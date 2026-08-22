@@ -326,6 +326,15 @@ button:disabled {
   align-items: center;
 }
 
+.inline.wrap {
+  flex-wrap: wrap;
+}
+
+.muted {
+  color: var(--muted);
+  margin: 0;
+}
+
 .kpi-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -440,6 +449,24 @@ button:disabled {
   gap: 10px;
 }
 
+.dataset-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.dataset-context-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.dataset-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
 table {
   width: 100%;
   border-collapse: collapse;
@@ -525,6 +552,9 @@ pre {
   .provider-grid,
   .two-col,
   .three-col,
+  .dataset-grid,
+  .dataset-context-grid,
+  .dataset-list,
   .split {
     grid-template-columns: 1fr;
   }

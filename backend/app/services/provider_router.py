@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 from dataclasses import dataclass
 from urllib import request
+from urllib.error import HTTPError
 from urllib.error import URLError
 
 from ..config import OFFICIAL_BASE_URLS, Provider
@@ -67,6 +68,11 @@ class ProviderRouter:
                 status_code = response.getcode()
                 if status_code >= 500:
                     raise_api_error("MODEL_ENDPOINT_UNAVAILABLE", f"Endpoint returned server error: {url}")
+        except HTTPError as exc:
+            # 4xx still proves the endpoint is reachable (many model APIs return
+            # 401/403/404 for bare GETs on base paths). Only 5xx is considered unavailable.
+            if exc.code >= 500:
+                raise_api_error("MODEL_ENDPOINT_UNAVAILABLE", f"Endpoint returned server error: {url} (HTTP {exc.code})")
         except ApiError:
             raise
         except URLError as exc:

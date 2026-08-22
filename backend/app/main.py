@@ -313,6 +313,24 @@ def get_job(job_id: str, _: AuthContext = Depends(require_roles("admin", "operat
     return job_queue.get_job(job_id)
 
 
+@app.get("/pipeline/runs")
+def list_runs(_: AuthContext = Depends(require_roles("admin", "operator", "reviewer", "developer"))) -> dict:
+    items = []
+    for run_id, entry in runtime_state.run_registry.items():
+        items.append(
+            {
+                "run_id": run_id,
+                "request_id": entry.get("request_id"),
+                "trace_id": entry.get("trace_id"),
+                "workflow_state": entry.get("workflow_state"),
+                "updated_at": entry.get("updated_at"),
+            }
+        )
+
+    items.sort(key=lambda row: str(row.get("updated_at") or ""), reverse=True)
+    return {"items": items}
+
+
 @app.post("/pipeline/generate")
 def generate(payload: GenerateRequest, _: AuthContext = Depends(require_roles("admin", "operator"))) -> GenerateResponse:
     start = time.time()

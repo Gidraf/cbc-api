@@ -65,6 +65,23 @@ type StageDraft = {
   base_url: string;
 };
 
+type CurriculumContext = {
+  profile_name: string;
+  level: string;
+  grade: string;
+  subject: string;
+  subject_code: string;
+  pathway: string;
+  track: string;
+  strand: string;
+  sub_strand: string;
+  slo_id: string;
+  strand_context: string;
+  sub_strand_context: string;
+  learning_objectives: string;
+  assessment_focus: string;
+};
+
 const providerLabel: Record<Provider, string> = {
   openai: "OpenAI",
   anthropic: "Anthropic",
@@ -86,6 +103,27 @@ const defaultStageDrafts: Record<Stage, StageDraft> = {
   question_generation: { provider: "gemini", model: "gemini-2.5-flash", base_url: "" },
   reviewer_panel: { provider: "gemini", model: "gemini-2.5-flash", base_url: "" },
   regeneration: { provider: "gemini", model: "gemini-2.5-flash", base_url: "" }
+};
+
+const defaultCurriculumContext: CurriculumContext = {
+  profile_name: "Grade 7 Integrated Science: Matter",
+  level: "Middle School",
+  grade: "7",
+  subject: "Integrated Science",
+  subject_code: "ISCI",
+  pathway: "",
+  track: "",
+  strand: "Matter",
+  sub_strand: "Classification of Matter",
+  slo_id: "MS-G7-ISCI-MAT-CLM-01",
+  strand_context:
+    "Learners distinguish solids, liquids, and gases through observable properties, particle arrangement, and daily-life applications.",
+  sub_strand_context:
+    "Focus on compressibility, particle spacing, and examples from home and school contexts.",
+  learning_objectives:
+    "Classify matter by state, explain particle model differences, and apply to real examples.",
+  assessment_focus:
+    "Use mixed assessment with both selected-response and written-response items tied to criteria-based rubrics."
 };
 
 function pretty(value: unknown): string {
@@ -143,6 +181,8 @@ export function App() {
   const [productionItems, setProductionItems] = useState<Array<Record<string, unknown>>>([]);
   const [selectedReviewRaw, setSelectedReviewRaw] = useState("");
   const [generationMode, setGenerationMode] = useState<"sync" | "async">("sync");
+  const [curriculumContext, setCurriculumContext] = useState<CurriculumContext>(defaultCurriculumContext);
+  const [datasetLibrary, setDatasetLibrary] = useState<CurriculumContext[]>([defaultCurriculumContext]);
 
   const title = useMemo(() => `CBC API Control Plane`, []);
 
@@ -267,23 +307,23 @@ export function App() {
   }
 
   async function refreshDashboard() {
-    const [jobs, review, production] = await Promise.all([
-      run("Pipeline jobs", () => fetchJson<any>(`/pipeline/jobs/${jobId || "latest"}`, { method: "GET" }, auth())),
+    const [runs, review, production] = await Promise.all([
+      run("Pipeline runs", () => fetchJson<any>("/pipeline/runs", { method: "GET" }, auth())),
       run("Review queue", () => fetchJson<any>("/review/queue", { method: "GET" }, auth())),
       run("Production ready", () => fetchJson<any>("/production/ready", { method: "GET" }, auth()))
     ]);
 
     const reviewList = asList(review);
     const productionList = asList(production);
-    const jobsList = asList(jobs);
+    const runsList = asList(runs);
 
     setReviewItems(reviewList);
     setProductionItems(productionList);
-    setRecentRuns(jobsList.slice(0, 8));
+    setRecentRuns(runsList.slice(0, 8));
     setDashboardStats({
-      queued: jobsList.length,
+      queued: runsList.filter((item) => String(item.workflow_state || "").includes("queue")).length,
       inReview: reviewList.length,
-      failed: jobsList.filter((item) => String(item.status || "").toLowerCase() === "failed").length,
+      failed: runsList.filter((item) => String(item.workflow_state || "").toLowerCase() === "rejected").length,
       ready: productionList.length
     });
   }
@@ -333,8 +373,7 @@ export function App() {
     );
   }
 
-  async function onBootstrapSubmit(event: FormEvent) {
-    event.preventDefault();
+  async function runBootstrap() {
     await run("Bootstrap stage bindings", () =>
       fetchJson(
         "/admin/pipeline-bindings/bootstrap",
@@ -351,6 +390,57 @@ export function App() {
     );
   }
 
+  async function onBootstrapSubmit(event: FormEvent) {
+    event.preventDefault();
+    await runBootstrap();
+  }
+
+  function buildPayloadFromContext(basePayload: string): string {
+    const parsed = JSON.parse(basePayload) as Record<string, unknown>;
+    const next = {
+      ...parsed,
+      curriculum: {
+        level: curriculumContext.level,
+        grade: curriculumContext.grade,
+        subject: curriculumContext.subject,
+        subject_code: curriculumContext.subject_code,
+        pathway: curriculumContext.pathway || null,
+        track: curriculumContext.track || null,
+        strand: curriculumContext.strand,
+        sub_strand: curriculumContext.sub_strand,
+        slo_id: curriculumContext.slo_id
+      }
+    };
+    return pretty(next);
+  }
+
+  function applyContextToPayload(target: "sync" | "async" | "both") {
+    try {
+      if (target === "sync" || target === "both") {
+        setSyncPayload(buildPayloadFromContext(syncPayload));
+      }
+      if (target === "async" || target === "both") {
+        setAsyncPayload(buildPayloadFromContext(asyncPayload));
+      }
+      setOutput("Curriculum context applied to payload");
+    } catch {
+      setOutput("Payload JSON is invalid. Fix JSON first, then apply curriculum context.");
+    }
+  }
+
+  function saveCurriculumProfile() {
+    setDatasetLibrary((prev) => {
+      const idx = prev.findIndex((item) => item.profile_name === curriculumContext.profile_name);
+      if (idx === -1) {
+        return [...prev, curriculumContext];
+      }
+      const next = [...prev];
+      next[idx] = curriculumContext;
+      return next;
+    });
+    setOutput(`Saved dataset profile: ${curriculumContext.profile_name}`);
+  }
+
   async function onSyncGenerate(event: FormEvent) {
     event.preventDefault();
     await run("Run sync generation", async () => {
@@ -362,6 +452,11 @@ export function App() {
         },
         auth()
       );
+      const runId = (result as any)?.result?.run_id;
+      if (runId) {
+        setReviewRunId(String(runId));
+        setHumanReviewRunId(String(runId));
+      }
       setSelectedReviewRaw(pretty(result));
       return result;
     });
@@ -447,6 +542,12 @@ export function App() {
         auth()
       )
     );
+    await refreshDashboard();
+    if (path === "review") {
+      await loadReviewQueue();
+    } else {
+      await loadHumanReviewQueue();
+    }
   }
 
   const canAdmin = hasRight(currentRole, "all");
@@ -604,8 +705,8 @@ export function App() {
                     {recentRuns.map((item, idx) => (
                       <tr key={`${item.run_id || "run"}-${idx}`}>
                         <td>{String(item.run_id || item.job_id || "run")}</td>
-                        <td>{String(item.pipeline_stage || item.stage || "-")}</td>
-                        <td>{String(item.status || item.workflow_state || "queued")}</td>
+                        <td>{String(item.request_id || item.trace_id || "-")}</td>
+                        <td>{String(item.workflow_state || item.status || "queued")}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -716,7 +817,7 @@ export function App() {
                 <button className="ghost" onClick={loadAdminConfig}>
                   Load Current
                 </button>
-                <button className="ghost" onClick={onBootstrapSubmit as any}>
+                <button className="ghost" onClick={runBootstrap}>
                   Bulk Bootstrap
                 </button>
               </div>
@@ -827,6 +928,136 @@ export function App() {
                 <button className={generationMode === "async" ? "" : "ghost"} onClick={() => setGenerationMode("async")}>
                   Async Run
                 </button>
+              </div>
+            </div>
+
+            <div className="surface stack compact">
+              <h3>Curriculum Dataset Builder</h3>
+              <p className="muted">
+                Build complete curriculum context from subject to strand and sub-strand, then inject directly into generation payloads.
+              </p>
+              <div className="dataset-grid">
+                <label>
+                  Profile Name
+                  <input
+                    value={curriculumContext.profile_name}
+                    onChange={(event) => setCurriculumContext((prev) => ({ ...prev, profile_name: event.target.value }))}
+                  />
+                </label>
+                <label>
+                  Level
+                  <input value={curriculumContext.level} onChange={(event) => setCurriculumContext((prev) => ({ ...prev, level: event.target.value }))} />
+                </label>
+                <label>
+                  Grade
+                  <input value={curriculumContext.grade} onChange={(event) => setCurriculumContext((prev) => ({ ...prev, grade: event.target.value }))} />
+                </label>
+                <label>
+                  Subject
+                  <input
+                    value={curriculumContext.subject}
+                    onChange={(event) => setCurriculumContext((prev) => ({ ...prev, subject: event.target.value }))}
+                  />
+                </label>
+                <label>
+                  Subject Code
+                  <input
+                    value={curriculumContext.subject_code}
+                    onChange={(event) => setCurriculumContext((prev) => ({ ...prev, subject_code: event.target.value }))}
+                  />
+                </label>
+                <label>
+                  SLO ID
+                  <input value={curriculumContext.slo_id} onChange={(event) => setCurriculumContext((prev) => ({ ...prev, slo_id: event.target.value }))} />
+                </label>
+                <label>
+                  Pathway (optional)
+                  <input
+                    value={curriculumContext.pathway}
+                    onChange={(event) => setCurriculumContext((prev) => ({ ...prev, pathway: event.target.value }))}
+                  />
+                </label>
+                <label>
+                  Track (optional)
+                  <input value={curriculumContext.track} onChange={(event) => setCurriculumContext((prev) => ({ ...prev, track: event.target.value }))} />
+                </label>
+                <label>
+                  Strand
+                  <input value={curriculumContext.strand} onChange={(event) => setCurriculumContext((prev) => ({ ...prev, strand: event.target.value }))} />
+                </label>
+                <label>
+                  Sub-strand
+                  <input
+                    value={curriculumContext.sub_strand}
+                    onChange={(event) => setCurriculumContext((prev) => ({ ...prev, sub_strand: event.target.value }))}
+                  />
+                </label>
+              </div>
+
+              <div className="dataset-context-grid">
+                <label>
+                  Strand Context
+                  <textarea
+                    rows={3}
+                    value={curriculumContext.strand_context}
+                    onChange={(event) => setCurriculumContext((prev) => ({ ...prev, strand_context: event.target.value }))}
+                  />
+                </label>
+                <label>
+                  Sub-strand Context
+                  <textarea
+                    rows={3}
+                    value={curriculumContext.sub_strand_context}
+                    onChange={(event) => setCurriculumContext((prev) => ({ ...prev, sub_strand_context: event.target.value }))}
+                  />
+                </label>
+                <label>
+                  Learning Objectives
+                  <textarea
+                    rows={3}
+                    value={curriculumContext.learning_objectives}
+                    onChange={(event) => setCurriculumContext((prev) => ({ ...prev, learning_objectives: event.target.value }))}
+                  />
+                </label>
+                <label>
+                  Assessment Focus
+                  <textarea
+                    rows={3}
+                    value={curriculumContext.assessment_focus}
+                    onChange={(event) => setCurriculumContext((prev) => ({ ...prev, assessment_focus: event.target.value }))}
+                  />
+                </label>
+              </div>
+
+              <div className="inline wrap">
+                <button type="button" className="ghost" onClick={() => applyContextToPayload("sync")}>
+                  Apply to Sync Payload
+                </button>
+                <button type="button" className="ghost" onClick={() => applyContextToPayload("async")}>
+                  Apply to Async Payload
+                </button>
+                <button type="button" className="ghost" onClick={() => applyContextToPayload("both")}>
+                  Apply to Both
+                </button>
+                <button type="button" onClick={saveCurriculumProfile}>
+                  Save Dataset Profile
+                </button>
+              </div>
+
+              <div className="dataset-list">
+                {datasetLibrary.map((item, idx) => (
+                  <button
+                    key={`${item.profile_name}-${idx}`}
+                    className="review-item"
+                    onClick={() => setCurriculumContext(item)}
+                    type="button"
+                  >
+                    <strong>{item.profile_name}</strong>
+                    <small>
+                      {item.grade} · {item.subject} · {item.strand} · {item.sub_strand}
+                    </small>
+                  </button>
+                ))}
               </div>
             </div>
 
