@@ -9,7 +9,8 @@ x-backend-build: &backend-build
 x-backend-env: &backend-env
   DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
   CBC_MASTER_KEY: ${CBC_MASTER_KEY:-u8iP_EgFrh50kABm2MvxAfv5mN53uV8SQEgrMwJwztw=}
-  REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+  # Keep runtime pinned to the local compose Redis to avoid external auth mismatches.
+  REDIS_URL: redis://redis:6379/0
 
   # Provider API keys/config
   OPENAI_API_KEY: ${OPENAI_API_KEY:-}

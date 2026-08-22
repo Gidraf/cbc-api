@@ -17,7 +17,11 @@ def main() -> None:
     run_migrations()
     runtime_state.sync_users_from_env()
     runtime_state.load_from_db()
-    object_storage.ensure_bucket()
+    try:
+        object_storage.ensure_bucket()
+    except Exception as exc:  # noqa: BLE001
+        # Keep worker alive in degraded mode if external MinIO is unavailable at boot.
+        logger.warning("MinIO bootstrap skipped at startup: %s", exc)
     router = ProviderRouter(runtime_state)
     pipeline = PipelineService(router)
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import time
 
 from fastapi import Depends, FastAPI
@@ -40,6 +41,7 @@ app.add_middleware(
 router = ProviderRouter(runtime_state)
 pipeline_service = PipelineService(router)
 workflow_service = WorkflowService(runtime_state)
+logger = logging.getLogger("cbc-api")
 
 STAGE_NAMES = {
     "notes_generation",
@@ -99,7 +101,11 @@ def startup() -> None:
     run_migrations()
     runtime_state.sync_users_from_env()
     runtime_state.load_from_db()
-    object_storage.ensure_bucket()
+    try:
+        object_storage.ensure_bucket()
+    except Exception as exc:  # noqa: BLE001
+        # Keep API booting in degraded mode when external MinIO is temporarily unavailable.
+        logger.warning("MinIO bootstrap skipped at startup: %s", exc)
     _bootstrap_default_stage_bindings()
     for provider in runtime_state.provider_credentials:
         runtime_state.persist_provider(provider)
