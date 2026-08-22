@@ -1,29 +1,5 @@
-import { FormEvent, useMemo, useState } from "react";
+import { FormEvent, useMemo, useState, useEffect } from "react";
 import { API_BASE_URL, fetchJson } from "./api";
-
-const defaultGeneratePayload = {
-  request_id: "req_01",
-  trace_id: "trc_01",
-  tenant_id: "cbc_default",
-  actor: { type: "admin", id: "usr_admin_01" },
-  curriculum: {
-    level: "Middle School",
-    grade: "7",
-    subject: "Integrated Science",
-    subject_code: "ISCI",
-    pathway: null,
-    track: null,
-    strand: "Matter",
-    sub_strand: "Classification of Matter",
-    slo_id: "MS-G7-ISCI-MAT-CLM-01"
-  },
-  controls: {
-    idempotency_key: "idem_01",
-    deadline_ms: 120000,
-    max_regen_attempts: 2,
-    environment: "prod"
-  }
-};
 
 type Role = "admin" | "operator" | "reviewer" | "developer";
 type Provider = "openai" | "anthropic" | "gemini" | "ollama";
@@ -35,95 +11,24 @@ type Stage =
   | "reviewer_panel"
   | "regeneration";
 
-const stageOptions: Stage[] = [
-  "notes_generation",
-  "diagram_generation",
-  "activity_generation",
-  "question_generation",
-  "reviewer_panel",
-  "regeneration"
-];
+type View =
+  | "dashboard"
+  | "datasets"
+  | "prompts"
+  | "questions"
+  | "targets"
+  | "generation"
+  | "review"
+  | "providers"
+  | "pipelines"
+  | "browser"
+  | "production";
 
 const roleRights: Record<Role, string[]> = {
   admin: ["all"],
-  operator: ["bindings", "generate", "jobs", "health", "browse", "production_read"],
-  reviewer: ["health", "admin_config", "jobs", "review", "human_review", "production_read"],
-  developer: ["health", "admin_config", "jobs", "browse", "production_read"]
-};
-
-type View = "dashboard" | "providers" | "pipelines" | "generation" | "review" | "browser" | "production";
-
-type ProviderDraft = {
-  api_key: string;
-  base_url: string;
-  ollama_models: string;
-};
-
-type StageDraft = {
-  provider: Provider;
-  model: string;
-  base_url: string;
-};
-
-type CurriculumContext = {
-  profile_name: string;
-  level: string;
-  grade: string;
-  subject: string;
-  subject_code: string;
-  pathway: string;
-  track: string;
-  strand: string;
-  sub_strand: string;
-  slo_id: string;
-  strand_context: string;
-  sub_strand_context: string;
-  learning_objectives: string;
-  assessment_focus: string;
-};
-
-const providerLabel: Record<Provider, string> = {
-  openai: "OpenAI",
-  anthropic: "Anthropic",
-  gemini: "Gemini",
-  ollama: "Ollama"
-};
-
-const defaultProviderDrafts: Record<Provider, ProviderDraft> = {
-  openai: { api_key: "", base_url: "https://api.openai.com/v1", ollama_models: "" },
-  anthropic: { api_key: "", base_url: "https://api.anthropic.com/v1", ollama_models: "" },
-  gemini: { api_key: "", base_url: "https://generativelanguage.googleapis.com", ollama_models: "" },
-  ollama: { api_key: "", base_url: "http://host.docker.internal:11434", ollama_models: "llama3.1,qwen2.5:7b,mistral" }
-};
-
-const defaultStageDrafts: Record<Stage, StageDraft> = {
-  notes_generation: { provider: "openai", model: "gpt-5-mini", base_url: "" },
-  diagram_generation: { provider: "openai", model: "gpt-5-mini", base_url: "" },
-  activity_generation: { provider: "openai", model: "gpt-5-mini", base_url: "" },
-  question_generation: { provider: "openai", model: "gpt-5-mini", base_url: "" },
-  reviewer_panel: { provider: "openai", model: "gpt-5-mini", base_url: "" },
-  regeneration: { provider: "openai", model: "gpt-5-mini", base_url: "" }
-};
-
-const defaultCurriculumContext: CurriculumContext = {
-  profile_name: "Grade 7 Integrated Science: Matter",
-  level: "Middle School",
-  grade: "7",
-  subject: "Integrated Science",
-  subject_code: "ISCI",
-  pathway: "",
-  track: "",
-  strand: "Matter",
-  sub_strand: "Classification of Matter",
-  slo_id: "MS-G7-ISCI-MAT-CLM-01",
-  strand_context:
-    "Learners distinguish solids, liquids, and gases through observable properties, particle arrangement, and daily-life applications.",
-  sub_strand_context:
-    "Focus on compressibility, particle spacing, and examples from home and school contexts.",
-  learning_objectives:
-    "Classify matter by state, explain particle model differences, and apply to real examples.",
-  assessment_focus:
-    "Use mixed assessment with both selected-response and written-response items tied to criteria-based rubrics."
+  operator: ["bindings", "generate", "jobs", "health", "browse", "production_read", "targets", "datasets", "prompts"],
+  reviewer: ["health", "admin_config", "jobs", "review", "human_review", "production_read", "questions"],
+  developer: ["health", "admin_config", "jobs", "browse", "production_read", "questions"]
 };
 
 function pretty(value: unknown): string {
@@ -131,9 +36,7 @@ function pretty(value: unknown): string {
 }
 
 function hasRight(role: Role | null, right: string): boolean {
-  if (!role) {
-    return false;
-  }
+  if (!role) return false;
   const rights = roleRights[role] || [];
   return rights.includes("all") || rights.includes(right);
 }
@@ -143,50 +46,73 @@ export function App() {
   const [view, setView] = useState<View>("dashboard");
   const [isRunning, setIsRunning] = useState(false);
 
-  const [username, setUsername] = useState("admin");
+  // Authentication
+  const [username, setUsername] = useState(() => localStorage.getItem("cbc_username") || "admin");
   const [password, setPassword] = useState("admin123");
-  const [bearerToken, setBearerToken] = useState("");
+  const [bearerToken, setBearerToken] = useState(() => localStorage.getItem("cbc_token") || "");
   const [apiKey, setApiKey] = useState("");
-  const [currentRole, setCurrentRole] = useState<Role | null>(null);
-  const [currentSubject, setCurrentSubject] = useState("");
+  const [currentRole, setCurrentRole] = useState<Role | null>(() => (localStorage.getItem("cbc_role") as Role) || null);
+  const [currentSubject, setCurrentSubject] = useState(() => localStorage.getItem("cbc_subject") || "");
 
-  const [providerDrafts, setProviderDrafts] = useState<Record<Provider, ProviderDraft>>(defaultProviderDrafts);
-  const [providerStatus, setProviderStatus] = useState<Record<Provider, boolean>>({
-    openai: false,
-    anthropic: false,
-    gemini: false,
-    ollama: false
+  // Providers & Stage Bindings
+  const [providerDrafts, setProviderDrafts] = useState<Record<Provider, { api_key: string; base_url: string; ollama_models: string }>>({
+    openai: { api_key: "", base_url: "https://api.openai.com/v1", ollama_models: "" },
+    anthropic: { api_key: "", base_url: "https://api.anthropic.com", ollama_models: "" },
+    gemini: { api_key: "", base_url: "https://generativelanguage.googleapis.com", ollama_models: "" },
+    ollama: { api_key: "", base_url: "http://host.docker.internal:11434", ollama_models: "llama3.1,qwen2.5:7b,mistral" }
+  });
+  const [stageDrafts, setStageDrafts] = useState<Record<Stage, { provider: Provider; model: string; base_url: string }>>({
+    notes_generation: { provider: "openai", model: "gpt-4o-mini", base_url: "" },
+    diagram_generation: { provider: "openai", model: "gpt-4o-mini", base_url: "" },
+    activity_generation: { provider: "openai", model: "gpt-4o-mini", base_url: "" },
+    question_generation: { provider: "openai", model: "gpt-4o-mini", base_url: "" },
+    reviewer_panel: { provider: "openai", model: "gpt-4o-mini", base_url: "" },
+    regeneration: { provider: "openai", model: "gpt-4o-mini", base_url: "" }
   });
 
-  const [stageDrafts, setStageDrafts] = useState<Record<Stage, StageDraft>>(defaultStageDrafts);
+  // Datasets & Prompts State (Langfuse)
+  const [datasetsList, setDatasetsList] = useState<string[]>([]);
+  const [selectedGrade, setSelectedGrade] = useState("grade-7");
+  const [gradeDatasetItems, setGradeDatasetItems] = useState<any[]>([]);
+  const [newSubjectName, setNewSubjectName] = useState("Integrated Science");
+  const [newSubjectEssence, setNewSubjectEssence] = useState("Develops scientific inquiry, environmental conservation, and technological literacy.");
+  const [selectedPromptName, setSelectedPromptName] = useState("question-generator");
+  const [previewMessages, setPreviewMessages] = useState<any[]>([]);
 
-  const [bootstrapProvider, setBootstrapProvider] = useState<Provider>("openai");
-  const [bootstrapModel, setBootstrapModel] = useState("gpt-5-mini");
-  const [bootstrapBaseUrl, setBootstrapBaseUrl] = useState("");
+  // Generation & Pipeline
+  const [genGrade, setGenGrade] = useState("7");
+  const [genSubject, setGenSubject] = useState("Integrated Science");
+  const [genStrand, setGenStrand] = useState("Matter");
+  const [genSubstrand, setGenSubstrand] = useState("Classification of Matter");
+  const [genSloId, setGenSloId] = useState("MS-G7-ISCI-MAT-CLM-01");
+  const [generationResult, setGenerationResult] = useState<any>(null);
 
-  const [syncPayload, setSyncPayload] = useState(pretty(defaultGeneratePayload));
-  const [asyncPayload, setAsyncPayload] = useState(pretty(defaultGeneratePayload));
-  const [jobId, setJobId] = useState("");
+  // Question Bank
+  const [questionBank, setQuestionBank] = useState<any[]>([]);
+  const [selectedQuestionDna, setSelectedQuestionDna] = useState<any>(null);
+
+  // Targets
+  const [dailyTargetData, setDailyTargetData] = useState<any>(null);
+  const [targetCountInput, setTargetCountInput] = useState(100);
+
+  // Reviews
+  const [reviewItems, setReviewItems] = useState<any[]>([]);
+  const [humanReviewItems, setHumanReviewItems] = useState<any[]>([]);
+  const [productionItems, setProductionItems] = useState<any[]>([]);
+
+  // Browser Agent
   const [browseUrl, setBrowseUrl] = useState("https://example.com");
 
-  const [reviewRunId, setReviewRunId] = useState("");
-  const [reviewDecision, setReviewDecision] = useState("approve_to_human_review");
-  const [humanReviewRunId, setHumanReviewRunId] = useState("");
-  const [humanReviewDecisionValue, setHumanReviewDecisionValue] = useState("approve");
+  const title = useMemo(() => `CBC API Platform`, []);
 
-  const [dashboardStats, setDashboardStats] = useState({ queued: 0, inReview: 0, failed: 0, ready: 0 });
-  const [recentRuns, setRecentRuns] = useState<Array<Record<string, unknown>>>([]);
-  const [reviewItems, setReviewItems] = useState<Array<Record<string, unknown>>>([]);
-  const [humanReviewItems, setHumanReviewItems] = useState<Array<Record<string, unknown>>>([]);
-  const [productionItems, setProductionItems] = useState<Array<Record<string, unknown>>>([]);
-  const [selectedReviewRaw, setSelectedReviewRaw] = useState("");
-  const [generationMode, setGenerationMode] = useState<"sync" | "async">("sync");
-  const [curriculumContext, setCurriculumContext] = useState<CurriculumContext>(defaultCurriculumContext);
-  const [datasetLibrary, setDatasetLibrary] = useState<CurriculumContext[]>([defaultCurriculumContext]);
+  function auth() {
+    return {
+      bearerToken: bearerToken || undefined,
+      apiKey: apiKey || undefined
+    };
+  }
 
-  const title = useMemo(() => `CBC API Control Plane`, []);
-
-  async function run<T>(label: string, fn: () => Promise<T>) {
+  async function run<T>(label: string, fn: () => Promise<T>): Promise<T | undefined> {
     try {
       setIsRunning(true);
       setOutput(`${label}...`);
@@ -201,38 +127,20 @@ export function App() {
     }
   }
 
-  function auth() {
-    return {
-      bearerToken: bearerToken || undefined,
-      apiKey: apiKey || undefined
-    };
-  }
-
   async function onLoginSubmit(event: FormEvent) {
     event.preventDefault();
     await run("Login", async () => {
-      const result = await fetchJson<{ access_token: string; role: Role; subject: string }>(
-        "/auth/login",
-        {
-          method: "POST",
-          body: JSON.stringify({ username, password })
-        }
-      );
+      const result = await fetchJson<{ access_token: string; role: Role; subject: string }>("/api/v1/auth/login", {
+        method: "POST",
+        body: JSON.stringify({ username, password })
+      });
       setBearerToken(result.access_token);
       setCurrentRole(result.role);
       setCurrentSubject(result.subject);
-      setView("dashboard");
-      return result;
-    });
-  }
-
-  async function onUseApiKey(event: FormEvent) {
-    event.preventDefault();
-    await run("Use API key", async () => {
-      const result = await fetchJson<{ subject: string; role: Role; auth_type: string }>("/auth/me", { method: "GET" }, { apiKey });
-      setCurrentRole(result.role);
-      setCurrentSubject(result.subject);
-      setBearerToken("");
+      localStorage.setItem("cbc_token", result.access_token);
+      localStorage.setItem("cbc_role", result.role);
+      localStorage.setItem("cbc_subject", result.subject);
+      localStorage.setItem("cbc_username", username);
       setView("dashboard");
       return result;
     });
@@ -243,322 +151,170 @@ export function App() {
     setApiKey("");
     setCurrentRole(null);
     setCurrentSubject("");
+    localStorage.removeItem("cbc_token");
+    localStorage.removeItem("cbc_role");
+    localStorage.removeItem("cbc_subject");
     setOutput("Logged out");
   }
 
-  async function loadAdminConfig() {
-    const result = await run("Admin config", () => fetchJson<any>("/admin/config", { method: "GET" }, auth()));
-    if (!result) {
-      return;
-    }
-
-    const nextDrafts: Record<Provider, ProviderDraft> = { ...providerDrafts };
-    const nextStatus: Record<Provider, boolean> = { ...providerStatus };
-    const nextStages: Record<Stage, StageDraft> = { ...stageDrafts };
-
-    if (Array.isArray(result.providers)) {
-      for (const item of result.providers) {
-        const p = item.provider as Provider;
-        if (!nextDrafts[p]) {
-          continue;
-        }
-        nextDrafts[p] = {
-          api_key: "",
-          base_url: String(item.base_url || nextDrafts[p].base_url || ""),
-          ollama_models: Array.isArray(item.ollama_models) ? item.ollama_models.join(",") : nextDrafts[p].ollama_models
-        };
-        nextStatus[p] = Boolean(item.has_api_key);
-      }
-    }
-
-    if (Array.isArray(result.stage_bindings)) {
-      for (const row of result.stage_bindings) {
-        const stageName = row.pipeline_stage as Stage;
-        if (!nextStages[stageName]) {
-          continue;
-        }
-        nextStages[stageName] = {
-          provider: row.provider as Provider,
-          model: String(row.model || ""),
-          base_url: String(row.base_url || "")
-        };
-      }
-    }
-
-    setProviderDrafts(nextDrafts);
-    setProviderStatus(nextStatus);
-    setStageDrafts(nextStages);
+  // Load Langfuse Datasets
+  async function loadDatasets() {
+    await run("Load Datasets", async () => {
+      const res = await fetchJson<any>("/api/v1/admin/langfuse/datasets", { method: "GET" }, auth());
+      const list = res.datasets?.map((d: any) => d.name) || [];
+      setDatasetsList(list);
+      return res;
+    });
   }
 
-  function asList(value: unknown): Array<Record<string, unknown>> {
-    if (Array.isArray(value)) {
-      return value as Array<Record<string, unknown>>;
-    }
-    if (!value || typeof value !== "object") {
-      return [];
-    }
-    const record = value as Record<string, unknown>;
-    for (const key of ["items", "queue", "runs", "results", "ready", "bundles", "data"]) {
-      if (Array.isArray(record[key])) {
-        return record[key] as Array<Record<string, unknown>>;
-      }
-    }
-    return [];
+  async function loadGradeDataset(gradeSlug: string) {
+    await run(`Load ${gradeSlug}`, async () => {
+      const res = await fetchJson<any>(`/api/v1/admin/langfuse/datasets/${gradeSlug}`, { method: "GET" }, auth());
+      setGradeDatasetItems(res.items || []);
+      return res;
+    });
   }
 
+  async function onUploadSubjectContext(event: FormEvent) {
+    event.preventDefault();
+    await run("Upload Subject Context", async () => {
+      const payload = {
+        subject: newSubjectName,
+        subject_code: newSubjectName.slice(0, 4).toUpperCase(),
+        essence_statement: newSubjectEssence,
+        strands: [{ name: genStrand, sub_strands: [{ name: genSubstrand, slos: [genSloId] }] }]
+      };
+      const res = await fetchJson(`/api/v1/admin/langfuse/datasets/${selectedGrade}`, {
+        method: "POST",
+        body: JSON.stringify(payload)
+      }, auth());
+      await loadGradeDataset(selectedGrade);
+      return res;
+    });
+  }
+
+  async function previewPromptContext() {
+    await run("Preview Prompt Context", async () => {
+      const res = await fetchJson<any>("/api/v1/admin/langfuse/context/preview", {
+        method: "POST",
+        body: JSON.stringify({
+          grade: genGrade,
+          subject: genSubject,
+          agent_name: selectedPromptName,
+          template_vars: { strand: genStrand, sub_strand: genSubstrand, slo_id: genSloId }
+        })
+      }, auth());
+      setPreviewMessages(res.messages || []);
+      return res;
+    });
+  }
+
+  // Question Bank
+  async function loadQuestionBank() {
+    await run("Load Question Bank", async () => {
+      const res = await fetchJson<any>("/api/v1/questions?limit=50", { method: "GET" }, auth());
+      setQuestionBank(res.items || []);
+      return res;
+    });
+  }
+
+  async function triggerQuestionAction(questionId: string, action: "re-create" | "regenerate" | "re-review") {
+    await run(`Action: ${action}`, async () => {
+      const res = await fetchJson(`/api/v1/questions/${questionId}/action`, {
+        method: "POST",
+        body: JSON.stringify({ action })
+      }, auth());
+      await loadQuestionBank();
+      return res;
+    });
+  }
+
+  // Targets
+  async function loadTodayTarget() {
+    await run("Load Targets", async () => {
+      const res = await fetchJson<any>("/api/v1/targets/today", { method: "GET" }, auth());
+      setDailyTargetData(res);
+      return res;
+    });
+  }
+
+  async function configureTargetSubmit(event: FormEvent) {
+    event.preventDefault();
+    await run("Configure Target", async () => {
+      const res = await fetchJson("/api/v1/targets/configure", {
+        method: "POST",
+        body: JSON.stringify({ target_count: Number(targetCountInput) })
+      }, auth());
+      setDailyTargetData(res);
+      return res;
+    });
+  }
+
+  // Real Generation
+  async function triggerGenerate() {
+    await run("Generate Content", async () => {
+      const payload = {
+        request_id: `req_${Date.now()}`,
+        trace_id: `trc_${Date.now()}`,
+        tenant_id: "cbc_web",
+        actor: { type: "admin", id: currentSubject || "admin" },
+        curriculum: {
+          level: "Middle School",
+          grade: genGrade,
+          subject: genSubject,
+          subject_code: genSubject.slice(0, 4).toUpperCase(),
+          pathway: null,
+          track: null,
+          strand: genStrand,
+          sub_strand: genSubstrand,
+          slo_id: genSloId
+        },
+        controls: {
+          idempotency_key: `idem_${Date.now()}`,
+          deadline_ms: 120000,
+          max_regen_attempts: 2,
+          environment: "prod"
+        }
+      };
+
+      const res = await fetchJson<any>("/pipeline/generate", {
+        method: "POST",
+        body: JSON.stringify(payload)
+      }, auth());
+
+      setGenerationResult(res.result?.published_bundle || res.result);
+      return res;
+    });
+  }
+
+  // Dashboard Refresh
   async function refreshDashboard() {
-    const [runs, review, production] = await Promise.all([
-      run("Pipeline runs", () => fetchJson<any>("/pipeline/runs", { method: "GET" }, auth())),
-      run("Review queue", () => fetchJson<any>("/review/queue", { method: "GET" }, auth())),
-      run("Production ready", () => fetchJson<any>("/production/ready", { method: "GET" }, auth()))
-    ]);
-
-    const reviewList = asList(review);
-    const productionList = asList(production);
-    const runsList = asList(runs);
-
-    setReviewItems(reviewList);
-    setProductionItems(productionList);
-    setRecentRuns(runsList.slice(0, 8));
-    setDashboardStats({
-      queued: runsList.filter((item) => String(item.workflow_state || "").includes("queue")).length,
-      inReview: reviewList.length,
-      failed: runsList.filter((item) => String(item.workflow_state || "").toLowerCase() === "rejected").length,
-      ready: productionList.length
-    });
+    await Promise.all([loadTodayTarget(), loadQuestionBank()]);
   }
 
-  async function saveProvider(provider: Provider) {
-    const draft = providerDrafts[provider];
-    const payload: Record<string, unknown> = {
-      api_key: draft.api_key || null,
-      base_url: draft.base_url || null,
-      ollama_models:
-        provider === "ollama"
-          ? draft.ollama_models
-              .split(",")
-              .map((item) => item.trim())
-              .filter(Boolean)
-          : []
-    };
-    await run(`Configure provider: ${provider}`, () =>
-      fetchJson(`/admin/providers/${provider}/config`, { method: "PUT", body: JSON.stringify(payload) }, auth())
-    );
-    setProviderStatus((prev) => ({ ...prev, [provider]: Boolean(draft.api_key) || prev[provider] }));
-  }
-
-  async function onProviderConfigSubmit(event: FormEvent) {
-    event.preventDefault();
-    await saveProvider("openai");
-    await saveProvider("anthropic");
-    await saveProvider("gemini");
-    await saveProvider("ollama");
-  }
-
-  async function saveStageBinding(stageName: Stage) {
-    const row = stageDrafts[stageName];
-    await run(`Set stage binding: ${stageName}`, () =>
-      fetchJson(
-        `/admin/pipeline-bindings/${stageName}`,
-        {
-          method: "POST",
-          body: JSON.stringify({
-            provider: row.provider,
-            model: row.model,
-            base_url: row.base_url || null
-          })
-        },
-        auth()
-      )
-    );
-  }
-
-  async function runBootstrap() {
-    await run("Bootstrap stage bindings", () =>
-      fetchJson(
-        "/admin/pipeline-bindings/bootstrap",
-        {
-          method: "POST",
-          body: JSON.stringify({
-            provider: bootstrapProvider,
-            model: bootstrapModel,
-            base_url: bootstrapBaseUrl || null
-          })
-        },
-        auth()
-      )
-    );
-  }
-
-  async function onBootstrapSubmit(event: FormEvent) {
-    event.preventDefault();
-    await runBootstrap();
-  }
-
-  function buildPayloadFromContext(basePayload: string): string {
-    const parsed = JSON.parse(basePayload) as Record<string, unknown>;
-    const next = {
-      ...parsed,
-      curriculum: {
-        level: curriculumContext.level,
-        grade: curriculumContext.grade,
-        subject: curriculumContext.subject,
-        subject_code: curriculumContext.subject_code,
-        pathway: curriculumContext.pathway || null,
-        track: curriculumContext.track || null,
-        strand: curriculumContext.strand,
-        sub_strand: curriculumContext.sub_strand,
-        slo_id: curriculumContext.slo_id
-      }
-    };
-    return pretty(next);
-  }
-
-  function applyContextToPayload(target: "sync" | "async" | "both") {
-    try {
-      if (target === "sync" || target === "both") {
-        setSyncPayload(buildPayloadFromContext(syncPayload));
-      }
-      if (target === "async" || target === "both") {
-        setAsyncPayload(buildPayloadFromContext(asyncPayload));
-      }
-      setOutput("Curriculum context applied to payload");
-    } catch {
-      setOutput("Payload JSON is invalid. Fix JSON first, then apply curriculum context.");
+  useEffect(() => {
+    if (currentRole) {
+      loadDatasets();
+      loadGradeDataset(selectedGrade);
+      loadTodayTarget();
+      loadQuestionBank();
     }
-  }
-
-  function saveCurriculumProfile() {
-    setDatasetLibrary((prev) => {
-      const idx = prev.findIndex((item) => item.profile_name === curriculumContext.profile_name);
-      if (idx === -1) {
-        return [...prev, curriculumContext];
-      }
-      const next = [...prev];
-      next[idx] = curriculumContext;
-      return next;
-    });
-    setOutput(`Saved dataset profile: ${curriculumContext.profile_name}`);
-  }
-
-  async function onSyncGenerate(event: FormEvent) {
-    event.preventDefault();
-    await run("Run sync generation", async () => {
-      const result = await fetchJson(
-        "/pipeline/generate",
-        {
-          method: "POST",
-          body: syncPayload
-        },
-        auth()
-      );
-      const runId = (result as any)?.result?.run_id;
-      if (runId) {
-        setReviewRunId(String(runId));
-        setHumanReviewRunId(String(runId));
-      }
-      setSelectedReviewRaw(pretty(result));
-      return result;
-    });
-  }
-
-  async function fetchJobStatus() {
-    if (!jobId) {
-      setOutput("Set a job_id first");
-      return;
-    }
-    await run("Get job", async () => {
-      const result = await fetchJson(`/pipeline/jobs/${jobId}`, { method: "GET" }, auth());
-      setSelectedReviewRaw(pretty(result));
-      return result;
-    });
-  }
-
-  async function onAsyncGenerate(event: FormEvent) {
-    event.preventDefault();
-    await run("Enqueue generation", async () => {
-      const result = await fetchJson<{ job_id: string }>(
-        "/pipeline/enqueue",
-        {
-          method: "POST",
-          body: asyncPayload
-        },
-        auth()
-      );
-      setJobId(result.job_id);
-      setSelectedReviewRaw(pretty(result));
-      return result;
-    });
-  }
-
-  async function loadReviewQueue() {
-    await run("Review queue", async () => {
-      const result = await fetchJson<any>("/review/queue", { method: "GET" }, auth());
-      const items = asList(result);
-      setReviewItems(items);
-      if (items[0]) {
-        setSelectedReviewRaw(pretty(items[0]));
-      }
-      return result;
-    });
-  }
-
-  async function loadHumanReviewQueue() {
-    await run("Human review queue", async () => {
-      const result = await fetchJson<any>("/human-review/queue", { method: "GET" }, auth());
-      const items = asList(result);
-      setHumanReviewItems(items);
-      if (items[0]) {
-        setSelectedReviewRaw(pretty(items[0]));
-      }
-      return result;
-    });
-  }
-
-  async function loadProductionReady() {
-    await run("Production ready", async () => {
-      const result = await fetchJson<any>("/production/ready", { method: "GET" }, auth());
-      const items = asList(result);
-      setProductionItems(items);
-      if (items[0]) {
-        setSelectedReviewRaw(pretty(items[0]));
-      }
-      return result;
-    });
-  }
-
-  async function applyReviewDecision(runId: string, decision: string, path: "review" | "human-review") {
-    if (!runId) {
-      setOutput("Choose or provide a run_id first");
-      return;
-    }
-    await run("Submit decision", () =>
-      fetchJson(
-        `/${path}/${runId}/decision`,
-        {
-          method: "POST",
-          body: JSON.stringify({ decision })
-        },
-        auth()
-      )
-    );
-    await refreshDashboard();
-    if (path === "review") {
-      await loadReviewQueue();
-    } else {
-      await loadHumanReviewQueue();
-    }
-  }
+  }, [currentRole]);
 
   const canAdmin = hasRight(currentRole, "all");
+
   const navItems: Array<{ id: View; label: string; right: string }> = [
     { id: "dashboard", label: "Dashboard", right: "health" },
-    { id: "providers", label: "Providers", right: "all" },
-    { id: "pipelines", label: "Pipelines", right: "bindings" },
+    { id: "datasets", label: "Datasets (Langfuse)", right: "datasets" },
+    { id: "prompts", label: "Prompt Builder", right: "prompts" },
     { id: "generation", label: "Generation", right: "generate" },
-    { id: "review", label: "Review", right: "review" },
+    { id: "questions", label: "Questions & DNA", right: "questions" },
+    { id: "targets", label: "Targets & Alerts", right: "targets" },
+    { id: "review", label: "Review & Quality", right: "review" },
+    { id: "providers", label: "Model Providers", right: "all" },
+    { id: "pipelines", label: "Stage Bindings", right: "bindings" },
     { id: "browser", label: "Browser Agent", right: "browse" },
-    { id: "production", label: "Production", right: "production_read" }
+    { id: "production", label: "Production Bundles", right: "production_read" }
   ];
 
   if (!currentRole) {
@@ -566,48 +322,30 @@ export function App() {
       <div className="login-shell">
         <section className="login-art">
           <h1>{title}</h1>
-          <p>Technical control room for provider routing, pipeline orchestration, and approval workflows.</p>
-          <div className="art-grid">
-            <div className="node" />
-            <div className="node" />
-            <div className="node" />
-            <div className="node" />
-          </div>
+          <p>Contract-first multi-agent production platform for Kenyan CBC educational content, Question DNA, and vector diagrams.</p>
         </section>
 
         <section className="login-card">
-          <h2>Welcome back</h2>
+          <h2>Sign In to Control Plane</h2>
           <form onSubmit={onLoginSubmit} className="stack">
             <label>
               Role
-              <select value={username} onChange={(event) => setUsername(event.target.value)}>
-                <option value="admin">admin</option>
-                <option value="operator">operator</option>
-                <option value="reviewer">reviewer</option>
-                <option value="developer">developer</option>
+              <select value={username} onChange={(e) => setUsername(e.target.value)}>
+                <option value="admin">Admin</option>
+                <option value="operator">Operator</option>
+                <option value="reviewer">Reviewer</option>
+                <option value="developer">Developer</option>
               </select>
             </label>
             <label>
               Username
-              <input value={username} onChange={(event) => setUsername(event.target.value)} placeholder="admin" />
+              <input value={username} onChange={(e) => setUsername(e.target.value)} placeholder="admin" />
             </label>
             <label>
               Password
-              <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="password" />
+              <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="password" />
             </label>
-            <button type="submit" disabled={isRunning}>
-              Sign In
-            </button>
-          </form>
-
-          <form onSubmit={onUseApiKey} className="stack api-key-login">
-            <label>
-              Developer API key
-              <input type="password" value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder="DEVELOPER_API_KEY" />
-            </label>
-            <button type="submit" className="ghost" disabled={isRunning}>
-              Use API Key
-            </button>
+            <button type="submit" disabled={isRunning}>Sign In</button>
           </form>
         </section>
       </div>
@@ -621,7 +359,7 @@ export function App() {
           <span className="brand-mark">C</span>
           <div>
             <strong>CBC API</strong>
-            <small>Control Plane</small>
+            <small>Platform Control Room</small>
           </div>
         </div>
 
@@ -636,10 +374,8 @@ export function App() {
         </nav>
 
         <div className="sidebar-footer">
-          <button className="ghost" onClick={logout}>
-            Sign out
-          </button>
-          <small>{currentSubject || "session"}</small>
+          <button className="ghost" onClick={logout}>Sign out</button>
+          <small>{currentSubject} ({currentRole})</small>
         </div>
       </aside>
 
@@ -647,601 +383,357 @@ export function App() {
         <header className="topbar">
           <h1>{title}</h1>
           <div className="topbar-actions">
-            <button className="ghost" onClick={() => run("Health", () => fetchJson("/health"))}>
-              Health
-            </button>
-            <button className="ghost" onClick={() => run("Auth me", () => fetchJson("/auth/me", { method: "GET" }, auth()))}>
-              Session
-            </button>
+            <button className="ghost" onClick={refreshDashboard}>Refresh Data</button>
           </div>
         </header>
 
+        {/* 1. DASHBOARD TAB */}
         {view === "dashboard" && (
           <section className="panel">
             <div className="panel-head">
               <div>
                 <h2>System Overview</h2>
-                <p>Real-time telemetry and generation status.</p>
+                <p>Live generation telemetry, Question DNA metrics, and daily production target status.</p>
               </div>
-              <button onClick={refreshDashboard}>Refresh</button>
             </div>
 
             <div className="kpi-grid">
               <article className="kpi">
-                <h3>Queued Jobs</h3>
-                <p>{dashboardStats.queued}</p>
+                <h3>Today's Target</h3>
+                <p>{dailyTargetData?.target_count || 100}</p>
               </article>
               <article className="kpi">
-                <h3>In Review</h3>
-                <p>{dashboardStats.inReview}</p>
+                <h3>Completed Today</h3>
+                <p>{dailyTargetData?.completed_count || 0}</p>
               </article>
               <article className="kpi">
-                <h3>Failed</h3>
-                <p>{dashboardStats.failed}</p>
+                <h3>Approved Items</h3>
+                <p>{dailyTargetData?.approved_count || 0}</p>
               </article>
               <article className="kpi">
-                <h3>Ready</h3>
-                <p>{dashboardStats.ready}</p>
+                <h3>Question Bank Total</h3>
+                <p>{questionBank.length}</p>
               </article>
             </div>
 
-            <div className="split">
-              <div className="surface">
-                <h3>Recent Generation Runs</h3>
-                <table>
-                  <thead>
-                    <tr>
-                      <th>ID</th>
-                      <th>Stage</th>
-                      <th>Status</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {recentRuns.length === 0 && (
-                      <tr>
-                        <td colSpan={3}>No runs loaded yet.</td>
-                      </tr>
-                    )}
-                    {recentRuns.map((item, idx) => (
-                      <tr key={`${item.run_id || "run"}-${idx}`}>
-                        <td>{String(item.run_id || item.job_id || "run")}</td>
-                        <td>{String(item.request_id || item.trace_id || "-")}</td>
-                        <td>{String(item.workflow_state || item.status || "queued")}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+            <div className="surface">
+              <h3>Daily Target Progress</h3>
+              <div className="progress-bar-wrap">
+                <div
+                  className="progress-bar"
+                  style={{
+                    width: `${Math.min(100, Math.round(((dailyTargetData?.completed_count || 0) / (dailyTargetData?.target_count || 100)) * 100))}%`
+                  }}
+                />
               </div>
-
-              <div className="surface">
-                <h3>Quick Actions</h3>
-                <div className="stack">
-                  <button onClick={() => setView("generation")}>Start Sync Run</button>
-                  {canAdmin && <button onClick={() => setView("providers")}>Configure Providers</button>}
-                  {hasRight(currentRole, "production_read") && <button onClick={() => setView("production")}>Export Production Data</button>}
-                </div>
+              <div className="milestone-badges">
+                <span>0%</span>
+                <span className={(dailyTargetData?.completed_count || 0) >= (dailyTargetData?.target_count || 100) * 0.25 ? "active" : ""}>25% Milestone</span>
+                <span className={(dailyTargetData?.completed_count || 0) >= (dailyTargetData?.target_count || 100) * 0.5 ? "active" : ""}>50% Milestone</span>
+                <span className={(dailyTargetData?.completed_count || 0) >= (dailyTargetData?.target_count || 100) * 0.75 ? "active" : ""}>75% Milestone</span>
+                <span className={(dailyTargetData?.completed_count || 0) >= (dailyTargetData?.target_count || 100) ? "active" : ""}>100% Goal</span>
               </div>
             </div>
           </section>
         )}
 
+        {/* 2. DATASETS (LANGFUSE) TAB */}
+        {view === "datasets" && (
+          <section className="panel">
+            <div className="panel-head">
+              <div>
+                <h2>Langfuse Curriculum Datasets</h2>
+                <p>Browse and upload KICD curriculum design essence statements, strands, and SLOs stored dynamically in Langfuse.</p>
+              </div>
+            </div>
+
+            <div className="two-col">
+              <div className="surface">
+                <h3>Select Grade Dataset</h3>
+                <select value={selectedGrade} onChange={(e) => { setSelectedGrade(e.target.value); loadGradeDataset(e.target.value); }}>
+                  {datasetsList.map((d) => (
+                    <option key={d} value={d}>{d}</option>
+                  ))}
+                </select>
+
+                <h4 style={{ marginTop: "16px" }}>Subjects in {selectedGrade}:</h4>
+                {gradeDatasetItems.length === 0 ? (
+                  <p className="muted">No subjects loaded for this grade.</p>
+                ) : (
+                  gradeDatasetItems.map((item, idx) => (
+                    <div key={idx} className="card-item">
+                      <strong>{item.input?.subject || "Subject"}</strong>
+                      <p className="muted" style={{ fontSize: "12px", marginTop: "4px" }}>{item.metadata?.essence_statement || "No essence statement"}</p>
+                    </div>
+                  ))
+                )}
+              </div>
+
+              <div className="surface">
+                <h3>Upload New Subject Context Item</h3>
+                <form onSubmit={onUploadSubjectContext} className="stack">
+                  <label>
+                    Subject Name
+                    <input value={newSubjectName} onChange={(e) => setNewSubjectName(e.target.value)} />
+                  </label>
+                  <label>
+                    Essence Statement
+                    <textarea rows={4} value={newSubjectEssence} onChange={(e) => setNewSubjectEssence(e.target.value)} />
+                  </label>
+                  <button type="submit" disabled={isRunning}>Upload to Langfuse</button>
+                </form>
+              </div>
+            </div>
+          </section>
+        )}
+
+        {/* 3. PROMPT BUILDER TAB */}
+        {view === "prompts" && (
+          <section className="panel">
+            <div className="panel-head">
+              <div>
+                <h2>Langfuse Dynamic Prompt Builder</h2>
+                <p>Inspect master context and test-compile agent prompts with live variables.</p>
+              </div>
+            </div>
+
+            <div className="two-col">
+              <div className="surface">
+                <h3>Select Agent Prompt</h3>
+                <select value={selectedPromptName} onChange={(e) => setSelectedPromptName(e.target.value)}>
+                  <option value="note-generator">note-generator</option>
+                  <option value="diagram-generator">diagram-generator</option>
+                  <option value="activity-generator">activity-generator</option>
+                  <option value="question-generator">question-generator</option>
+                  <option value="reviewer-panel">reviewer-panel</option>
+                </select>
+                <button style={{ marginTop: "12px" }} onClick={previewPromptContext} disabled={isRunning}>Compile & Preview</button>
+              </div>
+
+              <div className="surface">
+                <h3>Assembled Message Stack</h3>
+                <pre>{pretty(previewMessages)}</pre>
+              </div>
+            </div>
+          </section>
+        )}
+
+        {/* 4. GENERATION TAB */}
+        {view === "generation" && (
+          <section className="panel">
+            <div className="panel-head">
+              <div>
+                <h2>Real-Time Content Generation</h2>
+                <p>Trigger Notes, SVG Diagrams, Activities, and Questions with Question DNA lineage.</p>
+              </div>
+            </div>
+
+            <div className="surface">
+              <div className="three-col">
+                <label>
+                  Grade
+                  <input value={genGrade} onChange={(e) => setGenGrade(e.target.value)} />
+                </label>
+                <label>
+                  Subject
+                  <input value={genSubject} onChange={(e) => setGenSubject(e.target.value)} />
+                </label>
+                <label>
+                  Strand
+                  <input value={genStrand} onChange={(e) => setGenStrand(e.target.value)} />
+                </label>
+              </div>
+              <div className="two-col" style={{ marginTop: "12px" }}>
+                <label>
+                  Sub-Strand
+                  <input value={genSubstrand} onChange={(e) => setGenSubstrand(e.target.value)} />
+                </label>
+                <label>
+                  Specific Learning Outcome (SLO ID)
+                  <input value={genSloId} onChange={(e) => setGenSloId(e.target.value)} />
+                </label>
+              </div>
+              <button style={{ marginTop: "16px" }} onClick={triggerGenerate} disabled={isRunning}>
+                {isRunning ? "Generating with LLM..." : "Run Real Generation Pipeline"}
+              </button>
+            </div>
+
+            {generationResult && (
+              <div className="surface" style={{ marginTop: "16px" }}>
+                <h3>Generated Resource Bundle ({generationResult.bundle_id})</h3>
+                <h4>Notes: {generationResult.notes?.title}</h4>
+                <p>{generationResult.notes?.intro}</p>
+
+                {generationResult.diagrams?.[0]?.diagram_svg && (
+                  <div>
+                    <h4>Generated Vector Diagram (SHA-256 Deduplicated):</h4>
+                    <div
+                      className="svg-preview"
+                      dangerouslySetInnerHTML={{ __html: generationResult.diagrams[0].diagram_svg }}
+                    />
+                    <small className="muted">Alt Text: {generationResult.diagrams[0].accessibility?.alt_text}</small>
+                  </div>
+                )}
+
+                <h4>Questions ({generationResult.questions?.length}):</h4>
+                {generationResult.questions?.map((q: any, idx: number) => (
+                  <div key={idx} className="card-item">
+                    <strong>{q.content?.question_type?.toUpperCase()}: {q.content?.question_text}</strong>
+                    <div style={{ marginTop: "6px" }}>
+                      <span className="pill ok">Meeting Rubric: {q.content?.marking_guide?.meeting}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
+        )}
+
+        {/* 5. QUESTIONS & DNA TAB */}
+        {view === "questions" && (
+          <section className="panel">
+            <div className="panel-head">
+              <div>
+                <h2>Question DNA Bank</h2>
+                <p>Browse generated assessment questions, inspect cryptographic provenance, and trigger lifecycle actions.</p>
+              </div>
+            </div>
+
+            <div className="split">
+              <div className="surface">
+                <h3>Question Repository</h3>
+                {questionBank.map((q: any) => (
+                  <div key={q.question_id} className="card-item">
+                    <div className="card-item-head">
+                      <strong>{q.question_id}</strong>
+                      <span className="pill ok">{q.status}</span>
+                    </div>
+                    <p style={{ fontSize: "13px", margin: "4px 0" }}>{q.content?.question_text}</p>
+                    <div className="inline wrap" style={{ marginTop: "8px" }}>
+                      <button className="ghost" style={{ fontSize: "11px", padding: "4px 8px" }} onClick={() => setSelectedQuestionDna(q)}>Inspect DNA</button>
+                      <button className="ghost" style={{ fontSize: "11px", padding: "4px 8px" }} onClick={() => triggerQuestionAction(q.question_id, "re-create")}>Re-create</button>
+                      <button className="ghost" style={{ fontSize: "11px", padding: "4px 8px" }} onClick={() => triggerQuestionAction(q.question_id, "regenerate")}>Regenerate</button>
+                      <button className="ghost" style={{ fontSize: "11px", padding: "4px 8px" }} onClick={() => triggerQuestionAction(q.question_id, "re-review")}>Re-review</button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="surface">
+                <h3>Question DNA Inspector</h3>
+                {selectedQuestionDna ? (
+                  <pre>{pretty(selectedQuestionDna)}</pre>
+                ) : (
+                  <p className="muted">Select a question to inspect full lineage and provenance.</p>
+                )}
+              </div>
+            </div>
+          </section>
+        )}
+
+        {/* 6. TARGETS TAB */}
+        {view === "targets" && (
+          <section className="panel">
+            <div className="panel-head">
+              <div>
+                <h2>Daily Production Targets & Alerts</h2>
+                <p>Configure daily quotas and track automatic 25%, 50%, 75%, 100% milestone email dispatches.</p>
+              </div>
+            </div>
+
+            <div className="two-col">
+              <div className="surface">
+                <h3>Target Configuration</h3>
+                <form onSubmit={configureTargetSubmit} className="stack">
+                  <label>
+                    Daily Target Items
+                    <input type="number" value={targetCountInput} onChange={(e) => setTargetCountInput(Number(e.target.value))} />
+                  </label>
+                  <button type="submit" disabled={isRunning}>Save Daily Target</button>
+                </form>
+              </div>
+
+              <div className="surface">
+                <h3>Current Target Metrics</h3>
+                <pre>{pretty(dailyTargetData)}</pre>
+              </div>
+            </div>
+          </section>
+        )}
+
+        {/* 7. PROVIDERS TAB */}
         {view === "providers" && canAdmin && (
           <section className="panel">
             <div className="panel-head">
               <div>
-                <h2>Providers Configuration</h2>
-                <p>Configure API keys and endpoints for all providers.</p>
+                <h2>Model Providers & Credentials</h2>
+                <p>Manage OpenAI, Anthropic, Gemini, and Ollama encrypted keys and endpoints.</p>
               </div>
-              <button className="ghost" onClick={loadAdminConfig}>
-                Load Existing
-              </button>
             </div>
-
-            <form onSubmit={onProviderConfigSubmit} className="provider-grid">
-              {(["openai", "anthropic", "gemini"] as Provider[]).map((p) => (
-                <article className="provider-card" key={p}>
+            <div className="provider-grid">
+              {(["openai", "anthropic", "gemini", "ollama"] as Provider[]).map((p) => (
+                <article key={p} className="provider-card">
                   <div className="provider-head">
-                    <h3>{providerLabel[p]}</h3>
-                    <span className={`pill ${providerStatus[p] ? "ok" : "idle"}`}>{providerStatus[p] ? "Active" : "No key"}</span>
+                    <h3>{p.toUpperCase()}</h3>
                   </div>
                   <label>
                     API Key
                     <input
                       type="password"
                       value={providerDrafts[p].api_key}
-                      onChange={(event) =>
-                        setProviderDrafts((prev) => ({ ...prev, [p]: { ...prev[p], api_key: event.target.value } }))
-                      }
+                      onChange={(e) => setProviderDrafts({ ...providerDrafts, [p]: { ...providerDrafts[p], api_key: e.target.value } })}
                     />
                   </label>
                   <label>
                     Base URL
                     <input
                       value={providerDrafts[p].base_url}
-                      onChange={(event) =>
-                        setProviderDrafts((prev) => ({ ...prev, [p]: { ...prev[p], base_url: event.target.value } }))
-                      }
+                      onChange={(e) => setProviderDrafts({ ...providerDrafts, [p]: { ...providerDrafts[p], base_url: e.target.value } })}
                     />
                   </label>
-                  <button type="button" onClick={() => saveProvider(p)}>
-                    Save {providerLabel[p]}
-                  </button>
                 </article>
               ))}
-
-              <article className="provider-card wide">
-                <div className="provider-head">
-                  <h3>Ollama (Local/Self-hosted)</h3>
-                  <span className={`pill ${providerStatus.ollama ? "ok" : "idle"}`}>{providerStatus.ollama ? "Ready" : "Setup"}</span>
-                </div>
-                <div className="two-col">
-                  <label>
-                    Base URL
-                    <input
-                      value={providerDrafts.ollama.base_url}
-                      onChange={(event) =>
-                        setProviderDrafts((prev) => ({ ...prev, ollama: { ...prev.ollama, base_url: event.target.value } }))
-                      }
-                    />
-                  </label>
-                  <label>
-                    Available Models List
-                    <input
-                      value={providerDrafts.ollama.ollama_models}
-                      onChange={(event) =>
-                        setProviderDrafts((prev) => ({ ...prev, ollama: { ...prev.ollama, ollama_models: event.target.value } }))
-                      }
-                    />
-                  </label>
-                </div>
-                <button type="button" onClick={() => saveProvider("ollama")}>
-                  Save Ollama
-                </button>
-              </article>
-
-              <button type="submit" className="wide-submit">
-                Save All Providers
-              </button>
-            </form>
+            </div>
           </section>
         )}
 
-        {view === "pipelines" && hasRight(currentRole, "bindings") && (
+        {/* 8. PIPELINES TAB */}
+        {view === "pipelines" && (
           <section className="panel">
             <div className="panel-head">
               <div>
-                <h2>Pipeline Stage Bindings</h2>
-                <p>Configure provider and model assignments for each pipeline stage.</p>
-              </div>
-              <div className="inline">
-                <button className="ghost" onClick={loadAdminConfig}>
-                  Load Current
-                </button>
-                <button className="ghost" onClick={runBootstrap}>
-                  Bulk Bootstrap
-                </button>
+                <h2>Stage-to-Model Bindings</h2>
+                <p>Configure which LLM powers each stage (notes, diagrams, activities, questions, reviewers).</p>
               </div>
             </div>
+            <pre>{pretty(stageDrafts)}</pre>
+          </section>
+        )}
 
+        {/* 9. BROWSER AGENT TAB */}
+        {view === "browser" && (
+          <section className="panel">
+            <div className="panel-head">
+              <div>
+                <h2>Playwright Browser Verification Agent</h2>
+                <p>Execute live web verification for curriculum resources.</p>
+              </div>
+            </div>
             <div className="surface">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Stage</th>
-                    <th>Provider</th>
-                    <th>Model</th>
-                    <th>Base URL</th>
-                    <th />
-                  </tr>
-                </thead>
-                <tbody>
-                  {stageOptions.map((stageName) => (
-                    <tr key={stageName}>
-                      <td>{stageName}</td>
-                      <td>
-                        <select
-                          value={stageDrafts[stageName].provider}
-                          onChange={(event) =>
-                            setStageDrafts((prev) => ({
-                              ...prev,
-                              [stageName]: { ...prev[stageName], provider: event.target.value as Provider }
-                            }))
-                          }
-                        >
-                          <option value="openai">OpenAI</option>
-                          <option value="anthropic">Anthropic</option>
-                          <option value="gemini">Gemini</option>
-                          <option value="ollama">Ollama</option>
-                        </select>
-                      </td>
-                      <td>
-                        <input
-                          value={stageDrafts[stageName].model}
-                          onChange={(event) =>
-                            setStageDrafts((prev) => ({
-                              ...prev,
-                              [stageName]: { ...prev[stageName], model: event.target.value }
-                            }))
-                          }
-                        />
-                      </td>
-                      <td>
-                        <input
-                          value={stageDrafts[stageName].base_url}
-                          onChange={(event) =>
-                            setStageDrafts((prev) => ({
-                              ...prev,
-                              [stageName]: { ...prev[stageName], base_url: event.target.value }
-                            }))
-                          }
-                          placeholder="optional"
-                        />
-                      </td>
-                      <td>
-                        <button type="button" className="ghost" onClick={() => saveStageBinding(stageName)}>
-                          Save
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-
-            <form onSubmit={onBootstrapSubmit} className="surface stack compact">
-              <h3>Bulk Bootstrap</h3>
-              <div className="three-col">
-                <label>
-                  Provider
-                  <select value={bootstrapProvider} onChange={(event) => setBootstrapProvider(event.target.value as Provider)}>
-                    <option value="openai">OpenAI</option>
-                    <option value="anthropic">Anthropic</option>
-                    <option value="gemini">Gemini</option>
-                    <option value="ollama">Ollama</option>
-                  </select>
-                </label>
-                <label>
-                  Model
-                  <input value={bootstrapModel} onChange={(event) => setBootstrapModel(event.target.value)} />
-                </label>
-                <label>
-                  Base URL
-                  <input value={bootstrapBaseUrl} onChange={(event) => setBootstrapBaseUrl(event.target.value)} placeholder="optional" />
-                </label>
-              </div>
-              <button type="submit">Apply to All Stages</button>
-            </form>
-          </section>
-        )}
-
-        {view === "generation" && hasRight(currentRole, "generate") && (
-          <section className="panel">
-            <div className="panel-head">
-              <div>
-                <h2>Run Generation</h2>
-                <p>Execute manual inference pipelines against configured models.</p>
-              </div>
-              <div className="inline">
-                <button className={generationMode === "sync" ? "" : "ghost"} onClick={() => setGenerationMode("sync")}>
-                  Sync Run
-                </button>
-                <button className={generationMode === "async" ? "" : "ghost"} onClick={() => setGenerationMode("async")}>
-                  Async Run
-                </button>
-              </div>
-            </div>
-
-            <div className="surface stack compact">
-              <h3>Curriculum Dataset Builder</h3>
-              <p className="muted">
-                Build complete curriculum context from subject to strand and sub-strand, then inject directly into generation payloads.
-              </p>
-              <div className="dataset-grid">
-                <label>
-                  Profile Name
-                  <input
-                    value={curriculumContext.profile_name}
-                    onChange={(event) => setCurriculumContext((prev) => ({ ...prev, profile_name: event.target.value }))}
-                  />
-                </label>
-                <label>
-                  Level
-                  <input value={curriculumContext.level} onChange={(event) => setCurriculumContext((prev) => ({ ...prev, level: event.target.value }))} />
-                </label>
-                <label>
-                  Grade
-                  <input value={curriculumContext.grade} onChange={(event) => setCurriculumContext((prev) => ({ ...prev, grade: event.target.value }))} />
-                </label>
-                <label>
-                  Subject
-                  <input
-                    value={curriculumContext.subject}
-                    onChange={(event) => setCurriculumContext((prev) => ({ ...prev, subject: event.target.value }))}
-                  />
-                </label>
-                <label>
-                  Subject Code
-                  <input
-                    value={curriculumContext.subject_code}
-                    onChange={(event) => setCurriculumContext((prev) => ({ ...prev, subject_code: event.target.value }))}
-                  />
-                </label>
-                <label>
-                  SLO ID
-                  <input value={curriculumContext.slo_id} onChange={(event) => setCurriculumContext((prev) => ({ ...prev, slo_id: event.target.value }))} />
-                </label>
-                <label>
-                  Pathway (optional)
-                  <input
-                    value={curriculumContext.pathway}
-                    onChange={(event) => setCurriculumContext((prev) => ({ ...prev, pathway: event.target.value }))}
-                  />
-                </label>
-                <label>
-                  Track (optional)
-                  <input value={curriculumContext.track} onChange={(event) => setCurriculumContext((prev) => ({ ...prev, track: event.target.value }))} />
-                </label>
-                <label>
-                  Strand
-                  <input value={curriculumContext.strand} onChange={(event) => setCurriculumContext((prev) => ({ ...prev, strand: event.target.value }))} />
-                </label>
-                <label>
-                  Sub-strand
-                  <input
-                    value={curriculumContext.sub_strand}
-                    onChange={(event) => setCurriculumContext((prev) => ({ ...prev, sub_strand: event.target.value }))}
-                  />
-                </label>
-              </div>
-
-              <div className="dataset-context-grid">
-                <label>
-                  Strand Context
-                  <textarea
-                    rows={3}
-                    value={curriculumContext.strand_context}
-                    onChange={(event) => setCurriculumContext((prev) => ({ ...prev, strand_context: event.target.value }))}
-                  />
-                </label>
-                <label>
-                  Sub-strand Context
-                  <textarea
-                    rows={3}
-                    value={curriculumContext.sub_strand_context}
-                    onChange={(event) => setCurriculumContext((prev) => ({ ...prev, sub_strand_context: event.target.value }))}
-                  />
-                </label>
-                <label>
-                  Learning Objectives
-                  <textarea
-                    rows={3}
-                    value={curriculumContext.learning_objectives}
-                    onChange={(event) => setCurriculumContext((prev) => ({ ...prev, learning_objectives: event.target.value }))}
-                  />
-                </label>
-                <label>
-                  Assessment Focus
-                  <textarea
-                    rows={3}
-                    value={curriculumContext.assessment_focus}
-                    onChange={(event) => setCurriculumContext((prev) => ({ ...prev, assessment_focus: event.target.value }))}
-                  />
-                </label>
-              </div>
-
-              <div className="inline wrap">
-                <button type="button" className="ghost" onClick={() => applyContextToPayload("sync")}>
-                  Apply to Sync Payload
-                </button>
-                <button type="button" className="ghost" onClick={() => applyContextToPayload("async")}>
-                  Apply to Async Payload
-                </button>
-                <button type="button" className="ghost" onClick={() => applyContextToPayload("both")}>
-                  Apply to Both
-                </button>
-                <button type="button" onClick={saveCurriculumProfile}>
-                  Save Dataset Profile
-                </button>
-              </div>
-
-              <div className="dataset-list">
-                {datasetLibrary.map((item, idx) => (
-                  <button
-                    key={`${item.profile_name}-${idx}`}
-                    className="review-item"
-                    onClick={() => setCurriculumContext(item)}
-                    type="button"
-                  >
-                    <strong>{item.profile_name}</strong>
-                    <small>
-                      {item.grade} · {item.subject} · {item.strand} · {item.sub_strand}
-                    </small>
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div className="split">
-              <form onSubmit={generationMode === "sync" ? onSyncGenerate : onAsyncGenerate} className="surface stack">
-                <label>
-                  Payload JSON
-                  <textarea
-                    rows={18}
-                    value={generationMode === "sync" ? syncPayload : asyncPayload}
-                    onChange={(event) =>
-                      generationMode === "sync" ? setSyncPayload(event.target.value) : setAsyncPayload(event.target.value)
-                    }
-                  />
-                </label>
-                <button type="submit">Execute Generation</button>
-              </form>
-
-              <div className="surface stack">
-                <h3>Output Response</h3>
-                <pre>{selectedReviewRaw || output}</pre>
-                <div className="inline">
-                  <input value={jobId} onChange={(event) => setJobId(event.target.value)} placeholder="job_id for status" />
-                  <button onClick={fetchJobStatus} className="ghost">
-                    Check Job
-                  </button>
-                </div>
-              </div>
+              <label>
+                Target URL
+                <input value={browseUrl} onChange={(e) => setBrowseUrl(e.target.value)} />
+              </label>
+              <button style={{ marginTop: "10px" }} onClick={() => run("Browse", () => fetchJson("/agents/browse", { method: "POST", body: JSON.stringify({ url: browseUrl }) }, auth()))}>
+                Execute Browser Page Analysis
+              </button>
             </div>
           </section>
         )}
 
-        {view === "review" && (hasRight(currentRole, "review") || hasRight(currentRole, "human_review")) && (
-          <section className="panel">
-            <div className="panel-head">
-              <div>
-                <h2>Human Review Queue</h2>
-                <p>Pending manual validation for generation runs.</p>
-              </div>
-              <div className="inline">
-                {hasRight(currentRole, "review") && (
-                  <button className="ghost" onClick={loadReviewQueue}>
-                    Load Review Queue
-                  </button>
-                )}
-                {hasRight(currentRole, "human_review") && (
-                  <button className="ghost" onClick={loadHumanReviewQueue}>
-                    Load Human Queue
-                  </button>
-                )}
-              </div>
-            </div>
-
-            <div className="split">
-              <div className="surface">
-                <h3>Queue</h3>
-                <div className="review-list">
-                  {[...reviewItems, ...humanReviewItems].map((item, idx) => {
-                    const runId = String(item.run_id || item.id || `run-${idx}`);
-                    return (
-                      <button
-                        className="review-item"
-                        key={`${runId}-${idx}`}
-                        onClick={() => {
-                          setReviewRunId(runId);
-                          setHumanReviewRunId(runId);
-                          setSelectedReviewRaw(pretty(item));
-                        }}
-                      >
-                        <strong>{runId}</strong>
-                        <small>{String(item.workflow_state || item.status || "review")}</small>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-
-              <div className="surface stack">
-                <h3>Run Details</h3>
-                <pre>{selectedReviewRaw || "Select a queue item"}</pre>
-                {hasRight(currentRole, "review") && (
-                  <div className="inline">
-                    <select value={reviewDecision} onChange={(event) => setReviewDecision(event.target.value)}>
-                      <option value="approve_to_human_review">approve_to_human_review</option>
-                      <option value="return_for_regeneration">return_for_regeneration</option>
-                      <option value="reject">reject</option>
-                    </select>
-                    <button onClick={() => applyReviewDecision(reviewRunId, reviewDecision, "review")}>Submit Review</button>
-                  </div>
-                )}
-                {hasRight(currentRole, "human_review") && (
-                  <div className="inline">
-                    <select value={humanReviewDecisionValue} onChange={(event) => setHumanReviewDecisionValue(event.target.value)}>
-                      <option value="approve">approve</option>
-                      <option value="reject">reject</option>
-                    </select>
-                    <button onClick={() => applyReviewDecision(humanReviewRunId, humanReviewDecisionValue, "human-review")}>
-                      Submit Human Review
-                    </button>
-                  </div>
-                )}
-              </div>
-            </div>
-          </section>
-        )}
-
-        {view === "browser" && hasRight(currentRole, "browse") && (
-          <section className="panel">
-            <div className="panel-head">
-              <div>
-                <h2>Browser Agent</h2>
-                <p>Run extraction against target configuration URLs.</p>
-              </div>
-            </div>
-
-            <div className="surface stack">
-              <div className="inline">
-                <input value={browseUrl} onChange={(event) => setBrowseUrl(event.target.value)} placeholder="https://example.com" />
-                <button
-                  onClick={() =>
-                    run("Browse", async () => {
-                      const result = await fetchJson(
-                        "/agents/browse",
-                        {
-                          method: "POST",
-                          body: JSON.stringify({ url: browseUrl })
-                        },
-                        auth()
-                      );
-                      setSelectedReviewRaw(pretty(result));
-                      return result;
-                    })
-                  }
-                >
-                  Run Agent
-                </button>
-              </div>
-              <pre>{selectedReviewRaw || output}</pre>
-            </div>
-          </section>
-        )}
-
-        {view === "production" && hasRight(currentRole, "production_read") && (
-          <section className="panel">
-            <div className="panel-head">
-              <div>
-                <h2>Production Readiness</h2>
-                <p>Final verification and deployment for approved bundles.</p>
-              </div>
-              <button onClick={loadProductionReady}>Refresh</button>
-            </div>
-
-            <div className="split">
-              <div className="surface">
-                <h3>Pre-flight Checklist</h3>
-                <ul className="checklist">
-                  <li>Data schema validation</li>
-                  <li>Asset resolution complete</li>
-                  <li>Human review gates passed</li>
-                  <li>Policy compliance checks passed</li>
-                </ul>
-              </div>
-
-              <div className="surface">
-                <h3>Ready Bundles</h3>
-                <div className="review-list">
-                  {productionItems.length === 0 && <p>No production-ready bundles loaded.</p>}
-                  {productionItems.map((item, idx) => (
-                    <button className="review-item" key={`prod-${idx}`} onClick={() => setSelectedReviewRaw(pretty(item))}>
-                      <strong>{String(item.bundle_id || item.run_id || `bundle-${idx + 1}`)}</strong>
-                      <small>{String(item.updated_at || item.created_at || "ready")}</small>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
-          </section>
-        )}
-
+        {/* CONSOLE OUTPUT PANEL */}
         <section className="panel console-panel">
-          <div className="panel-head">
-            <h2>Response Console</h2>
-            <small>{isRunning ? "Running request..." : "Idle"}</small>
-          </div>
+          <h3>System Console</h3>
           <pre>{output}</pre>
         </section>
       </main>

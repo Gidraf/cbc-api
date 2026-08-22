@@ -12,16 +12,38 @@ class ApiError(Exception):
 
 
 ERRORS = {
+    # Authentication & Authorization
     "UNAUTHORIZED_ACCESS": (401, False),
+    "FORBIDDEN": (403, False),
+    # Datasets & Context
     "DATASET_ITEM_NOT_FOUND": (404, False),
+    "INVALID_GRADE_DATASET": (400, False),
+    "MISSING_CONTEXT_LAYER": (400, False),
+    # Model & Routing
     "UNSUPPORTED_MODEL_PROVIDER": (400, False),
     "MODEL_NOT_CONFIGURED_FOR_STAGE": (400, False),
     "MODEL_CREDENTIAL_MISSING": (401, False),
     "MODEL_ENDPOINT_UNAVAILABLE": (503, True),
-    "INVALID_GRADE_DATASET": (400, False),
+    "LLM_PROVIDER_TIMEOUT": (504, True),
+    "LLM_PROVIDER_ERROR": (502, True),
+    # Langfuse
+    "LANGFUSE_UNAVAILABLE": (503, True),
+    "PROMPT_NOT_FOUND": (404, False),
+    "PROMPT_COMPILE_ERROR": (400, False),
+    # Assets & Storage
+    "DIAGRAM_GENERATION_FAILED": (502, True),
+    "STORAGE_UPLOAD_FAILED": (502, True),
+    # Quality & Policy Gates
     "QUALITY_GATE_REJECTED": (422, False),
+    "CRITICAL_RISK_FLAG": (422, False),
     "INSUFFICIENT_WRITTEN_RESPONSE_ITEMS": (422, False),
     "SCHEMA_VALIDATION_FAILED": (422, False),
+    "REGENERATION_LIMIT_EXCEEDED": (422, False),
+    "HUMAN_REVIEW_REQUIRED": (409, False),
+    "APPROVER_VERIFICATION_REQUIRED": (412, False),
+    # Idempotency & Concurrency
+    "IDEMPOTENCY_CONFLICT": (409, False),
+    "NOT_FOUND": (404, False),
 }
 
 

@@ -22,15 +22,21 @@ from .models import (
     StageBindingInput,
     StageBindingView,
 )
+from .routes.admin_langfuse import router as admin_langfuse_router
+from .routes.auth import router as auth_router
+from .routes.questions import router as questions_router
+from .routes.targets import router as targets_router
 from .services.auth import AuthContext, authenticate_login, create_access_token, get_auth_context, require_roles
 from .services.browser_agent import browse_page
+from .services.metrics import metrics_service
 from .services.pipeline import PipelineService
 from .services.provider_router import ProviderRouter
 from .services.validation import validate_grade_dataset
 from .services.workflow import WorkflowService
 from .state import StageBinding, runtime_state
 
-app = FastAPI(title="CBC API Runtime", version="0.1.0")
+app = FastAPI(title="CBC API Platform", version="2.1.0", description="Contract-First Educational Content Production System")
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -38,6 +44,13 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Mount Modular Feature Routers
+app.include_router(auth_router)
+app.include_router(admin_langfuse_router)
+app.include_router(questions_router)
+app.include_router(targets_router)
+
 router = ProviderRouter(runtime_state)
 pipeline_service = PipelineService(router)
 workflow_service = WorkflowService(runtime_state)
@@ -104,7 +117,7 @@ def _bootstrap_default_stage_bindings() -> None:
         return
 
     provider = Provider.OPENAI.value
-    model = "gpt-5-mini"
+    model = "gpt-4o-mini"
 
     for stage in STAGE_NAMES:
         runtime_state.stage_bindings[stage] = StageBinding(
@@ -123,7 +136,6 @@ def startup() -> None:
     try:
         object_storage.ensure_bucket()
     except Exception as exc:  # noqa: BLE001
-        # Keep API booting in degraded mode when external MinIO is temporarily unavailable.
         logger.warning("MinIO bootstrap skipped at startup: %s", exc)
     _bootstrap_default_stage_bindings()
     for provider in runtime_state.provider_credentials:
@@ -174,6 +186,12 @@ def health() -> dict:
     }
 
 
+@app.get("/api/v1/metrics")
+def get_metrics(_: AuthContext = Depends(require_roles("admin", "operator", "reviewer", "developer"))) -> dict:
+    return metrics_service.get_system_metrics()
+
+
+# Direct /auth/login backward compatibility
 @app.post("/auth/login")
 def login(payload: LoginRequest) -> dict:
     context = authenticate_login(payload.username, payload.password)
@@ -293,8 +311,7 @@ def get_admin_config(_: AuthContext = Depends(require_roles("admin", "operator",
 
 @app.post("/pipeline/enqueue")
 def enqueue_generate(payload: GenerateRequest, _: AuthContext = Depends(require_roles("admin", "operator"))) -> dict:
-    _dataset_slug = validate_grade_dataset(payload.curriculum.grade)
-    _ = _dataset_slug
+    validate_grade_dataset(payload.curriculum.grade)
     job_id = job_queue.enqueue_generation(payload)
     return {
         "job_id": job_id,
@@ -330,7 +347,7 @@ def list_runs(_: AuthContext = Depends(require_roles("admin", "operator", "revie
 @app.post("/pipeline/generate")
 def generate(payload: GenerateRequest, _: AuthContext = Depends(require_roles("admin", "operator"))) -> GenerateResponse:
     start = time.time()
-    _dataset_slug = validate_grade_dataset(payload.curriculum.grade)
+    validate_grade_dataset(payload.curriculum.grade)
 
     result = pipeline_service.run(payload)
     runtime_state.save_pipeline_run(result.run_id, payload.model_dump(), result.model_dump())
