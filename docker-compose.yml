@@ -1,0 +1,99 @@
+services:
+  frontend-web:
+    build:
+      context: ./frontend-web
+      dockerfile: Dockerfile
+    environment:
+      VITE_API_BASE_URL: ${VITE_API_BASE_URL:-/api}
+      API_PROXY_TARGET: ${API_PROXY_TARGET:-http://api:8000}
+    ports:
+      - "5173:5173"
+    depends_on:
+      api:
+        condition: service_started
+    restart: unless-stopped
+
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      args:
+        CUSTOM_CA_CERT_B64: ${CUSTOM_CA_CERT_B64:-}
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-}
+        PIP_EXTRA_INDEX_URL: ${PIP_EXTRA_INDEX_URL:-}
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+    environment:
+      CBC_MASTER_KEY: ${CBC_MASTER_KEY:-u8iP_EgFrh50kABm2MvxAfv5mN53uV8SQEgrMwJwztw=}
+      REDIS_URL: redis://redis:6379/0
+      MINIO_ENDPOINT: ${MINIO_ENDPOINT:-host.docker.internal:9000}
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
+      MINIO_SECURE: ${MINIO_SECURE:-false}
+      MINIO_BUCKET: cbc-assets
+      MINIO_PUBLIC_BASE_URL: ${MINIO_PUBLIC_BASE_URL:-http://host.docker.internal:9000}
+      PLAYWRIGHT_CDP_URL: http://playwright:3000
+      QUEUE_NAME: generation_jobs
+      RESULT_TTL_SECONDS: "86400"
+    ports:
+      - "8000:8000"
+    depends_on:
+      redis:
+        condition: service_healthy
+      playwright:
+        condition: service_started
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      args:
+        CUSTOM_CA_CERT_B64: ${CUSTOM_CA_CERT_B64:-}
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-}
+        PIP_EXTRA_INDEX_URL: ${PIP_EXTRA_INDEX_URL:-}
+    command: python -m app.worker
+    environment:
+      CBC_MASTER_KEY: ${CBC_MASTER_KEY:-u8iP_EgFrh50kABm2MvxAfv5mN53uV8SQEgrMwJwztw=}
+      REDIS_URL: redis://redis:6379/0
+      MINIO_ENDPOINT: ${MINIO_ENDPOINT:-host.docker.internal:9000}
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
+      MINIO_SECURE: ${MINIO_SECURE:-false}
+      MINIO_BUCKET: cbc-assets
+      MINIO_PUBLIC_BASE_URL: ${MINIO_PUBLIC_BASE_URL:-http://host.docker.internal:9000}
+      PLAYWRIGHT_CDP_URL: http://playwright:3000
+      QUEUE_NAME: generation_jobs
+      RESULT_TTL_SECONDS: "86400"
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    command: redis-server --appendonly yes
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  playwright:
+    image: browserless/chrome:latest
+    environment:
+      TOKEN: ""
+      MAX_CONCURRENT_SESSIONS: "10"
+      CONNECTION_TIMEOUT: "120000"
+      PREBOOT_CHROME: "true"
+      CORS: "true"
+    ports:
+      - "3000:3000"
+    restart: unless-stopped
+
+volumes:
+  redis_data:
