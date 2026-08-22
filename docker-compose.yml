@@ -131,14 +131,29 @@ services:
       - "3000:3000"
     restart: unless-stopped
 
+  langfuse-db:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: langfuse
+      POSTGRES_PASSWORD: langfuse_password
+      POSTGRES_DB: langfuse
+    volumes:
+      - langfuse_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U langfuse -d langfuse"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
   langfuse-server:
     image: langfuse/langfuse:2
     depends_on:
-      postgres-gateway:
-        condition: service_started
+      langfuse-db:
+        condition: service_healthy
     environment:
       NODE_ENV: production
-      DATABASE_URL: ${LANGFUSE_DATABASE_URL:-postgresql://cbc_user:cbc_password@postgres-gateway:5432/cbc_db}
+      DATABASE_URL: postgresql://langfuse:langfuse_password@langfuse-db:5432/langfuse
       NEXTAUTH_URL: ${LANGFUSE_NEXTAUTH_URL:-http://localhost:3001}
       NEXTAUTH_SECRET: ${LANGFUSE_NEXTAUTH_SECRET:-langfuse-secret-key-32-chars-long!}
       SALT: ${LANGFUSE_SALT:-langfuse-salt-key-32-chars-long!}
@@ -150,3 +165,4 @@ services:
 
 volumes:
   redis_data:
+  langfuse_db_data:
