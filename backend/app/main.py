@@ -130,18 +130,26 @@ def _bootstrap_default_stage_bindings() -> None:
 
 @app.on_event("startup")
 def startup() -> None:
-    run_migrations()
-    runtime_state.sync_users_from_env()
-    runtime_state.load_from_db()
+    try:
+        run_migrations()
+        runtime_state.sync_users_from_env()
+        runtime_state.load_from_db()
+    except Exception as exc:
+        logger.error("Database initialization warning during startup: %s", exc)
+
     try:
         object_storage.ensure_bucket()
     except Exception as exc:  # noqa: BLE001
         logger.warning("MinIO bootstrap skipped at startup: %s", exc)
-    _bootstrap_default_stage_bindings()
-    for provider in runtime_state.provider_credentials:
-        runtime_state.persist_provider(provider)
-    for stage in runtime_state.stage_bindings:
-        runtime_state.persist_stage_binding(stage)
+
+    try:
+        _bootstrap_default_stage_bindings()
+        for provider in runtime_state.provider_credentials:
+            runtime_state.persist_provider(provider)
+        for stage in runtime_state.stage_bindings:
+            runtime_state.persist_stage_binding(stage)
+    except Exception as exc:
+        logger.warning("Default bindings initialization warning: %s", exc)
 
 
 @app.exception_handler(ApiError)

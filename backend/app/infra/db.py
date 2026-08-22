@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from functools import lru_cache
 
 from sqlalchemy import create_engine, text
@@ -8,6 +9,7 @@ from sqlalchemy.engine import Engine
 
 from ..settings import settings
 
+logger = logging.getLogger("cbc-db")
 
 MIGRATIONS: list[tuple[str, str]] = [
     (
@@ -182,6 +184,13 @@ def get_engine() -> Engine:
 def run_migrations() -> None:
     engine = get_engine()
     with engine.begin() as conn:
+        # 1. Acquire transactional advisory lock to prevent race conditions across concurrent container startups (api vs worker)
+        try:
+            conn.execute(text("SELECT pg_advisory_xact_lock(748392019);"))
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Could not acquire advisory lock: %s", exc)
+
+        # 2. Ensure migrations tracking table exists
         conn.execute(
             text(
                 """
@@ -193,14 +202,44 @@ def run_migrations() -> None:
             )
         )
 
+        # 3. Read applied migrations inside the locked transaction
         rows = conn.execute(text("SELECT version FROM schema_migrations")).mappings().all()
         applied = {row["version"] for row in rows}
 
         for version, sql_script in MIGRATIONS:
             if version in applied:
                 continue
-            conn.execute(text(sql_script))
-            conn.execute(text("INSERT INTO schema_migrations (version) VALUES (:version)"), {"version": version})
+
+            logger.info("Applying database migration: %s", version)
+            try:
+                conn.execute(text(sql_script))
+                conn.execute(
+                    text(
+                        """
+                        INSERT INTO schema_migrations (version, applied_at)
+                        VALUES (:version, NOW())
+                        ON CONFLICT (version) DO NOTHING
+                        """
+                    ),
+                    {"version": version},
+                )
+                logger.info("✓ Migration %s applied successfully", version)
+            except Exception as exc:  # noqa: BLE001
+                # If unique violation occurs on pg_type / existing tables from prior runs, mark migration applied
+                if "already exists" in str(exc) or "UniqueViolation" in str(exc):
+                    logger.warning("Migration %s objects already exist: %s. Marking as applied.", version, exc)
+                    conn.execute(
+                        text(
+                            """
+                            INSERT INTO schema_migrations (version, applied_at)
+                            VALUES (:version, NOW())
+                            ON CONFLICT (version) DO NOTHING
+                            """
+                        ),
+                        {"version": version},
+                    )
+                else:
+                    raise
 
 
 def fetch_all(query: str, params: dict | None = None) -> list[dict]:

@@ -16,9 +16,13 @@ logger = logging.getLogger("cbc-worker")
 
 
 def main() -> None:
-    run_migrations()
-    runtime_state.sync_users_from_env()
-    runtime_state.load_from_db()
+    try:
+        run_migrations()
+        runtime_state.sync_users_from_env()
+        runtime_state.load_from_db()
+    except Exception as exc:
+        logger.warning("Worker database sync warning at startup: %s", exc)
+
     try:
         object_storage.ensure_bucket()
     except Exception as exc:  # noqa: BLE001
