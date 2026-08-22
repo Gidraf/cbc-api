@@ -11,6 +11,7 @@ This runtime is designed to boot as a complete local platform with Docker Compos
 - Provider config and per-stage model routing for `openai`, `anthropic`, `gemini`, `ollama`
 - Notes-first pipeline and mixed-assessment question contract validation
 - Frontend React UI in `frontend-web` that consumes all API routes
+- External Postgres persistence with automatic startup migrations
 
 ## One-Command Boot
 
@@ -42,6 +43,10 @@ Set external MinIO settings in `.env`:
 - `MINIO_SECRET_KEY`
 - `MINIO_SECURE`
 - `MINIO_PUBLIC_BASE_URL`
+
+Set external Postgres in root `.env`:
+
+- `DATABASE_URL`
 
 If no Gemini key is configured, default stage bindings bootstrap to Ollama.
 
@@ -161,3 +166,4 @@ curl -X POST http://localhost:8000/agents/browse \
 - This stack is contract-first and extensible.
 - Stage generators currently return deterministic baseline outputs.
 - MinIO bucket bootstrap is handled by API startup and worker startup checks against your external VM MinIO.
+- Postgres schema migrations run automatically on API/worker startup.

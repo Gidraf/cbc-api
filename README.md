@@ -22,6 +22,7 @@ docker-compose up --build
 - Redis: localhost:6379
 - Playwright Browser Service: http://localhost:3000
 - External MinIO on your VM (configured through `.env`)
+- External PostgreSQL on your VM (configured through `.env`)
 
 ## Core Features
 
@@ -45,8 +46,9 @@ cp .env.example .env
 2. Optionally set provider keys in `.env`.
 3. Set your VM MinIO values in `.env` (`MINIO_ENDPOINT`, `MINIO_ACCESS_KEY`, `MINIO_SECRET_KEY`, `MINIO_PUBLIC_BASE_URL`).
 4. Set auth values in `.env` (`JWT_SECRET`, `ADMIN_PASSWORD`, `OPERATOR_PASSWORD`, `REVIEWER_PASSWORD`, `DEVELOPER_PASSWORD`, `DEVELOPER_API_KEY`).
+5. Set Postgres VM connection in `.env` (`DATABASE_URL`).
 
-5. Start stack:
+6. Start stack:
 
 ```bash
 docker compose up --build
@@ -71,7 +73,7 @@ docker-compose build --no-cache
 docker-compose up -d
 ```
 
-6. Open docs and configure model routing:
+7. Open docs and configure model routing:
 
 - Open frontend: http://localhost:5173
 
@@ -86,3 +88,8 @@ curl -X POST http://localhost:8000/admin/pipeline-bindings/bootstrap \
   -H 'content-type: application/json' \
   -d '{"provider":"gemini","model":"gemini-2.5-flash"}'
 ```
+
+## Automatic Migrations
+
+- On API and worker startup, migrations run automatically against `DATABASE_URL`.
+- No Docker Postgres image is used in this stack.

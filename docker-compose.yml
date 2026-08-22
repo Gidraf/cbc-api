@@ -1,9 +1,84 @@
+x-backend-build: &backend-build
+  context: ./backend
+  dockerfile: Dockerfile
+  args:
+    CUSTOM_CA_CERT_B64: ${CUSTOM_CA_CERT_B64:-}
+    PIP_INDEX_URL: ${PIP_INDEX_URL:-}
+    PIP_EXTRA_INDEX_URL: ${PIP_EXTRA_INDEX_URL:-}
+
+x-backend-env: &backend-env
+  DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
+  CBC_MASTER_KEY: ${CBC_MASTER_KEY:-u8iP_EgFrh50kABm2MvxAfv5mN53uV8SQEgrMwJwztw=}
+  REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+
+  # Provider API keys/config
+  OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+  ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+  GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+  OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+
+  # Optional mailing keys
+  EMAIL_FROM_ADDRESS: ${EMAIL_FROM_ADDRESS:-}
+  SMTP_CONNECTION_URL: ${SMTP_CONNECTION_URL:-}
+
+  # Optional Langfuse tracing keys
+  LANGFUSE_HOST: ${LANGFUSE_HOST:-}
+  LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-}
+  LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-}
+  LANGFUSE_ENV: ${LANGFUSE_ENV:-}
+
+  # Langfuse S3 upload compatibility keys
+  LANGFUSE_S3_EVENT_UPLOAD_BUCKET: ${LANGFUSE_S3_EVENT_UPLOAD_BUCKET:-langfuse}
+  LANGFUSE_S3_EVENT_UPLOAD_REGION: ${LANGFUSE_S3_EVENT_UPLOAD_REGION:-us-east-1}
+  LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: ${LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID:-}
+  LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: ${LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY:-}
+  LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: ${LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT:-}
+  LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: ${LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE:-true}
+  LANGFUSE_S3_EVENT_UPLOAD_PREFIX: ${LANGFUSE_S3_EVENT_UPLOAD_PREFIX:-events/}
+  LANGFUSE_S3_MEDIA_UPLOAD_BUCKET: ${LANGFUSE_S3_MEDIA_UPLOAD_BUCKET:-langfuse}
+  LANGFUSE_S3_MEDIA_UPLOAD_REGION: ${LANGFUSE_S3_MEDIA_UPLOAD_REGION:-us-east-1}
+  LANGFUSE_S3_MEDIA_UPLOAD_ACCESS_KEY_ID: ${LANGFUSE_S3_MEDIA_UPLOAD_ACCESS_KEY_ID:-}
+  LANGFUSE_S3_MEDIA_UPLOAD_SECRET_ACCESS_KEY: ${LANGFUSE_S3_MEDIA_UPLOAD_SECRET_ACCESS_KEY:-}
+  LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT: ${LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT:-}
+  LANGFUSE_S3_MEDIA_UPLOAD_FORCE_PATH_STYLE: ${LANGFUSE_S3_MEDIA_UPLOAD_FORCE_PATH_STYLE:-true}
+  LANGFUSE_S3_MEDIA_UPLOAD_PREFIX: ${LANGFUSE_S3_MEDIA_UPLOAD_PREFIX:-media/}
+  LANGFUSE_ENABLE_EXPERIMENTAL_FEATURES: ${LANGFUSE_ENABLE_EXPERIMENTAL_FEATURES:-true}
+  LANGFUSE_INIT_ORG_ID: ${LANGFUSE_INIT_ORG_ID:-}
+  LANGFUSE_INIT_ORG_NAME: ${LANGFUSE_INIT_ORG_NAME:-}
+  LANGFUSE_INIT_PROJECT_ID: ${LANGFUSE_INIT_PROJECT_ID:-}
+  LANGFUSE_INIT_PROJECT_NAME: ${LANGFUSE_INIT_PROJECT_NAME:-}
+  LANGFUSE_INIT_PROJECT_PUBLIC_KEY: ${LANGFUSE_INIT_PROJECT_PUBLIC_KEY:-}
+  LANGFUSE_INIT_PROJECT_SECRET_KEY: ${LANGFUSE_INIT_PROJECT_SECRET_KEY:-}
+  LANGFUSE_INIT_USER_EMAIL: ${LANGFUSE_INIT_USER_EMAIL:-}
+  LANGFUSE_INIT_USER_NAME: ${LANGFUSE_INIT_USER_NAME:-}
+  LANGFUSE_INIT_USER_PASSWORD: ${LANGFUSE_INIT_USER_PASSWORD:-}
+
+  MINIO_ENDPOINT: ${MINIO_ENDPOINT:-host.docker.internal:9000}
+  MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
+  MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
+  MINIO_SECURE: ${MINIO_SECURE:-false}
+  MINIO_BUCKET: ${MINIO_BUCKET:-cbc-assets}
+  MINIO_PUBLIC_BASE_URL: ${MINIO_PUBLIC_BASE_URL:-http://host.docker.internal:9000}
+  PLAYWRIGHT_CDP_URL: ${PLAYWRIGHT_CDP_URL:-http://playwright:3000}
+  QUEUE_NAME: ${QUEUE_NAME:-generation_jobs}
+  RESULT_TTL_SECONDS: ${RESULT_TTL_SECONDS:-86400}
+
+x-backend-depends: &backend-depends
+  redis:
+    condition: service_healthy
+  postgres-gateway:
+    condition: service_started
+
+x-extra-hosts: &extra-hosts
+  - "host.docker.internal:host-gateway"
+
 services:
   frontend-web:
     build:
       context: ./frontend-web
       dockerfile: Dockerfile
     environment:
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
       VITE_API_BASE_URL: ${VITE_API_BASE_URL:-/api}
       API_PROXY_TARGET: ${API_PROXY_TARGET:-http://api:8000}
     ports:
@@ -14,59 +89,33 @@ services:
     restart: unless-stopped
 
   api:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
-      args:
-        CUSTOM_CA_CERT_B64: ${CUSTOM_CA_CERT_B64:-}
-        PIP_INDEX_URL: ${PIP_INDEX_URL:-}
-        PIP_EXTRA_INDEX_URL: ${PIP_EXTRA_INDEX_URL:-}
+    build: *backend-build
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000
-    environment:
-      CBC_MASTER_KEY: ${CBC_MASTER_KEY:-u8iP_EgFrh50kABm2MvxAfv5mN53uV8SQEgrMwJwztw=}
-      REDIS_URL: redis://redis:6379/0
-      MINIO_ENDPOINT: ${MINIO_ENDPOINT:-host.docker.internal:9000}
-      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
-      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
-      MINIO_SECURE: ${MINIO_SECURE:-false}
-      MINIO_BUCKET: cbc-assets
-      MINIO_PUBLIC_BASE_URL: ${MINIO_PUBLIC_BASE_URL:-http://host.docker.internal:9000}
-      PLAYWRIGHT_CDP_URL: http://playwright:3000
-      QUEUE_NAME: generation_jobs
-      RESULT_TTL_SECONDS: "86400"
+    environment: *backend-env
     ports:
       - "8000:8000"
     depends_on:
-      redis:
-        condition: service_healthy
+      <<: *backend-depends
       playwright:
         condition: service_started
+    extra_hosts: *extra-hosts
     restart: unless-stopped
 
   worker:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
-      args:
-        CUSTOM_CA_CERT_B64: ${CUSTOM_CA_CERT_B64:-}
-        PIP_INDEX_URL: ${PIP_INDEX_URL:-}
-        PIP_EXTRA_INDEX_URL: ${PIP_EXTRA_INDEX_URL:-}
+    build: *backend-build
     command: python -m app.worker
-    environment:
-      CBC_MASTER_KEY: ${CBC_MASTER_KEY:-u8iP_EgFrh50kABm2MvxAfv5mN53uV8SQEgrMwJwztw=}
-      REDIS_URL: redis://redis:6379/0
-      MINIO_ENDPOINT: ${MINIO_ENDPOINT:-host.docker.internal:9000}
-      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
-      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
-      MINIO_SECURE: ${MINIO_SECURE:-false}
-      MINIO_BUCKET: cbc-assets
-      MINIO_PUBLIC_BASE_URL: ${MINIO_PUBLIC_BASE_URL:-http://host.docker.internal:9000}
-      PLAYWRIGHT_CDP_URL: http://playwright:3000
-      QUEUE_NAME: generation_jobs
-      RESULT_TTL_SECONDS: "86400"
-    depends_on:
-      redis:
-        condition: service_healthy
+    environment: *backend-env
+    depends_on: *backend-depends
+    extra_hosts: *extra-hosts
+    restart: unless-stopped
+
+  postgres-gateway:
+    image: alpine/socat:1.8.0.0
+    # Forwards container traffic on port 5432 to Postgres running on the host/VM.
+    command:
+      - TCP-LISTEN:5432,fork,reuseaddr
+      - TCP:${POSTGRES_GATEWAY_TARGET:-host.docker.internal:5432}
+    extra_hosts: *extra-hosts
     restart: unless-stopped
 
   redis:

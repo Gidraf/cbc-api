@@ -53,6 +53,7 @@ class WorkflowService:
             raise_api_error("SCHEMA_VALIDATION_FAILED", f"Unknown review decision: {decision}")
 
         entry["updated_at"] = now_iso()
+        self.state.set_pipeline_run_state(run_id, entry["workflow_state"])
         return DecisionResult(run_id=run_id, state=entry["workflow_state"], updated_at=entry["updated_at"])
 
     def human_review_decision(self, run_id: str, decision: str) -> DecisionResult:
@@ -68,4 +69,5 @@ class WorkflowService:
             raise_api_error("SCHEMA_VALIDATION_FAILED", f"Unknown human review decision: {decision}")
 
         entry["updated_at"] = now_iso()
+        self.state.set_pipeline_run_state(run_id, entry["workflow_state"])
         return DecisionResult(run_id=run_id, state=entry["workflow_state"], updated_at=entry["updated_at"])

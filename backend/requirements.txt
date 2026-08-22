@@ -3,6 +3,8 @@ uvicorn==0.35.0
 pydantic==2.11.7
 cryptography==45.0.6
 PyJWT==2.9.0
+SQLAlchemy==2.0.34
+psycopg2-binary==2.9.9
 redis==5.2.0
 minio==7.2.15
 playwright==1.55.0

@@ -9,6 +9,7 @@ from pydantic import BaseModel
 
 from .config import OFFICIAL_BASE_URLS, Provider
 from .errors import ApiError, raise_api_error
+from .infra.db import run_migrations
 from .infra.queue import job_queue
 from .infra.storage import object_storage
 from .models import (
@@ -95,8 +96,15 @@ def _bootstrap_default_stage_bindings() -> None:
 
 @app.on_event("startup")
 def startup() -> None:
+    run_migrations()
+    runtime_state.sync_users_from_env()
+    runtime_state.load_from_db()
     object_storage.ensure_bucket()
     _bootstrap_default_stage_bindings()
+    for provider in runtime_state.provider_credentials:
+        runtime_state.persist_provider(provider)
+    for stage in runtime_state.stage_bindings:
+        runtime_state.persist_stage_binding(stage)
 
 
 @app.exception_handler(ApiError)
@@ -184,6 +192,8 @@ def configure_provider(
     else:
         credential_ref_id = conf.credential_ref_id
 
+    runtime_state.persist_provider(provider)
+
     return {
         "provider": provider,
         "base_url": conf.base_url,
@@ -208,6 +218,7 @@ def set_stage_binding(
         model=payload.model,
         base_url=payload.base_url,
     )
+    runtime_state.persist_stage_binding(stage)
 
     return {
         "pipeline_stage": stage,
@@ -233,6 +244,7 @@ def bootstrap_stage_bindings(
             model=payload.model,
             base_url=payload.base_url,
         )
+        runtime_state.persist_stage_binding(stage)
         updated.append(stage)
 
     return {

@@ -9,6 +9,7 @@ from fastapi import Depends, Header
 
 from ..errors import raise_api_error
 from ..settings import settings
+from ..state import runtime_state
 
 
 ROLES = {"admin", "operator", "reviewer", "developer"}
@@ -41,7 +42,7 @@ def _decode_token(token: str) -> dict:
 
 
 def authenticate_login(username: str, password: str) -> AuthContext:
-    accounts = settings.user_accounts
+    accounts = runtime_state.user_accounts
     account = accounts.get(username)
     if not account or account["password"] != password:
         raise_api_error("UNAUTHORIZED_ACCESS", "Invalid username or password")

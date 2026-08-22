@@ -4,6 +4,7 @@ import os
 
 
 class Settings:
+    database_url: str = os.getenv("DATABASE_URL", "")
     redis_url: str = os.getenv("REDIS_URL", "redis://localhost:6379/0")
     queue_name: str = os.getenv("QUEUE_NAME", "generation_jobs")
     result_ttl_seconds: int = int(os.getenv("RESULT_TTL_SECONDS", "86400"))
