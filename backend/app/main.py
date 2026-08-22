@@ -53,6 +53,29 @@ STAGE_NAMES = {
 }
 
 
+def _apply_bootstrap_bindings(provider: str, model: str, base_url: str | None) -> dict:
+    if provider not in runtime_state.provider_credentials:
+        raise_api_error("UNSUPPORTED_MODEL_PROVIDER", f"Unsupported provider: {provider}")
+
+    updated = []
+    for stage in sorted(STAGE_NAMES):
+        runtime_state.stage_bindings[stage] = StageBinding(
+            pipeline_stage=stage,
+            provider=provider,
+            model=model,
+            base_url=base_url,
+        )
+        runtime_state.persist_stage_binding(stage)
+        updated.append(stage)
+
+    return {
+        "provider": provider,
+        "model": model,
+        "base_url": base_url,
+        "stages_updated": updated,
+    }
+
+
 class BrowseRequest(BaseModel):
     url: str
 
@@ -215,6 +238,9 @@ def set_stage_binding(
     payload: StageBindingInput,
     _: AuthContext = Depends(require_roles("admin", "operator")),
 ) -> dict:
+    if stage == "bootstrap":
+        return _apply_bootstrap_bindings(payload.provider, payload.model, payload.base_url)
+
     if stage not in STAGE_NAMES:
         raise_api_error("MODEL_NOT_CONFIGURED_FOR_STAGE", f"Unsupported stage: {stage}")
 
@@ -239,26 +265,7 @@ def bootstrap_stage_bindings(
     payload: BulkStageBindingRequest,
     _: AuthContext = Depends(require_roles("admin", "operator")),
 ) -> dict:
-    if payload.provider not in runtime_state.provider_credentials:
-        raise_api_error("UNSUPPORTED_MODEL_PROVIDER", f"Unsupported provider: {payload.provider}")
-
-    updated = []
-    for stage in sorted(STAGE_NAMES):
-        runtime_state.stage_bindings[stage] = StageBinding(
-            pipeline_stage=stage,
-            provider=payload.provider,
-            model=payload.model,
-            base_url=payload.base_url,
-        )
-        runtime_state.persist_stage_binding(stage)
-        updated.append(stage)
-
-    return {
-        "provider": payload.provider,
-        "model": payload.model,
-        "base_url": payload.base_url,
-        "stages_updated": updated,
-    }
+    return _apply_bootstrap_bindings(payload.provider, payload.model, payload.base_url)
 
 
 @app.get("/admin/config")
