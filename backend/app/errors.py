@@ -12,6 +12,7 @@ class ApiError(Exception):
 
 
 ERRORS = {
+    "UNAUTHORIZED_ACCESS": (401, False),
     "UNSUPPORTED_MODEL_PROVIDER": (400, False),
     "MODEL_NOT_CONFIGURED_FOR_STAGE": (400, False),
     "MODEL_CREDENTIAL_MISSING": (401, False),
