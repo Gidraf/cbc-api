@@ -97,12 +97,12 @@ const defaultProviderDrafts: Record<Provider, ProviderDraft> = {
 };
 
 const defaultStageDrafts: Record<Stage, StageDraft> = {
-  notes_generation: { provider: "gemini", model: "gemini-2.5-flash", base_url: "" },
-  diagram_generation: { provider: "gemini", model: "gemini-2.5-flash", base_url: "" },
-  activity_generation: { provider: "gemini", model: "gemini-2.5-flash", base_url: "" },
-  question_generation: { provider: "gemini", model: "gemini-2.5-flash", base_url: "" },
-  reviewer_panel: { provider: "gemini", model: "gemini-2.5-flash", base_url: "" },
-  regeneration: { provider: "gemini", model: "gemini-2.5-flash", base_url: "" }
+  notes_generation: { provider: "openai", model: "gpt-5-mini", base_url: "" },
+  diagram_generation: { provider: "openai", model: "gpt-5-mini", base_url: "" },
+  activity_generation: { provider: "openai", model: "gpt-5-mini", base_url: "" },
+  question_generation: { provider: "openai", model: "gpt-5-mini", base_url: "" },
+  reviewer_panel: { provider: "openai", model: "gpt-5-mini", base_url: "" },
+  regeneration: { provider: "openai", model: "gpt-5-mini", base_url: "" }
 };
 
 const defaultCurriculumContext: CurriculumContext = {
@@ -160,8 +160,8 @@ export function App() {
 
   const [stageDrafts, setStageDrafts] = useState<Record<Stage, StageDraft>>(defaultStageDrafts);
 
-  const [bootstrapProvider, setBootstrapProvider] = useState<Provider>("gemini");
-  const [bootstrapModel, setBootstrapModel] = useState("gemini-2.5-flash");
+  const [bootstrapProvider, setBootstrapProvider] = useState<Provider>("openai");
+  const [bootstrapModel, setBootstrapModel] = useState("gpt-5-mini");
   const [bootstrapBaseUrl, setBootstrapBaseUrl] = useState("");
 
   const [syncPayload, setSyncPayload] = useState(pretty(defaultGeneratePayload));

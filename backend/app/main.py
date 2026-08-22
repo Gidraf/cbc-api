@@ -103,12 +103,8 @@ def _bootstrap_default_stage_bindings() -> None:
     if runtime_state.stage_bindings:
         return
 
-    if runtime_state.decrypt_api_key(Provider.GEMINI.value):
-        provider = Provider.GEMINI.value
-        model = "gemini-2.5-flash"
-    else:
-        provider = Provider.OLLAMA.value
-        model = "llama3.1"
+    provider = Provider.OPENAI.value
+    model = "gpt-5-mini"
 
     for stage in STAGE_NAMES:
         runtime_state.stage_bindings[stage] = StageBinding(
