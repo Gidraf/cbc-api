@@ -150,15 +150,20 @@ export function App() {
   const [notesRefinePrompt, setNotesRefinePrompt] = useState("");
   const [notesApproved, setNotesApproved] = useState(false);
 
-  // Station 2: SVG Diagram
+  // Station 2: Multi-Visuals & Diagrams Studio
   const [stationDiagram, setStationDiagram] = useState<any>(null);
+  const [stationVisualsList, setStationVisualsList] = useState<any[]>([]);
+  const [activeVisualIdx, setActiveVisualIdx] = useState<number>(0);
   const [diagramConceptInput, setDiagramConceptInput] = useState("");
   const [diagramRefinePrompt, setDiagramRefinePrompt] = useState("");
-  const [diagramViewMode, setDiagramViewMode] = useState<"visual" | "code" | "tactile">("visual");
+  const [diagramViewMode, setDiagramViewMode] = useState<"visual" | "image_spec" | "code" | "tactile">("visual");
   const [diagramApproved, setDiagramApproved] = useState(false);
 
-  // Station 3: Experiments & Safety
+  // Station 3: Multi-Activities, Experiments & Video Storyboards Studio
   const [stationActivity, setStationActivity] = useState<any>(null);
+  const [stationActivitiesList, setStationActivitiesList] = useState<any[]>([]);
+  const [activeActivityIdx, setActiveActivityIdx] = useState<number>(0);
+  const [activityDetailTab, setActivityDetailTab] = useState<"procedure" | "video" | "image" | "safety" | "rubric">("procedure");
   const [activityRefinePrompt, setActivityRefinePrompt] = useState("");
   const [activityApproved, setActivityApproved] = useState(false);
 
@@ -549,6 +554,46 @@ export function App() {
     });
   }
 
+  function sanitizeSvgForDisplay(rawSvg: string): string {
+    if (!rawSvg) return "<p style='color:#64748b;text-align:center;'>No SVG markup</p>";
+    let clean = rawSvg.trim();
+
+    // Strip markdown fences
+    if (clean.includes("```")) {
+      const match = clean.match(/```(?:xml|svg|html)?\s*(<svg[\s\S]*?<\/svg>)\s*```/i);
+      if (match) clean = match[1];
+      else {
+        const matchAny = clean.match(/<svg[\s\S]*?<\/svg>/i);
+        if (matchAny) clean = matchAny[0];
+      }
+    }
+
+    const svgMatch = clean.match(/<svg[\s\S]*?<\/svg>/i);
+    if (svgMatch) {
+      clean = svgMatch[0];
+    } else if (!clean.toLowerCase().startsWith("<svg")) {
+      return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 500" width="100%" height="100%"><rect width="100%" height="100%" fill="#f8fafc" rx="8" stroke="#cbd5e1"/><text x="400" y="250" font-family="sans-serif" font-size="16" text-anchor="middle" fill="#0369a1">Visual Schematic</text></svg>`;
+    }
+
+    // Wrap naked CSS in <defs><style> if not present
+    if (!clean.includes("<style") && /\.[a-zA-Z0-9_-]+\s*\{[^}]*\}/.test(clean)) {
+      const cssMatches = clean.match(/(?:^|\n|\s)(\.[a-zA-Z0-9_-]+\s*\{[^}]*\}|#[a-zA-Z0-9_-]+\s*\{[^}]*\})/g) || [];
+      if (cssMatches.length > 0) {
+        const css = cssMatches.join("\n");
+        for (const m of cssMatches) {
+          clean = clean.replace(m, "");
+        }
+        const defs = `<defs><style type="text/css"><![CDATA[\n${css}\n]]></style><marker id="arrowhead" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto"><polygon points="0 0, 10 3.5, 0 7" fill="#0284c7" /></marker></defs>`;
+        const gtIdx = clean.indexOf(">");
+        if (gtIdx !== -1) {
+          clean = clean.substring(0, gtIdx + 1) + "\n" + defs + "\n" + clean.substring(gtIdx + 1);
+        }
+      }
+    }
+
+    return clean;
+  }
+
   // Generation & Pipeline Execution
   async function triggerGenerate() {
     await run("Run Full CBC Production Pipeline", async () => {
@@ -623,7 +668,12 @@ export function App() {
     // Clear previous station content to guarantee zero stale data
     setStationNotes(null);
     setStationDiagram(null);
+    setStationVisualsList([]);
+    setActiveVisualIdx(0);
     setStationActivity(null);
+    setStationActivitiesList([]);
+    setActiveActivityIdx(0);
+    setActivityDetailTab("procedure");
     setStationQuestions([]);
     setNotesApproved(false);
     setDiagramApproved(false);
@@ -703,6 +753,12 @@ export function App() {
       }, auth());
       if (res.diagram) {
         setStationDiagram(res.diagram);
+        setStationVisualsList((prev) => {
+          if (prev.length === 0) return [res.diagram];
+          const copy = [...prev];
+          copy[0] = { ...copy[0], ...res.diagram, status: "generated" };
+          return copy;
+        });
         setDiagramApproved(false);
       }
       if (res.content_type) setDetectedContentType(res.content_type);
@@ -711,6 +767,71 @@ export function App() {
       if (res.quality_gate) setDiagramQualityGate(res.quality_gate);
       return res;
     });
+  }
+
+  async function planFactoryVisuals(customInstructions?: string) {
+    await run("Layer 2: Planning Multi-Item Visuals & Diagrams for Sub-strand...", async () => {
+      const payload = {
+        grade: genGrade,
+        subject: genSubject,
+        strand: genStrand,
+        sub_strand: genSubstrand,
+        notes_title: stationNotes?.title || genSubstrand,
+        notes_content: stationNotes || undefined,
+        custom_instructions: customInstructions || diagramRefinePrompt,
+      };
+      const res = await fetchJson<any>("/api/v1/curriculum/factory/plan-visuals", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      }, auth());
+      if (res.visuals && res.visuals.length > 0) {
+        setStationVisualsList(res.visuals);
+        setActiveVisualIdx(0);
+      }
+      if (res.content_type) setDetectedContentType(res.content_type);
+      if (res.research_dossier) setDiagramResearchDossier(res.research_dossier);
+      return res;
+    });
+  }
+
+  async function generateSingleVisual(visualItem: any, index: number, customInstructions?: string) {
+    await run(`Layer 2: Synthesizing Visual Asset ${index + 1} (${visualItem.title || 'Diagram'})...`, async () => {
+      const payload = {
+        grade: genGrade,
+        subject: genSubject,
+        strand: genStrand,
+        sub_strand: genSubstrand,
+        visual_item: visualItem,
+        notes_content: stationNotes || undefined,
+        custom_instructions: customInstructions || diagramRefinePrompt,
+      };
+      const res = await fetchJson<any>("/api/v1/curriculum/factory/generate-single-visual", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      }, auth());
+      if (res.visual) {
+        setStationVisualsList((prev) => {
+          const next = [...prev];
+          next[index] = res.visual;
+          return next;
+        });
+        if (index === activeVisualIdx || !stationDiagram) {
+          setStationDiagram(res.visual);
+        }
+      }
+      if (res.quality_audit) setDiagramQualityAudit(res.quality_audit);
+      if (res.quality_gate) setDiagramQualityGate(res.quality_gate);
+      return res;
+    });
+  }
+
+  async function generateAllVisuals() {
+    if (stationVisualsList.length === 0) {
+      await planFactoryVisuals();
+    }
+    for (let i = 0; i < stationVisualsList.length; i++) {
+      await generateSingleVisual(stationVisualsList[i], i);
+    }
   }
 
   async function generateFactoryActivity(customInstructions?: string) {
@@ -731,6 +852,12 @@ export function App() {
       }, auth());
       if (res.activity) {
         setStationActivity(res.activity);
+        setStationActivitiesList((prev) => {
+          if (prev.length === 0) return [res.activity];
+          const copy = [...prev];
+          copy[0] = { ...copy[0], ...res.activity, status: "generated" };
+          return copy;
+        });
         setActivityApproved(false);
       }
       if (res.content_type) setDetectedContentType(res.content_type);
@@ -739,6 +866,72 @@ export function App() {
       if (res.quality_gate) setActivityQualityGate(res.quality_gate);
       return res;
     });
+  }
+
+  async function planFactoryActivities(customInstructions?: string) {
+    await run("Layer 3: Planning Multi-Item Practical Tasks & Video Storyboards...", async () => {
+      const payload = {
+        grade: genGrade,
+        subject: genSubject,
+        strand: genStrand,
+        sub_strand: genSubstrand,
+        notes_title: stationNotes?.title || genSubstrand,
+        notes_content: stationNotes || undefined,
+        diagram_info: stationDiagram || undefined,
+        custom_instructions: customInstructions || activityRefinePrompt,
+      };
+      const res = await fetchJson<any>("/api/v1/curriculum/factory/plan-activities", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      }, auth());
+      if (res.activities && res.activities.length > 0) {
+        setStationActivitiesList(res.activities);
+        setActiveActivityIdx(0);
+      }
+      if (res.content_type) setDetectedContentType(res.content_type);
+      if (res.research_dossier) setActivityResearchDossier(res.research_dossier);
+      return res;
+    });
+  }
+
+  async function generateSingleActivity(activityItem: any, index: number, customInstructions?: string) {
+    await run(`Layer 3: Synthesizing Practical Module ${index + 1} (${activityItem.activity_name || 'Activity'})...`, async () => {
+      const payload = {
+        grade: genGrade,
+        subject: genSubject,
+        strand: genStrand,
+        sub_strand: genSubstrand,
+        activity_item: activityItem,
+        notes_content: stationNotes || undefined,
+        custom_instructions: customInstructions || activityRefinePrompt,
+      };
+      const res = await fetchJson<any>("/api/v1/curriculum/factory/generate-single-activity", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      }, auth());
+      if (res.activity) {
+        setStationActivitiesList((prev) => {
+          const next = [...prev];
+          next[index] = res.activity;
+          return next;
+        });
+        if (index === activeActivityIdx || !stationActivity) {
+          setStationActivity(res.activity);
+        }
+      }
+      if (res.quality_audit) setActivityQualityAudit(res.quality_audit);
+      if (res.quality_gate) setActivityQualityGate(res.quality_gate);
+      return res;
+    });
+  }
+
+  async function generateAllActivities() {
+    if (stationActivitiesList.length === 0) {
+      await planFactoryActivities();
+    }
+    for (let i = 0; i < stationActivitiesList.length; i++) {
+      await generateSingleActivity(stationActivitiesList[i], i);
+    }
   }
 
   async function generateFactoryQuestions(customInstructions?: string) {
@@ -816,7 +1009,8 @@ export function App() {
         level: "Basic Education",
         notes: stationNotes || {},
         diagram: stationDiagram || {},
-        activities: stationActivity ? [stationActivity] : [],
+        diagrams: stationVisualsList.length > 0 ? stationVisualsList : (stationDiagram ? [stationDiagram] : []),
+        activities: stationActivitiesList.length > 0 ? stationActivitiesList : (stationActivity ? [stationActivity] : []),
         experiments: stationActivity?.experiments || [],
         questions: stationQuestions || [],
         review_status: reviewStatus,
@@ -843,7 +1037,9 @@ export function App() {
         level: "Basic Education",
         notes: stationNotes || {},
         diagram: stationDiagram || {},
+        diagrams: stationVisualsList.length > 0 ? stationVisualsList : (stationDiagram ? [stationDiagram] : []),
         activity: stationActivity || {},
+        activities: stationActivitiesList.length > 0 ? stationActivitiesList : (stationActivity ? [stationActivity] : []),
         questions: stationQuestions || [],
         deliberation_notes: factoryDeliberation?.consensus || "Approved via 5-Layer Content Factory",
       };
@@ -2534,14 +2730,36 @@ export function App() {
                     </div>
                   </div>
 
-                  {/* STATION 2: LIVE VECTOR SVG DIAGRAM */}
+                  {/* STATION 2: MULTI-VISUALS & DIAGRAMS STUDIO */}
                   <div className="factory-station-card">
                     <div className="factory-station-header">
                       <div>
-                        <h3>📐 Station 2: Diagram Studio (Layer 2)</h3>
-                        <small className="muted">Derived directly from Layer 1 Notes</small>
+                        <h3>📐 Station 2: Visuals & Diagrams Studio (Layer 2)</h3>
+                        <small className="muted">
+                          {stationVisualsList.length > 0
+                            ? `${stationVisualsList.length} Visual Assets Planned / Generated`
+                            : "Multi-item technical SVGs, photorealistic scenes, and schematics derived from Notes"}
+                        </small>
                       </div>
                       <div style={{ display: "flex", gap: "6px", alignItems: "center", flexWrap: "wrap" }}>
+                        <button
+                          className="ghost"
+                          style={{ fontSize: "11px", padding: "3px 8px", background: "#f0fdf4", color: "#166534", borderColor: "#86efac" }}
+                          onClick={() => planFactoryVisuals()}
+                          disabled={isRunning}
+                          title="Auto-discover all required diagrams, schematics, and realistic scene illustrations for this sub-strand"
+                        >
+                          ✨ Plan Required Visuals ({stationVisualsList.length || "Auto"})
+                        </button>
+                        <button
+                          className="ghost"
+                          style={{ fontSize: "11px", padding: "3px 8px", background: "#f0f9ff", color: "#0369a1", borderColor: "#bae6fd" }}
+                          onClick={() => generateAllVisuals()}
+                          disabled={isRunning || stationVisualsList.length === 0}
+                          title="Synthesize all planned visual assets one by one"
+                        >
+                          ⚡ Generate All ({stationVisualsList.length})
+                        </button>
                         {diagramResearchDossier && (
                           <span
                             className="pill ok"
@@ -2560,111 +2778,218 @@ export function App() {
                             🛡️ Gate: {diagramQualityGate.overall_score}% ({diagramQualityGate.passed ? "PASSED" : "REVISE"})
                           </span>
                         )}
-                        <span className={`pill ${diagramApproved ? "ok" : stationDiagram ? "warn" : "idle"}`}>
-                          {diagramApproved ? "Approved" : stationDiagram ? "Generated" : "Pending"}
+                        <span className={`pill ${diagramApproved ? "ok" : (stationVisualsList.length > 0 || stationDiagram) ? "warn" : "idle"}`}>
+                          {diagramApproved ? "Approved" : (stationVisualsList.length > 0 || stationDiagram) ? "Generated" : "Pending"}
                         </span>
                       </div>
                     </div>
 
-                    <div style={{ display: "grid", gap: "6px" }}>
-                      <input
-                        placeholder="Diagram Concept Target (auto-filled from Substrand Blueprint)"
-                        value={diagramConceptInput}
-                        onChange={(e) => setDiagramConceptInput(e.target.value)}
-                        style={{ fontSize: "12px", padding: "6px 10px" }}
-                      />
-                      <div className="factory-refine-box" style={{ margin: 0 }}>
-                        <input
-                          placeholder="Refine prompt (e.g., add clear callout leader lines)..."
-                          value={diagramRefinePrompt}
-                          onChange={(e) => setDiagramRefinePrompt(e.target.value)}
-                        />
-                        <button
-                          onClick={() => generateFactoryDiagram(diagramRefinePrompt)}
-                          disabled={isRunning}
-                          style={{ whiteSpace: "nowrap" }}
-                        >
-                          {stationDiagram ? "🔄 Regenerate" : "⚡ Generate Layer 2"}
-                        </button>
+                    {/* Multi-Visual Selection Tabs */}
+                    {stationVisualsList.length > 0 && (
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: "6px", marginBottom: "8px" }}>
+                        {stationVisualsList.map((vis: any, vIdx: number) => {
+                          const isActive = vIdx === activeVisualIdx;
+                          const isGen = vis.status === "generated" || vis.diagram_svg;
+                          return (
+                            <button
+                              key={vIdx}
+                              className={isActive ? "" : "ghost"}
+                              style={{
+                                fontSize: "11.5px",
+                                padding: "4px 10px",
+                                borderRadius: "6px",
+                                background: isActive ? "#0284c7" : "#fff",
+                                color: isActive ? "#fff" : "#0f172a",
+                                borderColor: isActive ? "#0284c7" : "#cbd5e1",
+                                fontWeight: isActive ? 700 : 500,
+                              }}
+                              onClick={() => {
+                                setActiveVisualIdx(vIdx);
+                                setStationDiagram(vis);
+                              }}
+                            >
+                              {vis.asset_type === "realistic_image" ? "🎨" : "📐"} {vIdx + 1}. {vis.title || `Visual ${vIdx + 1}`}{" "}
+                              <span style={{ opacity: 0.8, fontSize: "10px" }}>({isGen ? "✓ Ready" : "Planned"})</span>
+                            </button>
+                          );
+                        })}
                       </div>
-                    </div>
+                    )}
 
-                    {/* Live SVG Vector Canvas & Toggles */}
-                    <div style={{ display: "flex", gap: "6px", marginTop: "4px" }}>
-                      <button
-                        className={diagramViewMode === "visual" ? "" : "ghost"}
-                        style={{ fontSize: "11px", padding: "4px 8px" }}
-                        onClick={() => setDiagramViewMode("visual")}
-                      >
-                        🖼️ Visual Canvas
-                      </button>
-                      <button
-                        className={diagramViewMode === "code" ? "" : "ghost"}
-                        style={{ fontSize: "11px", padding: "4px 8px" }}
-                        onClick={() => setDiagramViewMode("code")}
-                      >
-                        💻 XML Markup
-                      </button>
-                      <button
-                        className={diagramViewMode === "tactile" ? "" : "ghost"}
-                        style={{ fontSize: "11px", padding: "4px 8px" }}
-                        onClick={() => setDiagramViewMode("tactile")}
-                      >
-                        ♿ SNE Tactile Notes
-                      </button>
-                    </div>
-
-                    <div className="factory-preview-pane" style={{ padding: "8px" }}>
-                      {stationDiagram ? (
+                    {/* Active Visual Meta & Prompt Bar */}
+                    {(() => {
+                      const curVis = stationVisualsList[activeVisualIdx] || stationDiagram;
+                      return (
                         <div>
-                          {diagramViewMode === "visual" && (
-                            <div
-                              className="svg-canvas-box"
-                              dangerouslySetInnerHTML={{ __html: stationDiagram.diagram_svg || "<p>No SVG markup</p>" }}
-                            />
-                          )}
-
-                          {diagramViewMode === "code" && (
-                            <pre style={{ fontSize: "10px", maxHeight: "250px" }}>
-                              {stationDiagram.diagram_svg}
-                            </pre>
-                          )}
-
-                          {diagramViewMode === "tactile" && (
-                            <div style={{ padding: "10px", fontSize: "12px" }}>
-                              <strong>Alt Text Description:</strong>
-                              <p style={{ margin: "4px 0 10px" }}>{stationDiagram.accessibility?.alt_text || "Visual model of the concept."}</p>
-                              <strong>Raised-Line Tactile Guidance (SNE):</strong>
-                              <p style={{ margin: "4px 0" }}>{stationDiagram.accessibility?.tactile_description || "Use tactile braille embosser with raised outlines."}</p>
+                          {curVis && (
+                            <div style={{ padding: "8px 12px", background: "#f8fafc", borderRadius: "8px", border: "1px solid #e2e8f0", marginBottom: "8px", fontSize: "12px" }}>
+                              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                                <strong style={{ color: "#0c4a6e", fontSize: "13px" }}>
+                                  {curVis.title || diagramConceptInput || "Active Visual Specification"}
+                                </strong>
+                                <span className="pill ok" style={{ fontSize: "10.5px" }}>
+                                  {curVis.asset_type || "technical_svg"}
+                                </span>
+                              </div>
+                              {curVis.pedagogical_purpose && (
+                                <p style={{ margin: "4px 0 0", color: "#475569" }}>
+                                  <strong>Purpose:</strong> {curVis.pedagogical_purpose}
+                                </p>
+                              )}
                             </div>
                           )}
-                        </div>
-                      ) : (
-                        <div style={{ textAlign: "center", padding: "30px", color: "var(--muted)" }}>
-                          <p>Click "⚡ Generate Layer 2" to synthesize crisp, standalone SVG vector illustrations.</p>
-                        </div>
-                      )}
-                    </div>
 
-                    <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                          <div className="factory-refine-box" style={{ margin: "0 0 8px" }}>
+                            <input
+                              placeholder="Refine active visual prompt (e.g., add clear callout leader lines, authentic Kenyan soil textures)..."
+                              value={diagramRefinePrompt}
+                              onChange={(e) => setDiagramRefinePrompt(e.target.value)}
+                            />
+                            <button
+                              onClick={() => {
+                                if (stationVisualsList.length > 0 && stationVisualsList[activeVisualIdx]) {
+                                  generateSingleVisual(stationVisualsList[activeVisualIdx], activeVisualIdx, diagramRefinePrompt);
+                                } else {
+                                  generateFactoryDiagram(diagramRefinePrompt);
+                                }
+                              }}
+                              disabled={isRunning}
+                              style={{ whiteSpace: "nowrap" }}
+                            >
+                              {curVis?.diagram_svg || curVis?.image_prompt ? "🔄 Regenerate Active Visual" : "⚡ Generate Active Visual"}
+                            </button>
+                          </div>
+
+                          {/* Visual Sub-View Mode Toggles */}
+                          <div style={{ display: "flex", gap: "6px", marginTop: "4px" }}>
+                            <button
+                              className={diagramViewMode === "visual" ? "" : "ghost"}
+                              style={{ fontSize: "11px", padding: "4px 8px" }}
+                              onClick={() => setDiagramViewMode("visual")}
+                            >
+                              🖼️ Vector Canvas (SVG)
+                            </button>
+                            <button
+                              className={diagramViewMode === "image_spec" ? "" : "ghost"}
+                              style={{ fontSize: "11px", padding: "4px 8px" }}
+                              onClick={() => setDiagramViewMode("image_spec")}
+                            >
+                              🎨 Photorealistic / AI Image Prompt Spec
+                            </button>
+                            <button
+                              className={diagramViewMode === "code" ? "" : "ghost"}
+                              style={{ fontSize: "11px", padding: "4px 8px" }}
+                              onClick={() => setDiagramViewMode("code")}
+                            >
+                              💻 XML Markup
+                            </button>
+                            <button
+                              className={diagramViewMode === "tactile" ? "" : "ghost"}
+                              style={{ fontSize: "11px", padding: "4px 8px" }}
+                              onClick={() => setDiagramViewMode("tactile")}
+                            >
+                              ♿ SNE Tactile Notes
+                            </button>
+                          </div>
+
+                          <div className="factory-preview-pane" style={{ padding: "8px", marginTop: "8px" }}>
+                            {curVis ? (
+                              <div>
+                                {diagramViewMode === "visual" && (
+                                  <div
+                                    className="svg-canvas-box"
+                                    dangerouslySetInnerHTML={{ __html: sanitizeSvgForDisplay(curVis.diagram_svg || "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 800 500'><rect width='100%' height='100%' fill='#f8fafc'/><text x='400' y='250' font-family='sans-serif' font-size='16' text-anchor='middle' fill='#0369a1'>Click Generate to synthesize visual</text></svg>") }}
+                                  />
+                                )}
+
+                                {diagramViewMode === "image_spec" && (
+                                  <div style={{ padding: "12px", background: "#faf5ff", borderRadius: "8px", border: "1px solid #e9d5ff", fontSize: "12px" }}>
+                                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
+                                      <strong style={{ color: "#7e22ce" }}>🎨 Comprehensive Photorealistic AI Image Prompt:</strong>
+                                      <span className="pill ok" style={{ fontSize: "10px" }}>Aspect Ratio: {curVis.aspect_ratio || "16:9"}</span>
+                                    </div>
+                                    <div style={{ padding: "8px", background: "#fff", borderRadius: "6px", border: "1px solid #d8b4fe", color: "#3b0764", fontFamily: "monospace", fontSize: "11.5px", lineHeight: 1.5 }}>
+                                      {curVis.image_prompt || curVis.vivid_prompt || "Photorealistic educational illustration showing authentic Kenyan practical learning, high depth of field, natural golden-hour lighting, high visual clarity."}
+                                    </div>
+                                    {curVis.composition_guide && (
+                                      <div style={{ marginTop: "8px", color: "#6b21a8" }}>
+                                        <strong>Camera & Lighting Guide:</strong> {curVis.composition_guide}
+                                      </div>
+                                    )}
+                                    {curVis.negative_prompt && (
+                                      <div style={{ marginTop: "6px", color: "#9333ea", fontSize: "11px" }}>
+                                        <strong>Negative Prompt:</strong> {curVis.negative_prompt}
+                                      </div>
+                                    )}
+                                  </div>
+                                )}
+
+                                {diagramViewMode === "code" && (
+                                  <pre style={{ fontSize: "10px", maxHeight: "250px" }}>
+                                    {curVis.diagram_svg || "<svg .../>"}
+                                  </pre>
+                                )}
+
+                                {diagramViewMode === "tactile" && (
+                                  <div style={{ padding: "10px", fontSize: "12px" }}>
+                                    <strong>Alt Text Description:</strong>
+                                    <p style={{ margin: "4px 0 10px" }}>{curVis.accessibility?.alt_text || "Visual model of the concept."}</p>
+                                    <strong>Raised-Line Tactile Guidance (SNE):</strong>
+                                    <p style={{ margin: "4px 0" }}>{curVis.accessibility?.tactile_description || "Use tactile braille embosser with raised outlines."}</p>
+                                  </div>
+                                )}
+                              </div>
+                            ) : (
+                              <div style={{ textAlign: "center", padding: "30px", color: "var(--muted)" }}>
+                                <p>Click "✨ Plan Required Visuals" to discover all diagrams, schematics, and realistic scene illustrations for this sub-strand.</p>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })()}
+
+                    <div style={{ display: "flex", justifyContent: "flex-end", marginTop: "8px" }}>
                       <button
                         className={diagramApproved ? "ghost" : ""}
                         onClick={() => setDiagramApproved(!diagramApproved)}
-                        disabled={!stationDiagram}
+                        disabled={!stationDiagram && stationVisualsList.length === 0}
                       >
-                        {diagramApproved ? "✓ Diagram Approved" : "✅ Approve Diagram"}
+                        {diagramApproved ? "✓ Visuals Approved" : "✅ Approve Visuals"}
                       </button>
                     </div>
                   </div>
 
-                  {/* STATION 3: PRACTICAL EXPERIMENTS & ACTIVITIES */}
+                  {/* STATION 3: MULTI-ACTIVITIES, EXPERIMENTS & VIDEO STORYBOARDS */}
                   <div className="factory-station-card">
                     <div className="factory-station-header">
                       <div>
-                        <h3>🧪 Station 3: Activity Studio (Layer 3)</h3>
-                        <small className="muted">Derived from Layers 1 & 2 with safety checks</small>
+                        <h3>🧪 Station 3: Activities, Experiments & Video Storyboard Studio (Layer 3)</h3>
+                        <small className="muted">
+                          {stationActivitiesList.length > 0
+                            ? `${stationActivitiesList.length} Practical Modules Planned / Generated`
+                            : "Hands-on experiments, CSL field projects, and step-by-step video storyboards"}
+                        </small>
                       </div>
                       <div style={{ display: "flex", gap: "6px", alignItems: "center", flexWrap: "wrap" }}>
+                        <button
+                          className="ghost"
+                          style={{ fontSize: "11px", padding: "3px 8px", background: "#f0fdf4", color: "#166534", borderColor: "#86efac" }}
+                          onClick={() => planFactoryActivities()}
+                          disabled={isRunning}
+                          title="Auto-discover all required laboratory experiments, outdoor inquiries, and classroom games for this sub-strand"
+                        >
+                          ✨ Plan Required Practicals ({stationActivitiesList.length || "Auto"})
+                        </button>
+                        <button
+                          className="ghost"
+                          style={{ fontSize: "11px", padding: "3px 8px", background: "#f0f9ff", color: "#0369a1", borderColor: "#bae6fd" }}
+                          onClick={() => generateAllActivities()}
+                          disabled={isRunning || stationActivitiesList.length === 0}
+                          title="Synthesize all planned practical tasks and video scripts"
+                        >
+                          ⚡ Generate All ({stationActivitiesList.length})
+                        </button>
                         {activityResearchDossier && (
                           <span
                             className="pill ok"
@@ -2683,81 +3008,282 @@ export function App() {
                             🛡️ Gate: {activityQualityGate.overall_score}% ({activityQualityGate.passed ? "PASSED" : "REVISE"})
                           </span>
                         )}
-                        <span className={`pill ${activityApproved ? "ok" : stationActivity ? "warn" : "idle"}`}>
-                          {activityApproved ? "Approved" : stationActivity ? "Generated" : "Pending"}
+                        <span className={`pill ${activityApproved ? "ok" : (stationActivitiesList.length > 0 || stationActivity) ? "warn" : "idle"}`}>
+                          {activityApproved ? "Approved" : (stationActivitiesList.length > 0 || stationActivity) ? "Generated" : "Pending"}
                         </span>
                       </div>
                     </div>
 
-                    <div className="factory-refine-box">
-                      <input
-                        placeholder="Refine experiment prompt (e.g., mandate non-toxic materials)..."
-                        value={activityRefinePrompt}
-                        onChange={(e) => setActivityRefinePrompt(e.target.value)}
-                      />
-                      <button
-                        onClick={() => generateFactoryActivity(activityRefinePrompt)}
-                        disabled={isRunning}
-                        style={{ whiteSpace: "nowrap" }}
-                      >
-                        {stationActivity ? "🔄 Regenerate" : "⚡ Generate Layer 3"}
-                      </button>
-                    </div>
+                    {/* Multi-Activity Selection Tabs */}
+                    {stationActivitiesList.length > 0 && (
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: "6px", marginBottom: "8px" }}>
+                        {stationActivitiesList.map((act: any, aIdx: number) => {
+                          const isActive = aIdx === activeActivityIdx;
+                          const isGen = act.status === "generated" || (act.procedure_steps && act.procedure_steps.length > 0);
+                          return (
+                            <button
+                              key={aIdx}
+                              className={isActive ? "" : "ghost"}
+                              style={{
+                                fontSize: "11.5px",
+                                padding: "4px 10px",
+                                borderRadius: "6px",
+                                background: isActive ? "#0e7490" : "#fff",
+                                color: isActive ? "#fff" : "#0f172a",
+                                borderColor: isActive ? "#0e7490" : "#cbd5e1",
+                                fontWeight: isActive ? 700 : 500,
+                              }}
+                              onClick={() => {
+                                setActiveActivityIdx(aIdx);
+                                setStationActivity(act);
+                              }}
+                            >
+                              🧪 {aIdx + 1}. {act.activity_name || `Practical ${aIdx + 1}`}{" "}
+                              <span style={{ opacity: 0.8, fontSize: "10px" }}>({isGen ? "✓ Ready" : "Planned"})</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
 
-                    <div className="factory-preview-pane">
-                      {stationActivity ? (
+                    {/* Active Activity Meta & Prompt Bar */}
+                    {(() => {
+                      const curAct = stationActivitiesList[activeActivityIdx] || stationActivity;
+                      return (
                         <div>
-                          <strong style={{ fontSize: "14px", color: "#0e7490" }}>
-                            {stationActivity.activity_name || stationActivity.title || "Practical Learning Task"}
-                          </strong>
-                          <p style={{ margin: "4px 0 8px" }}>
-                            <strong>Objective:</strong> {stationActivity.objective || "Investigate practical applications."}
-                          </p>
-
-                          {/* Mandatory Safety Hazard Warning Card */}
-                          <div className="hazard-alert-box">
-                            <strong>🚨 MANDATORY SAFETY HAZARD GUIDELINES:</strong>
-                            <ul style={{ margin: "4px 0 0", paddingLeft: "18px" }}>
-                              {stationActivity.safety_protocols?.hazard_warnings?.map((hw: string, idx: number) => (
-                                <li key={idx}>{hw}</li>
-                              )) || (
-                                <li>Wash hands with soap and water after handling specimens. Adult supervision required.</li>
+                          {curAct && (
+                            <div style={{ padding: "8px 12px", background: "#f8fafc", borderRadius: "8px", border: "1px solid #e2e8f0", marginBottom: "8px", fontSize: "12px" }}>
+                              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                                <strong style={{ color: "#0891b2", fontSize: "13px" }}>
+                                  {curAct.activity_name || curAct.title || "Active Practical Module"}
+                                </strong>
+                                <span className="pill ok" style={{ fontSize: "10.5px" }}>
+                                  {curAct.activity_type || "laboratory_experiment"}
+                                </span>
+                              </div>
+                              {curAct.objective && (
+                                <p style={{ margin: "4px 0 0", color: "#475569" }}>
+                                  <strong>Objective:</strong> {curAct.objective}
+                                </p>
                               )}
-                            </ul>
+                            </div>
+                          )}
+
+                          <div className="factory-refine-box" style={{ margin: "0 0 8px" }}>
+                            <input
+                              placeholder="Refine practical module (e.g., add detailed video narration for Step 2, mandate safety goggles)..."
+                              value={activityRefinePrompt}
+                              onChange={(e) => setActivityRefinePrompt(e.target.value)}
+                            />
+                            <button
+                              onClick={() => {
+                                if (stationActivitiesList.length > 0 && stationActivitiesList[activeActivityIdx]) {
+                                  generateSingleActivity(stationActivitiesList[activeActivityIdx], activeActivityIdx, activityRefinePrompt);
+                                } else {
+                                  generateFactoryActivity(activityRefinePrompt);
+                                }
+                              }}
+                              disabled={isRunning}
+                              style={{ whiteSpace: "nowrap" }}
+                            >
+                              {curAct?.procedure_steps ? "🔄 Regenerate Active Practical" : "⚡ Generate Active Practical"}
+                            </button>
                           </div>
 
-                          {stationActivity.materials && (
-                            <div style={{ marginTop: "8px", fontSize: "12px" }}>
-                              <strong>Apparatus & Local Materials:</strong>
-                              <div>{Array.isArray(stationActivity.materials) ? stationActivity.materials.join(", ") : stationActivity.materials}</div>
-                            </div>
-                          )}
+                          {/* Activity Detail Sub-Tabs */}
+                          <div style={{ display: "flex", gap: "6px", marginTop: "4px" }}>
+                            <button
+                              className={activityDetailTab === "procedure" ? "" : "ghost"}
+                              style={{ fontSize: "11px", padding: "4px 8px" }}
+                              onClick={() => setActivityDetailTab("procedure")}
+                            >
+                              📋 Step-by-Step Procedure & Apparatus
+                            </button>
+                            <button
+                              className={activityDetailTab === "video" ? "" : "ghost"}
+                              style={{ fontSize: "11px", padding: "4px 8px" }}
+                              onClick={() => setActivityDetailTab("video")}
+                            >
+                              🎬 Video Storyboard Script ({curAct?.video_storyboard?.scenes?.length || 0} Scenes)
+                            </button>
+                            <button
+                              className={activityDetailTab === "image" ? "" : "ghost"}
+                              style={{ fontSize: "11px", padding: "4px 8px" }}
+                              onClick={() => setActivityDetailTab("image")}
+                            >
+                              🎨 Action Photo / Scene Prompt
+                            </button>
+                            <button
+                              className={activityDetailTab === "safety" ? "" : "ghost"}
+                              style={{ fontSize: "11px", padding: "4px 8px" }}
+                              onClick={() => setActivityDetailTab("safety")}
+                            >
+                              ⚠️ Hazard & PPE Protocols
+                            </button>
+                            <button
+                              className={activityDetailTab === "rubric" ? "" : "ghost"}
+                              style={{ fontSize: "11px", padding: "4px 8px" }}
+                              onClick={() => setActivityDetailTab("rubric")}
+                            >
+                              🎯 4-Tier Assessment Rubric
+                            </button>
+                          </div>
 
-                          {stationActivity.procedure_steps && (
-                            <div style={{ marginTop: "8px", fontSize: "12px" }}>
-                              <strong>Step-by-Step Procedure:</strong>
-                              <ol style={{ margin: "4px 0 0", paddingLeft: "18px" }}>
-                                {stationActivity.procedure_steps.map((st: string, idx: number) => (
-                                  <li key={idx} style={{ marginBottom: "2px" }}>{st}</li>
-                                ))}
-                              </ol>
-                            </div>
-                          )}
-                        </div>
-                      ) : (
-                        <div style={{ textAlign: "center", padding: "30px", color: "var(--muted)" }}>
-                          <p>Click "⚡ Generate Layer 3" to synthesize hands-on practical activities with safety protocols.</p>
-                        </div>
-                      )}
-                    </div>
+                          <div className="factory-preview-pane" style={{ padding: "10px", marginTop: "8px" }}>
+                            {curAct ? (
+                              <div>
+                                {activityDetailTab === "procedure" && (
+                                  <div>
+                                    {curAct.materials && (
+                                      <div style={{ marginBottom: "10px", fontSize: "12px", padding: "8px 12px", background: "#f0fdf4", borderRadius: "6px", border: "1px solid #bbf7d0" }}>
+                                        <strong style={{ color: "#166534" }}>🧪 Apparatus & Local Materials:</strong>
+                                        <div style={{ color: "#14532d", marginTop: "3px" }}>
+                                          {Array.isArray(curAct.materials) ? curAct.materials.join(" • ") : curAct.materials}
+                                        </div>
+                                      </div>
+                                    )}
 
-                    <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                                    {curAct.procedure_steps && curAct.procedure_steps.length > 0 ? (
+                                      <div style={{ fontSize: "12.5px" }}>
+                                        <strong style={{ color: "#0c4a6e" }}>Step-by-Step Practical Procedure:</strong>
+                                        <ol style={{ margin: "6px 0 0", paddingLeft: "20px", lineHeight: 1.6 }}>
+                                          {curAct.procedure_steps.map((st: string, idx: number) => (
+                                            <li key={idx} style={{ marginBottom: "4px" }}>{st}</li>
+                                          ))}
+                                        </ol>
+                                      </div>
+                                    ) : (
+                                      <p className="muted">Click "⚡ Generate Active Practical" to synthesize complete steps.</p>
+                                    )}
+                                  </div>
+                                )}
+
+                                {activityDetailTab === "video" && (
+                                  <div>
+                                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
+                                      <strong style={{ color: "#0891b2", fontSize: "13px" }}>
+                                        🎬 {curAct.video_storyboard?.video_title || `${curAct.activity_name} (Instructional Video Guide)`}
+                                      </strong>
+                                      <span className="pill ok" style={{ fontSize: "10px" }}>
+                                        ⏱️ Target Duration: {curAct.video_storyboard?.target_duration || "90-120 seconds"}
+                                      </span>
+                                    </div>
+                                    {curAct.video_storyboard?.overview && (
+                                      <p style={{ margin: "0 0 10px", fontSize: "12px", color: "#475569" }}>
+                                        <strong>Overview:</strong> {curAct.video_storyboard.overview}
+                                      </p>
+                                    )}
+
+                                    {curAct.video_storyboard?.scenes && curAct.video_storyboard.scenes.length > 0 ? (
+                                      <div style={{ display: "grid", gap: "8px" }}>
+                                        {curAct.video_storyboard.scenes.map((sc: any, scIdx: number) => (
+                                          <div
+                                            key={scIdx}
+                                            style={{
+                                              padding: "10px 12px",
+                                              background: "#f0f9ff",
+                                              borderRadius: "8px",
+                                              border: "1px solid #bae6fd",
+                                              fontSize: "12px",
+                                            }}
+                                          >
+                                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                                              <strong style={{ color: "#0369a1" }}>
+                                                🎥 Scene {sc.scene_number || scIdx + 1}: {sc.shot_type || "Demonstration Shot"}
+                                              </strong>
+                                            </div>
+                                            <div style={{ marginTop: "4px", color: "#0f172a" }}>
+                                              <strong>Visual Action on Screen:</strong> {sc.visual_action}
+                                            </div>
+                                            {sc.voiceover_narration && (
+                                              <div style={{ marginTop: "4px", color: "#166534", background: "#f0fdf4", padding: "4px 8px", borderRadius: "4px", border: "1px solid #bbf7d0" }}>
+                                                🗣️ <strong>Spoken Narration / Dialogue:</strong> "{sc.voiceover_narration}"
+                                              </div>
+                                            )}
+                                            {sc.on_screen_text && (
+                                              <div style={{ marginTop: "4px", color: "#0369a1", fontSize: "11px" }}>
+                                                🏷️ <strong>On-Screen Callout:</strong> {sc.on_screen_text}
+                                              </div>
+                                            )}
+                                            {sc.ai_video_prompt && (
+                                              <div style={{ marginTop: "4px", color: "#64748b", fontSize: "10.5px", fontFamily: "monospace" }}>
+                                                🤖 <strong>AI Video Model Prompt:</strong> {sc.ai_video_prompt}
+                                              </div>
+                                            )}
+                                          </div>
+                                        ))}
+                                      </div>
+                                    ) : (
+                                      <p className="muted">No video storyboard scenes yet. Click "⚡ Generate Active Practical" to author video scripts.</p>
+                                    )}
+                                  </div>
+                                )}
+
+                                {activityDetailTab === "image" && (
+                                  <div style={{ padding: "10px", background: "#faf5ff", borderRadius: "8px", border: "1px solid #e9d5ff", fontSize: "12px" }}>
+                                    <strong style={{ color: "#7e22ce" }}>🎨 Action Photo / Instructional Scene Prompt:</strong>
+                                    <div style={{ marginTop: "6px", padding: "8px", background: "#fff", borderRadius: "6px", border: "1px solid #d8b4fe", color: "#3b0764", fontFamily: "monospace", fontSize: "11.5px", lineHeight: 1.5 }}>
+                                      {curAct.visual_action_image_prompt || "Photorealistic high-clarity documentary photograph showing Kenyan students wearing safety aprons and conducting this investigation in a daylight science workbench, realistic hands-on actions, sharp focus, natural classroom setting."}
+                                    </div>
+                                  </div>
+                                )}
+
+                                {activityDetailTab === "safety" && (
+                                  <div className="hazard-alert-box">
+                                    <strong>🚨 MANDATORY SAFETY HAZARD GUIDELINES & PPE:</strong>
+                                    <ul style={{ margin: "6px 0 0", paddingLeft: "18px", fontSize: "12px" }}>
+                                      {(curAct.safety_hazards_to_check || curAct.safety_protocols?.hazard_warnings || [
+                                        "Wear eye protection and laboratory aprons during manipulation of soil samples.",
+                                        "Wash hands thoroughly with soap and clean water immediately after completing the investigation.",
+                                        "Dispose of organic waste in designated compost receptacles."
+                                      ]).map((hw: string, idx: number) => (
+                                        <li key={idx} style={{ marginBottom: "2px" }}>{hw}</li>
+                                      ))}
+                                    </ul>
+                                  </div>
+                                )}
+
+                                {activityDetailTab === "rubric" && (
+                                  <div style={{ fontSize: "12px" }}>
+                                    <strong style={{ color: "#0c4a6e" }}>🎯 4-Tier Assessment Rubric:</strong>
+                                    <div className="rubric-grid" style={{ marginTop: "8px" }}>
+                                      <div className="rubric-card exceeding">
+                                        <strong style={{ color: "#15803d" }}>Exceeding</strong>
+                                        {curAct.assessment_rubric?.exceeding || "Independently sets up apparatus, conducts investigation with zero errors, and formulates insightful hypotheses."}
+                                      </div>
+                                      <div className="rubric-card meeting">
+                                        <strong style={{ color: "#0369a1" }}>Meeting</strong>
+                                        {curAct.assessment_rubric?.meeting || "Accurately follows all procedure steps, records accurate observations, and adheres to safety protocols."}
+                                      </div>
+                                      <div className="rubric-card approaching">
+                                        <strong style={{ color: "#b45309" }}>Approaching</strong>
+                                        {curAct.assessment_rubric?.approaching || "Follows procedure with occasional teacher prompts and records basic observations."}
+                                      </div>
+                                      <div className="rubric-card below">
+                                        <strong style={{ color: "#b91c1c" }}>Below</strong>
+                                        {curAct.assessment_rubric?.below || "Requires direct continuous supervision to handle apparatus and follow safety instructions."}
+                                      </div>
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            ) : (
+                              <div style={{ textAlign: "center", padding: "30px", color: "var(--muted)" }}>
+                                <p>Click "✨ Plan Required Practicals" to discover all experiments, CSL field projects, and video storyboards for this sub-strand.</p>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })()}
+
+                    <div style={{ display: "flex", justifyContent: "flex-end", marginTop: "8px" }}>
                       <button
                         className={activityApproved ? "ghost" : ""}
                         onClick={() => setActivityApproved(!activityApproved)}
-                        disabled={!stationActivity}
+                        disabled={!stationActivity && stationActivitiesList.length === 0}
                       >
-                        {activityApproved ? "✓ Activity Approved" : "✅ Approve Activity"}
+                        {activityApproved ? "✓ Activities Approved" : "✅ Approve Activities"}
                       </button>
                     </div>
                   </div>

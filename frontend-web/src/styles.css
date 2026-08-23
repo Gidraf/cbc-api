@@ -725,21 +725,23 @@ pre {
   background: #ffffff;
   border: 1px solid #e2e8f0;
   border-radius: 10px;
-  padding: 12px;
+  padding: 16px;
   display: flex;
   justify-content: center;
   align-items: center;
-  min-height: 220px;
-  max-height: 320px;
-  overflow: hidden;
+  min-height: 240px;
+  max-height: 380px;
+  overflow: auto;
   background-image: radial-gradient(#e2e8f0 1px, transparent 1px);
   background-size: 16px 16px;
 }
 
 .svg-canvas-box svg {
-  max-width: 100%;
-  max-height: 300px;
+  width: 100%;
+  max-width: 760px;
+  max-height: 350px;
   height: auto;
+  display: block;
 }
 
 .hazard-alert-box {

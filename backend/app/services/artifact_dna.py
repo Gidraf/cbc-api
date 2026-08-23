@@ -26,6 +26,21 @@ class DnaCertificate:
     status: str
     created_at: str
 
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "dna_id": self.dna_id,
+            "artifact_type": self.artifact_type,
+            "artifact_id": self.artifact_id,
+            "universal_slo_id": self.universal_slo_id,
+            "curriculum_link": self.curriculum_link,
+            "dna_payload": self.dna_payload,
+            "compliance_scores": self.compliance_scores,
+            "provenance": self.provenance,
+            "parent_dna_id": self.parent_dna_id,
+            "status": self.status,
+            "created_at": self.created_at,
+        }
+
 
 class UniversalArtifactDnaService:
     """Generates cryptographic, anti-hallucination, and pedagogical DNA compliance certificates
@@ -513,6 +528,12 @@ class UniversalArtifactDnaService:
         )
 
     def _persist_dna(self, cert: DnaCertificate) -> None:
+        try:
+            from ..infra.storage import object_storage
+            object_storage.save_dna_certificate(cert.dna_id, cert.to_dict())
+        except Exception as exc:
+            logger.warning("Could not mirror DNA certificate %s to MinIO: %s", cert.dna_id, exc)
+
         try:
             execute(
                 """

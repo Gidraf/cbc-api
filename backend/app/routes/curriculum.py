@@ -308,6 +308,26 @@ class FactoryGenerateDiagramRequest(BaseModel):
     custom_instructions: str = ""
 
 
+class FactoryPlanVisualsRequest(BaseModel):
+    grade: str
+    subject: str
+    strand: str
+    sub_strand: str
+    notes_title: str = ""
+    notes_content: dict[str, Any] | None = None
+    custom_instructions: str = ""
+
+
+class FactoryGenerateSingleVisualRequest(BaseModel):
+    grade: str
+    subject: str
+    strand: str
+    sub_strand: str
+    visual_item: dict[str, Any]
+    notes_content: dict[str, Any] | None = None
+    custom_instructions: str = ""
+
+
 class FactoryGenerateActivityRequest(BaseModel):
     grade: str
     subject: str
@@ -316,6 +336,27 @@ class FactoryGenerateActivityRequest(BaseModel):
     notes_title: str = ""
     notes_content: dict[str, Any] | None = None
     diagram_info: dict[str, Any] | None = None
+    custom_instructions: str = ""
+
+
+class FactoryPlanActivitiesRequest(BaseModel):
+    grade: str
+    subject: str
+    strand: str
+    sub_strand: str
+    notes_title: str = ""
+    notes_content: dict[str, Any] | None = None
+    diagram_info: dict[str, Any] | None = None
+    custom_instructions: str = ""
+
+
+class FactoryGenerateSingleActivityRequest(BaseModel):
+    grade: str
+    subject: str
+    strand: str
+    sub_strand: str
+    activity_item: dict[str, Any]
+    notes_content: dict[str, Any] | None = None
     custom_instructions: str = ""
 
 
@@ -344,8 +385,10 @@ class FactorySaveBundleRequest(BaseModel):
     level: str = "Basic Education"
     notes: dict[str, Any] = {}
     diagram: dict[str, Any] = {}
+    diagrams: list[Any] = []
     activities: Any = []  # Can be list or dict
     experiments: Any = []
+    video_storyboards: list[Any] = []
     questions: list[Any] = []
     review_status: str = "draft_in_factory"
     human_notes: str = ""
@@ -359,7 +402,9 @@ class FactoryAuditBundleRequest(BaseModel):
     level: str = "Basic Education"
     notes: dict[str, Any] = {}
     diagram: dict[str, Any] = {}
-    activity: dict[str, Any] = {}
+    diagrams: list[Any] = []
+    activity: Any = {}
+    activities: list[Any] = []
     questions: list[Any] = []
 
 
@@ -781,13 +826,20 @@ def factory_generate_diagram(
             f"{dossier.formatted_context}\n\n"
             f"=== LAYER 1 NOTES CONTEXT ===\n{notes_summary_str}\n\n"
             f"VECTOR SVG DESIGN DIRECTIVE:\n"
-            f"Generate a professional, high-contrast SVG diagram for '{concept_name}' aligned with {ct_profile.diagram_type}.\n"
+            f"Generate a professional, high-contrast, responsive SVG vector illustration for '{concept_name}' aligned with {ct_profile.diagram_type}.\n\n"
+            f"STRICT SVG SYNTAX RULES:\n"
+            f"1. Root element MUST be: <svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 800 500\" width=\"100%\" height=\"100%\"> ... </svg>\n"
+            f"2. All CSS styles MUST be enclosed inside <defs><style type=\"text/css\"><![CDATA[ ... ]]></style></defs>. NEVER write naked CSS rules directly in the SVG body.\n"
+            f"3. All text MUST be inside <text x=\"...\" y=\"...\" font-family=\"system-ui, -apple-system, sans-serif\" font-size=\"14\" fill=\"#1e293b\" text-anchor=\"middle\">...</text> elements. NEVER write raw text outside of <text> tags.\n"
+            f"4. Use high-contrast modern colors (e.g. #f0fdf4 backgrounds, #16a34a / #0284c7 borders, #0f172a text), rounded corners (rx=\"8\"), clean connector arrows (<line marker-end=\"url(#arrowhead)\"/>), and clear step boxes.\n"
+            f"5. Return a valid JSON object matching:\n"
+            f'{{\n  "diagram_id": "diag_01",\n  "diagram_title": "{concept_name}",\n  "diagram_svg": "<svg ...>...</svg>",\n  "accessibility": {{"alt_text": "...", "tactile_description": "..."}}\n}}\n\n'
             f"ADDITIONAL INSTRUCTIONS: {payload.custom_instructions}"
         ),
     })
 
     resp = llm_client.generate(resolved, context.messages, temperature=0.1)
-    svg_markup = resp.content.get("diagram_svg", "<svg xmlns='http://www.w3.org/2000/svg'></svg>")
+    svg_markup = resp.content.get("diagram_svg") or resp.content.get("svg") or resp.content.get("svg_code") or "<svg xmlns='http://www.w3.org/2000/svg'></svg>"
     accessibility = resp.content.get("accessibility", {})
 
     dedup = diagram_deduplicator.deduplicate_and_store(
@@ -909,6 +961,426 @@ def factory_generate_activity(
         "model": resp.model,
         "content_type": ct_profile.to_dict(),
         "research_dossier": dossier.to_dict(),
+        "quality_audit": audit_report.to_dict(),
+        "quality_gate": gate_result.to_dict(),
+    }
+
+
+@router.post("/factory/plan-visuals")
+def factory_plan_visuals(
+    payload: FactoryPlanVisualsRequest,
+    _: AuthContext = Depends(require_roles("admin", "operator", "reviewer")),
+) -> dict[str, Any]:
+    """Plans and lists all required diagrams, schematics, and realistic visual assets for a sub-strand."""
+    import json as json_lib
+    from ..services.content_type_classifier import classify_content_type
+    from ..services.langfuse_context import langfuse_context_service
+    from ..services.llm_client import llm_client
+    from ..services.pipeline import pipeline_orchestrator
+    from ..services.web_research import web_research_agent
+
+    resolved = pipeline_orchestrator.router.resolve_for_stage("diagram_generation")
+    ct_profile = classify_content_type(payload.subject, payload.grade, payload.sub_strand)
+
+    dossier = web_research_agent.research_topic(
+        subject=payload.subject,
+        strand=payload.strand,
+        sub_strand=payload.sub_strand,
+        grade=payload.grade,
+        topic_type="diagram",
+        extra_query="visual models and schematics",
+    )
+
+    notes_str = ""
+    if payload.notes_content:
+        notes_str = json_lib.dumps(payload.notes_content, ensure_ascii=False)[:2500]
+
+    context = langfuse_context_service.assemble_agent_context(
+        agent_name="diagram-generator",
+        grade_slug=payload.grade,
+        subject=payload.subject,
+        template_vars={
+            "strand": payload.strand,
+            "sub_strand": payload.sub_strand,
+            "content_type_directives": ct_profile.format_for_prompt(),
+            "notes_content": notes_str or payload.notes_title or payload.sub_strand,
+        },
+    )
+
+    context.messages.append({
+        "role": "user",
+        "content": (
+            f"{ct_profile.format_for_prompt()}\n\n"
+            f"{dossier.formatted_context}\n\n"
+            f"=== LAYER 1 MASTER NOTES CONTEXT ===\n{notes_str[:1500]}\n\n"
+            f"MULTI-VISUAL ASSET PLANNING DIRECTIVE:\n"
+            f"Analyze the sub-strand '{payload.sub_strand}' and plan 2 to 4 distinct, necessary visual assets covering the entire concept scope:\n"
+            f"1. A Technical Process / Flowchart Schematic (vector SVG)\n"
+            f"2. A Realistic Conceptual Scene / Photographic Infographic with authentic Kenyan context\n"
+            f"3. A Detailed Apparatus / Anatomical / Practical Setup Diagram (vector SVG)\n\n"
+            f"For EACH visual asset provide:\n"
+            f"- asset_id (e.g. vis_1, vis_2)\n"
+            f"- title (e.g. 'Soil Conservation Structures Comparative Flowchart')\n"
+            f"- asset_type ('technical_svg' | 'realistic_image' | 'apparatus_schematic' | 'process_flowchart')\n"
+            f"- pedagogical_purpose (why this visual is needed by the learner)\n"
+            f"- vivid_prompt (exhaustive, vivid visual scene description: layout, perspective, objects, lighting, color palette, labels, callouts for AI image/SVG generation)\n"
+            f"- accessibility: {{ 'alt_text': '...', 'tactile_description': '...' }}\n\n"
+            f"Return JSON format:\n"
+            f'{{\n  "sub_strand": "{payload.sub_strand}",\n  "visuals": [\n'
+            f'    {{\n'
+            f'      "asset_id": "vis_1",\n'
+            f'      "title": "...",\n'
+            f'      "asset_type": "technical_svg",\n'
+            f'      "pedagogical_purpose": "...",\n'
+            f'      "vivid_prompt": "...",\n'
+            f'      "accessibility": {{"alt_text": "...", "tactile_description": "..."}},\n'
+            f'      "status": "planned"\n'
+            f'    }}\n  ]\n}}\n\n'
+            f"ADDITIONAL INSTRUCTIONS: {payload.custom_instructions}"
+        ),
+    })
+
+    resp = llm_client.generate(resolved, context.messages, temperature=0.2)
+    visuals_list = resp.content.get("visuals", []) if isinstance(resp.content, dict) else []
+
+    return {
+        "sub_strand": payload.sub_strand,
+        "visuals": visuals_list,
+        "usage": resp.usage,
+        "model": resp.model,
+        "content_type": ct_profile.to_dict(),
+        "research_dossier": dossier.to_dict(),
+    }
+
+
+@router.post("/factory/generate-single-visual")
+def factory_generate_single_visual(
+    payload: FactoryGenerateSingleVisualRequest,
+    _: AuthContext = Depends(require_roles("admin", "operator", "reviewer")),
+) -> dict[str, Any]:
+    """Generates or regenerates a specific visual asset (either vector SVG or AI Image Prompt with realistic detail)."""
+    import json as json_lib
+    from ..services.content_type_classifier import classify_content_type
+    from ..services.diagram_dedup import diagram_deduplicator, extract_and_sanitize_svg
+    from ..services.langfuse_context import langfuse_context_service
+    from ..services.llm_client import llm_client
+    from ..services.pipeline import pipeline_orchestrator
+    from ..services.quality_gate import quality_gate_service
+    from ..services.web_research import web_research_agent
+
+    resolved = pipeline_orchestrator.router.resolve_for_stage("diagram_generation")
+    ct_profile = classify_content_type(payload.subject, payload.grade, payload.sub_strand)
+    item = payload.visual_item
+    title = item.get("title") or "Visual Diagram"
+    asset_type = item.get("asset_type") or "technical_svg"
+    vivid_desc = item.get("vivid_prompt") or title
+
+    dossier = web_research_agent.research_topic(
+        subject=payload.subject,
+        strand=payload.strand,
+        sub_strand=payload.sub_strand,
+        grade=payload.grade,
+        topic_type="diagram",
+        extra_query=title,
+    )
+
+    notes_str = json_lib.dumps(payload.notes_content, ensure_ascii=False)[:1500] if payload.notes_content else ""
+
+    context = langfuse_context_service.assemble_agent_context(
+        agent_name="diagram-generator",
+        grade_slug=payload.grade,
+        subject=payload.subject,
+        template_vars={
+            "strand": payload.strand,
+            "sub_strand": payload.sub_strand,
+            "concept": title,
+            "content_type_directives": ct_profile.format_for_prompt(),
+            "notes_content": notes_str or payload.sub_strand,
+        },
+    )
+
+    if asset_type in ("technical_svg", "apparatus_schematic", "process_flowchart", "concept_diagram"):
+        context.messages.append({
+            "role": "user",
+            "content": (
+                f"{ct_profile.format_for_prompt()}\n\n"
+                f"{dossier.formatted_context}\n\n"
+                f"=== SPECIFICATION FOR THIS VISUAL ASSET ===\n"
+                f"Title: {title}\n"
+                f"Type: {asset_type}\n"
+                f"Vivid Description & Scene Elements:\n{vivid_desc}\n\n"
+                f"VECTOR SVG CODE DIRECTIVE:\n"
+                f"Generate a crisp, responsive, high-contrast standalone SVG for '{title}'.\n"
+                f"STRICT RULES:\n"
+                f"1. Root MUST be <svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 800 500\" width=\"100%\" height=\"100%\">\n"
+                f"2. All styles enclosed inside <defs><style type=\"text/css\"><![CDATA[ ... ]]></style><marker id=\"arrowhead\" markerWidth=\"10\" markerHeight=\"7\" refX=\"10\" refY=\"3.5\" orient=\"auto\"><polygon points=\"0 0, 10 3.5, 0 7\" fill=\"#0284c7\" /></marker></defs>\n"
+                f"3. All text inside <text x=\"...\" y=\"...\" font-family=\"system-ui, -apple-system, sans-serif\" font-size=\"13\" text-anchor=\"middle\" fill=\"#0f172a\">...</text>\n"
+                f"4. Return JSON: {{ \"diagram_id\": \"{item.get('asset_id', 'vis_1')}\", \"diagram_title\": \"{title}\", \"diagram_svg\": \"<svg...>...</svg>\", \"accessibility\": {{ \"alt_text\": \"...\", \"tactile_description\": \"...\" }} }}\n\n"
+                f"ADDITIONAL INSTRUCTIONS: {payload.custom_instructions}"
+            ),
+        })
+    else:
+        # Realistic Photographic / AI Image prompt mode
+        context.messages.append({
+            "role": "user",
+            "content": (
+                f"{ct_profile.format_for_prompt()}\n\n"
+                f"{dossier.formatted_context}\n\n"
+                f"=== SPECIFICATION FOR REALISTIC SCENE / PHOTO INFOGRAPHIC ===\n"
+                f"Title: {title}\n"
+                f"Vivid Scene Guidance:\n{vivid_desc}\n\n"
+                f"AI IMAGE GENERATION PROMPT & SPECIFICATION DIRECTIVE:\n"
+                f"Generate an ultra-detailed, photorealistic image generation prompt for modern AI image models (e.g. Imagen 3, Midjourney v6, Flux, DALL-E 3) capturing authentic Kenyan learners, teachers, landscapes, or practical work.\n"
+                f"Also create a clean SVG preview schematic illustrating the scene layout.\n\n"
+                f"Return JSON:\n"
+                f"{{\n"
+                f'  "diagram_id": "{item.get("asset_id", "vis_1")}",\n'
+                f'  "diagram_title": "{title}",\n'
+                f'  "image_prompt": "<ultra-detailed 150-word photorealistic prompt for AI image generator>",\n'
+                f'  "negative_prompt": "blurry, low quality, distorted anatomy, unrealistic western setting",\n'
+                f'  "aspect_ratio": "16:9",\n'
+                f'  "composition_guide": "<camera angle, lighting, focal length, color temperature>",\n'
+                f'  "diagram_svg": "<svg xmlns=\\"http://www.w3.org/2000/svg\\" viewBox=\\"0 0 800 500\\"><rect width=\\"100%\\" height=\\"100%\\" fill=\\"#f8fafc\\"/><text x=\\"400\\" y=\\"250\\" text-anchor=\\"middle\\" font-family=\\"system-ui\\" font-size=\\"16\\" fill=\\"#0369a1\\">{title} (Photorealistic Scene)</text></svg>",\n'
+                f'  "accessibility": {{"alt_text": "...", "tactile_description": "..."}}\n'
+                f"}}\n\n"
+                f"ADDITIONAL INSTRUCTIONS: {payload.custom_instructions}"
+            ),
+        })
+
+    resp = llm_client.generate(resolved, context.messages, temperature=0.1)
+    svg_markup = resp.content.get("diagram_svg") or resp.content.get("svg") or "<svg xmlns='http://www.w3.org/2000/svg'></svg>"
+    accessibility = resp.content.get("accessibility", {})
+
+    dedup = diagram_deduplicator.deduplicate_and_store(
+        svg_str=svg_markup,
+        diagram_title=title,
+        alt_text=accessibility.get("alt_text", ""),
+        tactile_description=accessibility.get("tactile_description", ""),
+        metadata={"grade": payload.grade, "subject": payload.subject, "strand": payload.strand},
+    )
+
+    updated_visual = {
+        "asset_id": item.get("asset_id") or dedup.diagram_id,
+        "title": title,
+        "asset_type": asset_type,
+        "pedagogical_purpose": item.get("pedagogical_purpose", ""),
+        "vivid_prompt": item.get("vivid_prompt", ""),
+        "diagram_svg": dedup.diagram_svg,
+        "diagram_hash": dedup.diagram_hash,
+        "storage_url": dedup.storage_url,
+        "image_prompt": resp.content.get("image_prompt"),
+        "negative_prompt": resp.content.get("negative_prompt"),
+        "aspect_ratio": resp.content.get("aspect_ratio", "16:9"),
+        "composition_guide": resp.content.get("composition_guide"),
+        "accessibility": {
+            "alt_text": dedup.alt_text,
+            "tactile_description": dedup.tactile_description,
+        },
+        "status": "generated",
+    }
+
+    audit_report = web_research_agent.perform_quality_audit(resp.content, "diagram", dossier)
+    gate_result = quality_gate_service.run_layer_gate("diagram", updated_visual, {}, ct_profile)
+
+    return {
+        "visual": updated_visual,
+        "usage": resp.usage,
+        "model": resp.model,
+        "quality_audit": audit_report.to_dict(),
+        "quality_gate": gate_result.to_dict(),
+    }
+
+
+@router.post("/factory/plan-activities")
+def factory_plan_activities(
+    payload: FactoryPlanActivitiesRequest,
+    _: AuthContext = Depends(require_roles("admin", "operator", "reviewer")),
+) -> dict[str, Any]:
+    """Plans and generates a rich array of hands-on activities, laboratory experiments, and video storyboards for a sub-strand."""
+    import json as json_lib
+    from ..services.content_type_classifier import classify_content_type
+    from ..services.langfuse_context import langfuse_context_service
+    from ..services.llm_client import llm_client
+    from ..services.pipeline import pipeline_orchestrator
+    from ..services.web_research import web_research_agent
+
+    resolved = pipeline_orchestrator.router.resolve_for_stage("activity_generation")
+    ct_profile = classify_content_type(payload.subject, payload.grade, payload.sub_strand)
+
+    dossier = web_research_agent.research_topic(
+        subject=payload.subject,
+        strand=payload.strand,
+        sub_strand=payload.sub_strand,
+        grade=payload.grade,
+        topic_type="activity",
+        extra_query="experiential experiments and video demonstrations",
+    )
+
+    notes_str = json_lib.dumps(payload.notes_content, ensure_ascii=False)[:2000] if payload.notes_content else ""
+
+    context = langfuse_context_service.assemble_agent_context(
+        agent_name="activity-generator",
+        grade_slug=payload.grade,
+        subject=payload.subject,
+        template_vars={
+            "strand": payload.strand,
+            "sub_strand": payload.sub_strand,
+            "content_type_directives": ct_profile.format_for_prompt(),
+            "notes_content": notes_str or payload.notes_title or payload.sub_strand,
+        },
+    )
+
+    context.messages.append({
+        "role": "user",
+        "content": (
+            f"{ct_profile.format_for_prompt()}\n\n"
+            f"{dossier.formatted_context}\n\n"
+            f"=== LAYER 1 MASTER NOTES CONTEXT ===\n{notes_str[:1500]}\n\n"
+            f"MULTI-ACTIVITY & EXPERIMENTAL VIDEO STORYBOARD DIRECTIVE:\n"
+            f"Generate a comprehensive set of 2 to 3 distinct experiential practical tasks for '{payload.sub_strand}':\n"
+            f"1. A Hands-on Laboratory / Workbench Experiment with step-by-step procedure & full Video Storyboard script\n"
+            f"2. An Outdoor Field Study or Community Service Learning (CSL) Project\n"
+            f"3. A Classroom Pedagogical Game, Role-Play, or Practical Simulation\n\n"
+            f"For EACH activity include:\n"
+            f"- activity_id (e.g. act_1, act_2)\n"
+            f"- activity_name (engaging, descriptive title)\n"
+            f"- activity_type ('laboratory_experiment' | 'field_investigation' | 'csl_project' | 'classroom_game')\n"
+            f"- objective (measurable inquiry goal aligned with SLOs)\n"
+            f"- materials (list of low-cost local materials and safety apparatus)\n"
+            f"- procedure_steps (numbered step-by-step guide with safety checkpoints)\n"
+            f"- video_storyboard: {{\n"
+            f"    'video_title': '...', 'target_duration': '90-120s', 'overview': '...',\n"
+            f"    'scenes': [\n"
+            f"      {{ 'scene_number': 1, 'shot_type': 'Close-up / Wide shot', 'visual_action': 'Detailed on-screen action description...', 'voiceover_narration': 'Exact spoken narration...', 'on_screen_text': 'Callouts/labels...', 'ai_video_prompt': 'Prompt for video generator AI...' }}\n"
+            f"    ]\n"
+            f"  }}\n"
+            f"- visual_action_image_prompt (vivid prompt for generating action photo illustration of students conducting the activity)\n"
+            f"- safety_hazards_to_check (mandatory hazard checklist & PPE)\n"
+            f"- assessment_rubric: {{ 'exceeding': '...', 'meeting': '...', 'approaching': '...', 'below': '...' }}\n\n"
+            f"Return JSON format:\n"
+            f'{{\n  "sub_strand": "{payload.sub_strand}",\n  "activities": [\n'
+            f'    {{\n'
+            f'      "activity_id": "act_1",\n'
+            f'      "activity_name": "...",\n'
+            f'      "activity_type": "laboratory_experiment",\n'
+            f'      "objective": "...",\n'
+            f'      "materials": ["..."],\n'
+            f'      "procedure_steps": ["1. ...", "2. ..."],\n'
+            f'      "video_storyboard": {{"video_title": "...", "target_duration": "90s", "scenes": []}},\n'
+            f'      "visual_action_image_prompt": "...",\n'
+            f'      "safety_hazards_to_check": ["..."],\n'
+            f'      "assessment_rubric": {{"exceeding": "...", "meeting": "...", "approaching": "...", "below": "..."}},\n'
+            f'      "status": "planned"\n'
+            f'    }}\n  ]\n}}\n\n'
+            f"ADDITIONAL INSTRUCTIONS: {payload.custom_instructions}"
+        ),
+    })
+
+    resp = llm_client.generate(resolved, context.messages, temperature=0.25)
+    activities_list = resp.content.get("activities", []) if isinstance(resp.content, dict) else []
+
+    return {
+        "sub_strand": payload.sub_strand,
+        "activities": activities_list,
+        "usage": resp.usage,
+        "model": resp.model,
+        "content_type": ct_profile.to_dict(),
+        "research_dossier": dossier.to_dict(),
+    }
+
+
+@router.post("/factory/generate-single-activity")
+def factory_generate_single_activity(
+    payload: FactoryGenerateSingleActivityRequest,
+    _: AuthContext = Depends(require_roles("admin", "operator", "reviewer")),
+) -> dict[str, Any]:
+    """Generates or refines a single experiential activity / experiment with detailed video storyboard."""
+    import json as json_lib
+    from ..services.content_type_classifier import classify_content_type
+    from ..services.langfuse_context import langfuse_context_service
+    from ..services.llm_client import llm_client
+    from ..services.pipeline import pipeline_orchestrator
+    from ..services.quality_gate import quality_gate_service
+    from ..services.web_research import web_research_agent
+
+    resolved = pipeline_orchestrator.router.resolve_for_stage("activity_generation")
+    ct_profile = classify_content_type(payload.subject, payload.grade, payload.sub_strand)
+    item = payload.activity_item
+    name = item.get("activity_name") or "Practical Activity"
+
+    dossier = web_research_agent.research_topic(
+        subject=payload.subject,
+        strand=payload.strand,
+        sub_strand=payload.sub_strand,
+        grade=payload.grade,
+        topic_type="activity",
+        extra_query=name,
+    )
+
+    notes_str = json_lib.dumps(payload.notes_content, ensure_ascii=False)[:1500] if payload.notes_content else ""
+
+    context = langfuse_context_service.assemble_agent_context(
+        agent_name="activity-generator",
+        grade_slug=payload.grade,
+        subject=payload.subject,
+        template_vars={
+            "strand": payload.strand,
+            "sub_strand": payload.sub_strand,
+            "content_type_directives": ct_profile.format_for_prompt(),
+            "notes_content": notes_str or payload.sub_strand,
+        },
+    )
+
+    context.messages.append({
+        "role": "user",
+        "content": (
+            f"{ct_profile.format_for_prompt()}\n\n"
+            f"{dossier.formatted_context}\n\n"
+            f"=== ACTIVITY REFINEMENT DIRECTIVE ===\n"
+            f"Activity Name: {name}\n"
+            f"Type: {item.get('activity_type', 'laboratory_experiment')}\n"
+            f"Initial Objective: {item.get('objective', '')}\n\n"
+            f"Generate an exhaustive, publication-grade practical lesson module with:\n"
+            f"1. Detailed step-by-step instructions with safety checkpoints\n"
+            f"2. Multi-scene Video Storyboard (scene number, camera shot, visual actions, exact spoken voiceover, on-screen text, AI video prompt)\n"
+            f"3. Vivid Action Image Prompt for realistic instructional photo cards\n"
+            f"4. 4-tier KICD Assessment Rubric\n\n"
+            f"Return JSON matching:\n"
+            f"{{\n"
+            f'  "activity_id": "{item.get("activity_id", "act_1")}",\n'
+            f'  "activity_name": "{name}",\n'
+            f'  "activity_type": "{item.get("activity_type", "laboratory_experiment")}",\n'
+            f'  "objective": "...",\n'
+            f'  "materials": ["..."],\n'
+            f'  "procedure_steps": ["1. ...", "2. ..."],\n'
+            f'  "video_storyboard": {{\n'
+            f'    "video_title": "...",\n'
+            f'    "target_duration": "90-120s",\n'
+            f'    "overview": "...",\n'
+            f'    "scenes": [\n'
+            f'      {{ "scene_number": 1, "shot_type": "...", "visual_action": "...", "voiceover_narration": "...", "on_screen_text": "...", "ai_video_prompt": "..." }}\n'
+            f'    ]\n'
+            f'  }},\n'
+            f'  "visual_action_image_prompt": "...",\n'
+            f'  "safety_hazards_to_check": ["..."],\n'
+            f'  "assessment_rubric": {{"exceeding": "...", "meeting": "...", "approaching": "...", "below": "..."}},\n'
+            f'  "status": "generated"\n'
+            f"}}\n\n"
+            f"ADDITIONAL INSTRUCTIONS: {payload.custom_instructions}"
+        ),
+    })
+
+    resp = llm_client.generate(resolved, context.messages, temperature=0.2)
+    updated_activity = resp.content if isinstance(resp.content, dict) else item
+    updated_activity["status"] = "generated"
+
+    audit_report = web_research_agent.perform_quality_audit(resp.content, "activity", dossier)
+    gate_result = quality_gate_service.run_layer_gate("activity", updated_activity, {}, ct_profile)
+
+    return {
+        "activity": updated_activity,
+        "usage": resp.usage,
+        "model": resp.model,
         "quality_audit": audit_report.to_dict(),
         "quality_gate": gate_result.to_dict(),
     }
@@ -1173,11 +1645,27 @@ def factory_publish_bundle(
         },
     )
 
+    # 4. Mirror full bundle to MinIO Object Storage
+    from ..infra.storage import object_storage
+    minio_url = object_storage.save_full_bundle(payload.bundle_id, {
+        "bundle_id": payload.bundle_id,
+        "curriculum": curr_dict,
+        "notes": payload.notes,
+        "diagrams": payload.diagrams or ([payload.diagram] if payload.diagram else []),
+        "activities": activities_list,
+        "experiments": experiments_list,
+        "questions": payload.questions,
+        "bundle_dna_id": bundle_dna.dna_id,
+        "merkle_root": bundle_dna.merkle_root,
+        "status": "approved_active",
+    })
+
     return {
         "status": "published",
         "bundle_id": payload.bundle_id,
         "bundle_dna_id": bundle_dna.dna_id,
         "merkle_root": bundle_dna.merkle_root,
+        "storage_url": minio_url,
         "review_status": "approved_active",
     }
 
@@ -1188,6 +1676,7 @@ def factory_save_bundle(
     _: AuthContext = Depends(require_roles("admin", "operator", "reviewer")),
 ) -> dict[str, Any]:
     from ..infra.db import execute, to_json
+    from ..infra.storage import object_storage
 
     curr_dict = {
         "grade": payload.grade,
@@ -1231,15 +1720,22 @@ def factory_save_bundle(
             "bundle_id": payload.bundle_id,
             "curriculum": to_json(curr_dict),
             "notes": to_json(payload.notes),
-            "diagrams": to_json([payload.diagram] if payload.diagram else []),
-            "activities": to_json({"activities": activities_list, "experiments": experiments_list}),
+            "diagrams": to_json(payload.diagrams if payload.diagrams else ([payload.diagram] if payload.diagram else [])),
+            "activities": to_json({
+                "activities": activities_list,
+                "experiments": experiments_list,
+                "video_storyboards": payload.video_storyboards,
+            }),
             "questions": to_json(payload.questions),
             "review_audit": to_json({"status": payload.review_status, "human_notes": payload.human_notes}),
             "status": payload.review_status,
         },
     )
 
-    return {"status": "saved", "bundle_id": payload.bundle_id, "review_status": payload.review_status}
+    # Mirror draft to MinIO
+    minio_url = object_storage.save_full_bundle(payload.bundle_id, payload.model_dump())
+
+    return {"status": "saved", "bundle_id": payload.bundle_id, "storage_url": minio_url, "review_status": payload.review_status}
 
 
 
