@@ -234,26 +234,31 @@ class LangfuseContextService:
 
     def get_subject_context(self, grade_slug: str, subject: str) -> dict:
         from ..infra.db import fetch_all
+        alt_grade = grade_slug.replace("grade-", "") if grade_slug.startswith("grade-") else f"grade-{grade_slug}"
         rows = fetch_all(
             """
             SELECT strand_name, sub_strand_id, sub_strand_name, allocated_hours, slos,
                    learning_experiences, key_inquiry_questions, required_diagrams,
                    experiments, pedagogical_guidance, prompt_context
             FROM curriculum_substrands
-            WHERE (grade = :grade OR :grade = '' OR :grade IS NULL) AND LOWER(subject) = LOWER(:subject)
+            WHERE (grade = :grade OR grade = :alt_grade OR :grade = '' OR :grade IS NULL) AND LOWER(subject) = LOWER(:subject)
             ORDER BY strand_id ASC, sub_strand_id ASC
             """,
-            {"grade": grade_slug, "subject": subject},
+            {"grade": grade_slug, "alt_grade": alt_grade, "subject": subject},
         )
 
-        if rows:
-            strands_map: dict[str, list[dict]] = {}
-            for r in rows:
-                s_name = r["strand_name"]
-                if s_name not in strands_map:
-                    strands_map[s_name] = []
+        strands_map: dict[str, list[dict]] = {}
+        seen_ss: set[str] = set()
+
+        for r in rows:
+            s_name = r["strand_name"] or "Strand"
+            if s_name not in strands_map:
+                strands_map[s_name] = []
+            ss_name = r["sub_strand_name"]
+            if ss_name:
+                seen_ss.add(ss_name.lower().strip())
                 strands_map[s_name].append({
-                    "name": r["sub_strand_name"],
+                    "name": ss_name,
                     "hours": r["allocated_hours"],
                     "slos": [item.get("text", "") if isinstance(item, dict) else str(item) for item in (r["slos"] or [])],
                     "diagrams_required": r["required_diagrams"] or [],
@@ -262,6 +267,37 @@ class LangfuseContextService:
                     "prompt_package": r["prompt_context"] or {},
                 })
 
+        # Also search curriculum_designs for additional strands/substrands
+        design_rows = fetch_all(
+            """
+            SELECT metadata, raw_payload FROM curriculum_designs
+            WHERE (grade = :grade OR grade = :alt_grade) AND LOWER(subject) = LOWER(:subject)
+            """,
+            {"grade": grade_slug, "alt_grade": alt_grade, "subject": subject},
+        )
+        for dr in design_rows:
+            meta = dr.get("metadata") or {}
+            raw = dr.get("raw_payload") or {}
+            strands_list = meta.get("strands") or raw.get("strands") or []
+            for st in strands_list:
+                st_name = st.get("name") or st.get("strand_name") or "Strand"
+                if st_name not in strands_map:
+                    strands_map[st_name] = []
+                for ss in st.get("sub_strands") or []:
+                    ss_name = ss if isinstance(ss, str) else (ss.get("sub_strand_name") or ss.get("name") or ss.get("title"))
+                    if ss_name and ss_name.lower().strip() not in seen_ss:
+                        seen_ss.add(ss_name.lower().strip())
+                        strands_map[st_name].append({
+                            "name": ss_name,
+                            "hours": (ss.get("allocated_hours") or ss.get("hours") or "4 hours") if isinstance(ss, dict) else "4 hours",
+                            "slos": (ss.get("slos") or []) if isinstance(ss, dict) else [],
+                            "diagrams_required": (ss.get("required_diagrams") or []) if isinstance(ss, dict) else [],
+                            "experiments": (ss.get("experiments") or []) if isinstance(ss, dict) else [],
+                            "kiqs": (ss.get("key_inquiry_questions") or ss.get("kiqs") or []) if isinstance(ss, dict) else [],
+                            "prompt_package": {},
+                        })
+
+        if strands_map:
             strands_tree = [{"name": k, "sub_strands": v} for k, v in strands_map.items()]
             return {
                 "subject": subject,

@@ -3104,52 +3104,142 @@ export function App() {
 
                         <label style={{ fontSize: "12px", fontWeight: 600, color: "#0369a1", display: "flex", alignItems: "center", gap: "6px" }}>
                           🌿 Strand:
-                          <select
-                            value={genStrand}
-                            onChange={(e) => {
-                              const stName = e.target.value;
-                              setGenStrand(stName);
-                              const foundStrand = subjectStrands.find((s: any) => (s.name || s.strand_name) === stName);
-                              if (foundStrand && foundStrand.sub_strands && foundStrand.sub_strands.length > 0) {
-                                const firstSub = foundStrand.sub_strands[0];
-                                selectSubstrandForFactory(firstSub, genGrade, genSubject);
+                          {(() => {
+                            const strandsSet = new Set<string>();
+                            for (const st of subjectStrands) {
+                              const name = st.name || st.strand_name;
+                              if (name) strandsSet.add(name);
+                            }
+                            for (const fs of factorySubstrandsList) {
+                              if (fs.strand_name) strandsSet.add(fs.strand_name);
+                            }
+                            for (const cd of curriculumDesignsList) {
+                              if (!genSubject || (cd.subject || "").toLowerCase() === genSubject.toLowerCase()) {
+                                for (const st of (cd.strands || cd.raw_payload?.strands || [])) {
+                                  const name = st.name || st.strand_name;
+                                  if (name) strandsSet.add(name);
+                                }
                               }
-                            }}
-                            style={{ fontSize: "12px", padding: "4px 8px", borderRadius: "6px", border: "1px solid #bae6fd", background: "#fff", color: "#0c4a6e" }}
-                          >
-                            {subjectStrands.length > 0 ? (
-                              subjectStrands.map((st: any, idx: number) => {
-                                const label = st.name || st.strand_name || `Strand ${idx+1}`;
-                                return <option key={`st-opt-${idx}`} value={label}>{label}</option>;
-                              })
-                            ) : (
-                              <option value={genStrand}>{genStrand || "General Strand"}</option>
-                            )}
-                          </select>
+                            }
+                            if (genStrand) strandsSet.add(genStrand);
+                            const list = Array.from(strandsSet);
+                            return (
+                              <select
+                                value={genStrand}
+                                onChange={(e) => {
+                                  const stName = e.target.value;
+                                  setGenStrand(stName);
+                                  const foundStrand = subjectStrands.find((s: any) => (s.name || s.strand_name) === stName);
+                                  if (foundStrand && foundStrand.sub_strands && foundStrand.sub_strands.length > 0) {
+                                    const raw0 = foundStrand.sub_strands[0];
+                                    const firstSub = typeof raw0 === "string" ? { strand_name: stName, sub_strand_name: raw0 } : raw0;
+                                    selectSubstrandForFactory(firstSub, genGrade, genSubject);
+                                  }
+                                }}
+                                style={{ fontSize: "12px", padding: "4px 8px", borderRadius: "6px", border: "1px solid #bae6fd", background: "#fff", color: "#0c4a6e" }}
+                              >
+                                {list.length > 0 ? (
+                                  list.map((st: string, idx: number) => (
+                                    <option key={`st-opt-${idx}`} value={st}>{st}</option>
+                                  ))
+                                ) : (
+                                  <option value={genStrand}>{genStrand || "General Strand"}</option>
+                                )}
+                              </select>
+                            );
+                          })()}
                         </label>
 
                         <label style={{ fontSize: "12px", fontWeight: 600, color: "#15803d", display: "flex", alignItems: "center", gap: "6px" }}>
                           🌱 Sub-strand:
-                          <select
-                            value={genSubstrand}
-                            onChange={(e) => {
-                              const ssName = e.target.value;
-                              const found = factorySubstrandsList.find((s: any) => (s.sub_strand_name || s.name) === ssName)
-                                || { strand_name: genStrand, sub_strand_name: ssName };
-                              selectSubstrandForFactory(found, genGrade, genSubject);
-                            }}
-                            style={{ fontSize: "12px", padding: "4px 8px", borderRadius: "6px", border: "1px solid #86efac", background: "#fff", color: "#14532d", fontWeight: 700 }}
-                          >
-                            {factorySubstrandsList.length > 0 ? (
-                              factorySubstrandsList.map((ss: any, idx: number) => {
-                                const name = ss.sub_strand_name || ss.name || `Sub-strand ${idx+1}`;
-                                const hours = ss.allocated_hours || "4h";
-                                return <option key={`ss-opt-${idx}`} value={name}>{name} (⏱️ {hours})</option>;
-                              })
-                            ) : (
-                              <option value={genSubstrand}>{genSubstrand || "Select Sub-strand"}</option>
-                            )}
-                          </select>
+                          {(() => {
+                            const result: Array<{ name: string; hours?: string; strand_name?: string }> = [];
+                            const seen = new Set<string>();
+
+                            const add = (name: string, hours?: string, strand?: string) => {
+                              if (!name) return;
+                              const clean = name.trim();
+                              if (!seen.has(clean.toLowerCase())) {
+                                seen.add(clean.toLowerCase());
+                                result.push({ name: clean, hours: hours || "4 hours", strand_name: strand || genStrand });
+                              }
+                            };
+
+                            // 1. From subjectStrands matching genStrand
+                            const matchedSt = subjectStrands.find((s: any) => {
+                              const sName = (s.name || s.strand_name || "").toLowerCase().trim();
+                              const target = (genStrand || "").toLowerCase().trim();
+                              return sName === target || (target && (sName.includes(target) || target.includes(sName)));
+                            });
+                            if (matchedSt && Array.isArray(matchedSt.sub_strands)) {
+                              for (const ss of matchedSt.sub_strands) {
+                                const name = typeof ss === "string" ? ss : (ss.sub_strand_name || ss.name || ss.title);
+                                const hours = typeof ss === "object" ? (ss.allocated_hours || ss.hours) : undefined;
+                                add(name, hours, matchedSt.name || matchedSt.strand_name);
+                              }
+                            }
+
+                            // 2. From factorySubstrandsList matching genStrand
+                            for (const fs of factorySubstrandsList) {
+                              const fsStrand = (fs.strand_name || "").toLowerCase().trim();
+                              const target = (genStrand || "").toLowerCase().trim();
+                              const matches = !target || fsStrand === target || fsStrand.includes(target) || target.includes(fsStrand);
+                              if (matches && fs.sub_strand_name) {
+                                add(fs.sub_strand_name, fs.allocated_hours, fs.strand_name);
+                              }
+                            }
+
+                            // 3. From curriculumDesignsList matching genStrand
+                            for (const cd of curriculumDesignsList) {
+                              if (!genSubject || (cd.subject || "").toLowerCase() === genSubject.toLowerCase()) {
+                                for (const st of (cd.strands || cd.raw_payload?.strands || [])) {
+                                  const stName = (st.name || st.strand_name || "").toLowerCase().trim();
+                                  const target = (genStrand || "").toLowerCase().trim();
+                                  if (!target || stName === target || stName.includes(target) || target.includes(stName)) {
+                                    for (const ss of (st.sub_strands || [])) {
+                                      const name = typeof ss === "string" ? ss : (ss.sub_strand_name || ss.name || ss.title);
+                                      const hours = typeof ss === "object" ? (ss.allocated_hours || ss.hours) : undefined;
+                                      add(name, hours, st.name || st.strand_name);
+                                    }
+                                  }
+                                }
+                              }
+                            }
+
+                            // 4. Fallback if still empty: add all items
+                            if (result.length === 0) {
+                              for (const fs of factorySubstrandsList) {
+                                if (fs.sub_strand_name) add(fs.sub_strand_name, fs.allocated_hours, fs.strand_name);
+                              }
+                            }
+
+                            // 5. Always include currently selected genSubstrand
+                            if (genSubstrand) {
+                              add(genSubstrand);
+                            }
+
+                            return (
+                              <select
+                                value={genSubstrand}
+                                onChange={(e) => {
+                                  const ssName = e.target.value;
+                                  const found = result.find((s) => s.name === ssName)
+                                    || factorySubstrandsList.find((s: any) => (s.sub_strand_name || s.name) === ssName)
+                                    || { strand_name: genStrand, sub_strand_name: ssName };
+                                  selectSubstrandForFactory(found, genGrade, genSubject);
+                                }}
+                                style={{ fontSize: "12px", padding: "4px 8px", borderRadius: "6px", border: "1px solid #86efac", background: "#fff", color: "#14532d", fontWeight: 700 }}
+                              >
+                                {result.length > 0 ? (
+                                  result.map((ss: any, idx: number) => (
+                                    <option key={`ss-opt-${idx}`} value={ss.name}>{ss.name} (⏱️ {ss.hours || "4h"})</option>
+                                  ))
+                                ) : (
+                                  <option value={genSubstrand}>{genSubstrand || "Select Sub-strand"}</option>
+                                )}
+                              </select>
+                            );
+                          })()}
                         </label>
                       </div>
 
@@ -6036,61 +6126,152 @@ export function App() {
 
                 <label style={{ fontSize: "12px", fontWeight: 600, color: "#5b21b6" }}>
                   Strand (Parent Concept):
-                  <select
-                    value={qfStrand}
-                    onChange={(e) => {
-                      const st = e.target.value;
-                      setQfStrand(st);
-                      const foundStrand = subjectStrands.find((s: any) => (s.name || s.strand_name) === st);
-                      let firstSub = qfSubstrand;
-                      if (foundStrand && foundStrand.sub_strands && foundStrand.sub_strands.length > 0) {
-                        firstSub = foundStrand.sub_strands[0]?.sub_strand_name || foundStrand.sub_strands[0]?.name || foundStrand.sub_strands[0] || qfSubstrand;
-                        setQfSubstrand(firstSub);
+                  {(() => {
+                    const strandsSet = new Set<string>();
+                    for (const st of subjectStrands) {
+                      const name = st.name || st.strand_name;
+                      if (name) strandsSet.add(name);
+                    }
+                    for (const fs of factorySubstrandsList) {
+                      if (fs.strand_name) strandsSet.add(fs.strand_name);
+                    }
+                    for (const cd of curriculumDesignsList) {
+                      if (!qfSubject || (cd.subject || "").toLowerCase() === qfSubject.toLowerCase()) {
+                        for (const st of (cd.strands || cd.raw_payload?.strands || [])) {
+                          const name = st.name || st.strand_name;
+                          if (name) strandsSet.add(name);
+                        }
                       }
-                      loadGroundTruthForQF(qfGrade, qfSubject, st, firstSub);
-                      loadQuestionsForSubstrand(qfGrade, qfSubject, st, firstSub);
-                    }}
-                    style={{ width: "100%", marginTop: "4px", padding: "6px", borderRadius: "6px", border: "1px solid #c4b5fd", background: "#fff" }}
-                  >
-                    {subjectStrands.length > 0 ? (
-                      subjectStrands.map((st: any, idx: number) => {
-                        const label = st.name || st.strand_name || `Strand ${idx+1}`;
-                        return <option key={`qf-st-${idx}`} value={label}>{label}</option>;
-                      })
-                    ) : (
-                      <option value={qfStrand}>{qfStrand || "Select Strand"}</option>
-                    )}
-                    {qfStrand && !subjectStrands.some((st: any) => (st.name || st.strand_name) === qfStrand) && (
-                      <option value={qfStrand}>{qfStrand}</option>
-                    )}
-                  </select>
+                    }
+                    if (qfStrand) strandsSet.add(qfStrand);
+                    const list = Array.from(strandsSet);
+                    return (
+                      <select
+                        value={qfStrand}
+                        onChange={(e) => {
+                          const st = e.target.value;
+                          setQfStrand(st);
+                          const foundStrand = subjectStrands.find((s: any) => (s.name || s.strand_name) === st);
+                          let firstSub = qfSubstrand;
+                          if (foundStrand && foundStrand.sub_strands && foundStrand.sub_strands.length > 0) {
+                            const raw0 = foundStrand.sub_strands[0];
+                            firstSub = typeof raw0 === "string" ? raw0 : (raw0?.sub_strand_name || raw0?.name || qfSubstrand);
+                            setQfSubstrand(firstSub);
+                          }
+                          loadGroundTruthForQF(qfGrade, qfSubject, st, firstSub);
+                          loadQuestionsForSubstrand(qfGrade, qfSubject, st, firstSub);
+                        }}
+                        style={{ width: "100%", marginTop: "4px", padding: "6px", borderRadius: "6px", border: "1px solid #c4b5fd", background: "#fff" }}
+                      >
+                        {list.length > 0 ? (
+                          list.map((stName: string, idx: number) => (
+                            <option key={`qf-st-${idx}`} value={stName}>{stName}</option>
+                          ))
+                        ) : (
+                          <option value={qfStrand}>{qfStrand || "Select Strand"}</option>
+                        )}
+                      </select>
+                    );
+                  })()}
                 </label>
 
                 <label style={{ fontSize: "12px", fontWeight: 600, color: "#5b21b6" }}>
                   Sub-strand (Target Anchor):
-                  <select
-                    value={qfSubstrand}
-                    onChange={(e) => {
-                      const ss = e.target.value;
-                      setQfSubstrand(ss);
-                      loadGroundTruthForQF(qfGrade, qfSubject, qfStrand, ss);
-                      loadQuestionsForSubstrand(qfGrade, qfSubject, qfStrand, ss);
-                    }}
-                    style={{ width: "100%", marginTop: "4px", padding: "6px", borderRadius: "6px", border: "1px solid #c4b5fd", background: "#fff", fontWeight: 700 }}
-                  >
-                    {factorySubstrandsList.length > 0 ? (
-                      factorySubstrandsList.map((ss: any, idx: number) => {
-                        const name = ss.sub_strand_name || ss.name || `Sub-strand ${idx+1}`;
-                        const hours = ss.allocated_hours || "4h";
-                        return <option key={`qf-ss-${idx}`} value={name}>{name} (⏱️ {hours})</option>;
-                      })
-                    ) : (
-                      <option value={qfSubstrand}>{qfSubstrand || "Select Sub-strand"}</option>
-                    )}
-                    {qfSubstrand && !factorySubstrandsList.some((ss: any) => (ss.sub_strand_name || ss.name) === qfSubstrand) && (
-                      <option value={qfSubstrand}>{qfSubstrand}</option>
-                    )}
-                  </select>
+                  {(() => {
+                    const result: Array<{ name: string; hours?: string }> = [];
+                    const seen = new Set<string>();
+
+                    const add = (name: string, hours?: string) => {
+                      if (!name) return;
+                      const clean = name.trim();
+                      if (!seen.has(clean.toLowerCase())) {
+                        seen.add(clean.toLowerCase());
+                        result.push({ name: clean, hours: hours || "4 hours" });
+                      }
+                    };
+
+                    // 1. Check subjectStrands matching qfStrand
+                    const matchedSt = subjectStrands.find((s: any) => {
+                      const sName = (s.name || s.strand_name || "").toLowerCase().trim();
+                      const target = (qfStrand || "").toLowerCase().trim();
+                      return sName === target || (target && (sName.includes(target) || target.includes(sName)));
+                    });
+                    if (matchedSt && Array.isArray(matchedSt.sub_strands)) {
+                      for (const ss of matchedSt.sub_strands) {
+                        const name = typeof ss === "string" ? ss : (ss.sub_strand_name || ss.name || ss.title);
+                        const hours = typeof ss === "object" ? (ss.allocated_hours || ss.hours) : undefined;
+                        add(name, hours);
+                      }
+                    }
+
+                    // 2. Check factorySubstrandsList matching qfStrand
+                    for (const fs of factorySubstrandsList) {
+                      const fsStrand = (fs.strand_name || "").toLowerCase().trim();
+                      const target = (qfStrand || "").toLowerCase().trim();
+                      const matchesStrand = !target || fsStrand === target || fsStrand.includes(target) || target.includes(fsStrand);
+                      if (matchesStrand && fs.sub_strand_name) {
+                        add(fs.sub_strand_name, fs.allocated_hours);
+                      }
+                    }
+
+                    // 3. Check curriculumDesignsList matching qfStrand
+                    for (const cd of curriculumDesignsList) {
+                      if (!qfSubject || (cd.subject || "").toLowerCase() === qfSubject.toLowerCase()) {
+                        for (const st of (cd.strands || cd.raw_payload?.strands || [])) {
+                          const stName = (st.name || st.strand_name || "").toLowerCase().trim();
+                          const target = (qfStrand || "").toLowerCase().trim();
+                          if (!target || stName === target || stName.includes(target) || target.includes(stName)) {
+                            for (const ss of (st.sub_strands || [])) {
+                              const name = typeof ss === "string" ? ss : (ss.sub_strand_name || ss.name || ss.title);
+                              const hours = typeof ss === "object" ? (ss.allocated_hours || ss.hours) : undefined;
+                              add(name, hours);
+                            }
+                          }
+                        }
+                      }
+                    }
+
+                    // 4. Fallback if still empty: add all items
+                    if (result.length === 0) {
+                      for (const fs of factorySubstrandsList) {
+                        if (fs.sub_strand_name) add(fs.sub_strand_name, fs.allocated_hours);
+                      }
+                      for (const st of subjectStrands) {
+                        if (Array.isArray(st.sub_strands)) {
+                          for (const ss of st.sub_strands) {
+                            const name = typeof ss === "string" ? ss : (ss.sub_strand_name || ss.name || ss.title);
+                            add(name);
+                          }
+                        }
+                      }
+                    }
+
+                    // 5. Always include currently selected qfSubstrand if set
+                    if (qfSubstrand) {
+                      add(qfSubstrand);
+                    }
+
+                    return (
+                      <select
+                        value={qfSubstrand}
+                        onChange={(e) => {
+                          const ss = e.target.value;
+                          setQfSubstrand(ss);
+                          loadGroundTruthForQF(qfGrade, qfSubject, qfStrand, ss);
+                          loadQuestionsForSubstrand(qfGrade, qfSubject, qfStrand, ss);
+                        }}
+                        style={{ width: "100%", marginTop: "4px", padding: "6px", borderRadius: "6px", border: "1px solid #c4b5fd", background: "#fff", fontWeight: 700 }}
+                      >
+                        {result.length > 0 ? (
+                          result.map((ss: any, idx: number) => (
+                            <option key={`qf-ss-${idx}`} value={ss.name}>{ss.name} (⏱️ {ss.hours || "4h"})</option>
+                          ))
+                        ) : (
+                          <option value={qfSubstrand}>{qfSubstrand || "Select Sub-strand"}</option>
+                        )}
+                      </select>
+                    );
+                  })()}
                 </label>
               </div>
 

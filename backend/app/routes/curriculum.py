@@ -227,8 +227,10 @@ def list_curriculum_substrands(
     params: dict[str, Any] = {}
 
     if grade:
-        conditions.append("grade = :grade")
+        alt_grade = grade.replace("grade-", "") if grade.startswith("grade-") else f"grade-{grade}"
+        conditions.append("(grade = :grade OR grade = :alt_grade OR :grade = '' OR :grade IS NULL)")
         params["grade"] = grade
+        params["alt_grade"] = alt_grade
     if subject:
         conditions.append("LOWER(subject) = LOWER(:subject)")
         params["subject"] = subject
@@ -247,6 +249,58 @@ def list_curriculum_substrands(
         ORDER BY strand_id ASC, sub_strand_id ASC
     """
     rows = fetch_all(query, params)
+    seen_names = {r["sub_strand_name"].lower().strip() for r in rows if r.get("sub_strand_name")}
+
+    # Also search curriculum_designs for additional strands/substrands
+    design_conds = ["1=1"]
+    design_params: dict[str, Any] = {}
+    if grade:
+        design_conds.append("(grade = :grade OR grade = :alt_grade)")
+        design_params["grade"] = grade
+        design_params["alt_grade"] = alt_grade
+    if subject:
+        design_conds.append("LOWER(subject) = LOWER(:subject)")
+        design_params["subject"] = subject
+
+    design_rows = fetch_all(
+        f"SELECT design_id, grade, subject, metadata, raw_payload FROM curriculum_designs WHERE {' AND '.join(design_conds)}",
+        design_params,
+    )
+    for dr in design_rows:
+        meta = dr.get("metadata") or {}
+        raw = dr.get("raw_payload") or {}
+        strands_list = meta.get("strands") or raw.get("strands") or []
+        for st in strands_list:
+            st_name = st.get("name") or st.get("strand_name") or "Strand"
+            if strand_name and strand_name.lower().strip() not in st_name.lower().strip() and st_name.lower().strip() not in strand_name.lower().strip():
+                continue
+            for ss in st.get("sub_strands") or []:
+                ss_name = ss if isinstance(ss, str) else (ss.get("sub_strand_name") or ss.get("name") or ss.get("title"))
+                if ss_name and ss_name.lower().strip() not in seen_names:
+                    seen_names.add(ss_name.lower().strip())
+                    rows.append({
+                        "id": f"des_{len(rows)+1}",
+                        "design_id": dr.get("design_id"),
+                        "grade": dr.get("grade") or grade,
+                        "subject": dr.get("subject") or subject,
+                        "strand_id": st.get("strand_id", "1.0"),
+                        "strand_name": st_name,
+                        "sub_strand_id": ss.get("sub_strand_id", f"1.{len(rows)+1}") if isinstance(ss, dict) else f"1.{len(rows)+1}",
+                        "sub_strand_name": ss_name,
+                        "allocated_hours": (ss.get("allocated_hours") or ss.get("hours") or "4 hours") if isinstance(ss, dict) else "4 hours",
+                        "slos": (ss.get("slos") or []) if isinstance(ss, dict) else [],
+                        "learning_experiences": (ss.get("learning_experiences") or []) if isinstance(ss, dict) else [],
+                        "key_inquiry_questions": (ss.get("key_inquiry_questions") or ss.get("kiqs") or []) if isinstance(ss, dict) else [],
+                        "core_competencies": (ss.get("core_competencies") or []) if isinstance(ss, dict) else [],
+                        "values": (ss.get("values") or []) if isinstance(ss, dict) else [],
+                        "assessment_rubrics": (ss.get("assessment_rubrics") or {}) if isinstance(ss, dict) else {},
+                        "required_diagrams": (ss.get("required_diagrams") or []) if isinstance(ss, dict) else [],
+                        "experiments": (ss.get("experiments") or []) if isinstance(ss, dict) else [],
+                        "pedagogical_guidance": {},
+                        "prompt_context": {},
+                        "created_at": None,
+                    })
+
     return {"substrands": rows, "count": len(rows)}
 
 
