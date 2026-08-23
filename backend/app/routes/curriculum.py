@@ -741,75 +741,143 @@ def factory_generate_notes(
         "content": (
             f"{ct_profile.format_for_prompt()}\n\n"
             f"{dossier.formatted_context}\n\n"
-            f"=== 4-HOUR FULL INSTRUCTIONAL DEPTH DIRECTIVE ===\n"
+            f"=== {hours_count}-HOUR FULL INSTRUCTIONAL SYLLABUS DIRECTIVE ===\n"
             f"Subject: {payload.subject} ({payload.grade}, {level}) [Content Type: {ct_profile.content_type.upper()}]\n"
             f"Strand: {payload.strand} ➔ Sub-strand: {payload.sub_strand}\n"
             f"Allocated Syllabus Time: {hours_count} CONTACT HOURS (240 instructional minutes)\n"
             f"SLOs to Cover Completely:\n{slos_formatted}\n"
             f"Key Inquiry Questions to Address:\n{kiqs_formatted}\n\n"
             f"ESSENCE STATEMENT & CURRICULUM CONTEXT:\n{essence_stmt}\n\n"
-            f"CRITICAL RIGOR & ZERO HALLUCINATION RULES:\n"
-            f"1. This is a publication-grade, 4-hour master revision and teaching guide for teacher trainees / senior students. DO NOT write shallow summaries or 1-paragraph overviews.\n"
-            f"2. Every section MUST provide substantive, deeply articulated paragraphs (400-600 words per concept) with exact scientific mechanisms, ecological principles, quantitative statistics, and authentic Kenyan county case examples.\n"
+            f"MANDATORY MULTI-HOUR PRODUCTION RULES:\n"
+            f"1. YOU MUST GENERATE ALL {hours_count} COMPLETE, INDEPENDENT HOUR MODULES in the 'hour_modules' array (Hour 1, Hour 2, Hour 3, Hour 4). DO NOT combine them into one concept.\n"
+            f"2. Each Hour Module must be a comprehensive, uncompressed chapter of 600-900 words containing:\n"
+            f"   - An in-depth 'full_lecture_notes' multi-paragraph exposition with technical vocabulary, chemical/physical/ecological principles, quantitative statistics, and authentic Kenyan county examples (e.g. Uasin Gishu, Nakuru, Kericho, Trans-Nzoia, Makueni).\n"
+            f"   - 2 to 3 detailed 'subsections' with exhaustive explanations.\n"
+            f"   - 'quantitative_data_summary': specific cited metrics and statistics.\n"
+            f"   - 'pedagogical_notes': 5E instructional plan (Engage, Explore, Explain, Elaborate, Evaluate) for teacher trainees.\n"
+            f"   - 'common_misconceptions': specific learner misconception, root cause, and clinical cognitive remediation.\n"
+            f"   - 'formative_checks': 3 high-order diagnostic assessment questions with model answers.\n"
+            f"   - 'active_trainee_tasks': specific practical or inquiry task conducted during that 60-minute session.\n"
             f"3. IN-TEXT RESEARCH CITATIONS: Every statistic, policy target, or scientific claim MUST cite verifiable sources in brackets directly in the text (e.g. [KNBS Economic Survey 2024], [KALRO Technical Bulletin 2023], [KICD DTE Agriculture Curriculum Design 2024], [Ministry of Agriculture ASTGS 2019-2029], [UNEP Kenya Environmental Assessment]).\n"
-            f"4. Include a dedicated 'hourly_breakdown' section dividing the {hours_count} hours into 60-minute modular blocks with specific teacher facilitation protocols and trainee active tasks.\n"
-            f"5. Include a dedicated 'research_references' bibliography list at the bottom.\n\n"
+            f"4. Total combined text across all {hours_count} hours must be substantial (3,000+ words).\n\n"
             f"RETURN JSON FORMAT MATCHING:\n"
             f"{{\n"
             f'  "title": "Comprehensive {hours_count}-Hour Master Revision & Teaching Guide: {payload.sub_strand}",\n'
             f'  "allocated_hours": {hours_count},\n'
-            f'  "intro": "In-depth multi-paragraph theoretical, constitutional, and socio-economic introduction (300+ words) citing relevant frameworks...",\n'
-            f'  "hourly_breakdown": [\n'
+            f'  "intro": "In-depth multi-paragraph theoretical, constitutional, and socio-economic introduction (350+ words) citing relevant frameworks...",\n'
+            f'  "hour_modules": [\n'
             f'    {{\n'
             f'      "hour_number": 1,\n'
-            f'      "hour_title": "Hour 1: ...",\n'
+            f'      "hour_title": "Hour 1: Macro-Economic Architecture, Agricultural GDP Contribution & Employment Dynamics",\n'
             f'      "duration_minutes": 60,\n'
-            f'      "learning_intent": "...",\n'
-            f'      "teacher_facilitation_steps": "...",\n'
-            f'      "learner_active_tasks": "...",\n'
-            f'      "empirical_citations": ["KNBS Economic Survey 2024"]\n'
-            f'    }}\n'
-            f'  ],\n'
-            f'  "key_concepts": [\n'
-            f'    {{\n'
-            f'      "concept_id": "concept_1",\n'
-            f'      "heading": "1. In-Depth Concept Title",\n'
-            f'      "content": "Exhaustive, multi-paragraph conceptual treatise (500+ words) with technical depth, quantitative metrics, mechanisms, and in-text citations [KNBS 2024]...",\n'
-            f'      "sub_sections": [\n'
-            f'        {{"title": "1.1 Sub-topic", "content": "Detailed technical analysis..."}}\n'
+            f'      "learning_intent": "Analyze the quantitative and structural contribution of agriculture to Kenya\'s GDP, rural livelihoods, and industrialization...",\n'
+            f'      "full_lecture_notes": "Exhaustive multi-paragraph deep technical text (600-800 words) with exact KNBS data, agro-based industry linkages, export earnings, and multi-sectoral multipliers [KNBS Economic Survey 2024]...",\n'
+            f'      "subsections": [\n'
+            f'        {{"title": "1.1 Direct vs. Indirect GDP Contributions", "content": "Detailed breakdown of the 33% direct and 27% indirect GDP share..."}},\n'
+            f'        {{"title": "1.2 Employment Multipliers & Rural Poverty Alleviation", "content": "Analysis of the 70% rural workforce dependency..."}},\n'
+            f'        {{"title": "1.3 Agro-Industrial Value Chains & Export Foreign Exchange", "content": "Horticulture, tea, and pyrethrum value addition dynamics..."}}\n'
             f'      ],\n'
-            f'      "pedagogical_notes": "Deep PCK guidance for teacher facilitation using 5E constructivist model...",\n'
-            f'      "common_misconceptions": "Prevalent learner misconception, root cause, and clinical cognitive remediation protocol...",\n'
-            f'      "formative_checks": "Diagnostic evaluation cues with model answers and scoring rationales..."\n'
+            f'      "quantitative_data_summary": [\n'
+            f'        {{"metric": "Direct GDP Contribution", "value": "33.0%", "source": "KNBS Economic Survey 2024"}},\n'
+            f'        {{"metric": "Rural Population Employment Dependency", "value": ">70.0%", "source": "KNBS / MoA 2024"}}\n'
+            f'      ],\n'
+            f'      "pedagogical_notes": "Teacher Trainee Guidance: Conduct a 5E guided inquiry session where trainees analyze KNBS district data...",\n'
+            f'      "common_misconceptions": "Misconception: Agriculture is limited to subsistence food farming. Correction: Agriculture encompasses high-tech horticulture, biotechnology, agro-processing, and agro-tourism.",\n'
+            f'      "formative_checks": [\n'
+            f'        "1. Quantify the direct and indirect GDP contribution of Kenya\'s agricultural sector and cite the reporting authority.",\n'
+            f'        "2. Explain how agro-processing industries in Thika and Nakuru create forward and backward economic linkages."\n'
+            f'      ],\n'
+            f'      "active_trainee_tasks": "Trainees map a local agricultural value chain from farm gate to supermarket shelf in their county."\n'
+            f'    }},\n'
+            f'    {{\n'
+            f'      "hour_number": 2,\n'
+            f'      "hour_title": "Hour 2: Agriculture & Environmental Systems — Soil Chemistry, Water Cycles & Agroforestry",\n'
+            f'      "duration_minutes": 60,\n'
+            f'      "learning_intent": "Evaluate the biophysical interactions between farming systems and ecological equilibrium...",\n'
+            f'      "full_lecture_notes": "Exhaustive multi-paragraph deep technical text (600-800 words) on soil organic matter, nutrient cycling, watershed conservation, and agroforestry species (*Grevillea robusta*, *Calliandra*) [KALRO 2023]...",\n'
+            f'      "subsections": [\n'
+            f'        {{"title": "2.1 Soil Microbiome & Humus Dynamics", "content": "Detailed analysis of mycorrhizal fungi and soil aggregation..."}},\n'
+            f'        {{"title": "2.2 Hydrological Cycles & Swale Water Infiltration", "content": "Terracing and catchment hydrology in semi-arid zones..."}},\n'
+            f'        {{"title": "2.3 Agroforestry Systems for Carbon Sequestration", "content": "Nitrogen-fixing tree species and microclimate stabilization..."}}\n'
+            f'      ],\n'
+            f'      "pedagogical_notes": "Teacher Trainee Guidance: 5E lesson plan on soil structure demonstration...",\n'
+            f'      "common_misconceptions": "Misconception: Trees always compete with crops for nutrients. Correction: Deep-rooted nitrogen-fixing trees pump deep subsoil nutrients to topsoil.",\n'
+            f'      "formative_checks": ["1. Describe the biological mechanism of nitrogen fixation in Calliandra calothyrsus."],\n'
+            f'      "active_trainee_tasks": "Trainees design an agroforestry layout for a 2-acre farm in Embu County."\n'
+            f'    }},\n'
+            f'    {{\n'
+            f'      "hour_number": 3,\n'
+            f'      "hour_title": "Hour 3: Environmental Impacts of Intensive Agronomy & Climate Resilience Mitigation Protocols",\n'
+            f'      "duration_minutes": 60,\n'
+            f'      "learning_intent": "Critically analyze soil degradation, chemical runoff, and climate adaptation strategies...",\n'
+            f'      "full_lecture_notes": "Exhaustive multi-paragraph deep technical text (600-800 words) on agrochemical leaching, soil acidification from synthetic fertilizers, minimum tillage, and IPM [Kenya Climate Action Plan]...",\n'
+            f'      "subsections": [\n'
+            f'        {{"title": "3.1 Fertilizer Leaching & Soil Acidification Mechanisms", "content": "Chemistry of ammonium-based fertilizers and calcium depletion..."}},\n'
+            f'        {{"title": "3.2 Integrated Pest Management (IPM) & Biological Controls", "content": "Push-pull technology with Desmodium and Napier grass..."}},\n'
+            f'        {{"title": "3.3 Conservation Tillage & Soil Moisture Preservation", "content": "Direct drilling and residue retention protocols..."}}\n'
+            f'      ],\n'
+            f'      "pedagogical_notes": "Teacher Trainee Guidance: Facilitate a structured debate on synthetic fertilizers vs. organic amendments...",\n'
+            f'      "common_misconceptions": "Misconception: Chemical fertilizers are the only cause of soil degradation. Correction: Over-tillage, monocrpping, and lack of organic matter are equally damaging.",\n'
+            f'      "formative_checks": ["1. Explain the biochemical process of push-pull technology in stem-borer control."],\n'
+            f'      "active_trainee_tasks": "Trainees calculate soil erosion risk using the Universal Soil Loss Equation (USLE) for sloping land."\n'
+            f'    }},\n'
+            f'    {{\n'
+            f'      "hour_number": 4,\n'
+            f'      "hour_title": "Hour 4: Laboratory Practicum, Soil Acidification Diagnostic & Policy Synthesis",\n'
+            f'      "duration_minutes": 60,\n'
+            f'      "learning_intent": "Conduct standardized soil pH testing, calculate agricultural lime requirement, and synthesize national policy frameworks...",\n'
+            f'      "full_lecture_notes": "Exhaustive multi-paragraph deep technical text (600-800 words) on laboratory soil diagnostics, buffer pH calculations, agricultural lime chemistry (CaCO3), and policy alignment with Vision 2030...",\n'
+            f'      "subsections": [\n'
+            f'        {{"title": "4.1 Standardized Soil Sampling & Colorimetric/Electrometric pH Testing", "content": "1:2.5 soil-water ratio protocol and electrode calibration..."}},\n'
+            f'        {{"title": "4.2 Agricultural Lime Requirement Calculations", "content": "Formulas for calculating CaCO3 tonnage per hectare based on buffering index..."}},\n'
+            f'        {{"title": "4.3 Policy Synthesis & Community Outreach Strategy", "content": "Bridging research from KALRO to smallholder farmer extension..."}}\n'
+            f'      ],\n'
+            f'      "pedagogical_notes": "Teacher Trainee Guidance: Lead the 60-minute laboratory investigation and supervise safety PPE...",\n'
+            f'      "common_misconceptions": "Misconception: Adding lime immediately changes soil pH permanently. Correction: Lime requires soil moisture and 4-8 weeks to react with exchangeable aluminum ions.",\n'
+            f'      "formative_checks": ["1. Calculate the lime requirement for a 5-hectare plot with soil pH 4.8."],\n'
+            f'      "active_trainee_tasks": "Trainees perform colorimetric pH testing on 3 distinct soil samples and record findings."\n'
             f'    }}\n'
             f'  ],\n'
             f'  "worked_examples": [\n'
             f'    {{\n'
-            f'      "scenario": "Authentic Kenyan county/enterprise problem scenario...",\n'
+            f'      "scenario": "Authentic Kenyan county problem scenario (e.g. Soil acidity in Uasin Gishu maize farms)...",\n'
             f'      "solution_steps": ["Step 1...", "Step 2...", "Step 3..."],\n'
             f'      "explanation": "Detailed scientific and economic rationale...",\n'
-            f'      "research_source": "KALRO Advisory"\n'
+            f'      "research_source": "KALRO Advisory Bulletin"\n'
             f'    }}\n'
             f'  ],\n'
             f'  "practical_connections": {{\n'
-            f'    "activity_title": "60-Minute Hands-on Fieldwork / Laboratory Investigation",\n'
-            f'    "materials_needed": ["..."],\n'
-            f'    "procedure": ["Step 1...", "Step 2..."],\n'
-            f'    "safety_precautions": "Mandatory PPE and safety protocols.",\n'
-            f'    "expected_observations": "Scientific observations and recording table."\n'
+            f'    "activity_title": "60-Minute Standardized Soil pH & Lime Buffer Laboratory Practicum",\n'
+            f'    "materials_needed": ["Digital pH meter", "Agricultural lime (CaCO3)", "Distilled water", "Beakers", "Soil sampling auger"],\n'
+            f'    "procedure": ["Step 1: Weigh 20g of air-dried sieved soil...", "Step 2: Add 50ml of distilled water (1:2.5 ratio)...", "Step 3: Calibrate pH meter with buffer solutions 4.0 and 7.0...", "Step 4: Record equilibrium pH and determine lime requirement tonnage..."],\n'
+            f'    "safety_precautions": "Wear latex gloves, splash goggles, and lab coat. Avoid inhaling fine lime dust.",\n'
+            f'    "expected_observations": "Acidic soil suspension reads pH 4.8 - 5.2. Post-lime treatment buffer shifts to pH 6.2 - 6.5."\n'
             f'  }},\n'
-            f'  "key_inquiry_questions": ["..."],\n'
-            f'  "summary_points": ["..."],\n'
+            f'  "key_inquiry_questions": [\n'
+            f'    "How do Kenya\'s macro-economic GDP targets depend fundamentally on soil ecological health?",\n'
+            f'    "What policy mechanisms can balance smallholder productivity with national watershed protection?"\n'
+            f'  ],\n'
+            f'  "summary_points": [\n'
+            f'    "Agriculture provides 33% direct GDP, 27% indirect GDP, and over 70% of rural employment [KNBS 2024].",\n'
+            f'    "Soil health and organic matter conservation are the biophysical foundation of agricultural climate resilience.",\n'
+            f'    "Standardized diagnostics (pH testing, lime application, IPM) provide scientifically verified pathways to sustainable yield growth."\n'
+            f'  ],\n'
             f'  "accessibility_support": {{\n'
-            f'    "plain_language_summary": "...",\n'
-            f'    "tactile_and_audio_cues": "..."\n'
+            f'    "plain_language_summary": "Agriculture gives Kenyans food, jobs, and income. Healthy soil and trees protect our farms from drought so we have food in the future.",\n'
+            f'    "tactile_and_audio_cues": "Provide soil texture samples (clay, loam, sand) for tactile differentiation by visually impaired trainees."\n'
             f'  }},\n'
             f'  "research_references": [\n'
             f'    {{\n'
             f'      "source_title": "KNBS Economic Survey 2024",\n'
             f'      "author_organization": "Kenya National Bureau of Statistics",\n'
             f'      "year": 2024,\n'
-            f'      "key_data_points_cited": "Agriculture 33% GDP contribution"\n'
+            f'      "key_data_points_cited": "Agriculture 33% direct GDP, 70% rural workforce"\n'
+            f'    }},\n'
+            f'    {{\n'
+            f'      "source_title": "KALRO Soil Fertility & Plant Nutrition Bulletin 2023",\n'
+            f'      "author_organization": "Kenya Agricultural and Livestock Research Organization",\n'
+            f'      "year": 2023,\n'
+            f'      "key_data_points_cited": "Soil acidity remediation protocols and lime buffer guidelines in Western Kenya"\n'
             f'    }}\n'
             f'  ]\n'
             f"}}\n\n"
@@ -820,17 +888,64 @@ def factory_generate_notes(
     resp = llm_client.generate(resolved, context.messages, temperature=0.15)
     audit_report = web_research_agent.perform_quality_audit(resp.content, "notes", dossier)
 
+    # Normalize notes output so both hour_modules and key_concepts are rich arrays
+    notes_content = resp.content
+    if isinstance(notes_content, dict):
+        hour_mods = notes_content.get("hour_modules") or []
+        key_cncpts = notes_content.get("key_concepts") or []
+
+        # If hour_modules exists and key_concepts is short, map hour_modules to key_concepts
+        if hour_mods and (not key_cncpts or len(key_cncpts) < len(hour_mods)):
+            synced_concepts = []
+            for hm in hour_mods:
+                h_num = hm.get("hour_number", len(synced_concepts) + 1)
+                h_title = hm.get("hour_title") or hm.get("title") or f"Session {h_num}"
+                h_content = hm.get("full_lecture_notes") or hm.get("content") or hm.get("detailed_exposition", "")
+                h_subs = hm.get("subsections") or hm.get("sub_sections", [])
+                h_pck = hm.get("pedagogical_notes") or hm.get("pck_guidance", "")
+                h_misc = hm.get("common_misconceptions") or hm.get("misconceptions", "")
+                h_fc = hm.get("formative_checks") or hm.get("formative_evaluations", "")
+                if isinstance(h_fc, list):
+                    h_fc = " • ".join(h_fc)
+
+                synced_concepts.append({
+                    "concept_id": f"hour_{h_num}",
+                    "heading": f"Hour {h_num}: {h_title.replace(f'Hour {h_num}:', '').strip()}",
+                    "content": h_content,
+                    "detailed_exposition": h_content,
+                    "sub_sections": h_subs,
+                    "pedagogical_notes": h_pck,
+                    "common_misconceptions": h_misc,
+                    "formative_checks": h_fc,
+                })
+            notes_content["key_concepts"] = synced_concepts
+        elif key_cncpts and not hour_mods:
+            hour_mods = []
+            for idx, kc in enumerate(key_cncpts):
+                hour_mods.append({
+                    "hour_number": idx + 1,
+                    "hour_title": kc.get("heading", f"Hour {idx + 1}"),
+                    "duration_minutes": 60,
+                    "learning_intent": f"Master core competencies of {kc.get('heading', '')}",
+                    "full_lecture_notes": kc.get("content") or kc.get("detailed_exposition", ""),
+                    "subsections": kc.get("sub_sections", []),
+                    "pedagogical_notes": kc.get("pedagogical_notes", ""),
+                    "common_misconceptions": kc.get("common_misconceptions", ""),
+                    "formative_checks": kc.get("formative_checks", ""),
+                })
+            notes_content["hour_modules"] = hour_mods
+
     # 5. Run 3-Agent Quality Gate
     gate_result = quality_gate_service.run_layer_gate(
         layer_name="notes",
-        content=resp.content,
+        content=notes_content,
         blueprint=substrand_row or {},
         content_type_profile=ct_profile,
         custom_instructions=payload.custom_instructions,
     )
 
     return {
-        "notes": resp.content,
+        "notes": notes_content,
         "usage": resp.usage,
         "model": resp.model,
         "content_type": ct_profile.to_dict(),
@@ -1555,20 +1670,76 @@ def factory_generate_questions(
     })
 
     resp = llm_client.generate(resolved, context.messages, temperature=0.2)
-    questions_list = resp.content.get("questions", []) if isinstance(resp.content, dict) else resp.content
+    raw_questions = resp.content.get("questions", []) if isinstance(resp.content, dict) else (resp.content if isinstance(resp.content, list) else [])
     audit_report = web_research_agent.perform_quality_audit(resp.content, "questions", dossier)
+
+    # Normalize questions format so options is always a structured list
+    normalized_questions = []
+    if isinstance(raw_questions, list):
+        for q in raw_questions:
+            if not isinstance(q, dict):
+                continue
+            opts = q.get("options")
+            correct = str(q.get("correct_answer") or "").strip()
+            distractors = q.get("distractor_explanations") or {}
+
+            norm_opts = []
+            if isinstance(opts, dict):
+                for k, v in opts.items():
+                    opt_text = v.get("text", str(v)) if isinstance(v, dict) else str(v)
+                    is_corr = (k.upper() == correct.upper()) or (isinstance(v, dict) and v.get("is_correct", False))
+                    rationale = distractors.get(k) or (v.get("distractor_rationale") if isinstance(v, dict) else "")
+                    norm_opts.append({
+                        "id": k,
+                        "text": opt_text,
+                        "is_correct": is_corr,
+                        "distractor_rationale": rationale,
+                    })
+            elif isinstance(opts, list):
+                for item in opts:
+                    if isinstance(item, dict):
+                        opt_id = item.get("id") or str(len(norm_opts) + 1)
+                        is_corr = item.get("is_correct", False) or (opt_id.upper() == correct.upper())
+                        norm_opts.append({
+                            "id": opt_id,
+                            "text": item.get("text", str(item)),
+                            "is_correct": is_corr,
+                            "distractor_rationale": item.get("distractor_rationale") or distractors.get(opt_id, ""),
+                        })
+                    else:
+                        norm_opts.append({
+                            "id": str(len(norm_opts) + 1),
+                            "text": str(item),
+                            "is_correct": False,
+                            "distractor_rationale": "",
+                        })
+
+            marking_guide = q.get("marking_guide") or q.get("kicd_rubric")
+            if not marking_guide and q.get("marking_scheme"):
+                marking_guide = {
+                    "exceeding": "Demonstrates comprehensive mastery beyond expected curriculum outcome.",
+                    "meeting": str(q.get("marking_scheme")),
+                    "approaching": "Partially demonstrates concept with minor inaccuracies.",
+                    "below": "Requires guided instructional remediation.",
+                }
+
+            normalized_questions.append({
+                **q,
+                "options": norm_opts if norm_opts else None,
+                "marking_guide": marking_guide,
+            })
 
     # 3-Agent Quality Gate
     gate_result = quality_gate_service.run_layer_gate(
         layer_name="questions",
-        content=questions_list,
+        content=normalized_questions,
         blueprint={},
         content_type_profile=ct_profile,
         custom_instructions=payload.custom_instructions,
     )
 
     return {
-        "questions": questions_list,
+        "questions": normalized_questions,
         "usage": resp.usage,
         "model": resp.model,
         "content_type": ct_profile.to_dict(),

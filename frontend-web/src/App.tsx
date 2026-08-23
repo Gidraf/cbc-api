@@ -75,6 +75,53 @@ function isTokenValid(token: string): boolean {
   return exp * 1000 > Date.now();
 }
 
+function normalizeQuestionOptions(
+  options: any,
+  correctAnswer?: string,
+  distractorExplanations?: any
+): Array<{ id: string; text: string; is_correct?: boolean; distractor_rationale?: string }> {
+  if (!options) return [];
+  if (Array.isArray(options)) {
+    return options.map((opt, idx) => {
+      if (typeof opt === "object" && opt !== null) {
+        const id = opt.id || String.fromCharCode(65 + idx);
+        return {
+          id,
+          text: opt.text || opt.label || opt.option || String(opt),
+          is_correct: opt.is_correct ?? (correctAnswer ? (id.toUpperCase() === correctAnswer.toUpperCase() || String.fromCharCode(65 + idx).toUpperCase() === correctAnswer.toUpperCase()) : false),
+          distractor_rationale: opt.distractor_rationale || (distractorExplanations && distractorExplanations[id]) || ""
+        };
+      }
+      const id = String.fromCharCode(65 + idx);
+      return {
+        id,
+        text: String(opt),
+        is_correct: correctAnswer ? (id.toUpperCase() === correctAnswer.toUpperCase()) : false,
+        distractor_rationale: (distractorExplanations && distractorExplanations[id]) || ""
+      };
+    });
+  }
+  if (typeof options === "object") {
+    return Object.entries(options).map(([k, v]) => {
+      if (typeof v === "object" && v !== null) {
+        return {
+          id: k,
+          text: (v as any).text || (v as any).label || (v as any).option || String(v),
+          is_correct: (v as any).is_correct ?? (correctAnswer ? (k.toUpperCase() === correctAnswer.toUpperCase()) : false),
+          distractor_rationale: (v as any).distractor_rationale || (distractorExplanations && distractorExplanations[k]) || ""
+        };
+      }
+      return {
+        id: k,
+        text: String(v),
+        is_correct: correctAnswer ? (k.toUpperCase() === correctAnswer.toUpperCase()) : false,
+        distractor_rationale: (distractorExplanations && distractorExplanations[k]) || ""
+      };
+    });
+  }
+  return [];
+}
+
 export function App() {
   const [output, setOutput] = useState("Ready");
   const [view, setView] = useState<View>("dashboard");
@@ -186,6 +233,7 @@ export function App() {
   const [stationNotes, setStationNotes] = useState<any>(null);
   const [notesRefinePrompt, setNotesRefinePrompt] = useState("");
   const [notesApproved, setNotesApproved] = useState(false);
+  const [activeHourView, setActiveHourView] = useState<number | "all">("all");
 
   // Station 2: Multi-Visuals & Diagrams Studio
   const [stationDiagram, setStationDiagram] = useState<any>(null);
@@ -2724,193 +2772,247 @@ export function App() {
                     </div>
 
                     <div className="factory-preview-pane">
-                      {stationNotes ? (
-                        <div style={{ display: "grid", gap: "10px" }}>
-                          <div style={{ padding: "12px", background: "#f0f9ff", borderRadius: "8px", border: "1px solid #bae6fd" }}>
-                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                              <strong style={{ fontSize: "15px", color: "#0369a1" }}>📘 {stationNotes.title}</strong>
-                              <span className="pill ok" style={{ fontSize: "11px", fontWeight: 700 }}>
-                                ⏱️ {stationNotes.allocated_hours || 4} Contact Hours (240 mins)
-                              </span>
-                            </div>
-                            <p style={{ margin: "8px 0 0", fontSize: "13px", lineHeight: "1.6", color: "#334155" }}>{stationNotes.intro}</p>
-                          </div>
+                      {stationNotes ? (() => {
+                        const hourModulesList = (stationNotes.hour_modules && stationNotes.hour_modules.length > 0)
+                          ? stationNotes.hour_modules
+                          : (stationNotes.key_concepts || []);
 
-                          {/* 4-Hour Modular Syllabus Breakdown */}
-                          {stationNotes.hourly_breakdown?.length > 0 && (
-                            <div style={{ padding: "12px", background: "#f8fafc", borderRadius: "8px", border: "1px solid #cbd5e1" }}>
-                              <strong style={{ fontSize: "13px", color: "#0c4a6e" }}>⏱️ Modular Hour-by-Hour Syllabus Structure:</strong>
-                              <div style={{ display: "grid", gap: "8px", marginTop: "8px" }}>
-                                {stationNotes.hourly_breakdown.map((hb: any, hIdx: number) => (
-                                  <div key={hIdx} style={{ padding: "10px 12px", background: "#fff", borderRadius: "6px", border: "1px solid #e2e8f0", fontSize: "12px" }}>
-                                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                                      <strong style={{ color: "#0284c7" }}>
-                                        Hour {hb.hour_number || hIdx + 1}: {hb.hour_title || `Session ${hIdx + 1}`}
-                                      </strong>
-                                      <span className="pill idle" style={{ fontSize: "10px" }}>60 Minutes</span>
+                        const displayedHours = activeHourView === "all"
+                          ? hourModulesList
+                          : hourModulesList.filter((hm: any, idx: number) => (hm.hour_number || idx + 1) === activeHourView);
+
+                        return (
+                          <div style={{ display: "grid", gap: "12px" }}>
+                            <div style={{ padding: "14px", background: "#f0f9ff", borderRadius: "8px", border: "1px solid #bae6fd" }}>
+                              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "8px" }}>
+                                <strong style={{ fontSize: "15px", color: "#0369a1" }}>📘 {stationNotes.title}</strong>
+                                <span className="pill ok" style={{ fontSize: "11px", fontWeight: 700 }}>
+                                  ⏱️ {stationNotes.allocated_hours || 4} Contact Hours (240 mins)
+                                </span>
+                              </div>
+                              <p style={{ margin: "8px 0 0", fontSize: "13px", lineHeight: "1.6", color: "#334155" }}>{stationNotes.intro}</p>
+                            </div>
+
+                            {/* Hour-by-Hour Interactive Navigation Bar */}
+                            {hourModulesList.length > 1 && (
+                              <div style={{ display: "flex", gap: "6px", flexWrap: "wrap", padding: "8px 10px", background: "#f8fafc", borderRadius: "8px", border: "1px solid #e2e8f0" }}>
+                                <button
+                                  className={activeHourView === "all" ? "" : "ghost"}
+                                  style={{ fontSize: "11.5px", padding: "4px 10px", borderRadius: "6px" }}
+                                  onClick={() => setActiveHourView("all")}
+                                >
+                                  📖 All {hourModulesList.length} Hours (Full Master Guide)
+                                </button>
+                                {hourModulesList.map((hm: any, idx: number) => {
+                                  const hNum = hm.hour_number || idx + 1;
+                                  const hTitle = hm.hour_title || hm.heading || `Hour ${hNum}`;
+                                  const shortTitle = hTitle.length > 35 ? hTitle.substring(0, 32) + "..." : hTitle;
+                                  return (
+                                    <button
+                                      key={idx}
+                                      className={activeHourView === hNum ? "" : "ghost"}
+                                      style={{ fontSize: "11px", padding: "4px 8px", borderRadius: "6px" }}
+                                      onClick={() => setActiveHourView(hNum)}
+                                    >
+                                      ⏰ Hour {hNum}: {shortTitle}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            )}
+
+                            {/* Exhaustive Hour-by-Hour Lecture Modules */}
+                            {displayedHours.map((hm: any, idx: number) => {
+                              const hNum = hm.hour_number || (activeHourView === "all" ? idx + 1 : activeHourView);
+                              const hTitle = hm.hour_title || hm.heading || `Hour ${hNum}: Core Pedagogical Module`;
+                              const fullText = hm.full_lecture_notes || hm.detailed_exposition || hm.content;
+                              const subsections = hm.subsections || hm.sub_sections || [];
+                              const quantData = hm.quantitative_data_summary || [];
+                              const pck = hm.pedagogical_notes || hm.teacher_facilitation_steps;
+                              const misc = hm.common_misconceptions;
+                              const formative = hm.formative_checks;
+                              const tasks = hm.active_trainee_tasks || hm.learner_active_tasks;
+
+                              return (
+                                <div key={idx} style={{ padding: "16px", background: "#fff", borderRadius: "8px", border: "1px solid #cbd5e1", boxShadow: "0 2px 4px rgba(0,0,0,0.04)" }}>
+                                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #f1f5f9", paddingBottom: "8px", marginBottom: "10px" }}>
+                                    <strong style={{ fontSize: "14.5px", color: "#0f172a" }}>
+                                      {hTitle.startsWith("Hour") ? hTitle : `Hour ${hNum}: ${hTitle}`}
+                                    </strong>
+                                    <span className="pill ok" style={{ fontSize: "10.5px" }}>60 Contact Minutes</span>
+                                  </div>
+
+                                  {hm.learning_intent && (
+                                    <div style={{ padding: "6px 10px", background: "#f0f9ff", borderRadius: "6px", fontSize: "12px", color: "#0369a1", marginBottom: "10px" }}>
+                                      🎯 <strong>Session Learning Intent:</strong> {hm.learning_intent}
                                     </div>
-                                    {hb.learning_intent && (
-                                      <div style={{ marginTop: "4px", color: "#334155" }}>
-                                        <strong>Learning Intent:</strong> {hb.learning_intent}
+                                  )}
+
+                                  {/* Substantive Multi-Paragraph Lecture Notes */}
+                                  <div style={{ fontSize: "13px", lineHeight: "1.65", color: "#1e293b", whiteSpace: "pre-line", marginBottom: "12px" }}>
+                                    {fullText}
+                                  </div>
+
+                                  {/* Sub-sections */}
+                                  {subsections.length > 0 && (
+                                    <div style={{ display: "grid", gap: "8px", margin: "10px 0 14px", paddingLeft: "12px", borderLeft: "3px solid #0284c7" }}>
+                                      {subsections.map((sub: any, sIdx: number) => (
+                                        <div key={sIdx} style={{ fontSize: "12.5px", background: "#f8fafc", padding: "10px 12px", borderRadius: "6px", border: "1px solid #e2e8f0" }}>
+                                          <strong style={{ color: "#0369a1" }}>{sub.title}</strong>
+                                          <p style={{ margin: "4px 0 0", color: "#334155", lineHeight: "1.55", whiteSpace: "pre-line" }}>{sub.content}</p>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  )}
+
+                                  {/* Quantitative Data Summary */}
+                                  {quantData.length > 0 && (
+                                    <div style={{ padding: "8px 12px", background: "#faf5ff", borderRadius: "6px", border: "1px solid #f3e8ff", margin: "10px 0", fontSize: "11.5px" }}>
+                                      <strong style={{ color: "#7e22ce" }}>📊 Key Empirical Data & Parameters:</strong>
+                                      <div style={{ display: "flex", gap: "10px", flexWrap: "wrap", marginTop: "4px" }}>
+                                        {quantData.map((qd: any, qIdx: number) => (
+                                          <span key={qIdx} style={{ background: "#fff", padding: "3px 8px", borderRadius: "4px", border: "1px solid #e9d5ff", color: "#581c87" }}>
+                                            <strong>{qd.metric}:</strong> {qd.value} {qd.source ? `(${qd.source})` : ""}
+                                          </span>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  )}
+
+                                  {/* Teacher Facilitation / PCK */}
+                                  {pck && (
+                                    <div style={{ marginTop: "8px", padding: "8px 12px", background: "#fefce8", borderRadius: "6px", border: "1px solid #fef08a", fontSize: "12px", color: "#854d0e" }}>
+                                      💡 <strong>Pedagogical Content Knowledge (PCK) Facilitation:</strong> {pck}
+                                    </div>
+                                  )}
+
+                                  {/* Trainee Active Tasks */}
+                                  {tasks && (
+                                    <div style={{ marginTop: "8px", padding: "8px 12px", background: "#f0fdf4", borderRadius: "6px", border: "1px solid #bbf7d0", fontSize: "12px", color: "#166534" }}>
+                                      ✍️ <strong>Active Trainee Task / Practicum:</strong> {tasks}
+                                    </div>
+                                  )}
+
+                                  {/* Misconception Diagnostics */}
+                                  {misc && (
+                                    <div style={{ marginTop: "8px", padding: "8px 12px", background: "#fff1f2", borderRadius: "6px", border: "1px solid #fecdd3", fontSize: "12px", color: "#9f1239" }}>
+                                      ⚠️ <strong>Learner Misconception Diagnostic:</strong> {misc}
+                                    </div>
+                                  )}
+
+                                  {/* Formative Assessment Checks */}
+                                  {formative && (
+                                    <div style={{ marginTop: "8px", padding: "8px 12px", background: "#f1f5f9", borderRadius: "6px", border: "1px solid #cbd5e1", fontSize: "12px", color: "#0f172a" }}>
+                                      ❓ <strong>Formative Assessment Cues:</strong>
+                                      {Array.isArray(formative) ? (
+                                        <ul style={{ margin: "4px 0 0", paddingLeft: "18px", color: "#334155" }}>
+                                          {formative.map((fQ: string, fIdx: number) => (
+                                            <li key={fIdx}>{fQ}</li>
+                                          ))}
+                                        </ul>
+                                      ) : (
+                                        <div style={{ marginTop: "4px", color: "#334155" }}>{formative}</div>
+                                      )}
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })}
+
+                            {/* Cross-Cutting Practical Connections */}
+                            {stationNotes.practical_connections && (
+                              <div style={{ padding: "14px", background: "#f0fdfa", borderRadius: "8px", border: "1px solid #99f6e4" }}>
+                                <strong style={{ fontSize: "14px", color: "#0f766e" }}>🔬 Practical Connection: {stationNotes.practical_connections.activity_title}</strong>
+                                {stationNotes.practical_connections.materials_needed?.length > 0 && (
+                                  <div style={{ fontSize: "12px", marginTop: "6px", color: "#115e59" }}>
+                                    <strong>Materials / Resources:</strong> {Array.isArray(stationNotes.practical_connections.materials_needed) ? stationNotes.practical_connections.materials_needed.join(", ") : stationNotes.practical_connections.materials_needed}
+                                  </div>
+                                )}
+                                {stationNotes.practical_connections.procedure && (
+                                  <div style={{ fontSize: "12px", marginTop: "6px", color: "#334155" }}>
+                                    <strong>Step-by-Step Procedure:</strong> {Array.isArray(stationNotes.practical_connections.procedure) ? stationNotes.practical_connections.procedure.join(" ➔ ") : stationNotes.practical_connections.procedure}
+                                  </div>
+                                )}
+                                {stationNotes.practical_connections.safety_precautions && (
+                                  <div style={{ fontSize: "12px", marginTop: "6px", color: "#b91c1c" }}>
+                                    🚨 <strong>Safety Protocol:</strong> {stationNotes.practical_connections.safety_precautions}
+                                  </div>
+                                )}
+                              </div>
+                            )}
+
+                            {/* Worked Case Study Examples */}
+                            {stationNotes.worked_examples?.length > 0 && (
+                              <div style={{ padding: "14px", background: "#f8fafc", borderRadius: "8px", border: "1px solid #cbd5e1" }}>
+                                <strong style={{ fontSize: "13.5px", color: "#334155" }}>💼 Authentic Worked Case Studies:</strong>
+                                {stationNotes.worked_examples.map((we: any, idx: number) => (
+                                  <div key={idx} style={{ fontSize: "12px", marginTop: "8px", padding: "10px 12px", background: "#fff", borderRadius: "6px", border: "1px solid #e2e8f0" }}>
+                                    <div style={{ color: "#0f172a" }}><strong>Scenario:</strong> {we.scenario}</div>
+                                    <div style={{ marginTop: "4px", color: "#0369a1" }}><strong>Resolution Steps:</strong> {Array.isArray(we.solution_steps) ? we.solution_steps.join(" ➔ ") : we.solution_steps}</div>
+                                    {(we.explanation || we.solution_explanation) && (
+                                      <div style={{ marginTop: "4px", color: "#475569", fontStyle: "italic" }}>
+                                        <strong>Rationale:</strong> {we.explanation || we.solution_explanation}
                                       </div>
                                     )}
-                                    {hb.teacher_facilitation_steps && (
-                                      <div style={{ marginTop: "4px", color: "#166534", background: "#f0fdf4", padding: "4px 8px", borderRadius: "4px" }}>
-                                        👩‍🏫 <strong>Teacher Facilitation:</strong> {hb.teacher_facilitation_steps}
-                                      </div>
-                                    )}
-                                    {hb.learner_active_tasks && (
-                                      <div style={{ marginTop: "4px", color: "#0369a1", background: "#f0f9ff", padding: "4px 8px", borderRadius: "4px" }}>
-                                        ✍️ <strong>Trainee Active Tasks:</strong> {hb.learner_active_tasks}
-                                      </div>
-                                    )}
-                                    {hb.empirical_citations?.length > 0 && (
-                                      <div style={{ marginTop: "4px", color: "#64748b", fontSize: "10.5px" }}>
-                                        📚 <strong>Citations:</strong> {hb.empirical_citations.join(" • ")}
+                                    {we.research_source && (
+                                      <div style={{ marginTop: "4px", color: "#64748b", fontSize: "11px" }}>
+                                        📚 <strong>Source:</strong> {we.research_source}
                                       </div>
                                     )}
                                   </div>
                                 ))}
                               </div>
-                            </div>
-                          )}
+                            )}
 
-                          {/* Core Concepts Breakdown */}
-                          {stationNotes.key_concepts?.map((kc: any, idx: number) => (
-                            <div key={idx} style={{ padding: "14px", background: "#fff", borderRadius: "8px", border: "1px solid #e2e8f0", boxShadow: "0 1px 3px rgba(0,0,0,0.05)" }}>
-                              <strong style={{ fontSize: "14px", color: "#0f172a" }}>{kc.heading || `Concept ${idx + 1}`}</strong>
-                              <p style={{ margin: "8px 0 10px", fontSize: "13px", lineHeight: "1.6", color: "#1e293b", whiteSpace: "pre-line" }}>
-                                {kc.detailed_exposition || kc.content}
-                              </p>
+                            {/* Key Inquiry Questions */}
+                            {stationNotes.key_inquiry_questions?.length > 0 && (
+                              <div style={{ padding: "12px", background: "#fefce8", borderRadius: "8px", border: "1px solid #fef08a", fontSize: "12px" }}>
+                                <strong style={{ color: "#854d0e", fontSize: "13px" }}>🎯 High-Order Key Inquiry Questions:</strong>
+                                <ul style={{ margin: "6px 0 0", paddingLeft: "18px", color: "#713f12" }}>
+                                  {stationNotes.key_inquiry_questions.map((kiq: string, idx: number) => (
+                                    <li key={idx} style={{ marginBottom: "2px" }}>{kiq}</li>
+                                  ))}
+                                </ul>
+                              </div>
+                            )}
 
-                              {/* Detailed Sub-sections */}
-                              {kc.sub_sections?.length > 0 && (
-                                <div style={{ display: "grid", gap: "6px", margin: "8px 0", paddingLeft: "10px", borderLeft: "3px solid #0284c7" }}>
-                                  {kc.sub_sections.map((sub: any, sIdx: number) => (
-                                    <div key={sIdx} style={{ fontSize: "12px", background: "#f8fafc", padding: "8px 10px", borderRadius: "6px" }}>
-                                      <strong style={{ color: "#0369a1" }}>{sub.title}</strong>
-                                      <p style={{ margin: "4px 0 0", color: "#334155", lineHeight: "1.5" }}>{sub.content}</p>
+                            {/* Research References & Bibliography */}
+                            {stationNotes.research_references?.length > 0 && (
+                              <div style={{ padding: "14px", background: "#f1f5f9", borderRadius: "8px", border: "1px solid #cbd5e1", fontSize: "12px" }}>
+                                <strong style={{ color: "#1e293b", fontSize: "13px" }}>📚 Verifiable Research References & Published Policy Documents:</strong>
+                                <div style={{ display: "grid", gap: "6px", marginTop: "8px" }}>
+                                  {stationNotes.research_references.map((ref: any, rIdx: number) => (
+                                    <div key={rIdx} style={{ padding: "8px 12px", background: "#fff", borderRadius: "4px", border: "1px solid #e2e8f0" }}>
+                                      <strong style={{ color: "#0f172a" }}>{ref.source_title || ref.title}</strong> ({ref.year || "2024"})
+                                      <div style={{ color: "#475569", fontSize: "11.5px", marginTop: "2px" }}>
+                                        Author / Agency: {ref.author_organization || ref.agency || "Government of Kenya"} • Cites: {ref.key_data_points_cited || ref.data_point}
+                                      </div>
                                     </div>
                                   ))}
                                 </div>
-                              )}
-
-                              {/* PCK Teacher Note */}
-                              {kc.pedagogical_notes && (
-                                <div style={{ marginTop: "6px", padding: "6px 10px", background: "#fefce8", borderRadius: "6px", border: "1px solid #fef08a", fontSize: "11.5px", color: "#854d0e" }}>
-                                  💡 <strong>Pedagogical Content Knowledge (PCK) Note:</strong> {kc.pedagogical_notes}
-                                </div>
-                              )}
-
-                              {/* Misconceptions & Diagnostics */}
-                              {kc.common_misconceptions && (
-                                <div style={{ marginTop: "6px", padding: "6px 10px", background: "#fff1f2", borderRadius: "6px", border: "1px solid #fecdd3", fontSize: "11.5px", color: "#9f1239" }}>
-                                  ⚠️ <strong>Learner Misconception Diagnostic:</strong> {kc.common_misconceptions}
-                                </div>
-                              )}
-
-                              {/* Formative Checks */}
-                              {kc.formative_checks && (
-                                <div style={{ marginTop: "6px", padding: "6px 10px", background: "#f0fdf4", borderRadius: "6px", border: "1px solid #bbf7d0", fontSize: "11.5px", color: "#166534" }}>
-                                  ❓ <strong>Formative Assessment Cue:</strong> {kc.formative_checks}
-                                </div>
-                              )}
-                            </div>
-                          ))}
-
-                          {/* Practical Fieldwork Connections */}
-                          {stationNotes.practical_connections && (
-                            <div style={{ padding: "12px", background: "#f0fdfa", borderRadius: "8px", border: "1px solid #99f6e4" }}>
-                              <strong style={{ fontSize: "13px", color: "#0f766e" }}>🔬 Practical Connection: {stationNotes.practical_connections.activity_title}</strong>
-                              {stationNotes.practical_connections.materials_needed?.length > 0 && (
-                                <div style={{ fontSize: "12px", marginTop: "4px", color: "#115e59" }}>
-                                  <strong>Materials / Resources:</strong> {Array.isArray(stationNotes.practical_connections.materials_needed) ? stationNotes.practical_connections.materials_needed.join(", ") : stationNotes.practical_connections.materials_needed}
-                                </div>
-                              )}
-                              {stationNotes.practical_connections.procedure && (
-                                <div style={{ fontSize: "12px", marginTop: "4px", color: "#334155" }}>
-                                  <strong>Step-by-Step Procedure:</strong> {Array.isArray(stationNotes.practical_connections.procedure) ? stationNotes.practical_connections.procedure.join(" ➔ ") : stationNotes.practical_connections.procedure}
-                                </div>
-                              )}
-                              {stationNotes.practical_connections.safety_precautions && (
-                                <div style={{ fontSize: "11.5px", marginTop: "4px", color: "#b91c1c" }}>
-                                  🚨 <strong>Safety Protocol:</strong> {stationNotes.practical_connections.safety_precautions}
-                                </div>
-                              )}
-                            </div>
-                          )}
-
-                          {/* Worked Case Study Examples */}
-                          {stationNotes.worked_examples?.length > 0 && (
-                            <div style={{ padding: "12px", background: "#f8fafc", borderRadius: "8px", border: "1px solid #cbd5e1" }}>
-                              <strong style={{ fontSize: "13px", color: "#334155" }}>💼 Authentic Worked Case Study:</strong>
-                              {stationNotes.worked_examples.map((we: any, idx: number) => (
-                                <div key={idx} style={{ fontSize: "12px", marginTop: "6px", padding: "8px", background: "#fff", borderRadius: "6px", border: "1px solid #e2e8f0" }}>
-                                  <div style={{ color: "#0f172a" }}><strong>Scenario:</strong> {we.scenario}</div>
-                                  <div style={{ marginTop: "4px", color: "#0369a1" }}><strong>Resolution Steps:</strong> {Array.isArray(we.solution_steps) ? we.solution_steps.join(" ➔ ") : we.solution_steps}</div>
-                                  {(we.explanation || we.solution_explanation) && (
-                                    <div style={{ marginTop: "4px", color: "#475569", fontStyle: "italic" }}>
-                                      <strong>Rationale:</strong> {we.explanation || we.solution_explanation}
-                                    </div>
-                                  )}
-                                  {we.research_source && (
-                                    <div style={{ marginTop: "4px", color: "#64748b", fontSize: "11px" }}>
-                                      📚 <strong>Source:</strong> {we.research_source}
-                                    </div>
-                                  )}
-                                </div>
-                              ))}
-                            </div>
-                          )}
-
-                          {/* Key Inquiry Questions & Summary Points */}
-                          {stationNotes.key_inquiry_questions?.length > 0 && (
-                            <div style={{ padding: "10px", background: "#fefce8", borderRadius: "8px", border: "1px solid #fef08a", fontSize: "12px" }}>
-                              <strong style={{ color: "#854d0e" }}>🎯 Key Inquiry Questions:</strong>
-                              <ul style={{ margin: "4px 0 0", paddingLeft: "18px", color: "#713f12" }}>
-                                {stationNotes.key_inquiry_questions.map((kiq: string, idx: number) => (
-                                  <li key={idx}>{kiq}</li>
-                                ))}
-                              </ul>
-                            </div>
-                          )}
-
-                          {/* Research References & Bibliography */}
-                          {stationNotes.research_references?.length > 0 && (
-                            <div style={{ padding: "12px", background: "#f1f5f9", borderRadius: "8px", border: "1px solid #cbd5e1", fontSize: "12px" }}>
-                              <strong style={{ color: "#1e293b", fontSize: "13px" }}>📚 Verifiable Research References & Policy Documents:</strong>
-                              <div style={{ display: "grid", gap: "6px", marginTop: "6px" }}>
-                                {stationNotes.research_references.map((ref: any, rIdx: number) => (
-                                  <div key={rIdx} style={{ padding: "6px 10px", background: "#fff", borderRadius: "4px", border: "1px solid #e2e8f0" }}>
-                                    <strong style={{ color: "#0f172a" }}>{ref.source_title || ref.title}</strong> ({ref.year || "2024"})
-                                    <div style={{ color: "#475569", fontSize: "11px", marginTop: "2px" }}>
-                                      Author / Agency: {ref.author_organization || ref.agency || "Government of Kenya"} • Cites: {ref.key_data_points_cited || ref.data_point}
-                                    </div>
-                                  </div>
-                                ))}
                               </div>
-                            </div>
-                          )}
+                            )}
 
-                          {stationNotes.summary_points?.length > 0 && (
-                            <div style={{ padding: "10px", background: "#f8fafc", borderRadius: "8px", border: "1px solid #e2e8f0", fontSize: "12px" }}>
-                              <strong style={{ color: "#0f172a" }}>📌 Summary Takeaways:</strong>
-                              <ul style={{ margin: "4px 0 0", paddingLeft: "18px", color: "#334155" }}>
-                                {stationNotes.summary_points.map((sp: string, idx: number) => (
-                                  <li key={idx}>{sp}</li>
-                                ))}
-                              </ul>
-                            </div>
-                          )}
+                            {stationNotes.summary_points?.length > 0 && (
+                              <div style={{ padding: "12px", background: "#f8fafc", borderRadius: "8px", border: "1px solid #e2e8f0", fontSize: "12px" }}>
+                                <strong style={{ color: "#0f172a", fontSize: "13px" }}>📌 Summary Takeaways:</strong>
+                                <ul style={{ margin: "6px 0 0", paddingLeft: "18px", color: "#334155" }}>
+                                  {stationNotes.summary_points.map((sp: string, idx: number) => (
+                                    <li key={idx} style={{ marginBottom: "2px" }}>{sp}</li>
+                                  ))}
+                                </ul>
+                              </div>
+                            )}
 
-                          {/* SNE & Plain Language Adaptation */}
-                          {stationNotes.accessibility_support?.plain_language_summary && (
-                            <div style={{ padding: "8px 10px", background: "#eff6ff", borderRadius: "6px", fontSize: "11.5px", color: "#1e40af", border: "1px solid #bfdbfe" }}>
-                              ♿ <strong>SNE Plain Language & Differentiated Support:</strong> {stationNotes.accessibility_support.plain_language_summary}
-                            </div>
-                          )}
-                        </div>
-                      ) : (
+                            {/* SNE & Plain Language Adaptation */}
+                            {stationNotes.accessibility_support?.plain_language_summary && (
+                              <div style={{ padding: "10px 12px", background: "#eff6ff", borderRadius: "6px", fontSize: "12px", color: "#1e40af", border: "1px solid #bfdbfe" }}>
+                                ♿ <strong>SNE Plain Language & Differentiated Support:</strong> {stationNotes.accessibility_support.plain_language_summary}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })() : (
                         <div style={{ textAlign: "center", padding: "30px", color: "var(--muted)" }}>
                           <p>Click "⚡ Generate Layer 1" to synthesize high-depth revision notes.</p>
                         </div>
@@ -3562,28 +3664,32 @@ export function App() {
                                 <p style={{ margin: "6px 0", fontSize: "12px" }}>{c.question_text}</p>
 
                                 {/* Options if MCQ */}
-                                {c.options && (
-                                  <div style={{ display: "grid", gap: "4px", margin: "6px 0" }}>
-                                    {c.options.map((opt: any) => (
-                                      <div
-                                        key={opt.id}
-                                        style={{
-                                          fontSize: "11px",
-                                          padding: "4px 8px",
-                                          borderRadius: "4px",
-                                          background: opt.is_correct ? "#f0fdf4" : "#fff",
-                                          border: `1px solid ${opt.is_correct ? "#86efac" : "#e2e8f0"}`,
-                                        }}
-                                      >
-                                        <strong>{opt.id}.</strong> {opt.text}{" "}
-                                        {opt.is_correct && <span style={{ color: "#166534", fontWeight: 700 }}>✓ (Correct)</span>}
-                                        {opt.distractor_rationale && (
-                                          <div style={{ color: "#6b7280", fontStyle: "italic", marginTop: "2px" }}>Rationale: {opt.distractor_rationale}</div>
-                                        )}
-                                      </div>
-                                    ))}
-                                  </div>
-                                )}
+                                {(() => {
+                                  const safeOptions = normalizeQuestionOptions(c.options, c.correct_answer, c.distractor_explanations);
+                                  if (!safeOptions || safeOptions.length === 0) return null;
+                                  return (
+                                    <div style={{ display: "grid", gap: "4px", margin: "6px 0" }}>
+                                      {safeOptions.map((opt: any) => (
+                                        <div
+                                          key={opt.id}
+                                          style={{
+                                            fontSize: "11px",
+                                            padding: "4px 8px",
+                                            borderRadius: "4px",
+                                            background: opt.is_correct ? "#f0fdf4" : "#fff",
+                                            border: `1px solid ${opt.is_correct ? "#86efac" : "#e2e8f0"}`,
+                                          }}
+                                        >
+                                          <strong>{opt.id}.</strong> {opt.text}{" "}
+                                          {opt.is_correct && <span style={{ color: "#166534", fontWeight: 700 }}>✓ (Correct)</span>}
+                                          {opt.distractor_rationale && (
+                                            <div style={{ color: "#6b7280", fontStyle: "italic", marginTop: "2px" }}>Rationale: {opt.distractor_rationale}</div>
+                                          )}
+                                        </div>
+                                      ))}
+                                    </div>
+                                  );
+                                })()}
 
                                 {/* 4-Level KICD Scoring Rubric Grid */}
                                 {c.marking_guide && (
