@@ -1368,27 +1368,52 @@ def factory_generate_single_visual(
         })
 
     resp = llm_client.generate(resolved, context.messages, temperature=0.15)
-    svg_markup = resp.content.get("diagram_svg") or resp.content.get("svg") or "<svg xmlns='http://www.w3.org/2000/svg'></svg>"
-    accessibility = resp.content.get("accessibility", {})
+    
+    # 1. Extract existing assets to preserve them across generation modes
+    existing_svg = item.get("diagram_svg") or ""
+    existing_image_prompt = item.get("image_prompt") or ""
+    existing_negative_prompt = item.get("negative_prompt") or ""
+    existing_aspect_ratio = item.get("aspect_ratio") or "16:9"
+    existing_comp_guide = item.get("composition_guide") or ""
+    existing_video_storyboard = item.get("video_storyboard")
+
+    # 2. Extract newly generated outputs
+    new_svg = resp.content.get("diagram_svg") or resp.content.get("svg")
+    new_image_prompt = resp.content.get("image_prompt")
+    new_negative_prompt = resp.content.get("negative_prompt")
+    new_aspect_ratio = resp.content.get("aspect_ratio")
+    new_comp_guide = resp.content.get("composition_guide")
+    new_video_storyboard = resp.content.get("video_storyboard")
+    new_accessibility = resp.content.get("accessibility", {})
+
+    # 3. Non-destructive co-existence merging
+    final_svg = new_svg if (new_svg and len(str(new_svg).strip()) > 30) else (existing_svg or "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 800 500'><rect width='100%' height='100%' fill='#f8fafc'/><text x='400' y='250' font-family='sans-serif' font-size='16' text-anchor='middle' fill='#0369a1'>Scientific Vector Model</text></svg>")
+    final_image_prompt = new_image_prompt or existing_image_prompt or item.get("vivid_prompt", "")
+    final_negative_prompt = new_negative_prompt or existing_negative_prompt
+    final_aspect_ratio = new_aspect_ratio or existing_aspect_ratio
+    final_comp_guide = new_comp_guide or existing_comp_guide
+    final_video_storyboard = new_video_storyboard or existing_video_storyboard
 
     dedup = diagram_deduplicator.deduplicate_and_store(
-        svg_str=svg_markup,
+        svg_str=final_svg,
         diagram_title=title,
-        alt_text=accessibility.get("alt_text", ""),
-        tactile_description=accessibility.get("tactile_description", ""),
+        alt_text=new_accessibility.get("alt_text") or item.get("accessibility", {}).get("alt_text", f"Vector diagram of {title}"),
+        tactile_description=new_accessibility.get("tactile_description") or item.get("accessibility", {}).get("tactile_description", "Tactile raised-line diagram with embossed contours."),
         metadata={"grade": payload.grade, "subject": payload.subject, "strand": payload.strand},
     )
 
     # Save to MinIO explicitly and track result
-    minio_status = "saved"
-    minio_url = ""
+    minio_status = item.get("minio_status") or "saved"
+    minio_url = item.get("storage_url") or ""
     minio_error = ""
     try:
         clean_g = payload.grade.lower().replace("grade-", "")
         clean_s = payload.subject.lower().replace(" ", "_")
         clean_ss = payload.sub_strand.lower().replace(" ", "_")[:30]
         obj_name = f"diagrams/{clean_g}_{clean_s}_{clean_ss}_{item.get('asset_id', 'vis')}.svg"
-        minio_url = object_storage.save_svg(obj_name, dedup.diagram_svg)
+        if final_svg and len(final_svg.strip()) > 30:
+            minio_url = object_storage.save_svg(obj_name, dedup.diagram_svg)
+            minio_status = "saved"
     except Exception as exc:
         minio_status = "error"
         minio_error = str(exc)
@@ -1400,16 +1425,16 @@ def factory_generate_single_visual(
         "generation_mode": mode,
         "pedagogical_purpose": item.get("pedagogical_purpose", ""),
         "vivid_prompt": item.get("vivid_prompt", ""),
-        "diagram_svg": dedup.diagram_svg,
+        "diagram_svg": dedup.diagram_svg if (dedup.diagram_svg and len(dedup.diagram_svg.strip()) > 30) else existing_svg,
         "diagram_hash": dedup.diagram_hash,
         "storage_url": minio_url or dedup.storage_url,
         "minio_status": minio_status,
         "minio_error": minio_error,
-        "image_prompt": resp.content.get("image_prompt"),
-        "negative_prompt": resp.content.get("negative_prompt"),
-        "aspect_ratio": resp.content.get("aspect_ratio", "16:9"),
-        "composition_guide": resp.content.get("composition_guide"),
-        "video_storyboard": resp.content.get("video_storyboard"),
+        "image_prompt": final_image_prompt,
+        "negative_prompt": final_negative_prompt,
+        "aspect_ratio": final_aspect_ratio,
+        "composition_guide": final_comp_guide,
+        "video_storyboard": final_video_storyboard,
         "accessibility": {
             "alt_text": dedup.alt_text,
             "tactile_description": dedup.tactile_description,
@@ -2058,37 +2083,86 @@ def factory_get_bundle_by_substrand(
         """
     )
 
+    merged_curriculum: dict[str, Any] = {}
+    merged_notes: dict[str, Any] = {}
+    merged_diagrams: list[Any] = []
+    merged_activities: dict[str, Any] = {}
+    merged_questions: list[Any] = []
+    merged_audit: dict[str, Any] = {}
+    merged_status: str = "draft"
+    found_any = False
+    latest_bundle_id = ""
+    latest_updated_at = ""
+
     for row in rows:
         c = row.get("curriculum") or {}
         row_grade = str(c.get("grade", "")).lower().replace("grade-", "").strip()
         row_subj = str(c.get("subject", "")).lower().strip()
-        row_strand = str(c.get("strand", "")).lower().strip()
         row_ss = str(c.get("sub_strand", "")).lower().strip()
 
-        if (
-            (row_grade == clean_grade or not clean_grade or not row_grade)
-            and (row_subj == clean_subj or clean_subj in row_subj or row_subj in clean_subj)
-            and (row_ss == clean_ss or clean_ss in row_ss or row_ss in clean_ss)
-        ):
-            raw_diag = row.get("diagrams")
-            norm_diag = raw_diag if isinstance(raw_diag, list) else ([raw_diag] if raw_diag else [])
-            raw_act = row.get("activities")
-            norm_act = raw_act if raw_act else {}
-            raw_qs = row.get("questions")
-            norm_qs = raw_qs if isinstance(raw_qs, list) else ([raw_qs] if raw_qs else [])
+        # Match subject and sub-strand (fuzzy or exact)
+        match_subj = (row_subj == clean_subj or clean_subj in row_subj or row_subj in clean_subj)
+        match_ss = (row_ss == clean_ss or clean_ss in row_ss or row_ss in clean_ss)
 
-            return {
-                "found": True,
-                "bundle_id": row.get("bundle_id"),
-                "curriculum": c,
-                "notes": row.get("notes") or {},
-                "diagrams": norm_diag,
-                "activities": norm_act,
-                "questions": norm_qs,
-                "review_audit": row.get("review_audit") or {},
-                "status": row.get("status") or "draft",
-                "updated_at": str(row.get("updated_at")),
-            }
+        if match_subj and match_ss:
+            found_any = True
+            if not latest_bundle_id:
+                latest_bundle_id = row.get("bundle_id") or ""
+                latest_updated_at = str(row.get("updated_at") or "")
+                merged_curriculum = c
+                merged_status = row.get("status") or "draft"
+                merged_audit = row.get("review_audit") or {}
+
+            # Merge notes
+            row_notes = row.get("notes")
+            if isinstance(row_notes, dict) and row_notes and not merged_notes:
+                merged_notes = row_notes
+
+            # Merge diagrams
+            raw_diag = row.get("diagrams")
+            if raw_diag and not merged_diagrams:
+                if isinstance(raw_diag, list):
+                    merged_diagrams = raw_diag
+                elif isinstance(raw_diag, dict):
+                    if "visuals" in raw_diag and isinstance(raw_diag["visuals"], list):
+                        merged_diagrams = raw_diag["visuals"]
+                    elif "diagrams" in raw_diag and isinstance(raw_diag["diagrams"], list):
+                        merged_diagrams = raw_diag["diagrams"]
+                    elif raw_diag.get("diagram_svg") or raw_diag.get("title"):
+                        merged_diagrams = [raw_diag]
+
+            # Merge activities
+            raw_act = row.get("activities")
+            if raw_act and not merged_activities:
+                if isinstance(raw_act, dict):
+                    merged_activities = raw_act
+                elif isinstance(raw_act, list):
+                    merged_activities = {"activities": raw_act}
+
+            # Merge questions
+            raw_qs = row.get("questions")
+            if raw_qs and not merged_questions:
+                if isinstance(raw_qs, list):
+                    merged_questions = raw_qs
+                elif isinstance(raw_qs, dict):
+                    if "questions" in raw_qs and isinstance(raw_qs["questions"], list):
+                        merged_questions = raw_qs["questions"]
+                    elif raw_qs.get("question_text"):
+                        merged_questions = [raw_qs]
+
+    if found_any:
+        return {
+            "found": True,
+            "bundle_id": latest_bundle_id,
+            "curriculum": merged_curriculum or {"grade": grade, "subject": subject, "strand": strand, "sub_strand": sub_strand},
+            "notes": merged_notes,
+            "diagrams": merged_diagrams,
+            "activities": merged_activities,
+            "questions": merged_questions,
+            "review_audit": merged_audit,
+            "status": merged_status,
+            "updated_at": latest_updated_at,
+        }
 
     return {"found": False, "bundle": None}
 
@@ -2148,6 +2222,9 @@ def factory_auto_persist_station(
         },
     )
 
+    # Use existing bundle_id if found to update the same record
+    target_bundle_id = existing.get("bundle_id") if (existing and existing.get("bundle_id")) else payload.bundle_id
+
     notes = existing.get("notes") if existing and existing.get("notes") else {}
     diagrams = existing.get("diagrams") if existing and existing.get("diagrams") else []
     activities = existing.get("activities") if existing and existing.get("activities") else {}
@@ -2193,7 +2270,7 @@ def factory_auto_persist_station(
             updated_at = NOW()
         """,
         {
-            "bundle_id": payload.bundle_id,
+            "bundle_id": target_bundle_id,
             "curriculum": to_json(curr_dict),
             "notes": to_json(notes),
             "diagrams": to_json(diagrams),

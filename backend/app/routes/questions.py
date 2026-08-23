@@ -300,11 +300,20 @@ def factory_generate_questions_batch(
             f"LAYER 3 EXPERIMENTS, LAB PRACTICUMS & SAFETY:\n{experiments_text[:2000]}\n\n"
             f"CRITICAL ASSESSMENT DESIGN RULES (ZERO HALLUCINATION & FULL DNA):\n"
             f"1. YOU MUST GENERATE EXACTLY {payload.batch_count} INDEPENDENT, COMPLETE QUESTIONS.\n"
-            f"2. Cover a balanced mix of requested typologies:\n"
-            f"   - 'multiple_choice': 4 plausible distractors, correct flag, distractor diagnostic rationale for every option.\n"
-            f"   - 'diagram_based': Questions directly referencing apparatus, anatomical/physical parts, or flowcharts from Layer 2.\n"
-            f"   - 'experiment_based': Questions testing laboratory methodology, controlled variables, expected data readings, and safety PPE from Layer 3.\n"
-            f"   - 'structured_scenario': Scenario-based problems set in authentic Kenyan counties (e.g. Uasin Gishu, Nakuru, Naivasha, Kericho) with sub-parts (a), (b), (c) and marks per part.\n"
+            f"2. Cover a balanced mix of requested typologies with maximum academic rigor:\n"
+            f"   - 'multiple_choice': 4 plausible distractors, correct flag, and deep distractor diagnostic rationale for every option.\n"
+            f"   - 'diagram_based': Questions directly referencing apparatus, anatomical/physical parts, or flowcharts from Layer 2. Set 'diagram_ref' to the matching diagram asset ID or title. Provide structured questions that test labeling, interpretation of flow arrows, functional roles of components, and troubleshooting abnormal readings.\n"
+            f"   - 'experiment_based': MUST NOT be generic or superficial (e.g., NEVER just say 'evaluate your experiment').\n"
+            f"     MUST formulate an AUTHENTIC, RIGOROUS LABORATORY PRACTICUM / FIELDWORK INVESTIGATION:\n"
+            f"     * Explicit Experimental Context & Setup: Describe the full investigation conducted by Kenyan learners (e.g. 'A Grade 7 learner investigated the buffering capacity and pH of 3 soil samples A, B, and C collected from Trans-Nzoia County...').\n"
+            f"     * Practical Protocol & Empirical Data Table: Provide step-by-step apparatus setup (e.g., 10g dried soil, 50ml distilled water, Universal Indicator / calibrated pH meter, 0.1M HCl titrant) and an observed readings table (initial pH, drops of acid added, final pH, buffer capacity, precipitation).\n"
+            f"     * Structured Multi-Part Inquiries ('structured_parts'):\n"
+            f"       - Part (a): Data Analysis & Interpretation (evaluate differences and calculate values from observed data).\n"
+            f"       - Part (b): Scientific Mechanisms & Principles (explain chemical buffering, ion exchange, or biological reactions).\n"
+            f"       - Part (c): Community Agricultural / Ecological Remediation (specific recommendations for local Kenyan farmers: e.g. agricultural lime CaCO3 application rates at 2 tons/ha in Uasin Gishu vs organic compost in Trans-Nzoia, crop yield implications).\n"
+            f"       - Part (d): Experimental Controls & Safety Protocols (controlled variables, safety PPE precautions for handling reagents, and sources of experimental error).\n"
+            f"     * Exhaustive Model Answer & Scoring Keys: Provide a multi-paragraph model answer covering all scenarios thoroughly, and a detailed point-by-point marking scheme with M1, A1, B1 marks.\n"
+            f"   - 'structured_scenario': Real-world scenario-based problems set in authentic Kenyan counties with sub-parts (a), (b), (c) and marks per part.\n"
             f"   - 'quantitative_calculation': Mathematical / statistical calculations (e.g. GDP contribution percentage, agricultural lime buffer tonnage, soil loss equation) with full formula steps.\n"
             f"   - 'extended_essay': Synthesis, environmental critique, or ASTGS 2019-2029 policy evaluation.\n"
             f"   - 'assertion_reason': Statement (A) and Reason (R) causality diagnostics.\n"
@@ -321,12 +330,12 @@ def factory_generate_questions_batch(
             f'      "question_type": "multiple_choice | diagram_based | experiment_based | structured_scenario | quantitative_calculation | extended_essay | assertion_reason",\n'
             f'      "bloom_level": "Recall | Understanding | Application | Analysis | Evaluation | Creation",\n'
             f'      "difficulty_index": {payload.difficulty},\n'
-            f'      "max_marks": 2,\n'
-            f'      "estimated_time_mins": 3,\n'
+            f'      "max_marks": 5,\n'
+            f'      "estimated_time_mins": 5,\n'
             f'      "micro_concept": "<specific sub-topic or competency tested>",\n'
             f'      "target_slo": "<specific learning outcome>",\n'
-            f'      "stimulus_context": "<authentic Kenyan agricultural/scientific scenario background>",\n'
-            f'      "question_text": "<clear, rigorous question prompt>",\n'
+            f'      "stimulus_context": "<authentic Kenyan agricultural/scientific practical scenario background and empirical data table>",\n'
+            f'      "question_text": "<clear, rigorous question prompt detailing instructions and inquiry>",\n'
             f'      "diagram_ref": "diag_01",\n'
             f'      "options": [\n'
             f'        {{"id": "A", "text": "...", "is_correct": false, "distractor_rationale": "Why plausible but incorrect..."}},\n'
@@ -337,9 +346,10 @@ def factory_generate_questions_batch(
             f'      "correct_answer": "B",\n'
             f'      "structured_parts": [\n'
             f'        {{"part_id": "(a)", "sub_question": "...", "marks": 2, "model_answer": "..."}},\n'
-            f'        {{"part_id": "(b)", "sub_question": "...", "marks": 3, "model_answer": "..."}}\n'
+            f'        {{"part_id": "(b)", "sub_question": "...", "marks": 3, "model_answer": "..."}},\n'
+            f'        {{"part_id": "(c)", "sub_question": "...", "marks": 2, "model_answer": "..."}}\n'
             f'      ],\n'
-            f'      "model_answer": "<comprehensive model response with scientific explanation>",\n'
+            f'      "model_answer": "<exhaustive multi-paragraph model response with scientific explanation covering all scenarios>",\n'
             f'      "marking_scheme": "<step-by-step scoring keys: M1 for method, A1 for accuracy, B1 for explanation>",\n'
             f'      "kicd_rubric": {{\n'
             f'        "exceeding": "Demonstrates exhaustive mastery and links concept to macro-environmental systems.",\n'
@@ -359,7 +369,9 @@ def factory_generate_questions_batch(
     raw_questions = resp.content.get("questions", []) if isinstance(resp.content, dict) else (resp.content if isinstance(resp.content, list) else [])
     audit_report = web_research_agent.perform_quality_audit(resp.content, "questions", dossier)
 
-    # 4. Normalize All Generated Question Typologies
+    # 4. Normalize All Generated Question Typologies and Bind Real Diagram SVGs
+    diagrams_list = diagrams_obj if isinstance(diagrams_obj, list) else ([diagrams_obj] if diagrams_obj else [])
+
     normalized_questions = []
     if isinstance(raw_questions, list):
         for idx, q in enumerate(raw_questions):
@@ -368,6 +380,32 @@ def factory_generate_questions_batch(
             q_id = q.get("question_id") or f"Q_{idx+1}"
             u_id = q.get("universal_id") or f"{payload.grade[:3].upper()}-{payload.subject[:4].upper()}-{q.get('target_slo', 'SLO-01')}-{idx+1}"
             q_type = q.get("question_type") or "multiple_choice"
+
+            # Diagram binding
+            diagram_svg = None
+            diagram_title = None
+            diagram_id = None
+            diagram_url = None
+
+            diag_ref = str(q.get("diagram_ref") or "").strip()
+            matched_diag = None
+
+            if len(diagrams_list) > 0:
+                for d in diagrams_list:
+                    if isinstance(d, dict):
+                        d_id = str(d.get("asset_id") or "")
+                        d_title = str(d.get("title") or d.get("diagram_title") or "")
+                        if diag_ref and (diag_ref == d_id or diag_ref.lower() in d_title.lower() or d_id.lower() in diag_ref.lower()):
+                            matched_diag = d
+                            break
+                if not matched_diag and (q_type == "diagram_based" or diag_ref):
+                    matched_diag = diagrams_list[idx % len(diagrams_list)]
+
+            if matched_diag and isinstance(matched_diag, dict):
+                diagram_svg = matched_diag.get("diagram_svg") or matched_diag.get("svg")
+                diagram_title = matched_diag.get("title") or matched_diag.get("diagram_title") or "Sub-strand Vector Diagram"
+                diagram_id = matched_diag.get("asset_id") or matched_diag.get("diagram_id") or "diag_01"
+                diagram_url = matched_diag.get("storage_url") or ""
 
             # Normalize Options
             opts = q.get("options")
@@ -422,13 +460,17 @@ def factory_generate_questions_batch(
                 "question_type": q_type,
                 "bloom_level": q.get("bloom_level", "Application"),
                 "difficulty_index": q.get("difficulty_index", payload.difficulty),
-                "max_marks": q.get("max_marks", 2),
-                "estimated_time_mins": q.get("estimated_time_mins", 3),
+                "max_marks": q.get("max_marks", 4),
+                "estimated_time_mins": q.get("estimated_time_mins", 4),
                 "micro_concept": q.get("micro_concept", payload.sub_strand),
                 "target_slo": q.get("target_slo", payload.slo_id or "SLO-01"),
                 "stimulus_context": q.get("stimulus_context", ""),
                 "question_text": q.get("question_text", ""),
-                "diagram_ref": q.get("diagram_ref", ""),
+                "diagram_ref": diag_ref or (diagram_id if diagram_id else ""),
+                "diagram_svg": diagram_svg,
+                "diagram_title": diagram_title,
+                "diagram_id": diagram_id,
+                "diagram_url": diagram_url,
                 "options": norm_opts if norm_opts else None,
                 "correct_answer": correct or (norm_opts[0]["id"] if norm_opts else None),
                 "structured_parts": q.get("structured_parts"),

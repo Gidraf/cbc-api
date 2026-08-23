@@ -796,36 +796,135 @@ export function App() {
     return `bundle_${cleanGrade}_${cleanSubj}_${cleanStrand}_${cleanSS}`;
   }
 
+  function normalizeVisualsList(raw: any): any[] {
+    if (!raw) return [];
+    if (typeof raw === "string") {
+      try {
+        raw = JSON.parse(raw);
+      } catch {
+        if (raw.includes("<svg")) {
+          return [{ asset_id: "vis_1", title: "Visual Model", diagram_svg: raw, status: "generated" }];
+        }
+        return [];
+      }
+    }
+    if (Array.isArray(raw)) {
+      return raw.map((item: any, idx: number) => {
+        if (typeof item === "string") {
+          if (item.includes("<svg")) {
+            return { asset_id: `vis_${idx + 1}`, title: `Visual ${idx + 1}`, diagram_svg: item, status: "generated" };
+          }
+          try {
+            const parsed = JSON.parse(item);
+            return parsed.content || parsed;
+          } catch {
+            return { asset_id: `vis_${idx + 1}`, title: item, status: "planned" };
+          }
+        }
+        const c = item.content || item;
+        return {
+          ...c,
+          asset_id: c.asset_id || c.diagram_id || `vis_${idx + 1}`,
+          title: c.title || c.diagram_title || `Visual ${idx + 1}`,
+          diagram_svg: c.diagram_svg || c.svg || c.svg_code,
+          image_prompt: c.image_prompt || c.vivid_prompt,
+          video_storyboard: c.video_storyboard,
+          status: (c.diagram_svg || c.image_prompt || c.video_storyboard) ? "generated" : (c.status || "planned"),
+        };
+      });
+    }
+    if (typeof raw === "object") {
+      if (Array.isArray(raw.visuals)) return normalizeVisualsList(raw.visuals);
+      if (Array.isArray(raw.diagrams)) return normalizeVisualsList(raw.diagrams);
+      if (raw.diagram_svg || raw.image_prompt || raw.diagram_title || raw.title) {
+        return [{
+          ...raw,
+          asset_id: raw.asset_id || raw.diagram_id || "vis_1",
+          title: raw.title || raw.diagram_title || "Visual Model",
+          diagram_svg: raw.diagram_svg || raw.svg || raw.svg_code,
+          status: "generated",
+        }];
+      }
+    }
+    return [];
+  }
+
+  function normalizeActivitiesList(raw: any): any[] {
+    if (!raw) return [];
+    if (typeof raw === "string") {
+      try { raw = JSON.parse(raw); } catch { return []; }
+    }
+    if (Array.isArray(raw)) return raw;
+    if (typeof raw === "object") {
+      if (Array.isArray(raw.activities)) return raw.activities;
+      if (Array.isArray(raw.practicals)) return raw.practicals;
+      if (raw.title || raw.procedure || raw.scientific_principle) return [raw];
+    }
+    return [];
+  }
+
+  function normalizeQuestionsList(raw: any): any[] {
+    if (!raw) return [];
+    if (typeof raw === "string") {
+      try { raw = JSON.parse(raw); } catch { return []; }
+    }
+    if (Array.isArray(raw)) return raw;
+    if (typeof raw === "object") {
+      if (Array.isArray(raw.questions)) return raw.questions;
+      if (Array.isArray(raw.items)) return raw.items;
+      if (raw.question_text) return [raw];
+    }
+    return [];
+  }
+
   async function loadSavedBundleForSubstrand(grade: string, subject: string, strand: string, subStrand: string) {
     const storageKey = `cbc:bundle:${grade}:${subject}:${strand}:${subStrand}`;
     
-    // 1. Instant local restore from localStorage
+    // 1. Instant local restore from localStorage with multiple candidate keys
+    const candidateKeys = [
+      storageKey,
+      `cbc:bundle:${grade.replace("grade-", "")}:${subject}:${strand}:${subStrand}`,
+      `cbc:bundle:grade-${grade.replace("grade-", "")}:${subject}:${strand}:${subStrand}`,
+      `cbc:bundle:${grade}:${subject}::${subStrand}`,
+    ];
+    
+    // Also search all localStorage keys for subStrand matches
     try {
-      const cached = localStorage.getItem(storageKey);
-      if (cached) {
-        const data = JSON.parse(cached);
-        if (data.notes) setStationNotes(data.notes);
-        if (data.diagrams && data.diagrams.length > 0) {
-          setStationVisualsList(data.diagrams);
-          setStationDiagram(data.diagrams[0]);
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (k && k.startsWith("cbc:bundle:") && subStrand && k.toLowerCase().includes(subStrand.toLowerCase().slice(0, 20))) {
+          if (!candidateKeys.includes(k)) candidateKeys.push(k);
         }
-        if (data.activities) {
-          const list = Array.isArray(data.activities.activities) ? data.activities.activities : (Array.isArray(data.activities) ? data.activities : []);
-          if (list.length > 0) {
-            setStationActivitiesList(list);
-            setStationActivity(list[0]);
-          }
-        }
-        if (data.questions && data.questions.length > 0) {
-          setStationQuestions(data.questions);
-        }
-        if (typeof data.notesApproved === "boolean") setNotesApproved(data.notesApproved);
-        if (typeof data.diagramApproved === "boolean") setDiagramApproved(data.diagramApproved);
-        if (typeof data.activityApproved === "boolean") setActivityApproved(data.activityApproved);
-        if (typeof data.questionsApproved === "boolean") setQuestionsApproved(data.questionsApproved);
       }
-    } catch (e) {
-      // Non-blocking
+    } catch (e) {}
+
+    for (const key of candidateKeys) {
+      try {
+        const cached = localStorage.getItem(key);
+        if (cached) {
+          const data = JSON.parse(cached);
+          if (data.notes && Object.keys(data.notes).length > 0) setStationNotes(data.notes);
+          const normVis = normalizeVisualsList(data.diagrams);
+          if (normVis.length > 0) {
+            setStationVisualsList(normVis);
+            setStationDiagram(normVis[0]);
+          }
+          const normActs = normalizeActivitiesList(data.activities);
+          if (normActs.length > 0) {
+            setStationActivitiesList(normActs);
+            setStationActivity(normActs[0]);
+          }
+          const normQs = normalizeQuestionsList(data.questions);
+          if (normQs.length > 0) {
+            setStationQuestions(normQs);
+          }
+          if (typeof data.notesApproved === "boolean") setNotesApproved(data.notesApproved);
+          if (typeof data.diagramApproved === "boolean") setDiagramApproved(data.diagramApproved);
+          if (typeof data.activityApproved === "boolean") setActivityApproved(data.activityApproved);
+          if (typeof data.questionsApproved === "boolean") setQuestionsApproved(data.questionsApproved);
+          break;
+        }
+      } catch (e) {}
     }
 
     // 2. Authoritative restore from backend DB & MinIO
@@ -839,20 +938,19 @@ export function App() {
         if (res.notes && Object.keys(res.notes).length > 0) {
           setStationNotes(res.notes);
         }
-        if (res.diagrams && res.diagrams.length > 0) {
-          setStationVisualsList(res.diagrams);
-          setStationDiagram(res.diagrams[0]);
+        const normVis = normalizeVisualsList(res.diagrams);
+        if (normVis.length > 0) {
+          setStationVisualsList(normVis);
+          setStationDiagram(normVis[0]);
         }
-        if (res.activities) {
-          const actData = res.activities;
-          const list = Array.isArray(actData.activities) ? actData.activities : (Array.isArray(actData) ? actData : []);
-          if (list.length > 0) {
-            setStationActivitiesList(list);
-            setStationActivity(list[0]);
-          }
+        const normActs = normalizeActivitiesList(res.activities);
+        if (normActs.length > 0) {
+          setStationActivitiesList(normActs);
+          setStationActivity(normActs[0]);
         }
-        if (res.questions && res.questions.length > 0) {
-          setStationQuestions(res.questions);
+        const normQs = normalizeQuestionsList(res.questions);
+        if (normQs.length > 0) {
+          setStationQuestions(normQs);
         }
         if (res.status === "approved" || res.status === "published") {
           setNotesApproved(true);
@@ -2974,45 +3072,66 @@ export function App() {
                         </span>
                       </div>
 
-                      <h2 style={{ margin: "6px 0 4px", color: "#14532d", fontSize: "18px" }}>
-                        {genSubject} ➔ <span style={{ color: "#0369a1" }}>🌿 Strand: {genStrand || "General Strand"}</span> ➔ <span style={{ color: "#15803d", textDecoration: "underline" }}>🌱 Sub-strand: {genSubstrand || "Select Sub-strand"}</span>
-                      </h2>
+                      <div style={{ display: "flex", gap: "10px", margin: "8px 0 6px", flexWrap: "wrap", alignItems: "center" }}>
+                        <h2 style={{ margin: 0, color: "#14532d", fontSize: "17px" }}>
+                          {genSubject}
+                        </h2>
+
+                        <label style={{ fontSize: "12px", fontWeight: 600, color: "#0369a1", display: "flex", alignItems: "center", gap: "6px" }}>
+                          🌿 Strand:
+                          <select
+                            value={genStrand}
+                            onChange={(e) => {
+                              const stName = e.target.value;
+                              setGenStrand(stName);
+                              const foundStrand = subjectStrands.find((s: any) => (s.name || s.strand_name) === stName);
+                              if (foundStrand && foundStrand.sub_strands && foundStrand.sub_strands.length > 0) {
+                                const firstSub = foundStrand.sub_strands[0];
+                                selectSubstrandForFactory(firstSub, genGrade, genSubject);
+                              }
+                            }}
+                            style={{ fontSize: "12px", padding: "4px 8px", borderRadius: "6px", border: "1px solid #bae6fd", background: "#fff", color: "#0c4a6e" }}
+                          >
+                            {subjectStrands.length > 0 ? (
+                              subjectStrands.map((st: any, idx: number) => {
+                                const label = st.name || st.strand_name || `Strand ${idx+1}`;
+                                return <option key={`st-opt-${idx}`} value={label}>{label}</option>;
+                              })
+                            ) : (
+                              <option value={genStrand}>{genStrand || "General Strand"}</option>
+                            )}
+                          </select>
+                        </label>
+
+                        <label style={{ fontSize: "12px", fontWeight: 600, color: "#15803d", display: "flex", alignItems: "center", gap: "6px" }}>
+                          🌱 Sub-strand:
+                          <select
+                            value={genSubstrand}
+                            onChange={(e) => {
+                              const ssName = e.target.value;
+                              const found = factorySubstrandsList.find((s: any) => (s.sub_strand_name || s.name) === ssName)
+                                || { strand_name: genStrand, sub_strand_name: ssName };
+                              selectSubstrandForFactory(found, genGrade, genSubject);
+                            }}
+                            style={{ fontSize: "12px", padding: "4px 8px", borderRadius: "6px", border: "1px solid #86efac", background: "#fff", color: "#14532d", fontWeight: 700 }}
+                          >
+                            {factorySubstrandsList.length > 0 ? (
+                              factorySubstrandsList.map((ss: any, idx: number) => {
+                                const name = ss.sub_strand_name || ss.name || `Sub-strand ${idx+1}`;
+                                const hours = ss.allocated_hours || "4h";
+                                return <option key={`ss-opt-${idx}`} value={name}>{name} (⏱️ {hours})</option>;
+                              })
+                            ) : (
+                              <option value={genSubstrand}>{genSubstrand || "Select Sub-strand"}</option>
+                            )}
+                          </select>
+                        </label>
+                      </div>
 
                       {/* Strand Guidance Context Pill */}
                       {genStrand && (
-                        <div style={{ fontSize: "11.5px", color: "#075985", background: "#f0f9ff", border: "1px solid #bae6fd", borderRadius: "6px", padding: "4px 8px", marginTop: "4px", display: "inline-block" }}>
-                          ℹ️ <strong>Parent Strand Scope & Guidance:</strong> Overall curricular anchor for all sub-strands in {genStrand}.
-                        </div>
-                      )}
-
-                      {/* Sub-strand Switcher Pills */}
-                      {factorySubstrandsList.length > 0 && (
-                        <div style={{ display: "flex", flexWrap: "wrap", gap: "6px", marginTop: "8px" }}>
-                          <span style={{ fontSize: "11px", color: "#166534", alignSelf: "center", fontWeight: 600 }}>Switch Sub-strand:</span>
-                          {factorySubstrandsList.map((ss: any, idx: number) => {
-                            const isSelected = (ss.sub_strand_name || ss.name) === genSubstrand;
-                            const hours = ss.allocated_hours || "4h";
-                            const sloCount = (ss.slos || []).length;
-                            return (
-                              <button
-                                key={idx}
-                                className={isSelected ? "" : "ghost"}
-                                style={{
-                                  fontSize: "11.5px",
-                                  padding: "4px 10px",
-                                  borderRadius: "20px",
-                                  background: isSelected ? "#15803d" : "#fff",
-                                  color: isSelected ? "#fff" : "#14532d",
-                                  borderColor: isSelected ? "#15803d" : "#86efac",
-                                  fontWeight: isSelected ? 700 : 500,
-                                }}
-                                onClick={() => selectSubstrandForFactory(ss, genGrade, genSubject)}
-                              >
-                                🌱 {ss.sub_strand_name || ss.name || `Sub-strand ${idx + 1}`}{" "}
-                                <span style={{ opacity: 0.85, fontSize: "10px" }}>⏱️ {hours} • 🎯 {sloCount} SLOs</span>
-                              </button>
-                            );
-                          })}
+                        <div style={{ fontSize: "11px", color: "#075985", background: "#f0f9ff", border: "1px solid #bae6fd", borderRadius: "6px", padding: "3px 8px", marginTop: "2px", display: "inline-block" }}>
+                          ℹ️ <strong>Parent Strand Anchor:</strong> Scope and guidance for all sub-strands in <em>{genStrand}</em>.
                         </div>
                       )}
                     </div>
@@ -3522,43 +3641,48 @@ export function App() {
                       </div>
                     </div>
 
-                    {/* Multi-Visual Selection Tabs */}
-                    {stationVisualsList.length > 0 && (
-                      <div style={{ display: "flex", flexWrap: "wrap", gap: "6px", marginBottom: "8px" }}>
-                        {stationVisualsList.map((vis: any, vIdx: number) => {
-                          const isActive = vIdx === activeVisualIdx;
-                          const isGen = vis.status === "generated" || vis.diagram_svg;
-                          return (
-                            <button
-                              key={vIdx}
-                              className={isActive ? "" : "ghost"}
-                              style={{
-                                fontSize: "11.5px",
-                                padding: "4px 10px",
-                                borderRadius: "6px",
-                                background: isActive ? "#0284c7" : "#fff",
-                                color: isActive ? "#fff" : "#0f172a",
-                                borderColor: isActive ? "#0284c7" : "#cbd5e1",
-                                fontWeight: isActive ? 700 : 500,
-                              }}
-                              onClick={() => {
-                                setActiveVisualIdx(vIdx);
-                                setStationDiagram(vis);
-                              }}
-                            >
-                              {vis.asset_type === "realistic_image" ? "🎨" : "📐"} {vIdx + 1}. {vis.title || `Visual ${vIdx + 1}`}{" "}
-                              <span style={{ opacity: 0.8, fontSize: "10px" }}>({isGen ? "✓ Ready" : "Planned"})</span>
-                            </button>
-                          );
-                        })}
-                      </div>
-                    )}
-
-                    {/* Active Visual Meta & Prompt Bar */}
+                    {/* Active Visual Meta & Preview */}
                     {(() => {
-                      const curVis = stationVisualsList[activeVisualIdx] || stationDiagram;
+                      const visualsToShow = (stationVisualsList && stationVisualsList.length > 0)
+                        ? stationVisualsList
+                        : (stationDiagram ? [stationDiagram] : []);
+                      const curVis = visualsToShow[activeVisualIdx] || visualsToShow[0] || stationDiagram;
+
                       return (
                         <div>
+                          {/* Multi-Visual Selection Tabs */}
+                          {visualsToShow.length > 0 && (
+                            <div style={{ display: "flex", flexWrap: "wrap", gap: "6px", marginBottom: "8px" }}>
+                              {visualsToShow.map((vis: any, vIdx: number) => {
+                                const isActive = vIdx === activeVisualIdx;
+                                const isGen = vis.status === "generated" || vis.diagram_svg || vis.image_prompt;
+                                return (
+                                  <button
+                                    key={vIdx}
+                                    className={isActive ? "" : "ghost"}
+                                    style={{
+                                      fontSize: "11.5px",
+                                      padding: "4px 10px",
+                                      borderRadius: "6px",
+                                      background: isActive ? "#0284c7" : "#fff",
+                                      color: isActive ? "#fff" : "#0f172a",
+                                      borderColor: isActive ? "#0284c7" : "#cbd5e1",
+                                      fontWeight: isActive ? 700 : 500,
+                                    }}
+                                    onClick={() => {
+                                      setActiveVisualIdx(vIdx);
+                                      setStationDiagram(vis);
+                                    }}
+                                  >
+                                    {vis.asset_type === "realistic_image" ? "🎨" : "📐"} {vIdx + 1}. {vis.title || `Visual ${vIdx + 1}`}{" "}
+                                    <span style={{ opacity: 0.8, fontSize: "10px" }}>({isGen ? "✓ Ready" : "Planned"})</span>
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          )}
+
+                          {/* Active Visual Meta & Prompt Bar */}
                           {curVis && (
                             <div style={{ padding: "10px 14px", background: "#f8fafc", borderRadius: "8px", border: "1px solid #e2e8f0", marginBottom: "10px", fontSize: "12px" }}>
                               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "6px" }}>
@@ -3691,25 +3815,77 @@ export function App() {
 
                           <div className="factory-preview-pane" style={{ padding: "8px", marginTop: "8px" }}>
                             {curVis ? (
-                              <div>
+                              <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
                                 {diagramViewMode === "visual" && (
                                   <div>
                                     <div
                                       className="svg-canvas-box"
                                       dangerouslySetInnerHTML={{ __html: sanitizeSvgForDisplay(curVis.diagram_svg || "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 800 500'><rect width='100%' height='100%' fill='#f8fafc'/><text x='400' y='250' font-family='sans-serif' font-size='16' text-anchor='middle' fill='#0369a1'>Click Generate to synthesize visual</text></svg>") }}
                                     />
+
+                                    {/* CO-EXISTING PHOTOREALISTIC SCENE CARD */}
+                                    <div style={{ marginTop: "12px", padding: "12px 14px", background: "#faf5ff", borderRadius: "8px", border: "1px solid #e9d5ff", fontSize: "12px" }}>
+                                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px", flexWrap: "wrap", gap: "6px" }}>
+                                        <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                                          <strong style={{ color: "#7e22ce", fontSize: "13px" }}>
+                                            📸 Photorealistic Scene: {curVis.title || "Visual Diagram"}
+                                          </strong>
+                                          <span className="pill ok" style={{ fontSize: "9.5px" }}>Aspect: {curVis.aspect_ratio || "16:9"}</span>
+                                        </div>
+                                        <div style={{ display: "flex", gap: "6px" }}>
+                                          <button
+                                            className="ghost"
+                                            style={{ fontSize: "10.5px", padding: "2px 8px", background: "#fff", borderColor: "#a855f7", color: "#7e22ce" }}
+                                            onClick={() => {
+                                              navigator.clipboard.writeText(curVis.image_prompt || curVis.vivid_prompt || "");
+                                              alert("Photorealistic image prompt copied to clipboard!");
+                                            }}
+                                          >
+                                            📋 Copy 4K Prompt
+                                          </button>
+                                          <button
+                                            className="ghost"
+                                            style={{ fontSize: "10.5px", padding: "2px 8px", background: "#fff", borderColor: "#7e22ce", color: "#7e22ce" }}
+                                            onClick={() => setActiveVisualModal(curVis)}
+                                          >
+                                            🔍 Inspect Modal
+                                          </button>
+                                        </div>
+                                      </div>
+                                      <div style={{ padding: "8px 10px", background: "#fff", borderRadius: "6px", border: "1px solid #d8b4fe", color: "#3b0764", fontFamily: "monospace", fontSize: "11.5px", lineHeight: "1.45" }}>
+                                        {curVis.image_prompt || curVis.vivid_prompt || "Photorealistic educational illustration showing authentic Kenyan practical learning with natural golden-hour lighting, high depth of field, and accurate scientific apparatus."}
+                                      </div>
+                                      {curVis.composition_guide && (
+                                        <div style={{ marginTop: "6px", color: "#6b21a8", fontSize: "11.5px" }}>
+                                          <strong>Camera & Lighting Guide:</strong> {curVis.composition_guide}
+                                        </div>
+                                      )}
+                                      {curVis.negative_prompt && (
+                                        <div style={{ marginTop: "4px", color: "#9333ea", fontSize: "11px" }}>
+                                          <strong>Negative Prompt:</strong> {curVis.negative_prompt}
+                                        </div>
+                                      )}
+                                    </div>
+
+                                    {/* CO-EXISTING VIDEO SIMULATION STORYBOARD CARD */}
                                     {curVis.video_storyboard && (
-                                      <div style={{ marginTop: "12px", padding: "12px", background: "#f8fafc", borderRadius: "8px", border: "1px solid #cbd5e1" }}>
-                                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                                          <strong style={{ color: "#475569" }}>🎥 Video Simulation Script ({curVis.video_storyboard.target_duration || "60s"}):</strong>
+                                      <div style={{ marginTop: "12px", padding: "12px 14px", background: "#f8fafc", borderRadius: "8px", border: "1px solid #cbd5e1" }}>
+                                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
+                                          <strong style={{ color: "#334155", fontSize: "13px" }}>
+                                            🎬 Video Simulation Script: {curVis.title || "Visual Model"} ({curVis.video_storyboard.target_duration || "60s"})
+                                          </strong>
                                           <span className="pill ok" style={{ fontSize: "10px" }}>{curVis.video_storyboard.scenes?.length || 0} Scenes</span>
                                         </div>
-                                        <div className="stack" style={{ gap: "6px", marginTop: "8px" }}>
+                                        <div className="stack" style={{ gap: "6px" }}>
                                           {(curVis.video_storyboard.scenes || []).map((sc: any, sIdx: number) => (
-                                            <div key={sIdx} style={{ fontSize: "11.5px", padding: "6px 8px", background: "#fff", borderRadius: "4px", border: "1px solid #e2e8f0" }}>
-                                              <strong>Scene {sc.scene_number || sIdx + 1} ({sc.time_range || sc.shot_type}):</strong> {sc.visual_action}
+                                            <div key={sIdx} style={{ fontSize: "11.5px", padding: "6px 10px", background: "#fff", borderRadius: "4px", border: "1px solid #e2e8f0" }}>
+                                              <div style={{ display: "flex", justifyContent: "space-between" }}>
+                                                <strong>Scene {sc.scene_number || sIdx + 1}: {sc.shot_type || "Scene"}</strong>
+                                                <span className="pill ok" style={{ fontSize: "9.5px" }}>{sc.time_range || `0:0${sIdx*15}-0:${(sIdx+1)*15}`}</span>
+                                              </div>
+                                              <div style={{ margin: "3px 0", color: "#334155" }}>{sc.visual_action}</div>
                                               {sc.voiceover_narration && (
-                                                <div style={{ color: "#166534", marginTop: "2px", fontStyle: "italic" }}>
+                                                <div style={{ color: "#166534", fontStyle: "italic", fontSize: "11px" }}>
                                                   "Voiceover: {sc.voiceover_narration}"
                                                 </div>
                                               )}
@@ -4184,43 +4360,187 @@ export function App() {
                         <div>
                           {stationQuestions.map((q: any, idx: number) => {
                             const c = q.content || q;
+                            const qType = (c.question_type || "multiple_choice").toLowerCase();
+                            
+                            // Diagram resolution
+                            let diagSvg = c.diagram_svg;
+                            let diagTitle = c.diagram_title || c.diagram_ref || "Practical Model";
+                            let diagId = c.diagram_id || c.diagram_ref || "diag_01";
+                            let diagStorage = c.diagram_url;
+                            let matchedVis = null;
+
+                            if (stationVisualsList && stationVisualsList.length > 0) {
+                              const found = stationVisualsList.find(
+                                (v: any) => v.asset_id === c.diagram_ref || (c.diagram_ref && v.title?.toLowerCase().includes(c.diagram_ref.toLowerCase()))
+                              ) || (qType === "diagram_based" ? stationVisualsList[idx % stationVisualsList.length] : null);
+                              if (found) {
+                                matchedVis = found;
+                                if (!diagSvg) diagSvg = found.diagram_svg;
+                                if (!diagTitle) diagTitle = found.title;
+                                if (!diagId) diagId = found.asset_id;
+                                if (!diagStorage) diagStorage = found.storage_url;
+                              }
+                            }
+
                             return (
-                              <div key={idx} className="card-item" style={{ marginBottom: "12px" }}>
-                                <div style={{ display: "flex", justifyContent: "space-between" }}>
-                                  <strong style={{ fontSize: "13px", color: "#0c4a6e" }}>
-                                    {idx + 1}. {c.question_type?.toUpperCase() || "QUESTION"}
+                              <div key={idx} className="card-item" style={{ marginBottom: "16px", border: "1px solid #cbd5e1" }}>
+                                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
+                                  <strong style={{ fontSize: "13.5px", color: "#0c4a6e" }}>
+                                    {idx + 1}. {qType.replace("_", " ").toUpperCase()}
                                   </strong>
-                                  <span className="pill ok" style={{ fontSize: "10px" }}>{q.pedagogical_dna?.cognitive_level || "Application"}</span>
+                                  <div style={{ display: "flex", gap: "6px" }}>
+                                    <span className="pill ok" style={{ fontSize: "10px" }}>{q.pedagogical_dna?.cognitive_level || c.bloom_level || "Application"}</span>
+                                    {c.max_marks && <span className="pill ok" style={{ fontSize: "10px" }}>{c.max_marks} Marks</span>}
+                                  </div>
                                 </div>
-                                <p style={{ margin: "6px 0", fontSize: "12px" }}>{c.question_text}</p>
+
+                                {/* Stimulus Context / Practical Experiment Protocol */}
+                                {c.stimulus_context && (
+                                  <div style={{ padding: "10px 14px", background: qType === "experiment_based" ? "#f0fdfa" : "#f8fafc", borderLeft: `4px solid ${qType === "experiment_based" ? "#0d9488" : "#7c3aed"}`, borderRadius: "4px", marginBottom: "10px", fontSize: "12.5px", color: "#334155" }}>
+                                    <strong style={{ color: qType === "experiment_based" ? "#0f766e" : "#6d28d9" }}>
+                                      {qType === "experiment_based" ? "🧪 Practical Investigation Protocol & Experimental Setup:" : "📌 Scenario Context:"}
+                                    </strong>
+                                    <p style={{ margin: "4px 0 0", whiteSpace: "pre-line" }}>{c.stimulus_context}</p>
+                                  </div>
+                                )}
+
+                                <p style={{ margin: "6px 0 10px", fontSize: "13px", fontWeight: 600, color: "#0f172a" }}>{c.question_text}</p>
+
+                                {/* Inline Vector SVG Diagram & Action Toolbar */}
+                                {(diagSvg || c.diagram_ref || qType === "diagram_based") && (
+                                  <div style={{ marginBottom: "12px", padding: "10px", background: "#f8fafc", border: "1px solid #cbd5e1", borderRadius: "6px" }}>
+                                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "6px", flexWrap: "wrap", gap: "6px" }}>
+                                      <div>
+                                        <strong style={{ color: "#0369a1", fontSize: "12px" }}>
+                                          📐 Figure {idx + 1}: {diagTitle}
+                                        </strong>
+                                        {diagId && <span className="pill ok" style={{ fontSize: "9.5px", marginLeft: "6px" }}>{diagId}</span>}
+                                      </div>
+                                      <div style={{ display: "flex", gap: "6px" }}>
+                                        {diagSvg && (
+                                          <button
+                                            className="ghost"
+                                            style={{ fontSize: "10.5px", padding: "2px 8px", background: "#fff", borderColor: "#0284c7", color: "#0284c7" }}
+                                            onClick={() => setActiveVisualModal(matchedVis || { title: diagTitle, asset_id: diagId, diagram_svg: diagSvg, storage_url: diagStorage })}
+                                            title="Inspect Diagram in Fullscreen View"
+                                          >
+                                            🔍 Zoom & Fullscreen
+                                          </button>
+                                        )}
+                                        {diagSvg && (
+                                          <button
+                                            className="ghost"
+                                            style={{ fontSize: "10.5px", padding: "2px 8px", background: "#fff", borderColor: "#166534", color: "#166534" }}
+                                            onClick={() => {
+                                              const blob = new Blob([diagSvg || ""], { type: "image/svg+xml" });
+                                              const url = URL.createObjectURL(blob);
+                                              const a = document.createElement("a");
+                                              a.href = url;
+                                              a.download = `${diagId || "figure"}.svg`;
+                                              a.click();
+                                            }}
+                                            title="Download SVG file"
+                                          >
+                                            ⬇️ Download SVG
+                                          </button>
+                                        )}
+                                      </div>
+                                    </div>
+                                    {diagSvg ? (
+                                      <div
+                                        className="svg-canvas-box"
+                                        style={{ minHeight: "160px", maxHeight: "280px", background: "#fff", border: "1px solid #e2e8f0", borderRadius: "6px" }}
+                                        dangerouslySetInnerHTML={{ __html: sanitizeSvgForDisplay(diagSvg) }}
+                                      />
+                                    ) : (
+                                      <div style={{ fontSize: "11.5px", color: "#0369a1" }}>
+                                        📐 Refer to Figure: <em>"{diagTitle}"</em> from Layer 2 Visual Studio.
+                                      </div>
+                                    )}
+
+                                    {/* CO-EXISTING 4K PHOTOREALISTIC SCENE CARD */}
+                                    {(matchedVis?.image_prompt || c.image_prompt) && (
+                                      <div style={{ marginTop: "8px", padding: "10px 12px", background: "#faf5ff", border: "1px solid #e9d5ff", borderRadius: "6px", fontSize: "11.5px" }}>
+                                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "6px", flexWrap: "wrap", gap: "6px" }}>
+                                          <strong style={{ color: "#7e22ce" }}>
+                                            📸 Photorealistic Scene: {diagTitle}
+                                          </strong>
+                                          <button
+                                            className="ghost"
+                                            style={{ fontSize: "10px", padding: "2px 6px", background: "#fff", borderColor: "#c084fc", color: "#7e22ce" }}
+                                            onClick={() => {
+                                              navigator.clipboard.writeText(matchedVis?.image_prompt || c.image_prompt || "");
+                                              alert("Photorealistic prompt copied to clipboard!");
+                                            }}
+                                          >
+                                            📋 Copy 4K Prompt
+                                          </button>
+                                        </div>
+                                        <div style={{ padding: "6px 8px", background: "#fff", borderRadius: "4px", border: "1px solid #d8b4fe", color: "#3b0764", fontFamily: "monospace", fontSize: "11px", lineHeight: "1.4" }}>
+                                          {matchedVis?.image_prompt || c.image_prompt}
+                                        </div>
+                                      </div>
+                                    )}
+                                  </div>
+                                )}
 
                                 {/* Options if MCQ */}
                                 {(() => {
                                   const safeOptions = normalizeQuestionOptions(c.options, c.correct_answer, c.distractor_explanations);
                                   if (!safeOptions || safeOptions.length === 0) return null;
                                   return (
-                                    <div style={{ display: "grid", gap: "4px", margin: "6px 0" }}>
+                                    <div style={{ display: "grid", gap: "4px", margin: "8px 0" }}>
                                       {safeOptions.map((opt: any) => (
                                         <div
                                           key={opt.id}
                                           style={{
-                                            fontSize: "11px",
-                                            padding: "4px 8px",
-                                            borderRadius: "4px",
+                                            fontSize: "12px",
+                                            padding: "6px 10px",
+                                            borderRadius: "6px",
                                             background: opt.is_correct ? "#f0fdf4" : "#fff",
                                             border: `1px solid ${opt.is_correct ? "#86efac" : "#e2e8f0"}`,
                                           }}
                                         >
                                           <strong>{opt.id}.</strong> {opt.text}{" "}
-                                          {opt.is_correct && <span style={{ color: "#166534", fontWeight: 700 }}>✓ (Correct)</span>}
+                                          {opt.is_correct && <span style={{ color: "#166534", fontWeight: 700 }}>✓ (Correct Key)</span>}
                                           {opt.distractor_rationale && (
-                                            <div style={{ color: "#6b7280", fontStyle: "italic", marginTop: "2px" }}>Rationale: {opt.distractor_rationale}</div>
+                                            <div style={{ color: "#6b7280", fontStyle: "italic", marginTop: "2px", fontSize: "11px" }}>Rationale: {opt.distractor_rationale}</div>
                                           )}
                                         </div>
                                       ))}
                                     </div>
                                   );
                                 })()}
+
+                                {/* Structured Sub-Parts */}
+                                {c.structured_parts && c.structured_parts.length > 0 && (
+                                  <div style={{ margin: "8px 0 12px", padding: "10px 12px", background: "#f8fafc", borderRadius: "6px", border: "1px solid #cbd5e1" }}>
+                                    <strong style={{ fontSize: "12px", color: "#334155" }}>Structured Inquiry Sub-Questions:</strong>
+                                    <div className="stack" style={{ gap: "6px", marginTop: "6px" }}>
+                                      {c.structured_parts.map((p: any, pIdx: number) => (
+                                        <div key={pIdx} style={{ fontSize: "12px", padding: "6px 10px", background: "#fff", borderRadius: "4px", border: "1px solid #e2e8f0" }}>
+                                          <div style={{ display: "flex", justifyContent: "space-between" }}>
+                                            <strong>{p.part_id || `(${String.fromCharCode(97+pIdx)})`} {p.sub_question}</strong>
+                                            <span className="pill ok" style={{ fontSize: "9.5px" }}>{p.marks || 1} Marks</span>
+                                          </div>
+                                          {p.model_answer && (
+                                            <div style={{ fontSize: "11px", color: "#166534", marginTop: "4px" }}>
+                                              <em>Model Answer: {p.model_answer}</em>
+                                            </div>
+                                          )}
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
+
+                                {/* Model Solution & Explanation */}
+                                {c.model_answer && (
+                                  <div style={{ padding: "8px 12px", background: "#f0fdf4", borderRadius: "6px", border: "1px solid #bbf7d0", fontSize: "12px", marginBottom: "8px" }}>
+                                    <strong style={{ color: "#166534" }}>💡 Model Solution & Explanation:</strong>
+                                    <p style={{ margin: "4px 0 0", color: "#14532d", whiteSpace: "pre-line" }}>{c.model_answer}</p>
+                                  </div>
+                                )}
 
                                 {/* 4-Level KICD Scoring Rubric Grid */}
                                 {c.marking_guide && (
@@ -5589,52 +5909,114 @@ export function App() {
                   <select
                     value={qfGrade}
                     onChange={(e) => {
-                      setQfGrade(e.target.value);
-                      loadGroundTruthForQF(e.target.value, qfSubject, qfStrand, qfSubstrand);
+                      const g = e.target.value;
+                      setQfGrade(g);
+                      if (g) {
+                        loadGradeSubjects(g);
+                        loadFactorySubstrandsForDesign(g, qfSubject);
+                        loadGroundTruthForQF(g, qfSubject, qfStrand, qfSubstrand);
+                        loadQuestionsForSubstrand(g, qfSubject, qfStrand, qfSubstrand);
+                      }
                     }}
-                    style={{ width: "100%", marginTop: "4px", padding: "6px" }}
+                    style={{ width: "100%", marginTop: "4px", padding: "6px", borderRadius: "6px", border: "1px solid #c4b5fd", background: "#fff" }}
                   >
+                    <option value="grade-dte">Diploma in Teacher Education (DTE)</option>
                     <option value="grade-7">Grade 7 (Junior Secondary)</option>
                     <option value="grade-8">Grade 8 (Junior Secondary)</option>
                     <option value="grade-9">Grade 9 (Junior Secondary)</option>
                     <option value="grade-10">Grade 10 (Senior Secondary)</option>
                     <option value="grade-11">Grade 11 (Senior Secondary)</option>
                     <option value="grade-12">Grade 12 (Senior Secondary)</option>
-                    <option value="grade-dte">Diploma in Teacher Education (DTE)</option>
                   </select>
                 </label>
 
                 <label style={{ fontSize: "12px", fontWeight: 600, color: "#5b21b6" }}>
                   Subject:
-                  <input
-                    type="text"
+                  <select
                     value={qfSubject}
-                    onChange={(e) => setQfSubject(e.target.value)}
-                    style={{ width: "100%", marginTop: "4px", padding: "6px" }}
-                  />
+                    onChange={(e) => {
+                      const s = e.target.value;
+                      setQfSubject(s);
+                      if (s && qfGrade) {
+                        loadSubjectStrands(qfGrade, s);
+                        loadFactorySubstrandsForDesign(qfGrade, s);
+                        loadGroundTruthForQF(qfGrade, s, qfStrand, qfSubstrand);
+                        loadQuestionsForSubstrand(qfGrade, s, qfStrand, qfSubstrand);
+                      }
+                    }}
+                    style={{ width: "100%", marginTop: "4px", padding: "6px", borderRadius: "6px", border: "1px solid #c4b5fd", background: "#fff" }}
+                  >
+                    <option value="">Select subject...</option>
+                    {gradeSubjects.map((s: any, idx: number) => {
+                      const label = toOptionLabel(s);
+                      return <option key={`qf-sub-${label}-${idx}`} value={label}>{label}</option>;
+                    })}
+                    {curriculumDesignsList.map((cd: any, idx: number) => (
+                      <option key={`qf-cd-${cd.subject}-${idx}`} value={cd.subject}>{cd.subject} ({cd.grade})</option>
+                    ))}
+                    {qfSubject && !gradeSubjects.some((s: any) => toOptionLabel(s) === qfSubject) && !curriculumDesignsList.some((cd: any) => cd.subject === qfSubject) && (
+                      <option value={qfSubject}>{qfSubject}</option>
+                    )}
+                  </select>
                 </label>
 
                 <label style={{ fontSize: "12px", fontWeight: 600, color: "#5b21b6" }}>
                   Strand (Parent Concept):
-                  <input
-                    type="text"
+                  <select
                     value={qfStrand}
-                    onChange={(e) => setQfStrand(e.target.value)}
-                    style={{ width: "100%", marginTop: "4px", padding: "6px" }}
-                  />
+                    onChange={(e) => {
+                      const st = e.target.value;
+                      setQfStrand(st);
+                      const foundStrand = subjectStrands.find((s: any) => (s.name || s.strand_name) === st);
+                      let firstSub = qfSubstrand;
+                      if (foundStrand && foundStrand.sub_strands && foundStrand.sub_strands.length > 0) {
+                        firstSub = foundStrand.sub_strands[0]?.sub_strand_name || foundStrand.sub_strands[0]?.name || foundStrand.sub_strands[0] || qfSubstrand;
+                        setQfSubstrand(firstSub);
+                      }
+                      loadGroundTruthForQF(qfGrade, qfSubject, st, firstSub);
+                      loadQuestionsForSubstrand(qfGrade, qfSubject, st, firstSub);
+                    }}
+                    style={{ width: "100%", marginTop: "4px", padding: "6px", borderRadius: "6px", border: "1px solid #c4b5fd", background: "#fff" }}
+                  >
+                    {subjectStrands.length > 0 ? (
+                      subjectStrands.map((st: any, idx: number) => {
+                        const label = st.name || st.strand_name || `Strand ${idx+1}`;
+                        return <option key={`qf-st-${idx}`} value={label}>{label}</option>;
+                      })
+                    ) : (
+                      <option value={qfStrand}>{qfStrand || "Select Strand"}</option>
+                    )}
+                    {qfStrand && !subjectStrands.some((st: any) => (st.name || st.strand_name) === qfStrand) && (
+                      <option value={qfStrand}>{qfStrand}</option>
+                    )}
+                  </select>
                 </label>
 
                 <label style={{ fontSize: "12px", fontWeight: 600, color: "#5b21b6" }}>
                   Sub-strand (Target Anchor):
-                  <input
-                    type="text"
+                  <select
                     value={qfSubstrand}
                     onChange={(e) => {
-                      setQfSubstrand(e.target.value);
-                      loadGroundTruthForQF(qfGrade, qfSubject, qfStrand, e.target.value);
+                      const ss = e.target.value;
+                      setQfSubstrand(ss);
+                      loadGroundTruthForQF(qfGrade, qfSubject, qfStrand, ss);
+                      loadQuestionsForSubstrand(qfGrade, qfSubject, qfStrand, ss);
                     }}
-                    style={{ width: "100%", marginTop: "4px", padding: "6px", fontWeight: 700 }}
-                  />
+                    style={{ width: "100%", marginTop: "4px", padding: "6px", borderRadius: "6px", border: "1px solid #c4b5fd", background: "#fff", fontWeight: 700 }}
+                  >
+                    {factorySubstrandsList.length > 0 ? (
+                      factorySubstrandsList.map((ss: any, idx: number) => {
+                        const name = ss.sub_strand_name || ss.name || `Sub-strand ${idx+1}`;
+                        const hours = ss.allocated_hours || "4h";
+                        return <option key={`qf-ss-${idx}`} value={name}>{name} (⏱️ {hours})</option>;
+                      })
+                    ) : (
+                      <option value={qfSubstrand}>{qfSubstrand || "Select Sub-strand"}</option>
+                    )}
+                    {qfSubstrand && !factorySubstrandsList.some((ss: any) => (ss.sub_strand_name || ss.name) === qfSubstrand) && (
+                      <option value={qfSubstrand}>{qfSubstrand}</option>
+                    )}
+                  </select>
                 </label>
               </div>
 
@@ -5976,11 +6358,20 @@ export function App() {
                             </div>
                           </div>
 
-                          {/* Stimulus Context (If Scenario-Based) */}
+                          {/* Stimulus Context (If Scenario-Based or Practical Experiment) */}
                           {q.stimulus_context && (
-                            <div style={{ padding: "10px 14px", background: "#f8fafc", borderLeft: "4px solid #7c3aed", borderRadius: "4px", marginBottom: "12px", fontSize: "13px", color: "#334155" }}>
-                              <strong style={{ color: "#6d28d9" }}>📌 Authentic Kenyan Scenario Context:</strong>
-                              <p style={{ margin: "4px 0 0" }}>{q.stimulus_context}</p>
+                            <div style={{ padding: "12px 14px", background: q.question_type === "experiment_based" ? "#f0fdfa" : "#f8fafc", borderLeft: `4px solid ${q.question_type === "experiment_based" ? "#0d9488" : "#7c3aed"}`, borderRadius: "6px", marginBottom: "12px", fontSize: "13px", color: "#334155" }}>
+                              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "4px" }}>
+                                <strong style={{ color: q.question_type === "experiment_based" ? "#0f766e" : "#6d28d9" }}>
+                                  {q.question_type === "experiment_based" ? "🧪 Authentic Practical Investigation Protocol & Experimental Setup:" : "📌 Authentic Kenyan Scenario Context:"}
+                                </strong>
+                                {q.question_type === "experiment_based" && (
+                                  <span className="pill ok" style={{ fontSize: "10px", background: "#ccfbf1", color: "#0f766e", borderColor: "#99f6e4" }}>
+                                    🔬 Laboratory / Fieldwork Practicum
+                                  </span>
+                                )}
+                              </div>
+                              <p style={{ margin: "4px 0 0", whiteSpace: "pre-line", lineHeight: "1.5" }}>{q.stimulus_context}</p>
                             </div>
                           )}
 
@@ -5989,12 +6380,112 @@ export function App() {
                             {q.question_text}
                           </div>
 
-                          {/* Diagram Callout (If Diagram-Based) */}
-                          {q.diagram_ref && (
-                            <div style={{ padding: "8px 12px", background: "#f0f9ff", border: "1px solid #bae6fd", borderRadius: "6px", marginBottom: "12px", fontSize: "12px", color: "#0369a1" }}>
-                              📐 <strong>Diagram Reference:</strong> Refer to Figure: <em>"{q.diagram_ref}"</em> from Layer 2 Visual Studio.
-                            </div>
-                          )}
+                          {/* Inline Vector SVG Diagram Callout & Action Toolbar */}
+                          {(() => {
+                            let diagSvg = q.diagram_svg;
+                            let diagTitle = q.diagram_title || q.diagram_ref || "Practical Scientific Model";
+                            let diagId = q.diagram_id || q.diagram_ref || "diag_01";
+                            let diagStorage = q.diagram_url;
+                            let matchedVis = null;
+
+                            if (stationVisualsList && stationVisualsList.length > 0) {
+                              const found = stationVisualsList.find(
+                                (v: any) => v.asset_id === q.diagram_ref || (q.diagram_ref && v.title?.toLowerCase().includes(q.diagram_ref.toLowerCase()))
+                              ) || (q.question_type === "diagram_based" ? stationVisualsList[qIdx % stationVisualsList.length] : null);
+                              if (found) {
+                                matchedVis = found;
+                                if (!diagSvg) diagSvg = found.diagram_svg;
+                                if (!diagTitle) diagTitle = found.title;
+                                if (!diagId) diagId = found.asset_id;
+                                if (!diagStorage) diagStorage = found.storage_url;
+                              }
+                            }
+
+                            if (!diagSvg && !q.diagram_ref && q.question_type !== "diagram_based") return null;
+
+                            return (
+                              <div style={{ marginBottom: "14px", padding: "12px", background: "#f8fafc", border: "1px solid #cbd5e1", borderRadius: "8px" }}>
+                                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px", flexWrap: "wrap", gap: "6px" }}>
+                                  <div>
+                                    <strong style={{ color: "#0369a1", fontSize: "13px" }}>
+                                      📐 Figure {qIdx + 1}: {diagTitle}
+                                    </strong>
+                                    {diagId && <span className="pill ok" style={{ fontSize: "10px", marginLeft: "6px" }}>{diagId}</span>}
+                                  </div>
+                                  <div style={{ display: "flex", gap: "6px" }}>
+                                    {diagSvg && (
+                                      <button
+                                        className="ghost"
+                                        style={{ fontSize: "11px", padding: "3px 8px", background: "#fff", borderColor: "#0284c7", color: "#0284c7" }}
+                                        onClick={() => setActiveVisualModal(matchedVis || { title: diagTitle, asset_id: diagId, diagram_svg: diagSvg, storage_url: diagStorage })}
+                                        title="Inspect Diagram in Fullscreen View"
+                                      >
+                                        🔍 Zoom & Fullscreen
+                                      </button>
+                                    )}
+                                    {diagSvg && (
+                                      <button
+                                        className="ghost"
+                                        style={{ fontSize: "11px", padding: "3px 8px", background: "#fff", borderColor: "#166534", color: "#166534" }}
+                                        onClick={() => {
+                                          const blob = new Blob([diagSvg || ""], { type: "image/svg+xml" });
+                                          const url = URL.createObjectURL(blob);
+                                          const a = document.createElement("a");
+                                          a.href = url;
+                                          a.download = `${diagId || "figure"}.svg`;
+                                          a.click();
+                                        }}
+                                        title="Download SVG file"
+                                      >
+                                        ⬇️ Download SVG
+                                      </button>
+                                    )}
+                                    {diagStorage && (
+                                      <span className="pill ok" style={{ fontSize: "10px" }} title={diagStorage}>
+                                        💾 MinIO S3
+                                      </span>
+                                    )}
+                                  </div>
+                                </div>
+
+                                {diagSvg ? (
+                                  <div
+                                    className="svg-canvas-box"
+                                    style={{ minHeight: "180px", maxHeight: "300px", background: "#fff", border: "1px solid #e2e8f0", borderRadius: "6px" }}
+                                    dangerouslySetInnerHTML={{ __html: sanitizeSvgForDisplay(diagSvg) }}
+                                  />
+                                ) : (
+                                  <div style={{ padding: "8px 12px", background: "#f0f9ff", borderRadius: "6px", fontSize: "12px", color: "#0369a1" }}>
+                                    📐 <strong>Diagram Reference:</strong> Refer to Figure: <em>"{diagTitle}"</em> ({diagId}) from Layer 2 Visual Studio.
+                                  </div>
+                                )}
+
+                                {/* CO-EXISTING 4K PHOTOREALISTIC SCENE CARD */}
+                                {(matchedVis?.image_prompt || q.image_prompt) && (
+                                  <div style={{ marginTop: "10px", padding: "10px 12px", background: "#faf5ff", border: "1px solid #e9d5ff", borderRadius: "6px", fontSize: "11.5px" }}>
+                                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "6px", flexWrap: "wrap", gap: "6px" }}>
+                                      <strong style={{ color: "#7e22ce" }}>
+                                        📸 Photorealistic Scene: {diagTitle}
+                                      </strong>
+                                      <button
+                                        className="ghost"
+                                        style={{ fontSize: "10px", padding: "2px 6px", background: "#fff", borderColor: "#c084fc", color: "#7e22ce" }}
+                                        onClick={() => {
+                                          navigator.clipboard.writeText(matchedVis?.image_prompt || q.image_prompt || "");
+                                          alert("Photorealistic prompt copied to clipboard!");
+                                        }}
+                                      >
+                                        📋 Copy 4K Prompt
+                                      </button>
+                                    </div>
+                                    <div style={{ padding: "6px 8px", background: "#fff", borderRadius: "4px", border: "1px solid #d8b4fe", color: "#3b0764", fontFamily: "monospace", fontSize: "11px", lineHeight: "1.4" }}>
+                                      {matchedVis?.image_prompt || q.image_prompt}
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })()}
 
                           {/* MCQ Options Rendering */}
                           {q.options && q.options.length > 0 && (
