@@ -141,5 +141,119 @@ class QuestionDnaService:
         )
         return {"action": "re-review", "question_id": question_id, "review_audit": audit}
 
+    def update_question(self, question_id: str, content: dict[str, Any], review_audit: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Updates a question's content or review audit data."""
+        existing = self.get_question(question_id)
+        audit = review_audit if review_audit is not None else existing.get("review_audit", {})
+        audit["updated_at"] = now_iso()
+        execute(
+            """
+            UPDATE question_dna
+            SET content = CAST(:content AS jsonb),
+                review_audit = CAST(:review_audit AS jsonb),
+                updated_at = NOW()
+            WHERE question_id = :qid
+            """,
+            {
+                "qid": question_id,
+                "content": to_json(content),
+                "review_audit": to_json(audit),
+            },
+        )
+        return self.get_question(question_id)
+
+    def delete_question(self, question_id: str) -> dict[str, Any]:
+        """Deletes a question from the repository."""
+        execute("DELETE FROM question_dna WHERE question_id = :qid", {"qid": question_id})
+        return {"deleted": True, "question_id": question_id}
+
+    def save_batch_questions(
+        self,
+        grade: str,
+        subject: str,
+        strand: str,
+        sub_strand: str,
+        questions: list[dict[str, Any]],
+        status: str = "approved",
+    ) -> list[dict[str, Any]]:
+        """Saves a batch of questions to the question_dna table."""
+        import time
+        from .artifact_dna import artifact_dna_service
+        now_ts = int(time.time())
+        saved = []
+        for idx, q in enumerate(questions):
+            q_id = q.get("question_id") or f"Q_{grade[:3]}_{subject[:3]}_{now_ts}_{idx+1}"
+            u_id = q.get("universal_id") or f"{grade.upper()}-{subject[:4].upper()}-{q.get('target_slo', 'SLO-01')}-{idx+1}"
+            
+            curriculum_link = {
+                "grade": grade,
+                "subject": subject,
+                "strand": strand,
+                "sub_strand": sub_strand,
+                "slo_id": q.get("target_slo") or "SLO-01",
+            }
+            
+            pedagogical_dna = {
+                "bloom_level": q.get("bloom_level", "Application"),
+                "difficulty_index": q.get("difficulty_index", 0.65),
+                "question_type": q.get("question_type", "multiple_choice"),
+                "max_marks": q.get("max_marks", 1),
+                "estimated_time_mins": q.get("estimated_time_mins", 2),
+                "micro_concept": q.get("micro_concept", ""),
+            }
+
+            content = {
+                "question_text": q.get("question_text", ""),
+                "question_type": q.get("question_type", "multiple_choice"),
+                "stimulus_context": q.get("stimulus_context", ""),
+                "options": q.get("options"),
+                "correct_answer": q.get("correct_answer"),
+                "structured_parts": q.get("structured_parts"),
+                "diagram_ref": q.get("diagram_ref"),
+                "diagram_svg": q.get("diagram_svg"),
+                "model_answer": q.get("model_answer") or q.get("explanation", ""),
+                "marking_scheme": q.get("marking_scheme", ""),
+                "marking_guide": q.get("marking_guide") or q.get("kicd_rubric", {}),
+            }
+
+            provenance = {
+                "source_citations": q.get("provenance_citation") or q.get("source_citations", ""),
+                "parent_substrand": sub_strand,
+                "generated_by": "Questions Factory 5-Layer Pipeline",
+                "verified_at": now_iso(),
+            }
+
+            review_audit = {
+                "status": status,
+                "reviewer_consensus": "Approved by Examiner Panel",
+                "quality_score": 1.0,
+                "approved_at": now_iso(),
+            }
+
+            self.save_question(
+                question_id=q_id,
+                universal_id=u_id,
+                curriculum_link=curriculum_link,
+                pedagogical_dna=pedagogical_dna,
+                content=content,
+                provenance=provenance,
+                review_audit=review_audit,
+                status=status,
+            )
+
+            # Generate and mirror DNA Certificate
+            try:
+                artifact_dna_service.generate_question_dna(
+                    question_id=q_id,
+                    curriculum=curriculum_link,
+                    question_item={"universal_id": u_id, "content": content, "pedagogical_dna": pedagogical_dna, "rubric": content["marking_guide"]},
+                    provenance=provenance,
+                )
+            except Exception:
+                pass
+
+            saved.append({"question_id": q_id, "universal_id": u_id, "status": status})
+        return saved
+
 
 question_dna_service = QuestionDnaService()

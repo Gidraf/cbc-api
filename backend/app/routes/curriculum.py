@@ -1975,6 +1975,161 @@ def factory_save_bundle(
     return {"status": "saved", "bundle_id": payload.bundle_id, "storage_url": minio_url, "review_status": payload.review_status}
 
 
+@router.get("/factory/bundle-by-substrand")
+def factory_get_bundle_by_substrand(
+    grade: str = Query(...),
+    subject: str = Query(...),
+    strand: str = Query(...),
+    sub_strand: str = Query(...),
+    _: AuthContext = Depends(require_roles("admin", "operator", "reviewer")),
+) -> dict[str, Any]:
+    from ..infra.db import fetch_all
+
+    clean_grade = grade.lower().replace("grade-", "").strip()
+    clean_subj = subject.lower().strip()
+    clean_strand = strand.lower().strip()
+    clean_ss = sub_strand.lower().strip()
+
+    rows = fetch_all(
+        """
+        SELECT bundle_id, curriculum, notes, diagrams, activities, questions, review_audit, status, updated_at
+        FROM substrand_resources
+        ORDER BY updated_at DESC
+        """
+    )
+
+    for row in rows:
+        c = row.get("curriculum") or {}
+        row_grade = str(c.get("grade", "")).lower().replace("grade-", "").strip()
+        row_subj = str(c.get("subject", "")).lower().strip()
+        row_strand = str(c.get("strand", "")).lower().strip()
+        row_ss = str(c.get("sub_strand", "")).lower().strip()
+
+        if (
+            (row_grade == clean_grade or not clean_grade)
+            and (row_subj == clean_subj or clean_subj in row_subj or row_subj in clean_subj)
+            and (row_strand == clean_strand or not clean_strand or clean_strand in row_strand or row_strand in clean_strand)
+            and (row_ss == clean_ss or clean_ss in row_ss or row_ss in clean_ss)
+        ):
+            return {
+                "found": True,
+                "bundle_id": row.get("bundle_id"),
+                "curriculum": c,
+                "notes": row.get("notes"),
+                "diagrams": row.get("diagrams"),
+                "activities": row.get("activities"),
+                "questions": row.get("questions"),
+                "review_audit": row.get("review_audit"),
+                "status": row.get("status"),
+                "updated_at": str(row.get("updated_at")),
+            }
+
+    return {"found": False, "bundle": None}
+
+
+class FactoryAutoPersistStationRequest(BaseModel):
+    bundle_id: str
+    grade: str
+    subject: str
+    strand: str
+    sub_strand: str
+    level: str = "Basic Education"
+    station_type: str  # "notes" | "diagrams" | "activities" | "questions" | "approval"
+    data: Any = None
+    review_status: str = "draft"
+    human_notes: str = ""
+
+
+@router.post("/factory/auto-persist-station")
+def factory_auto_persist_station(
+    payload: FactoryAutoPersistStationRequest,
+    _: AuthContext = Depends(require_roles("admin", "operator", "reviewer")),
+) -> dict[str, Any]:
+    from ..infra.db import execute, fetch_one, to_json
+    from ..infra.storage import object_storage
+
+    curr_dict = {
+        "grade": payload.grade,
+        "subject": payload.subject,
+        "level": payload.level,
+        "strand": payload.strand,
+        "sub_strand": payload.sub_strand,
+    }
+
+    existing = fetch_one(
+        "SELECT * FROM substrand_resources WHERE bundle_id = :bundle_id",
+        {"bundle_id": payload.bundle_id},
+    )
+
+    notes = existing.get("notes") if existing else {}
+    diagrams = existing.get("diagrams") if existing else []
+    activities = existing.get("activities") if existing else {}
+    questions = existing.get("questions") if existing else []
+    review_audit = existing.get("review_audit") if existing else {}
+    status = existing.get("status") if existing else payload.review_status
+
+    if payload.station_type == "notes" and payload.data:
+        notes = payload.data
+    elif payload.station_type == "diagrams" and payload.data is not None:
+        diagrams = payload.data if isinstance(payload.data, list) else [payload.data]
+    elif payload.station_type == "activities" and payload.data is not None:
+        activities = payload.data
+    elif payload.station_type == "questions" and payload.data is not None:
+        questions = payload.data if isinstance(payload.data, list) else [payload.data]
+    elif payload.station_type == "approval":
+        status = payload.review_status
+        review_audit = {"status": payload.review_status, "human_notes": payload.human_notes}
+
+    execute(
+        """
+        INSERT INTO substrand_resources (
+            bundle_id, curriculum, notes, diagrams, activities, questions, review_audit, status, updated_at
+        )
+        VALUES (
+            :bundle_id, CAST(:curriculum AS jsonb), CAST(:notes AS jsonb),
+            CAST(:diagrams AS jsonb), CAST(:activities AS jsonb),
+            CAST(:questions AS jsonb), CAST(:review_audit AS jsonb),
+            :status, NOW()
+        )
+        ON CONFLICT (bundle_id) DO UPDATE SET
+            curriculum = EXCLUDED.curriculum,
+            notes = EXCLUDED.notes,
+            diagrams = EXCLUDED.diagrams,
+            activities = EXCLUDED.activities,
+            questions = EXCLUDED.questions,
+            review_audit = EXCLUDED.review_audit,
+            status = EXCLUDED.status,
+            updated_at = NOW()
+        """,
+        {
+            "bundle_id": payload.bundle_id,
+            "curriculum": to_json(curr_dict),
+            "notes": to_json(notes),
+            "diagrams": to_json(diagrams),
+            "activities": to_json(activities),
+            "questions": to_json(questions),
+            "review_audit": to_json(review_audit),
+            "status": status,
+        },
+    )
+
+    # Mirror to MinIO in background
+    try:
+        object_storage.save_full_bundle(payload.bundle_id, {
+            "bundle_id": payload.bundle_id,
+            "curriculum": curr_dict,
+            "notes": notes,
+            "diagrams": diagrams,
+            "activities": activities,
+            "questions": questions,
+            "review_audit": review_audit,
+            "status": status,
+        })
+    except Exception:
+        pass
+
+    return {"status": "persisted", "bundle_id": payload.bundle_id, "station_type": payload.station_type}
+
 
 class FactoryGenerateStrandsRequest(BaseModel):
     grade: str

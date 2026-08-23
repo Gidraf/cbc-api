@@ -15,11 +15,12 @@ type View =
   | "dashboard"
   | "datasets"
   | "prompts"
-  | "questions"
-  | "targets"
   | "generation"
+  | "questions_factory"
+  | "questions"
   | "profiles"
   | "review"
+  | "targets"
   | "providers"
   | "pipelines"
   | "browser"
@@ -27,7 +28,7 @@ type View =
 
 const roleRights: Record<Role, string[]> = {
   admin: ["all"],
-  operator: ["bindings", "generate", "jobs", "health", "browse", "production_read", "targets", "datasets", "prompts"],
+  operator: ["bindings", "generate", "jobs", "health", "browse", "production_read", "targets", "datasets", "prompts", "questions"],
   reviewer: ["health", "admin_config", "jobs", "review", "human_review", "production_read", "questions"],
   developer: ["health", "admin_config", "jobs", "browse", "production_read", "questions"]
 };
@@ -257,6 +258,7 @@ export function App() {
   const [questionsDifficulty, setQuestionsDifficulty] = useState(0.65);
   const [questionsRefinePrompt, setQuestionsRefinePrompt] = useState("");
   const [questionsApproved, setQuestionsApproved] = useState(false);
+  const [lastPersistedTime, setLastPersistedTime] = useState<string | null>(null);
 
   // Live Web Research, Thinking Trace & Quality Audit States
   const [notesResearchDossier, setNotesResearchDossier] = useState<any>(null);
@@ -295,6 +297,38 @@ export function App() {
   const [factoryAudit, setFactoryAudit] = useState<any>(null);
   const [factoryDeliberation, setFactoryDeliberation] = useState<any>(null);
   const [isAuditingBundle, setIsAuditingBundle] = useState(false);
+
+  // ─── QUESTIONS FACTORY DEDICATED ASSESSMENT ENGINE STATE ───
+  const [qfGrade, setQfGrade] = useState<string>("grade-7");
+  const [qfSubject, setQfSubject] = useState<string>("Agriculture and Environment");
+  const [qfStrand, setQfStrand] = useState<string>("1.0 AGRICULTURE AND ENVIRONMENT");
+  const [qfSubstrand, setQfSubstrand] = useState<string>("1.1 Importance of Agriculture");
+  const [qfBatchCount, setQfBatchCount] = useState<number>(5);
+  const [qfSelectedTypes, setQfSelectedTypes] = useState<string[]>([
+    "multiple_choice",
+    "diagram_based",
+    "experiment_based",
+    "structured_scenario",
+    "quantitative_calculation",
+  ]);
+  const [qfSelectedBlooms, setQfSelectedBlooms] = useState<string[]>([
+    "Application",
+    "Analysis",
+    "Critical Thinking",
+    "Recall",
+  ]);
+  const [qfDifficulty, setQfDifficulty] = useState<number>(0.65);
+  const [qfCustomPrompt, setQfCustomPrompt] = useState<string>("");
+  const [qfQuestionsList, setQfQuestionsList] = useState<any[]>([]);
+  const [qfActiveFilter, setQfActiveFilter] = useState<string>("all");
+  const [qfShowGroundTruth, setQfShowGroundTruth] = useState<boolean>(false);
+  const [qfGroundTruthData, setQfGroundTruthData] = useState<any>(null);
+  const [qfEditingQuestionIdx, setQfEditingQuestionIdx] = useState<number | null>(null);
+  const [qfExamExportModal, setQfExamExportModal] = useState<boolean>(false);
+  const [qfExportedPaper, setQfExportedPaper] = useState<any>(null);
+  const [qfExamTitle, setQfExamTitle] = useState<string>("Kenya Competency-Based Assessment: Formative & Summative Examination");
+  const [qfExamTime, setQfExamTime] = useState<string>("1 Hour 30 Minutes");
+  const [qfExamMarks, setQfExamMarks] = useState<number>(50);
 
   // Error banner state
   const [errorBanner, setErrorBanner] = useState<{code: string; message: string; retryable: boolean} | null>(null);
@@ -749,20 +783,203 @@ export function App() {
     }
   }
 
+  function getSubstrandBundleId(grade: string, subject: string, strand: string, subStrand: string): string {
+    const cleanGrade = (grade || "grade").toLowerCase().replace(/[^a-z0-9]/g, "_");
+    const cleanSubj = (subject || "subject").toLowerCase().replace(/[^a-z0-9]/g, "_");
+    const cleanStrand = (strand || "strand").toLowerCase().replace(/[^a-z0-9]/g, "_");
+    const cleanSS = (subStrand || "substrand").toLowerCase().replace(/[^a-z0-9]/g, "_");
+    return `bundle_${cleanGrade}_${cleanSubj}_${cleanStrand}_${cleanSS}`;
+  }
+
+  async function loadSavedBundleForSubstrand(grade: string, subject: string, strand: string, subStrand: string) {
+    const storageKey = `cbc:bundle:${grade}:${subject}:${strand}:${subStrand}`;
+    
+    // 1. Instant local restore from localStorage
+    try {
+      const cached = localStorage.getItem(storageKey);
+      if (cached) {
+        const data = JSON.parse(cached);
+        if (data.notes) setStationNotes(data.notes);
+        if (data.diagrams && data.diagrams.length > 0) {
+          setStationVisualsList(data.diagrams);
+          setStationDiagram(data.diagrams[0]);
+        }
+        if (data.activities) {
+          const list = Array.isArray(data.activities.activities) ? data.activities.activities : (Array.isArray(data.activities) ? data.activities : []);
+          if (list.length > 0) {
+            setStationActivitiesList(list);
+            setStationActivity(list[0]);
+          }
+        }
+        if (data.questions && data.questions.length > 0) {
+          setStationQuestions(data.questions);
+        }
+        if (typeof data.notesApproved === "boolean") setNotesApproved(data.notesApproved);
+        if (typeof data.diagramApproved === "boolean") setDiagramApproved(data.diagramApproved);
+        if (typeof data.activityApproved === "boolean") setActivityApproved(data.activityApproved);
+        if (typeof data.questionsApproved === "boolean") setQuestionsApproved(data.questionsApproved);
+      }
+    } catch (e) {
+      // Non-blocking
+    }
+
+    // 2. Authoritative restore from backend DB & MinIO
+    try {
+      const res = await fetchJson<any>(
+        `/api/v1/curriculum/factory/bundle-by-substrand?grade=${encodeURIComponent(grade)}&subject=${encodeURIComponent(subject)}&strand=${encodeURIComponent(strand)}&sub_strand=${encodeURIComponent(subStrand)}`,
+        { method: "GET" },
+        auth()
+      );
+      if (res && res.found) {
+        if (res.notes && Object.keys(res.notes).length > 0) {
+          setStationNotes(res.notes);
+        }
+        if (res.diagrams && res.diagrams.length > 0) {
+          setStationVisualsList(res.diagrams);
+          setStationDiagram(res.diagrams[0]);
+        }
+        if (res.activities) {
+          const actData = res.activities;
+          const list = Array.isArray(actData.activities) ? actData.activities : (Array.isArray(actData) ? actData : []);
+          if (list.length > 0) {
+            setStationActivitiesList(list);
+            setStationActivity(list[0]);
+          }
+        }
+        if (res.questions && res.questions.length > 0) {
+          setStationQuestions(res.questions);
+        }
+        if (res.status === "approved" || res.status === "published") {
+          setNotesApproved(true);
+          setDiagramApproved(true);
+          setActivityApproved(true);
+          setQuestionsApproved(true);
+        }
+        setLastPersistedTime(new Date().toLocaleTimeString());
+      }
+    } catch (e) {
+      // Non-blocking
+    }
+  }
+
+  async function autoPersistStation(
+    stationType: "notes" | "diagrams" | "activities" | "questions" | "approval",
+    data: any,
+    overrideNotes?: any,
+    overrideVisuals?: any,
+    overrideActivities?: any,
+    overrideQuestions?: any,
+    overrideApproved?: { notes?: boolean; diagram?: boolean; activity?: boolean; questions?: boolean }
+  ) {
+    if (!genGrade || !genSubject || !genSubstrand) return;
+    const bundleId = getSubstrandBundleId(genGrade, genSubject, genStrand, genSubstrand);
+    const storageKey = `cbc:bundle:${genGrade}:${genSubject}:${genStrand}:${genSubstrand}`;
+
+    const currentNotes = overrideNotes !== undefined ? overrideNotes : (stationType === "notes" ? data : stationNotes);
+    const currentVisuals = overrideVisuals !== undefined ? overrideVisuals : (stationType === "diagrams" ? (Array.isArray(data) ? data : [data]) : stationVisualsList);
+    const currentActs = overrideActivities !== undefined ? overrideActivities : (stationType === "activities" ? (Array.isArray(data) ? data : (data?.activities || [data])) : stationActivitiesList);
+    const currentQs = overrideQuestions !== undefined ? overrideQuestions : (stationType === "questions" ? (Array.isArray(data) ? data : [data]) : stationQuestions);
+
+    const nApp = overrideApproved?.notes !== undefined ? overrideApproved.notes : notesApproved;
+    const dApp = overrideApproved?.diagram !== undefined ? overrideApproved.diagram : diagramApproved;
+    const aApp = overrideApproved?.activity !== undefined ? overrideApproved.activity : activityApproved;
+    const qApp = overrideApproved?.questions !== undefined ? overrideApproved.questions : questionsApproved;
+
+    const bundleState = {
+      bundle_id: bundleId,
+      grade: genGrade,
+      subject: genSubject,
+      strand: genStrand,
+      sub_strand: genSubstrand,
+      notes: currentNotes,
+      diagrams: currentVisuals,
+      activities: { activities: currentActs },
+      questions: currentQs,
+      notesApproved: nApp,
+      diagramApproved: dApp,
+      activityApproved: aApp,
+      questionsApproved: qApp,
+      updatedAt: new Date().toISOString(),
+    };
+
+    // 1. Instant local persistence
+    try {
+      localStorage.setItem(storageKey, JSON.stringify(bundleState));
+      localStorage.setItem("cbc:last_factory_substrand", JSON.stringify({
+        ss: factorySelectedSubstrand,
+        grade: genGrade,
+        subject: genSubject,
+        strand: genStrand,
+        sub_strand: genSubstrand,
+        step: factoryStep
+      }));
+    } catch (e) {
+      // Ignore quota error
+    }
+
+    // 2. Background DB & MinIO persistence
+    try {
+      const isAllApproved = nApp && dApp && aApp && qApp;
+      await fetchJson<any>("/api/v1/curriculum/factory/auto-persist-station", {
+        method: "POST",
+        body: JSON.stringify({
+          bundle_id: bundleId,
+          grade: genGrade,
+          subject: genSubject,
+          strand: genStrand,
+          sub_strand: genSubstrand,
+          station_type: stationType,
+          data: data,
+          review_status: isAllApproved ? "approved" : "draft",
+          human_notes: humanBlueprintNotes || "",
+        }),
+      }, auth());
+      setLastPersistedTime(new Date().toLocaleTimeString());
+    } catch (e) {
+      // Non-blocking
+    }
+  }
+
+  function toggleNotesApproval() {
+    const next = !notesApproved;
+    setNotesApproved(next);
+    autoPersistStation("approval", null, undefined, undefined, undefined, undefined, { notes: next });
+  }
+
+  function toggleDiagramApproval() {
+    const next = !diagramApproved;
+    setDiagramApproved(next);
+    autoPersistStation("approval", null, undefined, undefined, undefined, undefined, { diagram: next });
+  }
+
+  function toggleActivityApproval() {
+    const next = !activityApproved;
+    setActivityApproved(next);
+    autoPersistStation("approval", null, undefined, undefined, undefined, undefined, { activity: next });
+  }
+
+  function toggleQuestionsApproval() {
+    const next = !questionsApproved;
+    setQuestionsApproved(next);
+    autoPersistStation("approval", null, undefined, undefined, undefined, undefined, { questions: next });
+  }
+
   function selectSubstrandForFactory(ss: any, grade: string, subject: string) {
     setFactorySelectedSubstrand(ss);
     setGenGrade(grade);
     setGenSubject(subject);
-    setGenStrand(ss.strand_name || "");
-    setGenSubstrand(ss.sub_strand_name || ss.name || "");
+    const strandName = ss.strand_name || "";
+    const substrandName = ss.sub_strand_name || ss.name || "";
+    setGenStrand(strandName);
+    setGenSubstrand(substrandName);
     const sloList = ss.slos || [];
     const firstSlo = typeof sloList[0] === 'string' ? sloList[0] : (sloList[0]?.text || sloList[0]?.id || "");
     setGenSloId(firstSlo);
-    const diagramTarget = (ss.required_diagrams && ss.required_diagrams[0]) || ss.sub_strand_name || "Visual Model";
+    const diagramTarget = (ss.required_diagrams && ss.required_diagrams[0]) || substrandName || "Visual Model";
     setDiagramConceptInput(diagramTarget);
     setFactoryStep(2);
 
-    // Clear previous station content to guarantee zero stale data
+    // Clear previous station content initially
     setStationNotes(null);
     setStationDiagram(null);
     setStationVisualsList([]);
@@ -780,21 +997,20 @@ export function App() {
     setNotesResearchDossier(null);
     setNotesQualityAudit(null);
     setNotesQualityGate(null);
-
     setDiagramResearchDossier(null);
     setDiagramQualityAudit(null);
     setDiagramQualityGate(null);
-
     setActivityResearchDossier(null);
     setActivityQualityAudit(null);
     setActivityQualityGate(null);
-
     setQuestionsResearchDossier(null);
     setQuestionsQualityAudit(null);
     setQuestionsQualityGate(null);
-
     setFactoryAudit(null);
     setFactoryDeliberation(null);
+
+    // Automatically load existing saved bundle for this sub-strand from DB / MinIO / LocalStorage
+    loadSavedBundleForSubstrand(grade, subject, strandName, substrandName);
   }
 
   async function generateFactoryNotes(customInstructions?: string) {
@@ -823,6 +1039,7 @@ export function App() {
       if (res.notes) {
         setStationNotes(res.notes);
         setNotesApproved(false);
+        autoPersistStation("notes", res.notes, res.notes, undefined, undefined, undefined, { notes: false });
       }
       if (res.content_type) setDetectedContentType(res.content_type);
       if (res.research_dossier) setNotesResearchDossier(res.research_dossier);
@@ -850,13 +1067,10 @@ export function App() {
       }, auth());
       if (res.diagram) {
         setStationDiagram(res.diagram);
-        setStationVisualsList((prev) => {
-          if (prev.length === 0) return [res.diagram];
-          const copy = [...prev];
-          copy[0] = { ...copy[0], ...res.diagram, status: "generated" };
-          return copy;
-        });
+        const updated = [res.diagram];
+        setStationVisualsList(updated);
         setDiagramApproved(false);
+        autoPersistStation("diagrams", updated, undefined, updated, undefined, undefined, { diagram: false });
       }
       if (res.content_type) setDetectedContentType(res.content_type);
       if (res.research_dossier) setDiagramResearchDossier(res.research_dossier);
@@ -884,6 +1098,7 @@ export function App() {
       if (res.visuals && res.visuals.length > 0) {
         setStationVisualsList(res.visuals);
         setActiveVisualIdx(0);
+        autoPersistStation("diagrams", res.visuals, undefined, res.visuals);
       }
       if (res.content_type) setDetectedContentType(res.content_type);
       if (res.research_dossier) setDiagramResearchDossier(res.research_dossier);
@@ -907,14 +1122,13 @@ export function App() {
         body: JSON.stringify(payload),
       }, auth());
       if (res.visual) {
-        setStationVisualsList((prev) => {
-          const next = [...prev];
-          next[index] = res.visual;
-          return next;
-        });
+        const next = [...stationVisualsList];
+        next[index] = res.visual;
+        setStationVisualsList(next);
         if (index === activeVisualIdx || !stationDiagram) {
           setStationDiagram(res.visual);
         }
+        autoPersistStation("diagrams", next, undefined, next);
       }
       if (res.quality_audit) setDiagramQualityAudit(res.quality_audit);
       if (res.quality_gate) setDiagramQualityGate(res.quality_gate);
@@ -949,13 +1163,10 @@ export function App() {
       }, auth());
       if (res.activity) {
         setStationActivity(res.activity);
-        setStationActivitiesList((prev) => {
-          if (prev.length === 0) return [res.activity];
-          const copy = [...prev];
-          copy[0] = { ...copy[0], ...res.activity, status: "generated" };
-          return copy;
-        });
+        const updated = [res.activity];
+        setStationActivitiesList(updated);
         setActivityApproved(false);
+        autoPersistStation("activities", { activities: updated }, undefined, undefined, updated, undefined, { activity: false });
       }
       if (res.content_type) setDetectedContentType(res.content_type);
       if (res.research_dossier) setActivityResearchDossier(res.research_dossier);
@@ -984,6 +1195,7 @@ export function App() {
       if (res.activities && res.activities.length > 0) {
         setStationActivitiesList(res.activities);
         setActiveActivityIdx(0);
+        autoPersistStation("activities", { activities: res.activities }, undefined, undefined, res.activities);
       }
       if (res.content_type) setDetectedContentType(res.content_type);
       if (res.research_dossier) setActivityResearchDossier(res.research_dossier);
@@ -1007,14 +1219,13 @@ export function App() {
         body: JSON.stringify(payload),
       }, auth());
       if (res.activity) {
-        setStationActivitiesList((prev) => {
-          const next = [...prev];
-          next[index] = res.activity;
-          return next;
-        });
+        const next = [...stationActivitiesList];
+        next[index] = res.activity;
+        setStationActivitiesList(next);
         if (index === activeActivityIdx || !stationActivity) {
           setStationActivity(res.activity);
         }
+        autoPersistStation("activities", { activities: next }, undefined, undefined, next);
       }
       if (res.quality_audit) setActivityQualityAudit(res.quality_audit);
       if (res.quality_gate) setActivityQualityGate(res.quality_gate);
@@ -1055,6 +1266,7 @@ export function App() {
       if (res.questions) {
         setStationQuestions(res.questions);
         setQuestionsApproved(false);
+        autoPersistStation("questions", res.questions, undefined, undefined, undefined, res.questions, { questions: false });
       }
       if (res.content_type) setDetectedContentType(res.content_type);
       if (res.research_dossier) setQuestionsResearchDossier(res.research_dossier);
@@ -1145,6 +1357,182 @@ export function App() {
         body: JSON.stringify(payload),
       }, auth());
       await Promise.all([loadQuestionBank(), loadReviewBundles("all")]);
+      return res;
+    });
+  }
+
+  // ─── QUESTIONS FACTORY DEDICATED ASSESSMENT ENGINE HANDLERS ───
+  async function loadGroundTruthForQF(grade: string, subject: string, strand: string, subStrand: string) {
+    try {
+      const res = await fetchJson<any>(
+        `/api/v1/curriculum/factory/bundle-by-substrand?grade=${encodeURIComponent(grade)}&subject=${encodeURIComponent(subject)}&strand=${encodeURIComponent(strand)}&sub_strand=${encodeURIComponent(subStrand)}`,
+        { method: "GET" },
+        auth()
+      );
+      if (res && res.found) {
+        setQfGroundTruthData(res);
+      } else {
+        setQfGroundTruthData(null);
+      }
+    } catch (e) {
+      setQfGroundTruthData(null);
+    }
+  }
+
+  function openQuestionsFactoryFromContentFactory() {
+    const targetGrade = genGrade || "grade-7";
+    const targetSubj = genSubject || "Agriculture and Environment";
+    const targetStrand = genStrand || "1.0 AGRICULTURE AND ENVIRONMENT";
+    const targetSubstrand = genSubstrand || "1.1 Importance of Agriculture";
+    setQfGrade(targetGrade);
+    setQfSubject(targetSubj);
+    setQfStrand(targetStrand);
+    setQfSubstrand(targetSubstrand);
+    loadGroundTruthForQF(targetGrade, targetSubj, targetStrand, targetSubstrand);
+    loadQuestionsForSubstrand(targetGrade, targetSubj, targetStrand, targetSubstrand);
+    setView("questions_factory");
+  }
+
+  async function loadQuestionsForSubstrand(grade: string, subject: string, strand: string, subStrand: string) {
+    try {
+      const res = await fetchJson<any>(
+        `/api/v1/questions/by-substrand?grade=${encodeURIComponent(grade)}&subject=${encodeURIComponent(subject)}&strand=${encodeURIComponent(strand)}&sub_strand=${encodeURIComponent(subStrand)}`,
+        { method: "GET" },
+        auth()
+      );
+      if (res && res.questions && res.questions.length > 0) {
+        const mapped = res.questions.map((q: any) => ({
+          question_id: q.question_id,
+          universal_id: q.universal_id,
+          question_type: q.content?.question_type || q.pedagogical_dna?.question_type || "multiple_choice",
+          bloom_level: q.pedagogical_dna?.bloom_level || "Application",
+          difficulty_index: q.pedagogical_dna?.difficulty_index || 0.65,
+          max_marks: q.pedagogical_dna?.max_marks || 2,
+          estimated_time_mins: q.pedagogical_dna?.estimated_time_mins || 3,
+          micro_concept: q.pedagogical_dna?.micro_concept || subStrand,
+          target_slo: q.curriculum_link?.slo_id || "SLO-01",
+          stimulus_context: q.content?.stimulus_context || "",
+          question_text: q.content?.question_text || "",
+          diagram_ref: q.content?.diagram_ref || "",
+          diagram_svg: q.content?.diagram_svg || "",
+          options: q.content?.options,
+          correct_answer: q.content?.correct_answer,
+          structured_parts: q.content?.structured_parts,
+          model_answer: q.content?.model_answer || "",
+          marking_scheme: q.content?.marking_scheme || "",
+          marking_guide: q.content?.marking_guide || {},
+          provenance_citation: q.provenance?.source_citations || "[KNBS 2024 / KALRO 2023] — Linked to Lesson Notes",
+          approved: q.status === "approved",
+        }));
+        setQfQuestionsList(mapped);
+      }
+    } catch (e) {
+      // Non-blocking
+    }
+  }
+
+  async function generateQuestionsFactoryBatch(customPrompt?: string) {
+    await run(`🎯 Generating Batch of ${qfBatchCount} Publication Assessment Items...`, async () => {
+      const payload = {
+        grade: qfGrade,
+        subject: qfSubject,
+        strand: qfStrand,
+        sub_strand: qfSubstrand,
+        batch_count: qfBatchCount,
+        question_types: qfSelectedTypes.length > 0 ? qfSelectedTypes : ["multiple_choice", "structured_scenario", "diagram_based", "experiment_based"],
+        bloom_levels: qfSelectedBlooms.length > 0 ? qfSelectedBlooms : ["Application", "Analysis", "Critical Thinking"],
+        difficulty: qfDifficulty,
+        custom_instructions: customPrompt || qfCustomPrompt || "Generate diverse, rigorous Kenya CBC questions referencing the saved notes, diagrams, and experiments.",
+      };
+      const res = await fetchJson<any>("/api/v1/questions/factory/generate-batch", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      }, auth());
+      if (res.questions && res.questions.length > 0) {
+        setQfQuestionsList((prev) => [...prev, ...res.questions]);
+      }
+      return res;
+    });
+  }
+
+  async function generateQuestionsFactorySingle(qType: string, conceptTarget: string) {
+    await run(`🎯 Generating Single ${qType.replace('_', ' ').toUpperCase()} Item...`, async () => {
+      const payload = {
+        grade: qfGrade,
+        subject: qfSubject,
+        strand: qfStrand,
+        sub_strand: qfSubstrand,
+        question_type: qType,
+        bloom_level: "Application",
+        difficulty: qfDifficulty,
+        concept_target: conceptTarget,
+        custom_instructions: qfCustomPrompt,
+      };
+      const res = await fetchJson<any>("/api/v1/questions/factory/generate-single", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      }, auth());
+      if (res.questions && res.questions.length > 0) {
+        setQfQuestionsList((prev) => [...prev, ...res.questions]);
+      }
+      return res;
+    });
+  }
+
+  function toggleApproveQuestionInQF(index: number) {
+    setQfQuestionsList((prev) => {
+      const copy = [...prev];
+      if (copy[index]) {
+        copy[index] = { ...copy[index], approved: !copy[index].approved };
+      }
+      return copy;
+    });
+  }
+
+  async function approveAllQFQuestions() {
+    await run("✅ Syncing & Registering All Questions in Question DNA Repository...", async () => {
+      const payload = {
+        grade: qfGrade,
+        subject: qfSubject,
+        strand: qfStrand,
+        sub_strand: qfSubstrand,
+        questions: qfQuestionsList,
+        status: "approved",
+      };
+      const res = await fetchJson<any>("/api/v1/questions/factory/approve-batch", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      }, auth());
+      setQfQuestionsList((prev) => prev.map((q) => ({ ...q, approved: true })));
+      await loadQuestionBank();
+      return res;
+    });
+  }
+
+  function deleteQFQuestion(index: number) {
+    setQfQuestionsList((prev) => prev.filter((_, i) => i !== index));
+  }
+
+  async function exportQFExamPaper() {
+    await run("📑 Formatting KNEC / KICD Publication Exam Paper & Marking Scheme...", async () => {
+      const payload = {
+        grade: qfGrade,
+        subject: qfSubject,
+        strand: qfStrand,
+        sub_strand: qfSubstrand,
+        exam_title: qfExamTitle,
+        time_allowed: qfExamTime,
+        total_marks: qfExamMarks,
+        questions: qfQuestionsList,
+      };
+      const res = await fetchJson<any>("/api/v1/questions/factory/export-exam", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      }, auth());
+      if (res) {
+        setQfExportedPaper(res);
+        setQfExamExportModal(true);
+      }
       return res;
     });
   }
@@ -1427,6 +1815,20 @@ export function App() {
     loadReviewBundles(reviewFilter);
     loadProfilesList();
 
+    // Restore last active factory sub-strand and load its persisted notes, diagrams, activities, and questions
+    try {
+      const rawLast = localStorage.getItem("cbc:last_factory_substrand");
+      if (rawLast) {
+        const parsed = JSON.parse(rawLast);
+        if (parsed && parsed.ss && parsed.grade && parsed.subject) {
+          selectSubstrandForFactory(parsed.ss, parsed.grade, parsed.subject);
+          if (parsed.step) setFactoryStep(parsed.step);
+        }
+      }
+    } catch (e) {
+      // Non-blocking
+    }
+
     // 2. Proactive JWT Expiration Timer
     let expTimer: any = null;
     const expSec = parseJwtExp(bearerToken);
@@ -1470,11 +1872,12 @@ export function App() {
     { id: "dashboard", label: "Dashboard", right: "health" },
     { id: "datasets", label: "Datasets & Blueprints", right: "datasets" },
     { id: "generation", label: "🏭 Content Factory", right: "generate" },
+    { id: "questions_factory", label: "🎯 Questions Factory", right: "generate" },
+    { id: "questions", label: "📚 Question Bank & DNA", right: "questions" },
     { id: "profiles", label: "🎭 Pedagogical Profiles", right: "generate" },
     { id: "review", label: "Review & Human Approval", right: "review" },
     { id: "production", label: "Production Bundles", right: "production_read" },
     { id: "prompts", label: "Prompt Builder", right: "prompts" },
-    { id: "questions", label: "Questions & DNA", right: "questions" },
     { id: "targets", label: "Targets & Alerts", right: "targets" },
     { id: "providers", label: "Model Providers", right: "all" },
     { id: "pipelines", label: "Stage Bindings", right: "bindings" },
@@ -2594,7 +2997,18 @@ export function App() {
                       )}
                     </div>
 
-                    <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+                    <div style={{ display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" }}>
+                      {lastPersistedTime && (
+                        <span className="pill ok" style={{ fontSize: "11px", fontWeight: 700, background: "#dcfce7", color: "#15803d", borderColor: "#86efac" }}>
+                          💾 Auto-Saved ({lastPersistedTime})
+                        </span>
+                      )}
+                      <button
+                        style={{ fontSize: "12px", background: "#7c3aed", color: "#fff", borderColor: "#7c3aed", fontWeight: 700 }}
+                        onClick={openQuestionsFactoryFromContentFactory}
+                      >
+                        🎯 Launch Questions Factory ➔
+                      </button>
                       <button
                         className="ghost"
                         style={{ fontSize: "12px", border: "1px solid #86efac", color: "#166534" }}
@@ -3022,7 +3436,7 @@ export function App() {
                     <div style={{ display: "flex", justifyContent: "flex-end" }}>
                       <button
                         className={notesApproved ? "ghost" : ""}
-                        onClick={() => setNotesApproved(!notesApproved)}
+                        onClick={toggleNotesApproval}
                         disabled={!stationNotes}
                       >
                         {notesApproved ? "✓ Notes Approved" : "✅ Approve Notes"}
@@ -3252,7 +3666,7 @@ export function App() {
                     <div style={{ display: "flex", justifyContent: "flex-end", marginTop: "8px" }}>
                       <button
                         className={diagramApproved ? "ghost" : ""}
-                        onClick={() => setDiagramApproved(!diagramApproved)}
+                        onClick={toggleDiagramApproval}
                         disabled={!stationDiagram && stationVisualsList.length === 0}
                       >
                         {diagramApproved ? "✓ Visuals Approved" : "✅ Approve Visuals"}
@@ -3580,7 +3994,7 @@ export function App() {
                     <div style={{ display: "flex", justifyContent: "flex-end", marginTop: "8px" }}>
                       <button
                         className={activityApproved ? "ghost" : ""}
-                        onClick={() => setActivityApproved(!activityApproved)}
+                        onClick={toggleActivityApproval}
                         disabled={!stationActivity && stationActivitiesList.length === 0}
                       >
                         {activityApproved ? "✓ Activities Approved" : "✅ Approve Activities"}
@@ -3723,10 +4137,16 @@ export function App() {
                       )}
                     </div>
 
-                    <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "12px", flexWrap: "wrap", gap: "8px" }}>
+                      <button
+                        style={{ fontSize: "12px", background: "#7c3aed", color: "#fff", borderColor: "#7c3aed", fontWeight: 700 }}
+                        onClick={openQuestionsFactoryFromContentFactory}
+                      >
+                        🚀 Launch Dedicated Questions Factory (Unlimited Items) ➔
+                      </button>
                       <button
                         className={questionsApproved ? "ghost" : ""}
-                        onClick={() => setQuestionsApproved(!questionsApproved)}
+                        onClick={toggleQuestionsApproval}
                         disabled={stationQuestions.length === 0}
                       >
                         {questionsApproved ? "✓ Questions Approved" : "✅ Approve Questions"}
@@ -3736,11 +4156,17 @@ export function App() {
                 </div>
 
                 {/* Bottom Navigation */}
-                <div style={{ display: "flex", justifyContent: "space-between", marginTop: "24px", padding: "16px", background: "#f8fafc", borderRadius: "10px", border: "1px solid #e2e8f0" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", marginTop: "24px", padding: "16px", background: "#f8fafc", borderRadius: "10px", border: "1px solid #e2e8f0", flexWrap: "wrap", gap: "10px" }}>
                   <button className="ghost" onClick={() => setFactoryStep(1)}>
                     ⬅ Back to Step 1: Strands Architecture
                   </button>
-                  <div style={{ display: "flex", gap: "10px" }}>
+                  <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
+                    <button
+                      style={{ background: "#7c3aed", color: "#fff", borderColor: "#7c3aed", fontWeight: 700 }}
+                      onClick={openQuestionsFactoryFromContentFactory}
+                    >
+                      🎯 Launch Questions Factory ➔
+                    </button>
                     <button className="ghost" onClick={() => saveFactorySubstrandBundle("draft_in_factory")}>
                       💾 Save Draft Bundle
                     </button>
@@ -4787,6 +5213,612 @@ export function App() {
                 <pre>{pretty(previewMessages)}</pre>
               </div>
             </div>
+          </section>
+        )}
+
+        {/* 6.5. DEDICATED QUESTIONS FACTORY TAB (UNLIMITED ASSESSMENT PIPELINE) */}
+        {view === "questions_factory" && (
+          <section className="panel">
+            <div className="panel-head">
+              <div>
+                <h2>🎯 Questions Factory: Assessment & Provenance Engine</h2>
+                <p>Synthesize unlimited publication-grade assessment items grounded in saved 4-Hour Notes, Vector Diagrams, Lab Practicums & Verifiable Research Citations.</p>
+              </div>
+              <div style={{ display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" }}>
+                <button
+                  className={qfShowGroundTruth ? "" : "ghost"}
+                  style={{ fontSize: "12px", border: "1px solid #7c3aed", color: qfShowGroundTruth ? "#fff" : "#7c3aed", background: qfShowGroundTruth ? "#7c3aed" : "transparent" }}
+                  onClick={() => {
+                    if (!qfGroundTruthData) loadGroundTruthForQF(qfGrade, qfSubject, qfStrand, qfSubstrand);
+                    setQfShowGroundTruth(!qfShowGroundTruth);
+                  }}
+                >
+                  👁️ {qfShowGroundTruth ? "Hide Ground Truth Knowledge" : "View Ground Truth Knowledge (Notes & Visuals)"}
+                </button>
+                <button
+                  className="ghost"
+                  style={{ fontSize: "12px" }}
+                  onClick={() => {
+                    loadGroundTruthForQF(qfGrade, qfSubject, qfStrand, qfSubstrand);
+                    loadQuestionsForSubstrand(qfGrade, qfSubject, qfStrand, qfSubstrand);
+                  }}
+                >
+                  🔄 Sync with Content Factory
+                </button>
+              </div>
+            </div>
+
+            {/* Sub-strand Selector Context Bar */}
+            <div style={{ padding: "14px", background: "#f5f3ff", border: "1px solid #ddd6fe", borderRadius: "10px", marginBottom: "16px" }}>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "12px", alignItems: "center" }}>
+                <label style={{ fontSize: "12px", fontWeight: 600, color: "#5b21b6" }}>
+                  Grade / Level:
+                  <select
+                    value={qfGrade}
+                    onChange={(e) => {
+                      setQfGrade(e.target.value);
+                      loadGroundTruthForQF(e.target.value, qfSubject, qfStrand, qfSubstrand);
+                    }}
+                    style={{ width: "100%", marginTop: "4px", padding: "6px" }}
+                  >
+                    <option value="grade-7">Grade 7 (Junior Secondary)</option>
+                    <option value="grade-8">Grade 8 (Junior Secondary)</option>
+                    <option value="grade-9">Grade 9 (Junior Secondary)</option>
+                    <option value="grade-10">Grade 10 (Senior Secondary)</option>
+                    <option value="grade-11">Grade 11 (Senior Secondary)</option>
+                    <option value="grade-12">Grade 12 (Senior Secondary)</option>
+                    <option value="grade-dte">Diploma in Teacher Education (DTE)</option>
+                  </select>
+                </label>
+
+                <label style={{ fontSize: "12px", fontWeight: 600, color: "#5b21b6" }}>
+                  Subject:
+                  <input
+                    type="text"
+                    value={qfSubject}
+                    onChange={(e) => setQfSubject(e.target.value)}
+                    style={{ width: "100%", marginTop: "4px", padding: "6px" }}
+                  />
+                </label>
+
+                <label style={{ fontSize: "12px", fontWeight: 600, color: "#5b21b6" }}>
+                  Strand (Parent Concept):
+                  <input
+                    type="text"
+                    value={qfStrand}
+                    onChange={(e) => setQfStrand(e.target.value)}
+                    style={{ width: "100%", marginTop: "4px", padding: "6px" }}
+                  />
+                </label>
+
+                <label style={{ fontSize: "12px", fontWeight: 600, color: "#5b21b6" }}>
+                  Sub-strand (Target Anchor):
+                  <input
+                    type="text"
+                    value={qfSubstrand}
+                    onChange={(e) => {
+                      setQfSubstrand(e.target.value);
+                      loadGroundTruthForQF(qfGrade, qfSubject, qfStrand, e.target.value);
+                    }}
+                    style={{ width: "100%", marginTop: "4px", padding: "6px", fontWeight: 700 }}
+                  />
+                </label>
+              </div>
+
+              {/* Live Ground Truth Status Badges */}
+              <div style={{ display: "flex", gap: "10px", marginTop: "10px", flexWrap: "wrap", alignItems: "center" }}>
+                <span className="pill ok" style={{ fontSize: "11px" }}>
+                  📖 Notes Status: {qfGroundTruthData?.notes ? "Loaded & Verifiable" : "Default Context"}
+                </span>
+                <span className="pill ok" style={{ fontSize: "11px" }}>
+                  📐 Diagrams: {qfGroundTruthData?.diagrams?.length || 0} Assets Available
+                </span>
+                <span className="pill ok" style={{ fontSize: "11px" }}>
+                  🧪 Experiments: {qfGroundTruthData?.activities ? "Practical Modules Loaded" : "Context Loaded"}
+                </span>
+                <span className="pill ok" style={{ fontSize: "11px", background: "#f3e8ff", color: "#6b21a8", borderColor: "#c084fc" }}>
+                  🎯 Active Question Batch: {qfQuestionsList.length} Items ({qfQuestionsList.filter(q => q.approved).length} Approved)
+                </span>
+              </div>
+            </div>
+
+            {/* Sliding Ground Truth Knowledge Drawer */}
+            {qfShowGroundTruth && (
+              <div style={{ marginBottom: "20px", padding: "16px", background: "#f8fafc", border: "2px dashed #8b5cf6", borderRadius: "10px" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
+                  <h3 style={{ margin: 0, color: "#5b21b6" }}>📖 Ground Truth Knowledge Base (Anti-Hallucination Anchor)</h3>
+                  <button className="ghost" style={{ fontSize: "11px" }} onClick={() => setQfShowGroundTruth(false)}>✖ Close Drawer</button>
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: "14px" }}>
+                  {/* Notes summary */}
+                  <div style={{ padding: "12px", background: "#fff", borderRadius: "8px", border: "1px solid #e2e8f0", maxHeight: "250px", overflowY: "auto" }}>
+                    <strong style={{ color: "#166534" }}>📘 4-Hour Lesson Notes & Citations:</strong>
+                    <p style={{ fontSize: "12px", marginTop: "6px", color: "#334155" }}>
+                      <strong>{qfGroundTruthData?.notes?.title || qfSubstrand}</strong>: {qfGroundTruthData?.notes?.intro || "Foundation notes synthesized via Content Factory."}
+                    </p>
+                    {(qfGroundTruthData?.notes?.hour_modules || qfGroundTruthData?.notes?.key_concepts || []).map((hm: any, hIdx: number) => (
+                      <div key={hIdx} style={{ fontSize: "11.5px", marginTop: "6px", padding: "6px", background: "#f0fdf4", borderRadius: "4px" }}>
+                        <strong>{hm.hour_title || hm.heading || `Hour ${hIdx+1}`}:</strong> {(hm.full_lecture_notes || hm.detailed_exposition || "").substring(0, 180)}...
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Diagrams list */}
+                  <div style={{ padding: "12px", background: "#fff", borderRadius: "8px", border: "1px solid #e2e8f0", maxHeight: "250px", overflowY: "auto" }}>
+                    <strong style={{ color: "#0369a1" }}>📐 Diagrams & Visual Assets:</strong>
+                    {(qfGroundTruthData?.diagrams || []).length > 0 ? (
+                      (qfGroundTruthData.diagrams).map((d: any, dIdx: number) => (
+                        <div key={dIdx} style={{ fontSize: "11.5px", marginTop: "6px", padding: "6px", background: "#f0f9ff", borderRadius: "4px" }}>
+                          <strong>{d.title || d.diagram_title || `Visual ${dIdx+1}`}:</strong> {d.description || d.concept}
+                        </div>
+                      ))
+                    ) : (
+                      <p style={{ fontSize: "12px", color: "#64748b", marginTop: "6px" }}>Visual diagrams available in Content Factory.</p>
+                    )}
+                  </div>
+
+                  {/* Practical Activities & Safety */}
+                  <div style={{ padding: "12px", background: "#fff", borderRadius: "8px", border: "1px solid #e2e8f0", maxHeight: "250px", overflowY: "auto" }}>
+                    <strong style={{ color: "#b45309" }}>🧪 Practical Experiments & Safety:</strong>
+                    <p style={{ fontSize: "12px", marginTop: "6px", color: "#334155" }}>
+                      {qfGroundTruthData?.activities?.activity_name || "Hands-on investigations and safety hazard protocols linked from Layer 3."}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* BATCH GENERATION CONTROL PANEL */}
+            <div className="surface" style={{ border: "1px solid #c4b5fd", borderRadius: "10px", padding: "18px", marginBottom: "20px" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "10px", marginBottom: "14px" }}>
+                <h3 style={{ margin: 0, color: "#6d28d9" }}>⚙️ Batch Assessment Synthesis Controls</h3>
+                <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
+                  <span style={{ fontSize: "12px", fontWeight: 600, color: "#475569" }}>Batch Count:</span>
+                  {[3, 5, 10, 15, 20].map((count) => (
+                    <button
+                      key={count}
+                      className={qfBatchCount === count ? "" : "ghost"}
+                      style={{ fontSize: "11.5px", padding: "4px 10px", background: qfBatchCount === count ? "#7c3aed" : "transparent", borderColor: "#7c3aed", color: qfBatchCount === count ? "#fff" : "#7c3aed" }}
+                      onClick={() => setQfBatchCount(count)}
+                    >
+                      {count} Items
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Typology Multi-Select Chips */}
+              <div style={{ marginBottom: "14px" }}>
+                <label style={{ fontSize: "12px", fontWeight: 700, color: "#334155", display: "block", marginBottom: "6px" }}>
+                  🎯 Select Question Typologies to Synthesize (Wide Spectrum Coverage):
+                </label>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
+                  {[
+                    { id: "multiple_choice", label: "🔘 Multiple Choice (MCQ)" },
+                    { id: "diagram_based", label: "📐 Diagram & Visual Analysis" },
+                    { id: "experiment_based", label: "🧪 Practical Lab / Experiment" },
+                    { id: "structured_scenario", label: "📝 Structured Case Scenario (Parts a,b,c)" },
+                    { id: "quantitative_calculation", label: "🧮 Quantitative / Data Calculation" },
+                    { id: "extended_essay", label: "📄 Extended Essay & Policy Synthesis" },
+                    { id: "assertion_reason", label: "⚡ Assertion & Reason Diagnostics" },
+                  ].map((t) => {
+                    const isSelected = qfSelectedTypes.includes(t.id);
+                    return (
+                      <button
+                        key={t.id}
+                        type="button"
+                        className={isSelected ? "" : "ghost"}
+                        style={{
+                          fontSize: "11.5px",
+                          padding: "5px 12px",
+                          borderRadius: "20px",
+                          background: isSelected ? "#6d28d9" : "#fff",
+                          color: isSelected ? "#fff" : "#4b5563",
+                          borderColor: isSelected ? "#6d28d9" : "#d1d5db",
+                          fontWeight: isSelected ? 700 : 500,
+                        }}
+                        onClick={() => {
+                          if (isSelected) {
+                            if (qfSelectedTypes.length > 1) {
+                              setQfSelectedTypes(qfSelectedTypes.filter((x) => x !== t.id));
+                            }
+                          } else {
+                            setQfSelectedTypes([...qfSelectedTypes, t.id]);
+                          }
+                        }}
+                      >
+                        {t.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Bloom's Progression & Difficulty Slider */}
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: "16px", marginBottom: "14px" }}>
+                <div>
+                  <label style={{ fontSize: "12px", fontWeight: 700, color: "#334155", display: "block", marginBottom: "4px" }}>
+                    🧠 Bloom's Cognitive Progression:
+                  </label>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: "8px", fontSize: "11.5px", marginTop: "4px" }}>
+                    {["Recall", "Understanding", "Application", "Analysis", "Evaluation", "Creation"].map((b) => (
+                      <label key={b} style={{ display: "inline-flex", alignItems: "center", gap: "4px", cursor: "pointer" }}>
+                        <input
+                          type="checkbox"
+                          checked={qfSelectedBlooms.includes(b)}
+                          onChange={(e) => {
+                            if (e.target.checked) setQfSelectedBlooms([...qfSelectedBlooms, b]);
+                            else if (qfSelectedBlooms.length > 1) setQfSelectedBlooms(qfSelectedBlooms.filter((x) => x !== b));
+                          }}
+                        />
+                        {b}
+                      </label>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <label style={{ fontSize: "12px", fontWeight: 700, color: "#334155", display: "block", marginBottom: "4px" }}>
+                    ⚖️ Difficulty Index: <strong>{qfDifficulty}</strong> ({qfDifficulty < 0.4 ? "Foundational" : qfDifficulty < 0.75 ? "Intermediate CBC" : "Advanced Olympiad"})
+                  </label>
+                  <input
+                    type="range"
+                    min="0.10"
+                    max="0.95"
+                    step="0.05"
+                    value={qfDifficulty}
+                    onChange={(e) => setQfDifficulty(parseFloat(e.target.value))}
+                    style={{ width: "100%" }}
+                  />
+                </div>
+              </div>
+
+              {/* Custom Refinement Directives */}
+              <div style={{ marginBottom: "14px" }}>
+                <label style={{ fontSize: "12px", fontWeight: 700, color: "#334155", display: "block", marginBottom: "4px" }}>
+                  💡 Custom Pedagogical Directives / Focus (Optional):
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. Include authentic Trans-Nzoia county maize farming scenario, calculations of soil pH buffering, and KALRO citation."
+                  value={qfCustomPrompt}
+                  onChange={(e) => setQfCustomPrompt(e.target.value)}
+                  style={{ width: "100%", padding: "8px", fontSize: "13px" }}
+                />
+              </div>
+
+              {/* Submit Button */}
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px" }}>
+                <button
+                  style={{ background: "#7c3aed", color: "#fff", borderColor: "#7c3aed", fontSize: "13px", padding: "8px 20px", fontWeight: 700 }}
+                  onClick={() => generateQuestionsFactoryBatch()}
+                  disabled={isRunning}
+                >
+                  {isRunning ? "⚡ Synthesizing Assessment Items..." : `⚡ Generate Batch of ${qfBatchCount} Questions`}
+                </button>
+              </div>
+            </div>
+
+            {/* QUESTIONS WORKSPACE & REVIEW PANEL */}
+            <div>
+              {/* Filter Tabs and Action Toolbar */}
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "10px", marginBottom: "16px" }}>
+                <div style={{ display: "flex", gap: "6px" }}>
+                  <button
+                    className={qfActiveFilter === "all" ? "" : "ghost"}
+                    style={{ fontSize: "12px", padding: "4px 12px" }}
+                    onClick={() => setQfActiveFilter("all")}
+                  >
+                    All Items ({qfQuestionsList.length})
+                  </button>
+                  <button
+                    className={qfActiveFilter === "approved" ? "" : "ghost"}
+                    style={{ fontSize: "12px", padding: "4px 12px" }}
+                    onClick={() => setQfActiveFilter("approved")}
+                  >
+                    Approved ({qfQuestionsList.filter(q => q.approved).length})
+                  </button>
+                  <button
+                    className={qfActiveFilter === "pending" ? "" : "ghost"}
+                    style={{ fontSize: "12px", padding: "4px 12px" }}
+                    onClick={() => setQfActiveFilter("pending")}
+                  >
+                    Pending Review ({qfQuestionsList.filter(q => !q.approved).length})
+                  </button>
+                </div>
+
+                <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                  <button
+                    style={{ background: "#166534", color: "#fff", borderColor: "#166534", fontSize: "12px", fontWeight: 700 }}
+                    onClick={approveAllQFQuestions}
+                    disabled={qfQuestionsList.length === 0 || isRunning}
+                  >
+                    ✅ Approve All {qfQuestionsList.length} Items (Sync to DNA Repo)
+                  </button>
+                  <button
+                    className="ghost"
+                    style={{ fontSize: "12px", border: "1px solid #7c3aed", color: "#7c3aed" }}
+                    onClick={exportQFExamPaper}
+                    disabled={qfQuestionsList.length === 0 || isRunning}
+                  >
+                    📑 Export Exam Paper (KNEC/KICD Format)
+                  </button>
+                  <button
+                    className="ghost"
+                    style={{ fontSize: "12px", color: "#b91c1c", borderColor: "#fca5a5" }}
+                    onClick={() => setQfQuestionsList([])}
+                    disabled={qfQuestionsList.length === 0}
+                  >
+                    🗑️ Clear Draft Set
+                  </button>
+                </div>
+              </div>
+
+              {/* Questions List */}
+              {qfQuestionsList.length === 0 ? (
+                <div style={{ textAlign: "center", padding: "48px 20px", background: "#f8fafc", border: "2px dashed #cbd5e1", borderRadius: "10px" }}>
+                  <span style={{ fontSize: "36px" }}>🎯</span>
+                  <h3 style={{ margin: "10px 0 6px", color: "#334155" }}>Questions Factory Ready</h3>
+                  <p style={{ color: "#64748b", maxWidth: "540px", margin: "0 auto 16px", fontSize: "13px" }}>
+                    Configure the typology mix above and click <strong>"⚡ Generate Batch"</strong> to synthesize unlimited multiple-choice, diagram interpretation, practical experiments, and structured case studies linked directly to the saved lesson notes.
+                  </p>
+                  <button
+                    style={{ background: "#7c3aed", color: "#fff", borderColor: "#7c3aed" }}
+                    onClick={() => generateQuestionsFactoryBatch()}
+                  >
+                    ⚡ Generate Initial Batch of 5 Questions
+                  </button>
+                </div>
+              ) : (
+                <div className="stack" style={{ gap: "16px" }}>
+                  {qfQuestionsList
+                    .filter((q) => {
+                      if (qfActiveFilter === "approved") return q.approved;
+                      if (qfActiveFilter === "pending") return !q.approved;
+                      return true;
+                    })
+                    .map((q: any, qIdx: number) => {
+                      const qType = (q.question_type || "multiple_choice").replace(/_/g, " ").toUpperCase();
+                      return (
+                        <div
+                          key={qIdx}
+                          className="surface"
+                          style={{
+                            border: `1px solid ${q.approved ? "#86efac" : "#ddd6fe"}`,
+                            borderRadius: "10px",
+                            padding: "18px",
+                            background: q.approved ? "#f0fdf4" : "#ffffff",
+                            boxShadow: "0 1px 3px rgba(0,0,0,0.05)",
+                          }}
+                        >
+                          {/* Card Header */}
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: "8px", marginBottom: "12px", borderBottom: "1px solid #f1f5f9", paddingBottom: "10px" }}>
+                            <div>
+                              <div style={{ display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" }}>
+                                <strong style={{ fontSize: "14px", color: "#1e293b" }}>
+                                  Question {qIdx + 1}: {qType}
+                                </strong>
+                                <span className="pill ok" style={{ fontSize: "10px", background: "#ede9fe", color: "#5b21b6", borderColor: "#c4b5fd" }}>
+                                  🧠 {q.bloom_level || "Application"} • {q.max_marks || 2} Marks • ⏱️ {q.estimated_time_mins || 3} mins
+                                </span>
+                                <span className="pill ok" style={{ fontSize: "10px" }}>
+                                  🎯 {q.micro_concept || qfSubstrand}
+                                </span>
+                              </div>
+                              <small style={{ color: "#64748b", fontSize: "11px" }}>DNA ID: {q.universal_id || `Q-CBC-${qIdx+1}`}</small>
+                            </div>
+
+                            {/* Action Buttons */}
+                            <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
+                              <button
+                                className={q.approved ? "ghost" : ""}
+                                style={{
+                                  fontSize: "11.5px",
+                                  padding: "4px 10px",
+                                  background: q.approved ? "transparent" : "#166534",
+                                  borderColor: q.approved ? "#86efac" : "#166534",
+                                  color: q.approved ? "#166534" : "#fff",
+                                  fontWeight: 700,
+                                }}
+                                onClick={() => toggleApproveQuestionInQF(qIdx)}
+                              >
+                                {q.approved ? "✓ Approved" : "✅ Approve"}
+                              </button>
+                              <button
+                                className="ghost"
+                                style={{ fontSize: "11.5px", padding: "4px 8px" }}
+                                onClick={() => generateQuestionsFactorySingle(q.question_type, q.micro_concept)}
+                                title="Regenerate single question for this concept"
+                              >
+                                🔄 Regenerate
+                              </button>
+                              <button
+                                className="ghost"
+                                style={{ fontSize: "11.5px", padding: "4px 8px", color: "#b91c1c" }}
+                                onClick={() => deleteQFQuestion(qIdx)}
+                                title="Remove question from batch"
+                              >
+                                🗑️
+                              </button>
+                            </div>
+                          </div>
+
+                          {/* Stimulus Context (If Scenario-Based) */}
+                          {q.stimulus_context && (
+                            <div style={{ padding: "10px 14px", background: "#f8fafc", borderLeft: "4px solid #7c3aed", borderRadius: "4px", marginBottom: "12px", fontSize: "13px", color: "#334155" }}>
+                              <strong style={{ color: "#6d28d9" }}>📌 Authentic Kenyan Scenario Context:</strong>
+                              <p style={{ margin: "4px 0 0" }}>{q.stimulus_context}</p>
+                            </div>
+                          )}
+
+                          {/* Question Prompt */}
+                          <div style={{ fontSize: "14px", fontWeight: 600, color: "#0f172a", marginBottom: "12px", lineHeight: "1.5" }}>
+                            {q.question_text}
+                          </div>
+
+                          {/* Diagram Callout (If Diagram-Based) */}
+                          {q.diagram_ref && (
+                            <div style={{ padding: "8px 12px", background: "#f0f9ff", border: "1px solid #bae6fd", borderRadius: "6px", marginBottom: "12px", fontSize: "12px", color: "#0369a1" }}>
+                              📐 <strong>Diagram Reference:</strong> Refer to Figure: <em>"{q.diagram_ref}"</em> from Layer 2 Visual Studio.
+                            </div>
+                          )}
+
+                          {/* MCQ Options Rendering */}
+                          {q.options && q.options.length > 0 && (
+                            <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: "8px", marginBottom: "14px" }}>
+                              {normalizeQuestionOptions(q.options, q.correct_answer).map((opt: any, oIdx: number) => {
+                                const isCorrect = opt.is_correct || opt.id === q.correct_answer;
+                                return (
+                                  <div
+                                    key={oIdx}
+                                    style={{
+                                      padding: "10px 14px",
+                                      borderRadius: "8px",
+                                      border: isCorrect ? "2px solid #16a34a" : "1px solid #e2e8f0",
+                                      background: isCorrect ? "#f0fdf4" : "#ffffff",
+                                      fontSize: "13px",
+                                    }}
+                                  >
+                                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                                      <span>
+                                        <strong style={{ color: isCorrect ? "#166534" : "#475569" }}>{opt.id}.</strong> {opt.text}
+                                      </span>
+                                      {isCorrect && (
+                                        <span className="pill ok" style={{ fontSize: "10.5px", fontWeight: 700 }}>
+                                          ✓ Correct Key
+                                        </span>
+                                      )}
+                                    </div>
+                                    {opt.distractor_rationale && (
+                                      <div style={{ fontSize: "11px", color: isCorrect ? "#166534" : "#64748b", marginTop: "4px", fontStyle: "italic" }}>
+                                        Rationale: {opt.distractor_rationale}
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+
+                          {/* Structured Scenario Parts (If Structured) */}
+                          {q.structured_parts && q.structured_parts.length > 0 && (
+                            <div style={{ marginBottom: "14px", padding: "12px", background: "#f8fafc", borderRadius: "8px", border: "1px solid #e2e8f0" }}>
+                              <strong style={{ fontSize: "12px", color: "#334155" }}>Structured Sub-Questions & Mark Scheme:</strong>
+                              <div className="stack" style={{ gap: "8px", marginTop: "6px" }}>
+                                {q.structured_parts.map((p: any, pIdx: number) => (
+                                  <div key={pIdx} style={{ fontSize: "12.5px", padding: "6px 8px", background: "#fff", borderRadius: "6px", border: "1px solid #cbd5e1" }}>
+                                    <div style={{ display: "flex", justifyContent: "space-between" }}>
+                                      <strong>{p.part_id || `(${String.fromCharCode(97+pIdx)})`} {p.sub_question}</strong>
+                                      <span className="pill ok" style={{ fontSize: "10px" }}>{p.marks || 1} Marks</span>
+                                    </div>
+                                    {p.model_answer && (
+                                      <div style={{ fontSize: "11.5px", color: "#166534", marginTop: "4px" }}>
+                                        <em>Model Response: {p.model_answer}</em>
+                                      </div>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Model Solution & Step-by-Step Marking Scheme */}
+                          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: "12px", marginBottom: "14px" }}>
+                            {q.model_answer && (
+                              <div style={{ padding: "10px 12px", background: "#f0fdf4", borderRadius: "8px", border: "1px solid #bbf7d0", fontSize: "12px" }}>
+                                <strong style={{ color: "#166534" }}>💡 Model Solution & Explanation:</strong>
+                                <p style={{ margin: "4px 0 0", color: "#14532d", whiteSpace: "pre-line" }}>{q.model_answer}</p>
+                              </div>
+                            )}
+
+                            {q.marking_scheme && (
+                              <div style={{ padding: "10px 12px", background: "#f8fafc", borderRadius: "8px", border: "1px solid #cbd5e1", fontSize: "12px" }}>
+                                <strong style={{ color: "#334155" }}>📋 Step-by-Step Scoring Guide:</strong>
+                                <p style={{ margin: "4px 0 0", color: "#475569", whiteSpace: "pre-line" }}>{q.marking_scheme}</p>
+                              </div>
+                            )}
+                          </div>
+
+                          {/* 4-Tier KICD Rubric Grid */}
+                          {q.marking_guide && typeof q.marking_guide === "object" && (
+                            <div style={{ marginTop: "10px", paddingTop: "10px", borderTop: "1px dashed #cbd5e1" }}>
+                              <strong style={{ fontSize: "11.5px", color: "#475569" }}>📊 4-Tier KICD Performance Rubric Grid:</strong>
+                              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "8px", marginTop: "6px" }}>
+                                <div style={{ padding: "6px 10px", background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: "6px", fontSize: "11px" }}>
+                                  <strong style={{ color: "#166534" }}>Exceeding:</strong> {q.marking_guide.exceeding || "Analytical mastery"}
+                                </div>
+                                <div style={{ padding: "6px 10px", background: "#f0f9ff", border: "1px solid #bae6fd", borderRadius: "6px", fontSize: "11px" }}>
+                                  <strong style={{ color: "#0369a1" }}>Meeting:</strong> {q.marking_guide.meeting || "Standard competency"}
+                                </div>
+                                <div style={{ padding: "6px 10px", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: "6px", fontSize: "11px" }}>
+                                  <strong style={{ color: "#b45309" }}>Approaching:</strong> {q.marking_guide.approaching || "Partial understanding"}
+                                </div>
+                                <div style={{ padding: "6px 10px", background: "#fef2f2", border: "1px solid #fecaca", borderRadius: "6px", fontSize: "11px" }}>
+                                  <strong style={{ color: "#b91c1c" }}>Below:</strong> {q.marking_guide.below || "Remediation required"}
+                                </div>
+                              </div>
+                            </div>
+                          )}
+
+                          {/* DNA Provenance Citation Tag */}
+                          <div style={{ marginTop: "12px", paddingTop: "8px", borderTop: "1px solid #f1f5f9", display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: "11px", color: "#64748b", flexWrap: "wrap", gap: "6px" }}>
+                            <span>🧬 <strong>Verifiable DNA Lineage:</strong> {q.provenance_citation || `Linked to Layer 1 Lesson Notes (${qfSubstrand})`}</span>
+                            <span style={{ fontStyle: "italic" }}>Criterion-referenced assessment</span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                </div>
+              )}
+            </div>
+
+            {/* Printable KNEC / KICD Examination Modal */}
+            {qfExamExportModal && qfExportedPaper && (
+              <div className="modal-overlay" style={{ zIndex: 9999 }}>
+                <div className="modal-content" style={{ maxWidth: "800px", maxHeight: "88vh", overflowY: "auto", padding: "24px" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "2px solid #7c3aed", paddingBottom: "12px", marginBottom: "16px" }}>
+                    <h2 style={{ margin: 0, color: "#5b21b6" }}>📑 Publication-Ready Exam Paper & Marking Scheme</h2>
+                    <button className="ghost" onClick={() => setQfExamExportModal(false)}>✖ Close</button>
+                  </div>
+
+                  <div style={{ display: "flex", gap: "10px", marginBottom: "16px" }}>
+                    <button
+                      onClick={() => {
+                        const win = window.open("", "_blank");
+                        if (win) {
+                          win.document.write(`<html><head><title>${qfExportedPaper.exam_title}</title><style>body{font-family:serif;margin:40px;line-height:1.6;}h1,h2,h3{color:#1e293b;}hr{margin:20px 0;}</style></head><body><pre style="white-space:pre-wrap;font-family:inherit;">${qfExportedPaper.question_paper_markdown}\n\n========================================\n\n${qfExportedPaper.marking_scheme_markdown}</pre></body></html>`);
+                          win.document.close();
+                          win.print();
+                        }
+                      }}
+                    >
+                      🖨️ Print Exam Paper & Marking Scheme
+                    </button>
+                    <button
+                      className="ghost"
+                      onClick={() => {
+                        navigator.clipboard.writeText(`${qfExportedPaper.question_paper_markdown}\n\n${qfExportedPaper.marking_scheme_markdown}`);
+                        alert("Copied complete Exam Paper and Marking Scheme to clipboard!");
+                      }}
+                    >
+                      📋 Copy Markdown to Clipboard
+                    </button>
+                  </div>
+
+                  <div style={{ background: "#f8fafc", padding: "16px", borderRadius: "8px", border: "1px solid #e2e8f0" }}>
+                    <h3>Question Paper Preview</h3>
+                    <pre style={{ whiteSpace: "pre-wrap", fontFamily: "inherit", fontSize: "12px", background: "#fff", padding: "14px", borderRadius: "6px", border: "1px solid #cbd5e1" }}>
+                      {qfExportedPaper.question_paper_markdown}
+                    </pre>
+
+                    <h3 style={{ marginTop: "20px" }}>Marking Scheme Preview</h3>
+                    <pre style={{ whiteSpace: "pre-wrap", fontFamily: "inherit", fontSize: "12px", background: "#fff", padding: "14px", borderRadius: "6px", border: "1px solid #cbd5e1" }}>
+                      {qfExportedPaper.marking_scheme_markdown}
+                    </pre>
+                  </div>
+                </div>
+              </div>
+            )}
           </section>
         )}
 
