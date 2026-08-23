@@ -30,8 +30,9 @@ class ParsedSubstrand:
     assessment_rubrics: list[dict[str, Any]]
     required_diagrams: list[str]
     experiments: list[str]
+    safety_hazards_to_check: list[str]
     pedagogical_guidance: dict[str, Any]
-    prompt_context: dict[str, Any]
+    prompt_package: dict[str, Any]
     raw_snippet: str
     substrand_dna_id: str = ""
     strand_dna_id: str = ""
@@ -54,8 +55,9 @@ class ParsedCurriculumDesign:
 
 
 class CurriculumExtractorService:
-    """Extracts, structures, and persists rich curriculum designs with cryptographically
-    verified Curriculum DNA (Dataset DNA -> Subject DNA -> Strand DNA -> Sub-strand DNA)."""
+    """Extracts curriculum specifications/blueprints from raw datasets.
+    Generates tailored guidance, safety hazard criteria, and dynamic agent prompts
+    (Generator, Reviewer with Hazard Check, Multi-Agent Approvers) for downstream pipeline stages."""
 
     def ingest_raw_curriculum(self, raw_input: dict[str, Any] | str) -> dict[str, Any]:
         raw_text = ""
@@ -93,7 +95,7 @@ class CurriculumExtractorService:
         langfuse_sync_result = self._sync_to_langfuse(design)
 
         logger.info(
-            "Successfully ingested curriculum design '%s' (%s - %s) with %d sub-strands and full DNA lineage.",
+            "Successfully ingested curriculum design '%s' (%s - %s) with %d sub-strand blueprints and prompt packages.",
             design.subject,
             design.grade,
             design.level,
@@ -121,7 +123,9 @@ class CurriculumExtractorService:
                     "slo_count": len(s.slos),
                     "diagrams_required": s.required_diagrams,
                     "experiments": s.experiments,
+                    "safety_hazards_to_check": s.safety_hazards_to_check,
                     "kiqs": s.key_inquiry_questions,
+                    "prompt_package": s.prompt_package,
                 }
                 for s in design.substrands
             ],
@@ -131,7 +135,6 @@ class CurriculumExtractorService:
     def _generate_curriculum_dna_tree(
         self, design: ParsedCurriculumDesign, dataset_dna_id: str, raw_text: str
     ) -> None:
-        # Generate Subject DNA
         subject_dna = artifact_dna_service.generate_subject_dna(
             subject=design.subject,
             grade=design.grade,
@@ -144,7 +147,6 @@ class CurriculumExtractorService:
         design.subject_dna_id = subject_dna.dna_id
         design.dataset_dna_id = dataset_dna_id
 
-        # Generate Strand DNAs & Substrand DNAs
         strand_dnas: dict[str, str] = {}
         for s in design.substrands:
             if s.strand_name not in strand_dnas:
@@ -160,7 +162,6 @@ class CurriculumExtractorService:
 
             s.strand_dna_id = strand_dnas[s.strand_name]
 
-            # Generate Substrand DNA
             sub_cert = artifact_dna_service.generate_substrand_dna(
                 grade=design.grade,
                 subject=design.subject,
@@ -176,13 +177,12 @@ class CurriculumExtractorService:
                 raw_substrand_snippet=s.raw_snippet,
             )
             s.substrand_dna_id = sub_cert.dna_id
-            s.prompt_context["substrand_dna_id"] = sub_cert.dna_id
-            s.prompt_context["subject_dna_id"] = subject_dna.dna_id
+            s.prompt_package["substrand_dna_id"] = sub_cert.dna_id
+            s.prompt_package["subject_dna_id"] = subject_dna.dna_id
 
     def _parse_curriculum_text(
         self, text: str, meta: dict[str, Any], dataset_dna_id: str
     ) -> ParsedCurriculumDesign:
-        # Subject detection
         subject = "General Curriculum"
         subject_patterns = [
             r"(?:DIPLOMA IN TEACHER EDUCATION[^\n]*\n(?:PRE-PRIMARY AND PRIMARY\n)?([A-Z\s]{3,30})\nCURRICULUM DESIGN)",
@@ -202,7 +202,6 @@ class CurriculumExtractorService:
         if subject == "General Curriculum" and meta.get("title"):
             subject = str(meta["title"]).replace(".pdf", "").title()
 
-        # Grade / Level detection
         grade = "grade-7"
         level = "Basic Education"
         if "DIPLOMA IN TEACHER EDUCATION" in text.upper() or "DTE" in text.upper():
@@ -226,7 +225,6 @@ class CurriculumExtractorService:
 
         subject_code = "".join([w[0] for w in subject.split() if w]).upper()[:4]
 
-        # Essence statement extraction
         essence_statement = ""
         essence_match = re.search(
             r"ESSENCE STATEMENT\s*\n+(.*?)(?=\n+[A-Z\s]{4,}\n|\Z)",
@@ -236,7 +234,6 @@ class CurriculumExtractorService:
         if essence_match:
             essence_statement = essence_match.group(1).strip()
 
-        # General learning outcomes
         general_outcomes: list[str] = []
         glo_match = re.search(
             r"GENERAL LEARNING OUTCOMES\s*\n+(.*?)(?=\n+STRAND|\n+TABLE|\n+1\.0|\Z)",
@@ -251,7 +248,6 @@ class CurriculumExtractorService:
                 if line.strip() and len(line.strip()) > 10
             ]
 
-        # Parse Strands and Substrands
         substrands = self._extract_substrands(text, subject, grade, level)
 
         design_id = f"cd_{grade}_{subject_code.lower()}_{hashlib.sha256(text[:500].encode()).hexdigest()[:8]}"
@@ -275,7 +271,6 @@ class CurriculumExtractorService:
     ) -> list[ParsedSubstrand]:
         substrands: list[ParsedSubstrand] = []
 
-        # Find all Strand / Sub-strand blocks
         strand_pattern = r"(STRAND\s+(\d+\.\d+)\s+([^\n]+))"
         strand_matches = list(re.finditer(strand_pattern, text, re.IGNORECASE))
 
@@ -411,23 +406,23 @@ class CurriculumExtractorService:
         if rubric_match:
             rubrics.append({"raw_rubric": rubric_match.group(1)[:1200]})
 
-        # 6. Discover Required Diagrams / Visual Models
+        # 6. Discover Required Diagrams & Visual Models
         required_diagrams = []
         diagram_keywords = [
             "structure", "model", "diagram", "chart", "map", "illustration", "setup",
             "drip irrigation", "compost", "zai pit", "scarecrow", "soil profile", "herbarium",
-            "nursery bed", "container garden", "vertical garden", "seedbed"
+            "nursery bed", "container garden", "vertical garden", "seedbed", "water pan",
+            "animal house", "plant morphology"
         ]
         for kw in diagram_keywords:
             if kw in body.lower():
                 required_diagrams.append(f"{sub_name} - {kw.title()} visual model")
-
         required_diagrams = list(dict.fromkeys(required_diagrams))[:4]
 
-        # 7. Discover Experiments & Practical Projects
+        # 7. Discover Experiments & Practical Activities
         experiments = []
         exp_keywords = [
-            "experiment", "project", "investigate", "test", "measure", "simulate", "prepare", "construct", "rear"
+            "experiment", "project", "investigate", "test", "measure", "simulate", "prepare", "construct", "rear", "grow"
         ]
         for line in body.split("\n"):
             line_l = line.lower()
@@ -438,20 +433,73 @@ class CurriculumExtractorService:
                 if len(experiments) >= 4:
                     break
 
-        # 8. Assemble Context & Prompt Directives for Downstream Agents
-        prompt_context = {
+        # 8. Discover Safety Hazards to Check (Hazard audit criteria)
+        safety_hazards = [
+            "Verify all chemical or biological materials are non-toxic and age-appropriate",
+            "Ensure procedures with heat, fire, or smoke specify adult supervision and fire safety",
+            "Ensure tools/equipment (cutters, hoes, knives) include explicit handling precautions",
+            "Check that soil/manure activities mandate washing hands with soap and water afterwards",
+            "Verify animal handling steps include hygiene, gentle restraint, and rabies/bite precautions",
+        ]
+
+        # 9. Build Comprehensive Dynamic Prompt Package for all downstream agents
+        slo_texts = [s["text"] for s in slos]
+        prompt_package = {
             "subject": subject,
             "grade": grade,
             "level": level,
             "strand": strand_name,
             "sub_strand": sub_name,
             "allocated_hours": hours,
-            "slos": [s["text"] for s in slos],
+            "slos": slo_texts,
             "kiqs": kiqs,
-            "diagrams_required": required_diagrams,
-            "experiments_required": experiments,
-            "pedagogical_focus": "Competency-based experiential learning with concrete PCK activities.",
-            "assessment_focus": "Criterion-referenced assessment rubrics aligned with KICD standards.",
+            "diagram_guidance": required_diagrams,
+            "experiment_guidance": experiments,
+            "safety_hazard_criteria": safety_hazards,
+            # Agent-specific customized prompt templates
+            "notes_prompt": (
+                f"You are the NotesGeneratorAgent for {subject} ({level}, {grade}).\n"
+                f"Generate revision notes for sub-strand '{sub_name}'.\n"
+                f"Specific Learning Outcomes to cover: {json.dumps(slo_texts)}\n"
+                f"Key Inquiry Questions to answer: {json.dumps(kiqs)}\n"
+                f"Ensure constructivist CBC pedagogical explanations and KICD criterion alignment."
+            ),
+            "diagram_prompt": (
+                f"You are the DiagramGeneratorAgent for {subject}.\n"
+                f"Generate clean vector SVG diagram markup for visual models needed in '{sub_name}': {json.dumps(required_diagrams)}.\n"
+                f"Include clear labels, viewBox='0 0 800 500', semantic SVG tags, alt_text, and tactile descriptions for SNE."
+            ),
+            "experiment_activity_prompt": (
+                f"You are the ExperimentActivityAgent for {subject}.\n"
+                f"Generate step-by-step practical experiments and activities for '{sub_name}'.\n"
+                f"Target experiments: {json.dumps(experiments)}\n"
+                f"Include: Title, Objective, Local Materials/Apparatus, Step-by-Step Procedure, "
+                f"SAFETY HAZARD WARNINGS (strictly enforce {json.dumps(safety_hazards)}), Observations, and Formative Check."
+            ),
+            "question_prompt": (
+                f"You are the QuestionGeneratorAgent for {subject}.\n"
+                f"Generate high-order thinking questions and detailed marking guides DERIVED DIRECTLY from the generated notes and experiments for '{sub_name}'.\n"
+                f"Cover Bloom's Taxonomy (Applying, Analyzing, Evaluating). Never rank learners."
+            ),
+            "reviewer_prompt": (
+                f"You are the StrictSafetyAndQualityReviewerAgent.\n"
+                f"Perform a thorough audit of the generated Notes, Diagram, Experiments, and Questions for '{sub_name}'.\n"
+                f"CRITICAL SAFETY & HAZARD AUDIT:\n"
+                f"- Scan experiments and activities for hazardous, toxic, or dangerous procedures.\n"
+                f"- If dangerous activities are detected without adequate safety controls, REJECT IMMEDIATELY.\n"
+                f"- Verify 100% adherence to sub-strand SLOs with zero hallucination.\n"
+                f"- Confirm KICD 4-level rubric scoring standard."
+            ),
+            "approver_agent1_prompt": (
+                f"You are Primary Approver Agent (Auditor 1).\n"
+                f"Evaluate the generated CBC educational bundle for '{sub_name}'. Review pedagogical depth, safety compliance, and question validity.\n"
+                f"State your initial approval recommendation and notes for Auditor 2."
+            ),
+            "approver_agent2_prompt": (
+                f"You are Senior Quality Approver Agent (Auditor 2).\n"
+                f"Cross-examine Auditor 1's recommendation and verify all safety hazard checks, diagram vector validity, and question distractor plausibility.\n"
+                f"Reach consensus on whether the bundle is ready for final Human Approval."
+            ),
         }
 
         return ParsedSubstrand(
@@ -468,13 +516,13 @@ class CurriculumExtractorService:
             assessment_rubrics=rubrics,
             required_diagrams=required_diagrams,
             experiments=experiments,
+            safety_hazards_to_check=safety_hazards,
             pedagogical_guidance={"competencies": competencies, "values": values},
-            prompt_context=prompt_context,
+            prompt_package=prompt_package,
             raw_snippet=body,
         )
 
     def _persist_to_db(self, design: ParsedCurriculumDesign) -> None:
-        """Saves curriculum design and all sub-strands with DNA references to database."""
         execute(
             """
             INSERT INTO curriculum_designs (
@@ -568,7 +616,7 @@ class CurriculumExtractorService:
                     "pedagogical": to_json(s.pedagogical_guidance),
                     "prompt_context": to_json(
                         {
-                            **s.prompt_context,
+                            **s.prompt_package,
                             "substrand_dna_id": s.substrand_dna_id,
                             "strand_dna_id": s.strand_dna_id,
                         }
@@ -577,7 +625,6 @@ class CurriculumExtractorService:
             )
 
     def _sync_to_langfuse(self, design: ParsedCurriculumDesign) -> dict[str, Any]:
-        """Packages the extracted curriculum tree into a structured Langfuse dataset item."""
         strands_tree: list[dict[str, Any]] = []
         strand_map: dict[str, list[dict[str, Any]]] = {}
 
@@ -591,10 +638,11 @@ class CurriculumExtractorService:
                     "slos": [item["text"] for item in s.slos],
                     "diagrams_required": s.required_diagrams,
                     "experiments": s.experiments,
+                    "safety_hazards_to_check": s.safety_hazards_to_check,
                     "kiqs": s.key_inquiry_questions,
                     "substrand_dna_id": s.substrand_dna_id,
                     "strand_dna_id": s.strand_dna_id,
-                    "prompt_context": s.prompt_context,
+                    "prompt_package": s.prompt_package,
                 }
             )
 

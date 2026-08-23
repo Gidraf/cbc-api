@@ -7,20 +7,15 @@ from typing import Any
 
 from ..config import PipelineStage
 from ..errors import raise_api_error
-from ..infra.db import execute, fetch_one, to_json
+from ..infra.db import execute, fetch_all, fetch_one, to_json
 from ..models import GenerateRequest, PipelineResult, Provenance, StageRunResult, now_iso
-from ..services.cost_tracker import (
-    CostResult,
-    TokenUsage,
-    calculate_cost,
-    format_cost_summary,
-    persist_stage_cost,
-)
+from ..services.artifact_dna import artifact_dna_service
+from ..services.cost_tracker import CostResult, calculate_cost, format_cost_summary, persist_stage_cost
 from ..services.diagram_dedup import diagram_deduplicator
 from ..services.langfuse_context import langfuse_context_service
 from ..services.llm_client import LlmResponse, llm_client
 from ..services.metrics import metrics_service
-from ..services.provider_router import ProviderRouter
+from ..services.provider_router import ProviderRouter, ResolvedModelConfig
 from ..services.question_dna import question_dna_service
 from ..services.targets import target_service
 from ..services.validation import validate_grade_dataset, validate_question_batch
@@ -32,92 +27,37 @@ class PipelineService:
     def __init__(self, router: ProviderRouter) -> None:
         self.router = router
 
-    def run(self, request: GenerateRequest) -> PipelineResult:
+    def run_full_pipeline(self, request: GenerateRequest) -> PipelineResult:
+        """Executes the full pipeline:
+        Dataset Blueprint -> Notes -> SVG Diagrams -> Experiments & Activities (Safety Checked) ->
+        Derived Questions -> Strict Reviewer Hazard Audit -> Dual-Agent Approver Deliberation ->
+        Human Review Queue."""
         start_time = time.time()
-        grade_slug = validate_grade_dataset(request.curriculum.grade)
-        subject = request.curriculum.subject
-        idempotency_key = request.controls.idempotency_key
 
-        # 1. Idempotency Cache Check
+        # 1. Check Idempotency Cache
+        idempotency_key = request.controls.idempotency_key
         if idempotency_key:
-            cached = fetch_one(
+            cached_row = fetch_one(
                 "SELECT result FROM idempotency_cache WHERE idempotency_key = :ikey AND expires_at > NOW()",
                 {"ikey": idempotency_key},
             )
-            if cached and cached.get("result"):
-                return PipelineResult.model_validate(cached["result"])
+            if cached_row and cached_row.get("result"):
+                logger.info("Returning cached result for idempotency_key: %s", idempotency_key)
+                return PipelineResult(**cached_row["result"])
 
+        grade_slug = validate_grade_dataset(request.curriculum.grade)
+        subject = request.curriculum.subject
+        sub_strand = request.curriculum.sub_strand
         run_id = f"run_{request.request_id}"
         stage_runs: list[StageRunResult] = []
         stage_costs: list[CostResult] = []
 
-        # 2. Notes Generation Stage
-        notes_stage, notes_cost = self._run_stage(
-            PipelineStage.NOTES_GENERATION.value,
-            run_id,
-            request,
-            lambda req, resolved: self._generate_notes(req, resolved, grade_slug, subject),
-        )
-        stage_runs.append(notes_stage)
-        stage_costs.append(notes_cost)
-
-        # 3. Diagram Generation Stage (with Vector Deduplication & Accessibility)
-        diagram_stage, diagram_cost = self._run_stage(
-            PipelineStage.DIAGRAM_GENERATION.value,
-            run_id,
-            request,
-            lambda req, resolved: self._generate_diagrams(req, resolved, grade_slug, subject, notes_stage.output),
-        )
-        stage_runs.append(diagram_stage)
-        stage_costs.append(diagram_cost)
-
-        # 4. Activity Generation Stage
-        activity_stage, activity_cost = self._run_stage(
-            PipelineStage.ACTIVITY_GENERATION.value,
-            run_id,
-            request,
-            lambda req, resolved: self._generate_activities(req, resolved, grade_slug, subject, notes_stage.output),
-        )
-        stage_runs.append(activity_stage)
-        stage_costs.append(activity_cost)
-
-        # 5. Question Generation Stage
-        question_stage, question_cost = self._run_stage(
-            PipelineStage.QUESTION_GENERATION.value,
-            run_id,
-            request,
-            lambda req, resolved: self._generate_questions(
-                req, resolved, grade_slug, subject, notes_stage.output, diagram_stage.output, activity_stage.output
-            ),
-        )
-        validate_question_batch(question_stage.output.get("questions", []))
-        stage_runs.append(question_stage)
-        stage_costs.append(question_cost)
-
-        # 6. Reviewer Panel Quality Audit
-        review_stage, review_cost = self._run_stage(
-            PipelineStage.REVIEWER_PANEL.value,
-            run_id,
-            request,
-            lambda req, resolved: self._run_reviewer_panel(req, resolved, grade_slug, subject, question_stage.output),
-        )
-        stage_runs.append(review_stage)
-        stage_costs.append(review_cost)
-
-        # 7. Quality Gate Decision
-        review_audit = review_stage.output
-        is_approved = review_audit.get("status") == "approved"
-        workflow_status = "published" if is_approved else "needs_human_review"
-
-        # 8. Generate Universal Artifact DNA Lineage for All Stages
-        from ..services.artifact_dna import artifact_dna_service
-
-        curr_dict = request.curriculum.model_dump()
-
-        # Lookup parent Substrand DNA from curriculum database for unbroken Merkle custody
-        parent_sub_dna = fetch_one(
+        # 2. Fetch Sub-strand Blueprint & Dynamic Prompt Package from Database
+        substrand_record = fetch_one(
             """
-            SELECT prompt_context->>'substrand_dna_id' as substrand_dna_id
+            SELECT strand_name, sub_strand_id, sub_strand_name, allocated_hours, slos,
+                   learning_experiences, key_inquiry_questions, required_diagrams,
+                   experiments, prompt_context
             FROM curriculum_substrands
             WHERE grade = :grade AND LOWER(subject) = LOWER(:subject) AND (
                 LOWER(sub_strand_name) LIKE LOWER(:sub) OR LOWER(sub_strand_id) = LOWER(:sub)
@@ -127,11 +67,119 @@ class PipelineService:
             {
                 "grade": grade_slug,
                 "subject": subject,
-                "sub": f"%{request.curriculum.sub_strand}%",
+                "sub": f"%{sub_strand}%",
             },
         )
-        parent_substrand_dna_id = parent_sub_dna.get("substrand_dna_id") if parent_sub_dna else None
 
+        blueprint = substrand_record or {}
+        parent_substrand_dna_id = (blueprint.get("prompt_context") or {}).get("substrand_dna_id")
+
+        # 3. Stage 1: Notes Generation Stage
+        notes_stage, notes_cost = self._run_stage(
+            PipelineStage.NOTES_GENERATION.value,
+            run_id,
+            request,
+            lambda req, resolved: self._generate_notes(req, resolved, grade_slug, subject, blueprint),
+        )
+        stage_runs.append(notes_stage)
+        stage_costs.append(notes_cost)
+
+        # 4. Stage 2: Diagram Generation Stage (Vector Deduplication & Accessibility)
+        diagram_stage, diagram_cost = self._run_stage(
+            PipelineStage.DIAGRAM_GENERATION.value,
+            run_id,
+            request,
+            lambda req, resolved: self._generate_diagrams(req, resolved, grade_slug, subject, notes_stage.output, blueprint),
+        )
+        stage_runs.append(diagram_stage)
+        stage_costs.append(diagram_cost)
+
+        # 5. Stage 3: Real Experiments & Learning Activities Stage (with Safety Guidelines)
+        activity_stage, activity_cost = self._run_stage(
+            PipelineStage.ACTIVITY_GENERATION.value,
+            run_id,
+            request,
+            lambda req, resolved: self._generate_experiments_and_activities(
+                req, resolved, grade_slug, subject, notes_stage.output, blueprint
+            ),
+        )
+        stage_runs.append(activity_stage)
+        stage_costs.append(activity_cost)
+
+        # 6. Stage 4: Question Generation Stage (Derived Directly from Generated Notes & Experiments)
+        question_stage, question_cost = self._run_stage(
+            PipelineStage.QUESTION_GENERATION.value,
+            run_id,
+            request,
+            lambda req, resolved: self._generate_derived_questions(
+                req,
+                resolved,
+                grade_slug,
+                subject,
+                notes_stage.output,
+                diagram_stage.output,
+                activity_stage.output,
+                blueprint,
+            ),
+        )
+        validate_question_batch(question_stage.output.get("questions", []))
+        stage_runs.append(question_stage)
+        stage_costs.append(question_cost)
+
+        # 7. Stage 5: Reviewer Stage (Strict Safety Hazard Audit & Curriculum Adherence)
+        review_stage, review_cost = self._run_stage(
+            PipelineStage.REVIEWER_PANEL.value,
+            run_id,
+            request,
+            lambda req, resolved: self._run_reviewer_panel(
+                req,
+                resolved,
+                grade_slug,
+                subject,
+                notes_stage.output,
+                diagram_stage.output,
+                activity_stage.output,
+                question_stage.output,
+                blueprint,
+            ),
+        )
+        stage_runs.append(review_stage)
+        stage_costs.append(review_cost)
+
+        # 8. Stage 6: Multi-Agent Approver Stage (Dual-Agent Deliberation before Human Review)
+        approver_stage, approver_cost = self._run_stage(
+            "approver_panel",
+            run_id,
+            request,
+            lambda req, resolved: self._run_multi_agent_approver(
+                req,
+                resolved,
+                grade_slug,
+                subject,
+                notes_stage.output,
+                activity_stage.output,
+                question_stage.output,
+                review_stage.output,
+            ),
+        )
+        stage_runs.append(approver_stage)
+        stage_costs.append(approver_cost)
+
+        # 9. Quality & Safety Decision
+        review_audit = review_stage.output
+        approver_audit = approver_stage.output
+        has_critical_hazard = review_audit.get("has_hazardous_procedures", False)
+
+        is_approved = (
+            not has_critical_hazard
+            and review_audit.get("status") == "approved"
+            and approver_audit.get("consensus") == "approved_for_human"
+        )
+
+        workflow_status = "human_review_queue" if is_approved else "needs_safety_revision"
+
+        # 10. Generate Universal DNA Lineage for All Stages
+        curr_dict = request.curriculum.model_dump()
         notes_dna = artifact_dna_service.generate_notes_dna(
             notes_id=f"notes_{run_id}",
             curriculum=curr_dict,
@@ -168,7 +216,6 @@ class PipelineService:
             )
             question_dnas.append(q_cert)
 
-            # Backwards-compatible save to question_dna
             question_dna_service.save_question(
                 question_id=qid,
                 universal_id=q.get("universal_id", request.curriculum.slo_id),
@@ -180,7 +227,6 @@ class PipelineService:
                 status="approved" if is_approved else "needs_review",
             )
 
-        # Generate composite Bundle DNA with parent Substrand DNA link
         bundle_id = f"res_{request.request_id[-12:].lower()}"
         bundle_dna = artifact_dna_service.generate_bundle_dna(
             bundle_id=bundle_id,
@@ -194,19 +240,21 @@ class PipelineService:
             parent_substrand_dna_id=parent_substrand_dna_id,
         )
 
-        # 9. Compute Cost Summary
         cost_summary = format_cost_summary(stage_costs)
         total_pipeline_ms = (time.time() - start_time) * 1000
 
-        # 10. Assemble Sub-strand Resource Bundle
+        # 11. Assemble Resource Bundle for Human Approver Page
         bundle = {
             "bundle_id": bundle_id,
             "curriculum": curr_dict,
             "notes": notes_stage.output,
             "diagrams": [diagram_stage.output],
-            "activities": [activity_stage.output],
+            "activities": activity_stage.output.get("activities", []),
+            "experiments": activity_stage.output.get("experiments", []),
+            "safety_guidelines": activity_stage.output.get("safety_guidelines", []),
             "questions": question_stage.output.get("questions", []),
             "review_audit": review_audit,
+            "multi_agent_deliberation": approver_audit,
             "status": workflow_status,
             "cost_summary": cost_summary,
             "bundle_dna": {
@@ -225,7 +273,6 @@ class PipelineService:
             "updated_at": now_iso(),
         }
 
-        # Persist Sub-strand Resource Bundle to Database
         execute(
             """
             INSERT INTO substrand_resources (bundle_id, curriculum, notes, diagrams, activities, questions, review_audit, status, total_tokens, total_cost_usd, updated_at)
@@ -249,19 +296,18 @@ class PipelineService:
             """,
             {
                 "bundle_id": bundle_id,
-                "curriculum": to_json(request.curriculum.model_dump()),
+                "curriculum": to_json(curr_dict),
                 "notes": to_json(notes_stage.output),
                 "diagrams": to_json([diagram_stage.output]),
-                "activities": to_json([activity_stage.output]),
+                "activities": to_json(activity_stage.output),
                 "questions": to_json(question_stage.output.get("questions", [])),
-                "review_audit": to_json(review_audit),
+                "review_audit": to_json({"review": review_audit, "deliberation": approver_audit}),
                 "status": workflow_status,
                 "total_tokens": cost_summary.get("total_tokens", 0),
                 "total_cost_usd": cost_summary.get("total_cost_usd", 0.0),
             },
         )
 
-        # 11. Record Target Metrics
         target_service.record_generation(grade_slug, is_approved=is_approved)
 
         result = PipelineResult(
@@ -271,7 +317,6 @@ class PipelineService:
             cost_summary=cost_summary,
         )
 
-        # 12. Store in Idempotency Cache
         if idempotency_key:
             expires_at = datetime.now(timezone.utc) + timedelta(hours=24)
             execute(
@@ -308,17 +353,13 @@ class PipelineService:
         latency_ms = (time.time() - start) * 1000
         metrics_service.record_stage_latency(stage, latency_ms)
 
-        # Calculate cost for this stage
         cost = calculate_cost(
             model=llm_response.model,
             provider=llm_response.provider,
             usage=llm_response.usage,
         )
 
-        # Persist cost record to database
         persist_stage_cost(run_id, stage, cost)
-
-        # Record metrics
         metrics_service.record_stage_cost(
             provider=llm_response.provider,
             tokens=llm_response.usage.total_tokens,
@@ -349,7 +390,9 @@ class PipelineService:
         )
         return StageRunResult(pipeline_stage=stage, output=llm_response.content, provenance=provenance), cost
 
-    def _generate_notes(self, request: GenerateRequest, resolved, grade_slug: str, subject: str) -> LlmResponse:
+    def _generate_notes(
+        self, request: GenerateRequest, resolved: ResolvedModelConfig, grade_slug: str, subject: str, blueprint: dict
+    ) -> LlmResponse:
         context = langfuse_context_service.assemble_agent_context(
             agent_name="note-generator",
             grade_slug=grade_slug,
@@ -359,6 +402,8 @@ class PipelineService:
                 "strand": request.curriculum.strand,
                 "sub_strand": request.curriculum.sub_strand,
                 "slo_id": request.curriculum.slo_id,
+                "slos": blueprint.get("slos", []),
+                "kiqs": blueprint.get("key_inquiry_questions", []),
             },
         )
         return llm_client.generate(resolved, context.messages, temperature=0.2)
@@ -366,12 +411,15 @@ class PipelineService:
     def _generate_diagrams(
         self,
         request: GenerateRequest,
-        resolved,
+        resolved: ResolvedModelConfig,
         grade_slug: str,
         subject: str,
         notes_output: dict,
+        blueprint: dict,
     ) -> LlmResponse:
-        concept_name = f"{request.curriculum.sub_strand} visual model"
+        required_diagrams = blueprint.get("required_diagrams", [])
+        concept_name = required_diagrams[0] if required_diagrams else f"{request.curriculum.sub_strand} visual model"
+
         context = langfuse_context_service.assemble_agent_context(
             agent_name="diagram-generator",
             grade_slug=grade_slug,
@@ -379,11 +427,11 @@ class PipelineService:
             template_vars={
                 "concept": concept_name,
                 "notes_title": notes_output.get("title", request.curriculum.sub_strand),
+                "diagrams_required": required_diagrams,
             },
         )
         llm_resp = llm_client.generate(resolved, context.messages, temperature=0.1)
 
-        # Execute SHA-256 Deduplication & MinIO Upload
         svg_markup = llm_resp.content.get("diagram_svg", "<svg xmlns='http://www.w3.org/2000/svg'></svg>")
         accessibility = llm_resp.content.get("accessibility", {})
 
@@ -397,7 +445,6 @@ class PipelineService:
 
         metrics_service.record_diagram_dedup(reused=(dedup_result.dedup_status == "reused"))
 
-        # Update LlmResponse content with dedup results
         llm_resp.content = {
             "diagram_id": dedup_result.diagram_id,
             "diagram_title": dedup_result.diagram_title,
@@ -412,13 +459,14 @@ class PipelineService:
         }
         return llm_resp
 
-    def _generate_activities(
+    def _generate_experiments_and_activities(
         self,
         request: GenerateRequest,
-        resolved,
+        resolved: ResolvedModelConfig,
         grade_slug: str,
         subject: str,
         notes_output: dict,
+        blueprint: dict,
     ) -> LlmResponse:
         context = langfuse_context_service.assemble_agent_context(
             agent_name="activity-generator",
@@ -430,21 +478,23 @@ class PipelineService:
                 "sub_strand": request.curriculum.sub_strand,
                 "slo_id": request.curriculum.slo_id,
                 "notes_title": notes_output.get("title", ""),
+                "target_experiments": blueprint.get("experiments", []),
+                "safety_hazard_criteria": (blueprint.get("prompt_context") or {}).get("safety_hazard_criteria", []),
             },
         )
-        return llm_client.generate(resolved, context.messages, temperature=0.3)
+        return llm_client.generate(resolved, context.messages, temperature=0.25)
 
-    def _generate_questions(
+    def _generate_derived_questions(
         self,
         request: GenerateRequest,
-        resolved,
+        resolved: ResolvedModelConfig,
         grade_slug: str,
         subject: str,
         notes_output: dict,
         diagrams_output: dict,
         activities_output: dict,
+        blueprint: dict,
     ) -> LlmResponse:
-        _ = activities_output
         context = langfuse_context_service.assemble_agent_context(
             agent_name="question-generator",
             grade_slug=grade_slug,
@@ -455,9 +505,10 @@ class PipelineService:
                 "strand": request.curriculum.strand,
                 "sub_strand": request.curriculum.sub_strand,
                 "slo_id": request.curriculum.slo_id,
-                "notes_title": notes_output.get("title", ""),
-                "diagram_id": diagrams_output.get("diagram_id", ""),
-                "difficulty": 0.5,
+                "notes_summary": notes_output.get("summary") or notes_output.get("intro", ""),
+                "experiments_generated": [e.get("title", "") for e in activities_output.get("experiments", [])],
+                "diagram_concept": diagrams_output.get("diagram_title", ""),
+                "slos": blueprint.get("slos", []),
             },
         )
         return llm_client.generate(resolved, context.messages, temperature=0.2)
@@ -465,18 +516,69 @@ class PipelineService:
     def _run_reviewer_panel(
         self,
         request: GenerateRequest,
-        resolved,
+        resolved: ResolvedModelConfig,
         grade_slug: str,
         subject: str,
+        notes_output: dict,
+        diagrams_output: dict,
+        activities_output: dict,
         questions_output: dict,
+        blueprint: dict,
     ) -> LlmResponse:
         context = langfuse_context_service.assemble_agent_context(
             agent_name="reviewer-panel",
             grade_slug=grade_slug,
             subject=subject,
             template_vars={
-                "content_to_review": questions_output,
+                "notes_title": notes_output.get("title", ""),
+                "experiments": activities_output.get("experiments", []),
+                "safety_guidelines": activities_output.get("safety_guidelines", []),
+                "questions": questions_output.get("questions", []),
                 "curriculum_reference": request.curriculum.model_dump(),
+                "safety_hazard_criteria": (blueprint.get("prompt_context") or {}).get("safety_hazard_criteria", []),
             },
         )
         return llm_client.generate(resolved, context.messages, temperature=0.1)
+
+    def _run_multi_agent_approver(
+        self,
+        request: GenerateRequest,
+        resolved: ResolvedModelConfig,
+        grade_slug: str,
+        subject: str,
+        notes_output: dict,
+        activities_output: dict,
+        questions_output: dict,
+        reviewer_output: dict,
+    ) -> LlmResponse:
+        """Executes dual-agent consensus deliberation before human approval."""
+        deliberation_messages = [
+            {
+                "role": "system",
+                "content": (
+                    "You are a Multi-Agent Approver Committee comprising Agent 1 (Primary Auditor) "
+                    "and Agent 2 (Senior Pedagogical Approver). "
+                    "Simulate their deliberation and reach formal consensus on whether this educational package "
+                    "is completely safe, aligned to CBC BECF standards, and ready for human sign-off."
+                ),
+            },
+            {
+                "role": "user",
+                "content": (
+                    f"Sub-strand: {request.curriculum.sub_strand} ({subject}, {grade_slug})\n"
+                    f"Notes Title: {notes_output.get('title')}\n"
+                    f"Experiments Count: {len(activities_output.get('experiments', []))}\n"
+                    f"Questions Count: {len(questions_output.get('questions', []))}\n"
+                    f"Reviewer Quality Status: {reviewer_output.get('status')}\n"
+                    f"Hazard Flags: {reviewer_output.get('has_hazardous_procedures', False)}\n\n"
+                    "Respond with a JSON object containing:\n"
+                    "- 'auditor_1_assessment': text\n"
+                    "- 'auditor_2_cross_examination': text\n"
+                    "- 'safety_consensus': 'verified_safe' | 'hazard_detected'\n"
+                    "- 'consensus': 'approved_for_human' | 'requires_revision'\n"
+                    "- 'readiness_score': float (0.0 to 1.0)\n"
+                    "- 'summary_for_human_approver': text"
+                ),
+            },
+        ]
+        return llm_client.generate(resolved, deliberation_messages, temperature=0.1)

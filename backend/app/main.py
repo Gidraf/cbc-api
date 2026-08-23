@@ -421,6 +421,66 @@ def production_ready(_: AuthContext = Depends(require_roles("admin", "operator",
     return {"items": workflow_service.production_ready()}
 
 
+@app.get("/api/v1/bundles")
+def list_bundles(
+    status: str | None = None,
+    limit: int = 50,
+    _: AuthContext = Depends(require_roles("admin", "operator", "reviewer", "developer")),
+) -> dict:
+    from .infra.db import fetch_all
+
+    cond = ["1=1"]
+    params: dict[str, Any] = {"limit": limit}
+    if status:
+        cond.append("status = :status")
+        params["status"] = status
+
+    rows = fetch_all(
+        f"SELECT * FROM substrand_resources WHERE {' AND '.join(cond)} ORDER BY updated_at DESC LIMIT :limit",
+        params,
+    )
+    return {"bundles": rows, "count": len(rows)}
+
+
+@app.post("/api/v1/bundles/{bundle_id}/human-decision")
+def bundle_human_decision(
+    bundle_id: str,
+    payload: dict[str, Any],
+    auth_ctx: AuthContext = Depends(require_roles("admin", "reviewer")),
+) -> dict:
+    from .infra.db import execute
+
+    decision = payload.get("decision", "approve")  # 'approve' -> 'published', 'reject' -> 'rejected', 'revision' -> 'needs_safety_revision'
+    notes = payload.get("notes", "")
+
+    new_status = "published" if decision == "approve" else ("needs_safety_revision" if decision == "revision" else "rejected")
+
+    execute(
+        """
+        UPDATE substrand_resources
+        SET status = :status,
+            review_audit = jsonb_set(
+                COALESCE(review_audit, '{}'::jsonb),
+                '{human_approval}',
+                CAST(:audit AS jsonb)
+            ),
+            updated_at = NOW()
+        WHERE bundle_id = :bid
+        """,
+        {
+            "status": new_status,
+            "audit": to_json({
+                "decision": decision,
+                "reviewed_by": auth_ctx.actor_id,
+                "notes": notes,
+                "timestamp": now_iso(),
+            }),
+            "bid": bundle_id,
+        },
+    )
+    return {"bundle_id": bundle_id, "status": new_status, "decision": decision}
+
+
 # ── Cost Analytics Endpoints ─────────────────────────────────────────────────
 
 @app.get("/api/v1/costs/summary")
