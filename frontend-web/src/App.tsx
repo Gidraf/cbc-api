@@ -167,6 +167,12 @@ export function App() {
   const [questionsRefinePrompt, setQuestionsRefinePrompt] = useState("");
   const [questionsApproved, setQuestionsApproved] = useState(false);
 
+  // Sub-strand Generator Studio State
+  const [substrandGenModal, setSubstrandGenModal] = useState<{ strand_name: string; strand_id?: string } | null>(null);
+  const [generatedSubstrandsDraft, setGeneratedSubstrandsDraft] = useState<any[]>([]);
+  const [substrandPromptInput, setSubstrandPromptInput] = useState("");
+  const [strandPromptInput, setStrandPromptInput] = useState("");
+
   // Audit & Deliberation
   const [factoryAudit, setFactoryAudit] = useState<any>(null);
   const [factoryDeliberation, setFactoryDeliberation] = useState<any>(null);
@@ -676,6 +682,78 @@ export function App() {
         body: JSON.stringify(payload),
       }, auth());
       await Promise.all([loadQuestionBank(), loadReviewBundles("all")]);
+      return res;
+    });
+  }
+
+  // Sub-strand & Strand AI Generation Handlers
+  async function handleGenerateStrands(customInstructions?: string) {
+    await run("Generating Top-Level Strands...", async () => {
+      const payload = {
+        grade: genGrade,
+        subject: genSubject,
+        level: "Basic Education",
+        essence_statement: `Curriculum design for ${genSubject} (${genGrade}).`,
+        custom_instructions: customInstructions || strandPromptInput,
+      };
+      const res = await fetchJson<any>("/api/v1/curriculum/factory/generate-strands", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      }, auth());
+      if (res.strands) {
+        setSubjectStrands(res.strands.map((s: any) => ({
+          name: s.strand_name || s.name || s,
+          sub_strands: [],
+        })));
+      }
+      return res;
+    });
+  }
+
+  function handleOpenSubstrandGenerator(strandName: string, strandId: string = "1.0") {
+    setSubstrandGenModal({ strand_name: strandName, strand_id: strandId });
+    setGeneratedSubstrandsDraft([]);
+    setSubstrandPromptInput(`Generate 4 comprehensive sub-strands for ${strandName} with allocated hours (e.g. 4 hours), SLOs, practical experiments, and safety protocols.`);
+  }
+
+  async function handleGenerateSubstrands(customInstructions?: string) {
+    if (!substrandGenModal) return;
+    await run(`Generating Sub-strands for ${substrandGenModal.strand_name}...`, async () => {
+      const payload = {
+        grade: genGrade,
+        subject: genSubject,
+        strand_name: substrandGenModal.strand_name,
+        strand_id: substrandGenModal.strand_id || "1.0",
+        level: "Basic Education",
+        custom_instructions: customInstructions || substrandPromptInput,
+      };
+      const res = await fetchJson<any>("/api/v1/curriculum/factory/generate-substrands", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      }, auth());
+      if (res.sub_strands) {
+        setGeneratedSubstrandsDraft(res.sub_strands);
+      }
+      return res;
+    });
+  }
+
+  async function handleSaveSubstrandsToDatabase() {
+    if (!substrandGenModal || generatedSubstrandsDraft.length === 0) return;
+    await run(`Saving Sub-strands for ${substrandGenModal.strand_name}...`, async () => {
+      const payload = {
+        grade: genGrade,
+        subject: genSubject,
+        strand_name: substrandGenModal.strand_name,
+        strand_id: substrandGenModal.strand_id || "1.0",
+        substrands: generatedSubstrandsDraft,
+      };
+      const res = await fetchJson<any>("/api/v1/curriculum/factory/save-substrands", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      }, auth());
+      await loadFactorySubstrandsForDesign(genGrade, genSubject);
+      setSubstrandGenModal(null);
       return res;
     });
   }
@@ -1415,21 +1493,30 @@ export function App() {
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "14px" }}>
                     <div>
                       <h3 style={{ margin: 0 }}>Strands & Sub-strands Hierarchy for {genSubject || "Selected Subject"}</h3>
-                      <small className="muted">Click "⚡ Open in Asset Factory Playground" on any sub-strand to begin generating and refining content.</small>
+                      <small className="muted">Generate sub-strands for any strand, then click "⚡ Open in Asset Factory Playground" to generate notes, diagrams, safety-checked experiments, and questions.</small>
                     </div>
-                    <button
-                      className="ghost"
-                      onClick={() => {
-                        if (subjectStrands.length > 0 && subjectStrands[0].sub_strands?.length > 0) {
-                          selectSubstrandForFactory(subjectStrands[0].sub_strands[0], genGrade, genSubject);
-                        } else if (factorySubstrandsList.length > 0) {
-                          selectSubstrandForFactory(factorySubstrandsList[0], genGrade, genSubject);
-                        }
-                      }}
-                      disabled={subjectStrands.length === 0 && factorySubstrandsList.length === 0}
-                    >
-                      ⚡ Quick Enter Factory Playground
-                    </button>
+                    <div style={{ display: "flex", gap: "8px" }}>
+                      <button
+                        className="ghost"
+                        onClick={() => handleGenerateStrands()}
+                        disabled={isRunning || !genSubject}
+                      >
+                        ✨ AI Generate Strands for {genSubject || "Subject"}
+                      </button>
+                      <button
+                        className="ghost"
+                        onClick={() => {
+                          if (subjectStrands.length > 0 && subjectStrands[0].sub_strands?.length > 0) {
+                            selectSubstrandForFactory(subjectStrands[0].sub_strands[0], genGrade, genSubject);
+                          } else if (factorySubstrandsList.length > 0) {
+                            selectSubstrandForFactory(factorySubstrandsList[0], genGrade, genSubject);
+                          }
+                        }}
+                        disabled={subjectStrands.length === 0 && factorySubstrandsList.length === 0}
+                      >
+                        ⚡ Quick Enter Asset Factory
+                      </button>
+                    </div>
                   </div>
 
                   {/* Render from database factorySubstrandsList or subjectStrands */}
@@ -1440,8 +1527,16 @@ export function App() {
                         return (
                           <div key={sIdx} className="strand-card">
                             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
-                              <strong style={{ fontSize: "14px", color: "#0c4a6e" }}>🌿 STRAND: {strandName}</strong>
-                              <span className="pill ok" style={{ fontSize: "11px" }}>{subsInStrand.length} Sub-strands</span>
+                              <div>
+                                <strong style={{ fontSize: "14px", color: "#0c4a6e" }}>🌿 STRAND: {strandName}</strong>
+                                <span className="pill ok" style={{ fontSize: "11px", marginLeft: "8px" }}>{subsInStrand.length} Sub-strands</span>
+                              </div>
+                              <button
+                                style={{ fontSize: "11px", padding: "4px 10px" }}
+                                onClick={() => handleOpenSubstrandGenerator(strandName)}
+                              >
+                                ✨ AI Generate / Refine Sub-strands
+                              </button>
                             </div>
 
                             <div style={{ display: "grid", gap: "8px" }}>
@@ -1465,7 +1560,7 @@ export function App() {
                                     style={{ fontSize: "12px", padding: "6px 12px" }}
                                     onClick={() => selectSubstrandForFactory(ss, genGrade, genSubject)}
                                   >
-                                    ⚡ Open in Asset Factory
+                                    ⚡ Open in Asset Factory ➔
                                   </button>
                                 </div>
                               ))}
@@ -1476,46 +1571,234 @@ export function App() {
                     </div>
                   ) : subjectStrands.length > 0 ? (
                     <div>
-                      {subjectStrands.map((strand: any, sIdx: number) => (
-                        <div key={sIdx} className="strand-card">
-                          <strong style={{ fontSize: "14px", color: "#0c4a6e" }}>🌿 STRAND: {toOptionLabel(strand)}</strong>
-                          <div style={{ display: "grid", gap: "8px", marginTop: "8px" }}>
-                            {(strand.sub_strands || []).map((ss: any, subIdx: number) => {
-                              const ssName = toOptionLabel(ss);
-                              return (
-                                <div key={subIdx} className="substrand-row">
-                                  <div>
-                                    <div style={{ fontWeight: 700, fontSize: "13px" }}>🌱 {ssName}</div>
-                                  </div>
+                      {subjectStrands.map((strand: any, sIdx: number) => {
+                        const stName = toOptionLabel(strand);
+                        return (
+                          <div key={sIdx} className="strand-card">
+                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
+                              <strong style={{ fontSize: "14px", color: "#0c4a6e" }}>🌿 STRAND: {stName}</strong>
+                              <button
+                                style={{ fontSize: "11px", padding: "4px 10px" }}
+                                onClick={() => handleOpenSubstrandGenerator(stName)}
+                              >
+                                ✨ AI Generate Sub-strands for this Strand
+                              </button>
+                            </div>
+                            <div style={{ display: "grid", gap: "8px", marginTop: "8px" }}>
+                              {(strand.sub_strands || []).length > 0 ? (
+                                (strand.sub_strands || []).map((ss: any, subIdx: number) => {
+                                  const ssName = toOptionLabel(ss);
+                                  return (
+                                    <div key={subIdx} className="substrand-row">
+                                      <div>
+                                        <div style={{ fontWeight: 700, fontSize: "13px" }}>🌱 {ssName}</div>
+                                      </div>
+                                      <button
+                                        style={{ fontSize: "12px", padding: "6px 12px" }}
+                                        onClick={() => selectSubstrandForFactory({ strand_name: stName, sub_strand_name: ssName }, genGrade, genSubject)}
+                                      >
+                                        ⚡ Open in Asset Factory ➔
+                                      </button>
+                                    </div>
+                                  );
+                                })
+                              ) : (
+                                <div style={{ padding: "8px 12px", background: "#f8fafc", borderRadius: "6px", fontSize: "12px", color: "#64748b", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                                  <span>No sub-strands generated yet for this strand.</span>
                                   <button
-                                    style={{ fontSize: "12px", padding: "6px 12px" }}
-                                    onClick={() => selectSubstrandForFactory({ strand_name: toOptionLabel(strand), sub_strand_name: ssName }, genGrade, genSubject)}
+                                    style={{ fontSize: "11px", padding: "4px 8px" }}
+                                    onClick={() => handleOpenSubstrandGenerator(stName)}
                                   >
-                                    ⚡ Open in Asset Factory
+                                    ✨ Generate Sub-strands Now
                                   </button>
                                 </div>
-                              );
-                            })}
+                              )}
+                            </div>
                           </div>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   ) : (
                     <div style={{ textAlign: "center", padding: "32px", color: "var(--muted)" }}>
                       <p>No strands loaded yet. Select a grade & subject above, or click "Load Sample Agriculture DTE Design" in Datasets tab.</p>
-                      <button
-                        className="ghost"
-                        onClick={() => {
-                          setGenGrade("grade-dte");
-                          setGenSubject("Agriculture");
-                          loadFactorySubstrandsForDesign("grade-dte", "Agriculture");
-                        }}
-                      >
-                        Load DTE Agriculture Strands
-                      </button>
+                      <div style={{ display: "flex", justifyContent: "center", gap: "8px", marginTop: "8px" }}>
+                        <button
+                          className="ghost"
+                          onClick={() => {
+                            setGenGrade("grade-dte");
+                            setGenSubject("Agriculture");
+                            loadFactorySubstrandsForDesign("grade-dte", "Agriculture");
+                          }}
+                        >
+                          Load DTE Agriculture Strands
+                        </button>
+                        <button
+                          onClick={() => {
+                            if (genGrade && genSubject) {
+                              handleGenerateStrands();
+                            }
+                          }}
+                          disabled={!genGrade || !genSubject}
+                        >
+                          ✨ Generate Top-Level Strands for {genSubject || "Subject"}
+                        </button>
+                      </div>
                     </div>
                   )}
                 </div>
+
+                {/* SUB-STRAND GENERATOR MODAL / STUDIO */}
+                {substrandGenModal && (
+                  <div
+                    style={{
+                      position: "fixed",
+                      top: 0,
+                      left: 0,
+                      right: 0,
+                      bottom: 0,
+                      background: "rgba(15, 23, 42, 0.7)",
+                      backdropFilter: "blur(4px)",
+                      display: "flex",
+                      justifyContent: "center",
+                      alignItems: "center",
+                      zIndex: 1000,
+                      padding: "20px",
+                    }}
+                  >
+                    <div
+                      style={{
+                        background: "#fff",
+                        borderRadius: "16px",
+                        maxWidth: "900px",
+                        width: "100%",
+                        maxHeight: "90vh",
+                        overflowY: "auto",
+                        padding: "24px",
+                        boxShadow: "0 20px 25px -5px rgba(0, 0, 0, 0.2)",
+                      }}
+                    >
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #e2e8f0", paddingBottom: "12px" }}>
+                        <div>
+                          <h2 style={{ margin: 0, color: "#0f172a" }}>
+                            🌱 Sub-strand Intelligence Generator
+                          </h2>
+                          <div style={{ fontSize: "13px", color: "#0284c7", marginTop: "4px" }}>
+                            Subject: <strong>{genSubject}</strong> ({genGrade}) • Target Strand: <strong>{substrandGenModal.strand_name}</strong>
+                          </div>
+                        </div>
+                        <button className="ghost" onClick={() => setSubstrandGenModal(null)}>✕ Close</button>
+                      </div>
+
+                      <div style={{ marginTop: "16px" }}>
+                        <label style={{ fontWeight: 600, fontSize: "13px" }}>
+                          Custom Prompt & Pedagogical Directives for this Strand:
+                          <textarea
+                            rows={3}
+                            style={{ width: "100%", marginTop: "6px", fontFamily: "inherit", fontSize: "13px", padding: "8px" }}
+                            value={substrandPromptInput}
+                            onChange={(e) => setSubstrandPromptInput(e.target.value)}
+                            placeholder="e.g. Generate 4 sub-strands covering overview, soil composition, water conservation, and farm layout with 4 hours each..."
+                          />
+                        </label>
+
+                        <div style={{ display: "flex", justifyContent: "flex-end", gap: "8px", marginTop: "10px" }}>
+                          <button onClick={() => handleGenerateSubstrands(substrandPromptInput)} disabled={isRunning}>
+                            {isRunning ? "⚡ AI Generating Sub-strands..." : (generatedSubstrandsDraft.length > 0 ? "🔄 Regenerate Sub-strands" : "⚡ AI Generate Sub-strands for this Strand")}
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Generated Sub-strands List Preview */}
+                      {generatedSubstrandsDraft.length > 0 && (
+                        <div style={{ marginTop: "20px" }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "10px" }}>
+                            <h3 style={{ margin: 0, color: "#166534" }}>
+                              ✨ Generated Sub-strands ({generatedSubstrandsDraft.length})
+                            </h3>
+                            <button
+                              style={{ background: "#16a34a", color: "#fff", fontWeight: 700 }}
+                              onClick={handleSaveSubstrandsToDatabase}
+                              disabled={isRunning}
+                            >
+                              💾 Save Sub-strands to Database & Strands Tree
+                            </button>
+                          </div>
+
+                          <div style={{ display: "grid", gap: "12px" }}>
+                            {generatedSubstrandsDraft.map((ss: any, idx: number) => (
+                              <div
+                                key={idx}
+                                style={{
+                                  padding: "14px",
+                                  borderRadius: "10px",
+                                  border: "1px solid #bbf7d0",
+                                  background: "#f0fdf4",
+                                }}
+                              >
+                                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                                  <strong style={{ fontSize: "14px", color: "#14532d" }}>
+                                    🌱 {ss.sub_strand_name || ss.name}
+                                  </strong>
+                                  <span className="pill warn" style={{ fontWeight: 600 }}>{ss.allocated_hours || "4 hours"}</span>
+                                </div>
+
+                                {/* SLOs */}
+                                {ss.slos && (
+                                  <div style={{ marginTop: "8px", fontSize: "12px" }}>
+                                    <strong>Specific Learning Outcomes (SLOs):</strong>
+                                    <ul style={{ margin: "4px 0 0", paddingLeft: "18px" }}>
+                                      {ss.slos.map((slo: any, sIdx: number) => (
+                                        <li key={sIdx}>{typeof slo === "string" ? slo : (slo.text || slo.name)}</li>
+                                      ))}
+                                    </ul>
+                                  </div>
+                                )}
+
+                                {/* Key Inquiry Questions */}
+                                {ss.key_inquiry_questions && (
+                                  <div style={{ marginTop: "6px", fontSize: "12px", color: "#0369a1" }}>
+                                    <strong>Key Inquiry Questions:</strong> {Array.isArray(ss.key_inquiry_questions) ? ss.key_inquiry_questions.join(" • ") : ss.key_inquiry_questions}
+                                  </div>
+                                )}
+
+                                {/* Diagrams & Experiments */}
+                                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px", marginTop: "8px", fontSize: "11px" }}>
+                                  <div style={{ padding: "6px 8px", background: "#fff", borderRadius: "6px", border: "1px solid #e2e8f0" }}>
+                                    <strong>📐 Required Diagram:</strong>
+                                    <div>{Array.isArray(ss.required_diagrams) ? ss.required_diagrams.join(", ") : (ss.required_diagrams || "Process Flowchart")}</div>
+                                  </div>
+                                  <div style={{ padding: "6px 8px", background: "#fff", borderRadius: "6px", border: "1px solid #e2e8f0" }}>
+                                    <strong>🧪 Practical Experiment:</strong>
+                                    <div>{Array.isArray(ss.experiments) ? ss.experiments.join(", ") : (ss.experiments || "Hands-on investigation")}</div>
+                                  </div>
+                                </div>
+
+                                {/* Safety Hazards */}
+                                {ss.safety_hazards_to_check && (
+                                  <div style={{ marginTop: "6px", fontSize: "11px", color: "#b91c1c" }}>
+                                    ⚠️ <strong>Safety Hazard Guidelines:</strong> {Array.isArray(ss.safety_hazards_to_check) ? ss.safety_hazards_to_check.join(" • ") : ss.safety_hazards_to_check}
+                                  </div>
+                                )}
+
+                                <div style={{ display: "flex", justifyContent: "flex-end", marginTop: "10px" }}>
+                                  <button
+                                    style={{ fontSize: "12px", padding: "6px 12px" }}
+                                    onClick={() => {
+                                      setSubstrandGenModal(null);
+                                      selectSubstrandForFactory(ss, genGrade, genSubject);
+                                    }}
+                                  >
+                                    ⚡ Open Directly in Asset Factory ➔
+                                  </button>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 

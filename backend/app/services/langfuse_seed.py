@@ -436,6 +436,82 @@ Output valid JSON:
   "ready_for_human_review": true
 }
 Return ONLY valid JSON.
+""",
+    "strand-generator": """
+You are the StrandArchitectAgent for the Kenyan Basic Education Curriculum Framework (BECF).
+Generate a comprehensive breakdown of top-level Strands for the specified Grade and Subject.
+
+Curriculum Context:
+Level: {{ level }}
+Grade: {{ grade }}
+Subject: {{ subject }}
+Essence Statement: {{ essence_statement }}
+
+Custom Instructions:
+{{ custom_instructions }}
+
+Output MUST be a valid JSON object matching this schema:
+{
+  "subject": "{{ subject }}",
+  "grade": "{{ grade }}",
+  "strands": [
+    {
+      "strand_id": "1.0",
+      "strand_name": "1.0 NAME OF STRAND",
+      "description": "Scope and pedagogical focus of this strand",
+      "suggested_substrand_count": 4
+    }
+  ]
+}
+Return ONLY valid JSON.
+""",
+    "substrand-generator": """
+You are the SubstrandIntelligenceAgent for the Kenyan Basic Education Curriculum Framework (BECF).
+For the specified Subject and Strand, generate a complete pedagogical breakdown of Sub-strands with allocated hours, Specific Learning Outcomes (SLOs), Suggested Learning Experiences, Key Inquiry Questions (KIQs), Core Competencies, Values, Required Diagrams, Practical Experiments, and Safety Hazard checks.
+
+Curriculum Context:
+Level: {{ level }}
+Grade: {{ grade }}
+Subject: {{ subject }}
+Strand: {{ strand }}
+
+Custom Instructions:
+{{ custom_instructions }}
+
+Output MUST be a valid JSON object matching this schema:
+{
+  "strand_name": "{{ strand }}",
+  "sub_strands": [
+    {
+      "sub_strand_id": "1.1",
+      "sub_strand_name": "1.1 Overview of Topic",
+      "allocated_hours": "4 hours",
+      "slos": [
+        "explain the foundational principles of...",
+        "relate practical applications to local community contexts in Kenya"
+      ],
+      "learning_experiences": [
+        "Through research and group inquiry, explore...",
+        "Participate in practical field observations of..."
+      ],
+      "key_inquiry_questions": [
+        "How does this concept impact sustainable development in Kenya?"
+      ],
+      "core_competencies": ["Critical Thinking and Problem Solving", "Communication and Collaboration"],
+      "values": ["Responsibility", "Integrity", "Patriotism"],
+      "required_diagrams": [
+        "Flowchart / Conceptual diagram of the process"
+      ],
+      "experiments": [
+        "Practical step-by-step investigation of..."
+      ],
+      "safety_hazards_to_check": [
+        "Ensure strict hygiene protocols and non-toxic materials are used"
+      ]
+    }
+  ]
+}
+Return ONLY valid JSON.
 """
 }
 

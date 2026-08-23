@@ -538,3 +538,197 @@ def factory_save_bundle(
     )
 
     return {"status": "saved", "bundle_id": payload.bundle_id, "review_status": payload.review_status}
+
+
+class FactoryGenerateStrandsRequest(BaseModel):
+    grade: str
+    subject: str
+    level: str = "Basic Education"
+    essence_statement: str = ""
+    custom_instructions: str = ""
+
+
+class FactoryGenerateSubstrandsRequest(BaseModel):
+    grade: str
+    subject: str
+    strand_name: str
+    strand_id: str = "1.0"
+    level: str = "Basic Education"
+    custom_instructions: str = ""
+
+
+class FactorySaveSubstrandsRequest(BaseModel):
+    grade: str
+    subject: str
+    strand_name: str
+    strand_id: str = "1.0"
+    design_id: str = ""
+    substrands: list[dict[str, Any]]
+
+
+@router.post("/factory/generate-strands")
+def factory_generate_strands(
+    payload: FactoryGenerateStrandsRequest,
+    _: AuthContext = Depends(require_roles("admin", "operator", "reviewer")),
+) -> dict[str, Any]:
+    """Generates the top-level strands for a subject using Langfuse prompt management."""
+    from ..services.langfuse_context import langfuse_context_service
+    from ..services.llm_client import llm_client
+    from ..services.pipeline import pipeline_orchestrator
+
+    resolved = pipeline_orchestrator.router.resolve_for_stage("notes_generation")
+    context = langfuse_context_service.assemble_agent_context(
+        agent_name="strand-generator",
+        grade_slug=payload.grade,
+        subject=payload.subject,
+        template_vars={
+            "level": payload.level,
+            "essence_statement": payload.essence_statement,
+            "custom_instructions": payload.custom_instructions,
+        },
+    )
+    if payload.custom_instructions:
+        context.messages.append({
+            "role": "user",
+            "content": f"ADDITIONAL STRAND INSTRUCTIONS: {payload.custom_instructions}",
+        })
+
+    resp = llm_client.generate(resolved, context.messages, temperature=0.2)
+    strands = resp.content.get("strands", []) if isinstance(resp.content, dict) else []
+    return {"subject": payload.subject, "grade": payload.grade, "strands": strands, "usage": resp.usage, "model": resp.model}
+
+
+@router.post("/factory/generate-substrands")
+def factory_generate_substrands(
+    payload: FactoryGenerateSubstrandsRequest,
+    _: AuthContext = Depends(require_roles("admin", "operator", "reviewer")),
+) -> dict[str, Any]:
+    """Generates detailed sub-strands with SLOs, hours, diagrams, experiments, and hazard protocols for a specific strand."""
+    from ..services.langfuse_context import langfuse_context_service
+    from ..services.llm_client import llm_client
+    from ..services.pipeline import pipeline_orchestrator
+
+    resolved = pipeline_orchestrator.router.resolve_for_stage("notes_generation")
+    context = langfuse_context_service.assemble_agent_context(
+        agent_name="substrand-generator",
+        grade_slug=payload.grade,
+        subject=payload.subject,
+        template_vars={
+            "level": payload.level,
+            "strand": payload.strand_name,
+            "custom_instructions": payload.custom_instructions,
+        },
+    )
+    if payload.custom_instructions:
+        context.messages.append({
+            "role": "user",
+            "content": f"ADDITIONAL SUB-STRAND INSTRUCTIONS: {payload.custom_instructions}",
+        })
+
+    resp = llm_client.generate(resolved, context.messages, temperature=0.2)
+    sub_strands = resp.content.get("sub_strands", []) if isinstance(resp.content, dict) else []
+    return {
+        "subject": payload.subject,
+        "grade": payload.grade,
+        "strand_name": payload.strand_name,
+        "sub_strands": sub_strands,
+        "usage": resp.usage,
+        "model": resp.model,
+    }
+
+
+@router.post("/factory/save-substrands")
+def factory_save_substrands(
+    payload: FactorySaveSubstrandsRequest,
+    _: AuthContext = Depends(require_roles("admin", "operator", "reviewer")),
+) -> dict[str, Any]:
+    """Saves generated sub-strands for a strand to PostgreSQL database."""
+    from ..infra.db import execute, to_json
+
+    saved_count = 0
+    design_id = payload.design_id or f"cd_{payload.grade}_{payload.subject.lower()[:4]}"
+
+    for ss in payload.substrands:
+        sub_id = str(ss.get("sub_strand_id") or ss.get("id") or "1.1")
+        sub_name = str(ss.get("sub_strand_name") or ss.get("name") or sub_id)
+        hours = str(ss.get("allocated_hours") or ss.get("hours") or "4 hours")
+        slos = ss.get("slos", [])
+        learning_exp = ss.get("learning_experiences", [])
+        kiqs = ss.get("key_inquiry_questions", [])
+        competencies = ss.get("core_competencies", [])
+        vals = ss.get("values", [])
+        rubrics = ss.get("assessment_rubrics", {})
+        diagrams = ss.get("required_diagrams", [])
+        experiments = ss.get("experiments", [])
+        safety_hazards = ss.get("safety_hazards_to_check", [])
+
+        prompt_context = {
+            "subject": payload.subject,
+            "grade": payload.grade,
+            "strand": payload.strand_name,
+            "sub_strand": sub_name,
+            "allocated_hours": hours,
+            "slos": slos,
+            "kiqs": kiqs,
+            "diagram_guidance": diagrams,
+            "experiment_guidance": experiments,
+            "safety_hazard_criteria": safety_hazards,
+        }
+
+        execute(
+            """
+            INSERT INTO curriculum_substrands (
+                design_id, grade, subject, strand_id, strand_name, sub_strand_id, sub_strand_name,
+                allocated_hours, slos, learning_experiences, key_inquiry_questions,
+                core_competencies, values, assessment_rubrics, required_diagrams,
+                experiments, pedagogical_guidance, prompt_context, updated_at
+            )
+            VALUES (
+                :design_id, :grade, :subject, :strand_id, :strand_name, :sub_strand_id, :sub_strand_name,
+                :allocated_hours, CAST(:slos AS jsonb), CAST(:learning_exp AS jsonb),
+                CAST(:kiqs AS jsonb), CAST(:competencies AS jsonb), CAST(:values AS jsonb),
+                CAST(:rubrics AS jsonb), CAST(:diagrams AS jsonb), CAST(:experiments AS jsonb),
+                CAST(:pedagogical AS jsonb), CAST(:prompt_context AS jsonb), NOW()
+            )
+            ON CONFLICT (grade, subject, strand_name, sub_strand_name) DO UPDATE SET
+                design_id = EXCLUDED.design_id,
+                strand_id = EXCLUDED.strand_id,
+                sub_strand_id = EXCLUDED.sub_strand_id,
+                allocated_hours = EXCLUDED.allocated_hours,
+                slos = EXCLUDED.slos,
+                learning_experiences = EXCLUDED.learning_experiences,
+                key_inquiry_questions = EXCLUDED.key_inquiry_questions,
+                core_competencies = EXCLUDED.core_competencies,
+                values = EXCLUDED.values,
+                assessment_rubrics = EXCLUDED.assessment_rubrics,
+                required_diagrams = EXCLUDED.required_diagrams,
+                experiments = EXCLUDED.experiments,
+                pedagogical_guidance = EXCLUDED.pedagogical_guidance,
+                prompt_context = EXCLUDED.prompt_context,
+                updated_at = NOW()
+            """,
+            {
+                "design_id": design_id,
+                "grade": payload.grade,
+                "subject": payload.subject,
+                "strand_id": payload.strand_id,
+                "strand_name": payload.strand_name,
+                "sub_strand_id": sub_id,
+                "sub_strand_name": sub_name,
+                "allocated_hours": hours,
+                "slos": to_json([{"id": f"{payload.grade}-{payload.subject[:3]}-{sub_id}-{idx+1}", "text": s} if isinstance(s, str) else s for idx, s in enumerate(slos)]),
+                "learning_exp": to_json(learning_exp),
+                "kiqs": to_json(kiqs),
+                "competencies": to_json(competencies),
+                "values": to_json(vals),
+                "rubrics": to_json(rubrics),
+                "diagrams": to_json(diagrams),
+                "experiments": to_json(experiments),
+                "pedagogical": to_json({"safety_hazards_to_check": safety_hazards}),
+                "prompt_context": to_json(prompt_context),
+            },
+        )
+        saved_count += 1
+
+    return {"status": "saved", "saved_count": saved_count, "strand_name": payload.strand_name}
+
