@@ -576,7 +576,7 @@ def factory_generate_strands(
     _: AuthContext = Depends(require_roles("admin", "operator", "reviewer")),
 ) -> dict[str, Any]:
     """Generates the top-level strands for a subject using Langfuse prompt management and subject design context."""
-    from ..infra.db import query_one
+    from ..infra.db import fetch_one
     from ..services.langfuse_context import langfuse_context_service
     from ..services.llm_client import llm_client
     from ..services.pipeline import pipeline_orchestrator
@@ -585,7 +585,7 @@ def factory_generate_strands(
     level = payload.level
 
     if not essence_statement:
-        row = query_one(
+        row = fetch_one(
             """
             SELECT essence_statement, level
             FROM curriculum_designs
@@ -626,7 +626,7 @@ def factory_generate_substrands(
     _: AuthContext = Depends(require_roles("admin", "operator", "reviewer")),
 ) -> dict[str, Any]:
     """Generates detailed sub-strands with SLOs, hours, diagrams, experiments, and hazard protocols using curriculum design blueprint context."""
-    from ..infra.db import query_one
+    from ..infra.db import fetch_one
     from ..services.langfuse_context import langfuse_context_service
     from ..services.llm_client import llm_client
     from ..services.pipeline import pipeline_orchestrator
@@ -637,7 +637,7 @@ def factory_generate_substrands(
     level = payload.level
 
     # Look up previous curriculum design context from database if not supplied
-    row = query_one(
+    row = fetch_one(
         """
         SELECT design_id, subject, level, essence_statement, general_learning_outcomes, raw_payload
         FROM curriculum_designs

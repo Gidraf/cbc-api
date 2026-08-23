@@ -343,6 +343,10 @@ def fetch_one(query: str, params: dict | None = None) -> dict | None:
     return result[0] if result else None
 
 
+query_one = fetch_one
+query_all = fetch_all
+
+
 def execute(query: str, params: dict | None = None) -> None:
     engine = get_engine()
     with engine.begin() as conn:
