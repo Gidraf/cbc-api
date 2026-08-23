@@ -812,7 +812,7 @@ export function App() {
         raw = JSON.parse(raw);
       } catch {
         if (raw.includes("<svg")) {
-          return [{ asset_id: "vis_1", title: "Visual Model", diagram_svg: raw, status: "generated" }];
+          return [{ asset_id: "vis_1", title: "Visual Model", diagram_svg: raw, status: "generated", hour_index: 1, hour_title: "Hour 1" }];
         }
         return [];
       }
@@ -821,20 +821,31 @@ export function App() {
       return raw.map((item: any, idx: number) => {
         if (typeof item === "string") {
           if (item.includes("<svg")) {
-            return { asset_id: `vis_${idx + 1}`, title: `Visual ${idx + 1}`, diagram_svg: item, status: "generated" };
+            return { asset_id: `vis_${idx + 1}`, title: `Visual ${idx + 1}`, diagram_svg: item, status: "generated", hour_index: ((idx % 4) + 1), hour_title: `Hour ${((idx % 4) + 1)}` };
           }
           try {
             const parsed = JSON.parse(item);
             return parsed.content || parsed;
           } catch {
-            return { asset_id: `vis_${idx + 1}`, title: item, status: "planned" };
+            return { asset_id: `vis_${idx + 1}`, title: item, status: "planned", hour_index: ((idx % 4) + 1), hour_title: `Hour ${((idx % 4) + 1)}` };
           }
         }
         const c = item.content || item;
+        let hIdx = c.hour_index;
+        if (!hIdx) {
+          const t = (c.title || c.diagram_title || c.micro_concept || "").toLowerCase();
+          if (t.includes("economic") || t.includes("gdp") || t.includes("overview")) hIdx = 1;
+          else if (t.includes("chemistry") || t.includes("ph") || t.includes("lime") || t.includes("water") || t.includes("swale") || t.includes("agroforestry") || t.includes("grevillea")) hIdx = 2;
+          else if (t.includes("erosion") || t.includes("terracing") || t.includes("gabion") || t.includes("conservation") || t.includes("impact")) hIdx = 3;
+          else if (t.includes("profile") || t.includes("strata") || t.includes("horizon") || t.includes("titration") || t.includes("bedrock") || t.includes("practicum")) hIdx = 4;
+          else hIdx = ((idx % 4) + 1);
+        }
         return {
           ...c,
           asset_id: c.asset_id || c.diagram_id || `vis_${idx + 1}`,
           title: c.title || c.diagram_title || `Visual ${idx + 1}`,
+          hour_index: hIdx,
+          hour_title: c.hour_title || `Hour ${hIdx}`,
           diagram_svg: c.diagram_svg || c.svg || c.svg_code,
           image_prompt: c.image_prompt || c.vivid_prompt,
           video_storyboard: c.video_storyboard,
@@ -850,6 +861,8 @@ export function App() {
           ...raw,
           asset_id: raw.asset_id || raw.diagram_id || "vis_1",
           title: raw.title || raw.diagram_title || "Visual Model",
+          hour_index: raw.hour_index || 1,
+          hour_title: raw.hour_title || "Hour 1",
           diagram_svg: raw.diagram_svg || raw.svg || raw.svg_code,
           status: "generated",
         }];
@@ -863,13 +876,32 @@ export function App() {
     if (typeof raw === "string") {
       try { raw = JSON.parse(raw); } catch { return []; }
     }
-    if (Array.isArray(raw)) return raw;
-    if (typeof raw === "object") {
-      if (Array.isArray(raw.activities)) return raw.activities;
-      if (Array.isArray(raw.practicals)) return raw.practicals;
-      if (raw.title || raw.procedure || raw.scientific_principle) return [raw];
+    let list: any[] = [];
+    if (Array.isArray(raw)) list = raw;
+    else if (typeof raw === "object") {
+      if (Array.isArray(raw.activities)) list = raw.activities;
+      else if (Array.isArray(raw.practicals)) list = raw.practicals;
+      else if (raw.title || raw.procedure || raw.scientific_principle || raw.activity_name) list = [raw];
     }
-    return [];
+    return list.map((a: any, idx: number) => {
+      let hIdx = a.hour_index;
+      if (!hIdx) {
+        const t = (a.activity_name || a.title || a.objective || "").toLowerCase();
+        if (t.includes("policy") || t.includes("economic") || t.includes("overview")) hIdx = 1;
+        else if (t.includes("chemistry") || t.includes("ph") || t.includes("lime") || t.includes("swale") || t.includes("agroforestry") || t.includes("grevillea")) hIdx = 2;
+        else if (t.includes("erosion") || t.includes("terracing") || t.includes("gabion") || t.includes("conservation") || t.includes("csl")) hIdx = 3;
+        else if (t.includes("profile") || t.includes("strata") || t.includes("titration") || t.includes("buffer") || t.includes("lab")) hIdx = 4;
+        else hIdx = ((idx % 4) + 1);
+      }
+      return {
+        ...a,
+        activity_id: a.activity_id || `act_${idx + 1}`,
+        activity_name: a.activity_name || a.title || `Practical ${idx + 1}`,
+        hour_index: hIdx,
+        hour_title: a.hour_title || `Hour ${hIdx}`,
+        status: (a.procedure_steps && a.procedure_steps.length > 0) ? "generated" : (a.status || "planned"),
+      };
+    });
   }
 
   function normalizeQuestionsList(raw: any): any[] {

@@ -1356,10 +1356,10 @@ def factory_plan_visuals(
         extra_query="visual models and schematics",
     )
 
-    notes_str = ""
-    if payload.notes_content:
-        notes_str = json_lib.dumps(payload.notes_content, ensure_ascii=False)[:4000]
-    else:
+    # Extract all 4 hour modules explicitly
+    hours_breakdown_str = ""
+    notes_dict = payload.notes_content
+    if not notes_dict:
         from ..infra.db import fetch_one
         saved_row = fetch_one(
             """
@@ -1371,7 +1371,17 @@ def factory_plan_visuals(
             {"subject": payload.subject.strip(), "ss": f"%{payload.sub_strand.strip().lower()}%"},
         )
         if saved_row and saved_row.get("notes"):
-            notes_str = json_lib.dumps(saved_row.get("notes"), ensure_ascii=False)[:4000]
+            notes_dict = saved_row.get("notes")
+
+    if notes_dict and isinstance(notes_dict, dict):
+        h_mods = notes_dict.get("hour_modules") or notes_dict.get("key_concepts") or []
+        for idx, hm in enumerate(h_mods):
+            h_num = hm.get("hour_number", idx + 1)
+            h_title = hm.get("hour_title") or hm.get("heading") or f"Hour {h_num}"
+            h_notes = hm.get("full_lecture_notes") or hm.get("content") or hm.get("detailed_exposition") or ""
+            hours_breakdown_str += f"\n--- ⏰ LESSON HOUR {h_num}: {h_title} ---\n{h_notes[:2500]}\n"
+
+    notes_str = hours_breakdown_str or (json_lib.dumps(notes_dict, ensure_ascii=False)[:4000] if notes_dict else payload.sub_strand)
 
     context = langfuse_context_service.assemble_agent_context(
         agent_name="diagram-generator",
@@ -1390,24 +1400,20 @@ def factory_plan_visuals(
         "content": (
             f"{ct_profile.format_for_prompt()}\n\n"
             f"{dossier.formatted_context}\n\n"
-            f"=== LAYER 1 MASTER LESSON NOTES CONTEXT (MANDATORY SOURCE OF TRUTH) ===\n{notes_str[:3000]}\n\n"
-            f"EXHAUSTIVE MULTI-VISUAL ASSET DISCOVERY & SPECIFICATION DIRECTIVE:\n"
-            f"Analyze every hour module, sub-topic, and practical concept in the Lesson Notes for '{payload.sub_strand}'.\n"
-            f"DISCOVER AND SPECIFY ALL REQUIRED PEDAGOGICAL VISUAL ASSETS (Generate 6 to 10+ distinct, high-impact visuals) covering every dimension:\n"
-            f"1. Structural / Anatomical Cross-Section Model (e.g. Soil Profile Horizon Strata showing O, A, B, C horizons, bedrock, and root penetration depths with clear callout leader lines)\n"
-            f"2. Laboratory / Workbench Apparatus Setup Schematic (vector SVG showing calibrated beakers, titration burettes, indicator charts, test tubes)\n"
-            f"3. Macro Process / Cycle Flowchart (vector SVG showing chemical, biological, or socio-economic processes with clear flow arrows)\n"
-            f"4. Authentic Kenyan Agricultural / Ecological Field Practice Photographic Scene (e.g. farmers applying agricultural lime / contour terracing in Uasin Gishu or Kiambu County)\n"
-            f"5. Comparative Data Infographic / Taxonomy Chart (comparing soil types, pest treatments, or biological classifications)\n"
-            f"6. Environmental & Community Problem-Solving Field Schematic (e.g. erosion control gabions, drip irrigation layout)\n"
-            f"7. Video Simulation Action Storyboard (step-by-step camera shots for an experiential student demonstration)\n\n"
+            f"=== LAYER 1 MASTER LESSON NOTES CONTEXT (MANDATORY 4-HOUR SOURCE OF TRUTH) ===\n{notes_str}\n\n"
+            f"MANDATORY 4-HOUR BALANCED MULTI-VISUAL ASSET DISCOVERY DIRECTIVE:\n"
+            f"You MUST discover and specify 2 to 3 distinct pedagogical visual assets FOR EACH of the 4 Lesson Hours listed above (Total 8 to 12 distinct assets):\n"
+            f"1. For Hour 1 ({h_mods[0].get('hour_title', 'Hour 1') if len(h_mods) > 0 else 'Hour 1'}): Generate 2-3 visuals illustrating Hour 1 concepts (flowcharts, economic dynamics, overview models) -> set 'hour_index': 1, 'hour_title': 'Hour 1: ...'\n"
+            f"2. For Hour 2 ({h_mods[1].get('hour_title', 'Hour 2') if len(h_mods) > 1 else 'Hour 2'}): Generate 2-3 visuals illustrating Hour 2 concepts (e.g. Soil Chemistry, pH Scale, Swale Water Infiltration, Grevillea robusta / Calliandra Agroforestry Systems) -> set 'hour_index': 2, 'hour_title': 'Hour 2: ...'\n"
+            f"3. For Hour 3 ({h_mods[2].get('hour_title', 'Hour 3') if len(h_mods) > 2 else 'Hour 3'}): Generate 2-3 visuals illustrating Hour 3 concepts (e.g. Soil Erosion types, Contour Bunds, Gabions, Ecological Equilibrium) -> set 'hour_index': 3, 'hour_title': 'Hour 3: ...'\n"
+            f"4. For Hour 4 ({h_mods[3].get('hour_title', 'Hour 4') if len(h_mods) > 3 else 'Hour 4'}): Generate 2-3 visuals illustrating Hour 4 concepts (e.g. Soil Profile Horizon Strata O-A-B-C, pH Titration & Buffer Capacity Apparatus) -> set 'hour_index': 4, 'hour_title': 'Hour 4: ...'\n\n"
             f"For EACH visual asset provide:\n"
             f"- asset_id (e.g. vis_01, vis_02, vis_03, vis_04, vis_05, vis_06, vis_07, vis_08)\n"
             f"- hour_index (1 | 2 | 3 | 4 - the specific hour module in the lesson notes this visual illustrates)\n"
-            f"- hour_title (e.g. 'Hour 1: Macro-Economic Architecture' or 'Hour 4: Soil Profile & Lab Practicum')\n"
-            f"- title (e.g. 'Soil Profile Horizon Strata (O-A-B-C Layers & Root Zone)')\n"
+            f"- hour_title (e.g. 'Hour 1: ...' or 'Hour 2: ...')\n"
+            f"- title (e.g. 'Agroforestry System: Grevillea robusta & Maize Canopy Stratification' or 'Soil Profile Strata')\n"
             f"- asset_type ('technical_svg' | 'realistic_image' | 'apparatus_schematic' | 'process_flowchart' | 'infographic_chart' | 'video_storyboard')\n"
-            f"- micro_concept (the specific sub-topic tested, e.g. 'Soil Strata & Horizon Identification')\n"
+            f"- micro_concept (the specific sub-topic tested)\n"
             f"- pedagogical_purpose (why this visual is essential for learner mastery and exam assessment)\n"
             f"- vivid_prompt (exhaustive, vivid visual scene description: layout, perspective, objects, lighting, color palette, labels, callouts for AI image/SVG generation)\n"
             f"- accessibility: {{ 'alt_text': '...', 'tactile_description': '...' }}\n\n"
@@ -1475,7 +1481,24 @@ def factory_generate_single_visual(
         extra_query=title,
     )
 
-    notes_str = json_lib.dumps(payload.notes_content, ensure_ascii=False)[:1500] if payload.notes_content else ""
+    hour_idx = item.get("hour_index")
+    specific_hour_notes = ""
+    if payload.notes_content and isinstance(payload.notes_content, dict):
+        h_mods = payload.notes_content.get("hour_modules") or payload.notes_content.get("key_concepts") or []
+        if isinstance(hour_idx, int) and 1 <= hour_idx <= len(h_mods):
+            mod = h_mods[hour_idx - 1]
+            specific_hour_notes = f"\n=== ⏰ MANDATORY PARENT HOUR MODULE (Hour {hour_idx}: {mod.get('hour_title', '')}) ===\n{mod.get('full_lecture_notes', '') or mod.get('content', '')[:2500]}\n"
+        elif not hour_idx:
+            for idx, mod in enumerate(h_mods):
+                h_txt = f"{mod.get('hour_title', '')} {mod.get('full_lecture_notes', '')} {mod.get('content', '')}".lower()
+                if any(w in h_txt for w in title.lower().split() if len(w) > 3):
+                    hour_idx = idx + 1
+                    item["hour_index"] = hour_idx
+                    item["hour_title"] = mod.get("hour_title", f"Hour {hour_idx}")
+                    specific_hour_notes = f"\n=== ⏰ MANDATORY PARENT HOUR MODULE (Hour {hour_idx}: {mod.get('hour_title', '')}) ===\n{mod.get('full_lecture_notes', '') or mod.get('content', '')[:2500]}\n"
+                    break
+
+    notes_str = specific_hour_notes or (json_lib.dumps(payload.notes_content, ensure_ascii=False)[:2500] if payload.notes_content else "")
 
     context = langfuse_context_service.assemble_agent_context(
         agent_name="diagram-generator",
@@ -1496,16 +1519,18 @@ def factory_generate_single_visual(
             "content": (
                 f"{ct_profile.format_for_prompt()}\n\n"
                 f"{dossier.formatted_context}\n\n"
+                f"{specific_hour_notes}\n\n"
                 f"=== SPECIFICATION FOR PHOTOREALISTIC IMAGE SPECIFICATION ===\n"
-                f"Title: {title}\n"
+                f"Title: {title} (Hour {hour_idx or 'All'})\n"
                 f"Scene Description: {vivid_desc}\n\n"
                 f"AI IMAGE GENERATION PROMPT DIRECTIVE:\n"
-                f"Generate an ultra-detailed, 4K photorealistic prompt for AI image generation models (Imagen 3, Midjourney v6, Flux) depicting authentic Kenyan learners, teachers, crops, tools, and environments.\n"
+                f"Generate an ultra-detailed, 4K photorealistic prompt for AI image generation models (Imagen 3, Midjourney v6, Flux) depicting authentic Kenyan learners, teachers, crops, tools, and environments specifically illustrating the concept from Hour {hour_idx or 'All'}.\n"
                 f"Also create a clean SVG preview schematic illustrating the scene layout.\n\n"
                 f"Return JSON:\n"
                 f"{{\n"
                 f'  "diagram_id": "{item.get("asset_id", "vis_1")}",\n'
                 f'  "diagram_title": "{title}",\n'
+                f'  "hour_index": {hour_idx or 1},\n'
                 f'  "image_prompt": "<ultra-detailed 150-word photorealistic prompt with camera angle, lighting, 8k resolution, Kenyan setting>",\n'
                 f'  "negative_prompt": "blurry, low quality, distorted anatomy, western setting, unrealistic tools",\n'
                 f'  "aspect_ratio": "16:9",\n'
@@ -1522,8 +1547,9 @@ def factory_generate_single_visual(
             "content": (
                 f"{ct_profile.format_for_prompt()}\n\n"
                 f"{dossier.formatted_context}\n\n"
+                f"{specific_hour_notes}\n\n"
                 f"=== SPECIFICATION FOR VIDEO SIMULATION STORYBOARD ===\n"
-                f"Title: {title}\n"
+                f"Title: {title} (Hour {hour_idx or 'All'})\n"
                 f"Description: {vivid_desc}\n\n"
                 f"VIDEO SIMULATION SCRIPT DIRECTIVE:\n"
                 f"Generate a multi-scene educational video simulation storyboard (60-90s) detailing the concept progression.\n\n"
@@ -1531,6 +1557,7 @@ def factory_generate_single_visual(
                 f"{{\n"
                 f'  "diagram_id": "{item.get("asset_id", "vis_1")}",\n'
                 f'  "diagram_title": "{title}",\n'
+                f'  "hour_index": {hour_idx or 1},\n'
                 f'  "video_storyboard": {{\n'
                 f'    "video_title": "{title}",\n'
                 f'    "target_duration": "75s",\n'
@@ -1555,17 +1582,19 @@ def factory_generate_single_visual(
             "content": (
                 f"{ct_profile.format_for_prompt()}\n\n"
                 f"{dossier.formatted_context}\n\n"
+                f"{specific_hour_notes}\n\n"
                 f"=== SPECIFICATION FOR THIS VECTOR SVG ASSET ===\n"
-                f"Title: {title}\n"
+                f"Title: {title} (Hour {hour_idx or 'All'})\n"
                 f"Type: {asset_type}\n"
                 f"Vivid Description & Scene Elements:\n{vivid_desc}\n\n"
                 f"VECTOR SVG CODE DIRECTIVE:\n"
-                f"Generate a crisp, responsive, high-contrast standalone SVG for '{title}'.\n"
+                f"Generate a crisp, responsive, high-contrast standalone SVG specifically illustrating the concept '{title}' from Hour {hour_idx or 'All'}.\n"
+                f"CRITICAL: Draw the actual scientific, morphological, or agricultural system (e.g. soil strata layers, agroforestry tree-crop canopies, water swale contours, or lab apparatus). DO NOT generate a macroeconomic flowchart unless this is Hour 1 overview.\n\n"
                 f"STRICT RULES:\n"
                 f"1. Root MUST be <svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 800 500\" width=\"100%\" height=\"100%\">\n"
                 f"2. All styles enclosed inside <defs><style type=\"text/css\"><![CDATA[ ... ]]></style><marker id=\"arrowhead\" markerWidth=\"10\" markerHeight=\"7\" refX=\"10\" refY=\"3.5\" orient=\"auto\"><polygon points=\"0 0, 10 3.5, 0 7\" fill=\"#0284c7\" /></marker></defs>\n"
                 f"3. All text inside <text x=\"...\" y=\"...\" font-family=\"system-ui, -apple-system, sans-serif\" font-size=\"13\" text-anchor=\"middle\" fill=\"#0f172a\">...</text>\n"
-                f"4. Return JSON: {{ \"diagram_id\": \"{item.get('asset_id', 'vis_1')}\", \"diagram_title\": \"{title}\", \"diagram_svg\": \"<svg...>...</svg>\", \"accessibility\": {{ \"alt_text\": \"...\", \"tactile_description\": \"...\" }} }}\n\n"
+                f"4. Return JSON: {{ \"diagram_id\": \"{item.get('asset_id', 'vis_1')}\", \"diagram_title\": \"{title}\", \"hour_index\": {hour_idx or 1}, \"diagram_svg\": \"<svg...>...</svg>\", \"accessibility\": {{ \"alt_text\": \"...\", \"tactile_description\": \"...\" }} }}\n\n"
                 f"ADDITIONAL INSTRUCTIONS: {payload.custom_instructions}"
             ),
         })
@@ -1685,10 +1714,10 @@ def factory_plan_activities(
         extra_query="experiential experiments and video demonstrations",
     )
 
-    notes_str = ""
-    if payload.notes_content:
-        notes_str = json_lib.dumps(payload.notes_content, ensure_ascii=False)[:4000]
-    else:
+    # Extract all 4 hour modules explicitly
+    hours_breakdown_str = ""
+    notes_dict = payload.notes_content
+    if not notes_dict:
         from ..infra.db import fetch_one
         saved_row = fetch_one(
             """
@@ -1700,7 +1729,17 @@ def factory_plan_activities(
             {"subject": payload.subject.strip(), "ss": f"%{payload.sub_strand.strip().lower()}%"},
         )
         if saved_row and saved_row.get("notes"):
-            notes_str = json_lib.dumps(saved_row.get("notes"), ensure_ascii=False)[:4000]
+            notes_dict = saved_row.get("notes")
+
+    if notes_dict and isinstance(notes_dict, dict):
+        h_mods = notes_dict.get("hour_modules") or notes_dict.get("key_concepts") or []
+        for idx, hm in enumerate(h_mods):
+            h_num = hm.get("hour_number", idx + 1)
+            h_title = hm.get("hour_title") or hm.get("heading") or f"Hour {h_num}"
+            h_notes = hm.get("full_lecture_notes") or hm.get("content") or hm.get("detailed_exposition") or ""
+            hours_breakdown_str += f"\n--- ⏰ LESSON HOUR {h_num}: {h_title} ---\n{h_notes[:2500]}\n"
+
+    notes_str = hours_breakdown_str or (json_lib.dumps(notes_dict, ensure_ascii=False)[:4000] if notes_dict else payload.sub_strand)
 
     context = langfuse_context_service.assemble_agent_context(
         agent_name="activity-generator",
@@ -1711,6 +1750,7 @@ def factory_plan_activities(
             "sub_strand": payload.sub_strand,
             "content_type_directives": ct_profile.format_for_prompt(),
             "notes_content": notes_str or payload.notes_title or payload.sub_strand,
+            "diagram_info": json_lib.dumps(payload.diagram_info, ensure_ascii=False) if payload.diagram_info else "Visual diagram context",
         },
     )
 
@@ -1719,18 +1759,17 @@ def factory_plan_activities(
         "content": (
             f"{ct_profile.format_for_prompt()}\n\n"
             f"{dossier.formatted_context}\n\n"
-            f"=== LAYER 1 MASTER LESSON NOTES CONTEXT (MANDATORY SOURCE OF TRUTH) ===\n{notes_str[:3000]}\n\n"
-            f"EXHAUSTIVE MULTI-ACTIVITY & EXPERIMENTAL VIDEO STORYBOARD DIRECTIVE:\n"
-            f"Analyze every hour module and practical concept in the Lesson Notes for '{payload.sub_strand}'.\n"
-            f"DISCOVER AND SPECIFY ALL REQUIRED EXPERIENTIAL PRACTICAL TASKS (Generate 3 to 5 distinct, rigorous practical modules):\n"
-            f"1. A Rigorous Hands-on Laboratory / Workbench Experiment with quantitative data collection, apparatus setup, procedure, safety hazards, and full Video Storyboard script\n"
-            f"2. An Outdoor Field Investigation or Soil/Environmental Sampling Protocol in an authentic Kenyan farm/school setting\n"
-            f"3. A Community Service Learning (CSL) Action Project (e.g. tree planting, terracing, composting, community awareness outreach)\n"
-            f"4. A Classroom Pedagogical Game, Role-Play, or Practical Simulation\n\n"
+            f"=== LAYER 1 MASTER LESSON NOTES CONTEXT (MANDATORY 4-HOUR SOURCE OF TRUTH) ===\n{notes_str}\n\n"
+            f"MANDATORY 4-HOUR BALANCED MULTI-PRACTICAL DISCOVERY DIRECTIVE:\n"
+            f"You MUST discover and specify at least 1 authentic practical task / laboratory experiment FOR EACH of the 4 Lesson Hours listed above (Total 4 to 6 distinct activities):\n"
+            f"1. For Hour 1 ({h_mods[0].get('hour_title', 'Hour 1') if len(h_mods) > 0 else 'Hour 1'}): Practical inquiry / policy review -> set 'hour_index': 1, 'hour_title': 'Hour 1: ...'\n"
+            f"2. For Hour 2 ({h_mods[1].get('hour_title', 'Hour 2') if len(h_mods) > 1 else 'Hour 2'}): Agroforestry layout & field sampling / Soil pH buffer inquiry -> set 'hour_index': 2, 'hour_title': 'Hour 2: ...'\n"
+            f"3. For Hour 3 ({h_mods[2].get('hour_title', 'Hour 3') if len(h_mods) > 2 else 'Hour 3'}): Soil conservation / contour terracing / CSL project -> set 'hour_index': 3, 'hour_title': 'Hour 3: ...'\n"
+            f"4. For Hour 4 ({h_mods[3].get('hour_title', 'Hour 4') if len(h_mods) > 3 else 'Hour 4'}): 60-Minute Standardized Laboratory Practicum (Soil pH Titration & Buffer Capacity) -> set 'hour_index': 4, 'hour_title': 'Hour 4: ...'\n\n"
             f"For EACH activity include:\n"
             f"- activity_id (e.g. act_01, act_02, act_03, act_04)\n"
             f"- hour_index (1 | 2 | 3 | 4 - the specific hour module in the lesson notes this practical task belongs to)\n"
-            f"- hour_title (e.g. 'Hour 1: Macro-Economic Architecture' or 'Hour 4: Soil Profile & Lab Practicum')\n"
+            f"- hour_title (e.g. 'Hour 1: ...' or 'Hour 2: ...')\n"
             f"- activity_name (engaging, descriptive title)\n"
             f"- activity_type ('laboratory_experiment' | 'field_investigation' | 'csl_project' | 'classroom_game')\n"
             f"- objective (measurable inquiry goal aligned with SLOs)\n"
@@ -1761,8 +1800,7 @@ def factory_plan_activities(
             f'      "safety_hazards_to_check": ["..."],\n'
             f'      "assessment_rubric": {{"exceeding": "...", "meeting": "...", "approaching": "...", "below": "..."}},\n'
             f'      "status": "planned"\n'
-            f'    }}\n  ]\n}}\n\n'
-            f"ADDITIONAL INSTRUCTIONS: {payload.custom_instructions}"
+            f'    }}\n  ]\n}}\n\n"ADDITIONAL INSTRUCTIONS: {payload.custom_instructions}'
         ),
     })
 
@@ -1797,6 +1835,7 @@ def factory_generate_single_activity(
     ct_profile = classify_content_type(payload.subject, payload.grade, payload.sub_strand)
     item = payload.activity_item
     name = item.get("activity_name") or "Practical Activity"
+    hour_idx = item.get("hour_index")
 
     dossier = web_research_agent.research_topic(
         subject=payload.subject,
@@ -1807,7 +1846,23 @@ def factory_generate_single_activity(
         extra_query=name,
     )
 
-    notes_str = json_lib.dumps(payload.notes_content, ensure_ascii=False)[:1500] if payload.notes_content else ""
+    specific_hour_notes = ""
+    if payload.notes_content and isinstance(payload.notes_content, dict):
+        h_mods = payload.notes_content.get("hour_modules") or payload.notes_content.get("key_concepts") or []
+        if isinstance(hour_idx, int) and 1 <= hour_idx <= len(h_mods):
+            mod = h_mods[hour_idx - 1]
+            specific_hour_notes = f"\n=== ⏰ MANDATORY PARENT HOUR MODULE (Hour {hour_idx}: {mod.get('hour_title', '')}) ===\n{mod.get('full_lecture_notes', '') or mod.get('content', '')[:2500]}\n"
+        elif not hour_idx:
+            for idx, mod in enumerate(h_mods):
+                h_txt = f"{mod.get('hour_title', '')} {mod.get('full_lecture_notes', '')} {mod.get('content', '')}".lower()
+                if any(w in h_txt for w in name.lower().split() if len(w) > 3):
+                    hour_idx = idx + 1
+                    item["hour_index"] = hour_idx
+                    item["hour_title"] = mod.get("hour_title", f"Hour {hour_idx}")
+                    specific_hour_notes = f"\n=== ⏰ MANDATORY PARENT HOUR MODULE (Hour {hour_idx}: {mod.get('hour_title', '')}) ===\n{mod.get('full_lecture_notes', '') or mod.get('content', '')[:2500]}\n"
+                    break
+
+    notes_str = specific_hour_notes or (json_lib.dumps(payload.notes_content, ensure_ascii=False)[:2500] if payload.notes_content else "")
 
     context = langfuse_context_service.assemble_agent_context(
         agent_name="activity-generator",
@@ -1826,19 +1881,21 @@ def factory_generate_single_activity(
         "content": (
             f"{ct_profile.format_for_prompt()}\n\n"
             f"{dossier.formatted_context}\n\n"
-            f"=== ACTIVITY REFINEMENT DIRECTIVE ===\n"
-            f"Activity Name: {name}\n"
+            f"{specific_hour_notes}\n\n"
+            f"=== PRACTICAL ACTIVITY REFINEMENT DIRECTIVE ===\n"
+            f"Activity Name: {name} (Hour {hour_idx or 'All'})\n"
             f"Type: {item.get('activity_type', 'laboratory_experiment')}\n"
             f"Initial Objective: {item.get('objective', '')}\n\n"
             f"Generate an exhaustive, publication-grade practical lesson module with:\n"
-            f"1. Detailed step-by-step instructions with safety checkpoints\n"
+            f"1. Detailed step-by-step instructions with safety checkpoints specifically aligned with Hour {hour_idx or 'All'}\n"
             f"2. Multi-scene Video Storyboard (scene number, camera shot, visual actions, exact spoken voiceover, on-screen text, AI video prompt)\n"
             f"3. Vivid Action Image Prompt for realistic instructional photo cards\n"
             f"4. 4-tier KICD Assessment Rubric\n\n"
             f"Return JSON matching:\n"
             f"{{\n"
-            f'  "activity_id": "{item.get("activity_id", "act_1")}",\n'
+            f'  "activity_id": "{item.get("activity_id", "act_01")}",\n'
             f'  "activity_name": "{name}",\n'
+            f'  "hour_index": {hour_idx or 1},\n'
             f'  "activity_type": "{item.get("activity_type", "laboratory_experiment")}",\n'
             f'  "objective": "...",\n'
             f'  "materials": ["..."],\n'
