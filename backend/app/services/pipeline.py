@@ -595,3 +595,10 @@ class PipelineService:
             },
         ]
         return llm_client.generate(resolved, deliberation_messages, temperature=0.1)
+
+
+from ..state import runtime_state
+
+provider_router = ProviderRouter(runtime_state)
+pipeline_service = PipelineService(provider_router)
+pipeline_orchestrator = pipeline_service
