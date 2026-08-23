@@ -330,6 +330,11 @@ export function App() {
   const [qfExamTime, setQfExamTime] = useState<string>("1 Hour 30 Minutes");
   const [qfExamMarks, setQfExamMarks] = useState<number>(50);
 
+  // Modal inspectors & MinIO status
+  const [activeVisualModal, setActiveVisualModal] = useState<any | null>(null);
+  const [activeActivityModal, setActiveActivityModal] = useState<any | null>(null);
+  const [minioStatusMessage, setMinioStatusMessage] = useState<string | null>(null);
+
   // Error banner state
   const [errorBanner, setErrorBanner] = useState<{code: string; message: string; retryable: boolean} | null>(null);
 
@@ -920,7 +925,7 @@ export function App() {
     // 2. Background DB & MinIO persistence
     try {
       const isAllApproved = nApp && dApp && aApp && qApp;
-      await fetchJson<any>("/api/v1/curriculum/factory/auto-persist-station", {
+      const res = await fetchJson<any>("/api/v1/curriculum/factory/auto-persist-station", {
         method: "POST",
         body: JSON.stringify({
           bundle_id: bundleId,
@@ -935,8 +940,13 @@ export function App() {
         }),
       }, auth());
       setLastPersistedTime(new Date().toLocaleTimeString());
-    } catch (e) {
-      // Non-blocking
+      if (res?.minio_status === "error") {
+        setMinioStatusMessage(`⚠️ MinIO Storage Notice: Local DB saved, MinIO offline (${res.minio_error || 'Network'})`);
+      } else if (res?.minio_status === "saved") {
+        setMinioStatusMessage(`💾 Auto-Saved & Mirrored to MinIO (${new Date().toLocaleTimeString()})`);
+      }
+    } catch (e: any) {
+      setMinioStatusMessage(`⚠️ Local copy preserved (${e?.message || 'Sync pending'})`);
     }
   }
 
@@ -1081,12 +1091,13 @@ export function App() {
   }
 
   async function planFactoryVisuals(customInstructions?: string) {
-    await run("Layer 2: Planning Multi-Item Visuals & Diagrams for Sub-strand...", async () => {
+    await run("Layer 2: Planning Minimum 5+ Visual Assets, Photos & Diagrams for Sub-strand...", async () => {
       const payload = {
         grade: genGrade,
         subject: genSubject,
         strand: genStrand,
         sub_strand: genSubstrand,
+        min_visuals: 5,
         notes_title: stationNotes?.title || genSubstrand,
         notes_content: stationNotes || undefined,
         custom_instructions: customInstructions || diagramRefinePrompt,
@@ -1106,14 +1117,15 @@ export function App() {
     });
   }
 
-  async function generateSingleVisual(visualItem: any, index: number, customInstructions?: string) {
-    await run(`Layer 2: Synthesizing Visual Asset ${index + 1} (${visualItem.title || 'Diagram'})...`, async () => {
+  async function generateSingleVisual(visualItem: any, index: number, generationMode: "svg" | "photo_spec" | "video_storyboard" = "svg", customInstructions?: string) {
+    await run(`Layer 2: Synthesizing ${generationMode === "photo_spec" ? "Realistic Photo Spec" : (generationMode === "video_storyboard" ? "Video Storyboard" : "Vector SVG")} for Asset ${index + 1} (${visualItem.title || 'Visual'})...`, async () => {
       const payload = {
         grade: genGrade,
         subject: genSubject,
         strand: genStrand,
         sub_strand: genSubstrand,
         visual_item: visualItem,
+        generation_mode: generationMode,
         notes_content: stationNotes || undefined,
         custom_instructions: customInstructions || diagramRefinePrompt,
       };
@@ -1128,7 +1140,15 @@ export function App() {
         if (index === activeVisualIdx || !stationDiagram) {
           setStationDiagram(res.visual);
         }
+        if (generationMode === "photo_spec") setDiagramViewMode("image_spec");
+        else setDiagramViewMode("visual");
+
         autoPersistStation("diagrams", next, undefined, next);
+      }
+      if (res.minio_status === "error") {
+        setMinioStatusMessage(`⚠️ MinIO upload failed: ${res.minio_error || 'offline'}`);
+      } else if (res.minio_status === "saved") {
+        setMinioStatusMessage(`💾 Visual saved to MinIO (${res.minio_url || 's3://cbc-assets'})`);
       }
       if (res.quality_audit) setDiagramQualityAudit(res.quality_audit);
       if (res.quality_gate) setDiagramQualityGate(res.quality_gate);
@@ -1141,7 +1161,7 @@ export function App() {
       await planFactoryVisuals();
     }
     for (let i = 0; i < stationVisualsList.length; i++) {
-      await generateSingleVisual(stationVisualsList[i], i);
+      await generateSingleVisual(stationVisualsList[i], i, "svg");
     }
   }
 
@@ -2998,11 +3018,15 @@ export function App() {
                     </div>
 
                     <div style={{ display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" }}>
-                      {lastPersistedTime && (
+                      {minioStatusMessage ? (
+                        <span className={`pill ${minioStatusMessage.includes('⚠️') ? 'warn' : 'ok'}`} style={{ fontSize: "11px", fontWeight: 700 }}>
+                          {minioStatusMessage}
+                        </span>
+                      ) : lastPersistedTime ? (
                         <span className="pill ok" style={{ fontSize: "11px", fontWeight: 700, background: "#dcfce7", color: "#15803d", borderColor: "#86efac" }}>
                           💾 Auto-Saved ({lastPersistedTime})
                         </span>
-                      )}
+                      ) : null}
                       <button
                         style={{ fontSize: "12px", background: "#7c3aed", color: "#fff", borderColor: "#7c3aed", fontWeight: 700 }}
                         onClick={openQuestionsFactoryFromContentFactory}
@@ -3536,33 +3560,92 @@ export function App() {
                       return (
                         <div>
                           {curVis && (
-                            <div style={{ padding: "8px 12px", background: "#f8fafc", borderRadius: "8px", border: "1px solid #e2e8f0", marginBottom: "8px", fontSize: "12px" }}>
-                              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                                <strong style={{ color: "#0c4a6e", fontSize: "13px" }}>
-                                  {curVis.title || diagramConceptInput || "Active Visual Specification"}
-                                </strong>
-                                <span className="pill ok" style={{ fontSize: "10.5px" }}>
-                                  {curVis.asset_type || "technical_svg"}
-                                </span>
+                            <div style={{ padding: "10px 14px", background: "#f8fafc", borderRadius: "8px", border: "1px solid #e2e8f0", marginBottom: "10px", fontSize: "12px" }}>
+                              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "6px" }}>
+                                <div>
+                                  <strong style={{ color: "#0c4a6e", fontSize: "13.5px" }}>
+                                    {curVis.title || diagramConceptInput || "Active Visual Specification"}
+                                  </strong>
+                                  <span className="pill ok" style={{ fontSize: "10.5px", marginLeft: "8px" }}>
+                                    {curVis.asset_type || "technical_svg"}
+                                  </span>
+                                </div>
+                                <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
+                                  {curVis.storage_url && (
+                                    <span className="pill ok" style={{ fontSize: "10px", background: "#ecfdf5", color: "#065f46" }} title={curVis.storage_url}>
+                                      💾 MinIO S3
+                                    </span>
+                                  )}
+                                  <button
+                                    className="ghost"
+                                    style={{ fontSize: "11px", padding: "3px 8px", background: "#fff", borderColor: "#7c3aed", color: "#7c3aed" }}
+                                    onClick={() => setActiveVisualModal(curVis)}
+                                    title="Open Fullscreen Asset & Spec Modal"
+                                  >
+                                    🔍 Fullscreen Modal
+                                  </button>
+                                </div>
                               </div>
                               {curVis.pedagogical_purpose && (
-                                <p style={{ margin: "4px 0 0", color: "#475569" }}>
+                                <p style={{ margin: "6px 0 0", color: "#475569" }}>
                                   <strong>Purpose:</strong> {curVis.pedagogical_purpose}
                                 </p>
                               )}
+
+                              {/* Multi-Format Independent Synthesis Controls */}
+                              <div style={{ display: "flex", gap: "8px", marginTop: "10px", flexWrap: "wrap", paddingTop: "8px", borderTop: "1px dashed #e2e8f0" }}>
+                                <button
+                                  className="ghost"
+                                  style={{ fontSize: "11.5px", padding: "4px 10px", background: "#f0f9ff", color: "#0369a1", borderColor: "#bae6fd", fontWeight: 600 }}
+                                  onClick={() => {
+                                    if (stationVisualsList[activeVisualIdx]) {
+                                      generateSingleVisual(stationVisualsList[activeVisualIdx], activeVisualIdx, "svg", diagramRefinePrompt);
+                                    } else {
+                                      generateFactoryDiagram(diagramRefinePrompt);
+                                    }
+                                  }}
+                                  disabled={isRunning}
+                                >
+                                  🎨 Synthesize Vector SVG
+                                </button>
+                                <button
+                                  className="ghost"
+                                  style={{ fontSize: "11.5px", padding: "4px 10px", background: "#faf5ff", color: "#7e22ce", borderColor: "#e9d5ff", fontWeight: 600 }}
+                                  onClick={() => {
+                                    if (stationVisualsList[activeVisualIdx]) {
+                                      generateSingleVisual(stationVisualsList[activeVisualIdx], activeVisualIdx, "photo_spec", diagramRefinePrompt);
+                                    }
+                                  }}
+                                  disabled={isRunning || !stationVisualsList[activeVisualIdx]}
+                                >
+                                  📸 Synthesize Realistic Photo Specs
+                                </button>
+                                <button
+                                  className="ghost"
+                                  style={{ fontSize: "11.5px", padding: "4px 10px", background: "#fdf4ff", color: "#86198f", borderColor: "#f5d0fe", fontWeight: 600 }}
+                                  onClick={() => {
+                                    if (stationVisualsList[activeVisualIdx]) {
+                                      generateSingleVisual(stationVisualsList[activeVisualIdx], activeVisualIdx, "video_storyboard", diagramRefinePrompt);
+                                    }
+                                  }}
+                                  disabled={isRunning || !stationVisualsList[activeVisualIdx]}
+                                >
+                                  🎥 Synthesize Video Storyboard
+                                </button>
+                              </div>
                             </div>
                           )}
 
                           <div className="factory-refine-box" style={{ margin: "0 0 8px" }}>
                             <input
-                              placeholder="Refine active visual prompt (e.g., add clear callout leader lines, authentic Kenyan soil textures)..."
+                              placeholder="Refine visual prompt (e.g., add clear callout leader lines, authentic Kenyan soil textures)..."
                               value={diagramRefinePrompt}
                               onChange={(e) => setDiagramRefinePrompt(e.target.value)}
                             />
                             <button
                               onClick={() => {
                                 if (stationVisualsList.length > 0 && stationVisualsList[activeVisualIdx]) {
-                                  generateSingleVisual(stationVisualsList[activeVisualIdx], activeVisualIdx, diagramRefinePrompt);
+                                  generateSingleVisual(stationVisualsList[activeVisualIdx], activeVisualIdx, "svg", diagramRefinePrompt);
                                 } else {
                                   generateFactoryDiagram(diagramRefinePrompt);
                                 }
@@ -3570,12 +3653,12 @@ export function App() {
                               disabled={isRunning}
                               style={{ whiteSpace: "nowrap" }}
                             >
-                              {curVis?.diagram_svg || curVis?.image_prompt ? "🔄 Regenerate Active Visual" : "⚡ Generate Active Visual"}
+                              {curVis?.diagram_svg || curVis?.image_prompt ? "🔄 Regenerate Visual" : "⚡ Generate Active Visual"}
                             </button>
                           </div>
 
                           {/* Visual Sub-View Mode Toggles */}
-                          <div style={{ display: "flex", gap: "6px", marginTop: "4px" }}>
+                          <div style={{ display: "flex", gap: "6px", marginTop: "4px", flexWrap: "wrap" }}>
                             <button
                               className={diagramViewMode === "visual" ? "" : "ghost"}
                               style={{ fontSize: "11px", padding: "4px 8px" }}
@@ -3610,19 +3693,53 @@ export function App() {
                             {curVis ? (
                               <div>
                                 {diagramViewMode === "visual" && (
-                                  <div
-                                    className="svg-canvas-box"
-                                    dangerouslySetInnerHTML={{ __html: sanitizeSvgForDisplay(curVis.diagram_svg || "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 800 500'><rect width='100%' height='100%' fill='#f8fafc'/><text x='400' y='250' font-family='sans-serif' font-size='16' text-anchor='middle' fill='#0369a1'>Click Generate to synthesize visual</text></svg>") }}
-                                  />
+                                  <div>
+                                    <div
+                                      className="svg-canvas-box"
+                                      dangerouslySetInnerHTML={{ __html: sanitizeSvgForDisplay(curVis.diagram_svg || "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 800 500'><rect width='100%' height='100%' fill='#f8fafc'/><text x='400' y='250' font-family='sans-serif' font-size='16' text-anchor='middle' fill='#0369a1'>Click Generate to synthesize visual</text></svg>") }}
+                                    />
+                                    {curVis.video_storyboard && (
+                                      <div style={{ marginTop: "12px", padding: "12px", background: "#f8fafc", borderRadius: "8px", border: "1px solid #cbd5e1" }}>
+                                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                                          <strong style={{ color: "#475569" }}>🎥 Video Simulation Script ({curVis.video_storyboard.target_duration || "60s"}):</strong>
+                                          <span className="pill ok" style={{ fontSize: "10px" }}>{curVis.video_storyboard.scenes?.length || 0} Scenes</span>
+                                        </div>
+                                        <div className="stack" style={{ gap: "6px", marginTop: "8px" }}>
+                                          {(curVis.video_storyboard.scenes || []).map((sc: any, sIdx: number) => (
+                                            <div key={sIdx} style={{ fontSize: "11.5px", padding: "6px 8px", background: "#fff", borderRadius: "4px", border: "1px solid #e2e8f0" }}>
+                                              <strong>Scene {sc.scene_number || sIdx + 1} ({sc.time_range || sc.shot_type}):</strong> {sc.visual_action}
+                                              {sc.voiceover_narration && (
+                                                <div style={{ color: "#166534", marginTop: "2px", fontStyle: "italic" }}>
+                                                  "Voiceover: {sc.voiceover_narration}"
+                                                </div>
+                                              )}
+                                            </div>
+                                          ))}
+                                        </div>
+                                      </div>
+                                    )}
+                                  </div>
                                 )}
 
                                 {diagramViewMode === "image_spec" && (
-                                  <div style={{ padding: "12px", background: "#faf5ff", borderRadius: "8px", border: "1px solid #e9d5ff", fontSize: "12px" }}>
+                                  <div style={{ padding: "14px", background: "#faf5ff", borderRadius: "8px", border: "1px solid #e9d5ff", fontSize: "12.5px" }}>
                                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
-                                      <strong style={{ color: "#7e22ce" }}>🎨 Comprehensive Photorealistic AI Image Prompt:</strong>
-                                      <span className="pill ok" style={{ fontSize: "10px" }}>Aspect Ratio: {curVis.aspect_ratio || "16:9"}</span>
+                                      <strong style={{ color: "#7e22ce", fontSize: "13px" }}>🎨 Comprehensive Photorealistic AI Image Prompt:</strong>
+                                      <div style={{ display: "flex", gap: "6px" }}>
+                                        <span className="pill ok" style={{ fontSize: "10px" }}>Aspect: {curVis.aspect_ratio || "16:9"}</span>
+                                        <button
+                                          className="ghost"
+                                          style={{ fontSize: "10.5px", padding: "2px 8px", background: "#fff" }}
+                                          onClick={() => {
+                                            navigator.clipboard.writeText(curVis.image_prompt || curVis.vivid_prompt || "");
+                                            alert("Image prompt copied to clipboard!");
+                                          }}
+                                        >
+                                          📋 Copy Prompt
+                                        </button>
+                                      </div>
                                     </div>
-                                    <div style={{ padding: "8px", background: "#fff", borderRadius: "6px", border: "1px solid #d8b4fe", color: "#3b0764", fontFamily: "monospace", fontSize: "11.5px", lineHeight: 1.5 }}>
+                                    <div style={{ padding: "10px", background: "#fff", borderRadius: "6px", border: "1px solid #d8b4fe", color: "#3b0764", fontFamily: "monospace", fontSize: "12px", lineHeight: 1.5 }}>
                                       {curVis.image_prompt || curVis.vivid_prompt || "Photorealistic educational illustration showing authentic Kenyan practical learning, high depth of field, natural golden-hour lighting, high visual clarity."}
                                     </div>
                                     {curVis.composition_guide && (
@@ -3631,7 +3748,7 @@ export function App() {
                                       </div>
                                     )}
                                     {curVis.negative_prompt && (
-                                      <div style={{ marginTop: "6px", color: "#9333ea", fontSize: "11px" }}>
+                                      <div style={{ marginTop: "6px", color: "#9333ea", fontSize: "11.5px" }}>
                                         <strong>Negative Prompt:</strong> {curVis.negative_prompt}
                                       </div>
                                     )}
@@ -4352,6 +4469,222 @@ export function App() {
                           </div>
                         );
                       })()}
+                    </div>
+                  </div>
+                )}
+
+                {/* VISUAL ASSET INSPECTION & FULLSCREEN MODAL */}
+                {activeVisualModal && (
+                  <div className="modal-overlay" style={{ zIndex: 10001 }}>
+                    <div className="modal-card" style={{ maxWidth: "900px", maxHeight: "88vh", display: "flex", flexDirection: "column" }}>
+                      {/* Modal Header */}
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #e2e8f0", paddingBottom: "12px" }}>
+                        <div>
+                          <h3 style={{ margin: 0, color: "#0c4a6e" }}>
+                            📐 {activeVisualModal.title || "Visual Asset Inspector"}
+                          </h3>
+                          <small style={{ color: "#64748b" }}>
+                            Asset ID: <strong>{activeVisualModal.asset_id || "vis_1"}</strong> • Type: <span className="pill ok" style={{ fontSize: "10px" }}>{activeVisualModal.asset_type || "technical_svg"}</span>
+                            {activeVisualModal.storage_url && ` • 💾 MinIO: ${activeVisualModal.storage_url}`}
+                          </small>
+                        </div>
+                        <button className="ghost" onClick={() => setActiveVisualModal(null)} style={{ fontSize: "16px", padding: "4px 8px" }}>✕</button>
+                      </div>
+
+                      {/* Modal Body */}
+                      <div style={{ padding: "16px 0", overflowY: "auto", display: "flex", flexDirection: "column", gap: "16px" }}>
+                        {activeVisualModal.pedagogical_purpose && (
+                          <div style={{ padding: "10px 14px", background: "#f0f9ff", borderRadius: "8px", border: "1px solid #bae6fd", fontSize: "12.5px", color: "#0369a1" }}>
+                            <strong>🎯 Pedagogical Objective:</strong> {activeVisualModal.pedagogical_purpose}
+                          </div>
+                        )}
+
+                        {/* Vector SVG Render */}
+                        <div>
+                          <strong style={{ fontSize: "13px", color: "#0f172a", display: "block", marginBottom: "6px" }}>
+                            🖼️ Vector SVG Canvas Preview:
+                          </strong>
+                          <div
+                            className="svg-canvas-box"
+                            style={{ minHeight: "280px", background: "#fff", border: "1px solid #cbd5e1", borderRadius: "8px" }}
+                            dangerouslySetInnerHTML={{ __html: sanitizeSvgForDisplay(activeVisualModal.diagram_svg || "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 800 500'><rect width='100%' height='100%' fill='#f8fafc'/><text x='400' y='250' font-family='sans-serif' font-size='16' text-anchor='middle' fill='#0369a1'>Vector SVG preview</text></svg>") }}
+                          />
+                        </div>
+
+                        {/* Photorealistic AI Image Prompt Spec */}
+                        <div style={{ padding: "14px", background: "#faf5ff", borderRadius: "8px", border: "1px solid #e9d5ff", fontSize: "12.5px" }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
+                            <strong style={{ color: "#7e22ce", fontSize: "13px" }}>📸 Photorealistic AI Image Prompt Specification:</strong>
+                            <div style={{ display: "flex", gap: "6px" }}>
+                              <span className="pill ok" style={{ fontSize: "10px" }}>Aspect: {activeVisualModal.aspect_ratio || "16:9"}</span>
+                              <button
+                                className="ghost"
+                                style={{ fontSize: "11px", padding: "3px 8px", background: "#fff" }}
+                                onClick={() => {
+                                  navigator.clipboard.writeText(activeVisualModal.image_prompt || activeVisualModal.vivid_prompt || "");
+                                  alert("Copied image prompt to clipboard!");
+                                }}
+                              >
+                                📋 Copy Image Prompt
+                              </button>
+                            </div>
+                          </div>
+                          <div style={{ padding: "10px", background: "#fff", borderRadius: "6px", border: "1px solid #d8b4fe", color: "#3b0764", fontFamily: "monospace", fontSize: "12px", lineHeight: "1.5" }}>
+                            {activeVisualModal.image_prompt || activeVisualModal.vivid_prompt || "Photorealistic scene illustration showing authentic Kenyan learners engaged in practical learning with high depth of field and natural lighting."}
+                          </div>
+                          {activeVisualModal.composition_guide && (
+                            <div style={{ marginTop: "8px", color: "#6b21a8" }}>
+                              <strong>Camera & Lighting Guide:</strong> {activeVisualModal.composition_guide}
+                            </div>
+                          )}
+                          {activeVisualModal.negative_prompt && (
+                            <div style={{ marginTop: "6px", color: "#9333ea", fontSize: "11.5px" }}>
+                              <strong>Negative Prompt:</strong> {activeVisualModal.negative_prompt}
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Video Storyboard Script (If Available) */}
+                        {activeVisualModal.video_storyboard && (
+                          <div style={{ padding: "14px", background: "#f8fafc", borderRadius: "8px", border: "1px solid #cbd5e1" }}>
+                            <strong style={{ color: "#334155", fontSize: "13px" }}>
+                              🎥 Video Simulation Script ({activeVisualModal.video_storyboard.target_duration || "60s"}):
+                            </strong>
+                            <div className="stack" style={{ gap: "8px", marginTop: "10px" }}>
+                              {(activeVisualModal.video_storyboard.scenes || []).map((sc: any, sIdx: number) => (
+                                <div key={sIdx} style={{ fontSize: "12px", padding: "8px 12px", background: "#fff", borderRadius: "6px", border: "1px solid #e2e8f0" }}>
+                                  <div style={{ display: "flex", justifyContent: "space-between" }}>
+                                    <strong style={{ color: "#0f172a" }}>Scene {sc.scene_number || sIdx + 1}: {sc.shot_type || "Scene"}</strong>
+                                    <span className="pill ok" style={{ fontSize: "10px" }}>{sc.time_range || `0:0${sIdx*15}-0:${(sIdx+1)*15}`}</span>
+                                  </div>
+                                  <p style={{ margin: "4px 0", color: "#334155" }}>{sc.visual_action}</p>
+                                  {sc.voiceover_narration && (
+                                    <div style={{ color: "#166534", fontStyle: "italic", marginTop: "2px" }}>
+                                      "Voiceover: {sc.voiceover_narration}"
+                                    </div>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Modal Footer Actions */}
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderTop: "1px solid #e2e8f0", paddingTop: "12px", flexWrap: "wrap", gap: "8px" }}>
+                        <div style={{ display: "flex", gap: "6px" }}>
+                          <button
+                            className="ghost"
+                            style={{ fontSize: "11.5px", padding: "4px 10px", borderColor: "#0284c7", color: "#0284c7" }}
+                            onClick={() => {
+                              const blob = new Blob([activeVisualModal.diagram_svg || ""], { type: "image/svg+xml" });
+                              const url = URL.createObjectURL(blob);
+                              const a = document.createElement("a");
+                              a.href = url;
+                              a.download = `${activeVisualModal.asset_id || "diagram"}.svg`;
+                              a.click();
+                            }}
+                          >
+                            ⬇️ Download SVG File
+                          </button>
+                        </div>
+                        <button onClick={() => setActiveVisualModal(null)}>Done Inspecting</button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* PRACTICAL ACTIVITY & EXPERIMENT INSPECTION MODAL */}
+                {activeActivityModal && (
+                  <div className="modal-overlay" style={{ zIndex: 10001 }}>
+                    <div className="modal-card" style={{ maxWidth: "900px", maxHeight: "88vh", display: "flex", flexDirection: "column" }}>
+                      {/* Modal Header */}
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #e2e8f0", paddingBottom: "12px" }}>
+                        <div>
+                          <h3 style={{ margin: 0, color: "#0891b2" }}>
+                            🧪 {activeActivityModal.activity_name || "Practical Activity & Experiment Inspector"}
+                          </h3>
+                          <small style={{ color: "#64748b" }}>
+                            Type: <span className="pill ok" style={{ fontSize: "10px" }}>{activeActivityModal.activity_type || "laboratory_experiment"}</span>
+                          </small>
+                        </div>
+                        <button className="ghost" onClick={() => setActiveActivityModal(null)} style={{ fontSize: "16px", padding: "4px 8px" }}>✕</button>
+                      </div>
+
+                      {/* Modal Body */}
+                      <div style={{ padding: "16px 0", overflowY: "auto", display: "flex", flexDirection: "column", gap: "14px" }}>
+                        {activeActivityModal.objective && (
+                          <div style={{ padding: "10px 14px", background: "#f0fdfa", borderRadius: "8px", border: "1px solid #99f6e4", fontSize: "13px", color: "#0f766e" }}>
+                            <strong>🎯 Learning Objective:</strong> {activeActivityModal.objective}
+                          </div>
+                        )}
+
+                        {/* Materials list */}
+                        {activeActivityModal.materials && (
+                          <div style={{ padding: "12px", background: "#f8fafc", borderRadius: "8px", border: "1px solid #cbd5e1" }}>
+                            <strong style={{ fontSize: "13px", color: "#334155" }}>🧰 Apparatus & Required Local Materials:</strong>
+                            <ul style={{ margin: "6px 0 0", paddingLeft: "20px", fontSize: "12.5px", color: "#334155" }}>
+                              {(Array.isArray(activeActivityModal.materials) ? activeActivityModal.materials : [activeActivityModal.materials]).map((m: string, mIdx: number) => (
+                                <li key={mIdx}>{m}</li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+
+                        {/* Step-by-step procedures */}
+                        {activeActivityModal.procedure_steps && (
+                          <div style={{ padding: "14px", background: "#fff", borderRadius: "8px", border: "1px solid #e2e8f0" }}>
+                            <strong style={{ fontSize: "13px", color: "#0f172a" }}>📋 Step-by-Step Practical Procedure:</strong>
+                            <ol style={{ margin: "8px 0 0", paddingLeft: "20px", fontSize: "12.5px", color: "#1e293b", lineHeight: "1.6" }}>
+                              {(Array.isArray(activeActivityModal.procedure_steps) ? activeActivityModal.procedure_steps : [activeActivityModal.procedure_steps]).map((p: string, pIdx: number) => (
+                                <li key={pIdx} style={{ marginBottom: "6px" }}>{p}</li>
+                              ))}
+                            </ol>
+                          </div>
+                        )}
+
+                        {/* Video Storyboard */}
+                        {activeActivityModal.video_storyboard && (
+                          <div style={{ padding: "14px", background: "#f8fafc", borderRadius: "8px", border: "1px solid #cbd5e1" }}>
+                            <strong style={{ fontSize: "13px", color: "#0f172a" }}>
+                              🎬 Complete Video Demonstration Storyboard ({activeActivityModal.video_storyboard.target_duration || "90s"}):
+                            </strong>
+                            <div className="stack" style={{ gap: "8px", marginTop: "10px" }}>
+                              {(activeActivityModal.video_storyboard.scenes || []).map((sc: any, sIdx: number) => (
+                                <div key={sIdx} style={{ fontSize: "12px", padding: "10px", background: "#fff", borderRadius: "6px", border: "1px solid #e2e8f0" }}>
+                                  <div style={{ display: "flex", justifyContent: "space-between" }}>
+                                    <strong style={{ color: "#0f172a" }}>Scene {sc.scene_number || sIdx + 1}: {sc.shot_type}</strong>
+                                    <span className="pill ok" style={{ fontSize: "10px" }}>{sc.time_range || `Scene ${sIdx+1}`}</span>
+                                  </div>
+                                  <p style={{ margin: "4px 0", color: "#334155" }}>{sc.visual_action}</p>
+                                  {sc.voiceover_narration && (
+                                    <div style={{ color: "#166534", fontStyle: "italic", marginTop: "2px" }}>
+                                      "Voiceover: {sc.voiceover_narration}"
+                                    </div>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Safety hazards & PPE */}
+                        {activeActivityModal.safety_hazards_to_check && (
+                          <div style={{ padding: "12px", background: "#fef2f2", borderRadius: "8px", border: "1px solid #fecaca", fontSize: "12.5px", color: "#991b1b" }}>
+                            <strong>🚨 Mandatory Safety Hazards Checklist & PPE:</strong>
+                            <ul style={{ margin: "6px 0 0", paddingLeft: "20px" }}>
+                              {(Array.isArray(activeActivityModal.safety_hazards_to_check) ? activeActivityModal.safety_hazards_to_check : [activeActivityModal.safety_hazards_to_check]).map((sh: string, shIdx: number) => (
+                                <li key={shIdx}>{sh}</li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Modal Footer Actions */}
+                      <div style={{ display: "flex", justifyContent: "flex-end", borderTop: "1px solid #e2e8f0", paddingTop: "12px" }}>
+                        <button onClick={() => setActiveActivityModal(null)}>Done Inspecting</button>
+                      </div>
                     </div>
                   </div>
                 )}

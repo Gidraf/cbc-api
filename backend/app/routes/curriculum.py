@@ -313,6 +313,7 @@ class FactoryPlanVisualsRequest(BaseModel):
     subject: str
     strand: str
     sub_strand: str
+    min_visuals: int = 5
     notes_title: str = ""
     notes_content: dict[str, Any] | None = None
     custom_instructions: str = ""
@@ -324,6 +325,7 @@ class FactoryGenerateSingleVisualRequest(BaseModel):
     strand: str
     sub_strand: str
     visual_item: dict[str, Any]
+    generation_mode: str = "svg"  # "svg" | "photo_spec" | "video_storyboard"
     notes_content: dict[str, Any] | None = None
     custom_instructions: str = ""
 
@@ -1195,14 +1197,17 @@ def factory_plan_visuals(
             f"{dossier.formatted_context}\n\n"
             f"=== LAYER 1 MASTER NOTES CONTEXT ===\n{notes_str[:1500]}\n\n"
             f"MULTI-VISUAL ASSET PLANNING DIRECTIVE:\n"
-            f"Analyze the sub-strand '{payload.sub_strand}' and plan 2 to 4 distinct, necessary visual assets covering the entire concept scope:\n"
+            f"Analyze the sub-strand '{payload.sub_strand}' and plan AT LEAST 5 (MINIMUM 5 TO 7) distinct, pedagogical visual assets covering the entire concept scope:\n"
             f"1. A Technical Process / Flowchart Schematic (vector SVG)\n"
-            f"2. A Realistic Conceptual Scene / Photographic Infographic with authentic Kenyan context\n"
-            f"3. A Detailed Apparatus / Anatomical / Practical Setup Diagram (vector SVG)\n\n"
+            f"2. A Realistic Conceptual Scene / Photographic Infographic with authentic Kenyan county context\n"
+            f"3. A Detailed Apparatus / Practical Laboratory Setup Diagram (vector SVG)\n"
+            f"4. A Comparative Analysis / Data Infographic / Taxonomic Flowchart\n"
+            f"5. A Cross-Sectional / Anatomical / Structural Diagnostic Model\n"
+            f"6. A Video Simulation Action Storyboard / Scene Progression\n\n"
             f"For EACH visual asset provide:\n"
-            f"- asset_id (e.g. vis_1, vis_2)\n"
-            f"- title (e.g. 'Soil Conservation Structures Comparative Flowchart')\n"
-            f"- asset_type ('technical_svg' | 'realistic_image' | 'apparatus_schematic' | 'process_flowchart')\n"
+            f"- asset_id (e.g. vis_1, vis_2, vis_3, vis_4, vis_5)\n"
+            f"- title (e.g. 'Soil Acidity Testing & pH Buffering Apparatus')\n"
+            f"- asset_type ('technical_svg' | 'realistic_image' | 'apparatus_schematic' | 'process_flowchart' | 'infographic_chart' | 'video_storyboard')\n"
             f"- pedagogical_purpose (why this visual is needed by the learner)\n"
             f"- vivid_prompt (exhaustive, vivid visual scene description: layout, perspective, objects, lighting, color palette, labels, callouts for AI image/SVG generation)\n"
             f"- accessibility: {{ 'alt_text': '...', 'tactile_description': '...' }}\n\n"
@@ -1239,8 +1244,9 @@ def factory_generate_single_visual(
     payload: FactoryGenerateSingleVisualRequest,
     _: AuthContext = Depends(require_roles("admin", "operator", "reviewer")),
 ) -> dict[str, Any]:
-    """Generates or regenerates a specific visual asset (either vector SVG or AI Image Prompt with realistic detail)."""
+    """Generates or regenerates a specific visual asset (vector SVG, Photorealistic AI Image Spec, or Video Simulation Storyboard)."""
     import json as json_lib
+    from ..infra.storage import object_storage
     from ..services.content_type_classifier import classify_content_type
     from ..services.diagram_dedup import diagram_deduplicator, extract_and_sanitize_svg
     from ..services.langfuse_context import langfuse_context_service
@@ -1255,6 +1261,7 @@ def factory_generate_single_visual(
     title = item.get("title") or "Visual Diagram"
     asset_type = item.get("asset_type") or "technical_svg"
     vivid_desc = item.get("vivid_prompt") or title
+    mode = payload.generation_mode or ("photo_spec" if asset_type == "realistic_image" else ("video_storyboard" if asset_type == "video_storyboard" else "svg"))
 
     dossier = web_research_agent.research_topic(
         subject=payload.subject,
@@ -1280,13 +1287,72 @@ def factory_generate_single_visual(
         },
     )
 
-    if asset_type in ("technical_svg", "apparatus_schematic", "process_flowchart", "concept_diagram"):
+    if mode == "photo_spec":
         context.messages.append({
             "role": "user",
             "content": (
                 f"{ct_profile.format_for_prompt()}\n\n"
                 f"{dossier.formatted_context}\n\n"
-                f"=== SPECIFICATION FOR THIS VISUAL ASSET ===\n"
+                f"=== SPECIFICATION FOR PHOTOREALISTIC IMAGE SPECIFICATION ===\n"
+                f"Title: {title}\n"
+                f"Scene Description: {vivid_desc}\n\n"
+                f"AI IMAGE GENERATION PROMPT DIRECTIVE:\n"
+                f"Generate an ultra-detailed, 4K photorealistic prompt for AI image generation models (Imagen 3, Midjourney v6, Flux) depicting authentic Kenyan learners, teachers, crops, tools, and environments.\n"
+                f"Also create a clean SVG preview schematic illustrating the scene layout.\n\n"
+                f"Return JSON:\n"
+                f"{{\n"
+                f'  "diagram_id": "{item.get("asset_id", "vis_1")}",\n'
+                f'  "diagram_title": "{title}",\n'
+                f'  "image_prompt": "<ultra-detailed 150-word photorealistic prompt with camera angle, lighting, 8k resolution, Kenyan setting>",\n'
+                f'  "negative_prompt": "blurry, low quality, distorted anatomy, western setting, unrealistic tools",\n'
+                f'  "aspect_ratio": "16:9",\n'
+                f'  "composition_guide": "<camera angle, golden hour lighting, 50mm lens, depth of field>",\n'
+                f'  "diagram_svg": "<svg xmlns=\\"http://www.w3.org/2000/svg\\" viewBox=\\"0 0 800 500\\"><rect width=\\"100%\\" height=\\"100%\\" fill=\\"#0f172a\\"/><text x=\\"400\\" y=\\"250\\" text-anchor=\\"middle\\" font-family=\\"system-ui\\" font-size=\\"18\\" fill=\\"#38bdf8\\">📸 Photorealistic Scene: {title}</text></svg>",\n'
+                f'  "accessibility": {{"alt_text": "...", "tactile_description": "..."}}\n'
+                f"}}\n\n"
+                f"ADDITIONAL INSTRUCTIONS: {payload.custom_instructions}"
+            ),
+        })
+    elif mode == "video_storyboard":
+        context.messages.append({
+            "role": "user",
+            "content": (
+                f"{ct_profile.format_for_prompt()}\n\n"
+                f"{dossier.formatted_context}\n\n"
+                f"=== SPECIFICATION FOR VIDEO SIMULATION STORYBOARD ===\n"
+                f"Title: {title}\n"
+                f"Description: {vivid_desc}\n\n"
+                f"VIDEO SIMULATION SCRIPT DIRECTIVE:\n"
+                f"Generate a multi-scene educational video simulation storyboard (60-90s) detailing the concept progression.\n\n"
+                f"Return JSON:\n"
+                f"{{\n"
+                f'  "diagram_id": "{item.get("asset_id", "vis_1")}",\n'
+                f'  "diagram_title": "{title}",\n'
+                f'  "video_storyboard": {{\n'
+                f'    "video_title": "{title}",\n'
+                f'    "target_duration": "75s",\n'
+                f'    "overview": "...",\n'
+                f'    "scenes": [\n'
+                f'      {{"scene_number": 1, "time_range": "0:00-0:15", "shot_type": "Wide Establishing Shot", "visual_action": "...", "voiceover_narration": "...", "on_screen_text": "...", "ai_video_prompt": "..."}},\n'
+                f'      {{"scene_number": 2, "time_range": "0:15-0:40", "shot_type": "Close-up Action Shot", "visual_action": "...", "voiceover_narration": "...", "on_screen_text": "...", "ai_video_prompt": "..."}},\n'
+                f'      {{"scene_number": 3, "time_range": "0:40-1:05", "shot_type": "Medium Angle Result", "visual_action": "...", "voiceover_narration": "...", "on_screen_text": "...", "ai_video_prompt": "..."}},\n'
+                f'      {{"scene_number": 4, "time_range": "1:05-1:15", "shot_type": "Summary Infographic Overlay", "visual_action": "...", "voiceover_narration": "...", "on_screen_text": "...", "ai_video_prompt": "..."}}\n'
+                f'    ]\n'
+                f'  }},\n'
+                f'  "diagram_svg": "<svg xmlns=\\"http://www.w3.org/2000/svg\\" viewBox=\\"0 0 800 500\\"><rect width=\\"100%\\" height=\\"100%\\" fill=\\"#1e1b4b\\"/><text x=\\"400\\" y=\\"250\\" text-anchor=\\"middle\\" font-family=\\"system-ui\\" font-size=\\"18\\" fill=\\"#c084fc\\">🎥 Video Storyboard: {title}</text></svg>",\n'
+                f'  "accessibility": {{"alt_text": "...", "tactile_description": "..."}}\n'
+                f"}}\n\n"
+                f"ADDITIONAL INSTRUCTIONS: {payload.custom_instructions}"
+            ),
+        })
+    else:
+        # Standard SVG Mode
+        context.messages.append({
+            "role": "user",
+            "content": (
+                f"{ct_profile.format_for_prompt()}\n\n"
+                f"{dossier.formatted_context}\n\n"
+                f"=== SPECIFICATION FOR THIS VECTOR SVG ASSET ===\n"
                 f"Title: {title}\n"
                 f"Type: {asset_type}\n"
                 f"Vivid Description & Scene Elements:\n{vivid_desc}\n\n"
@@ -1300,35 +1366,8 @@ def factory_generate_single_visual(
                 f"ADDITIONAL INSTRUCTIONS: {payload.custom_instructions}"
             ),
         })
-    else:
-        # Realistic Photographic / AI Image prompt mode
-        context.messages.append({
-            "role": "user",
-            "content": (
-                f"{ct_profile.format_for_prompt()}\n\n"
-                f"{dossier.formatted_context}\n\n"
-                f"=== SPECIFICATION FOR REALISTIC SCENE / PHOTO INFOGRAPHIC ===\n"
-                f"Title: {title}\n"
-                f"Vivid Scene Guidance:\n{vivid_desc}\n\n"
-                f"AI IMAGE GENERATION PROMPT & SPECIFICATION DIRECTIVE:\n"
-                f"Generate an ultra-detailed, photorealistic image generation prompt for modern AI image models (e.g. Imagen 3, Midjourney v6, Flux, DALL-E 3) capturing authentic Kenyan learners, teachers, landscapes, or practical work.\n"
-                f"Also create a clean SVG preview schematic illustrating the scene layout.\n\n"
-                f"Return JSON:\n"
-                f"{{\n"
-                f'  "diagram_id": "{item.get("asset_id", "vis_1")}",\n'
-                f'  "diagram_title": "{title}",\n'
-                f'  "image_prompt": "<ultra-detailed 150-word photorealistic prompt for AI image generator>",\n'
-                f'  "negative_prompt": "blurry, low quality, distorted anatomy, unrealistic western setting",\n'
-                f'  "aspect_ratio": "16:9",\n'
-                f'  "composition_guide": "<camera angle, lighting, focal length, color temperature>",\n'
-                f'  "diagram_svg": "<svg xmlns=\\"http://www.w3.org/2000/svg\\" viewBox=\\"0 0 800 500\\"><rect width=\\"100%\\" height=\\"100%\\" fill=\\"#f8fafc\\"/><text x=\\"400\\" y=\\"250\\" text-anchor=\\"middle\\" font-family=\\"system-ui\\" font-size=\\"16\\" fill=\\"#0369a1\\">{title} (Photorealistic Scene)</text></svg>",\n'
-                f'  "accessibility": {{"alt_text": "...", "tactile_description": "..."}}\n'
-                f"}}\n\n"
-                f"ADDITIONAL INSTRUCTIONS: {payload.custom_instructions}"
-            ),
-        })
 
-    resp = llm_client.generate(resolved, context.messages, temperature=0.1)
+    resp = llm_client.generate(resolved, context.messages, temperature=0.15)
     svg_markup = resp.content.get("diagram_svg") or resp.content.get("svg") or "<svg xmlns='http://www.w3.org/2000/svg'></svg>"
     accessibility = resp.content.get("accessibility", {})
 
@@ -1340,19 +1379,37 @@ def factory_generate_single_visual(
         metadata={"grade": payload.grade, "subject": payload.subject, "strand": payload.strand},
     )
 
+    # Save to MinIO explicitly and track result
+    minio_status = "saved"
+    minio_url = ""
+    minio_error = ""
+    try:
+        clean_g = payload.grade.lower().replace("grade-", "")
+        clean_s = payload.subject.lower().replace(" ", "_")
+        clean_ss = payload.sub_strand.lower().replace(" ", "_")[:30]
+        obj_name = f"diagrams/{clean_g}_{clean_s}_{clean_ss}_{item.get('asset_id', 'vis')}.svg"
+        minio_url = object_storage.save_svg(obj_name, dedup.diagram_svg)
+    except Exception as exc:
+        minio_status = "error"
+        minio_error = str(exc)
+
     updated_visual = {
         "asset_id": item.get("asset_id") or dedup.diagram_id,
         "title": title,
         "asset_type": asset_type,
+        "generation_mode": mode,
         "pedagogical_purpose": item.get("pedagogical_purpose", ""),
         "vivid_prompt": item.get("vivid_prompt", ""),
         "diagram_svg": dedup.diagram_svg,
         "diagram_hash": dedup.diagram_hash,
-        "storage_url": dedup.storage_url,
+        "storage_url": minio_url or dedup.storage_url,
+        "minio_status": minio_status,
+        "minio_error": minio_error,
         "image_prompt": resp.content.get("image_prompt"),
         "negative_prompt": resp.content.get("negative_prompt"),
         "aspect_ratio": resp.content.get("aspect_ratio", "16:9"),
         "composition_guide": resp.content.get("composition_guide"),
+        "video_storyboard": resp.content.get("video_storyboard"),
         "accessibility": {
             "alt_text": dedup.alt_text,
             "tactile_description": dedup.tactile_description,
@@ -1369,6 +1426,9 @@ def factory_generate_single_visual(
         "model": resp.model,
         "quality_audit": audit_report.to_dict(),
         "quality_gate": gate_result.to_dict(),
+        "minio_status": minio_status,
+        "minio_url": minio_url,
+        "minio_error": minio_error,
     }
 
 
@@ -2006,21 +2066,27 @@ def factory_get_bundle_by_substrand(
         row_ss = str(c.get("sub_strand", "")).lower().strip()
 
         if (
-            (row_grade == clean_grade or not clean_grade)
+            (row_grade == clean_grade or not clean_grade or not row_grade)
             and (row_subj == clean_subj or clean_subj in row_subj or row_subj in clean_subj)
-            and (row_strand == clean_strand or not clean_strand or clean_strand in row_strand or row_strand in clean_strand)
             and (row_ss == clean_ss or clean_ss in row_ss or row_ss in clean_ss)
         ):
+            raw_diag = row.get("diagrams")
+            norm_diag = raw_diag if isinstance(raw_diag, list) else ([raw_diag] if raw_diag else [])
+            raw_act = row.get("activities")
+            norm_act = raw_act if raw_act else {}
+            raw_qs = row.get("questions")
+            norm_qs = raw_qs if isinstance(raw_qs, list) else ([raw_qs] if raw_qs else [])
+
             return {
                 "found": True,
                 "bundle_id": row.get("bundle_id"),
                 "curriculum": c,
-                "notes": row.get("notes"),
-                "diagrams": row.get("diagrams"),
-                "activities": row.get("activities"),
-                "questions": row.get("questions"),
-                "review_audit": row.get("review_audit"),
-                "status": row.get("status"),
+                "notes": row.get("notes") or {},
+                "diagrams": norm_diag,
+                "activities": norm_act,
+                "questions": norm_qs,
+                "review_audit": row.get("review_audit") or {},
+                "status": row.get("status") or "draft",
                 "updated_at": str(row.get("updated_at")),
             }
 
@@ -2056,26 +2122,51 @@ def factory_auto_persist_station(
         "sub_strand": payload.sub_strand,
     }
 
+    clean_subj = payload.subject.lower().strip()
+    clean_ss = payload.sub_strand.lower().strip()
+
     existing = fetch_one(
-        "SELECT * FROM substrand_resources WHERE bundle_id = :bundle_id",
-        {"bundle_id": payload.bundle_id},
+        """
+        SELECT * FROM substrand_resources 
+        WHERE bundle_id = :bundle_id
+           OR (
+              LOWER(curriculum->>'subject') = :subject
+              AND (
+                  LOWER(curriculum->>'sub_strand') = :ss 
+                  OR LOWER(curriculum->>'sub_strand') LIKE :ss_like
+                  OR :ss LIKE CONCAT('%', LOWER(curriculum->>'sub_strand'), '%')
+              )
+           )
+        ORDER BY updated_at DESC
+        LIMIT 1
+        """,
+        {
+            "bundle_id": payload.bundle_id,
+            "subject": clean_subj,
+            "ss": clean_ss,
+            "ss_like": f"%{clean_ss}%",
+        },
     )
 
-    notes = existing.get("notes") if existing else {}
-    diagrams = existing.get("diagrams") if existing else []
-    activities = existing.get("activities") if existing else {}
-    questions = existing.get("questions") if existing else []
-    review_audit = existing.get("review_audit") if existing else {}
-    status = existing.get("status") if existing else payload.review_status
+    notes = existing.get("notes") if existing and existing.get("notes") else {}
+    diagrams = existing.get("diagrams") if existing and existing.get("diagrams") else []
+    activities = existing.get("activities") if existing and existing.get("activities") else {}
+    questions = existing.get("questions") if existing and existing.get("questions") else []
+    review_audit = existing.get("review_audit") if existing and existing.get("review_audit") else {}
+    status = existing.get("status") if existing and existing.get("status") else payload.review_status
 
     if payload.station_type == "notes" and payload.data:
         notes = payload.data
     elif payload.station_type == "diagrams" and payload.data is not None:
-        diagrams = payload.data if isinstance(payload.data, list) else [payload.data]
+        incoming_diag = payload.data if isinstance(payload.data, list) else [payload.data]
+        if incoming_diag:
+            diagrams = incoming_diag
     elif payload.station_type == "activities" and payload.data is not None:
         activities = payload.data
     elif payload.station_type == "questions" and payload.data is not None:
-        questions = payload.data if isinstance(payload.data, list) else [payload.data]
+        incoming_qs = payload.data if isinstance(payload.data, list) else [payload.data]
+        if incoming_qs:
+            questions = incoming_qs
     elif payload.station_type == "approval":
         status = payload.review_status
         review_audit = {"status": payload.review_status, "human_notes": payload.human_notes}
@@ -2113,9 +2204,12 @@ def factory_auto_persist_station(
         },
     )
 
-    # Mirror to MinIO in background
+    # Mirror to MinIO with error reporting
+    minio_status = "saved"
+    minio_url = ""
+    minio_error = ""
     try:
-        object_storage.save_full_bundle(payload.bundle_id, {
+        minio_url = object_storage.save_full_bundle(payload.bundle_id, {
             "bundle_id": payload.bundle_id,
             "curriculum": curr_dict,
             "notes": notes,
@@ -2125,10 +2219,18 @@ def factory_auto_persist_station(
             "review_audit": review_audit,
             "status": status,
         })
-    except Exception:
-        pass
+    except Exception as exc:
+        minio_status = "error"
+        minio_error = str(exc)
 
-    return {"status": "persisted", "bundle_id": payload.bundle_id, "station_type": payload.station_type}
+    return {
+        "status": "persisted",
+        "bundle_id": payload.bundle_id,
+        "station_type": payload.station_type,
+        "minio_status": minio_status,
+        "minio_url": minio_url,
+        "minio_error": minio_error,
+    }
 
 
 class FactoryGenerateStrandsRequest(BaseModel):
