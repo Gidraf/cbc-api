@@ -665,6 +665,16 @@ class CurriculumExtractorService:
             },
         }
 
+        try:
+            from .langfuse_context import langfuse_context_service
+            return langfuse_context_service.upload_dataset_item(
+                grade_slug=design.grade,
+                subject_data=langfuse_payload,
+            )
+        except Exception as exc:
+            logger.warning("Langfuse sync skipped for design '%s': %s", design.design_id, exc)
+            return {"status": "skipped", "reason": str(exc)}
+
     def set_blueprint_decision(self, design_id: str, decision: str, notes: str = "") -> dict[str, Any]:
         """Human reviewer accepts or rejects the AI-generated curriculum blueprint."""
         from ..infra.db import execute, fetch_one

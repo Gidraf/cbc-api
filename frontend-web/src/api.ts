@@ -33,10 +33,19 @@ export async function fetchJson<T>(path: string, init?: RequestInit, auth?: Auth
   });
 
   const text = await response.text();
-  const body = text ? JSON.parse(text) : null;
+  let body: any = null;
+  try {
+    body = text ? JSON.parse(text) : null;
+  } catch {
+    body = { error: "SERVER_ERROR", message: text || response.statusText, status_code: response.status };
+  }
 
   if (!response.ok) {
-    throw new Error(JSON.stringify(body ?? { status: response.status, message: response.statusText }, null, 2));
+    const errMsg = (body && typeof body === "object") ? (body.message || body.detail || body.error || JSON.stringify(body)) : text;
+    const err = new Error(errMsg || `HTTP ${response.status} ${response.statusText}`);
+    (err as any).data = body;
+    (err as any).status = response.status;
+    throw err;
   }
 
   return body as T;

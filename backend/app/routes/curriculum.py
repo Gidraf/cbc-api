@@ -276,3 +276,265 @@ def get_dna_by_slo(
 ) -> dict[str, Any]:
     certs = artifact_dna_service.list_dnas_for_slo(slo_id)
     return {"slo_id": slo_id, "certificates": certs, "count": len(certs)}
+
+
+# ── Content Factory & Interactive Playground Endpoints ───────────────────────
+
+class FactoryGenerateNotesRequest(BaseModel):
+    grade: str
+    subject: str
+    strand: str
+    sub_strand: str
+    slo_id: str = ""
+    level: str = "Basic Education"
+    custom_instructions: str = ""
+
+
+class FactoryGenerateDiagramRequest(BaseModel):
+    grade: str
+    subject: str
+    strand: str
+    sub_strand: str
+    concept: str = ""
+    notes_title: str = ""
+    custom_instructions: str = ""
+
+
+class FactoryGenerateActivityRequest(BaseModel):
+    grade: str
+    subject: str
+    strand: str
+    sub_strand: str
+    notes_title: str = ""
+    custom_instructions: str = ""
+
+
+class FactoryGenerateQuestionsRequest(BaseModel):
+    grade: str
+    subject: str
+    subject_code: str = "CORE"
+    strand: str
+    sub_strand: str
+    slo_id: str = ""
+    difficulty: float = 0.65
+    notes_summary: str = ""
+    diagram_title: str = ""
+    custom_instructions: str = ""
+
+
+class FactorySaveBundleRequest(BaseModel):
+    bundle_id: str
+    grade: str
+    subject: str
+    strand: str
+    sub_strand: str
+    level: str = "Basic Education"
+    notes: dict[str, Any] = {}
+    diagram: dict[str, Any] = {}
+    activities: list[Any] = []
+    experiments: list[Any] = []
+    questions: list[Any] = []
+    review_status: str = "draft_in_factory"
+    human_notes: str = ""
+
+
+@router.post("/factory/generate-notes")
+def factory_generate_notes(
+    payload: FactoryGenerateNotesRequest,
+    _: AuthContext = Depends(require_roles("admin", "operator", "reviewer")),
+) -> dict[str, Any]:
+    from ..services.langfuse_context import langfuse_context_service
+    from ..services.llm_client import llm_client
+    from ..services.pipeline import pipeline_orchestrator
+
+    resolved = pipeline_orchestrator.router.resolve_for_stage("notes_generation")
+    template_vars = {
+        "level": payload.level,
+        "strand": payload.strand,
+        "sub_strand": payload.sub_strand,
+        "slo_id": payload.slo_id or f"{payload.grade}-{payload.subject[:3]}-01",
+        "custom_instructions": payload.custom_instructions,
+    }
+    context = langfuse_context_service.assemble_agent_context(
+        agent_name="note-generator",
+        grade_slug=payload.grade,
+        subject=payload.subject,
+        template_vars=template_vars,
+    )
+    if payload.custom_instructions:
+        context.messages.append({
+            "role": "user",
+            "content": f"ADDITIONAL REFINEMENT INSTRUCTIONS: {payload.custom_instructions}",
+        })
+
+    resp = llm_client.generate(resolved, context.messages, temperature=0.2)
+    return {"notes": resp.content, "usage": resp.usage, "model": resp.model}
+
+
+@router.post("/factory/generate-diagram")
+def factory_generate_diagram(
+    payload: FactoryGenerateDiagramRequest,
+    _: AuthContext = Depends(require_roles("admin", "operator", "reviewer")),
+) -> dict[str, Any]:
+    from ..services.diagram_dedup import diagram_deduplicator
+    from ..services.langfuse_context import langfuse_context_service
+    from ..services.llm_client import llm_client
+    from ..services.pipeline import pipeline_orchestrator
+
+    resolved = pipeline_orchestrator.router.resolve_for_stage("diagram_generation")
+    concept_name = payload.concept or f"{payload.sub_strand} model"
+    context = langfuse_context_service.assemble_agent_context(
+        agent_name="diagram-generator",
+        grade_slug=payload.grade,
+        subject=payload.subject,
+        template_vars={
+            "concept": concept_name,
+            "notes_title": payload.notes_title or payload.sub_strand,
+        },
+    )
+    if payload.custom_instructions:
+        context.messages.append({
+            "role": "user",
+            "content": f"ADDITIONAL SVG DIAGRAM REFINEMENT INSTRUCTIONS: {payload.custom_instructions}",
+        })
+
+    resp = llm_client.generate(resolved, context.messages, temperature=0.1)
+    svg_markup = resp.content.get("diagram_svg", "<svg xmlns='http://www.w3.org/2000/svg'></svg>")
+    accessibility = resp.content.get("accessibility", {})
+
+    dedup = diagram_deduplicator.deduplicate_and_store(
+        svg_str=svg_markup,
+        diagram_title=resp.content.get("diagram_title", concept_name),
+        alt_text=accessibility.get("alt_text", ""),
+        tactile_description=accessibility.get("tactile_description", ""),
+        metadata={"grade": payload.grade, "subject": payload.subject, "strand": payload.strand},
+    )
+
+    diagram_data = {
+        "diagram_id": dedup.diagram_id,
+        "diagram_title": dedup.diagram_title,
+        "diagram_svg": dedup.diagram_svg,
+        "diagram_hash": dedup.diagram_hash,
+        "storage_url": dedup.storage_url,
+        "dedup_status": dedup.dedup_status,
+        "accessibility": {
+            "alt_text": dedup.alt_text,
+            "tactile_description": dedup.tactile_description,
+        },
+    }
+    return {"diagram": diagram_data, "usage": resp.usage, "model": resp.model}
+
+
+@router.post("/factory/generate-activity")
+def factory_generate_activity(
+    payload: FactoryGenerateActivityRequest,
+    _: AuthContext = Depends(require_roles("admin", "operator", "reviewer")),
+) -> dict[str, Any]:
+    from ..services.langfuse_context import langfuse_context_service
+    from ..services.llm_client import llm_client
+    from ..services.pipeline import pipeline_orchestrator
+
+    resolved = pipeline_orchestrator.router.resolve_for_stage("activity_generation")
+    context = langfuse_context_service.assemble_agent_context(
+        agent_name="activity-generator",
+        grade_slug=payload.grade,
+        subject=payload.subject,
+        template_vars={
+            "strand": payload.strand,
+            "sub_strand": payload.sub_strand,
+            "notes_title": payload.notes_title or payload.sub_strand,
+        },
+    )
+    if payload.custom_instructions:
+        context.messages.append({
+            "role": "user",
+            "content": f"ADDITIONAL EXPERIMENT & SAFETY REFINEMENT INSTRUCTIONS: {payload.custom_instructions}",
+        })
+
+    resp = llm_client.generate(resolved, context.messages, temperature=0.25)
+    return {"activity": resp.content, "usage": resp.usage, "model": resp.model}
+
+
+@router.post("/factory/generate-questions")
+def factory_generate_questions(
+    payload: FactoryGenerateQuestionsRequest,
+    _: AuthContext = Depends(require_roles("admin", "operator", "reviewer")),
+) -> dict[str, Any]:
+    from ..services.langfuse_context import langfuse_context_service
+    from ..services.llm_client import llm_client
+    from ..services.pipeline import pipeline_orchestrator
+
+    resolved = pipeline_orchestrator.router.resolve_for_stage("question_generation")
+    context = langfuse_context_service.assemble_agent_context(
+        agent_name="question-generator",
+        grade_slug=payload.grade,
+        subject=payload.subject,
+        template_vars={
+            "subject_code": payload.subject_code,
+            "strand": payload.strand,
+            "sub_strand": payload.sub_strand,
+            "slo_id": payload.slo_id or f"{payload.grade}-{payload.subject_code}-01",
+            "difficulty": payload.difficulty,
+            "notes_summary": payload.notes_summary,
+            "diagram_concept": payload.diagram_title,
+        },
+    )
+    if payload.custom_instructions:
+        context.messages.append({
+            "role": "user",
+            "content": f"ADDITIONAL QUESTION & RUBRIC REFINEMENT INSTRUCTIONS: {payload.custom_instructions}",
+        })
+
+    resp = llm_client.generate(resolved, context.messages, temperature=0.2)
+    return {"questions": resp.content.get("questions", []), "usage": resp.usage, "model": resp.model}
+
+
+@router.post("/factory/save-bundle")
+def factory_save_bundle(
+    payload: FactorySaveBundleRequest,
+    _: AuthContext = Depends(require_roles("admin", "operator", "reviewer")),
+) -> dict[str, Any]:
+    from ..infra.db import execute, to_json
+
+    curr_dict = {
+        "grade": payload.grade,
+        "subject": payload.subject,
+        "level": payload.level,
+        "strand": payload.strand,
+        "sub_strand": payload.sub_strand,
+    }
+
+    execute(
+        """
+        INSERT INTO substrand_resources (
+            bundle_id, curriculum, notes, diagrams, activities, questions, review_audit, status, updated_at
+        )
+        VALUES (
+            :bundle_id, CAST(:curriculum AS jsonb), CAST(:notes AS jsonb),
+            CAST(:diagrams AS jsonb), CAST(:activities AS jsonb),
+            CAST(:questions AS jsonb), CAST(:review_audit AS jsonb),
+            :status, NOW()
+        )
+        ON CONFLICT (bundle_id) DO UPDATE SET
+            curriculum = EXCLUDED.curriculum,
+            notes = EXCLUDED.notes,
+            diagrams = EXCLUDED.diagrams,
+            activities = EXCLUDED.activities,
+            questions = EXCLUDED.questions,
+            review_audit = EXCLUDED.review_audit,
+            status = EXCLUDED.status,
+            updated_at = NOW()
+        """,
+        {
+            "bundle_id": payload.bundle_id,
+            "curriculum": to_json(curr_dict),
+            "notes": to_json(payload.notes),
+            "diagrams": to_json([payload.diagram] if payload.diagram else []),
+            "activities": to_json({"activities": payload.activities, "experiments": payload.experiments}),
+            "questions": to_json(payload.questions),
+            "review_audit": to_json({"status": payload.review_status, "human_notes": payload.human_notes}),
+            "status": payload.review_status,
+        },
+    )
+
+    return {"status": "saved", "bundle_id": payload.bundle_id, "review_status": payload.review_status}

@@ -600,3 +600,243 @@ pre {
   font-weight: 700;
   color: var(--ink);
 }
+
+/* ── Content Factory & Playground Styling ───────────────────────────── */
+.factory-stepper {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: #f8fafc;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 12px 20px;
+  margin-bottom: 20px;
+  gap: 12px;
+}
+
+.factory-step {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 6px 12px;
+  border-radius: 8px;
+  transition: all 0.2s ease;
+}
+
+.factory-step.active {
+  background: var(--brand-light);
+  color: var(--brand-strong);
+  font-weight: 700;
+}
+
+.factory-step.completed {
+  color: var(--ok);
+}
+
+.factory-step-num {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #e2e8f0;
+  color: #475569;
+  font-size: 11px;
+}
+
+.factory-step.active .factory-step-num {
+  background: var(--brand);
+  color: #fff;
+}
+
+.factory-step.completed .factory-step-num {
+  background: var(--ok);
+  color: #fff;
+}
+
+.factory-stepper-arrow {
+  color: #cbd5e1;
+  font-size: 16px;
+}
+
+.factory-quadrant {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+  margin-top: 16px;
+}
+
+.factory-station-card {
+  border: 1px solid var(--line);
+  background: #fff;
+  border-radius: 14px;
+  padding: 18px;
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.03);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.factory-station-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  border-bottom: 1px solid #f1f5f9;
+  padding-bottom: 10px;
+}
+
+.factory-station-header h3 {
+  margin: 0 0 4px;
+  font-size: 15px;
+  color: #0f172a;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.factory-refine-box {
+  display: flex;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.factory-refine-box input {
+  font-size: 12px;
+  padding: 8px 10px;
+}
+
+.factory-preview-pane {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 14px;
+  max-height: 380px;
+  overflow-y: auto;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.svg-canvas-box {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 12px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 220px;
+  max-height: 320px;
+  overflow: hidden;
+  background-image: radial-gradient(#e2e8f0 1px, transparent 1px);
+  background-size: 16px 16px;
+}
+
+.svg-canvas-box svg {
+  max-width: 100%;
+  max-height: 300px;
+  height: auto;
+}
+
+.hazard-alert-box {
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  border-left: 4px solid #dc2626;
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin: 8px 0;
+  font-size: 12px;
+  color: #991b1b;
+}
+
+.hazard-alert-box strong {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 12px;
+  color: #b91c1c;
+}
+
+.rubric-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  margin-top: 10px;
+  font-size: 11px;
+}
+
+.rubric-card {
+  padding: 8px;
+  border-radius: 6px;
+  border: 1px solid #e2e8f0;
+  background: #fff;
+}
+
+.rubric-card.exceeding {
+  border-color: #86efac;
+  background: #f0fdf4;
+}
+
+.rubric-card.meeting {
+  border-color: #93c5fd;
+  background: #eff6ff;
+}
+
+.rubric-card.approaching {
+  border-color: #fde68a;
+  background: #fffbeb;
+}
+
+.rubric-card.below {
+  border-color: #fca5a5;
+  background: #fef2f2;
+}
+
+.rubric-card strong {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.strand-explorer-tree {
+  border: 1px solid var(--line);
+  background: #fff;
+  border-radius: 12px;
+  padding: 16px;
+}
+
+.strand-card {
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 12px;
+  margin-bottom: 12px;
+  background: #fbfdff;
+}
+
+.substrand-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 12px;
+  border-radius: 8px;
+  margin-top: 6px;
+  background: #fff;
+  border: 1px solid #f1f5f9;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.substrand-row:hover {
+  border-color: var(--brand);
+  background: var(--brand-light);
+}
+
+.substrand-row.selected {
+  border-color: var(--brand-strong);
+  background: #e0f2fe;
+  font-weight: 700;
+}
