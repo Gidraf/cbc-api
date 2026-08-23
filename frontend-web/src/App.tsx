@@ -240,6 +240,7 @@ export function App() {
   const [stationDiagram, setStationDiagram] = useState<any>(null);
   const [stationVisualsList, setStationVisualsList] = useState<any[]>([]);
   const [activeVisualIdx, setActiveVisualIdx] = useState<number>(0);
+  const [visualActiveHourTab, setVisualActiveHourTab] = useState<number | "all">("all");
   const [diagramConceptInput, setDiagramConceptInput] = useState("");
   const [diagramRefinePrompt, setDiagramRefinePrompt] = useState("");
   const [diagramViewMode, setDiagramViewMode] = useState<"visual" | "image_spec" | "code" | "tactile">("visual");
@@ -250,9 +251,16 @@ export function App() {
   const [stationActivity, setStationActivity] = useState<any>(null);
   const [stationActivitiesList, setStationActivitiesList] = useState<any[]>([]);
   const [activeActivityIdx, setActiveActivityIdx] = useState<number>(0);
+  const [activityActiveHourTab, setActivityActiveHourTab] = useState<number | "all">("all");
   const [activityDetailTab, setActivityDetailTab] = useState<"procedure" | "video" | "image" | "safety" | "rubric">("procedure");
   const [activityRefinePrompt, setActivityRefinePrompt] = useState("");
   const [activityApproved, setActivityApproved] = useState(false);
+
+  // Questions Factory Parent Anchor
+  const [qfParentAnchorType, setQfParentAnchorType] = useState<string>("holistic"); // "holistic", "hour", "diagram", "experiment"
+  const [qfTargetHour, setQfTargetHour] = useState<number>(1);
+  const [qfSelectedDiagramId, setQfSelectedDiagramId] = useState<string>("");
+  const [qfSelectedExperimentId, setQfSelectedExperimentId] = useState<string>("");
 
   // Station 4: Questions & Rubrics
   const [stationQuestions, setStationQuestions] = useState<any[]>([]);
@@ -1574,6 +1582,70 @@ export function App() {
     }
   }
 
+  async function deleteSubstrandWithGenerations(gradeSlug: string, subjectName: string, strandName: string, substrandName: string) {
+    if (!window.confirm(`⚠️ Are you sure you want to permanently delete sub-strand "${substrandName}" and all its generated notes, diagrams, activities, and questions?`)) {
+      return;
+    }
+    await run(`Deleting Sub-strand "${substrandName}" and all generations...`, async () => {
+      const res = await fetchJson<any>(
+        `/api/v1/curriculum/substrand?grade=${encodeURIComponent(gradeSlug)}&subject=${encodeURIComponent(subjectName)}&strand=${encodeURIComponent(strandName || '')}&sub_strand=${encodeURIComponent(substrandName)}`,
+        { method: "DELETE" },
+        auth()
+      );
+      // Clean local state if currently selected
+      if (genSubstrand === substrandName || qfSubstrand === substrandName) {
+        setStationNotes(null);
+        setStationDiagram(null);
+        setStationVisualsList([]);
+        setStationActivity(null);
+        setStationActivitiesList([]);
+        setStationQuestions([]);
+        setQfQuestionsList([]);
+        // Clear localStorage caches for this substrand
+        for (let i = 0; i < localStorage.length; i++) {
+          const key = localStorage.key(i);
+          if (key && key.includes(encodeURIComponent(substrandName))) {
+            localStorage.removeItem(key);
+          }
+        }
+      }
+      await loadFactorySubstrandsForDesign(gradeSlug, subjectName);
+      return res;
+    });
+  }
+
+  async function deleteStrandWithGenerations(gradeSlug: string, subjectName: string, strandName: string) {
+    if (!window.confirm(`⚠️ Are you sure you want to permanently delete strand "${strandName}" and ALL child sub-strands and generations?`)) {
+      return;
+    }
+    await run(`Deleting Strand "${strandName}"...`, async () => {
+      const res = await fetchJson<any>(
+        `/api/v1/curriculum/strand?grade=${encodeURIComponent(gradeSlug)}&subject=${encodeURIComponent(subjectName)}&strand=${encodeURIComponent(strandName)}`,
+        { method: "DELETE" },
+        auth()
+      );
+      await loadSubjectStrands(gradeSlug, subjectName);
+      await loadFactorySubstrandsForDesign(gradeSlug, subjectName);
+      return res;
+    });
+  }
+
+  async function deleteSubjectWithGenerations(gradeSlug: string, subjectName: string) {
+    if (!window.confirm(`⚠️ DANGER: Are you sure you want to permanently delete the ENTIRE SUBJECT "${subjectName}" across ${gradeSlug}, including all strands, sub-strands, notes, diagrams, and question bank?`)) {
+      return;
+    }
+    await run(`Deleting Entire Subject "${subjectName}"...`, async () => {
+      const res = await fetchJson<any>(
+        `/api/v1/curriculum/subject?grade=${encodeURIComponent(gradeSlug)}&subject=${encodeURIComponent(subjectName)}`,
+        { method: "DELETE" },
+        auth()
+      );
+      await loadGradeSubjects(gradeSlug);
+      await loadCurriculumDesigns();
+      return res;
+    });
+  }
+
   async function generateQuestionsFactoryBatch(customPrompt?: string) {
     await run(`🎯 Generating Batch of ${qfBatchCount} Publication Assessment Items...`, async () => {
       const payload = {
@@ -1585,6 +1657,10 @@ export function App() {
         question_types: qfSelectedTypes.length > 0 ? qfSelectedTypes : ["multiple_choice", "structured_scenario", "diagram_based", "experiment_based"],
         bloom_levels: qfSelectedBlooms.length > 0 ? qfSelectedBlooms : ["Application", "Analysis", "Critical Thinking"],
         difficulty: qfDifficulty,
+        parent_anchor_type: qfParentAnchorType,
+        target_hour: qfParentAnchorType === "hour" ? qfTargetHour : undefined,
+        target_diagram_id: qfParentAnchorType === "diagram" ? qfSelectedDiagramId : undefined,
+        target_experiment_id: qfParentAnchorType === "experiment" ? qfSelectedExperimentId : undefined,
         custom_instructions: customPrompt || qfCustomPrompt || "Generate diverse, rigorous Kenya CBC questions referencing the saved notes, diagrams, and experiments.",
       };
       const res = await fetchJson<any>("/api/v1/questions/factory/generate-batch", {
@@ -2489,6 +2565,14 @@ export function App() {
                               >
                                 🚀 Open in Factory
                               </button>
+                              <button
+                                className="ghost"
+                                style={{ fontSize: '0.78rem', padding: '5px 8px', color: '#b91c1c', borderColor: '#fca5a5' }}
+                                title="Permanently delete this entire subject and all its generations"
+                                onClick={() => deleteSubjectWithGenerations(d.grade, d.subject)}
+                              >
+                                🗑️ Delete
+                              </button>
                             </div>
                           </td>
                         </tr>
@@ -3274,6 +3358,15 @@ export function App() {
                       >
                         {showBlueprintDetails ? "📋 Hide Blueprint" : "📋 View Blueprint & SLOs"}
                       </button>
+                      <button
+                        className="ghost"
+                        style={{ fontSize: "12px", border: "1px solid #fca5a5", color: "#b91c1c" }}
+                        onClick={() => deleteSubstrandWithGenerations(genGrade, genSubject, genStrand, genSubstrand)}
+                        disabled={!genSubstrand || isRunning}
+                        title="Delete this sub-strand and all generated notes, diagrams, activities, and questions to start again"
+                      >
+                        🗑️ Reset Sub-strand
+                      </button>
                       <button onClick={triggerGenerate} disabled={isRunning} style={{ whiteSpace: "nowrap" }}>
                         {isRunning ? "⚡ Generating Pipeline..." : "⚡ Generate Entire 4-Layer Bundle"}
                       </button>
@@ -3793,13 +3886,45 @@ export function App() {
 
                     {/* Active Visual Meta & Preview */}
                     {(() => {
-                      const visualsToShow = (stationVisualsList && stationVisualsList.length > 0)
+                      const allVisuals = (stationVisualsList && stationVisualsList.length > 0)
                         ? stationVisualsList
                         : (stationDiagram ? [stationDiagram] : []);
+
+                      const visualsToShow = visualActiveHourTab === "all"
+                        ? allVisuals
+                        : allVisuals.filter((v: any) => v.hour_index === visualActiveHourTab || (!v.hour_index && visualActiveHourTab === 1));
+
                       const curVis = visualsToShow[activeVisualIdx] || visualsToShow[0] || stationDiagram;
 
                       return (
                         <div>
+                          {/* Station 2 Hourly Breakdown Navigation Bar */}
+                          <div style={{ display: "flex", gap: "6px", marginBottom: "10px", flexWrap: "wrap", alignItems: "center" }}>
+                            <span style={{ fontSize: "11.5px", fontWeight: 700, color: "#475569" }}>Notes Hourly Filter:</span>
+                            <button
+                              className={visualActiveHourTab === "all" ? "" : "ghost"}
+                              style={{ fontSize: "11px", padding: "3px 10px", borderRadius: "16px" }}
+                              onClick={() => { setVisualActiveHourTab("all"); setActiveVisualIdx(0); }}
+                            >
+                              📖 All Visuals ({allVisuals.length})
+                            </button>
+                            {[1, 2, 3, 4].map((hNum) => {
+                              const hCount = allVisuals.filter((v: any) => v.hour_index === hNum).length;
+                              const hTitle = stationNotes?.hour_modules?.[hNum - 1]?.hour_title || `Hour ${hNum}`;
+                              return (
+                                <button
+                                  key={hNum}
+                                  className={visualActiveHourTab === hNum ? "" : "ghost"}
+                                  style={{ fontSize: "11px", padding: "3px 10px", borderRadius: "16px" }}
+                                  onClick={() => { setVisualActiveHourTab(hNum); setActiveVisualIdx(0); }}
+                                  title={hTitle}
+                                >
+                                  ⏰ Hour {hNum} ({hCount})
+                                </button>
+                              );
+                            })}
+                          </div>
+
                           {/* Multi-Visual Selection Tabs */}
                           {visualsToShow.length > 0 && (
                             <div style={{ display: "flex", flexWrap: "wrap", gap: "6px", marginBottom: "8px" }}>
@@ -3825,6 +3950,7 @@ export function App() {
                                     }}
                                   >
                                     {vis.asset_type === "realistic_image" ? "🎨" : "📐"} {vIdx + 1}. {vis.title || `Visual ${vIdx + 1}`}{" "}
+                                    {vis.hour_index && <span style={{ fontSize: "10px", opacity: 0.85 }}>[H{vis.hour_index}]</span>}{" "}
                                     <span style={{ opacity: 0.8, fontSize: "10px" }}>({isGen ? "✓ Ready" : "Planned"})</span>
                                   </button>
                                 );
@@ -4256,43 +4382,80 @@ export function App() {
                       </div>
                     )}
 
-                    {/* Multi-Activity Selection Tabs */}
-                    {stationActivitiesList.length > 0 && (
-                      <div style={{ display: "flex", flexWrap: "wrap", gap: "6px", marginBottom: "8px" }}>
-                        {stationActivitiesList.map((act: any, aIdx: number) => {
-                          const isActive = aIdx === activeActivityIdx;
-                          const isGen = act.status === "generated" || (act.procedure_steps && act.procedure_steps.length > 0);
-                          return (
-                            <button
-                              key={aIdx}
-                              className={isActive ? "" : "ghost"}
-                              style={{
-                                fontSize: "11.5px",
-                                padding: "4px 10px",
-                                borderRadius: "6px",
-                                background: isActive ? "#0e7490" : "#fff",
-                                color: isActive ? "#fff" : "#0f172a",
-                                borderColor: isActive ? "#0e7490" : "#cbd5e1",
-                                fontWeight: isActive ? 700 : 500,
-                              }}
-                              onClick={() => {
-                                setActiveActivityIdx(aIdx);
-                                setStationActivity(act);
-                              }}
-                            >
-                              🧪 {aIdx + 1}. {act.activity_name || `Practical ${aIdx + 1}`}{" "}
-                              <span style={{ opacity: 0.8, fontSize: "10px" }}>({isGen ? "✓ Ready" : "Planned"})</span>
-                            </button>
-                          );
-                        })}
-                      </div>
-                    )}
-
-                    {/* Active Activity Meta & Prompt Bar */}
+                    {/* Active Activity Meta & Preview */}
                     {(() => {
-                      const curAct = stationActivitiesList[activeActivityIdx] || stationActivity;
+                      const allActivities = stationActivitiesList.length > 0
+                        ? stationActivitiesList
+                        : (stationActivity ? [stationActivity] : []);
+
+                      const activitiesToShow = activityActiveHourTab === "all"
+                        ? allActivities
+                        : allActivities.filter((a: any) => a.hour_index === activityActiveHourTab || (!a.hour_index && activityActiveHourTab === 1));
+
+                      const curAct = activitiesToShow[activeActivityIdx] || activitiesToShow[0] || stationActivity;
+
                       return (
                         <div>
+                          {/* Station 3 Hourly Breakdown Navigation Bar */}
+                          <div style={{ display: "flex", gap: "6px", marginBottom: "10px", flexWrap: "wrap", alignItems: "center" }}>
+                            <span style={{ fontSize: "11.5px", fontWeight: 700, color: "#475569" }}>Notes Hourly Filter:</span>
+                            <button
+                              className={activityActiveHourTab === "all" ? "" : "ghost"}
+                              style={{ fontSize: "11px", padding: "3px 10px", borderRadius: "16px" }}
+                              onClick={() => { setActivityActiveHourTab("all"); setActiveActivityIdx(0); }}
+                            >
+                              🧪 All Practicals ({allActivities.length})
+                            </button>
+                            {[1, 2, 3, 4].map((hNum) => {
+                              const hCount = allActivities.filter((a: any) => a.hour_index === hNum).length;
+                              const hTitle = stationNotes?.hour_modules?.[hNum - 1]?.hour_title || `Hour ${hNum}`;
+                              return (
+                                <button
+                                  key={hNum}
+                                  className={activityActiveHourTab === hNum ? "" : "ghost"}
+                                  style={{ fontSize: "11px", padding: "3px 10px", borderRadius: "16px" }}
+                                  onClick={() => { setActivityActiveHourTab(hNum); setActiveActivityIdx(0); }}
+                                  title={hTitle}
+                                >
+                                  ⏰ Hour {hNum} ({hCount})
+                                </button>
+                              );
+                            })}
+                          </div>
+
+                          {/* Multi-Activity Selection Tabs */}
+                          {activitiesToShow.length > 0 && (
+                            <div style={{ display: "flex", flexWrap: "wrap", gap: "6px", marginBottom: "8px" }}>
+                              {activitiesToShow.map((act: any, aIdx: number) => {
+                                const isActive = aIdx === activeActivityIdx;
+                                const isGen = act.status === "generated" || (act.procedure_steps && act.procedure_steps.length > 0);
+                                return (
+                                  <button
+                                    key={aIdx}
+                                    className={isActive ? "" : "ghost"}
+                                    style={{
+                                      fontSize: "11.5px",
+                                      padding: "4px 10px",
+                                      borderRadius: "6px",
+                                      background: isActive ? "#0e7490" : "#fff",
+                                      color: isActive ? "#fff" : "#0f172a",
+                                      borderColor: isActive ? "#0e7490" : "#cbd5e1",
+                                      fontWeight: isActive ? 700 : 500,
+                                    }}
+                                    onClick={() => {
+                                      setActiveActivityIdx(aIdx);
+                                      setStationActivity(act);
+                                    }}
+                                  >
+                                    🧪 {aIdx + 1}. {act.activity_name || `Practical ${aIdx + 1}`}{" "}
+                                    {act.hour_index && <span style={{ fontSize: "10px", opacity: 0.85 }}>[H{act.hour_index}]</span>}{" "}
+                                    <span style={{ opacity: 0.8, fontSize: "10px" }}>({isGen ? "✓ Ready" : "Planned"})</span>
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          )}
+
                           {curAct && (
                             <div style={{ padding: "8px 12px", background: "#f8fafc", borderRadius: "8px", border: "1px solid #e2e8f0", marginBottom: "8px", fontSize: "12px" }}>
                               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -6511,6 +6674,95 @@ export function App() {
                     onChange={(e) => setQfDifficulty(parseFloat(e.target.value))}
                     style={{ width: "100%" }}
                   />
+                </div>
+              </div>
+
+              {/* Target Parent Anchor Selector (Hourly Notes, Specific Diagram, or Specific Experiment) */}
+              <div style={{ marginBottom: "14px", padding: "12px", background: "#f5f3ff", border: "1px solid #ddd6fe", borderRadius: "8px" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px", flexWrap: "wrap", gap: "6px" }}>
+                  <label style={{ fontSize: "12.5px", fontWeight: 700, color: "#5b21b6" }}>
+                    🎯 Question Lineage & Target Parent Anchor (Direct Concept Grounding):
+                  </label>
+                  <span className="pill ok" style={{ fontSize: "10px", background: "#ede9fe", color: "#6d28d9", borderColor: "#c4b5fd" }}>
+                    Zero Hallucination Anchor
+                  </span>
+                </div>
+
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: "10px", alignItems: "center" }}>
+                  {/* Mode Selector */}
+                  <div>
+                    <select
+                      value={qfParentAnchorType}
+                      onChange={(e) => setQfParentAnchorType(e.target.value)}
+                      style={{ width: "100%", fontSize: "12.5px", padding: "6px 8px", borderRadius: "6px", border: "1px solid #a78bfa", background: "#fff", color: "#4c1d95", fontWeight: 600 }}
+                    >
+                      <option value="holistic">📖 All 4 Hours (Holistic Sub-strand Examination)</option>
+                      <option value="hour">⏰ Ground in Specific Lesson Notes Hour Module</option>
+                      <option value="diagram">📐 Ground in Specific Diagram / Visual Asset</option>
+                      <option value="experiment">🧪 Ground in Specific Practical Lab / Experiment</option>
+                    </select>
+                  </div>
+
+                  {/* Secondary Dropdown depending on anchor type */}
+                  {qfParentAnchorType === "hour" && (
+                    <div>
+                      <select
+                        value={qfTargetHour}
+                        onChange={(e) => setQfTargetHour(parseInt(e.target.value) || 1)}
+                        style={{ width: "100%", fontSize: "12px", padding: "6px 8px", borderRadius: "6px", border: "1px solid #a78bfa", background: "#fff" }}
+                      >
+                        {[1, 2, 3, 4].map((hNum) => {
+                          const hMod = (qfGroundTruthData?.notes?.hour_modules || stationNotes?.hour_modules)?.[hNum - 1];
+                          const title = hMod?.hour_title || `Hour ${hNum}: Lesson Module`;
+                          return <option key={hNum} value={hNum}>⏰ Hour {hNum}: {title}</option>;
+                        })}
+                      </select>
+                    </div>
+                  )}
+
+                  {qfParentAnchorType === "diagram" && (
+                    <div>
+                      {(() => {
+                        const diags = (stationVisualsList.length > 0 ? stationVisualsList : (qfGroundTruthData?.diagrams || []));
+                        return (
+                          <select
+                            value={qfSelectedDiagramId}
+                            onChange={(e) => setQfSelectedDiagramId(e.target.value)}
+                            style={{ width: "100%", fontSize: "12px", padding: "6px 8px", borderRadius: "6px", border: "1px solid #a78bfa", background: "#fff" }}
+                          >
+                            <option value="">-- Select Specific Diagram to Query --</option>
+                            {diags.map((d: any, dIdx: number) => {
+                              const id = d.asset_id || d.diagram_id || `diag_${dIdx+1}`;
+                              const title = d.title || d.diagram_title || `Figure ${dIdx+1}`;
+                              return <option key={dIdx} value={id}>📐 [{id}] {title}</option>;
+                            })}
+                          </select>
+                        );
+                      })()}
+                    </div>
+                  )}
+
+                  {qfParentAnchorType === "experiment" && (
+                    <div>
+                      {(() => {
+                        const acts = (stationActivitiesList.length > 0 ? stationActivitiesList : (qfGroundTruthData?.activities?.activities || (qfGroundTruthData?.activities ? [qfGroundTruthData.activities] : [])));
+                        return (
+                          <select
+                            value={qfSelectedExperimentId}
+                            onChange={(e) => setQfSelectedExperimentId(e.target.value)}
+                            style={{ width: "100%", fontSize: "12px", padding: "6px 8px", borderRadius: "6px", border: "1px solid #a78bfa", background: "#fff" }}
+                          >
+                            <option value="">-- Select Specific Experiment to Query --</option>
+                            {acts.map((a: any, aIdx: number) => {
+                              const id = a.activity_id || `act_${aIdx+1}`;
+                              const name = a.activity_name || a.title || `Practical ${aIdx+1}`;
+                              return <option key={aIdx} value={id}>🧪 [{id}] {name}</option>;
+                            })}
+                          </select>
+                        );
+                      })()}
+                    </div>
+                  )}
                 </div>
               </div>
 

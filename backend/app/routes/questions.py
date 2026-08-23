@@ -36,6 +36,10 @@ class QuestionBatchGenerateRequest(BaseModel):
     ]
     bloom_levels: list[str] = ["Application", "Analysis", "Critical Thinking", "Recall"]
     difficulty: float = 0.65
+    parent_anchor_type: str = "holistic"  # "holistic" | "hour" | "diagram" | "experiment"
+    target_hour: int | None = None  # 1..4
+    target_diagram_id: str | None = None
+    target_experiment_id: str | None = None
     custom_instructions: str = ""
 
 
@@ -260,6 +264,62 @@ def factory_generate_questions_batch(
         topic_type="questions",
     )
 
+    # 2.5 Extract Specific Parent Anchor Context (Hour, Diagram, or Experiment)
+    parent_anchor_directive = ""
+    target_diag_obj = None
+    target_exp_obj = None
+
+    if payload.target_diagram_id:
+        for d in (diagrams_obj if isinstance(diagrams_obj, list) else []):
+            if isinstance(d, dict) and (d.get("asset_id") == payload.target_diagram_id or d.get("diagram_id") == payload.target_diagram_id):
+                target_diag_obj = d
+                break
+        if target_diag_obj:
+            parent_anchor_directive = (
+                f"\n=== 🎯 TARGET PARENT ANCHOR: SPECIFIC VECTOR DIAGRAM (MANDATORY FOCUS) ===\n"
+                f"Asset ID: {target_diag_obj.get('asset_id')}\n"
+                f"Title: {target_diag_obj.get('title')}\n"
+                f"Hour Module: {target_diag_obj.get('hour_title', 'All')}\n"
+                f"Micro-Concept: {target_diag_obj.get('micro_concept')}\n"
+                f"Visual Specification: {target_diag_obj.get('vivid_prompt') or target_diag_obj.get('description')}\n"
+                f"SVG Markup snippet: {str(target_diag_obj.get('diagram_svg', ''))[:800]}\n"
+                f"CRITICAL RULE: ALL GENERATED QUESTIONS MUST DIRECTLY TEST THIS ATTACHED DIAGRAM ({target_diag_obj.get('title')}). "
+                f"Set 'diagram_ref': '{target_diag_obj.get('asset_id')}'. Include sub-questions asking to label specific parts, explain flow arrows, or deduce conclusions from this exact graphic.\n"
+            )
+
+    elif payload.target_experiment_id:
+        for a in ((activities_obj.get("activities") or []) if isinstance(activities_obj, dict) else []):
+            if isinstance(a, dict) and (a.get("activity_id") == payload.target_experiment_id):
+                target_exp_obj = a
+                break
+        if target_exp_obj:
+            parent_anchor_directive = (
+                f"\n=== 🧪 TARGET PARENT ANCHOR: SPECIFIC PRACTICAL EXPERIMENT / CSL PROTOCOL ===\n"
+                f"Activity ID: {target_exp_obj.get('activity_id')}\n"
+                f"Title: {target_exp_obj.get('activity_name')}\n"
+                f"Hour Module: {target_exp_obj.get('hour_title', 'All')}\n"
+                f"Objective: {target_exp_obj.get('objective')}\n"
+                f"Apparatus & Materials: {target_exp_obj.get('materials')}\n"
+                f"Procedure Steps: {target_exp_obj.get('procedure_steps')}\n"
+                f"Safety Protocols: {target_exp_obj.get('safety_hazards_to_check')}\n"
+                f"CRITICAL RULE: ALL GENERATED QUESTIONS MUST DIRECTLY TEST THIS PRACTICAL INVESTIGATION. "
+                f"Provide empirical observed data tables and multi-part questions (a)-(d) evaluating data analysis, scientific mechanisms, and farmer remediation recommendations.\n"
+            )
+
+    elif payload.target_hour:
+        hour_idx = int(payload.target_hour)
+        h_mods = (notes_obj.get("hour_modules") or notes_obj.get("key_concepts") or []) if isinstance(notes_obj, dict) else []
+        selected_mod = h_mods[hour_idx - 1] if hour_idx <= len(h_mods) else None
+        if selected_mod:
+            h_title = selected_mod.get("hour_title") or selected_mod.get("heading") or f"Hour {hour_idx}"
+            h_body = selected_mod.get("full_lecture_notes") or selected_mod.get("detailed_exposition") or selected_mod.get("content") or ""
+            parent_anchor_directive = (
+                f"\n=== ⏰ TARGET PARENT ANCHOR: LESSON HOUR MODULE {hour_idx} ===\n"
+                f"Hour Title: {h_title}\n"
+                f"Hour Content Summary: {h_body[:1500]}\n"
+                f"CRITICAL RULE: ALL GENERATED QUESTIONS MUST DIRECTLY TEST THE CONCEPTS AND WORKED EXAMPLES TAUGHT IN THIS SPECIFIC HOUR MODULE.\n"
+            )
+
     # 3. Assemble Langfuse Context
     context = langfuse_context_service.assemble_agent_context(
         agent_name="question-generator",
@@ -273,7 +333,7 @@ def factory_generate_questions_batch(
             "difficulty": payload.difficulty,
             "content_type_directives": ct_profile.format_for_prompt(),
             "notes_content": notes_text[:3000] or payload.sub_strand,
-            "diagram_id": "diag_01",
+            "diagram_id": target_diag_obj.get("asset_id", "diag_01") if target_diag_obj else "diag_01",
             "diagram_info": diagrams_text[:1500] or "Visual models available.",
             "activity_info": experiments_text[:1500] or "Practical experiments available.",
         },
@@ -294,6 +354,7 @@ def factory_generate_questions_batch(
             f"Mandated Question Typologies: {types_str}\n"
             f"Cognitive Bloom Progression: {blooms_str}\n"
             f"Difficulty Index: {payload.difficulty} (0.10 to 0.99)\n\n"
+            f"{parent_anchor_directive}\n\n"
             f"=== 📖 GROUND TRUTH KNOWLEDGE BASE (FROM SAVED FOUNDATION LAYERS) ===\n"
             f"LAYER 1 MASTER LESSON NOTES & CITATIONS:\n{notes_text[:4000]}\n\n"
             f"LAYER 2 DIAGRAMS & VISUAL REPOSITORIES:\n{diagrams_text[:2000]}\n\n"
@@ -389,9 +450,9 @@ def factory_generate_questions_batch(
 
             diag_ref = str(q.get("diagram_ref") or "").strip().lower()
             q_stem = f"{q.get('question_text', '')} {q.get('stimulus_context', '')} {q.get('micro_concept', '')} {' '.join([str(sp.get('sub_question', '')) for sp in q.get('structured_parts', [])])}".lower()
-            matched_diag = None
+            matched_diag = target_diag_obj
 
-            if len(diagrams_list) > 0:
+            if not matched_diag and len(diagrams_list) > 0:
                 best_score = -1
                 for d in diagrams_list:
                     if not isinstance(d, dict):

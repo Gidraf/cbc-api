@@ -8,7 +8,7 @@ from typing import Any, Optional
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 
-from ..infra.db import fetch_all, fetch_one
+from ..infra.db import execute, fetch_all, fetch_one
 from ..services.artifact_dna import artifact_dna_service
 from ..services.auth import AuthContext, require_roles
 from ..services.curriculum_extractor import curriculum_extractor
@@ -302,6 +302,131 @@ def list_curriculum_substrands(
                     })
 
     return {"substrands": rows, "count": len(rows)}
+
+
+@router.delete("/substrand")
+def delete_curriculum_substrand(
+    grade: str = Query(...),
+    subject: str = Query(...),
+    strand: str | None = Query(default=None),
+    sub_strand: str = Query(...),
+    _: AuthContext = Depends(require_roles("admin", "operator", "reviewer")),
+) -> dict[str, Any]:
+    """Deletes a sub-strand and all associated generated outputs (notes, diagrams, activities, questions)."""
+    clean_subj = subject.lower().strip()
+    clean_ss = sub_strand.lower().strip()
+
+    execute(
+        """
+        DELETE FROM substrand_resources
+        WHERE LOWER(curriculum->>'subject') = :subject
+          AND LOWER(curriculum->>'sub_strand') LIKE :ss
+        """,
+        {"subject": clean_subj, "ss": f"%{clean_ss}%"},
+    )
+    execute(
+        """
+        DELETE FROM curriculum_substrands
+        WHERE LOWER(subject) = :subject
+          AND LOWER(sub_strand_name) LIKE :ss
+        """,
+        {"subject": clean_subj, "ss": f"%{clean_ss}%"},
+    )
+    execute(
+        """
+        DELETE FROM question_dna
+        WHERE LOWER(curriculum_link->>'subject') = :subject
+          AND LOWER(curriculum_link->>'sub_strand') LIKE :ss
+        """,
+        {"subject": clean_subj, "ss": f"%{clean_ss}%"},
+    )
+
+    return {
+        "success": True,
+        "message": f"Deleted sub-strand '{sub_strand}' and all generated assets.",
+        "grade": grade,
+        "subject": subject,
+        "sub_strand": sub_strand,
+    }
+
+
+@router.delete("/strand")
+def delete_curriculum_strand(
+    grade: str = Query(...),
+    subject: str = Query(...),
+    strand: str = Query(...),
+    _: AuthContext = Depends(require_roles("admin", "operator", "reviewer")),
+) -> dict[str, Any]:
+    """Deletes an entire strand, all child sub-strands, and all associated generations."""
+    clean_subj = subject.lower().strip()
+    clean_st = strand.lower().strip()
+
+    execute(
+        """
+        DELETE FROM substrand_resources
+        WHERE LOWER(curriculum->>'subject') = :subject
+          AND (LOWER(curriculum->>'strand') LIKE :st OR LOWER(curriculum->>'strand_name') LIKE :st)
+        """,
+        {"subject": clean_subj, "st": f"%{clean_st}%"},
+    )
+    execute(
+        """
+        DELETE FROM curriculum_substrands
+        WHERE LOWER(subject) = :subject
+          AND LOWER(strand_name) LIKE :st
+        """,
+        {"subject": clean_subj, "st": f"%{clean_st}%"},
+    )
+    execute(
+        """
+        DELETE FROM question_dna
+        WHERE LOWER(curriculum_link->>'subject') = :subject
+          AND (LOWER(curriculum_link->>'strand') LIKE :st OR LOWER(curriculum_link->>'strand_name') LIKE :st)
+        """,
+        {"subject": clean_subj, "st": f"%{clean_st}%"},
+    )
+
+    return {
+        "success": True,
+        "message": f"Deleted strand '{strand}' and all child sub-strands.",
+        "grade": grade,
+        "subject": subject,
+        "strand": strand,
+    }
+
+
+@router.delete("/subject")
+def delete_curriculum_subject(
+    grade: str = Query(...),
+    subject: str = Query(...),
+    _: AuthContext = Depends(require_roles("admin", "operator", "reviewer")),
+) -> dict[str, Any]:
+    """Deletes an entire subject curriculum design and all its generated content."""
+    clean_subj = subject.lower().strip()
+
+    execute(
+        "DELETE FROM substrand_resources WHERE LOWER(curriculum->>'subject') = :subject",
+        {"subject": clean_subj},
+    )
+    execute(
+        "DELETE FROM curriculum_substrands WHERE LOWER(subject) = :subject",
+        {"subject": clean_subj},
+    )
+    execute(
+        "DELETE FROM curriculum_designs WHERE LOWER(subject) = :subject",
+        {"subject": clean_subj},
+    )
+    execute(
+        "DELETE FROM question_dna WHERE LOWER(curriculum_link->>'subject') = :subject",
+        {"subject": clean_subj},
+    )
+
+    return {
+        "success": True,
+        "message": f"Deleted subject '{subject}' across {grade} and all generations.",
+        "grade": grade,
+        "subject": subject,
+    }
 
 
 @router.get("/dna/{artifact_id}")
@@ -1278,6 +1403,8 @@ def factory_plan_visuals(
             f"7. Video Simulation Action Storyboard (step-by-step camera shots for an experiential student demonstration)\n\n"
             f"For EACH visual asset provide:\n"
             f"- asset_id (e.g. vis_01, vis_02, vis_03, vis_04, vis_05, vis_06, vis_07, vis_08)\n"
+            f"- hour_index (1 | 2 | 3 | 4 - the specific hour module in the lesson notes this visual illustrates)\n"
+            f"- hour_title (e.g. 'Hour 1: Macro-Economic Architecture' or 'Hour 4: Soil Profile & Lab Practicum')\n"
             f"- title (e.g. 'Soil Profile Horizon Strata (O-A-B-C Layers & Root Zone)')\n"
             f"- asset_type ('technical_svg' | 'realistic_image' | 'apparatus_schematic' | 'process_flowchart' | 'infographic_chart' | 'video_storyboard')\n"
             f"- micro_concept (the specific sub-topic tested, e.g. 'Soil Strata & Horizon Identification')\n"
@@ -1288,6 +1415,8 @@ def factory_plan_visuals(
             f'{{\n  "sub_strand": "{payload.sub_strand}",\n  "visuals": [\n'
             f'    {{\n'
             f'      "asset_id": "vis_01",\n'
+            f'      "hour_index": 1,\n'
+            f'      "hour_title": "Hour 1: ...",\n'
             f'      "title": "...",\n'
             f'      "asset_type": "technical_svg",\n'
             f'      "micro_concept": "...",\n'
@@ -1600,6 +1729,8 @@ def factory_plan_activities(
             f"4. A Classroom Pedagogical Game, Role-Play, or Practical Simulation\n\n"
             f"For EACH activity include:\n"
             f"- activity_id (e.g. act_01, act_02, act_03, act_04)\n"
+            f"- hour_index (1 | 2 | 3 | 4 - the specific hour module in the lesson notes this practical task belongs to)\n"
+            f"- hour_title (e.g. 'Hour 1: Macro-Economic Architecture' or 'Hour 4: Soil Profile & Lab Practicum')\n"
             f"- activity_name (engaging, descriptive title)\n"
             f"- activity_type ('laboratory_experiment' | 'field_investigation' | 'csl_project' | 'classroom_game')\n"
             f"- objective (measurable inquiry goal aligned with SLOs)\n"
@@ -1617,7 +1748,9 @@ def factory_plan_activities(
             f"Return JSON format:\n"
             f'{{\n  "sub_strand": "{payload.sub_strand}",\n  "activities": [\n'
             f'    {{\n'
-            f'      "activity_id": "act_1",\n'
+            f'      "activity_id": "act_01",\n'
+            f'      "hour_index": 1,\n'
+            f'      "hour_title": "Hour 1: ...",\n'
             f'      "activity_name": "...",\n'
             f'      "activity_type": "laboratory_experiment",\n'
             f'      "objective": "...",\n'
