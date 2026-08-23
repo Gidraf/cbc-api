@@ -50,6 +50,47 @@ def sync_langfuse_datasets(
     from ..services.langfuse_context import langfuse_context_service
 
     raw_items = langfuse_context_service.fetch_raw_datasets_from_langfuse()
+
+    # If no datasets in Langfuse yet, seed the default cbc/datasets with sample Agriculture DTE design
+    if not raw_items:
+        sample_payload = {
+            "title": "Diploma in Teacher Education Agriculture Curriculum Design",
+            "source": "Mobile_JS_Browser_Injector",
+            "file_id": "1uRWxOaKYWZ-ZPgD-VEvYOTXDh62oy6Zd",
+            "captured_at": "2026-08-23T07:57:54.268Z",
+            "output": (
+                "DIPLOMA IN TEACHER EDUCATION\nPRE-PRIMARY AND PRIMARY\nAGRICULTURE\nCURRICULUM DESIGN 2024\n\n"
+                "ESSENCE STATEMENT\nKenya is mainly dependent on an agro-based economy that requires competent manpower for sustainable development.\n\n"
+                "GENERAL LEARNING OUTCOMES\n1. Develop Agricultural knowledge, skills, values and attitudes.\n"
+                "2. Apply knowledge and pedagogical skills to rear domestic animals.\n\n"
+                "STRAND 1.0 AGRICULTURE AND ENVIRONMENT\n"
+                "1.1 Overview of Agriculture (4 hours)\n"
+                "By the end of the sub strand, the teacher trainee should be able to:\n"
+                "a) discuss the importance of Agriculture in Kenya,\n"
+                "b) relate the key natural resources to Agricultural production in Kenya,\n"
+                "Suggested Learning Experiences\n"
+                "• Through discussion and literature review, develop the meaning and importance of Agriculture.\n"
+                "• Research on key natural resources that influence Agricultural production.\n"
+                "Suggested Key Inquiry Questions\n"
+                "How does curriculum in primary education relate to Agriculture productivity in Kenya?\n"
+                "Core competencies to be developed:\nCritical thinking and problem solving.\nValues:\nPatriotism as teacher trainees take initiative.\n\n"
+                "1.4 Soil Composition (4 hours)\n"
+                "By the end of the sub strand, the teacher trainee should be able to:\n"
+                "a) investigate components of a garden soil sample,\n"
+                "b) relate components of soil to its productivity in Agriculture,\n"
+                "Suggested Learning Experiences\n"
+                "• Carry out experiments to investigate presence of components (air, water, organic matter) of a garden soil sample.\n"
+                "• Prepare compost manure using heap and pit methods.\n"
+                "Suggested Key Inquiry Questions\nWhat makes a quality fertile soil?"
+            ),
+        }
+        try:
+            # Upload to Langfuse
+            langfuse_context_service.upload_dataset_item("cbc/datasets", sample_payload)
+        except Exception:
+            pass
+        raw_items = [sample_payload]
+
     results = []
     for item in raw_items:
         try:

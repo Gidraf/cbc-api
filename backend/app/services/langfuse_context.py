@@ -112,32 +112,62 @@ class LangfuseContextService:
         self._set_cache("master_context", _DEV_FALLBACK_MASTER_CONTEXT)
         return _DEV_FALLBACK_MASTER_CONTEXT
 
-    def fetch_raw_datasets_from_langfuse(self, dataset_names: list[str] | None = None) -> list[dict[str, Any]]:
-        """Fetches all raw dataset items directly from Langfuse project (e.g. cbc/datasets)."""
-        names_to_try = dataset_names or ["cbc/datasets", "cbc-datasets", "cbc_datasets", "datasets", "curriculum", "grade-dte", "grade-7"]
+    def fetch_raw_datasets_from_langfuse(self) -> list[dict[str, Any]]:
+        """Fetches all raw dataset items directly from Langfuse project by querying the real datasets list first."""
+        import httpx
+        from urllib.parse import quote
+
         found_items: list[dict[str, Any]] = []
 
-        if self._client:
-            for name in names_to_try:
-                try:
-                    dataset = self._client.get_dataset(name=name)
-                    if dataset and dataset.items:
-                        logger.info("Found %d raw dataset items in Langfuse dataset '%s'", len(dataset.items), name)
-                        for item in dataset.items:
-                            # Package the raw payload as-is
-                            inp = item.input if isinstance(item.input, dict) else {"input": item.input}
-                            out = item.expected_output or (inp.get("output") if isinstance(inp, dict) else "") or ""
-                            meta = item.metadata or {}
-                            combined = {
-                                "dataset_name": name,
-                                "item_id": item.id,
+        if not (settings.langfuse_public_key and settings.langfuse_secret_key):
+            logger.info("Langfuse credentials not configured; skipping Langfuse dataset sync.")
+            return found_items
+
+        base_url = settings.langfuse_host.rstrip("/")
+        auth = (settings.langfuse_public_key, settings.langfuse_secret_key)
+
+        try:
+            # 1. Discover all datasets actually present in Langfuse project
+            with httpx.Client(timeout=15.0) as client:
+                resp = client.get(f"{base_url}/api/public/datasets?limit=100", auth=auth)
+                if resp.status_code != 200:
+                    logger.warning("Could not list datasets from Langfuse (HTTP %d): %s", resp.status_code, resp.text[:200])
+                    return found_items
+
+                res_json = resp.json()
+                datasets_list = res_json.get("data", []) if isinstance(res_json, dict) else []
+
+                logger.info("Found %d datasets in Langfuse project.", len(datasets_list))
+
+                # 2. Fetch items for each real dataset
+                for ds in datasets_list:
+                    ds_name = ds.get("name")
+                    if not ds_name:
+                        continue
+
+                    # Fetch dataset details & items
+                    encoded_name = quote(ds_name, safe="")
+                    ds_resp = client.get(f"{base_url}/api/public/datasets/{encoded_name}", auth=auth)
+                    if ds_resp.status_code == 200:
+                        ds_data = ds_resp.json()
+                        items = ds_data.get("items", [])
+                        logger.info("Dataset '%s' contains %d items.", ds_name, len(items))
+
+                        for itm in items:
+                            inp = itm.get("input") if isinstance(itm.get("input"), dict) else {"input": itm.get("input")}
+                            out = itm.get("expectedOutput") or (inp.get("output") if isinstance(inp, dict) else "") or ""
+                            meta = itm.get("metadata") or {}
+
+                            found_items.append({
+                                "dataset_name": ds_name,
+                                "item_id": itm.get("id"),
                                 **inp,
                                 "output": out if out else (inp.get("output") or meta.get("output") or ""),
                                 "metadata": meta,
-                            }
-                            found_items.append(combined)
-                except Exception as exc:
-                    logger.debug("Dataset '%s' not present in Langfuse: %s", name, exc)
+                            })
+
+        except Exception as exc:
+            logger.warning("Error fetching datasets from Langfuse: %s", exc)
 
         return found_items
 
