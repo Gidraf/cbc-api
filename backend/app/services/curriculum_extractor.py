@@ -522,16 +522,18 @@ class CurriculumExtractorService:
             raw_snippet=body,
         )
 
-    def _persist_to_db(self, design: ParsedCurriculumDesign) -> None:
+    def _persist_to_db(self, design: ParsedCurriculumDesign, status: str = "draft_pending_human_review") -> None:
+        review_status = design.metadata.get("review_status") or status
+
         execute(
             """
             INSERT INTO curriculum_designs (
                 design_id, subject, subject_code, grade, level, essence_statement,
-                general_learning_outcomes, raw_payload, metadata, updated_at
+                general_learning_outcomes, raw_payload, metadata, review_status, updated_at
             )
             VALUES (
                 :design_id, :subject, :subject_code, :grade, :level, :essence_statement,
-                CAST(:glo AS jsonb), CAST(:raw_payload AS jsonb), CAST(:metadata AS jsonb), NOW()
+                CAST(:glo AS jsonb), CAST(:raw_payload AS jsonb), CAST(:metadata AS jsonb), :review_status, NOW()
             )
             ON CONFLICT (design_id) DO UPDATE SET
                 subject = EXCLUDED.subject,
@@ -542,6 +544,7 @@ class CurriculumExtractorService:
                 general_learning_outcomes = EXCLUDED.general_learning_outcomes,
                 raw_payload = EXCLUDED.raw_payload,
                 metadata = EXCLUDED.metadata,
+                review_status = EXCLUDED.review_status,
                 updated_at = NOW()
             """,
             {
@@ -560,6 +563,7 @@ class CurriculumExtractorService:
                     }
                 ),
                 "metadata": to_json(design.metadata),
+                "review_status": review_status,
             },
         )
 
@@ -665,11 +669,27 @@ class CurriculumExtractorService:
             },
         }
 
-        try:
-            return langfuse_context_service.upload_dataset_item(design.grade, langfuse_payload)
-        except Exception as exc:
-            logger.warning("Langfuse sync failed for design %s: %s", design.design_id, exc)
-            return {"status": "saved_locally_only", "error": str(exc)}
+    def set_blueprint_decision(self, design_id: str, decision: str, notes: str = "") -> dict[str, Any]:
+        """Human reviewer accepts or rejects the AI-generated curriculum blueprint."""
+        from ..infra.db import execute, fetch_one
+
+        status = "accepted_active" if decision.lower() in {"accept", "approved", "active", "accepted"} else "rejected"
+        execute(
+            """
+            UPDATE curriculum_designs
+            SET review_status = :status, human_review_notes = :notes, updated_at = NOW()
+            WHERE design_id = :design_id
+            """,
+            {"design_id": design_id, "status": status, "notes": notes},
+        )
+        row = fetch_one("SELECT * FROM curriculum_designs WHERE design_id = :design_id", {"design_id": design_id})
+        return {
+            "design_id": design_id,
+            "status": status,
+            "decision": decision,
+            "human_review_notes": notes,
+            "updated_design": row,
+        }
 
 
 curriculum_extractor = CurriculumExtractorService()

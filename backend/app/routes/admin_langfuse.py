@@ -73,6 +73,7 @@ def get_subject_context(
 
 
 @router.get("/datasets/{grade}/{subject}/strands")
+@router.get("/datasets/{grade}/subjects/{subject}/strands")
 def get_subject_strands(
     grade: str,
     subject: str,
@@ -85,6 +86,7 @@ def get_subject_strands(
 
 
 @router.get("/datasets/{grade}/{subject}/strands/{strand}/{sub_strand}/slos")
+@router.get("/datasets/{grade}/subjects/{subject}/strands/{strand}/substrands/{sub_strand}/slos")
 def get_substrand_slos(
     grade: str,
     subject: str,

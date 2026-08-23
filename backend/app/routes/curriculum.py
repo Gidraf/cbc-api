@@ -105,6 +105,95 @@ def sync_langfuse_datasets(
     }
 
 
+@router.get("/raw-datasets")
+def list_raw_datasets(
+    _: AuthContext = Depends(require_roles("admin", "operator", "reviewer", "developer")),
+) -> dict[str, Any]:
+    """Fetches all raw dataset items from Langfuse (e.g. cbc/datasets) to display in the UI for processing."""
+    from ..services.langfuse_context import langfuse_context_service
+
+    raw_items = langfuse_context_service.fetch_raw_datasets_from_langfuse()
+
+    sample_dte = {
+        "dataset_name": "cbc/datasets",
+        "item_id": "1uRWxOaKYWZ-ZPgD-VEvYOTXDh62oy6Zd",
+        "url": "https://drive.google.com/file/d/1uRWxOaKYWZ-ZPgD-VEvYOTXDh62oy6Zd/view",
+        "title": "Diploma in Teacher Education Agriculture Curriculum Design (2024)",
+        "source": "Mobile_JS_Browser_Injector",
+        "file_id": "1uRWxOaKYWZ-ZPgD-VEvYOTXDh62oy6Zd",
+        "captured_at": "2026-08-23T07:57:54.268Z",
+        "output": (
+            "DIPLOMA IN TEACHER EDUCATION\nPRE-PRIMARY AND PRIMARY\nAGRICULTURE\nCURRICULUM DESIGN 2024\n\n"
+            "ESSENCE STATEMENT\nKenya is mainly dependent on an agro-based economy that requires competent manpower for sustainable development.\n\n"
+            "GENERAL LEARNING OUTCOMES\n1. Develop Agricultural knowledge, skills, values and attitudes.\n"
+            "2. Apply knowledge and pedagogical skills to rear domestic animals.\n\n"
+            "STRAND 1.0 AGRICULTURE AND ENVIRONMENT\n"
+            "1.1 Overview of Agriculture (4 hours)\n"
+            "By the end of the sub strand, the teacher trainee should be able to:\n"
+            "a) discuss the importance of Agriculture in Kenya,\n"
+            "b) relate the key natural resources to Agricultural production in Kenya,\n"
+            "Suggested Learning Experiences\n"
+            "• Through discussion and literature review, develop the meaning and importance of Agriculture.\n"
+            "• Research on key natural resources that influence Agricultural production.\n"
+            "Suggested Key Inquiry Questions\n"
+            "How does curriculum in primary education relate to Agriculture productivity in Kenya?\n"
+            "Core competencies to be developed:\nCritical thinking and problem solving.\nValues:\nPatriotism as teacher trainees take initiative.\n\n"
+            "1.4 Soil Composition (4 hours)\n"
+            "By the end of the sub strand, the teacher trainee should be able to:\n"
+            "a) investigate components of a garden soil sample,\n"
+            "b) relate components of soil to its productivity in Agriculture,\n"
+            "Suggested Learning Experiences\n"
+            "• Carry out experiments to investigate presence of components (air, water, organic matter) of a garden soil sample.\n"
+            "• Prepare compost manure using heap and pit methods.\n"
+            "Suggested Key Inquiry Questions\nWhat makes a quality fertile soil?"
+        ),
+    }
+
+    if not raw_items:
+        raw_items = [sample_dte]
+
+    # Check which datasets are already processed in DB
+    processed_designs = fetch_all("SELECT design_id, subject, grade, level, review_status, updated_at FROM curriculum_designs")
+    processed_map = {d["design_id"]: d for d in processed_designs}
+
+    enriched = []
+    for item in raw_items:
+        txt = item.get("output") or item.get("text") or ""
+        item_id = item.get("item_id") or item.get("file_id") or "raw_ds"
+        enriched.append({
+            "item_id": item_id,
+            "dataset_name": item.get("dataset_name", "cbc/datasets"),
+            "title": item.get("title") or f"Curriculum Dataset {item_id[:8]}",
+            "source": item.get("source", "Langfuse Dataset"),
+            "url": item.get("url", ""),
+            "captured_at": item.get("captured_at", ""),
+            "text_length": len(txt),
+            "output_preview": txt[:300] + ("..." if len(txt) > 300 else ""),
+            "raw_payload": item,
+        })
+
+    return {"raw_datasets": enriched, "count": len(enriched)}
+
+
+class BlueprintDecisionRequest(BaseModel):
+    design_id: str
+    decision: str  # "accept" | "reject"
+    notes: str = ""
+
+
+@router.post("/blueprint-decision")
+def set_blueprint_decision(
+    payload: BlueprintDecisionRequest,
+    _: AuthContext = Depends(require_roles("admin", "operator", "reviewer")),
+) -> dict[str, Any]:
+    """Human reviewer accepts or rejects the AI-generated curriculum blueprint."""
+    return curriculum_extractor.set_blueprint_decision(
+        design_id=payload.design_id,
+        decision=payload.decision,
+        notes=payload.notes,
+    )
+
+
 @router.get("/designs")
 def list_curriculum_designs(
     _: AuthContext = Depends(require_roles("admin", "operator", "reviewer", "developer")),
@@ -113,11 +202,11 @@ def list_curriculum_designs(
         """
         SELECT cd.design_id, cd.subject, cd.subject_code, cd.grade, cd.level,
                cd.essence_statement, cd.general_learning_outcomes, cd.metadata,
-               cd.created_at, cd.updated_at,
+               cd.review_status, cd.human_review_notes, cd.created_at, cd.updated_at,
                COUNT(cs.id) as substrand_count
         FROM curriculum_designs cd
         LEFT JOIN curriculum_substrands cs ON cd.design_id = cs.design_id
-        GROUP BY cd.design_id
+        GROUP BY cd.design_id, cd.review_status, cd.human_review_notes
         ORDER BY cd.updated_at DESC
         """
     )

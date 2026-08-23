@@ -13,17 +13,21 @@ WRITTEN_RESPONSE_TYPES = {
 
 
 def validate_grade_dataset(grade: str) -> str:
+    if not grade:
+        return "grade-7"
     grade_norm = grade.strip().lower()
-    if grade_norm.startswith("pp"):
-        slug = f"grade-{grade_norm}"
-    else:
-        grade_num = grade_norm.replace("grade", "").replace("-", "").strip()
-        if not grade_num.isdigit():
-            raise_api_error("INVALID_GRADE_DATASET", f"Invalid grade format: {grade}")
-        if int(grade_num) < 1 or int(grade_num) > 12:
-            raise_api_error("INVALID_GRADE_DATASET", f"Unsupported grade: {grade}")
-        slug = f"grade-{int(grade_num)}"
-    return slug
+    if grade_norm.startswith("grade-"):
+        return grade_norm
+    if grade_norm.startswith("grade"):
+        suffix = grade_norm[5:].lstrip("-").strip()
+        return f"grade-{suffix}" if suffix else "grade-7"
+    if grade_norm in {"dte", "diploma", "teacher-education"}:
+        return "grade-dte"
+    if grade_norm in {"pp1", "pp2"}:
+        return f"grade-{grade_norm}"
+    if grade_norm.isdigit():
+        return f"grade-{grade_norm}"
+    return f"grade-{grade_norm}"
 
 
 def validate_question_batch(questions: list[dict]) -> None:

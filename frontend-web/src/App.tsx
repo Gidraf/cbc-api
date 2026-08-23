@@ -110,6 +110,10 @@ export function App() {
   const [substrandSlos, setSubstrandSlos] = useState<string[]>([]);
   const [rawCurriculumInput, setRawCurriculumInput] = useState("");
   const [ingestedDesignResult, setIngestedDesignResult] = useState<any>(null);
+  const [rawLangfuseDatasets, setRawLangfuseDatasets] = useState<any[]>([]);
+  const [curriculumDesignsList, setCurriculumDesignsList] = useState<any[]>([]);
+  const [blueprintReviewModal, setBlueprintReviewModal] = useState<any | null>(null);
+  const [humanBlueprintNotes, setHumanBlueprintNotes] = useState<string>("");
 
   // Global BECF Context
   const [masterContext, setMasterContext] = useState("");
@@ -238,15 +242,28 @@ export function App() {
   async function loadDatasets() {
     try {
       const res = await fetchJson<any>("/api/v1/admin/langfuse/datasets", { method: "GET" }, auth());
-      setDatasetsList(res.datasets || []);
-    } catch(e) { /* ignore */ }
+      const rawList = res.datasets || [];
+      const normalized: string[] = rawList.map((d: any) => typeof d === "string" ? d : (d.name || String(d)));
+      const finalGrades = normalized.length > 0 ? normalized : ["grade-dte", "grade-7", "grade-8"];
+      setDatasetsList(finalGrades);
+      const gradeToUse = finalGrades[0];
+      setSelectedGrade(gradeToUse);
+      setGenGrade(gradeToUse);
+      await loadGradeSubjects(gradeToUse);
+      await loadGradeDataset(gradeToUse);
+    } catch(e) {
+      setDatasetsList(["grade-dte", "grade-7"]);
+    }
   }
 
   async function loadGradeDataset(gradeSlug: string) {
+    if (!gradeSlug) return;
     try {
       const res = await fetchJson<any>(`/api/v1/admin/langfuse/datasets/${gradeSlug}`, { method: "GET" }, auth());
       setGradeDatasetItems(res.items || []);
-    } catch(e) { /* ignore */ }
+    } catch(e) {
+      setGradeDatasetItems([]);
+    }
   }
 
   async function onUploadSubjectContext(e: FormEvent) {
@@ -312,11 +329,63 @@ export function App() {
       }, auth());
       setIngestedDesignResult(res);
       await loadDatasets();
+      await loadCurriculumDesigns();
+      await loadRawLangfuseDatasets();
       if (res.grade) {
         setSelectedGrade(res.grade);
         setGenGrade(res.grade);
         await loadGradeDataset(res.grade);
         await loadGradeSubjects(res.grade);
+      }
+      return res;
+    });
+  }
+
+  async function loadRawLangfuseDatasets() {
+    try {
+      const res = await fetchJson<any>("/api/v1/curriculum/raw-datasets", { method: "GET" }, auth());
+      setRawLangfuseDatasets(res.raw_datasets || []);
+    } catch(e) {
+      setRawLangfuseDatasets([]);
+    }
+  }
+
+  async function loadCurriculumDesigns() {
+    try {
+      const res = await fetchJson<any>("/api/v1/curriculum/designs", { method: "GET" }, auth());
+      setCurriculumDesignsList(res.designs || []);
+    } catch(e) {
+      setCurriculumDesignsList([]);
+    }
+  }
+
+  async function onProcessDatasetItem(item: any) {
+    await run(`Process with AI & BECF Context: ${item.title || item.item_id}`, async () => {
+      const res = await fetchJson<any>("/api/v1/curriculum/ingest-raw", {
+        method: "POST",
+        body: JSON.stringify({ raw_payload: item.raw_payload || item })
+      }, auth());
+      setBlueprintReviewModal(res);
+      await loadCurriculumDesigns();
+      await loadDatasets();
+      return res;
+    });
+  }
+
+  async function onBlueprintDecision(designId: string, decision: "accept" | "reject") {
+    await run(`Curriculum Blueprint Decision (${decision})`, async () => {
+      const res = await fetchJson<any>("/api/v1/curriculum/blueprint-decision", {
+        method: "POST",
+        body: JSON.stringify({ design_id: designId, decision, notes: humanBlueprintNotes })
+      }, auth());
+      setBlueprintReviewModal(null);
+      setHumanBlueprintNotes("");
+      await loadCurriculumDesigns();
+      await loadDatasets();
+      if (res?.updated_design?.grade) {
+        setSelectedGrade(res.updated_design.grade);
+        setGenGrade(res.updated_design.grade);
+        await loadGradeSubjects(res.updated_design.grade);
       }
       return res;
     });
@@ -328,8 +397,11 @@ export function App() {
         method: "POST"
       }, auth());
       await loadDatasets();
+      await loadRawLangfuseDatasets();
+      await loadCurriculumDesigns();
       if (res.structured_blueprints && res.structured_blueprints.length > 0) {
         setIngestedDesignResult(res.structured_blueprints[0]);
+        setBlueprintReviewModal(res.structured_blueprints[0]);
         const firstGrade = res.structured_blueprints[0].grade;
         if (firstGrade) {
           setSelectedGrade(firstGrade);
@@ -428,14 +500,14 @@ export function App() {
   // Question Bank
   async function loadQuestionBank() {
     try {
-      const res = await fetchJson<any>("/questions/bank?limit=50", { method: "GET" }, auth());
-      setQuestionBank(res.questions || []);
+      const res = await fetchJson<any>("/api/v1/questions?limit=50", { method: "GET" }, auth());
+      setQuestionBank(res.items || res.questions || []);
     } catch(e) { /* ignore */ }
   }
 
   async function triggerQuestionAction(questionId: string, action: string) {
     await run(`Question Action (${action})`, async () => {
-      const res = await fetchJson<any>(`/questions/${questionId}/action`, {
+      const res = await fetchJson<any>(`/api/v1/questions/${questionId}/action`, {
         method: "POST",
         body: JSON.stringify({ action, reason: `Triggered from control plane: ${action}` })
       }, auth());
@@ -447,7 +519,7 @@ export function App() {
   // Target Metrics
   async function loadTodayTarget() {
     try {
-      const res = await fetchJson<any>("/targets/today", { method: "GET" }, auth());
+      const res = await fetchJson<any>("/api/v1/targets/today", { method: "GET" }, auth());
       setDailyTargetData(res);
     } catch(e) { /* ignore */ }
   }
@@ -455,7 +527,7 @@ export function App() {
   async function configureTargetSubmit(e: FormEvent) {
     e.preventDefault();
     await run("Save Daily Target", async () => {
-      const res = await fetchJson<any>("/targets/configure", {
+      const res = await fetchJson<any>("/api/v1/targets/configure", {
         method: "POST",
         body: JSON.stringify({ target_date: new Date().toISOString().split("T")[0], target_count: targetCountInput })
       }, auth());
@@ -480,8 +552,8 @@ export function App() {
   useEffect(() => {
     if (currentRole) {
       loadDatasets();
-      loadGradeDataset(selectedGrade);
-      loadGradeSubjects(selectedGrade);
+      loadRawLangfuseDatasets();
+      loadCurriculumDesigns();
       loadTodayTarget();
       loadQuestionBank();
       loadCostSummary();
@@ -658,36 +730,308 @@ export function App() {
           <section className="panel">
             <div className="panel-head">
               <div>
-                <h2>Datasets & Curriculum Blueprints</h2>
-                <p>Ingest raw curriculum datasets (DTE, Grade 1-12) to extract blueprints and tailored agent prompts.</p>
+                <h2>Live Langfuse Datasets & Curriculum Blueprints</h2>
+                <p>All datasets are pulled directly from Langfuse. Click <strong>"⚡ Process with AI"</strong> to extract the subject, grade, strands, diagrams, experiments with safety hazard criteria, and dynamic agent prompts, then manually review and approve the blueprint.</p>
+              </div>
+              <div style={{display: 'flex', gap: '0.5rem'}}>
+                <button onClick={loadRawLangfuseDatasets} disabled={isRunning} className="ghost">
+                  🔄 Refresh Langfuse Datasets
+                </button>
+                <button onClick={syncLangfuseDatasets} disabled={isRunning} style={{background: '#4338ca', borderColor: '#4338ca'}}>
+                  {isRunning ? "Syncing..." : "📥 Auto-Pull & Sync All from Langfuse"}
+                </button>
               </div>
             </div>
 
-            {/* Raw Dataset Ingestion & Extraction Engine */}
-            <div className="panel" style={{marginTop: '0.5rem', marginBottom: '1rem', border: '1px solid var(--accent, #6366f1)'}}>
+            {/* 1. LIVE LANGFUSE RAW DATASETS LIST */}
+            <div className="panel" style={{marginTop: '0.5rem', marginBottom: '1.5rem', border: '1px solid #cbd5e1'}}>
               <div className="panel-head">
                 <div>
-                  <h3>📥 Raw Dataset Ingestion & Automated Blueprinting</h3>
-                  <p style={{fontSize: '0.85rem', color: 'var(--muted)'}}>
-                    Paste raw unclarified dataset text or PDF extracts (e.g. Diploma in Teacher Education, Grade 1-12 curriculum text).
-                    The AI engine automatically extracts subject, strands, sub-strands, SLOs, safety hazards to check, diagram specifications, and dynamic agent prompts.
-                  </p>
+                  <h3>📦 Raw Datasets in Langfuse ({rawLangfuseDatasets.length})</h3>
+                  <p style={{fontSize: '0.85rem', color: 'var(--muted)'}}>Unprocessed raw curriculum design texts (OCR extracts, Google Drive PDFs, browser captures).</p>
+                </div>
+              </div>
+              <div style={{padding: '0 1rem 1rem'}}>
+                {rawLangfuseDatasets.length === 0 ? (
+                  <div style={{padding: '1.5rem', textAlign: 'center', color: '#64748b'}}>
+                    No raw datasets found in Langfuse yet. Click <strong>"📥 Auto-Pull & Sync All from Langfuse"</strong> to seed and load live datasets.
+                  </div>
+                ) : (
+                  <table style={{width: '100%', fontSize: '0.85rem', borderCollapse: 'collapse'}}>
+                    <thead>
+                      <tr style={{textAlign: 'left', borderBottom: '2px solid #e2e8f0'}}>
+                        <th style={{padding: '8px'}}>Dataset / Source</th>
+                        <th style={{padding: '8px'}}>Title / File ID</th>
+                        <th style={{padding: '8px'}}>Length</th>
+                        <th style={{padding: '8px'}}>Preview</th>
+                        <th style={{padding: '8px', textAlign: 'right'}}>Action</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {rawLangfuseDatasets.map((item: any, idx: number) => (
+                        <tr key={idx} style={{borderBottom: '1px solid #f1f5f9'}}>
+                          <td style={{padding: '8px'}}>
+                            <span className="pill" style={{background: '#e0e7ff', color: '#3730a3'}}>{item.dataset_name}</span>
+                            <div style={{fontSize: '0.75rem', color: '#64748b', marginTop: '2px'}}>{item.source}</div>
+                          </td>
+                          <td style={{padding: '8px'}}>
+                            <strong>{item.title}</strong>
+                            <div style={{fontSize: '0.75rem', color: '#64748b'}}>{item.file_id || item.item_id}</div>
+                          </td>
+                          <td style={{padding: '8px'}}>
+                            {(item.text_length || 0).toLocaleString()} chars
+                          </td>
+                          <td style={{padding: '8px', color: '#475569', maxWidth: '300px'}}>
+                            <div style={{fontSize: '0.78rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis'}}>
+                              {item.output_preview || "(No preview)"}
+                            </div>
+                          </td>
+                          <td style={{padding: '8px', textAlign: 'right'}}>
+                            <button
+                              onClick={() => onProcessDatasetItem(item)}
+                              disabled={isRunning}
+                              style={{fontSize: '0.8rem', padding: '6px 12px', background: '#059669', borderColor: '#059669'}}
+                            >
+                              ⚡ Process with AI & BECF
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+            </div>
+
+            {/* 2. HUMAN REVIEW MODAL FOR GENERATED BLUEPRINT */}
+            {blueprintReviewModal && (
+              <div style={{
+                position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+                background: 'rgba(15, 23, 42, 0.75)', zIndex: 9999,
+                display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem'
+              }}>
+                <div style={{
+                  background: '#ffffff', borderRadius: '12px', width: '100%', maxWidth: '960px',
+                  maxHeight: '90vh', overflowY: 'auto', padding: '1.5rem', boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)'
+                }}>
+                  <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '2px solid #e2e8f0', paddingBottom: '0.75rem'}}>
+                    <div>
+                      <h2 style={{margin: 0, color: '#1e293b'}}>🔍 Curriculum Blueprint Human Review</h2>
+                      <p style={{margin: 0, fontSize: '0.85rem', color: '#64748b'}}>Review AI-extracted Grade, Subject, Strands, Safety Hazard Guidelines, and Generated Agent Prompts before publishing to Generation Studio.</p>
+                    </div>
+                    <button className="ghost" onClick={() => setBlueprintReviewModal(null)} style={{fontSize: '1.2rem', padding: '4px 10px'}}>✕</button>
+                  </div>
+
+                  {/* Blueprint Summary Details */}
+                  <div style={{marginTop: '1rem', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '0.75rem'}}>
+                    <div style={{background: '#f8fafc', padding: '0.75rem', borderRadius: '8px', border: '1px solid #e2e8f0'}}>
+                      <div style={{fontSize: '0.75rem', color: '#64748b'}}>Discovered Subject</div>
+                      <div style={{fontSize: '1.1rem', fontWeight: 700, color: '#0f172a'}}>{blueprintReviewModal.subject}</div>
+                      <span className="pill ok" style={{marginTop: '4px'}}>{blueprintReviewModal.subject_code || "CORE"}</span>
+                    </div>
+                    <div style={{background: '#f8fafc', padding: '0.75rem', borderRadius: '8px', border: '1px solid #e2e8f0'}}>
+                      <div style={{fontSize: '0.75rem', color: '#64748b'}}>Grade / Level</div>
+                      <div style={{fontSize: '1.1rem', fontWeight: 700, color: '#0f172a'}}>{blueprintReviewModal.grade}</div>
+                      <div style={{fontSize: '0.8rem', color: '#64748b'}}>{blueprintReviewModal.level || "Teacher Education"}</div>
+                    </div>
+                    <div style={{background: '#f8fafc', padding: '0.75rem', borderRadius: '8px', border: '1px solid #e2e8f0'}}>
+                      <div style={{fontSize: '0.75rem', color: '#64748b'}}>Sub-strands Extracted</div>
+                      <div style={{fontSize: '1.1rem', fontWeight: 700, color: '#0f172a'}}>{blueprintReviewModal.substrand_count || blueprintReviewModal.substrands?.length || 0}</div>
+                      <div style={{fontSize: '0.75rem', color: '#059669'}}>✓ All SLOs & Hours Parsed</div>
+                    </div>
+                    <div style={{background: '#f8fafc', padding: '0.75rem', borderRadius: '8px', border: '1px solid #e2e8f0'}}>
+                      <div style={{fontSize: '0.75rem', color: '#64748b'}}>Universal DNA Certificates</div>
+                      <div style={{fontSize: '0.75rem', color: '#334155', wordBreak: 'break-all'}}><strong>Dataset:</strong> {blueprintReviewModal.dataset_dna_id?.slice(0, 16)}...</div>
+                      <div style={{fontSize: '0.75rem', color: '#334155', wordBreak: 'break-all'}}><strong>Subject:</strong> {blueprintReviewModal.subject_dna_id?.slice(0, 16)}...</div>
+                    </div>
+                  </div>
+
+                  {/* Essence Statement */}
+                  <div style={{marginTop: '1rem', background: '#eff6ff', border: '1px solid #bfdbfe', padding: '0.75rem', borderRadius: '8px'}}>
+                    <strong style={{color: '#1e40af'}}>Essence Statement:</strong>
+                    <p style={{margin: '4px 0 0', fontSize: '0.85rem', color: '#1e3a8a'}}>{blueprintReviewModal.essence_statement || "Develops competent vocational and pedagogical capabilities aligned with Kenyan national goals."}</p>
+                  </div>
+
+                  {/* Strands & Sub-strands Accordion Table */}
+                  <div style={{marginTop: '1.25rem'}}>
+                    <h4 style={{margin: '0 0 0.5rem', color: '#334155'}}>🌿 Extracted Strands & Sub-strand Blueprints</h4>
+                    <div style={{border: '1px solid #e2e8f0', borderRadius: '8px', overflow: 'hidden'}}>
+                      {blueprintReviewModal.substrands?.map((ss: any, idx: number) => (
+                        <div key={idx} style={{padding: '0.75rem', borderBottom: idx < blueprintReviewModal.substrands.length - 1 ? '1px solid #e2e8f0' : 'none', background: idx % 2 === 0 ? '#ffffff' : '#f8fafc'}}>
+                          <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center'}}>
+                            <div>
+                              <strong style={{color: '#0f172a'}}>{ss.strand} ➔ {ss.sub_strand}</strong>
+                              <span className="pill" style={{marginLeft: '8px', background: '#e2e8f0'}}>{ss.hours || "4 hours"}</span>
+                            </div>
+                            <span className="pill ok">DNA: {ss.substrand_dna_id?.slice(0, 10)}...</span>
+                          </div>
+
+                          {/* SLOs & KIQs */}
+                          <div style={{marginTop: '0.5rem', fontSize: '0.8rem', color: '#475569'}}>
+                            <div><strong>Specific Learning Outcomes ({ss.slo_count || ss.slos?.length || 0}):</strong></div>
+                            <ul style={{margin: '4px 0 6px 16px', padding: 0}}>
+                              {(ss.slos || []).slice(0, 3).map((slo: any, sIdx: number) => (
+                                <li key={sIdx}>{typeof slo === 'string' ? slo : (slo.text || slo.id)}</li>
+                              ))}
+                            </ul>
+                          </div>
+
+                          {/* Planned Assets & Safety Hazards */}
+                          <div style={{display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: '0.5rem', marginTop: '0.5rem', fontSize: '0.78rem'}}>
+                            {ss.diagrams_required?.length > 0 && (
+                              <div style={{background: '#f5f3ff', border: '1px solid #ddd6fe', padding: '6px', borderRadius: '6px', color: '#5b21b6'}}>
+                                <strong>📐 Visual Models Needed:</strong> {ss.diagrams_required.join(', ')}
+                              </div>
+                            )}
+                            {ss.experiments?.length > 0 && (
+                              <div style={{background: '#ecfdf5', border: '1px solid #a7f3d0', padding: '6px', borderRadius: '6px', color: '#065f46'}}>
+                                <strong>🧪 Planned Practical Tasks:</strong> {ss.experiments.join('; ')}
+                              </div>
+                            )}
+                            {ss.safety_hazards_to_check?.length > 0 && (
+                              <div style={{background: '#fef2f2', border: '1px solid #fecaca', padding: '6px', borderRadius: '6px', color: '#991b1b'}}>
+                                <strong>⚠️ Strict Safety Hazards to Audit:</strong> {ss.safety_hazards_to_check.slice(0, 2).join('; ')}
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Dynamic Prompt Package Preview */}
+                          {ss.prompt_package && (
+                            <details style={{marginTop: '0.5rem', fontSize: '0.78rem', background: '#f1f5f9', padding: '6px', borderRadius: '6px'}}>
+                              <summary style={{cursor: 'pointer', fontWeight: 600, color: '#334155'}}>🤖 View Generated Agent Prompts for this Sub-strand</summary>
+                              <div style={{marginTop: '6px', display: 'flex', flexDirection: 'column', gap: '6px'}}>
+                                <div><strong>📝 Notes Generator Prompt:</strong> <pre style={{margin: '2px 0', padding: '4px', background: '#ffffff', borderRadius: '4px', whiteSpace: 'pre-wrap'}}>{ss.prompt_package.notes_prompt}</pre></div>
+                                <div><strong>📐 Diagram Generator Prompt:</strong> <pre style={{margin: '2px 0', padding: '4px', background: '#ffffff', borderRadius: '4px', whiteSpace: 'pre-wrap'}}>{ss.prompt_package.diagram_prompt}</pre></div>
+                                <div><strong>🧪 Experiment & Safety Prompt:</strong> <pre style={{margin: '2px 0', padding: '4px', background: '#ffffff', borderRadius: '4px', whiteSpace: 'pre-wrap'}}>{ss.prompt_package.experiment_activity_prompt}</pre></div>
+                                <div><strong>❓ Questions Prompt:</strong> <pre style={{margin: '2px 0', padding: '4px', background: '#ffffff', borderRadius: '4px', whiteSpace: 'pre-wrap'}}>{ss.prompt_package.question_prompt}</pre></div>
+                                <div><strong>🔍 Safety Reviewer Prompt:</strong> <pre style={{margin: '2px 0', padding: '4px', background: '#ffffff', borderRadius: '4px', whiteSpace: 'pre-wrap'}}>{ss.prompt_package.reviewer_prompt}</pre></div>
+                                <div><strong>🤖 Dual Approver Deliberation Prompts:</strong> <pre style={{margin: '2px 0', padding: '4px', background: '#ffffff', borderRadius: '4px', whiteSpace: 'pre-wrap'}}>Auditor 1: {ss.prompt_package.approver_agent1_prompt}&#10;&#10;Auditor 2: {ss.prompt_package.approver_agent2_prompt}</pre></div>
+                              </div>
+                            </details>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Human Decision Form */}
+                  <div style={{marginTop: '1.25rem', padding: '1rem', background: '#f8fafc', border: '1px solid #cbd5e1', borderRadius: '8px'}}>
+                    <h4 style={{margin: '0 0 0.5rem', color: '#1e293b'}}>✍️ Human Reviewer Decision & Feedback</h4>
+                    <textarea
+                      value={humanBlueprintNotes}
+                      onChange={(e) => setHumanBlueprintNotes(e.target.value)}
+                      placeholder="Add any curriculum adjustments, notes, or approval rationale..."
+                      rows={2}
+                      style={{width: '100%', fontSize: '0.85rem', marginBottom: '0.75rem'}}
+                    />
+                    <div style={{display: 'flex', gap: '0.75rem', justifyContent: 'flex-end'}}>
+                      <button
+                        onClick={() => onBlueprintDecision(blueprintReviewModal.design_id, "reject")}
+                        disabled={isRunning}
+                        style={{background: '#ef4444', borderColor: '#ef4444'}}
+                      >
+                        ❌ Reject Blueprint
+                      </button>
+                      <button
+                        onClick={() => onBlueprintDecision(blueprintReviewModal.design_id, "accept")}
+                        disabled={isRunning}
+                        style={{background: '#059669', borderColor: '#059669'}}
+                      >
+                        ✅ Accept Blueprint & Publish to Generation Studio
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* 3. ACTIVE APPROVED CURRICULUM BLUEPRINTS TABLE */}
+            <div className="panel" style={{marginBottom: '1.5rem', border: '1px solid #cbd5e1'}}>
+              <div className="panel-head">
+                <div>
+                  <h3>📚 Published Curriculum Blueprints ({curriculumDesignsList.length})</h3>
+                  <p style={{fontSize: '0.85rem', color: 'var(--muted)'}}>Active curriculum designs ready for the Multi-Agent Generation Studio.</p>
+                </div>
+              </div>
+              <div style={{padding: '0 1rem 1rem'}}>
+                {curriculumDesignsList.length === 0 ? (
+                  <div style={{padding: '1.5rem', textAlign: 'center', color: '#64748b'}}>
+                    No curriculum designs approved yet. Process a raw dataset above to generate and approve the first blueprint.
+                  </div>
+                ) : (
+                  <table style={{width: '100%', fontSize: '0.85rem', borderCollapse: 'collapse'}}>
+                    <thead>
+                      <tr style={{textAlign: 'left', borderBottom: '2px solid #e2e8f0'}}>
+                        <th style={{padding: '8px'}}>Subject</th>
+                        <th style={{padding: '8px'}}>Grade / Level</th>
+                        <th style={{padding: '8px'}}>Sub-strands</th>
+                        <th style={{padding: '8px'}}>Status</th>
+                        <th style={{padding: '8px'}}>Updated</th>
+                        <th style={{padding: '8px', textAlign: 'right'}}>Action</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {curriculumDesignsList.map((d: any, idx: number) => (
+                        <tr key={idx} style={{borderBottom: '1px solid #f1f5f9'}}>
+                          <td style={{padding: '8px'}}>
+                            <strong>{d.subject}</strong>
+                            <div style={{fontSize: '0.75rem', color: '#64748b'}}>{d.essence_statement?.slice(0, 60)}...</div>
+                          </td>
+                          <td style={{padding: '8px'}}>
+                            <span className="pill" style={{background: '#e0e7ff', color: '#3730a3'}}>{d.grade}</span>
+                            <div style={{fontSize: '0.75rem', color: '#64748b', marginTop: '2px'}}>{d.level}</div>
+                          </td>
+                          <td style={{padding: '8px'}}>
+                            <strong>{d.substrand_count || 0}</strong> sub-strands
+                          </td>
+                          <td style={{padding: '8px'}}>
+                            <span className={`pill ${d.review_status === 'accepted_active' ? 'ok' : 'warn'}`}>
+                              {d.review_status === 'accepted_active' ? '✓ Active in Studio' : d.review_status || 'Draft'}
+                            </span>
+                          </td>
+                          <td style={{padding: '8px', fontSize: '0.78rem', color: '#64748b'}}>
+                            {new Date(d.updated_at).toLocaleDateString()}
+                          </td>
+                          <td style={{padding: '8px', textAlign: 'right'}}>
+                            <button
+                              onClick={() => {
+                                setGenGrade(d.grade);
+                                setGenSubject(d.subject);
+                                loadGradeSubjects(d.grade);
+                                setView("generation");
+                              }}
+                              style={{fontSize: '0.8rem', padding: '6px 12px'}}
+                            >
+                              🚀 Open in Generation Studio
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+            </div>
+
+            {/* 4. RAW TEXT / PDF UPLOAD FALLBACK */}
+            <div className="panel" style={{marginBottom: '1.5rem', border: '1px solid #e2e8f0'}}>
+              <div className="panel-head">
+                <div>
+                  <h3>📥 Paste / Upload Additional Raw Curriculum Text</h3>
+                  <p style={{fontSize: '0.85rem', color: 'var(--muted)'}}>If you have custom curriculum text not in Langfuse, paste it here to run the extractor.</p>
                 </div>
               </div>
               <div style={{padding: '0 1rem 1rem'}}>
                 <textarea
                   value={rawCurriculumInput}
                   onChange={(e) => setRawCurriculumInput(e.target.value)}
-                  rows={8}
+                  rows={5}
                   style={{width: '100%', fontFamily: 'monospace', fontSize: '0.82rem'}}
                   placeholder="Paste raw curriculum design text or JSON dataset payload here..."
                 />
                 <div style={{display: 'flex', gap: '0.5rem', marginTop: '0.5rem', flexWrap: 'wrap'}}>
                   <button onClick={onIngestRawCurriculum} disabled={isRunning || !rawCurriculumInput.trim()}>
-                    {isRunning ? "Structuring Curriculum..." : "Ingest & Structure Curriculum Design"}
-                  </button>
-                  <button onClick={syncLangfuseDatasets} disabled={isRunning} style={{background: '#4338ca', borderColor: '#4338ca'}}>
-                    {isRunning ? "Fetching from Langfuse..." : "📥 Pull & Structure All Datasets from Langfuse"}
+                    {isRunning ? "Structuring..." : "Structure Curriculum from Text"}
                   </button>
                   <button
                     className="ghost"
@@ -698,36 +1042,6 @@ export function App() {
                     Load Sample Agriculture DTE Design
                   </button>
                 </div>
-
-                {ingestedDesignResult && (
-                  <div style={{marginTop: '1rem', padding: '0.75rem', background: '#f8fafc', borderRadius: '8px', border: '1px solid #e2e8f0'}}>
-                    <h4>✓ Successfully Ingested: {ingestedDesignResult.subject} ({ingestedDesignResult.grade})</h4>
-                    <p style={{fontSize: '0.85rem', color: '#475569'}}>{ingestedDesignResult.essence_statement}</p>
-                    <div style={{marginTop: '0.5rem', display: 'flex', gap: '0.5rem', flexWrap: 'wrap'}}>
-                      <span className="pill ok">Sub-strands: {ingestedDesignResult.substrand_count}</span>
-                      <span className="pill ok">Dataset DNA: {ingestedDesignResult.dataset_dna_id}</span>
-                      <span className="pill ok">Subject DNA: {ingestedDesignResult.subject_dna_id}</span>
-                      <span className="pill ok">Langfuse Synced</span>
-                    </div>
-
-                    <div style={{marginTop: '0.75rem', maxHeight: '240px', overflowY: 'auto'}}>
-                      {ingestedDesignResult.substrands?.map((ss: any, idx: number) => (
-                        <div key={idx} style={{fontSize: '0.8rem', padding: '0.5rem', borderBottom: '1px solid #e2e8f0'}}>
-                          <strong>{ss.strand} ➔ {ss.sub_strand}</strong> ({ss.hours}) | {ss.slo_count} SLOs
-                          {ss.diagrams_required?.length > 0 && (
-                            <div style={{color: '#6366f1'}}>📐 Visual Diagram specs: {ss.diagrams_required.join(', ')}</div>
-                          )}
-                          {ss.experiments?.length > 0 && (
-                            <div style={{color: '#059669'}}>🧪 Experiments planned: {ss.experiments.join('; ')}</div>
-                          )}
-                          {ss.safety_hazards_to_check?.length > 0 && (
-                            <div style={{color: '#dc2626'}}>⚠️ Safety Hazards to Audit: {ss.safety_hazards_to_check.slice(0, 2).join('; ')}</div>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
               </div>
             </div>
 
@@ -772,32 +1086,43 @@ export function App() {
                   <select value={genGrade} onChange={(e) => {
                     const g = e.target.value;
                     setGenGrade(g);
-                    loadGradeSubjects(g);
+                    if (g) loadGradeSubjects(g);
                   }}>
                     <option value="">Select level...</option>
-                    {datasetsList.map(d => <option key={d} value={d}>{d}</option>)}
+                    {datasetsList.map((d: any) => {
+                      const val = typeof d === "string" ? d : (d?.name || String(d));
+                      return <option key={val} value={val}>{val}</option>;
+                    })}
                   </select>
                 </label>
                 <label>
                   Subject
                   <select value={genSubject} onChange={(e) => {
-                    setGenSubject(e.target.value);
-                    if (e.target.value) loadSubjectStrands(genGrade, e.target.value);
+                    const sub = e.target.value;
+                    setGenSubject(sub);
+                    if (sub && genGrade) loadSubjectStrands(genGrade, sub);
                   }}>
                     <option value="">Select subject...</option>
-                    {gradeSubjects.map((s: any) => <option key={s.name || s} value={s.name || s}>{s.name || s}</option>)}
+                    {gradeSubjects.map((s: any) => {
+                      const val = typeof s === "string" ? s : (s?.name || String(s));
+                      return <option key={val} value={val}>{val}</option>;
+                    })}
                   </select>
                 </label>
                 <label>
                   Strand
                   <select value={genStrand} onChange={(e) => {
-                    setGenStrand(e.target.value);
+                    const st = e.target.value;
+                    setGenStrand(st);
                     setGenSubstrand("");
                     setGenSloId("");
                     setSubstrandSlos([]);
                   }}>
                     <option value="">Select strand...</option>
-                    {subjectStrands.map((s: any) => <option key={s.name} value={s.name}>{s.name}</option>)}
+                    {subjectStrands.map((s: any) => {
+                      const val = typeof s === "string" ? s : (s?.name || String(s));
+                      return <option key={val} value={val}>{val}</option>;
+                    })}
                   </select>
                 </label>
               </div>
@@ -805,22 +1130,27 @@ export function App() {
                 <label>
                   Sub-Strand
                   <select value={genSubstrand} onChange={(e) => {
-                    setGenSubstrand(e.target.value);
-                    if (e.target.value) {
-                      loadSubstrandSlos(genGrade, genSubject, genStrand, e.target.value);
+                    const subSt = e.target.value;
+                    setGenSubstrand(subSt);
+                    if (subSt && genGrade && genSubject && genStrand) {
+                      loadSubstrandSlos(genGrade, genSubject, genStrand, subSt);
                     }
                   }}>
                     <option value="">Select sub-strand...</option>
-                    {subjectStrands.find((s: any) => s.name === genStrand)?.sub_strands?.map((ss: any) => (
-                      <option key={ss.name} value={ss.name}>{ss.name}</option>
-                    ))}
+                    {subjectStrands.find((s: any) => (s?.name || s) === genStrand)?.sub_strands?.map((ss: any) => {
+                      const val = typeof ss === "string" ? ss : (ss?.name || String(ss));
+                      return <option key={val} value={val}>{val}</option>;
+                    })}
                   </select>
                 </label>
                 <label>
                   SLO ID
                   <select value={genSloId} onChange={(e) => setGenSloId(e.target.value)}>
                     <option value="">Select SLO...</option>
-                    {substrandSlos.map(slo => <option key={slo} value={slo}>{slo}</option>)}
+                    {substrandSlos.map((slo: any) => {
+                      const val = typeof slo === "string" ? slo : (slo?.text || slo?.id || String(slo));
+                      return <option key={val} value={val}>{val}</option>;
+                    })}
                   </select>
                 </label>
               </div>

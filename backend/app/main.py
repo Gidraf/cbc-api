@@ -355,6 +355,8 @@ def list_runs(_: AuthContext = Depends(require_roles("admin", "operator", "revie
 
 
 @app.post("/pipeline/generate")
+@app.post("/generate")
+@app.post("/api/v1/generate")
 def generate(payload: GenerateRequest, _: AuthContext = Depends(require_roles("admin", "operator"))) -> GenerateResponse:
     start = time.time()
     validate_grade_dataset(payload.curriculum.grade)

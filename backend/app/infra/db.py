@@ -253,6 +253,13 @@ MIGRATIONS: list[tuple[str, str]] = [
         CREATE INDEX IF NOT EXISTS idx_artifact_dna_slo ON artifact_dna(universal_slo_id);
         """,
     ),
+    (
+        "006_blueprint_review_status",
+        """
+        ALTER TABLE curriculum_designs ADD COLUMN IF NOT EXISTS review_status TEXT NOT NULL DEFAULT 'accepted_active';
+        ALTER TABLE curriculum_designs ADD COLUMN IF NOT EXISTS human_review_notes TEXT NULL;
+        """,
+    ),
 ]
 
 

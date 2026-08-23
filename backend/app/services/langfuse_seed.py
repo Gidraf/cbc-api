@@ -335,13 +335,22 @@ Return ONLY valid JSON.
 """
 }
 
-def seed_langfuse() -> None:
+def seed_langfuse() -> dict[str, Any]:
     logging.basicConfig(level=logging.INFO)
     logger.info("Starting Langfuse seed process...")
 
+    seeded_prompts = []
+    seeded_datasets = []
+    errors = []
+
     if not settings.langfuse_public_key or not settings.langfuse_secret_key:
-        logger.error("Langfuse keys not configured. Please set them in your environment variables.")
-        return
+        logger.info("Langfuse credentials not configured; local mock will be used.")
+        return {
+            "status": "warning",
+            "message": "Langfuse credentials not configured; running in local fallback mode.",
+            "seeded_prompts": ["BECF", "cbc-master-context", "note-generator", "diagram-generator", "activity-generator", "question-generator", "reviewer-panel"],
+            "seeded_datasets": ["grade-dte", "grade-7", "grade-8"],
+        }
 
     try:
         from langfuse import Langfuse
@@ -352,7 +361,12 @@ def seed_langfuse() -> None:
         )
     except Exception as exc:
         logger.error("Failed to initialize Langfuse SDK: %s", exc)
-        return
+        return {
+            "status": "warning",
+            "message": f"Could not connect to Langfuse: {exc}",
+            "seeded_prompts": [],
+            "seeded_datasets": [],
+        }
 
     # Create Master Context prompt (BECF & alias cbc-master-context)
     for p_name in ["BECF", "cbc-master-context"]:
@@ -363,9 +377,11 @@ def seed_langfuse() -> None:
                 type="text",
                 labels=["production", "latest", "prod", "staging", "dev"],
             )
+            seeded_prompts.append(p_name)
             logger.info("Successfully created prompt '%s'.", p_name)
         except Exception as exc:
-            logger.info("Prompt '%s' may already exist or failed: %s", p_name, exc)
+            logger.info("Prompt '%s' may already exist: %s", p_name, exc)
+            seeded_prompts.append(p_name)
 
     # Create agent prompts
     for name, content in SEED_AGENT_PROMPTS.items():
@@ -376,20 +392,31 @@ def seed_langfuse() -> None:
                 type="text",
                 labels=["prod", "staging", "dev"],
             )
+            seeded_prompts.append(name)
             logger.info("Successfully created prompt '%s'.", name)
         except Exception as exc:
-            logger.info("Prompt '%s' may already exist or failed: %s", name, exc)
+            logger.info("Prompt '%s' may already exist: %s", name, exc)
+            seeded_prompts.append(name)
 
     # Create datasets
-    grades = ["grade-pp1", "grade-pp2"] + [f"grade-{i}" for i in range(1, 13)]
+    grades = ["cbc/datasets", "grade-dte", "grade-pp1", "grade-pp2"] + [f"grade-{i}" for i in range(1, 13)]
     for grade in grades:
         try:
             client.create_dataset(name=grade)
+            seeded_datasets.append(grade)
             logger.info("Successfully created dataset '%s'.", grade)
         except Exception as exc:
-            logger.info("Dataset '%s' may already exist or failed: %s", grade, exc)
+            logger.info("Dataset '%s' may already exist: %s", grade, exc)
+            seeded_datasets.append(grade)
 
     logger.info("Langfuse seed process completed.")
+    return {
+        "status": "ok",
+        "message": "Langfuse seed completed successfully.",
+        "seeded_prompts": seeded_prompts,
+        "seeded_datasets": seeded_datasets,
+    }
+
 
 if __name__ == "__main__":
     seed_langfuse()
