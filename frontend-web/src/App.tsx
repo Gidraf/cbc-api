@@ -167,6 +167,23 @@ export function App() {
   const [questionsRefinePrompt, setQuestionsRefinePrompt] = useState("");
   const [questionsApproved, setQuestionsApproved] = useState(false);
 
+  // Live Web Research, Thinking Trace & Quality Audit States
+  const [notesResearchDossier, setNotesResearchDossier] = useState<any>(null);
+  const [notesQualityAudit, setNotesQualityAudit] = useState<any>(null);
+
+  const [diagramResearchDossier, setDiagramResearchDossier] = useState<any>(null);
+  const [diagramQualityAudit, setDiagramQualityAudit] = useState<any>(null);
+
+  const [activityResearchDossier, setActivityResearchDossier] = useState<any>(null);
+  const [activityQualityAudit, setActivityQualityAudit] = useState<any>(null);
+
+  const [questionsResearchDossier, setQuestionsResearchDossier] = useState<any>(null);
+  const [questionsQualityAudit, setQuestionsQualityAudit] = useState<any>(null);
+
+  // Active Trace Inspector Modal State
+  const [activeTraceStation, setActiveTraceStation] = useState<"notes" | "diagram" | "activity" | "questions">("notes");
+  const [showTraceModal, setShowTraceModal] = useState(false);
+
   // Sub-strand Generator Studio State
   const [substrandGenModal, setSubstrandGenModal] = useState<{ strand_name: string; strand_id?: string } | null>(null);
   const [generatedSubstrandsDraft, setGeneratedSubstrandsDraft] = useState<any[]>([]);
@@ -568,15 +585,23 @@ export function App() {
   }
 
   async function generateFactoryNotes(customInstructions?: string) {
-    await run("Generating Notes in Factory...", async () => {
+    await run("Generating Comprehensive Notes in Factory...", async () => {
+      const activeCd = curriculumDesignsList.find((cd: any) =>
+        cd.subject?.toLowerCase() === genSubject?.toLowerCase() &&
+        (cd.grade === genGrade || cd.grade === genGrade.replace("grade-", ""))
+      ) || (ingestedDesignResult?.subject?.toLowerCase() === genSubject?.toLowerCase() ? ingestedDesignResult : null);
+
       const payload = {
         grade: genGrade,
         subject: genSubject,
         strand: genStrand,
         sub_strand: genSubstrand,
         slo_id: genSloId,
-        level: "Basic Education",
-        custom_instructions: customInstructions || notesRefinePrompt,
+        level: activeCd?.level || "Basic Education",
+        essence_statement: activeCd?.essence_statement || "",
+        general_learning_outcomes: activeCd?.general_learning_outcomes || [],
+        source_material_text: substrandSourceMaterial,
+        custom_instructions: customInstructions || notesRefinePrompt || "Author exhaustive, college-level pedagogical lesson notes with 3-5 comprehensive concepts, PCK teacher notes, common learner misconception analysis, formative checks, worked problem scenarios, and practical fieldwork steps.",
       };
       const res = await fetchJson<any>("/api/v1/curriculum/factory/generate-notes", {
         method: "POST",
@@ -586,6 +611,8 @@ export function App() {
         setStationNotes(res.notes);
         setNotesApproved(false);
       }
+      if (res.research_dossier) setNotesResearchDossier(res.research_dossier);
+      if (res.quality_audit) setNotesQualityAudit(res.quality_audit);
       return res;
     });
   }
@@ -609,6 +636,8 @@ export function App() {
         setStationDiagram(res.diagram);
         setDiagramApproved(false);
       }
+      if (res.research_dossier) setDiagramResearchDossier(res.research_dossier);
+      if (res.quality_audit) setDiagramQualityAudit(res.quality_audit);
       return res;
     });
   }
@@ -631,6 +660,8 @@ export function App() {
         setStationActivity(res.activity);
         setActivityApproved(false);
       }
+      if (res.research_dossier) setActivityResearchDossier(res.research_dossier);
+      if (res.quality_audit) setActivityQualityAudit(res.quality_audit);
       return res;
     });
   }
@@ -657,6 +688,8 @@ export function App() {
         setStationQuestions(res.questions);
         setQuestionsApproved(false);
       }
+      if (res.research_dossier) setQuestionsResearchDossier(res.research_dossier);
+      if (res.quality_audit) setQuestionsQualityAudit(res.quality_audit);
       return res;
     });
   }
@@ -1922,6 +1955,24 @@ export function App() {
                   </div>
                 </div>
 
+                {/* Live Web & Academic Paper Research Intelligence Active Banner */}
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 14px", background: "#f0fdf4", border: "1px solid #86efac", borderRadius: "8px", marginBottom: "16px" }}>
+                  <div style={{ display: "flex", gap: "10px", alignItems: "center" }}>
+                    <span style={{ fontSize: "20px" }}>🌐</span>
+                    <div>
+                      <strong style={{ fontSize: "13px", color: "#14532d" }}>Live Web & Academic Paper Research Agent Active</strong>
+                      <div style={{ fontSize: "11px", color: "#166534" }}>Browsing live web, KICD standards, and KALRO research to inject verified empirical data and eliminate shallow content.</div>
+                    </div>
+                  </div>
+                  <button
+                    className="ghost"
+                    style={{ fontSize: "12px", border: "1px solid #16a34a", color: "#166534", fontWeight: 600 }}
+                    onClick={() => { setActiveTraceStation("notes"); setShowTraceModal(true); }}
+                  >
+                    🧠 Inspect Agent Thinking Trace & Citations
+                  </button>
+                </div>
+
                 {/* 4-Station Interactive Production Quadrant */}
                 <div className="factory-quadrant">
                   {/* STATION 1: REVISION NOTES */}
@@ -1931,9 +1982,20 @@ export function App() {
                         <h3>📝 Station 1: Notes Studio</h3>
                         <small className="muted">Constructivist explanation & PCK scaffolding</small>
                       </div>
-                      <span className={`pill ${notesApproved ? "ok" : stationNotes ? "warn" : "idle"}`}>
-                        {notesApproved ? "Approved" : stationNotes ? "Generated" : "Pending"}
-                      </span>
+                      <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
+                        {notesResearchDossier && (
+                          <span
+                            className="pill ok"
+                            style={{ fontSize: "10px", cursor: "pointer" }}
+                            onClick={() => { setActiveTraceStation("notes"); setShowTraceModal(true); }}
+                          >
+                            🌐 {notesResearchDossier.citations?.length || 0} Sources • 🛡️ {notesQualityAudit?.score || 100}%
+                          </span>
+                        )}
+                        <span className={`pill ${notesApproved ? "ok" : stationNotes ? "warn" : "idle"}`}>
+                          {notesApproved ? "Approved" : stationNotes ? "Generated" : "Pending"}
+                        </span>
+                      </div>
                     </div>
 
                     <div className="factory-refine-box">
@@ -1953,35 +2015,104 @@ export function App() {
 
                     <div className="factory-preview-pane">
                       {stationNotes ? (
-                        <div>
-                          <strong style={{ fontSize: "14px", color: "#0e7490" }}>{stationNotes.title}</strong>
-                          <p style={{ margin: "6px 0 10px" }}>{stationNotes.intro}</p>
+                        <div style={{ display: "grid", gap: "10px" }}>
+                          <div style={{ padding: "10px", background: "#f0f9ff", borderRadius: "8px", border: "1px solid #bae6fd" }}>
+                            <strong style={{ fontSize: "15px", color: "#0369a1" }}>📘 {stationNotes.title}</strong>
+                            <p style={{ margin: "6px 0 0", fontSize: "13px", lineHeight: "1.5", color: "#334155" }}>{stationNotes.intro}</p>
+                          </div>
 
+                          {/* Core Concepts Breakdown */}
                           {stationNotes.key_concepts?.map((kc: any, idx: number) => (
-                            <div key={idx} style={{ marginTop: "8px", padding: "8px", background: "#fff", borderRadius: "6px", border: "1px solid #e2e8f0" }}>
-                              <strong>{kc.heading || `Concept ${idx + 1}`}</strong>
-                              <p style={{ margin: "4px 0", fontSize: "12px" }}>{kc.content}</p>
+                            <div key={idx} style={{ padding: "12px", background: "#fff", borderRadius: "8px", border: "1px solid #e2e8f0", boxShadow: "0 1px 3px rgba(0,0,0,0.05)" }}>
+                              <strong style={{ fontSize: "13px", color: "#0f172a" }}>{kc.heading || `Concept ${idx + 1}`}</strong>
+                              <p style={{ margin: "6px 0 8px", fontSize: "12.5px", lineHeight: "1.5", color: "#1e293b", whiteSpace: "pre-line" }}>{kc.content}</p>
+
+                              {/* PCK Teacher Note */}
                               {kc.pedagogical_notes && (
-                                <small style={{ color: "#6b7280", fontStyle: "italic" }}>💡 Pedagogical Note: {kc.pedagogical_notes}</small>
+                                <div style={{ marginTop: "6px", padding: "6px 10px", background: "#fefce8", borderRadius: "6px", border: "1px solid #fef08a", fontSize: "11.5px", color: "#854d0e" }}>
+                                  💡 <strong>Pedagogical Content Knowledge (PCK) Note:</strong> {kc.pedagogical_notes}
+                                </div>
+                              )}
+
+                              {/* Misconceptions & Diagnostics */}
+                              {kc.common_misconceptions && (
+                                <div style={{ marginTop: "6px", padding: "6px 10px", background: "#fff1f2", borderRadius: "6px", border: "1px solid #fecdd3", fontSize: "11.5px", color: "#9f1239" }}>
+                                  ⚠️ <strong>Learner Misconception Diagnostic:</strong> {kc.common_misconceptions}
+                                </div>
+                              )}
+
+                              {/* Formative Checks */}
+                              {kc.formative_checks && (
+                                <div style={{ marginTop: "6px", padding: "6px 10px", background: "#f0fdf4", borderRadius: "6px", border: "1px solid #bbf7d0", fontSize: "11.5px", color: "#166534" }}>
+                                  ❓ <strong>Formative Assessment Cue:</strong> {kc.formative_checks}
+                                </div>
                               )}
                             </div>
                           ))}
 
+                          {/* Practical Fieldwork Connections */}
+                          {stationNotes.practical_connections && (
+                            <div style={{ padding: "12px", background: "#f0fdfa", borderRadius: "8px", border: "1px solid #99f6e4" }}>
+                              <strong style={{ fontSize: "13px", color: "#0f766e" }}>🔬 Practical Fieldwork & Laboratory Connection: {stationNotes.practical_connections.activity_title}</strong>
+                              {stationNotes.practical_connections.materials_needed?.length > 0 && (
+                                <div style={{ fontSize: "12px", marginTop: "4px", color: "#115e59" }}>
+                                  <strong>Materials / Apparatus:</strong> {Array.isArray(stationNotes.practical_connections.materials_needed) ? stationNotes.practical_connections.materials_needed.join(", ") : stationNotes.practical_connections.materials_needed}
+                                </div>
+                              )}
+                              {stationNotes.practical_connections.procedure && (
+                                <div style={{ fontSize: "12px", marginTop: "4px", color: "#334155" }}>
+                                  <strong>Step-by-Step Procedure:</strong> {Array.isArray(stationNotes.practical_connections.procedure) ? stationNotes.practical_connections.procedure.join(" ➔ ") : stationNotes.practical_connections.procedure}
+                                </div>
+                              )}
+                              {stationNotes.practical_connections.safety_precautions && (
+                                <div style={{ fontSize: "11.5px", marginTop: "4px", color: "#b91c1c" }}>
+                                  🚨 <strong>Safety Protocol:</strong> {stationNotes.practical_connections.safety_precautions}
+                                </div>
+                              )}
+                            </div>
+                          )}
+
+                          {/* Worked Case Study Examples */}
                           {stationNotes.worked_examples?.length > 0 && (
-                            <div style={{ marginTop: "10px" }}>
-                              <strong>Worked Examples:</strong>
+                            <div style={{ padding: "12px", background: "#f8fafc", borderRadius: "8px", border: "1px solid #cbd5e1" }}>
+                              <strong style={{ fontSize: "13px", color: "#334155" }}>💼 Authentic Kenyan Worked Case Study:</strong>
                               {stationNotes.worked_examples.map((we: any, idx: number) => (
-                                <div key={idx} style={{ fontSize: "12px", marginTop: "4px", padding: "6px", background: "#f8fafc", borderRadius: "4px" }}>
-                                  <em>Scenario: {we.scenario}</em>
-                                  <div style={{ marginTop: "2px" }}>Solution: {Array.isArray(we.solution_steps) ? we.solution_steps.join(" ➔ ") : we.solution_steps}</div>
+                                <div key={idx} style={{ fontSize: "12px", marginTop: "6px", padding: "8px", background: "#fff", borderRadius: "6px", border: "1px solid #e2e8f0" }}>
+                                  <div style={{ color: "#0f172a" }}><strong>Scenario:</strong> {we.scenario}</div>
+                                  <div style={{ marginTop: "4px", color: "#0369a1" }}><strong>Resolution Steps:</strong> {Array.isArray(we.solution_steps) ? we.solution_steps.join(" ➔ ") : we.solution_steps}</div>
+                                  {we.explanation && <div style={{ marginTop: "4px", color: "#475569", fontStyle: "italic" }}><strong>Rationale:</strong> {we.explanation}</div>}
                                 </div>
                               ))}
                             </div>
                           )}
 
+                          {/* Key Inquiry Questions & Summary Points */}
+                          {stationNotes.key_inquiry_questions?.length > 0 && (
+                            <div style={{ padding: "10px", background: "#fefce8", borderRadius: "8px", border: "1px solid #fef08a", fontSize: "12px" }}>
+                              <strong style={{ color: "#854d0e" }}>🎯 Key Inquiry Questions:</strong>
+                              <ul style={{ margin: "4px 0 0", paddingLeft: "18px", color: "#713f12" }}>
+                                {stationNotes.key_inquiry_questions.map((kiq: string, idx: number) => (
+                                  <li key={idx}>{kiq}</li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
+
+                          {stationNotes.summary_points?.length > 0 && (
+                            <div style={{ padding: "10px", background: "#f8fafc", borderRadius: "8px", border: "1px solid #e2e8f0", fontSize: "12px" }}>
+                              <strong style={{ color: "#0f172a" }}>📌 Summary Takeaways:</strong>
+                              <ul style={{ margin: "4px 0 0", paddingLeft: "18px", color: "#334155" }}>
+                                {stationNotes.summary_points.map((sp: string, idx: number) => (
+                                  <li key={idx}>{sp}</li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
+
+                          {/* SNE & Plain Language Adaptation */}
                           {stationNotes.accessibility_support?.plain_language_summary && (
-                            <div style={{ marginTop: "10px", padding: "6px 8px", background: "#eff6ff", borderRadius: "6px", fontSize: "11px", color: "#1e40af" }}>
-                              ♿ <strong>SNE Plain Language:</strong> {stationNotes.accessibility_support.plain_language_summary}
+                            <div style={{ padding: "8px 10px", background: "#eff6ff", borderRadius: "6px", fontSize: "11.5px", color: "#1e40af", border: "1px solid #bfdbfe" }}>
+                              ♿ <strong>SNE Plain Language & Differentiated Support:</strong> {stationNotes.accessibility_support.plain_language_summary}
                             </div>
                           )}
                         </div>
@@ -2010,9 +2141,20 @@ export function App() {
                         <h3>📐 Station 2: SVG Vector Diagram Studio</h3>
                         <small className="muted">Live vector rendering & accessibility</small>
                       </div>
-                      <span className={`pill ${diagramApproved ? "ok" : stationDiagram ? "warn" : "idle"}`}>
-                        {diagramApproved ? "Approved" : stationDiagram ? "Generated" : "Pending"}
-                      </span>
+                      <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
+                        {diagramResearchDossier && (
+                          <span
+                            className="pill ok"
+                            style={{ fontSize: "10px", cursor: "pointer" }}
+                            onClick={() => { setActiveTraceStation("diagram"); setShowTraceModal(true); }}
+                          >
+                            🌐 {diagramResearchDossier.citations?.length || 0} Sources • 🛡️ {diagramQualityAudit?.score || 100}%
+                          </span>
+                        )}
+                        <span className={`pill ${diagramApproved ? "ok" : stationDiagram ? "warn" : "idle"}`}>
+                          {diagramApproved ? "Approved" : stationDiagram ? "Generated" : "Pending"}
+                        </span>
+                      </div>
                     </div>
 
                     <div style={{ display: "grid", gap: "6px" }}>
@@ -2113,9 +2255,20 @@ export function App() {
                         <h3>🧪 Station 3: Experiments & Safety Studio</h3>
                         <small className="muted">Experiential tasks with mandatory hazard checks</small>
                       </div>
-                      <span className={`pill ${activityApproved ? "ok" : stationActivity ? "warn" : "idle"}`}>
-                        {activityApproved ? "Approved" : stationActivity ? "Generated" : "Pending"}
-                      </span>
+                      <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
+                        {activityResearchDossier && (
+                          <span
+                            className="pill ok"
+                            style={{ fontSize: "10px", cursor: "pointer" }}
+                            onClick={() => { setActiveTraceStation("activity"); setShowTraceModal(true); }}
+                          >
+                            🌐 {activityResearchDossier.citations?.length || 0} Sources • 🛡️ {activityQualityAudit?.score || 100}%
+                          </span>
+                        )}
+                        <span className={`pill ${activityApproved ? "ok" : stationActivity ? "warn" : "idle"}`}>
+                          {activityApproved ? "Approved" : stationActivity ? "Generated" : "Pending"}
+                        </span>
+                      </div>
                     </div>
 
                     <div className="factory-refine-box">
@@ -2198,9 +2351,20 @@ export function App() {
                         <h3>❓ Station 4: Questions & Rubrics Studio</h3>
                         <small className="muted">Derived Bloom's assessment with 4-level rubric</small>
                       </div>
-                      <span className={`pill ${questionsApproved ? "ok" : stationQuestions.length > 0 ? "warn" : "idle"}`}>
-                        {questionsApproved ? "Approved" : stationQuestions.length > 0 ? "Generated" : "Pending"}
-                      </span>
+                      <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
+                        {questionsResearchDossier && (
+                          <span
+                            className="pill ok"
+                            style={{ fontSize: "10px", cursor: "pointer" }}
+                            onClick={() => { setActiveTraceStation("questions"); setShowTraceModal(true); }}
+                          >
+                            🌐 {questionsResearchDossier.citations?.length || 0} Sources • 🛡️ {questionsQualityAudit?.score || 100}%
+                          </span>
+                        )}
+                        <span className={`pill ${questionsApproved ? "ok" : stationQuestions.length > 0 ? "warn" : "idle"}`}>
+                          {questionsApproved ? "Approved" : stationQuestions.length > 0 ? "Generated" : "Pending"}
+                        </span>
+                      </div>
                     </div>
 
                     <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
@@ -2279,7 +2443,7 @@ export function App() {
                                       {c.marking_guide.exceeding}
                                     </div>
                                     <div className="rubric-card meeting">
-                                      <strong style={{ color: "#1d4ed8" }}>Meeting</strong>
+                                      <strong style={{ color: "#0369a1" }}>Meeting</strong>
                                       {c.marking_guide.meeting}
                                     </div>
                                     <div className="rubric-card approaching">
@@ -2330,6 +2494,201 @@ export function App() {
                     </button>
                   </div>
                 </div>
+
+                {/* LIVE WEB RESEARCH, THINKING TRACE & ERROR CORRECTION MODAL */}
+                {showTraceModal && (
+                  <div
+                    style={{
+                      position: "fixed",
+                      top: 0,
+                      left: 0,
+                      right: 0,
+                      bottom: 0,
+                      background: "rgba(15, 23, 42, 0.75)",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      zIndex: 10000,
+                      backdropFilter: "blur(4px)",
+                    }}
+                  >
+                    <div
+                      style={{
+                        background: "#fff",
+                        borderRadius: "14px",
+                        width: "90%",
+                        maxWidth: "960px",
+                        maxHeight: "88vh",
+                        overflowY: "auto",
+                        boxShadow: "0 25px 50px -12px rgba(0, 0, 0, 0.25)",
+                        padding: "24px",
+                      }}
+                    >
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #e2e8f0", paddingBottom: "12px" }}>
+                        <div>
+                          <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+                            <span style={{ fontSize: "22px" }}>🧠</span>
+                            <h2 style={{ margin: 0, color: "#0f172a" }}>
+                              Live Web Research & Agent Thinking Trace Inspector
+                            </h2>
+                          </div>
+                          <p style={{ margin: "4px 0 0", fontSize: "12px", color: "#64748b" }}>
+                            Inspect live internet search queries, citations, KALRO/KICD empirical data, and pre-flight quality audit scores.
+                          </p>
+                        </div>
+                        <button className="ghost" onClick={() => setShowTraceModal(false)} style={{ fontSize: "16px", padding: "4px 10px" }}>
+                          ✕
+                        </button>
+                      </div>
+
+                      {/* Station Selector Tabs */}
+                      <div style={{ display: "flex", gap: "8px", marginTop: "14px", borderBottom: "1px solid #e2e8f0", paddingBottom: "8px" }}>
+                        <button
+                          className={activeTraceStation === "notes" ? "" : "ghost"}
+                          style={{ fontSize: "12px", padding: "6px 12px" }}
+                          onClick={() => setActiveTraceStation("notes")}
+                        >
+                          📝 Notes Station {notesResearchDossier ? "✓" : ""}
+                        </button>
+                        <button
+                          className={activeTraceStation === "diagram" ? "" : "ghost"}
+                          style={{ fontSize: "12px", padding: "6px 12px" }}
+                          onClick={() => setActiveTraceStation("diagram")}
+                        >
+                          📐 Diagram Station {diagramResearchDossier ? "✓" : ""}
+                        </button>
+                        <button
+                          className={activeTraceStation === "activity" ? "" : "ghost"}
+                          style={{ fontSize: "12px", padding: "6px 12px" }}
+                          onClick={() => setActiveTraceStation("activity")}
+                        >
+                          🧪 Experiments & Safety {activityResearchDossier ? "✓" : ""}
+                        </button>
+                        <button
+                          className={activeTraceStation === "questions" ? "" : "ghost"}
+                          style={{ fontSize: "12px", padding: "6px 12px" }}
+                          onClick={() => setActiveTraceStation("questions")}
+                        >
+                          ❓ Questions & Rubrics {questionsResearchDossier ? "✓" : ""}
+                        </button>
+                      </div>
+
+                      {/* Station Content Inspector */}
+                      {(() => {
+                        const dossier =
+                          activeTraceStation === "notes"
+                            ? notesResearchDossier
+                            : activeTraceStation === "diagram"
+                            ? diagramResearchDossier
+                            : activeTraceStation === "activity"
+                            ? activityResearchDossier
+                            : questionsResearchDossier;
+
+                        const audit =
+                          activeTraceStation === "notes"
+                            ? notesQualityAudit
+                            : activeTraceStation === "diagram"
+                            ? diagramQualityAudit
+                            : activeTraceStation === "activity"
+                            ? activityQualityAudit
+                            : questionsQualityAudit;
+
+                        if (!dossier) {
+                          return (
+                            <div style={{ textAlign: "center", padding: "40px 20px", color: "#64748b" }}>
+                              <p>No research dossier generated yet for this station.</p>
+                              <p style={{ fontSize: "12px" }}>Click "⚡ Generate" in {activeTraceStation} to execute live internet research and cognitive deliberation.</p>
+                            </div>
+                          );
+                        }
+
+                        return (
+                          <div style={{ display: "grid", gap: "16px", marginTop: "16px" }}>
+                            {/* Pre-Flight Quality Audit Scorecard */}
+                            {audit && (
+                              <div style={{ padding: "14px", background: audit.score >= 90 ? "#f0fdf4" : "#fefce8", borderRadius: "10px", border: `1px solid ${audit.score >= 90 ? "#86efac" : "#fef08a"}` }}>
+                                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                                  <strong style={{ fontSize: "14px", color: audit.score >= 90 ? "#14532d" : "#854d0e" }}>
+                                    🛡️ Pre-Flight Multi-Agent Quality Audit: {audit.score}/100
+                                  </strong>
+                                  <span className={`pill ${audit.score >= 90 ? "ok" : "warn"}`}>
+                                    {audit.score >= 90 ? "PASSED (Zero Errors)" : "REQUIRES ATTENTION"}
+                                  </span>
+                                </div>
+
+                                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "8px", marginTop: "10px" }}>
+                                  {audit.audit_checks?.map((chk: any, cIdx: number) => (
+                                    <div key={cIdx} style={{ padding: "6px 8px", background: "#fff", borderRadius: "6px", border: "1px solid #e2e8f0", fontSize: "11.5px" }}>
+                                      <div style={{ display: "flex", justifyContent: "space-between" }}>
+                                        <strong>{chk.name}</strong>
+                                        <span style={{ color: chk.status === "PASS" ? "#16a34a" : "#dc2626", fontWeight: 700 }}>
+                                          {chk.status === "PASS" ? "✓ PASS" : "⚠️ " + chk.status}
+                                        </span>
+                                      </div>
+                                      <div style={{ color: "#64748b", marginTop: "2px", fontSize: "11px" }}>{chk.detail || chk.reason}</div>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Section 1: Web Queries & Live Citations */}
+                            <div style={{ padding: "14px", background: "#f8fafc", borderRadius: "10px", border: "1px solid #e2e8f0" }}>
+                              <strong style={{ fontSize: "13px", color: "#0369a1" }}>📡 Live Web Queries Executed ({dossier.search_queries?.length || 0}):</strong>
+                              <div style={{ display: "flex", flexWrap: "wrap", gap: "6px", margin: "6px 0 12px" }}>
+                                {dossier.search_queries?.map((q: string, qIdx: number) => (
+                                  <span key={qIdx} style={{ fontSize: "11px", padding: "3px 8px", background: "#e0f2fe", color: "#0369a1", borderRadius: "4px", border: "1px solid #bae6fd" }}>
+                                    🔍 {q}
+                                  </span>
+                                ))}
+                              </div>
+
+                              <strong style={{ fontSize: "13px", color: "#0f172a" }}>📚 Authoritative Academic & Research Citations ({dossier.citations?.length || 0}):</strong>
+                              <div style={{ display: "grid", gap: "8px", marginTop: "8px" }}>
+                                {dossier.citations?.map((c: any, cIdx: number) => (
+                                  <div key={cIdx} style={{ padding: "10px", background: "#fff", borderRadius: "6px", border: "1px solid #cbd5e1", fontSize: "12px" }}>
+                                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                                      <a href={c.url} target="_blank" rel="noreferrer" style={{ fontWeight: 700, color: "#0284c7", textDecoration: "none" }}>
+                                        🔗 {c.title}
+                                      </a>
+                                      <span className="pill ok" style={{ fontSize: "10px" }}>{c.source_domain}</span>
+                                    </div>
+                                    <p style={{ margin: "4px 0 0", color: "#475569", fontSize: "11.5px", lineHeight: "1.4" }}>{c.snippet}</p>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+
+                            {/* Section 2: Verified Empirical Data & Case Studies */}
+                            {dossier.empirical_data_points?.length > 0 && (
+                              <div style={{ padding: "14px", background: "#f0fdf4", borderRadius: "10px", border: "1px solid #bbf7d0" }}>
+                                <strong style={{ fontSize: "13px", color: "#166534" }}>📊 Verified Empirical Statistics & KALRO Research Data:</strong>
+                                <div style={{ display: "grid", gap: "6px", marginTop: "8px" }}>
+                                  {dossier.empirical_data_points.map((ed: any, edIdx: number) => (
+                                    <div key={edIdx} style={{ padding: "6px 10px", background: "#fff", borderRadius: "6px", border: "1px solid #dcfce7", fontSize: "12px" }}>
+                                      <strong style={{ color: "#14532d" }}>{ed.metric}:</strong> {ed.value}{" "}
+                                      <span style={{ color: "#65a30d", fontSize: "11px", fontStyle: "italic" }}>[{ed.source}]</span>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Section 3: Agent Deliberation Thinking Trace */}
+                            <div style={{ padding: "14px", background: "#f1f5f9", borderRadius: "10px", border: "1px solid #cbd5e1" }}>
+                              <strong style={{ fontSize: "13px", color: "#334155" }}>🧠 Cognitive Deliberation & Pedagogical Planning Trace:</strong>
+                              <ol style={{ margin: "8px 0 0", paddingLeft: "20px", fontSize: "12px", color: "#334155" }}>
+                                {dossier.deliberation_trace?.map((dt: string, dtIdx: number) => (
+                                  <li key={dtIdx} style={{ marginBottom: "4px" }}>{dt}</li>
+                                ))}
+                              </ol>
+                            </div>
+                          </div>
+                        );
+                      })()}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 

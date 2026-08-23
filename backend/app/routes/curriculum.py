@@ -287,6 +287,9 @@ class FactoryGenerateNotesRequest(BaseModel):
     sub_strand: str
     slo_id: str = ""
     level: str = "Basic Education"
+    essence_statement: str = ""
+    general_learning_outcomes: list[str] = []
+    source_material_text: str = ""
     custom_instructions: str = ""
 
 
@@ -343,32 +346,122 @@ def factory_generate_notes(
     payload: FactoryGenerateNotesRequest,
     _: AuthContext = Depends(require_roles("admin", "operator", "reviewer")),
 ) -> dict[str, Any]:
+    from ..infra.db import fetch_one
     from ..services.langfuse_context import langfuse_context_service
     from ..services.llm_client import llm_client
     from ..services.pipeline import pipeline_orchestrator
+    from ..services.web_research import web_research_agent
 
+    essence_stmt = payload.essence_statement
+    source_text = payload.source_material_text
+    level = payload.level
+
+    # 1. Fetch Sub-strand specific blueprint (SLOs, KIQs, experiments) from database
+    substrand_row = fetch_one(
+        """
+        SELECT allocated_hours, slos, learning_experiences, key_inquiry_questions,
+               core_competencies, values, required_diagrams, experiments, pedagogical_guidance
+        FROM curriculum_substrands
+        WHERE (grade = :grade OR grade = :alt_grade)
+          AND LOWER(subject) = LOWER(:subject)
+          AND (LOWER(sub_strand_name) = LOWER(:sub_strand) OR LOWER(sub_strand_name) LIKE LOWER(:sub_strand_pattern))
+        LIMIT 1
+        """,
+        {
+            "grade": payload.grade,
+            "alt_grade": payload.grade.replace("grade-", ""),
+            "subject": payload.subject,
+            "sub_strand": payload.sub_strand,
+            "sub_strand_pattern": f"%{payload.sub_strand}%",
+        },
+    )
+
+    slos = substrand_row.get("slos", []) if substrand_row else []
+    kiqs = substrand_row.get("key_inquiry_questions", []) if substrand_row else []
+
+    # 2. Fetch Curriculum Design essence statement and source text if not provided
+    if not essence_stmt or not source_text:
+        design_row = fetch_one(
+            """
+            SELECT essence_statement, level, raw_payload
+            FROM curriculum_designs
+            WHERE (grade = :grade OR grade = :alt_grade) AND LOWER(subject) = LOWER(:subject)
+            ORDER BY updated_at DESC LIMIT 1
+            """,
+            {"grade": payload.grade, "alt_grade": payload.grade.replace("grade-", ""), "subject": payload.subject},
+        )
+        if design_row:
+            if not essence_stmt:
+                essence_stmt = design_row.get("essence_statement") or ""
+            if level == "Basic Education" and design_row.get("level"):
+                level = design_row.get("level")
+            if not source_text:
+                raw_payload = design_row.get("raw_payload") or {}
+                source_text = raw_payload.get("raw_text") or raw_payload.get("text") or raw_payload.get("output") or ""
+
+    # 3. Execute Deep Live Web Research & Academic Paper Retrieval
+    dossier = web_research_agent.research_topic(
+        subject=payload.subject,
+        strand=payload.strand,
+        sub_strand=payload.sub_strand,
+        grade=payload.grade,
+        topic_type="notes",
+        extra_query=payload.custom_instructions,
+    )
+
+    master_context = langfuse_context_service.get_master_context()
     resolved = pipeline_orchestrator.router.resolve_for_stage("notes_generation")
+
+    slos_formatted = "\n".join([f"- {s}" for s in slos]) if slos else f"- Master the foundational and practical principles of {payload.sub_strand}"
+    kiqs_formatted = "\n".join([f"- {k}" for k in kiqs]) if kiqs else f"- How does {payload.sub_strand} apply to real-world Kenyan national development?"
+
     template_vars = {
-        "level": payload.level,
+        "master_context": master_context,
+        "level": level,
         "strand": payload.strand,
         "sub_strand": payload.sub_strand,
         "slo_id": payload.slo_id or f"{payload.grade}-{payload.subject[:3]}-01",
+        "slos": slos_formatted,
+        "kiqs": kiqs_formatted,
+        "essence_statement": essence_stmt or f"Comprehensive curriculum blueprint for {payload.subject} ({payload.grade}).",
+        "source_material_snippet": source_text[:4000] if source_text else "(Syllabus design context attached)",
         "custom_instructions": payload.custom_instructions,
     }
+
     context = langfuse_context_service.assemble_agent_context(
         agent_name="note-generator",
         grade_slug=payload.grade,
         subject=payload.subject,
         template_vars=template_vars,
     )
-    if payload.custom_instructions:
-        context.messages.append({
-            "role": "user",
-            "content": f"ADDITIONAL REFINEMENT INSTRUCTIONS: {payload.custom_instructions}",
-        })
+
+    # Inject Live Web Research Dossier & Deliberation Directive
+    context.messages.append({
+        "role": "user",
+        "content": (
+            f"{dossier.formatted_context}\n\n"
+            f"PROFESSOR / SENIOR CURRICULUM SPECIALIST DIRECTIVE:\n"
+            f"You are authoring exhaustive, university/college and school-level lesson notes for:\n"
+            f"Subject: {payload.subject} ({payload.grade}, {level})\n"
+            f"Strand: {payload.strand} ➔ Sub-strand: {payload.sub_strand}\n"
+            f"SLOs to Cover Completely:\n{slos_formatted}\n"
+            f"Key Inquiry Questions to Address:\n{kiqs_formatted}\n\n"
+            f"ESSENCE CONTEXT:\n{essence_stmt}\n\n"
+            f"DO NOT write brief or shallow summaries. Provide 3-5 comprehensive core concept analyses, in-depth pedagogical content knowledge (PCK) guidance, common learner misconception diagnostics, formative assessment checks, full worked case studies, practical fieldwork instructions, and SNE plain-language adaptations.\n"
+            f"ADDITIONAL PRODUCTION DIRECTIVES: {payload.custom_instructions}"
+        ),
+    })
 
     resp = llm_client.generate(resolved, context.messages, temperature=0.2)
-    return {"notes": resp.content, "usage": resp.usage, "model": resp.model}
+    audit_report = web_research_agent.perform_quality_audit(resp.content, "notes", dossier)
+
+    return {
+        "notes": resp.content,
+        "usage": resp.usage,
+        "model": resp.model,
+        "research_dossier": dossier.to_dict(),
+        "quality_audit": audit_report.to_dict(),
+    }
 
 
 @router.post("/factory/generate-diagram")
@@ -380,9 +473,21 @@ def factory_generate_diagram(
     from ..services.langfuse_context import langfuse_context_service
     from ..services.llm_client import llm_client
     from ..services.pipeline import pipeline_orchestrator
+    from ..services.web_research import web_research_agent
 
     resolved = pipeline_orchestrator.router.resolve_for_stage("diagram_generation")
     concept_name = payload.concept or f"{payload.sub_strand} model"
+
+    # Execute Web Research for Scientific Schematics & Anatomical Structure
+    dossier = web_research_agent.research_topic(
+        subject=payload.subject,
+        strand=payload.strand,
+        sub_strand=payload.sub_strand,
+        grade=payload.grade,
+        topic_type="diagram",
+        extra_query=concept_name,
+    )
+
     context = langfuse_context_service.assemble_agent_context(
         agent_name="diagram-generator",
         grade_slug=payload.grade,
@@ -392,11 +497,16 @@ def factory_generate_diagram(
             "notes_title": payload.notes_title or payload.sub_strand,
         },
     )
-    if payload.custom_instructions:
-        context.messages.append({
-            "role": "user",
-            "content": f"ADDITIONAL SVG DIAGRAM REFINEMENT INSTRUCTIONS: {payload.custom_instructions}",
-        })
+
+    context.messages.append({
+        "role": "user",
+        "content": (
+            f"{dossier.formatted_context}\n\n"
+            f"SCIENTIFIC VECTOR SVG DESIGN DIRECTIVE:\n"
+            f"Generate a professional, publication-grade SVG diagram for '{concept_name}' with accurate scientific labeling, high-contrast WCAG 2.1 AA colors, clear leader lines, and tactile/alt text descriptions.\n"
+            f"ADDITIONAL INSTRUCTIONS: {payload.custom_instructions}"
+        ),
+    })
 
     resp = llm_client.generate(resolved, context.messages, temperature=0.1)
     svg_markup = resp.content.get("diagram_svg", "<svg xmlns='http://www.w3.org/2000/svg'></svg>")
@@ -422,7 +532,15 @@ def factory_generate_diagram(
             "tactile_description": dedup.tactile_description,
         },
     }
-    return {"diagram": diagram_data, "usage": resp.usage, "model": resp.model}
+    audit_report = web_research_agent.perform_quality_audit(resp.content, "diagram", dossier)
+
+    return {
+        "diagram": diagram_data,
+        "usage": resp.usage,
+        "model": resp.model,
+        "research_dossier": dossier.to_dict(),
+        "quality_audit": audit_report.to_dict(),
+    }
 
 
 @router.post("/factory/generate-activity")
@@ -433,8 +551,20 @@ def factory_generate_activity(
     from ..services.langfuse_context import langfuse_context_service
     from ..services.llm_client import llm_client
     from ..services.pipeline import pipeline_orchestrator
+    from ..services.web_research import web_research_agent
 
     resolved = pipeline_orchestrator.router.resolve_for_stage("activity_generation")
+
+    # Execute Web Research for Laboratory Procedures & Safety Standards
+    dossier = web_research_agent.research_topic(
+        subject=payload.subject,
+        strand=payload.strand,
+        sub_strand=payload.sub_strand,
+        grade=payload.grade,
+        topic_type="activity",
+        extra_query=payload.notes_title,
+    )
+
     context = langfuse_context_service.assemble_agent_context(
         agent_name="activity-generator",
         grade_slug=payload.grade,
@@ -445,14 +575,27 @@ def factory_generate_activity(
             "notes_title": payload.notes_title or payload.sub_strand,
         },
     )
-    if payload.custom_instructions:
-        context.messages.append({
-            "role": "user",
-            "content": f"ADDITIONAL EXPERIMENT & SAFETY REFINEMENT INSTRUCTIONS: {payload.custom_instructions}",
-        })
+
+    context.messages.append({
+        "role": "user",
+        "content": (
+            f"{dossier.formatted_context}\n\n"
+            f"EXPERIMENTAL & SAFETY PROTOCOL DIRECTIVE:\n"
+            f"Generate rigorous, constructivist practical experiments with step-by-step procedures, apparatus, observation tables, and mandatory safety hazard mitigations.\n"
+            f"ADDITIONAL INSTRUCTIONS: {payload.custom_instructions}"
+        ),
+    })
 
     resp = llm_client.generate(resolved, context.messages, temperature=0.25)
-    return {"activity": resp.content, "usage": resp.usage, "model": resp.model}
+    audit_report = web_research_agent.perform_quality_audit(resp.content, "activity", dossier)
+
+    return {
+        "activity": resp.content,
+        "usage": resp.usage,
+        "model": resp.model,
+        "research_dossier": dossier.to_dict(),
+        "quality_audit": audit_report.to_dict(),
+    }
 
 
 @router.post("/factory/generate-questions")
@@ -463,8 +606,19 @@ def factory_generate_questions(
     from ..services.langfuse_context import langfuse_context_service
     from ..services.llm_client import llm_client
     from ..services.pipeline import pipeline_orchestrator
+    from ..services.web_research import web_research_agent
 
     resolved = pipeline_orchestrator.router.resolve_for_stage("question_generation")
+
+    # Execute Web Research for Authentic Kenyan Assessment Scenarios
+    dossier = web_research_agent.research_topic(
+        subject=payload.subject,
+        strand=payload.strand,
+        sub_strand=payload.sub_strand,
+        grade=payload.grade,
+        topic_type="questions",
+    )
+
     context = langfuse_context_service.assemble_agent_context(
         agent_name="question-generator",
         grade_slug=payload.grade,
@@ -479,14 +633,28 @@ def factory_generate_questions(
             "diagram_concept": payload.diagram_title,
         },
     )
-    if payload.custom_instructions:
-        context.messages.append({
-            "role": "user",
-            "content": f"ADDITIONAL QUESTION & RUBRIC REFINEMENT INSTRUCTIONS: {payload.custom_instructions}",
-        })
+
+    context.messages.append({
+        "role": "user",
+        "content": (
+            f"{dossier.formatted_context}\n\n"
+            f"ASSESSMENT DESIGN & RUBRIC DIRECTIVE:\n"
+            f"Generate high-validity criterion-referenced assessment items (MCQ and structured) with 4-level KICD rubrics (Exceeding, Meeting, Approaching, Below Expectation) and authentic Kenyan problem scenarios.\n"
+            f"ADDITIONAL INSTRUCTIONS: {payload.custom_instructions}"
+        ),
+    })
 
     resp = llm_client.generate(resolved, context.messages, temperature=0.2)
-    return {"questions": resp.content.get("questions", []), "usage": resp.usage, "model": resp.model}
+    questions_list = resp.content.get("questions", [])
+    audit_report = web_research_agent.perform_quality_audit(resp.content, "questions", dossier)
+
+    return {
+        "questions": questions_list,
+        "usage": resp.usage,
+        "model": resp.model,
+        "research_dossier": dossier.to_dict(),
+        "quality_audit": audit_report.to_dict(),
+    }
 
 
 @router.post("/factory/save-bundle")
