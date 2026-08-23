@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
@@ -2189,10 +2189,10 @@ class FactoryAutoPersistStationRequest(BaseModel):
     level: str = "Basic Education"
     station_type: str = "notes"  # "notes" | "diagrams" | "activities" | "questions" | "approval"
     data: Any = None
-    notes: Optional[Any] = None
-    diagrams: Optional[Any] = None
-    activities: Optional[Any] = None
-    questions: Optional[Any] = None
+    notes: Any = None
+    diagrams: Any = None
+    activities: Any = None
+    questions: Any = None
     review_status: str = "draft"
     human_notes: str = ""
 
