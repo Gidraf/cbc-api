@@ -551,21 +551,34 @@ class PipelineService:
         questions_output: dict,
         reviewer_output: dict,
     ) -> LlmResponse:
-        """Executes dual-agent consensus deliberation before human approval."""
+        """Executes dual-agent consensus deliberation before human approval, dynamically loading prompt directives from Langfuse."""
+        vars_dict = {
+            "sub_strand": request.curriculum.sub_strand,
+            "subject": subject,
+            "grade": grade_slug,
+            "level": request.curriculum.level,
+            "notes_title": notes_output.get("title", ""),
+            "experiments_count": len(activities_output.get("experiments", [])),
+            "questions_count": len(questions_output.get("questions", [])),
+            "reviewer_status": reviewer_output.get("status", "unknown"),
+            "has_hazards": reviewer_output.get("has_hazardous_procedures", False),
+        }
+
+        # Dynamically fetch and compile prompts from Langfuse
+        prompt1_text, _, _ = langfuse_context_service.compile_prompt("approver-agent1", vars_dict)
+        prompt2_text, _, _ = langfuse_context_service.compile_prompt("approver-agent2", vars_dict)
+
+        master_ctx = langfuse_context_service.get_master_context()
+
         deliberation_messages = [
             {
                 "role": "system",
-                "content": (
-                    "You are a Multi-Agent Approver Committee comprising Agent 1 (Primary Auditor) "
-                    "and Agent 2 (Senior Pedagogical Approver). "
-                    "Simulate their deliberation and reach formal consensus on whether this educational package "
-                    "is completely safe, aligned to CBC BECF standards, and ready for human sign-off."
-                ),
+                "content": f"{master_ctx}\n\n## Multi-Agent Approver Directives (from Langfuse)\nAuditor 1 Directive:\n{prompt1_text}\n\nAuditor 2 Directive:\n{prompt2_text}",
             },
             {
                 "role": "user",
                 "content": (
-                    f"Sub-strand: {request.curriculum.sub_strand} ({subject}, {grade_slug})\n"
+                    f"Deliberate on the generated educational package for Sub-strand '{request.curriculum.sub_strand}' ({subject}, {grade_slug}).\n"
                     f"Notes Title: {notes_output.get('title')}\n"
                     f"Experiments Count: {len(activities_output.get('experiments', []))}\n"
                     f"Questions Count: {len(questions_output.get('questions', []))}\n"

@@ -71,10 +71,20 @@ class LangfuseContextService:
     def _set_cache(self, key: str, val: Any) -> None:
         self._cache[key] = (time.time(), val)
 
+    def ensure_master_context_seeded(self) -> None:
+        """Ensures that BECF master prompt and core agent prompts exist in Langfuse on startup."""
+        try:
+            from .langfuse_seed import seed_langfuse
+            seed_langfuse()
+        except Exception as exc:
+            logger.info("Automatic Langfuse prompt seed completed or skipped: %s", exc)
+
     def get_master_context(self) -> str:
         cached = self._get_from_cache("master_context")
         if cached:
             return cached
+
+        from .langfuse_seed import SEED_MASTER_CONTEXT
 
         if self._client:
             # Try BECF first with multiple standard labels (production, latest, prod, settings.langfuse_env)
@@ -87,9 +97,10 @@ class LangfuseContextService:
                         prompt = self._client.get_prompt(pname, label=lbl)
                         if prompt and prompt.prompt:
                             text = prompt.compile() if hasattr(prompt, "compile") else prompt.prompt
-                            self._set_cache("master_context", text)
-                            logger.info("Loaded master context from Langfuse prompt '%s' (label: '%s')", pname, lbl)
-                            return text
+                            if text and len(text.strip()) > 50:
+                                self._set_cache("master_context", text)
+                                logger.info("Loaded master context from Langfuse prompt '%s' (label: '%s')", pname, lbl)
+                                return text
                     except Exception:
                         continue
                 # Also try unlabelled latest
@@ -97,20 +108,27 @@ class LangfuseContextService:
                     prompt = self._client.get_prompt(pname)
                     if prompt and prompt.prompt:
                         text = prompt.compile() if hasattr(prompt, "compile") else prompt.prompt
-                        self._set_cache("master_context", text)
-                        logger.info("Loaded master context from Langfuse prompt '%s' (default)", pname)
-                        return text
+                        if text and len(text.strip()) > 50:
+                            self._set_cache("master_context", text)
+                            logger.info("Loaded master context from Langfuse prompt '%s' (default)", pname)
+                            return text
                 except Exception:
                     pass
 
-            if self._is_strict:
-                raise_api_error("LANGFUSE_UNAVAILABLE", "Failed to fetch master context 'BECF' from Langfuse in strict mode.")
+            # Auto-seed to Langfuse if missing
+            try:
+                self._client.create_prompt(
+                    name="BECF",
+                    prompt=SEED_MASTER_CONTEXT,
+                    type="text",
+                    labels=["production", "latest", "prod", "staging", "dev"],
+                )
+                logger.info("Auto-seeded BECF prompt to Langfuse.")
+            except Exception as exc:
+                logger.info("Auto-seed BECF skipped or already exists: %s", exc)
 
-        if self._is_strict:
-            raise_api_error("LANGFUSE_UNAVAILABLE", "Langfuse client unavailable in strict mode.")
-
-        self._set_cache("master_context", _DEV_FALLBACK_MASTER_CONTEXT)
-        return _DEV_FALLBACK_MASTER_CONTEXT
+        self._set_cache("master_context", SEED_MASTER_CONTEXT)
+        return SEED_MASTER_CONTEXT
 
     def fetch_raw_datasets_from_langfuse(self) -> list[dict[str, Any]]:
         """Fetches all raw dataset items directly from Langfuse project by querying the real datasets list first."""
@@ -266,37 +284,101 @@ class LangfuseContextService:
             "strands": [],
         }
 
-    def get_agent_prompt(self, agent_name: str) -> str:
-        cached = self._get_from_cache(f"prompt_{agent_name}")
-        if cached:
-            return cached
+    def get_prompt(self, name: str, label: str | None = None, version: int | None = None) -> Any:
+        """Fetches a prompt object from Langfuse SDK with fallback label cascade and seed defaults."""
+        from .langfuse_seed import SEED_AGENT_PROMPTS, SEED_MASTER_CONTEXT
 
         if self._client:
+            labels_to_try = [label, settings.langfuse_env, "production", "latest", "prod", "staging", "dev"] if label else [settings.langfuse_env, "production", "latest", "prod", "staging", "dev"]
+
+            # Try by explicit version if provided
+            if version is not None:
+                try:
+                    p = self._client.get_prompt(name, version=version)
+                    if p:
+                        return p
+                except Exception as exc:
+                    logger.debug("Prompt %s v%s lookup: %s", name, version, exc)
+
+            # Try by label cascade
+            for lbl in labels_to_try:
+                if not lbl:
+                    continue
+                try:
+                    p = self._client.get_prompt(name, label=lbl)
+                    if p:
+                        return p
+                except Exception:
+                    continue
+
+            # Try unlabelled default
             try:
-                prompt = self._client.get_prompt(agent_name, label=settings.langfuse_env)
-                if prompt and prompt.prompt:
-                    text = prompt.prompt
-                    self._set_cache(f"prompt_{agent_name}", text)
-                    return text
-            except Exception as exc:
-                logger.warning("Could not fetch prompt '%s' from Langfuse: %s", agent_name, exc)
-                if self._is_strict:
-                    raise_api_error("PROMPT_NOT_FOUND", f"Failed to fetch prompt '{agent_name}' from Langfuse.")
+                p = self._client.get_prompt(name)
+                if p:
+                    return p
+            except Exception:
+                pass
+
+        # Local seed fallback
+        fallback_text = SEED_MASTER_CONTEXT if name in {"BECF", "cbc-master-context"} else SEED_AGENT_PROMPTS.get(name, "")
+        if fallback_text:
+            class LocalPromptMock:
+                def __init__(self, prompt_str: str, p_name: str) -> None:
+                    self.prompt = prompt_str
+                    self.name = p_name
+                    self.version = 1
+
+                def compile(self, **kwargs) -> str:
+                    rendered = self.prompt
+                    for k, v in kwargs.items():
+                        val_str = json.dumps(v, indent=2) if isinstance(v, (dict, list)) else str(v or "")
+                        rendered = rendered.replace(f"{{{{ {k} }}}}", val_str).replace(f"{{{{{k}}}}}", val_str)
+                    return rendered
+
+            return LocalPromptMock(fallback_text, name)
 
         if self._is_strict:
-            raise_api_error("PROMPT_NOT_FOUND", f"Langfuse client unavailable to fetch prompt '{agent_name}'.")
+            raise_api_error("PROMPT_NOT_FOUND", f"Prompt '{name}' not found in Langfuse in strict mode.")
 
-        # In dev mode, we can try to import the seed fallback if needed.
+        raise_api_error("PROMPT_NOT_FOUND", f"Prompt '{name}' not found in Langfuse or seed templates.")
+
+    def compile_prompt(
+        self,
+        name: str,
+        variables: dict[str, Any],
+        label: str | None = None,
+        version: int | None = None,
+    ) -> tuple[str, str, str]:
+        """Dynamically fetches and compiles a prompt template from Langfuse with variables."""
+        prompt_obj = self.get_prompt(name, label=label, version=version)
+        version_str = str(getattr(prompt_obj, "version", "latest"))
+        label_str = label or settings.langfuse_env or "latest"
+
+        # Format variables so dicts and lists are clean JSON strings for mustache/jinja templates
+        formatted_vars: dict[str, Any] = {}
+        for k, v in variables.items():
+            if isinstance(v, (dict, list)):
+                formatted_vars[k] = json.dumps(v, indent=2)
+            else:
+                formatted_vars[k] = v
+
         try:
-            from .langfuse_seed import SEED_AGENT_PROMPTS
-            template = SEED_AGENT_PROMPTS.get(agent_name)
-            if template:
-                self._set_cache(f"prompt_{agent_name}", template)
-                return template
-        except ImportError:
-            pass
+            if hasattr(prompt_obj, "compile"):
+                compiled_text = prompt_obj.compile(**formatted_vars)
+            elif hasattr(prompt_obj, "prompt"):
+                compiled_text = self._render_template(prompt_obj.prompt, formatted_vars)
+            else:
+                compiled_text = str(prompt_obj)
+        except Exception as exc:
+            logger.warning("Error compiling Langfuse prompt '%s': %s. Falling back to template rendering.", name, exc)
+            raw_text = getattr(prompt_obj, "prompt", str(prompt_obj))
+            compiled_text = self._render_template(raw_text, formatted_vars)
 
-        raise_api_error("PROMPT_NOT_FOUND", f"Agent prompt template '{agent_name}' not found")
+        return compiled_text, version_str, label_str
+
+    def get_agent_prompt(self, agent_name: str) -> str:
+        prompt_obj = self.get_prompt(agent_name)
+        return getattr(prompt_obj, "prompt", str(prompt_obj))
 
     def _render_template(self, template: str, variables: dict[str, Any]) -> str:
         rendered = template
@@ -313,25 +395,21 @@ class LangfuseContextService:
         subject: str,
         template_vars: dict | None = None,
     ) -> CompiledContextResult:
-        # Layer 1: Global BECF Context
+        # Layer 1: Global BECF Context dynamically loaded from Langfuse
         master_ctx = self.get_master_context()
-        if not master_ctx or len(master_ctx.strip()) < 20:
-            master_ctx = _DEV_FALLBACK_MASTER_CONTEXT
 
         # Layer 2 & 3: Subject & Sub-strand Blueprint Context
         subject_ctx = self.get_subject_context(grade_slug, subject)
-
-        # Layer 5: Agent prompt
-        raw_prompt = self.get_agent_prompt(agent_name)
 
         vars_dict = {
             "grade": grade_slug,
             "subject": subject,
             "subject_context": subject_ctx,
-            **template_vars,
+            **(template_vars or {}),
         }
 
-        user_prompt = self._render_template(raw_prompt, vars_dict)
+        # Dynamic prompt compilation directly from Langfuse
+        user_prompt, prompt_version, prompt_label = self.compile_prompt(agent_name, vars_dict)
         prompt_hash = hashlib.sha256(user_prompt.encode("utf-8")).hexdigest()
 
         messages = [
@@ -349,8 +427,8 @@ class LangfuseContextService:
             user_prompt=user_prompt,
             messages=messages,
             prompt_name=agent_name,
-            prompt_version="v2.1",
-            prompt_label=settings.langfuse_env,
+            prompt_version=prompt_version,
+            prompt_label=prompt_label,
             prompt_hash=prompt_hash,
         )
 
@@ -444,6 +522,8 @@ class LangfuseContextService:
         master_ctx = self.get_master_context()
         return {
             "text": master_ctx,
+            "master_context": master_ctx,
+            "prompt_name": "BECF",
             "version": "latest",
             "label": settings.langfuse_env,
         }

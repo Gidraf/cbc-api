@@ -153,6 +153,12 @@ def startup() -> None:
     except Exception as exc:
         logger.warning("Default bindings initialization warning: %s", exc)
 
+    try:
+        from .services.langfuse_context import langfuse_context_service
+        langfuse_context_service.ensure_master_context_seeded()
+    except Exception as exc:
+        logger.warning("Langfuse automatic master context seed warning: %s", exc)
+
 
 @app.exception_handler(ApiError)
 async def api_error_handler(_, exc: ApiError):

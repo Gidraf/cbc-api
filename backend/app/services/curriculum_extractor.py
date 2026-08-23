@@ -442,8 +442,40 @@ class CurriculumExtractorService:
             "Verify animal handling steps include hygiene, gentle restraint, and rabies/bite precautions",
         ]
 
-        # 9. Build Comprehensive Dynamic Prompt Package for all downstream agents
+        # 9. Build Comprehensive Dynamic Prompt Package for all downstream agents (fetched from Langfuse)
         slo_texts = [s["text"] for s in slos]
+        prompt_vars = {
+            "level": level,
+            "grade": grade,
+            "subject": subject,
+            "subject_code": subject[:3].upper() if subject else "CORE",
+            "strand": strand_name,
+            "sub_strand": sub_name,
+            "slo_id": slos[0]["id"] if slos else f"{grade}-{subject[:3]}-01",
+            "difficulty": 0.65,
+            "diagram_id": f"diag_{slos[0]['id'] if slos else '01'}",
+            "notes_title": f"Revision Notes for {sub_name}",
+            "concept": required_diagrams[0] if required_diagrams else sub_name,
+            "subject_context": {
+                "subject": subject,
+                "strand": strand_name,
+                "sub_strand": sub_name,
+                "hours": hours,
+                "slos": slo_texts,
+                "kiqs": kiqs,
+                "diagrams": required_diagrams,
+                "experiments": experiments,
+                "safety_hazards": safety_hazards,
+            },
+        }
+
+        def _get_rendered_langfuse_prompt(pname: str, fallback: str) -> str:
+            try:
+                tpl = langfuse_context_service.get_agent_prompt(pname)
+                return langfuse_context_service._render_template(tpl, prompt_vars)
+            except Exception:
+                return fallback
+
         prompt_package = {
             "subject": subject,
             "grade": grade,
@@ -456,50 +488,14 @@ class CurriculumExtractorService:
             "diagram_guidance": required_diagrams,
             "experiment_guidance": experiments,
             "safety_hazard_criteria": safety_hazards,
-            # Agent-specific customized prompt templates
-            "notes_prompt": (
-                f"You are the NotesGeneratorAgent for {subject} ({level}, {grade}).\n"
-                f"Generate revision notes for sub-strand '{sub_name}'.\n"
-                f"Specific Learning Outcomes to cover: {json.dumps(slo_texts)}\n"
-                f"Key Inquiry Questions to answer: {json.dumps(kiqs)}\n"
-                f"Ensure constructivist CBC pedagogical explanations and KICD criterion alignment."
-            ),
-            "diagram_prompt": (
-                f"You are the DiagramGeneratorAgent for {subject}.\n"
-                f"Generate clean vector SVG diagram markup for visual models needed in '{sub_name}': {json.dumps(required_diagrams)}.\n"
-                f"Include clear labels, viewBox='0 0 800 500', semantic SVG tags, alt_text, and tactile descriptions for SNE."
-            ),
-            "experiment_activity_prompt": (
-                f"You are the ExperimentActivityAgent for {subject}.\n"
-                f"Generate step-by-step practical experiments and activities for '{sub_name}'.\n"
-                f"Target experiments: {json.dumps(experiments)}\n"
-                f"Include: Title, Objective, Local Materials/Apparatus, Step-by-Step Procedure, "
-                f"SAFETY HAZARD WARNINGS (strictly enforce {json.dumps(safety_hazards)}), Observations, and Formative Check."
-            ),
-            "question_prompt": (
-                f"You are the QuestionGeneratorAgent for {subject}.\n"
-                f"Generate high-order thinking questions and detailed marking guides DERIVED DIRECTLY from the generated notes and experiments for '{sub_name}'.\n"
-                f"Cover Bloom's Taxonomy (Applying, Analyzing, Evaluating). Never rank learners."
-            ),
-            "reviewer_prompt": (
-                f"You are the StrictSafetyAndQualityReviewerAgent.\n"
-                f"Perform a thorough audit of the generated Notes, Diagram, Experiments, and Questions for '{sub_name}'.\n"
-                f"CRITICAL SAFETY & HAZARD AUDIT:\n"
-                f"- Scan experiments and activities for hazardous, toxic, or dangerous procedures.\n"
-                f"- If dangerous activities are detected without adequate safety controls, REJECT IMMEDIATELY.\n"
-                f"- Verify 100% adherence to sub-strand SLOs with zero hallucination.\n"
-                f"- Confirm KICD 4-level rubric scoring standard."
-            ),
-            "approver_agent1_prompt": (
-                f"You are Primary Approver Agent (Auditor 1).\n"
-                f"Evaluate the generated CBC educational bundle for '{sub_name}'. Review pedagogical depth, safety compliance, and question validity.\n"
-                f"State your initial approval recommendation and notes for Auditor 2."
-            ),
-            "approver_agent2_prompt": (
-                f"You are Senior Quality Approver Agent (Auditor 2).\n"
-                f"Cross-examine Auditor 1's recommendation and verify all safety hazard checks, diagram vector validity, and question distractor plausibility.\n"
-                f"Reach consensus on whether the bundle is ready for final Human Approval."
-            ),
+            # Agent-specific customized prompt templates compiled directly from Langfuse prompt management
+            "notes_prompt": _get_rendered_langfuse_prompt("note-generator", f"Generate revision notes for {sub_name}"),
+            "diagram_prompt": _get_rendered_langfuse_prompt("diagram-generator", f"Generate vector SVG diagram for {sub_name}"),
+            "experiment_activity_prompt": _get_rendered_langfuse_prompt("activity-generator", f"Generate practical experiments with safety checks for {sub_name}"),
+            "question_prompt": _get_rendered_langfuse_prompt("question-generator", f"Generate criterion-referenced questions for {sub_name}"),
+            "reviewer_prompt": _get_rendered_langfuse_prompt("reviewer-panel", f"Perform safety and quality audit for {sub_name}"),
+            "approver_agent1_prompt": _get_rendered_langfuse_prompt("approver-agent1", f"Auditor 1 evaluation for {sub_name}"),
+            "approver_agent2_prompt": _get_rendered_langfuse_prompt("approver-agent2", f"Auditor 2 consensus evaluation for {sub_name}"),
         }
 
         return ParsedSubstrand(

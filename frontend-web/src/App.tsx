@@ -302,8 +302,9 @@ export function App() {
   async function loadMasterContext() {
     try {
       const res = await fetchJson<any>("/api/v1/admin/langfuse/context/master", { method: "GET" }, auth());
-      setMasterContext(res.master_context || "");
-      setMasterContextDraft(res.master_context || "");
+      const txt = res.text || res.master_context || "";
+      setMasterContext(txt);
+      setMasterContextDraft(txt);
       setMasterContextMeta(res);
     } catch(e) { /* ignore */ }
   }
@@ -1422,11 +1423,14 @@ export function App() {
               <div className="surface">
                 <h3>Select Agent Prompt</h3>
                 <select value={selectedPromptName} onChange={(e) => setSelectedPromptName(e.target.value)}>
-                  <option value="note-generator">note-generator</option>
-                  <option value="diagram-generator">diagram-generator</option>
-                  <option value="activity-generator">activity-generator</option>
-                  <option value="question-generator">question-generator</option>
-                  <option value="reviewer-panel">reviewer-panel</option>
+                  <option value="curriculum-extractor">curriculum-extractor (Layer 1 Discovery)</option>
+                  <option value="note-generator">note-generator (Revision Notes)</option>
+                  <option value="diagram-generator">diagram-generator (Vector SVG)</option>
+                  <option value="activity-generator">activity-generator (Experiments & Safety)</option>
+                  <option value="question-generator">question-generator (Criterion Questions)</option>
+                  <option value="reviewer-panel">reviewer-panel (Strict Safety Audit)</option>
+                  <option value="approver-agent1">approver-agent1 (Auditor 1 Evaluation)</option>
+                  <option value="approver-agent2">approver-agent2 (Auditor 2 Consensus)</option>
                 </select>
                 <button style={{ marginTop: "12px" }} onClick={previewPromptContext} disabled={isRunning}>Compile & Preview</button>
               </div>
