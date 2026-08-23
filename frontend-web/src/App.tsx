@@ -41,6 +41,21 @@ function hasRight(role: Role | null, right: string): boolean {
   return rights.includes("all") || rights.includes(right);
 }
 
+function toOptionLabel(val: any): string {
+  if (val === null || val === undefined) return "";
+  if (typeof val === "string") return val;
+  if (typeof val === "number" || typeof val === "boolean") return String(val);
+  if (typeof val === "object") {
+    if (typeof val.name === "string") return val.name;
+    if (typeof val.text === "string") return val.text;
+    if (typeof val.id === "string") return String(val.id);
+    if (typeof val.title === "string") return val.title;
+    if (typeof val.subject === "string") return val.subject;
+    return val.name || val.text || val.id || val.title || JSON.stringify(val);
+  }
+  return String(val);
+}
+
 export function App() {
   const [output, setOutput] = useState("Ready");
   const [view, setView] = useState<View>("dashboard");
@@ -1089,9 +1104,9 @@ export function App() {
                     if (g) loadGradeSubjects(g);
                   }}>
                     <option value="">Select level...</option>
-                    {datasetsList.map((d: any) => {
-                      const val = typeof d === "string" ? d : (d?.name || String(d));
-                      return <option key={val} value={val}>{val}</option>;
+                    {datasetsList.map((d: any, idx: number) => {
+                      const label = toOptionLabel(d);
+                      return <option key={`grade-${label}-${idx}`} value={label}>{label}</option>;
                     })}
                   </select>
                 </label>
@@ -1103,9 +1118,9 @@ export function App() {
                     if (sub && genGrade) loadSubjectStrands(genGrade, sub);
                   }}>
                     <option value="">Select subject...</option>
-                    {gradeSubjects.map((s: any) => {
-                      const val = typeof s === "string" ? s : (s?.name || String(s));
-                      return <option key={val} value={val}>{val}</option>;
+                    {gradeSubjects.map((s: any, idx: number) => {
+                      const label = toOptionLabel(s);
+                      return <option key={`sub-${label}-${idx}`} value={label}>{label}</option>;
                     })}
                   </select>
                 </label>
@@ -1119,9 +1134,9 @@ export function App() {
                     setSubstrandSlos([]);
                   }}>
                     <option value="">Select strand...</option>
-                    {subjectStrands.map((s: any) => {
-                      const val = typeof s === "string" ? s : (s?.name || String(s));
-                      return <option key={val} value={val}>{val}</option>;
+                    {subjectStrands.map((s: any, idx: number) => {
+                      const label = toOptionLabel(s);
+                      return <option key={`strand-${label}-${idx}`} value={label}>{label}</option>;
                     })}
                   </select>
                 </label>
@@ -1137,9 +1152,9 @@ export function App() {
                     }
                   }}>
                     <option value="">Select sub-strand...</option>
-                    {subjectStrands.find((s: any) => (s?.name || s) === genStrand)?.sub_strands?.map((ss: any) => {
-                      const val = typeof ss === "string" ? ss : (ss?.name || String(ss));
-                      return <option key={val} value={val}>{val}</option>;
+                    {(subjectStrands.find((s: any) => toOptionLabel(s) === genStrand)?.sub_strands || []).map((ss: any, idx: number) => {
+                      const label = toOptionLabel(ss);
+                      return <option key={`substrand-${label}-${idx}`} value={label}>{label}</option>;
                     })}
                   </select>
                 </label>
@@ -1147,9 +1162,9 @@ export function App() {
                   SLO ID
                   <select value={genSloId} onChange={(e) => setGenSloId(e.target.value)}>
                     <option value="">Select SLO...</option>
-                    {substrandSlos.map((slo: any) => {
-                      const val = typeof slo === "string" ? slo : (slo?.text || slo?.id || String(slo));
-                      return <option key={val} value={val}>{val}</option>;
+                    {substrandSlos.map((slo: any, idx: number) => {
+                      const label = toOptionLabel(slo);
+                      return <option key={`slo-${label}-${idx}`} value={label}>{label}</option>;
                     })}
                   </select>
                 </label>
