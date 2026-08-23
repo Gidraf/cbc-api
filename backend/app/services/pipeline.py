@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import time
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -8,14 +9,23 @@ from ..config import PipelineStage
 from ..errors import raise_api_error
 from ..infra.db import execute, fetch_one, to_json
 from ..models import GenerateRequest, PipelineResult, Provenance, StageRunResult, now_iso
+from ..services.cost_tracker import (
+    CostResult,
+    TokenUsage,
+    calculate_cost,
+    format_cost_summary,
+    persist_stage_cost,
+)
 from ..services.diagram_dedup import diagram_deduplicator
 from ..services.langfuse_context import langfuse_context_service
-from ..services.llm_client import llm_client
+from ..services.llm_client import LlmResponse, llm_client
 from ..services.metrics import metrics_service
 from ..services.provider_router import ProviderRouter
 from ..services.question_dna import question_dna_service
 from ..services.targets import target_service
 from ..services.validation import validate_grade_dataset, validate_question_batch
+
+logger = logging.getLogger("cbc-pipeline")
 
 
 class PipelineService:
@@ -39,34 +49,42 @@ class PipelineService:
 
         run_id = f"run_{request.request_id}"
         stage_runs: list[StageRunResult] = []
+        stage_costs: list[CostResult] = []
 
         # 2. Notes Generation Stage
-        notes_stage = self._run_stage(
+        notes_stage, notes_cost = self._run_stage(
             PipelineStage.NOTES_GENERATION.value,
+            run_id,
             request,
             lambda req, resolved: self._generate_notes(req, resolved, grade_slug, subject),
         )
         stage_runs.append(notes_stage)
+        stage_costs.append(notes_cost)
 
         # 3. Diagram Generation Stage (with Vector Deduplication & Accessibility)
-        diagram_stage = self._run_stage(
+        diagram_stage, diagram_cost = self._run_stage(
             PipelineStage.DIAGRAM_GENERATION.value,
+            run_id,
             request,
             lambda req, resolved: self._generate_diagrams(req, resolved, grade_slug, subject, notes_stage.output),
         )
         stage_runs.append(diagram_stage)
+        stage_costs.append(diagram_cost)
 
         # 4. Activity Generation Stage
-        activity_stage = self._run_stage(
+        activity_stage, activity_cost = self._run_stage(
             PipelineStage.ACTIVITY_GENERATION.value,
+            run_id,
             request,
             lambda req, resolved: self._generate_activities(req, resolved, grade_slug, subject, notes_stage.output),
         )
         stage_runs.append(activity_stage)
+        stage_costs.append(activity_cost)
 
         # 5. Question Generation Stage
-        question_stage = self._run_stage(
+        question_stage, question_cost = self._run_stage(
             PipelineStage.QUESTION_GENERATION.value,
+            run_id,
             request,
             lambda req, resolved: self._generate_questions(
                 req, resolved, grade_slug, subject, notes_stage.output, diagram_stage.output, activity_stage.output
@@ -74,14 +92,17 @@ class PipelineService:
         )
         validate_question_batch(question_stage.output.get("questions", []))
         stage_runs.append(question_stage)
+        stage_costs.append(question_cost)
 
         # 6. Reviewer Panel Quality Audit
-        review_stage = self._run_stage(
+        review_stage, review_cost = self._run_stage(
             PipelineStage.REVIEWER_PANEL.value,
+            run_id,
             request,
             lambda req, resolved: self._run_reviewer_panel(req, resolved, grade_slug, subject, question_stage.output),
         )
         stage_runs.append(review_stage)
+        stage_costs.append(review_cost)
 
         # 7. Quality Gate Decision
         review_audit = review_stage.output
@@ -102,7 +123,11 @@ class PipelineService:
                 status="approved" if is_approved else "needs_review",
             )
 
-        # 9. Assemble Sub-strand Resource Bundle
+        # 9. Compute Cost Summary
+        cost_summary = format_cost_summary(stage_costs)
+        total_pipeline_ms = (time.time() - start_time) * 1000
+
+        # 10. Assemble Sub-strand Resource Bundle
         bundle_id = f"res_{request.request_id[-12:].lower()}"
         bundle = {
             "bundle_id": bundle_id,
@@ -113,18 +138,20 @@ class PipelineService:
             "questions": question_stage.output.get("questions", []),
             "review_audit": review_audit,
             "status": workflow_status,
+            "cost_summary": cost_summary,
+            "total_latency_ms": round(total_pipeline_ms, 2),
             "updated_at": now_iso(),
         }
 
         # Persist Sub-strand Resource Bundle to Database
         execute(
             """
-            INSERT INTO substrand_resources (bundle_id, curriculum, notes, diagrams, activities, questions, review_audit, status, updated_at)
+            INSERT INTO substrand_resources (bundle_id, curriculum, notes, diagrams, activities, questions, review_audit, status, total_tokens, total_cost_usd, updated_at)
             VALUES (
                 :bundle_id, CAST(:curriculum AS jsonb), CAST(:notes AS jsonb),
                 CAST(:diagrams AS jsonb), CAST(:activities AS jsonb),
                 CAST(:questions AS jsonb), CAST(:review_audit AS jsonb),
-                :status, NOW()
+                :status, :total_tokens, :total_cost_usd, NOW()
             )
             ON CONFLICT (bundle_id) DO UPDATE SET
                 curriculum = EXCLUDED.curriculum,
@@ -134,6 +161,8 @@ class PipelineService:
                 questions = EXCLUDED.questions,
                 review_audit = EXCLUDED.review_audit,
                 status = EXCLUDED.status,
+                total_tokens = EXCLUDED.total_tokens,
+                total_cost_usd = EXCLUDED.total_cost_usd,
                 updated_at = NOW()
             """,
             {
@@ -145,15 +174,22 @@ class PipelineService:
                 "questions": to_json(question_stage.output.get("questions", [])),
                 "review_audit": to_json(review_audit),
                 "status": workflow_status,
+                "total_tokens": cost_summary.get("total_tokens", 0),
+                "total_cost_usd": cost_summary.get("total_cost_usd", 0.0),
             },
         )
 
-        # 10. Record Target Metrics
+        # 11. Record Target Metrics
         target_service.record_generation(grade_slug, is_approved=is_approved)
 
-        result = PipelineResult(run_id=run_id, stage_runs=stage_runs, published_bundle=bundle)
+        result = PipelineResult(
+            run_id=run_id,
+            stage_runs=stage_runs,
+            published_bundle=bundle,
+            cost_summary=cost_summary,
+        )
 
-        # 11. Store in Idempotency Cache
+        # 12. Store in Idempotency Cache
         if idempotency_key:
             expires_at = datetime.now(timezone.utc) + timedelta(hours=24)
             execute(
@@ -171,20 +207,47 @@ class PipelineService:
                 },
             )
 
+        logger.info(
+            "Pipeline run %s completed: %s | %d tokens | $%.4f | %.0fms",
+            run_id,
+            workflow_status,
+            cost_summary.get("total_tokens", 0),
+            cost_summary.get("total_cost_usd", 0.0),
+            total_pipeline_ms,
+        )
         return result
 
-    def _run_stage(self, stage: str, request: GenerateRequest, fn):
+    def _run_stage(
+        self, stage: str, run_id: str, request: GenerateRequest, fn
+    ) -> tuple[StageRunResult, CostResult]:
         start = time.time()
         resolved = self.router.resolve_for_stage(stage)
-        output = fn(request, resolved)
+        llm_response: LlmResponse = fn(request, resolved)
         latency_ms = (time.time() - start) * 1000
         metrics_service.record_stage_latency(stage, latency_ms)
+
+        # Calculate cost for this stage
+        cost = calculate_cost(
+            model=llm_response.model,
+            provider=llm_response.provider,
+            usage=llm_response.usage,
+        )
+
+        # Persist cost record to database
+        persist_stage_cost(run_id, stage, cost)
+
+        # Record metrics
+        metrics_service.record_stage_cost(
+            provider=llm_response.provider,
+            tokens=llm_response.usage.total_tokens,
+            cost_usd=cost.total_cost_usd,
+        )
 
         provenance = Provenance(
             langfuse_prompt_name=stage,
             langfuse_prompt_version="v2.1",
             langfuse_prompt_label=request.controls.environment,
-            prompt_hash_sha256=self.router.prompt_hash(stage, output),
+            prompt_hash_sha256=self.router.prompt_hash(stage, llm_response.content),
             model_provider=resolved.provider,
             model_name=resolved.model,
             model_revision="2026-08",
@@ -195,11 +258,16 @@ class PipelineService:
             resolved_model_name=resolved.model,
             resolved_base_url=resolved.resolved_base_url,
             credential_ref_id=resolved.credential_ref_id,
+            prompt_tokens=llm_response.usage.prompt_tokens,
+            completion_tokens=llm_response.usage.completion_tokens,
+            total_tokens=llm_response.usage.total_tokens,
+            cost_usd=cost.total_cost_usd,
+            latency_ms=round(latency_ms, 2),
             created_at=now_iso(),
         )
-        return StageRunResult(pipeline_stage=stage, output=output, provenance=provenance)
+        return StageRunResult(pipeline_stage=stage, output=llm_response.content, provenance=provenance), cost
 
-    def _generate_notes(self, request: GenerateRequest, resolved, grade_slug: str, subject: str) -> dict[str, Any]:
+    def _generate_notes(self, request: GenerateRequest, resolved, grade_slug: str, subject: str) -> LlmResponse:
         context = langfuse_context_service.assemble_agent_context(
             agent_name="note-generator",
             grade_slug=grade_slug,
@@ -220,7 +288,7 @@ class PipelineService:
         grade_slug: str,
         subject: str,
         notes_output: dict,
-    ) -> dict[str, Any]:
+    ) -> LlmResponse:
         concept_name = f"{request.curriculum.sub_strand} visual model"
         context = langfuse_context_service.assemble_agent_context(
             agent_name="diagram-generator",
@@ -231,15 +299,15 @@ class PipelineService:
                 "notes_title": notes_output.get("title", request.curriculum.sub_strand),
             },
         )
-        raw_diagram = llm_client.generate(resolved, context.messages, temperature=0.1)
-
-        svg_markup = raw_diagram.get("diagram_svg", "<svg xmlns='http://www.w3.org/2000/svg'></svg>")
-        accessibility = raw_diagram.get("accessibility", {})
+        llm_resp = llm_client.generate(resolved, context.messages, temperature=0.1)
 
         # Execute SHA-256 Deduplication & MinIO Upload
+        svg_markup = llm_resp.content.get("diagram_svg", "<svg xmlns='http://www.w3.org/2000/svg'></svg>")
+        accessibility = llm_resp.content.get("accessibility", {})
+
         dedup_result = diagram_deduplicator.deduplicate_and_store(
             svg_str=svg_markup,
-            diagram_title=raw_diagram.get("diagram_title", concept_name),
+            diagram_title=llm_resp.content.get("diagram_title", concept_name),
             alt_text=accessibility.get("alt_text", ""),
             tactile_description=accessibility.get("tactile_description", ""),
             metadata={"grade": grade_slug, "subject": subject, "strand": request.curriculum.strand},
@@ -247,7 +315,8 @@ class PipelineService:
 
         metrics_service.record_diagram_dedup(reused=(dedup_result.dedup_status == "reused"))
 
-        return {
+        # Update LlmResponse content with dedup results
+        llm_resp.content = {
             "diagram_id": dedup_result.diagram_id,
             "diagram_title": dedup_result.diagram_title,
             "diagram_svg": dedup_result.diagram_svg,
@@ -259,6 +328,7 @@ class PipelineService:
                 "tactile_description": dedup_result.tactile_description,
             },
         }
+        return llm_resp
 
     def _generate_activities(
         self,
@@ -267,7 +337,7 @@ class PipelineService:
         grade_slug: str,
         subject: str,
         notes_output: dict,
-    ) -> dict[str, Any]:
+    ) -> LlmResponse:
         context = langfuse_context_service.assemble_agent_context(
             agent_name="activity-generator",
             grade_slug=grade_slug,
@@ -291,7 +361,7 @@ class PipelineService:
         notes_output: dict,
         diagrams_output: dict,
         activities_output: dict,
-    ) -> dict[str, Any]:
+    ) -> LlmResponse:
         _ = activities_output
         context = langfuse_context_service.assemble_agent_context(
             agent_name="question-generator",
@@ -317,7 +387,7 @@ class PipelineService:
         grade_slug: str,
         subject: str,
         questions_output: dict,
-    ) -> dict[str, Any]:
+    ) -> LlmResponse:
         context = langfuse_context_service.assemble_agent_context(
             agent_name="reviewer-panel",
             grade_slug=grade_slug,

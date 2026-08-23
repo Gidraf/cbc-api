@@ -26,10 +26,16 @@ ERRORS = {
     "MODEL_ENDPOINT_UNAVAILABLE": (503, True),
     "LLM_PROVIDER_TIMEOUT": (504, True),
     "LLM_PROVIDER_ERROR": (502, True),
+    "LLM_CREDIT_EXHAUSTED": (402, False),
+    "LLM_RATE_LIMITED": (429, True),
+    "LLM_INVALID_MODEL": (400, False),
+    "LLM_CONTENT_FILTER": (400, False),
     # Langfuse
     "LANGFUSE_UNAVAILABLE": (503, True),
     "PROMPT_NOT_FOUND": (404, False),
     "PROMPT_COMPILE_ERROR": (400, False),
+    "LANGFUSE_DATASET_NOT_FOUND": (404, False),
+    "LANGFUSE_CONTEXT_ASSEMBLY_FAILED": (500, False),
     # Assets & Storage
     "DIAGRAM_GENERATION_FAILED": (502, True),
     "STORAGE_UPLOAD_FAILED": (502, True),

@@ -103,6 +103,23 @@ export function App() {
   // Browser Agent
   const [browseUrl, setBrowseUrl] = useState("https://example.com");
 
+  // Dynamic Curriculum Data (from Langfuse datasets)
+  const [gradeSubjects, setGradeSubjects] = useState<any[]>([]);
+  const [subjectStrands, setSubjectStrands] = useState<any[]>([]);
+  const [substrandSlos, setSubstrandSlos] = useState<string[]>([]);
+
+  // Global BECF Context
+  const [masterContext, setMasterContext] = useState("");
+  const [masterContextMeta, setMasterContextMeta] = useState<any>(null);
+  const [masterContextDraft, setMasterContextDraft] = useState("");
+
+  // Cost Tracking
+  const [costSummary, setCostSummary] = useState<any>(null);
+  const [generationCosts, setGenerationCosts] = useState<any>(null);
+
+  // Error banner state
+  const [errorBanner, setErrorBanner] = useState<{code: string; message: string; retryable: boolean} | null>(null);
+
   const title = useMemo(() => `CBC API Platform`, []);
 
   function auth() {
@@ -116,11 +133,22 @@ export function App() {
     try {
       setIsRunning(true);
       setOutput(`${label}...`);
+      setErrorBanner(null);
       const result = await fn();
       setOutput(pretty(result));
       return result;
     } catch (error) {
-      setOutput(error instanceof Error ? error.message : String(error));
+      // Parse structured API errors
+      let errMsg = error instanceof Error ? error.message : String(error);
+      try {
+        const parsed = JSON.parse(errMsg);
+        if (parsed.errors?.[0]) {
+          const apiErr = parsed.errors[0];
+          setErrorBanner({ code: apiErr.code, message: apiErr.message, retryable: apiErr.retryable || false });
+          errMsg = pretty(parsed);
+        }
+      } catch { /* not JSON, use raw message */ }
+      setOutput(errMsg);
       return undefined;
     } finally {
       setIsRunning(false);
@@ -283,21 +311,102 @@ export function App() {
       }, auth());
 
       setGenerationResult(res.result?.published_bundle || res.result);
+      setGenerationCosts(res.provenance?.cost_summary || res.result?.cost_summary || null);
       return res;
     });
   }
 
+  // Dynamic Curriculum Cascade
+  async function loadGradeSubjects(gradeSlug: string) {
+    try {
+      const res = await fetchJson<any>(`/api/v1/admin/langfuse/datasets/${gradeSlug}/subjects`, { method: "GET" }, auth());
+      setGradeSubjects(res.subjects || []);
+      setGenSubject("");
+      setSubjectStrands([]);
+      setSubstrandSlos([]);
+      setGenStrand("");
+      setGenSubstrand("");
+      setGenSloId("");
+    } catch(e) {
+      setGradeSubjects([]);
+    }
+  }
+
+  async function loadSubjectStrands(gradeSlug: string, subject: string) {
+    try {
+      const res = await fetchJson<any>(`/api/v1/admin/langfuse/datasets/${gradeSlug}/${encodeURIComponent(subject)}/strands`, { method: "GET" }, auth());
+      setSubjectStrands(res.strands || []);
+      setSubstrandSlos([]);
+      setGenStrand("");
+      setGenSubstrand("");
+      setGenSloId("");
+    } catch(e) {
+      setSubjectStrands([]);
+    }
+  }
+
+  async function loadSubstrandSlos(gradeSlug: string, subject: string, strand: string, subStrand: string) {
+    try {
+      const res = await fetchJson<any>(`/api/v1/admin/langfuse/datasets/${gradeSlug}/${encodeURIComponent(subject)}/strands/${encodeURIComponent(strand)}/${encodeURIComponent(subStrand)}/slos`, { method: "GET" }, auth());
+      setSubstrandSlos(res.slos || []);
+      setGenSloId("");
+    } catch(e) {
+      setSubstrandSlos([]);
+    }
+  }
+
+  // Global BECF Context
+  async function loadMasterContext() {
+    try {
+      const res = await fetchJson<any>("/api/v1/admin/langfuse/context/master", { method: "GET" }, auth());
+      setMasterContext(res.text || "");
+      setMasterContextDraft(res.text || "");
+      setMasterContextMeta(res);
+    } catch(e) { /* ignore */ }
+  }
+
+  async function saveMasterContext() {
+    await run("Save Master Context", async () => {
+      const res = await fetchJson<any>("/api/v1/admin/langfuse/context/master", {
+        method: "PUT",
+        body: JSON.stringify({ text: masterContextDraft })
+      }, auth());
+      setMasterContext(masterContextDraft);
+      setMasterContextMeta(res);
+      return res;
+    });
+  }
+
+  async function seedLangfuse() {
+    await run("Seed Langfuse", async () => {
+      const res = await fetchJson<any>("/api/v1/admin/langfuse/seed", { method: "POST" }, auth());
+      await loadDatasets();
+      return res;
+    });
+  }
+
+  // Cost tracking
+  async function loadCostSummary() {
+    try {
+      const res = await fetchJson<any>("/api/v1/costs/summary", { method: "GET" }, auth());
+      setCostSummary(res);
+    } catch(e) { /* ignore */ }
+  }
+
   // Dashboard Refresh
   async function refreshDashboard() {
-    await Promise.all([loadTodayTarget(), loadQuestionBank()]);
+    await Promise.all([loadTodayTarget(), loadQuestionBank(), loadCostSummary()]);
   }
 
   useEffect(() => {
     if (currentRole) {
       loadDatasets();
       loadGradeDataset(selectedGrade);
+      loadGradeSubjects(selectedGrade);
       loadTodayTarget();
       loadQuestionBank();
+      loadCostSummary();
+      loadMasterContext();
     }
   }, [currentRole]);
 
@@ -387,6 +496,25 @@ export function App() {
           </div>
         </header>
 
+        {errorBanner && (
+          <div className={`error-banner ${errorBanner.retryable ? 'warn' : 'danger'}`}>
+            <span className="error-icon">
+              {errorBanner.code === 'LLM_CREDIT_EXHAUSTED' ? '💳' :
+               errorBanner.code === 'LLM_RATE_LIMITED' ? '⏳' :
+               errorBanner.code === 'LANGFUSE_UNAVAILABLE' ? '🔌' :
+               errorBanner.code === 'MISSING_CONTEXT_LAYER' ? '📋' :
+               errorBanner.code === 'MODEL_CREDENTIAL_MISSING' ? '🔑' :
+               errorBanner.code.startsWith('LLM_') ? '🤖' : '⚠️'}
+            </span>
+            <div className="error-content">
+              <strong>{errorBanner.code}</strong>
+              <p>{errorBanner.message}</p>
+              {errorBanner.retryable && <small>This error is retryable — the system will attempt again automatically.</small>}
+            </div>
+            <button className="ghost" onClick={() => setErrorBanner(null)}>✕</button>
+          </div>
+        )}
+
         {/* 1. DASHBOARD TAB */}
         {view === "dashboard" && (
           <section className="panel">
@@ -416,6 +544,27 @@ export function App() {
               </article>
             </div>
 
+            {costSummary && (
+              <div className="kpi-grid" style={{marginTop: '1rem'}}>
+                <div className="kpi">
+                  <div className="muted">Total Tokens Used</div>
+                  <div className="kpi-value">{(costSummary.total_tokens || 0).toLocaleString()}</div>
+                </div>
+                <div className="kpi">
+                  <div className="muted">Total Cost (USD)</div>
+                  <div className="kpi-value">${(costSummary.total_cost_usd || 0).toFixed(4)}</div>
+                </div>
+                <div className="kpi">
+                  <div className="muted">Total Runs</div>
+                  <div className="kpi-value">{costSummary.total_runs || 0}</div>
+                </div>
+                <div className="kpi">
+                  <div className="muted">Avg Cost / Run</div>
+                  <div className="kpi-value">${(costSummary.avg_cost_per_run || 0).toFixed(4)}</div>
+                </div>
+              </div>
+            )}
+
             <div className="surface">
               <h3>Daily Target Progress</h3>
               <div className="progress-bar-wrap">
@@ -444,6 +593,31 @@ export function App() {
               <div>
                 <h2>Langfuse Curriculum Datasets</h2>
                 <p>Browse and upload KICD curriculum design essence statements, strands, and SLOs stored dynamically in Langfuse.</p>
+              </div>
+            </div>
+
+            <div className="panel" style={{marginTop: '1rem', marginBottom: '1rem'}}>
+              <div className="panel-head">
+                📜 Global BECF Context
+                <button className="ghost" onClick={loadMasterContext} style={{marginLeft: 'auto', fontSize: '0.8rem'}}>Refresh</button>
+              </div>
+              {masterContextMeta && (
+                <div style={{padding: '0.5rem 1rem', fontSize: '0.8rem', color: 'var(--muted)'}}>
+                  Prompt: {masterContextMeta.prompt_name} | Version: {masterContextMeta.prompt_version} | Label: {masterContextMeta.prompt_label}
+                </div>
+              )}
+              <div style={{padding: '0 1rem 1rem'}}>
+                <textarea
+                  value={masterContextDraft}
+                  onChange={(e) => setMasterContextDraft(e.target.value)}
+                  rows={12}
+                  style={{width: '100%', fontFamily: 'monospace', fontSize: '0.85rem'}}
+                  placeholder="Paste the full KICD BECF master context here..."
+                />
+                <div style={{display: 'flex', gap: '0.5rem', marginTop: '0.5rem'}}>
+                  <button onClick={saveMasterContext} disabled={isRunning}>Save to Langfuse</button>
+                  <button className="ghost" onClick={seedLangfuse} disabled={isRunning}>Seed Langfuse (Create All Prompts & Datasets)</button>
+                </div>
               </div>
             </div>
 
@@ -532,25 +706,62 @@ export function App() {
               <div className="three-col">
                 <label>
                   Grade
-                  <input value={genGrade} onChange={(e) => setGenGrade(e.target.value)} />
+                  <select value={genGrade} onChange={(e) => {
+                    const g = e.target.value;
+                    setGenGrade(g);
+                    const slug = g.startsWith('grade-') ? g : (g === 'pp1' || g === 'pp2' ? `grade-${g}` : `grade-${g}`);
+                    loadGradeSubjects(slug);
+                  }}>
+                    <option value="">Select grade...</option>
+                    {datasetsList.map(d => <option key={d} value={d}>{d}</option>)}
+                  </select>
                 </label>
                 <label>
                   Subject
-                  <input value={genSubject} onChange={(e) => setGenSubject(e.target.value)} />
+                  <select value={genSubject} onChange={(e) => {
+                    setGenSubject(e.target.value);
+                    const slug = genGrade.startsWith('grade-') ? genGrade : `grade-${genGrade}`;
+                    if (e.target.value) loadSubjectStrands(slug, e.target.value);
+                  }}>
+                    <option value="">Select subject...</option>
+                    {gradeSubjects.map((s: any) => <option key={s.name || s} value={s.name || s}>{s.name || s}</option>)}
+                  </select>
                 </label>
                 <label>
                   Strand
-                  <input value={genStrand} onChange={(e) => setGenStrand(e.target.value)} />
+                  <select value={genStrand} onChange={(e) => {
+                    setGenStrand(e.target.value);
+                    setGenSubstrand("");
+                    setGenSloId("");
+                    setSubstrandSlos([]);
+                  }}>
+                    <option value="">Select strand...</option>
+                    {subjectStrands.map((s: any) => <option key={s.name} value={s.name}>{s.name}</option>)}
+                  </select>
                 </label>
               </div>
               <div className="two-col" style={{ marginTop: "12px" }}>
                 <label>
                   Sub-Strand
-                  <input value={genSubstrand} onChange={(e) => setGenSubstrand(e.target.value)} />
+                  <select value={genSubstrand} onChange={(e) => {
+                    setGenSubstrand(e.target.value);
+                    if (e.target.value) {
+                      const slug = genGrade.startsWith('grade-') ? genGrade : `grade-${genGrade}`;
+                      loadSubstrandSlos(slug, genSubject, genStrand, e.target.value);
+                    }
+                  }}>
+                    <option value="">Select sub-strand...</option>
+                    {subjectStrands.find((s: any) => s.name === genStrand)?.sub_strands?.map((ss: any) => (
+                      <option key={ss.name} value={ss.name}>{ss.name}</option>
+                    ))}
+                  </select>
                 </label>
                 <label>
-                  Specific Learning Outcome (SLO ID)
-                  <input value={genSloId} onChange={(e) => setGenSloId(e.target.value)} />
+                  SLO ID
+                  <select value={genSloId} onChange={(e) => setGenSloId(e.target.value)}>
+                    <option value="">Select SLO...</option>
+                    {substrandSlos.map(slo => <option key={slo} value={slo}>{slo}</option>)}
+                  </select>
                 </label>
               </div>
               <button style={{ marginTop: "16px" }} onClick={triggerGenerate} disabled={isRunning}>
@@ -584,6 +795,41 @@ export function App() {
                     </div>
                   </div>
                 ))}
+              </div>
+            )}
+
+            {generationCosts && (
+              <div className="panel" style={{marginTop: '1rem'}}>
+                <div className="panel-head">💰 Generation Cost Breakdown</div>
+                <div className="kpi-grid">
+                  <div className="kpi">
+                    <div className="muted">Total Tokens</div>
+                    <div className="kpi-value">{(generationCosts.total_tokens || 0).toLocaleString()}</div>
+                  </div>
+                  <div className="kpi">
+                    <div className="muted">Total Cost</div>
+                    <div className="kpi-value">${(generationCosts.total_cost_usd || 0).toFixed(4)}</div>
+                  </div>
+                </div>
+                {generationCosts.stages && (
+                  <table style={{width: '100%', marginTop: '0.5rem', fontSize: '0.85rem'}}>
+                    <thead>
+                      <tr style={{textAlign: 'left'}}>
+                        <th>Stage</th><th>Model</th><th>Prompt Tokens</th><th>Completion</th><th>Cost</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {generationCosts.stages.map((s: any, i: number) => (
+                        <tr key={i}>
+                          <td>{s.model}</td><td>{s.provider}</td>
+                          <td>{(s.prompt_tokens || 0).toLocaleString()}</td>
+                          <td>{(s.completion_tokens || 0).toLocaleString()}</td>
+                          <td>${(s.cost_usd || 0).toFixed(4)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
               </div>
             )}
           </section>

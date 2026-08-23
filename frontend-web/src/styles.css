@@ -529,3 +529,74 @@ pre {
     grid-template-columns: 1fr;
   }
 }
+
+/* Error Banner */
+.error-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  padding: 0.75rem 1rem;
+  border-radius: var(--radius);
+  margin: 0.75rem 1rem 0;
+  font-size: 0.9rem;
+}
+.error-banner.danger {
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  color: #991b1b;
+}
+.error-banner.warn {
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  color: #92400e;
+}
+.error-icon {
+  font-size: 1.5rem;
+  flex-shrink: 0;
+  line-height: 1;
+}
+.error-content {
+  flex: 1;
+}
+.error-content strong {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.85rem;
+}
+.error-content p {
+  margin: 0.25rem 0 0;
+}
+.error-content small {
+  color: #6b7280;
+  font-size: 0.8rem;
+}
+
+/* Cost breakdown table */
+.cost-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 0.5rem;
+  font-size: 0.85rem;
+}
+.cost-table th {
+  text-align: left;
+  padding: 0.4rem 0.5rem;
+  border-bottom: 1px solid var(--line);
+  font-weight: 600;
+  color: var(--muted);
+  font-size: 0.8rem;
+  text-transform: uppercase;
+}
+.cost-table td {
+  padding: 0.4rem 0.5rem;
+  border-bottom: 1px solid var(--line);
+}
+.cost-table tr:last-child td {
+  border-bottom: none;
+}
+
+/* KPI value styling */
+.kpi-value {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--ink);
+}

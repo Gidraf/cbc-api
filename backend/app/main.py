@@ -364,6 +364,7 @@ def generate(payload: GenerateRequest, _: AuthContext = Depends(require_roles("a
     aggregate_provenance = {
         "pipeline_stage_count": len(result.stage_runs),
         "stage_provenance": [stage.provenance.model_dump() for stage in result.stage_runs],
+        "cost_summary": result.cost_summary,
     }
 
     return GenerateResponse(
@@ -416,3 +417,82 @@ def human_review_decision(
 @app.get("/production/ready")
 def production_ready(_: AuthContext = Depends(require_roles("admin", "operator", "reviewer", "developer"))) -> dict:
     return {"items": workflow_service.production_ready()}
+
+
+# ── Cost Analytics Endpoints ─────────────────────────────────────────────────
+
+@app.get("/api/v1/costs/summary")
+def get_cost_summary(_: AuthContext = Depends(require_roles("admin", "operator", "reviewer", "developer"))) -> dict:
+    from .infra.db import fetch_all, fetch_one
+
+    totals = fetch_one(
+        """
+        SELECT
+            COALESCE(SUM(total_tokens), 0) as total_tokens,
+            COALESCE(SUM(total_cost_usd), 0) as total_cost_usd,
+            COUNT(DISTINCT run_id) as total_runs
+        FROM generation_costs
+        """
+    ) or {}
+
+    by_provider = fetch_all(
+        """
+        SELECT provider, SUM(total_tokens) as tokens, SUM(total_cost_usd) as cost_usd, COUNT(*) as calls
+        FROM generation_costs
+        GROUP BY provider ORDER BY cost_usd DESC
+        """
+    ) or []
+
+    by_stage = fetch_all(
+        """
+        SELECT pipeline_stage, AVG(total_tokens) as avg_tokens, SUM(total_cost_usd) as total_cost, COUNT(*) as calls
+        FROM generation_costs
+        GROUP BY pipeline_stage ORDER BY total_cost DESC
+        """
+    ) or []
+
+    recent = fetch_all(
+        """
+        SELECT run_id, SUM(total_tokens) as tokens, SUM(total_cost_usd) as cost_usd
+        FROM generation_costs
+        GROUP BY run_id ORDER BY MAX(created_at) DESC LIMIT 20
+        """
+    ) or []
+
+    total_runs = totals.get("total_runs", 0)
+    total_cost = float(totals.get("total_cost_usd", 0))
+
+    return {
+        "total_tokens": totals.get("total_tokens", 0),
+        "total_cost_usd": round(total_cost, 4),
+        "total_runs": total_runs,
+        "avg_cost_per_run": round(total_cost / total_runs, 6) if total_runs > 0 else 0.0,
+        "by_provider": by_provider,
+        "by_stage": by_stage,
+        "recent_runs": recent,
+    }
+
+
+@app.get("/api/v1/costs/run/{run_id}")
+def get_run_costs(run_id: str, _: AuthContext = Depends(require_roles("admin", "operator", "reviewer", "developer"))) -> dict:
+    from .infra.db import fetch_all
+
+    stages = fetch_all(
+        """
+        SELECT pipeline_stage, provider, model, prompt_tokens, completion_tokens,
+               total_tokens, input_cost_usd, output_cost_usd, total_cost_usd, created_at
+        FROM generation_costs
+        WHERE run_id = :run_id ORDER BY created_at ASC
+        """,
+        {"run_id": run_id},
+    ) or []
+
+    total_tokens = sum(s.get("total_tokens", 0) for s in stages)
+    total_cost = sum(float(s.get("total_cost_usd", 0)) for s in stages)
+
+    return {
+        "run_id": run_id,
+        "stages": stages,
+        "total_tokens": total_tokens,
+        "total_cost_usd": round(total_cost, 6),
+    }

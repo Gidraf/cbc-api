@@ -100,6 +100,12 @@ class Provenance(BaseModel):
     resolved_model_name: str
     resolved_base_url: str
     credential_ref_id: str
+    # Token usage and cost tracking
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    total_tokens: int = 0
+    cost_usd: float = 0.0
+    latency_ms: float = 0.0
     created_at: str
 
 
@@ -124,6 +130,7 @@ class PipelineResult(BaseModel):
     run_id: str
     stage_runs: list[StageRunResult]
     published_bundle: dict
+    cost_summary: dict = Field(default_factory=dict)
 
 
 class StageBindingPath(BaseModel):

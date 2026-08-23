@@ -171,6 +171,27 @@ MIGRATIONS: list[tuple[str, str]] = [
         );
         """,
     ),
+    (
+        "004_cost_tracking",
+        """
+        CREATE TABLE IF NOT EXISTS generation_costs (
+            id SERIAL PRIMARY KEY,
+            run_id TEXT NOT NULL,
+            pipeline_stage TEXT NOT NULL,
+            provider TEXT NOT NULL,
+            model TEXT NOT NULL,
+            prompt_tokens INT DEFAULT 0,
+            completion_tokens INT DEFAULT 0,
+            total_tokens INT DEFAULT 0,
+            input_cost_usd NUMERIC(10,6) DEFAULT 0,
+            output_cost_usd NUMERIC(10,6) DEFAULT 0,
+            total_cost_usd NUMERIC(10,6) DEFAULT 0,
+            created_at TIMESTAMPTZ DEFAULT NOW()
+        );
+        ALTER TABLE substrand_resources ADD COLUMN IF NOT EXISTS total_tokens INT DEFAULT 0;
+        ALTER TABLE substrand_resources ADD COLUMN IF NOT EXISTS total_cost_usd NUMERIC(10,6) DEFAULT 0;
+        """,
+    ),
 ]
 
 
