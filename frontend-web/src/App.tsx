@@ -1,5 +1,5 @@
 import { FormEvent, useMemo, useState, useEffect } from "react";
-import { API_BASE_URL, fetchJson } from "./api";
+import { API_BASE_URL, AUTH_EXPIRED_EVENT, fetchJson } from "./api";
 
 type Role = "admin" | "operator" | "reviewer" | "developer";
 type Provider = "openai" | "anthropic" | "gemini" | "ollama";
@@ -57,17 +57,54 @@ function toOptionLabel(val: any): string {
   return String(val);
 }
 
+function parseJwtExp(token: string): number | null {
+  if (!token) return null;
+  try {
+    const parts = token.split(".");
+    if (parts.length !== 3) return null;
+    const payload = JSON.parse(atob(parts[1]));
+    return typeof payload.exp === "number" ? payload.exp : null;
+  } catch {
+    return null;
+  }
+}
+
+function isTokenValid(token: string): boolean {
+  const exp = parseJwtExp(token);
+  if (exp === null) return true;
+  return exp * 1000 > Date.now();
+}
+
 export function App() {
   const [output, setOutput] = useState("Ready");
   const [view, setView] = useState<View>("dashboard");
   const [isRunning, setIsRunning] = useState(false);
 
-  // Authentication
+  // Authentication & Session State
+  const [sessionExpiredNotice, setSessionExpiredNotice] = useState<string | null>(() => {
+    const t = localStorage.getItem("cbc_token") || "";
+    if (t && !isTokenValid(t)) {
+      localStorage.removeItem("cbc_token");
+      localStorage.removeItem("cbc_role");
+      localStorage.removeItem("cbc_username");
+      localStorage.removeItem("cbc_subject");
+      return "Your session has expired. Please sign in again.";
+    }
+    return null;
+  });
+
   const [username, setUsername] = useState(() => localStorage.getItem("cbc_username") || "admin");
   const [password, setPassword] = useState("admin123");
-  const [bearerToken, setBearerToken] = useState(() => localStorage.getItem("cbc_token") || "");
+  const [bearerToken, setBearerToken] = useState(() => {
+    const t = localStorage.getItem("cbc_token") || "";
+    return isTokenValid(t) ? t : "";
+  });
   const [apiKey, setApiKey] = useState("");
-  const [currentRole, setCurrentRole] = useState<Role | null>(() => (localStorage.getItem("cbc_role") as Role) || null);
+  const [currentRole, setCurrentRole] = useState<Role | null>(() => {
+    const t = localStorage.getItem("cbc_token") || "";
+    if (!t || !isTokenValid(t)) return null;
+    return (localStorage.getItem("cbc_role") as Role) || null;
+  });
   const [currentSubject, setCurrentSubject] = useState(() => localStorage.getItem("cbc_subject") || "");
 
   // Providers & Stage Bindings
@@ -281,23 +318,35 @@ export function App() {
         method: "POST",
         body: JSON.stringify({ username, password })
       });
-      setBearerToken(res.access_token);
-      setCurrentRole(res.user.role);
-      setCurrentSubject(res.user.subject_scope || "");
-      localStorage.setItem("cbc_token", res.access_token);
-      localStorage.setItem("cbc_role", res.user.role);
+      const token = res.access_token;
+      const userRole = (res.user?.role || res.role || username) as Role;
+      const userSubject = res.user?.subject_scope || res.subject || "";
+
+      setBearerToken(token);
+      setCurrentRole(userRole);
+      setCurrentSubject(userSubject);
+      setView("dashboard"); // Explicitly redirects to home/dashboard
+      setSessionExpiredNotice(null);
+
+      localStorage.setItem("cbc_token", token);
+      localStorage.setItem("cbc_role", userRole);
       localStorage.setItem("cbc_username", username);
-      localStorage.setItem("cbc_subject", res.user.subject_scope || "");
+      localStorage.setItem("cbc_subject", userSubject);
       return res;
     });
   }
 
-  function logout() {
+  function logout(reason?: string) {
     setBearerToken("");
     setCurrentRole(null);
+    setView("dashboard");
     localStorage.removeItem("cbc_token");
     localStorage.removeItem("cbc_role");
     localStorage.removeItem("cbc_username");
+    localStorage.removeItem("cbc_subject");
+    if (reason && typeof reason === "string") {
+      setSessionExpiredNotice(reason);
+    }
   }
 
   // Dynamic Curriculum Cascade
@@ -1306,18 +1355,66 @@ export function App() {
   }
 
   useEffect(() => {
-    if (currentRole) {
-      loadDatasets();
-      loadRawLangfuseDatasets();
-      loadCurriculumDesigns();
-      loadTodayTarget();
-      loadQuestionBank();
-      loadCostSummary();
-      loadMasterContext();
-      loadReviewBundles(reviewFilter);
-      loadProfilesList();
+    // 1. Listen for 401 Auth Expired events from api.ts
+    function handleAuthExpired(e: Event) {
+      const customEvent = e as CustomEvent<{ reason?: string }>;
+      const reason = customEvent.detail?.reason || "Your session has expired. Please sign in again.";
+      logout(reason);
     }
-  }, [currentRole]);
+    window.addEventListener(AUTH_EXPIRED_EVENT, handleAuthExpired);
+
+    if (!currentRole || !bearerToken) {
+      return () => {
+        window.removeEventListener(AUTH_EXPIRED_EVENT, handleAuthExpired);
+      };
+    }
+
+    loadDatasets();
+    loadRawLangfuseDatasets();
+    loadCurriculumDesigns();
+    loadTodayTarget();
+    loadQuestionBank();
+    loadCostSummary();
+    loadMasterContext();
+    loadReviewBundles(reviewFilter);
+    loadProfilesList();
+
+    // 2. Proactive JWT Expiration Timer
+    let expTimer: any = null;
+    const expSec = parseJwtExp(bearerToken);
+    if (expSec) {
+      const msUntilExp = expSec * 1000 - Date.now();
+      if (msUntilExp <= 0) {
+        logout("Your session has expired. Please sign in again.");
+      } else {
+        expTimer = setTimeout(() => {
+          logout("Your session has timed out. Please sign in again.");
+        }, msUntilExp);
+      }
+    }
+
+    // 3. User Inactivity / Idle Timeout (30 Minutes of idle time)
+    const IDLE_TIMEOUT_MS = 30 * 60 * 1000;
+    let idleTimer: any = null;
+
+    function resetIdleTimer() {
+      if (idleTimer) clearTimeout(idleTimer);
+      idleTimer = setTimeout(() => {
+        logout("You were logged out due to 30 minutes of inactivity.");
+      }, IDLE_TIMEOUT_MS);
+    }
+
+    const activityEvents = ["mousedown", "mousemove", "keydown", "scroll", "touchstart"];
+    activityEvents.forEach((ev) => window.addEventListener(ev, resetIdleTimer, { passive: true }));
+    resetIdleTimer();
+
+    return () => {
+      window.removeEventListener(AUTH_EXPIRED_EVENT, handleAuthExpired);
+      if (expTimer) clearTimeout(expTimer);
+      if (idleTimer) clearTimeout(idleTimer);
+      activityEvents.forEach((ev) => window.removeEventListener(ev, resetIdleTimer));
+    };
+  }, [currentRole, bearerToken]);
 
   const canAdmin = hasRight(currentRole, "all");
 
@@ -1346,6 +1443,23 @@ export function App() {
 
         <section className="login-card">
           <h2>Sign In to Control Plane</h2>
+          {sessionExpiredNotice && (
+            <div style={{
+              padding: "10px 14px",
+              background: "#fffbeb",
+              border: "1px solid #fde68a",
+              borderRadius: "8px",
+              color: "#92400e",
+              fontSize: "12.5px",
+              marginBottom: "14px",
+              display: "flex",
+              alignItems: "center",
+              gap: "8px"
+            }}>
+              <span style={{ fontSize: "16px" }}>⚠️</span>
+              <div>{sessionExpiredNotice}</div>
+            </div>
+          )}
           <form onSubmit={onLoginSubmit} className="stack">
             <label>
               Role
@@ -1397,7 +1511,7 @@ export function App() {
         </nav>
 
         <div className="sidebar-footer">
-          <button className="ghost" onClick={logout}>Sign out</button>
+          <button className="ghost" onClick={() => logout()}>Sign out</button>
           <small>{currentSubject} ({currentRole})</small>
         </div>
       </aside>

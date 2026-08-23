@@ -1,10 +1,18 @@
 export const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL?.replace(/\/$/, "") || "";
 
+export const AUTH_EXPIRED_EVENT = "cbc:auth_expired";
+
 export type AuthHeaders = {
   bearerToken?: string;
   apiKey?: string;
 };
+
+export function triggerAuthExpired(reason: string = "Session expired. Please sign in again.") {
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent(AUTH_EXPIRED_EVENT, { detail: { reason } }));
+  }
+}
 
 export async function fetchJson<T>(path: string, init?: RequestInit, auth?: AuthHeaders): Promise<T> {
   const headers = new Headers(init?.headers || {});
@@ -38,6 +46,14 @@ export async function fetchJson<T>(path: string, init?: RequestInit, auth?: Auth
     body = text ? JSON.parse(text) : null;
   } catch {
     body = { error: "SERVER_ERROR", message: text || response.statusText, status_code: response.status };
+  }
+
+  if (response.status === 401) {
+    // Only trigger if this is not the login endpoint itself
+    if (!cleanPath.includes("/auth/login")) {
+      const msg = (body && typeof body === "object") ? (body.message || body.detail || "Session expired") : "Session expired";
+      triggerAuthExpired(msg);
+    }
   }
 
   if (!response.ok) {

@@ -55,6 +55,11 @@ def login(payload: LoginRequest) -> dict[str, Any]:
         "token_type": "bearer",
         "role": context.role,
         "subject": context.subject,
+        "user": {
+            "username": payload.username,
+            "role": context.role,
+            "subject_scope": context.subject,
+        },
     }
 
 
