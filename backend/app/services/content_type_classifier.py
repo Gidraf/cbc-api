@@ -406,36 +406,90 @@ def ai_generate_profile_from_dataset(
     level: str = "Basic Education",
     essence_statement: str = "",
     general_learning_outcomes: list[str] | None = None,
+    substrands_summary: list[dict[str, Any]] | None = None,
     save_to_db: bool = True,
 ) -> ContentTypeProfile:
     """
-    Synthesizes a brand new bespoke ContentTypeProfile dynamically from an uploaded Curriculum Design dataset.
+    Synthesizes an exhaustive, bespoke ContentTypeProfile dynamically from an uploaded Curriculum Design dataset.
+    Ingests the essence statement, general learning outcomes, all strands, sub-strands, SLOs, learning experiences,
+    core competencies, and PCIs to capture ALL curriculum skills in the profile.
     """
     from .llm_client import llm_client
     from .pipeline import pipeline_orchestrator
 
+    # If substrands_summary not supplied, query curriculum_substrands from DB
+    if not substrands_summary and HAS_DB and fetch_all:
+        try:
+            rows = fetch_all(
+                """
+                SELECT strand_name, sub_strand_name, slos, suggested_learning_experiences,
+                       key_inquiry_questions, core_competencies, values, pertinent_contemporary_issues
+                FROM curriculum_substrands
+                WHERE LOWER(subject) = LOWER(:s) AND (LOWER(grade) = LOWER(:g) OR :g = 'all')
+                ORDER BY id ASC LIMIT 25
+                """,
+                {"s": subject.strip(), "g": grade.strip()},
+            )
+            if rows:
+                substrands_summary = rows
+        except Exception as q_exc:
+            logger.debug("Could not fetch substrands for profile synthesis: %s", q_exc)
+
+    # Format general learning outcomes
     outcomes_str = "\n".join([f"- {o}" for o in (general_learning_outcomes or [])])
 
+    # Format strands, sub-strands, SLOs, and learning experiences
+    skills_context_parts = []
+    if substrands_summary:
+        for idx, ss in enumerate(substrands_summary[:15], 1):
+            s_name = ss.get("strand_name", "")
+            sub_name = ss.get("sub_strand_name", "")
+            slos = ss.get("slos", [])
+            slo_texts = [slo.get("text", "") if isinstance(slo, dict) else str(slo) for slo in (slos if isinstance(slos, list) else [])]
+            exps = ss.get("suggested_learning_experiences", [])
+            exp_texts = [e.get("text", "") if isinstance(e, dict) else str(e) for e in (exps if isinstance(exps, list) else [])]
+            comps = ss.get("core_competencies", [])
+            pcis = ss.get("pertinent_contemporary_issues", [])
+
+            skills_context_parts.append(
+                f"Strand {idx}: {s_name} -> Sub-strand: {sub_name}\n"
+                f"  - Specific Learning Outcomes (SLOs): {'; '.join(slo_texts[:4])}\n"
+                f"  - Suggested Learning Experiences: {'; '.join(exp_texts[:3])}\n"
+                f"  - Core Competencies & PCIs: {', '.join(str(c) for c in (comps + pcis)[:4])}"
+            )
+    skills_context_str = "\n\n".join(skills_context_parts) if skills_context_parts else "(Standard syllabus scope)"
+
     system_prompt = (
-        "You are an elite Senior KICD Curriculum Specialist and Pedagogical Profile Architect. "
-        "Analyze the provided Kenyan Curriculum Design dataset (Essence Statement, Learning Outcomes, Grade/Level) "
-        "and generate a complete, bespoke Pedagogical ContentTypeProfile JSON. "
-        "The profile instructs downstream AI generation agents (Notes, SVG Diagram, Activities/Experiments, Questions) "
-        "on the exact persona, writing style, visual models, constructivist practical tasks, assessment rubrics, "
-        "safety protocols, empirical statistics, and authentic Kenyan case studies for THIS SPECIFIC SUBJECT.\n\n"
-        "Return ONLY a valid JSON object matching this exact schema:\n"
+        "You are an elite Chief KICD Curriculum Specialist and Master Pedagogical Profile Architect. "
+        "Your task is to analyze the provided Kenyan Curriculum Design dataset (Essence Statement, Learning Outcomes, "
+        "all Strands, Sub-strands, SLOs, Suggested Learning Experiences, Core Competencies, and Values) and synthesize "
+        "an EXHAUSTIVE, DEEPLY AUTHORITATIVE Pedagogical ContentTypeProfile JSON.\n\n"
+        "REQUIREMENTS FOR THE PROFILE:\n"
+        "1. persona: An eminent professor and master teacher educator with deep pedagogical authority in this subject, "
+        "specializing in all core skills and concepts present in the curriculum.\n"
+        "2. note_style: Deep Pedagogical Content Knowledge (PCK) guidance covering exact lesson structure, conceptual scaffolding, "
+        "concrete examples, common learner misconceptions to address, and real-world Kenyan contextual applications.\n"
+        "3. diagram_type: Precise visual models, vector SVG schematics, flowcharts, structural apparatus, and notation staves required across all strands.\n"
+        "4. activity_type: Constructivist hands-on investigations, practical laboratory/field experiments, group inquiry tasks, and Community Service Learning (CSL) projects.\n"
+        "5. question_type: Criterion-referenced Bloom's taxonomy assessment items (lower, intermediate, higher-order) with 4-level KICD rubrics (Exceeding, Meeting, Approaching, Below Expectation).\n"
+        "6. safety_focus: Comprehensive laboratory, workshop, agricultural, physical, or vocal safety and hygiene precautions tailored to the subject's practicals.\n"
+        "7. grade_appropriate_tone: Specific instructional tone and language register appropriate for the cognitive stage of the learners.\n"
+        "8. special_directives: 6-8 mandatory pedagogical mandates ensuring integration of the 7 BECF Core Competencies, 8 Core Values, and Special Needs Education (SNE) inclusivity.\n"
+        "9. empirical_insights: 4-6 authentic Kenyan empirical datasets, statistics, and scientific benchmarks from official sources (KNBS, KALRO, KICD, NEMA, etc.).\n"
+        "10. case_studies: 3-5 authentic Kenyan geographical case studies across diverse counties and ecological zones.\n\n"
+        "Return ONLY a valid JSON object matching this schema:\n"
         "{\n"
-        '  "subject": "' + subject + '",\n'
-        '  "grade": "' + grade + '",\n'
+        f'  "subject": "{subject}",\n'
+        f'  "grade": "{grade}",\n'
         '  "content_type": "<slug_e.g._music_or_home_science_or_pre_technical>",\n'
         '  "persona": "<authoritative professor/specialist persona>",\n'
-        '  "note_style": "<specific pedagogical guidance for lesson notes>",\n'
-        '  "diagram_type": "<specific visual models, schematics, or notation>",\n'
-        '  "activity_type": "<constructivist hands-on activities/practicals>",\n'
-        '  "question_type": "<criterion-referenced Bloom\'s assessment format>",\n'
-        '  "safety_focus": "<specific safety hazard protocols and precautions>",\n'
-        '  "grade_appropriate_tone": "<e.g. musical and expressive, rigorous technical, etc.>",\n'
-        '  "special_directives": ["<rule 1>", "<rule 2>", "<rule 3>", "<rule 4>"],\n'
+        '  "note_style": "<exhaustive pedagogical guidance for lesson notes>",\n'
+        '  "diagram_type": "<specific visual models, schematics, and diagrams>",\n'
+        '  "activity_type": "<constructivist hands-on practicals and experiments>",\n'
+        '  "question_type": "<criterion-referenced Bloom\'s assessment rubrics>",\n'
+        '  "safety_focus": "<comprehensive safety hazard and risk precautions>",\n'
+        '  "grade_appropriate_tone": "<instructional tone and register>",\n'
+        '  "special_directives": ["<rule 1>", "<rule 2>", "<rule 3>", "<rule 4>", "<rule 5>", "<rule 6>"],\n'
         '  "empirical_insights": [{"metric": "...", "value": "...", "source": "..."}],\n'
         '  "case_studies": [{"county": "...", "scenario": "...", "intervention": "..."}]\n'
         "}"
@@ -444,10 +498,11 @@ def ai_generate_profile_from_dataset(
     user_prompt = (
         f"CURRICULUM DESIGN DATASET:\n"
         f"Subject: {subject}\n"
-        f"Grade: {grade} (Level: {level})\n"
-        f"Essence Statement:\n{essence_statement or f'Comprehensive curriculum framework for {subject}.'}\n\n"
-        f"General Learning Outcomes:\n{outcomes_str or '(Standard KICD outcomes)'}\n\n"
-        f"Synthesize the complete, bespoke Pedagogical Profile JSON now."
+        f"Grade/Level: {grade} ({level})\n\n"
+        f"ESSENCE STATEMENT:\n{essence_statement or f'Comprehensive curriculum framework for {subject} under the KICD Basic Education Curriculum Framework.'}\n\n"
+        f"GENERAL LEARNING OUTCOMES:\n{outcomes_str or '(Standard KICD outcomes)'}\n\n"
+        f"STRANDS, SUB-STRANDS, SLOS & LEARNING EXPERIENCES:\n{skills_context_str}\n\n"
+        f"Synthesize the comprehensive, master-tier Pedagogical Profile JSON covering all skills now."
     )
 
     resolved = pipeline_orchestrator.router.resolve_for_stage("notes_generation")

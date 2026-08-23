@@ -514,6 +514,42 @@ def generate_profile_with_ai(
     return {"status": "success", "profile": generated.to_dict()}
 
 
+@router.post("/profiles/generate-from-design/{design_id}")
+def generate_profile_from_published_design(
+    design_id: str,
+    _: AuthContext = Depends(require_roles("admin", "operator", "reviewer")),
+) -> dict[str, Any]:
+    """Generates an exhaustive pedagogical profile directly from an uploaded/published Curriculum Design blueprint."""
+    from ..infra.db import fetch_all, fetch_one
+    from ..services.content_type_classifier import ai_generate_profile_from_dataset
+
+    design = fetch_one("SELECT * FROM curriculum_designs WHERE design_id = :id", {"id": design_id})
+    if not design:
+        raise_api_error("DATASET_ITEM_NOT_FOUND", f"Curriculum design '{design_id}' not found.")
+
+    substrands = fetch_all(
+        """
+        SELECT strand_name, sub_strand_name, slos, suggested_learning_experiences,
+               key_inquiry_questions, core_competencies, values, pertinent_contemporary_issues
+        FROM curriculum_substrands
+        WHERE design_id = :id
+        ORDER BY id ASC
+        """,
+        {"id": design_id},
+    )
+
+    generated = ai_generate_profile_from_dataset(
+        subject=design.get("subject", ""),
+        grade=design.get("grade", "all"),
+        level=design.get("level", "Basic Education"),
+        essence_statement=design.get("essence_statement", ""),
+        general_learning_outcomes=design.get("general_learning_outcomes", []),
+        substrands_summary=substrands,
+        save_to_db=True,
+    )
+    return {"status": "success", "profile": generated.to_dict()}
+
+
 @router.post("/factory/profile")
 def factory_get_profile(
     payload: FactoryGetProfileRequest,
@@ -942,12 +978,40 @@ def factory_generate_questions(
         "content": (
             f"{ct_profile.format_for_prompt()}\n\n"
             f"{dossier.formatted_context}\n\n"
-            f"=== ALL UPSTREAM LAYERS CONTEXT ===\n"
-            f"Layer 1 Notes: {notes_str[:1200]}\n"
-            f"Layer 2 Diagram: {diagram_str}\n"
-            f"Layer 3 Activity: {act_str[:800]}\n\n"
-            f"ASSESSMENT DESIGN & RUBRIC DIRECTIVE:\n"
-            f"Generate high-validity criterion-referenced assessment items (MCQ and structured) with 4-level KICD rubrics (Exceeding, Meeting, Approaching, Below Expectation) derived directly from all upstream layer content.\n"
+            f"=== PARENT STRAND GUIDANCE CONTEXT ===\n"
+            f"Parent Strand Scope: {payload.strand}\n"
+            f"Active Sub-strand: {payload.sub_strand}\n"
+            f"Target SLO: {payload.slo_id or f'{payload.grade}-{payload.subject_code}-01'}\n\n"
+            f"=== UPSTREAM GENERATED CONTENT LAYERS ===\n"
+            f"Layer 1 Lesson Notes: {notes_str[:1600]}\n"
+            f"Layer 2 Technical Diagram: {diagram_str}\n"
+            f"Layer 3 Practical Activities: {act_str[:1000]}\n\n"
+            f"GRANULAR ASSESSMENT DESIGN DIRECTIVE:\n"
+            f"Generate a rigorous set of 4-6 criterion-referenced assessment items testing THIS SUB-STRAND ({payload.sub_strand}).\n"
+            f"Break down the sub-strand into granular Micro-Concepts / Specific Learning Objectives and assign each question to a specific micro-concept.\n"
+            f"Include:\n"
+            f"1. Multiple Choice Questions (MCQ) with 4 options, plausible distractors, and diagnostic explanations for each distractor.\n"
+            f"2. Structured / Inquiry-Based Questions with realistic Kenyan scenarios, step-by-step marking schemes, and 4-level KICD rubrics (Exceeding, Meeting, Approaching, Below Expectation).\n"
+            f"3. Bloom's Cognitive Progression (Recall/Understanding -> Practical Application -> Critical Problem Solving/Evaluation).\n\n"
+            f"Return JSON format:\n"
+            f"{{\n"
+            f'  "sub_strand": "{payload.sub_strand}",\n'
+            f'  "questions": [\n'
+            f'    {{\n'
+            f'      "question_id": "Q1",\n'
+            f'      "micro_concept": "<specific sub-topic or skill tested>",\n'
+            f'      "target_slo": "<specific SLO from sub-strand>",\n'
+            f'      "bloom_level": "Application | Critical Thinking | Recall",\n'
+            f'      "question_type": "multiple_choice | structured",\n'
+            f'      "question_text": "<rich scenario-based question>",\n'
+            f'      "options": {{"A": "...", "B": "...", "C": "...", "D": "..."}},\n'
+            f'      "correct_answer": "B",\n'
+            f'      "distractor_explanations": {{"A": "why wrong", "C": "why wrong", "D": "why wrong"}},\n'
+            f'      "marking_scheme": "<step-by-step points>",\n'
+            f'      "kicd_rubric": {{"exceeding": "...", "meeting": "...", "approaching": "...", "below": "..."}}\n'
+            f'    }}\n'
+            f'  ]\n'
+            f"}}\n\n"
             f"ADDITIONAL INSTRUCTIONS: {payload.custom_instructions}"
         ),
     })
@@ -1360,16 +1424,19 @@ def factory_save_substrands(
     design_id = payload.design_id or f"cd_{payload.grade}_{payload.subject.lower()[:4]}"
 
     # Ensure parent record exists in curriculum_designs (idempotent upsert)
-    execute(
-        """
-        INSERT INTO curriculum_designs (
-            design_id, grade, subject, level, status, created_at, updated_at
+    try:
+        execute(
+            """
+            INSERT INTO curriculum_designs (
+                design_id, grade, subject, level, review_status, status, created_at, updated_at
+            )
+            VALUES (:design_id, :grade, :subject, 'Basic Education', 'accepted_active', 'accepted_active', NOW(), NOW())
+            ON CONFLICT (design_id) DO NOTHING
+            """,
+            {"design_id": design_id, "grade": payload.grade, "subject": payload.subject},
         )
-        VALUES (:design_id, :grade, :subject, 'Basic Education', 'approved_active', NOW(), NOW())
-        ON CONFLICT (design_id) DO NOTHING
-        """,
-        {"design_id": design_id, "grade": payload.grade, "subject": payload.subject},
-    )
+    except Exception as exc:
+        logger.warning("Parent curriculum_designs upsert warning: %s", exc)
 
     for ss in payload.substrands:
         sub_id = str(ss.get("sub_strand_id") or ss.get("id") or "1.1")

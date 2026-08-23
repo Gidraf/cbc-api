@@ -1555,17 +1555,37 @@ export function App() {
                             {new Date(d.updated_at).toLocaleDateString()}
                           </td>
                           <td style={{padding: '8px', textAlign: 'right'}}>
-                            <button
-                              onClick={() => {
-                                setGenGrade(d.grade);
-                                setGenSubject(d.subject);
-                                loadGradeSubjects(d.grade);
-                                setView("generation");
-                              }}
-                              style={{fontSize: '0.8rem', padding: '6px 12px'}}
-                            >
-                              🚀 Open in Generation Studio
-                            </button>
+                            <div style={{ display: "flex", gap: "6px", justifyContent: "flex-end" }}>
+                              <button
+                                className="ghost"
+                                style={{ fontSize: '0.78rem', padding: '5px 10px', background: '#f0fdf4', color: '#166534', borderColor: '#86efac' }}
+                                title="Synthesize an exhaustive Pedagogical Profile from this complete curriculum design"
+                                onClick={async () => {
+                                  await run(`Generating Profile for ${d.subject}`, async () => {
+                                    const res = await fetchJson<any>(`/api/v1/curriculum/profiles/generate-from-design/${d.design_id}`, { method: "POST" }, auth());
+                                    if (res?.profile) {
+                                      await loadProfilesList();
+                                      setActiveProfileEdit(res.profile);
+                                      setView("profiles");
+                                    }
+                                    return res;
+                                  });
+                                }}
+                              >
+                                🎭 Generate Profile
+                              </button>
+                              <button
+                                onClick={() => {
+                                  setGenGrade(d.grade);
+                                  setGenSubject(d.subject);
+                                  loadGradeSubjects(d.grade);
+                                  setView("generation");
+                                }}
+                                style={{fontSize: '0.8rem', padding: '6px 12px'}}
+                              >
+                                🚀 Open in Factory
+                              </button>
+                            </div>
                           </td>
                         </tr>
                       ))}
@@ -2174,8 +2194,15 @@ export function App() {
                       </div>
 
                       <h2 style={{ margin: "6px 0 4px", color: "#14532d", fontSize: "18px" }}>
-                        {genSubject} ➔ {genStrand || "Strand"} ➔ <span style={{ color: "#15803d", textDecoration: "underline" }}>{genSubstrand || "Sub-strand"}</span>
+                        {genSubject} ➔ <span style={{ color: "#0369a1" }}>🌿 Strand: {genStrand || "General Strand"}</span> ➔ <span style={{ color: "#15803d", textDecoration: "underline" }}>🌱 Sub-strand: {genSubstrand || "Select Sub-strand"}</span>
                       </h2>
+
+                      {/* Strand Guidance Context Pill */}
+                      {genStrand && (
+                        <div style={{ fontSize: "11.5px", color: "#075985", background: "#f0f9ff", border: "1px solid #bae6fd", borderRadius: "6px", padding: "4px 8px", marginTop: "4px", display: "inline-block" }}>
+                          ℹ️ <strong>Parent Strand Scope & Guidance:</strong> Overall curricular anchor for all sub-strands in {genStrand}.
+                        </div>
+                      )}
 
                       {/* Sub-strand Switcher Pills */}
                       {factorySubstrandsList.length > 0 && (
@@ -2200,7 +2227,7 @@ export function App() {
                                 }}
                                 onClick={() => selectSubstrandForFactory(ss, genGrade, genSubject)}
                               >
-                                {ss.sub_strand_name || ss.name || `Sub-strand ${idx + 1}`}{" "}
+                                🌱 {ss.sub_strand_name || ss.name || `Sub-strand ${idx + 1}`}{" "}
                                 <span style={{ opacity: 0.85, fontSize: "10px" }}>⏱️ {hours} • 🎯 {sloCount} SLOs</span>
                               </button>
                             );
@@ -2222,6 +2249,44 @@ export function App() {
                       </button>
                     </div>
                   </div>
+
+                  {/* PARENT STRAND NOTICE (If user hasn't selected a sub-strand yet) */}
+                  {(!factorySelectedSubstrand || genSubstrand === genStrand || !genSubstrand) && (
+                    <div style={{ margin: "14px 0", padding: "14px", background: "#fffbeb", border: "1px solid #fcd34d", borderRadius: "8px", color: "#92400e" }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "10px" }}>
+                        <div>
+                          <strong>⚠️ Parent Strand Active: "{genStrand || 'Selected Strand'}"</strong>
+                          <p style={{ margin: "4px 0 0", fontSize: "12px" }}>
+                            Strands are large parent concepts. Notes, SVG diagrams, practical experiments, and assessment items are strictly generated on <strong>Sub-strands</strong> to ensure high depth, granular mastery, and zero hallucination.
+                          </p>
+                        </div>
+                        {factorySubstrandsList.length > 0 ? (
+                          <div style={{ display: "flex", gap: "6px", flexWrap: "wrap", alignItems: "center" }}>
+                            <span style={{ fontSize: "12px", fontWeight: 700, color: "#14532d" }}>👉 Pick a Sub-strand to load:</span>
+                            {factorySubstrandsList.slice(0, 4).map((ss: any, idx: number) => (
+                              <button
+                                key={idx}
+                                style={{ fontSize: "11.5px", padding: "5px 10px", background: "#166534", color: "#fff", borderColor: "#166534" }}
+                                onClick={() => selectSubstrandForFactory(ss, genGrade, genSubject)}
+                              >
+                                🌱 {ss.sub_strand_name || ss.name}
+                              </button>
+                            ))}
+                          </div>
+                        ) : (
+                          <button
+                            style={{ fontSize: "12px", padding: "6px 14px", background: "#059669", color: "#fff", borderColor: "#059669" }}
+                            onClick={() => {
+                              handleOpenSubstrandGenerator(genStrand || "1.0 General Strand");
+                              setFactoryStep(1);
+                            }}
+                          >
+                            ✨ AI Auto-Break Strand into Sub-strands ➔
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  )}
 
                   {/* Expandable Sub-strand Blueprint & Prompt Context Card */}
                   {showBlueprintDetails && factorySelectedSubstrand && (
@@ -3640,6 +3705,32 @@ export function App() {
                   </div>
 
                   <div style={{ display: "grid", gap: "12px", marginTop: "16px" }}>
+                    {curriculumDesignsList.length > 0 && (
+                      <div style={{ padding: "10px", background: "#f0fdf4", borderRadius: "6px", border: "1px solid #bbf7d0" }}>
+                        <label style={{ margin: 0, fontSize: "12px", fontWeight: 600, color: "#166534" }}>
+                          📥 Pull from an Ingested Curriculum Design Blueprint:
+                          <select
+                            style={{ marginTop: "4px", fontSize: "12.5px" }}
+                            onChange={(e) => {
+                              const found = curriculumDesignsList.find((d: any) => d.design_id === e.target.value);
+                              if (found) {
+                                setAiGenProfileSubject(found.subject);
+                                setAiGenProfileGrade(found.grade);
+                                setAiGenProfileEssence(found.essence_statement || "");
+                              }
+                            }}
+                          >
+                            <option value="">-- Choose a published curriculum blueprint --</option>
+                            {curriculumDesignsList.map((d: any) => (
+                              <option key={d.design_id} value={d.design_id}>
+                                {d.subject} ({d.grade}) - {d.level || "Basic Education"} [{d.substrand_count || 0} sub-strands]
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                      </div>
+                    )}
+
                     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
                       <label>
                         Subject Name *
@@ -3668,10 +3759,10 @@ export function App() {
                     </div>
 
                     <label>
-                      Essence Statement / Curriculum Context
+                      Essence Statement / Syllabus Overview
                       <textarea
                         rows={4}
-                        placeholder="Paste or write the subject essence statement or syllabus overview..."
+                        placeholder="Paste or review the subject essence statement or syllabus overview..."
                         value={aiGenProfileEssence}
                         onChange={(e) => setAiGenProfileEssence(e.target.value)}
                       />

@@ -286,6 +286,14 @@ MIGRATIONS: list[tuple[str, str]] = [
         CREATE INDEX IF NOT EXISTS idx_subject_profiles_lookup ON subject_profiles(subject, grade);
         """,
     ),
+    (
+        "008_curriculum_designs_status_compat",
+        """
+        ALTER TABLE curriculum_designs ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'accepted_active';
+        ALTER TABLE curriculum_designs ADD COLUMN IF NOT EXISTS review_status TEXT NOT NULL DEFAULT 'accepted_active';
+        ALTER TABLE curriculum_designs ADD COLUMN IF NOT EXISTS human_review_notes TEXT NULL;
+        """,
+    ),
 ]
 
 
