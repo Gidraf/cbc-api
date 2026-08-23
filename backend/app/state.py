@@ -165,15 +165,44 @@ class RuntimeState:
         stage_rows = fetch_all("SELECT pipeline_stage, provider, model, base_url FROM stage_bindings")
         for row in stage_rows:
             provider = row["provider"]
-            model = (row.get("model") or "").strip()
-            if not model or model.lower() in {"null", "undefined", "default", "none"}:
-                model = "gpt-4o-mini" if provider == "openai" else ("claude-3-5-sonnet-20241022" if provider == "anthropic" else "gemini-2.0-flash")
+            raw_model = (row.get("model") or "").strip()
+            lower = raw_model.lower().replace(" ", "-").replace("_", "-")
+
+            # Auto-correct invalid or typo model names
+            if provider == "openai":
+                if not raw_model or lower in {"", "null", "undefined", "default", "none"} or "gpt-5" in lower or "gpt5" in lower:
+                    model = "gpt-4o-mini"
+                elif "4o-mini" in lower or "gpt-4-mini" in lower:
+                    model = "gpt-4o-mini"
+                elif "4o" in lower:
+                    model = "gpt-4o"
+                else:
+                    model = raw_model
+            elif provider == "anthropic":
+                if not raw_model or lower in {"", "null", "undefined", "default", "none"} or "3.5" in lower:
+                    model = "claude-3-5-sonnet-20241022"
+                else:
+                    model = raw_model
+            elif provider == "gemini":
+                if not raw_model or lower in {"", "null", "undefined", "default", "none"} or "2.0" in lower or "2-flash" in lower:
+                    model = "gemini-2.0-flash"
+                else:
+                    model = raw_model
+            else:
+                model = raw_model or "llama3.1"
+
             self.stage_bindings[row["pipeline_stage"]] = StageBinding(
                 pipeline_stage=row["pipeline_stage"],
                 provider=provider,
                 model=model,
                 base_url=row.get("base_url"),
             )
+            # If the model name was corrected, persist the repaired name back to the database
+            if model != raw_model:
+                try:
+                    self.persist_stage_binding(row["pipeline_stage"])
+                except Exception:
+                    pass
 
     def _load_pipeline_runs(self) -> None:
         run_rows = fetch_all("SELECT run_id, request_id, trace_id, workflow_state, result, updated_at FROM pipeline_runs")

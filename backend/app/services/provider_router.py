@@ -21,6 +21,80 @@ class ResolvedModelConfig:
     api_key: str | None
 
 
+OPENAI_VALID_MODELS = {
+    "gpt-4o-mini",
+    "gpt-4o",
+    "gpt-4o-2024-08-06",
+    "gpt-4o-2024-05-13",
+    "gpt-4o-mini-2024-07-18",
+    "gpt-4-turbo",
+    "gpt-4",
+    "gpt-3.5-turbo",
+    "o1",
+    "o1-mini",
+    "o1-preview",
+    "o3-mini",
+    "chatgpt-4o-latest",
+}
+
+
+def normalize_model_name(provider: str, raw_model: str) -> str:
+    """Normalizes and auto-corrects model names, typos, and version aliases."""
+    cleaned = (raw_model or "").strip()
+    lower = cleaned.lower().replace(" ", "-").replace("_", "-")
+
+    if provider == Provider.OPENAI.value:
+        if not cleaned or lower in {"", "null", "undefined", "default", "none"}:
+            return "gpt-4o-mini"
+        if cleaned in OPENAI_VALID_MODELS:
+            return cleaned
+        # Common typos & aliases (e.g. 'gpt-5 mini', 'gpt5', 'gpt-4 mini')
+        if "gpt-5" in lower or "gpt5" in lower or "gpt-4-mini" in lower or "gpt4-mini" in lower or "4o-mini" in lower:
+            return "gpt-4o-mini"
+        if "4o" in lower:
+            return "gpt-4o"
+        if "3.5" in lower or "35" in lower:
+            return "gpt-3.5-turbo"
+        if "o1-mini" in lower:
+            return "o1-mini"
+        if "o3-mini" in lower:
+            return "o3-mini"
+        if lower.startswith("gpt-"):
+            return lower
+        return "gpt-4o-mini"
+
+    elif provider == Provider.ANTHROPIC.value:
+        if not cleaned or lower in {"", "null", "undefined", "default", "none"}:
+            return "claude-3-5-sonnet-20241022"
+        if "3.5-sonnet" in lower or "3-5-sonnet" in lower or "sonnet-3.5" in lower or "sonnet" in lower:
+            return "claude-3-5-sonnet-20241022"
+        if "3.5-haiku" in lower or "3-5-haiku" in lower or "haiku-3.5" in lower:
+            return "claude-3-5-haiku-20241022"
+        if "3-opus" in lower or "opus" in lower:
+            return "claude-3-opus-20240229"
+        if "3-haiku" in lower or "haiku" in lower:
+            return "claude-3-haiku-20240307"
+        return cleaned
+
+    elif provider == Provider.GEMINI.value:
+        if not cleaned or lower in {"", "null", "undefined", "default", "none"}:
+            return "gemini-2.0-flash"
+        if "2.0-flash" in lower or "2-flash" in lower or "2.0" in lower:
+            return "gemini-2.0-flash"
+        if "1.5-pro" in lower or "pro" in lower:
+            return "gemini-1.5-pro"
+        if "1.5-flash" in lower or "flash" in lower:
+            return "gemini-1.5-flash"
+        return cleaned
+
+    elif provider == Provider.OLLAMA.value:
+        if not cleaned or lower in {"", "null", "undefined", "default", "none"}:
+            return "llama3.1"
+        return cleaned
+
+    return cleaned or "gpt-4o-mini"
+
+
 class ProviderRouter:
     def __init__(self, state: RuntimeState) -> None:
         self.state = state
@@ -35,21 +109,9 @@ class ProviderRouter:
             binding_base_url = None
         else:
             provider = binding.provider
-            model = (binding.model or "").strip()
+            raw_model = (binding.model or "").strip()
+            model = normalize_model_name(provider, raw_model)
             binding_base_url = binding.base_url
-
-        # Ensure valid non-empty model name
-        if not model or model.lower() in {"null", "undefined", "default", "none", ""}:
-            if provider == Provider.OPENAI.value:
-                model = "gpt-4o-mini"
-            elif provider == Provider.ANTHROPIC.value:
-                model = "claude-3-5-sonnet-20241022"
-            elif provider == Provider.GEMINI.value:
-                model = "gemini-2.0-flash"
-            elif provider == Provider.OLLAMA.value:
-                model = "llama3.1"
-            else:
-                model = "gpt-4o-mini"
 
         provider_config = self.state.provider_credentials.get(provider)
         if not provider_config:
