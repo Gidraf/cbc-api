@@ -302,6 +302,77 @@ class QualityGateService:
                     comment=f"Generated {len(q_list)} assessment items.",
                 ))
 
+                # Deep semantic validation per question
+                for q_idx, q in enumerate(q_list):
+                    if not isinstance(q, dict):
+                        continue
+                    q_id = q.get("question_id") or f"Q{q_idx+1}"
+                    q_type = q.get("question_type") or "multiple_choice"
+                    q_text = str(q.get("question_text") or "")
+                    q_ctx = str(q.get("stimulus_context") or q.get("scenario_context") or "")
+                    q_concept = str(q.get("micro_concept") or "")
+                    structured_parts = q.get("structured_parts") or []
+                    all_parts_text = " ".join([str(sp.get("sub_question") or "") for sp in structured_parts if isinstance(sp, dict)])
+
+                    full_stem = f"{q_text} {q_ctx} {q_concept} {all_parts_text}".lower()
+
+                    # 1. Visual-to-Stem Semantic Consistency Check
+                    has_diag_link = bool(q.get("diagram_svg") or q.get("diagram_ref") or q_type == "diagram_based")
+                    if has_diag_link:
+                        diag_title = str(q.get("diagram_title") or "").lower()
+                        diag_svg = str(q.get("diagram_svg") or "").lower()
+                        diag_full = f"{diag_title} {diag_svg}"
+
+                        # Detect specific anatomical/scientific/physical terms required by stem
+                        stem_specifics = []
+                        if any(w in full_stem for w in ["soil profile", "horizon", "bedrock", "topsoil", "subsoil", "parent material"]):
+                            stem_specifics.append(("soil profile / strata", ["soil", "profile", "horizon", "bedrock", "topsoil", "subsoil", "strata", "layer"]))
+                        elif any(w in full_stem for w in ["titration", "ph meter", "pipette", "burette", "buffer capacity"]):
+                            stem_specifics.append(("chemical titration / pH setup", ["titration", "ph", "burette", "pipette", "beaker", "acid", "buffer"]))
+                        elif any(w in full_stem for w in ["cross-section", "internal structure", "anatomy", "layer", "tissue"]):
+                            stem_specifics.append(("cross-sectional anatomical structure", ["section", "layer", "structure", "strata", "anatomy", "part"]))
+                        elif any(w in full_stem for w in ["terrace", "gabion", "bund", "contour", "soil conservation"]):
+                            stem_specifics.append(("soil conservation structure", ["terrace", "gabion", "bund", "contour", "drainage", "trench"]))
+
+                        for req_concept, req_keywords in stem_specifics:
+                            # Check if the attached visual contains AT LEAST ONE relevant keyword in its title or SVG labels
+                            has_overlap = any(kw in diag_full for kw in req_keywords)
+                            is_contradictory_flowchart = any(fc in diag_full for fc in ["gdp", "employment dynamics", "33% direct contribution", "70% of rural"]) and not any(kw in diag_full for kw in ["soil", "profile", "strata", "horizon", "titration"])
+
+                            if is_contradictory_flowchart or (not has_overlap and len(diag_svg) > 100):
+                                score -= 40
+                                risk_msg = (
+                                    f"CRITICAL VISUAL-STEM MISMATCH in {q_id}: "
+                                    f"Question requires examining '{req_concept}', but attached visual depicts an unrelated macroeconomic flowchart ('{diag_title or 'diag_01'}')."
+                                )
+                                risk_flags.append(risk_msg)
+                                feedback.append(ReviewerFeedback(
+                                    aspect="visual_semantic_alignment",
+                                    score=0.15,
+                                    status="fail",
+                                    comment=f"Visual asset mismatch: Question tests {req_concept}, but attached SVG is an economic flowchart.",
+                                ))
+
+                    # 2. Scenario Depth & Realism Check
+                    if len(q_ctx.split()) < 8 or q_ctx.strip().lower() in ["refer to the diagram.", "refer to the diagram below.", "see the image.", "refer to the soil profile diagram showing different layers."]:
+                        score -= 15
+                        feedback.append(ReviewerFeedback(
+                            aspect="scenario_authenticity",
+                            score=0.45,
+                            status="warn",
+                            comment=f"Question {q_id} has a superficial scenario context. Must provide authentic situated Kenyan county/community context.",
+                        ))
+
+                    # 3. Solvability & Rubric Check
+                    if not q.get("marking_scheme") and not q.get("kicd_rubric") and not q.get("marking_guide"):
+                        score -= 15
+                        feedback.append(ReviewerFeedback(
+                            aspect="rubric_completeness",
+                            score=0.5,
+                            status="warn",
+                            comment=f"Question {q_id} is missing a point-by-point marking scheme or 4-level KICD rubric.",
+                        ))
+
         # Common checks: Content-Type appropriateness
         if ct.content_type == "literature":
             if "laboratory apparatus" in content_str.lower() or "bunsen burner" in content_str.lower():
@@ -359,19 +430,29 @@ class QualityGateService:
         ct: ContentTypeProfile,
     ) -> ApproverResult:
         """Approver 1 (Pedagogical Quality Lead): Evaluates pedagogical scaffolding, SLO fidelity, Bloom's."""
-        base_score = min(100, reviewer_res.score + 4)
-        verdict = "approved" if base_score >= 80 else "needs_revision"
-        notes = (
-            f"Auditor 1 ({ct.persona.split('.')[0]}): "
-            f"Pedagogical scaffolding for '{layer_name}' aligns with BECF Constructivist principles. "
-            f"Tone and learning experiences match {ct.content_type.upper()} educational standards."
-        )
+        if reviewer_res.risk_flags:
+            base_score = min(reviewer_res.score, 55)
+            verdict = "needs_revision"
+            notes = (
+                f"Auditor 1 Rejection: Pedagogical/Visual violation detected. "
+                f"Issues: {'; '.join(reviewer_res.risk_flags)}. Content requires revision to align question prompts with actual diagrams."
+            )
+            safety_verified = False
+        else:
+            base_score = min(100, reviewer_res.score + 4)
+            verdict = "approved" if base_score >= 80 else "needs_revision"
+            notes = (
+                f"Auditor 1 ({ct.persona.split('.')[0]}): "
+                f"Pedagogical scaffolding for '{layer_name}' aligns with BECF Constructivist principles. "
+                f"Tone and learning experiences match {ct.content_type.upper()} educational standards."
+            )
+            safety_verified = True
 
         return ApproverResult(
             auditor="Auditor 1 (Pedagogical Quality Lead)",
             verdict=verdict,
             score=base_score,
-            safety_verified=True,
+            safety_verified=safety_verified,
             deliberation_notes=notes,
             ready_for_human_review=verdict == "approved",
         )

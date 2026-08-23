@@ -387,19 +387,43 @@ def factory_generate_questions_batch(
             diagram_id = None
             diagram_url = None
 
-            diag_ref = str(q.get("diagram_ref") or "").strip()
+            diag_ref = str(q.get("diagram_ref") or "").strip().lower()
+            q_stem = f"{q.get('question_text', '')} {q.get('stimulus_context', '')} {q.get('micro_concept', '')} {' '.join([str(sp.get('sub_question', '')) for sp in q.get('structured_parts', [])])}".lower()
             matched_diag = None
 
             if len(diagrams_list) > 0:
+                best_score = -1
                 for d in diagrams_list:
-                    if isinstance(d, dict):
-                        d_id = str(d.get("asset_id") or "")
-                        d_title = str(d.get("title") or d.get("diagram_title") or "")
-                        if diag_ref and (diag_ref == d_id or diag_ref.lower() in d_title.lower() or d_id.lower() in diag_ref.lower()):
-                            matched_diag = d
-                            break
+                    if not isinstance(d, dict):
+                        continue
+                    d_id = str(d.get("asset_id") or d.get("diagram_id") or "").lower()
+                    d_title = str(d.get("title") or d.get("diagram_title") or "").lower()
+                    d_concept = str(d.get("concept") or d.get("pedagogical_purpose") or "").lower()
+                    d_full = f"{d_id} {d_title} {d_concept}"
+
+                    # Exact ID match
+                    if diag_ref and (diag_ref == d_id or diag_ref in d_id or d_id in diag_ref):
+                        matched_diag = d
+                        break
+
+                    # Semantic overlap match with question prompt & micro_concept
+                    overlap_score = 0
+                    for word in d_full.split():
+                        clean_w = word.strip(".,;:()")
+                        if len(clean_w) > 3 and clean_w in q_stem:
+                            overlap_score += 1
+                    if overlap_score > best_score and overlap_score > 0:
+                        best_score = overlap_score
+                        matched_diag = d
+
+                # Fallback only if first diagram has relevant conceptual overlap
                 if not matched_diag and (q_type == "diagram_based" or diag_ref):
-                    matched_diag = diagrams_list[idx % len(diagrams_list)]
+                    first_d = diagrams_list[0]
+                    first_title = str(first_d.get("title") or "").lower()
+                    first_concept = str(first_d.get("concept") or "").lower()
+                    first_full = f"{first_title} {first_concept}"
+                    if any(len(w) > 4 and w in q_stem for w in first_full.split()):
+                        matched_diag = first_d
 
             if matched_diag and isinstance(matched_diag, dict):
                 diagram_svg = matched_diag.get("diagram_svg") or matched_diag.get("svg")

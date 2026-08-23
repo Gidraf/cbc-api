@@ -3721,7 +3721,7 @@ export function App() {
                           disabled={isRunning}
                           title="Auto-discover all required diagrams, schematics, and realistic scene illustrations for this sub-strand"
                         >
-                          ✨ Plan Required Visuals ({stationVisualsList.length || "Auto"})
+                          ✨ Discover All Visuals ({stationVisualsList.length || "Auto"})
                         </button>
                         <button
                           className="ghost"
@@ -3731,6 +3731,34 @@ export function App() {
                           title="Synthesize all planned visual assets one by one"
                         >
                           ⚡ Generate All ({stationVisualsList.length})
+                        </button>
+                        <button
+                          className="ghost"
+                          style={{ fontSize: "11px", padding: "3px 8px", background: "#faf5ff", color: "#7c3aed", borderColor: "#c4b5fd" }}
+                          onClick={() => {
+                            const customTitle = window.prompt("Enter Title for New Visual Asset (e.g. 'Soil Profile Horizon Strata (O-A-B-C Layers)'):");
+                            if (customTitle && customTitle.trim()) {
+                              const newVis = {
+                                asset_id: `vis_${String(stationVisualsList.length + 1).padStart(2, '0')}`,
+                                title: customTitle.trim(),
+                                asset_type: "technical_svg",
+                                micro_concept: customTitle.trim(),
+                                pedagogical_purpose: `Pedagogical illustration for ${customTitle.trim()}`,
+                                vivid_prompt: `Detailed high-clarity vector diagram illustrating ${customTitle.trim()} with clear callouts and labels.`,
+                                accessibility: { alt_text: customTitle.trim(), tactile_description: customTitle.trim() },
+                                status: "planned",
+                              };
+                              const updated = [...stationVisualsList, newVis];
+                              setStationVisualsList(updated);
+                              setActiveVisualIdx(updated.length - 1);
+                              setStationDiagram(newVis);
+                              autoPersistStation("diagrams", updated, undefined, updated);
+                            }
+                          }}
+                          disabled={isRunning}
+                          title="Add a custom diagram, cross-section, or photo spec to this sub-strand catalog"
+                        >
+                          ➕ Add Custom Visual
                         </button>
                         {diagramResearchDossier && (
                           <span
@@ -3755,6 +3783,13 @@ export function App() {
                         </span>
                       </div>
                     </div>
+
+                    {/* Layer 1 Dependency Context Notice */}
+                    {(!stationNotes || Object.keys(stationNotes).length === 0) && (
+                      <div style={{ padding: "8px 12px", background: "#fef3c7", border: "1px solid #fde68a", borderRadius: "6px", marginBottom: "10px", fontSize: "11.5px", color: "#92400e" }}>
+                        ⚠️ <strong>Layer 1 Notes Context:</strong> Visual models and diagrams are derived directly from Station 1 4-Hour Lesson Notes. Please generate or load Lesson Notes in Station 1 first for maximum pedagogical accuracy.
+                      </div>
+                    )}
 
                     {/* Active Visual Meta & Preview */}
                     {(() => {
@@ -4150,7 +4185,7 @@ export function App() {
                           disabled={isRunning}
                           title="Auto-discover all required laboratory experiments, outdoor inquiries, and classroom games for this sub-strand"
                         >
-                          ✨ Plan Required Practicals ({stationActivitiesList.length || "Auto"})
+                          ✨ Discover All Practicals ({stationActivitiesList.length || "Auto"})
                         </button>
                         <button
                           className="ghost"
@@ -4160,6 +4195,35 @@ export function App() {
                           title="Synthesize all planned practical tasks and video scripts"
                         >
                           ⚡ Generate All ({stationActivitiesList.length})
+                        </button>
+                        <button
+                          className="ghost"
+                          style={{ fontSize: "11px", padding: "3px 8px", background: "#faf5ff", color: "#7c3aed", borderColor: "#c4b5fd" }}
+                          onClick={() => {
+                            const customName = window.prompt("Enter Title for New Practical Task / Lab Experiment:");
+                            if (customName && customName.trim()) {
+                              const newAct = {
+                                activity_id: `act_${String(stationActivitiesList.length + 1).padStart(2, '0')}`,
+                                activity_name: customName.trim(),
+                                activity_type: "laboratory_experiment",
+                                objective: `Investigate and demonstrate ${customName.trim()}`,
+                                materials: ["Standard laboratory apparatus", "Local sample reagents", "Safety goggles & PPE"],
+                                procedure_steps: ["1. Setup apparatus.", "2. Conduct controlled trial.", "3. Record observations in empirical table."],
+                                safety_hazards_to_check: ["Wear protective gloves", "Ensure adult supervision"],
+                                assessment_rubric: { exceeding: "Exemplary precision", meeting: "Accurate experimental execution", approaching: "Partial execution", below: "Needs assistance" },
+                                status: "planned",
+                              };
+                              const updated = [...stationActivitiesList, newAct];
+                              setStationActivitiesList(updated);
+                              setActiveActivityIdx(updated.length - 1);
+                              setStationActivity(newAct);
+                              autoPersistStation("activities", { activities: updated }, undefined, undefined, updated);
+                            }
+                          }}
+                          disabled={isRunning}
+                          title="Add custom practical experiment or CSL project to catalog"
+                        >
+                          ➕ Add Custom Activity
                         </button>
                         {activityResearchDossier && (
                           <span
@@ -4184,6 +4248,13 @@ export function App() {
                         </span>
                       </div>
                     </div>
+
+                    {/* Layer 1 Dependency Context Notice */}
+                    {(!stationNotes || Object.keys(stationNotes).length === 0) && (
+                      <div style={{ padding: "8px 12px", background: "#fef3c7", border: "1px solid #fde68a", borderRadius: "6px", marginBottom: "10px", fontSize: "11.5px", color: "#92400e" }}>
+                        ⚠️ <strong>Layer 1 Notes Context:</strong> Practical experiments and fieldwork activities derive their core inquiry questions and safety criteria from Station 1 4-Hour Lesson Notes.
+                      </div>
+                    )}
 
                     {/* Multi-Activity Selection Tabs */}
                     {stationActivitiesList.length > 0 && (
@@ -6641,32 +6712,84 @@ export function App() {
                             let diagTitle = q.diagram_title || q.diagram_ref || "Practical Scientific Model";
                             let diagId = q.diagram_id || q.diagram_ref || "diag_01";
                             let diagStorage = q.diagram_url;
-                            let matchedVis = null;
+                            let matchedVis: any = null;
+
+                            const qStemLower = `${q.question_text || ''} ${q.stimulus_context || ''} ${q.micro_concept || ''}`.toLowerCase();
 
                             if (stationVisualsList && stationVisualsList.length > 0) {
+                              // Find exact or best semantic match
                               const found = stationVisualsList.find(
                                 (v: any) => v.asset_id === q.diagram_ref || (q.diagram_ref && v.title?.toLowerCase().includes(q.diagram_ref.toLowerCase()))
-                              ) || (q.question_type === "diagram_based" ? stationVisualsList[qIdx % stationVisualsList.length] : null);
+                              );
                               if (found) {
                                 matchedVis = found;
-                                if (!diagSvg) diagSvg = found.diagram_svg;
-                                if (!diagTitle) diagTitle = found.title;
-                                if (!diagId) diagId = found.asset_id;
-                                if (!diagStorage) diagStorage = found.storage_url;
+                              } else {
+                                // Find semantic match by topic keywords
+                                const semMatch = stationVisualsList.find((v: any) => {
+                                  const t = (v.title || '').toLowerCase();
+                                  const c = (v.micro_concept || '').toLowerCase();
+                                  return (t && qStemLower.includes(t)) || (c && qStemLower.includes(c));
+                                });
+                                if (semMatch) matchedVis = semMatch;
+                              }
+
+                              if (matchedVis) {
+                                if (!diagSvg) diagSvg = matchedVis.diagram_svg;
+                                if (!diagTitle) diagTitle = matchedVis.title;
+                                if (!diagId) diagId = matchedVis.asset_id;
+                                if (!diagStorage) diagStorage = matchedVis.storage_url;
                               }
                             }
 
                             if (!diagSvg && !q.diagram_ref && q.question_type !== "diagram_based") return null;
 
+                            // Check for visual-semantic mismatch
+                            const isSoilQuestion = qStemLower.includes("soil profile") || qStemLower.includes("horizon") || qStemLower.includes("bedrock") || qStemLower.includes("topsoil");
+                            const isEconDiagram = diagSvg && (diagSvg.includes("GDP") || diagSvg.includes("33% Direct Contribution") || diagSvg.includes("Employment Dynamics") || diagTitle.toLowerCase().includes("economic"));
+                            const hasMismatch = isSoilQuestion && isEconDiagram;
+
                             return (
-                              <div style={{ marginBottom: "14px", padding: "12px", background: "#f8fafc", border: "1px solid #cbd5e1", borderRadius: "8px" }}>
+                              <div style={{ marginBottom: "14px", padding: "12px", background: hasMismatch ? "#fff1f2" : "#f8fafc", border: `1px solid ${hasMismatch ? "#fda4af" : "#cbd5e1"}`, borderRadius: "8px" }}>
                                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px", flexWrap: "wrap", gap: "6px" }}>
-                                  <div>
-                                    <strong style={{ color: "#0369a1", fontSize: "13px" }}>
+                                  <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+                                    <strong style={{ color: hasMismatch ? "#be123c" : "#0369a1", fontSize: "13px" }}>
                                       📐 Figure {qIdx + 1}: {diagTitle}
                                     </strong>
-                                    {diagId && <span className="pill ok" style={{ fontSize: "10px", marginLeft: "6px" }}>{diagId}</span>}
+                                    {diagId && <span className="pill ok" style={{ fontSize: "10px" }}>{diagId}</span>}
+                                    
+                                    {/* Diagram Switcher Dropdown */}
+                                    {stationVisualsList && stationVisualsList.length > 1 && (
+                                      <label style={{ fontSize: "11px", display: "inline-flex", alignItems: "center", gap: "4px", color: "#475569" }}>
+                                        Switch Visual:
+                                        <select
+                                          value={diagId}
+                                          onChange={(e) => {
+                                            const selectedVis = stationVisualsList.find((v: any) => v.asset_id === e.target.value);
+                                            if (selectedVis) {
+                                              const updated = [...qfQuestionsList];
+                                              updated[qIdx] = {
+                                                ...updated[qIdx],
+                                                diagram_ref: selectedVis.asset_id,
+                                                diagram_id: selectedVis.asset_id,
+                                                diagram_title: selectedVis.title,
+                                                diagram_svg: selectedVis.diagram_svg,
+                                                diagram_url: selectedVis.storage_url,
+                                              };
+                                              setQfQuestionsList(updated);
+                                            }
+                                          }}
+                                          style={{ fontSize: "11px", padding: "2px 6px", borderRadius: "4px", border: "1px solid #cbd5e1" }}
+                                        >
+                                          {stationVisualsList.map((v: any, vIdx: number) => (
+                                            <option key={vIdx} value={v.asset_id || `vis_${vIdx+1}`}>
+                                              {v.title || `Visual ${vIdx+1}`} ({v.diagram_svg ? "✓ Ready" : "Planned"})
+                                            </option>
+                                          ))}
+                                        </select>
+                                      </label>
+                                    )}
                                   </div>
+
                                   <div style={{ display: "flex", gap: "6px" }}>
                                     {diagSvg && (
                                       <button
@@ -6702,6 +6825,13 @@ export function App() {
                                     )}
                                   </div>
                                 </div>
+
+                                {/* Visual-Semantic Mismatch Warning Banner */}
+                                {hasMismatch && (
+                                  <div style={{ padding: "6px 10px", background: "#fee2e2", border: "1px solid #f87171", borderRadius: "6px", fontSize: "11.5px", color: "#991b1b", marginBottom: "8px" }}>
+                                    ⚠️ <strong>Visual-Semantic Mismatch Detected:</strong> This question asks learners to label or evaluate a <em>Soil Profile / Strata</em>, but the attached graphic displays a <em>Macroeconomic Contribution Flowchart</em>. Please use the <strong>Switch Visual</strong> selector above to attach a Soil Profile diagram or generate one in Station 2.
+                                  </div>
+                                )}
 
                                 {diagSvg ? (
                                   <div

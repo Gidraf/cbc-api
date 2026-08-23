@@ -1233,7 +1233,20 @@ def factory_plan_visuals(
 
     notes_str = ""
     if payload.notes_content:
-        notes_str = json_lib.dumps(payload.notes_content, ensure_ascii=False)[:2500]
+        notes_str = json_lib.dumps(payload.notes_content, ensure_ascii=False)[:4000]
+    else:
+        from ..infra.db import fetch_one
+        saved_row = fetch_one(
+            """
+            SELECT notes FROM substrand_resources
+            WHERE LOWER(curriculum->>'subject') = LOWER(:subject)
+              AND LOWER(curriculum->>'sub_strand') LIKE :ss
+            ORDER BY updated_at DESC LIMIT 1
+            """,
+            {"subject": payload.subject.strip(), "ss": f"%{payload.sub_strand.strip().lower()}%"},
+        )
+        if saved_row and saved_row.get("notes"):
+            notes_str = json_lib.dumps(saved_row.get("notes"), ensure_ascii=False)[:4000]
 
     context = langfuse_context_service.assemble_agent_context(
         agent_name="diagram-generator",
@@ -1252,28 +1265,32 @@ def factory_plan_visuals(
         "content": (
             f"{ct_profile.format_for_prompt()}\n\n"
             f"{dossier.formatted_context}\n\n"
-            f"=== LAYER 1 MASTER NOTES CONTEXT ===\n{notes_str[:1500]}\n\n"
-            f"MULTI-VISUAL ASSET PLANNING DIRECTIVE:\n"
-            f"Analyze the sub-strand '{payload.sub_strand}' and plan AT LEAST 5 (MINIMUM 5 TO 7) distinct, pedagogical visual assets covering the entire concept scope:\n"
-            f"1. A Technical Process / Flowchart Schematic (vector SVG)\n"
-            f"2. A Realistic Conceptual Scene / Photographic Infographic with authentic Kenyan county context\n"
-            f"3. A Detailed Apparatus / Practical Laboratory Setup Diagram (vector SVG)\n"
-            f"4. A Comparative Analysis / Data Infographic / Taxonomic Flowchart\n"
-            f"5. A Cross-Sectional / Anatomical / Structural Diagnostic Model\n"
-            f"6. A Video Simulation Action Storyboard / Scene Progression\n\n"
+            f"=== LAYER 1 MASTER LESSON NOTES CONTEXT (MANDATORY SOURCE OF TRUTH) ===\n{notes_str[:3000]}\n\n"
+            f"EXHAUSTIVE MULTI-VISUAL ASSET DISCOVERY & SPECIFICATION DIRECTIVE:\n"
+            f"Analyze every hour module, sub-topic, and practical concept in the Lesson Notes for '{payload.sub_strand}'.\n"
+            f"DISCOVER AND SPECIFY ALL REQUIRED PEDAGOGICAL VISUAL ASSETS (Generate 6 to 10+ distinct, high-impact visuals) covering every dimension:\n"
+            f"1. Structural / Anatomical Cross-Section Model (e.g. Soil Profile Horizon Strata showing O, A, B, C horizons, bedrock, and root penetration depths with clear callout leader lines)\n"
+            f"2. Laboratory / Workbench Apparatus Setup Schematic (vector SVG showing calibrated beakers, titration burettes, indicator charts, test tubes)\n"
+            f"3. Macro Process / Cycle Flowchart (vector SVG showing chemical, biological, or socio-economic processes with clear flow arrows)\n"
+            f"4. Authentic Kenyan Agricultural / Ecological Field Practice Photographic Scene (e.g. farmers applying agricultural lime / contour terracing in Uasin Gishu or Kiambu County)\n"
+            f"5. Comparative Data Infographic / Taxonomy Chart (comparing soil types, pest treatments, or biological classifications)\n"
+            f"6. Environmental & Community Problem-Solving Field Schematic (e.g. erosion control gabions, drip irrigation layout)\n"
+            f"7. Video Simulation Action Storyboard (step-by-step camera shots for an experiential student demonstration)\n\n"
             f"For EACH visual asset provide:\n"
-            f"- asset_id (e.g. vis_1, vis_2, vis_3, vis_4, vis_5)\n"
-            f"- title (e.g. 'Soil Acidity Testing & pH Buffering Apparatus')\n"
+            f"- asset_id (e.g. vis_01, vis_02, vis_03, vis_04, vis_05, vis_06, vis_07, vis_08)\n"
+            f"- title (e.g. 'Soil Profile Horizon Strata (O-A-B-C Layers & Root Zone)')\n"
             f"- asset_type ('technical_svg' | 'realistic_image' | 'apparatus_schematic' | 'process_flowchart' | 'infographic_chart' | 'video_storyboard')\n"
-            f"- pedagogical_purpose (why this visual is needed by the learner)\n"
+            f"- micro_concept (the specific sub-topic tested, e.g. 'Soil Strata & Horizon Identification')\n"
+            f"- pedagogical_purpose (why this visual is essential for learner mastery and exam assessment)\n"
             f"- vivid_prompt (exhaustive, vivid visual scene description: layout, perspective, objects, lighting, color palette, labels, callouts for AI image/SVG generation)\n"
             f"- accessibility: {{ 'alt_text': '...', 'tactile_description': '...' }}\n\n"
             f"Return JSON format:\n"
             f'{{\n  "sub_strand": "{payload.sub_strand}",\n  "visuals": [\n'
             f'    {{\n'
-            f'      "asset_id": "vis_1",\n'
+            f'      "asset_id": "vis_01",\n'
             f'      "title": "...",\n'
             f'      "asset_type": "technical_svg",\n'
+            f'      "micro_concept": "...",\n'
             f'      "pedagogical_purpose": "...",\n'
             f'      "vivid_prompt": "...",\n'
             f'      "accessibility": {{"alt_text": "...", "tactile_description": "..."}},\n'
@@ -1539,7 +1556,22 @@ def factory_plan_activities(
         extra_query="experiential experiments and video demonstrations",
     )
 
-    notes_str = json_lib.dumps(payload.notes_content, ensure_ascii=False)[:2000] if payload.notes_content else ""
+    notes_str = ""
+    if payload.notes_content:
+        notes_str = json_lib.dumps(payload.notes_content, ensure_ascii=False)[:4000]
+    else:
+        from ..infra.db import fetch_one
+        saved_row = fetch_one(
+            """
+            SELECT notes FROM substrand_resources
+            WHERE LOWER(curriculum->>'subject') = LOWER(:subject)
+              AND LOWER(curriculum->>'sub_strand') LIKE :ss
+            ORDER BY updated_at DESC LIMIT 1
+            """,
+            {"subject": payload.subject.strip(), "ss": f"%{payload.sub_strand.strip().lower()}%"},
+        )
+        if saved_row and saved_row.get("notes"):
+            notes_str = json_lib.dumps(saved_row.get("notes"), ensure_ascii=False)[:4000]
 
     context = langfuse_context_service.assemble_agent_context(
         agent_name="activity-generator",
@@ -1558,14 +1590,16 @@ def factory_plan_activities(
         "content": (
             f"{ct_profile.format_for_prompt()}\n\n"
             f"{dossier.formatted_context}\n\n"
-            f"=== LAYER 1 MASTER NOTES CONTEXT ===\n{notes_str[:1500]}\n\n"
-            f"MULTI-ACTIVITY & EXPERIMENTAL VIDEO STORYBOARD DIRECTIVE:\n"
-            f"Generate a comprehensive set of 2 to 3 distinct experiential practical tasks for '{payload.sub_strand}':\n"
-            f"1. A Hands-on Laboratory / Workbench Experiment with step-by-step procedure & full Video Storyboard script\n"
-            f"2. An Outdoor Field Study or Community Service Learning (CSL) Project\n"
-            f"3. A Classroom Pedagogical Game, Role-Play, or Practical Simulation\n\n"
+            f"=== LAYER 1 MASTER LESSON NOTES CONTEXT (MANDATORY SOURCE OF TRUTH) ===\n{notes_str[:3000]}\n\n"
+            f"EXHAUSTIVE MULTI-ACTIVITY & EXPERIMENTAL VIDEO STORYBOARD DIRECTIVE:\n"
+            f"Analyze every hour module and practical concept in the Lesson Notes for '{payload.sub_strand}'.\n"
+            f"DISCOVER AND SPECIFY ALL REQUIRED EXPERIENTIAL PRACTICAL TASKS (Generate 3 to 5 distinct, rigorous practical modules):\n"
+            f"1. A Rigorous Hands-on Laboratory / Workbench Experiment with quantitative data collection, apparatus setup, procedure, safety hazards, and full Video Storyboard script\n"
+            f"2. An Outdoor Field Investigation or Soil/Environmental Sampling Protocol in an authentic Kenyan farm/school setting\n"
+            f"3. A Community Service Learning (CSL) Action Project (e.g. tree planting, terracing, composting, community awareness outreach)\n"
+            f"4. A Classroom Pedagogical Game, Role-Play, or Practical Simulation\n\n"
             f"For EACH activity include:\n"
-            f"- activity_id (e.g. act_1, act_2)\n"
+            f"- activity_id (e.g. act_01, act_02, act_03, act_04)\n"
             f"- activity_name (engaging, descriptive title)\n"
             f"- activity_type ('laboratory_experiment' | 'field_investigation' | 'csl_project' | 'classroom_game')\n"
             f"- objective (measurable inquiry goal aligned with SLOs)\n"

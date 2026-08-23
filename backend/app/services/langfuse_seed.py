@@ -509,12 +509,19 @@ Content to Review:
 Curriculum SLO Reference:
 {{ curriculum_reference }}
 
-CRITICAL SAFETY & HAZARD AUDIT:
-1. Scan practical experiments and activities for dangerous, toxic, or hazardous procedures.
-2. If any toxic chemicals, fire hazards without supervision, or dangerous activities are present, REJECT IMMEDIATELY.
-3. Confirm that hygiene protocols (handwashing after soil/animal handling) are explicitly mandated.
-4. Verify 100% adherence to sub-strand SLOs with zero hallucination.
-5. Verify 4-level criterion scoring rubrics with ZERO peer ranking.
+CRITICAL REVIEW & QUALITY AUDIT PROTOCOLS:
+1. VISUAL-SEMANTIC ALIGNMENT & DIAGRAM SOLVABILITY (ZERO MISMATCH TOLERANCE):
+   - For every diagram-based question, verify that the attached visual graphic directly and accurately depicts the exact concept, apparatus, or physical structures queried in the stem.
+   - If a question asks learners to label or evaluate specific morphological, anatomical, or chemical features (e.g. 'soil profile strata', 'titration setup') but the attached graphic displays an unrelated flowchart (e.g. 'GDP/employment contributions') or generic graphic, you MUST FLAG 'VISUAL_SEMANTIC_MISMATCH', set score < 0.60, and set status to 'needs_revision'.
+2. AUTHENTIC SCENARIO CONTEXT & SITUATED DEPTH:
+   - Reject shallow stimulus placeholders (e.g. 'Refer to the diagram below'). Every question must situate the problem within an authentic Kenyan community, farm, school, or county agricultural/environmental scenario.
+3. CRITICAL SAFETY & HAZARD AUDIT:
+   - Scan practical experiments and activities for dangerous, toxic, or hazardous procedures.
+   - If any toxic chemicals, fire hazards without supervision, or dangerous activities are present without explicit PPE, REJECT IMMEDIATELY.
+   - Confirm that hygiene protocols (handwashing after soil/animal handling) are explicitly mandated.
+4. SLO & DNA LINEAGE FIDELITY:
+   - Verify 100% adherence to sub-strand SLOs and Layer 1 Master Lesson Notes with zero hallucination.
+   - Verify 4-level criterion scoring rubrics with ZERO peer ranking.
 
 Output MUST be a valid JSON object matching this schema:
 {
@@ -530,18 +537,20 @@ Output MUST be a valid JSON object matching this schema:
     {
       "reviewer": "SafetyAndQualityAuditor",
       "aspect": "safety_and_curriculum_fit",
-      "comment": "All safety protocols verified. 100% aligned with KICD SLO."
+      "comment": "All safety protocols and visual-semantic alignments verified. 100% aligned with KICD SLO."
     }
   ]
 }
-If any score < 0.90 or safety_score < 1.0, set status to 'needs_revision' and add specific actionable feedback items.
-If critical safety hazard violation is found, add to risk_flags and set status to 'rejected'.
+If any score < 0.90 or safety_score < 1.0 or any visual mismatch is detected, set status to 'needs_revision' and add specific actionable feedback items.
+If critical safety hazard violation or unresolvable visual contradiction is found, add to risk_flags and set status to 'rejected'.
 Return ONLY valid JSON.
 """,
     "approver-agent1": """
 You are Primary Approver Agent (Auditor 1) in the dual-agent deliberation panel.
 Evaluate the complete CBC educational bundle for sub-strand '{{ sub_strand }}'.
-Review pedagogical depth, constructivist alignment, SVG diagram clarity, experiment safety protocols, and question validity.
+Review pedagogical depth, constructivist alignment, SVG diagram clarity, visual-to-question semantic consistency, experiment safety protocols, and question validity.
+
+If any question contains a visual asset mismatch (e.g., asking for soil profile layers while displaying an economic flowchart), you MUST set verdict to 'needs_revision' and safety_verified to false.
 
 State your evaluation, quality score (0-100), safety confirmation, and recommendations for Auditor 2.
 Output valid JSON:
@@ -550,7 +559,7 @@ Output valid JSON:
   "verdict": "approved",
   "score": 98,
   "safety_verified": true,
-  "deliberation_notes": "Bundle meets all pedagogical criteria and safety protocols.",
+  "deliberation_notes": "Bundle meets all pedagogical criteria, diagram alignments, and safety protocols.",
   "ready_for_human_review": true
 }
 Return ONLY valid JSON.
@@ -558,16 +567,16 @@ Return ONLY valid JSON.
     "approver-agent2": """
 You are Senior Quality Approver Agent (Auditor 2) in the dual-agent deliberation panel.
 Cross-examine Auditor 1's findings on the CBC educational bundle for '{{ sub_strand }}'.
-Verify all safety hazard checks, diagram vector validity, question distractor plausibility, and KICD rubric adherence.
+Check for consensus, risk flags, visual-semantic contradictions, safety verifications, and KICD compliance.
 
-Reach consensus with Auditor 1 on whether the bundle is ready for final Human Approval.
+If risk flags or visual contradictions are present, reject or request revision.
 Output valid JSON:
 {
   "auditor": "Auditor 2 (Senior Quality & Compliance Lead)",
   "consensus_verdict": "approved",
-  "consensus_score": 99,
+  "consensus_score": 96,
   "safety_audit_passed": true,
-  "consensus_deliberation": "Consensus reached. Zero safety violations. 100% SLO compliance.",
+  "consensus_deliberation": "Consensus approved: Full compliance with KICD standards, zero risk flags.",
   "ready_for_human_review": true
 }
 Return ONLY valid JSON.
