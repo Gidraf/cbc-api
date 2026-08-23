@@ -269,107 +269,45 @@ class WebResearchAgent:
     def _extract_empirical_insights(
         self, subject: str, strand: str, sub_strand: str, citations: list[ResearchCitation]
     ) -> tuple[list[dict[str, Any]], list[str], list[dict[str, str]], list[str]]:
-        """Extracts structured empirical data points, KALRO research, and Kenyan case studies."""
-        clean_sub = sub_strand.lower()
+        """Dynamically retrieves empirical insights, case studies, and safety protocols from PostgreSQL DB profile."""
         empirical_data: list[dict[str, Any]] = []
         academic_insights: list[str] = []
         kenyan_case_studies: list[dict[str, str]] = []
         safety_guidelines: list[str] = []
 
-        if "agri" in subject.lower() or "environment" in strand.lower() or "soil" in clean_sub or "farm" in clean_sub:
-            empirical_data.extend([
-                {
-                    "metric": "Economic Contribution of Agriculture to Kenya GDP",
-                    "value": "33% direct contribution, 27% indirect contribution to GDP (KNBS 2024)",
-                    "source": "Kenya National Bureau of Statistics (KNBS) / Ministry of Agriculture",
-                },
-                {
-                    "metric": "National Employment",
-                    "value": "Employs >40% of total population, >70% of rural population",
-                    "source": "Kenya Vision 2030 Agricultural Pillar / CAADP Framework",
-                },
-                {
-                    "metric": "Key Agro-Ecological Zones (AEZs) in Kenya",
-                    "value": "Zone I-III (High potential: Central, Rift Valley, Western highlands), Zone IV-VI (ASALs: Eastern, Coast, North-Eastern ~80% landmass)",
-                    "source": "KALRO Agro-Ecological Atlas of Kenya",
-                },
-                {
-                    "metric": "Soil pH & Fertility Dynamics",
-                    "value": "Optimum crop nutrient availability between pH 6.0 - 7.5; acidic soils in Western/Central Kenya treated with agricultural lime (CaCO3)",
-                    "source": "KALRO National Agricultural Research Laboratories (NARL)",
-                },
-            ])
+        try:
+            from .content_type_classifier import classify_content_type
+            profile = classify_content_type(subject=subject, sub_strand=sub_strand)
 
-            academic_insights.extend([
-                "Constructivist PCK Strategy: Guide learners through experiential soil testing and macro-nutrient deficiency identification using local field plots.",
-                "CAADP & SDG 2 Alignment: Emphasize climate-smart agriculture (conservation tillage, agroforestry, rainwater harvesting) over purely traditional subsistence methods.",
-                "Agro-processing & Value Addition: Connect crop production to downstream industries (tea/coffee processing, edible oils, dairy cooling and pasteurization).",
-            ])
+            if profile.empirical_insights:
+                empirical_data.extend(profile.empirical_insights)
+            if profile.case_studies:
+                kenyan_case_studies.extend(profile.case_studies)
+            if profile.safety_focus:
+                safety_guidelines.append(profile.safety_focus)
+            if profile.special_directives:
+                safety_guidelines.extend([f"Guideline: {d}" for d in profile.special_directives if "safe" in d.lower() or "hygiene" in d.lower() or "not" in d.lower() or "mandat" in d.lower()])
+            if profile.note_style:
+                academic_insights.append(f"Pedagogical Framework: {profile.note_style[:180]}...")
+            if profile.persona:
+                academic_insights.append(f"Instructional Standard: Modeled after {profile.persona[:140]}...")
+        except Exception as exc:
+            logger.warning("Could not fetch DB profile for empirical insights: %s", exc)
 
-            kenyan_case_studies.extend([
-                {
-                    "county": "Nakuru & Uasin Gishu Counties",
-                    "scenario": "Commercial & smallholder maize/wheat rotation facing fall armyworm and soil acidity.",
-                    "intervention": "Integrated Pest Management (IPM), push-pull technology (Desmodium & Napier grass), and lime application.",
-                },
-                {
-                    "county": "Machakos & Makueni Counties (ASAL)",
-                    "scenario": "Frequent erratic rainfall and drought leading to moisture stress in staple crops.",
-                    "intervention": "Zai pits, micro-catchment water harvesting, drip irrigation, and drought-tolerant sorghum/cassava varieties (KALRO Seredo).",
-                },
-                {
-                    "county": "Kirinyaga & Nyeri Counties",
-                    "scenario": "High-density smallholder horticulture and tea farming with steep slope erosion risk.",
-                    "intervention": "Bench terracing, vetiver grass contour hedgerows, and agroforestry with Calliandra calothyrsus.",
-                },
-            ])
+        # If DB profile had no empirical data, dynamically derive from citations
+        if not empirical_data and citations:
+            for c in citations[:3]:
+                empirical_data.append({
+                    "metric": f"Research Benchmark from {c.source_domain}",
+                    "value": c.snippet[:120],
+                    "source": c.title,
+                })
 
-            safety_guidelines.extend([
-                "Mandatory hygiene protocol: Wash hands thoroughly with soap and running water after handling soil samples, animal manure, or compost.",
-                "Chemical safety: When using test reagents (e.g. Universal Indicator or Barium Sulfate in soil testing), wear safety goggles and avoid skin contact.",
-                "Tool handling: Farm tools (jembes, pangas, slasher, pruning shears) must be carried pointing downward and inspected for secure handles.",
-                "Biological safety: Avoid collecting plant specimens from areas recently sprayed with synthetic pesticides without personal protective equipment (PPE).",
-            ])
+        if not safety_guidelines:
+            safety_guidelines.append("Standard safety protocol: Ensure age-appropriate materials, supervise hands-on activities, and enforce basic hygiene.")
 
-        elif "science" in subject.lower() or "biology" in subject.lower() or "chem" in subject.lower():
-            empirical_data.extend([
-                {
-                    "metric": "Standard Atmospheric Parameters",
-                    "value": "STP: Temperature = 273.15 K (0°C), Pressure = 101.325 kPa (1 atm)",
-                    "source": "IUPAC Chemical Standards",
-                },
-                {
-                    "metric": "Water Quality & Environmental Standards in Kenya",
-                    "value": "NEMA Drinking Water Standard: pH 6.5 - 8.5, Turbidity < 5 NTU, Total Dissolved Solids < 1000 mg/L",
-                    "source": "National Environment Management Authority (NEMA Kenya)",
-                },
-            ])
-
-            academic_insights.extend([
-                "Inquiry-Based Discovery: Lead with phenomena-driven questions rather than rote definitions to build scientific critical thinking.",
-                "Multi-sensory Tactile Scaffolding: Provide tactile diagrams with raised borders and high-contrast colorways for diverse learner accessibility.",
-            ])
-
-            kenyan_case_studies.extend([
-                {
-                    "county": "Nairobi & Athi River Basin",
-                    "scenario": "Industrial effluent and municipal runoff affecting local freshwater ecosystems.",
-                    "intervention": "Biological water filtration using constructed wetlands with reed beds (Typha domingensis).",
-                },
-            ])
-
-            safety_guidelines.extend([
-                "Eye protection: Safety goggles must be worn during heating or mixing of chemical solutions.",
-                "Heat safety: Never point the mouth of a heated test tube toward oneself or others; use test tube holders.",
-                "Glassware inspection: Check all beakers and test tubes for chips or cracks before heating.",
-            ])
-
-        else:
-            empirical_data.append({
-                "metric": "Kenyan National Curriculum Standards",
-                "value": "Criterion-referenced assessment framework with 4 mastery tiers (Exceeding, Meeting, Approaching, Below Expectation)",
-                "source": "KICD Basic Education Curriculum Framework (BECF)",
-            })
+        if not academic_insights:
+            academic_insights.append("Constructivist Scaffolding: Ground all inquiry in authentic Kenyan context and learner's immediate environment.")
 
         return empirical_data, academic_insights, kenyan_case_studies, safety_guidelines
 

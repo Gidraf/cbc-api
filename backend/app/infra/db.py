@@ -260,6 +260,32 @@ MIGRATIONS: list[tuple[str, str]] = [
         ALTER TABLE curriculum_designs ADD COLUMN IF NOT EXISTS human_review_notes TEXT NULL;
         """,
     ),
+    (
+        "007_subject_profiles",
+        """
+        CREATE TABLE IF NOT EXISTS subject_profiles (
+            id SERIAL PRIMARY KEY,
+            subject TEXT NOT NULL,
+            grade TEXT NOT NULL DEFAULT 'all',
+            content_type TEXT NOT NULL DEFAULT 'generic',
+            persona TEXT NOT NULL,
+            note_style TEXT NOT NULL,
+            diagram_type TEXT NOT NULL,
+            activity_type TEXT NOT NULL,
+            question_type TEXT NOT NULL,
+            safety_focus TEXT NOT NULL,
+            grade_appropriate_tone TEXT NOT NULL DEFAULT 'formal academic',
+            special_directives JSONB NOT NULL DEFAULT '[]'::jsonb,
+            empirical_insights JSONB NOT NULL DEFAULT '[]'::jsonb,
+            case_studies JSONB NOT NULL DEFAULT '[]'::jsonb,
+            metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            CONSTRAINT uq_subject_grade UNIQUE (subject, grade)
+        );
+        CREATE INDEX IF NOT EXISTS idx_subject_profiles_lookup ON subject_profiles(subject, grade);
+        """,
+    ),
 ]
 
 

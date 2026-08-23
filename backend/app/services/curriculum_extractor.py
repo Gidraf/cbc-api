@@ -85,13 +85,28 @@ class CurriculumExtractorService:
         # 2. Parse curriculum metadata & structural sections
         design = self._parse_curriculum_text(raw_text, payload_meta, dataset_dna.dna_id)
 
-        # 3. Generate Subject, Strand, and Substrand DNAs
+        # 3. Synthesize Dynamic Pedagogical ContentTypeProfile from Curriculum Design Dataset
+        try:
+            from .content_type_classifier import ai_generate_profile_from_dataset
+            dyn_profile = ai_generate_profile_from_dataset(
+                subject=design.subject,
+                grade=design.grade,
+                level=design.level,
+                essence_statement=design.essence_statement,
+                general_learning_outcomes=design.general_learning_outcomes,
+                save_to_db=True,
+            )
+            design.raw_payload["dynamic_profile"] = dyn_profile.to_dict()
+        except Exception as p_exc:  # noqa: BLE001
+            logger.warning("Dynamic profile synthesis during ingestion deferred: %s", p_exc)
+
+        # 4. Generate Subject, Strand, and Substrand DNAs
         self._generate_curriculum_dna_tree(design, dataset_dna.dna_id, raw_text)
 
-        # 4. Persist to PostgreSQL database
+        # 5. Persist to PostgreSQL database
         self._persist_to_db(design)
 
-        # 5. Synchronize with Langfuse dataset item
+        # 6. Synchronize with Langfuse dataset item
         langfuse_sync_result = self._sync_to_langfuse(design)
 
         logger.info(
