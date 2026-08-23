@@ -164,10 +164,14 @@ class RuntimeState:
     def _load_stage_bindings(self) -> None:
         stage_rows = fetch_all("SELECT pipeline_stage, provider, model, base_url FROM stage_bindings")
         for row in stage_rows:
+            provider = row["provider"]
+            model = (row.get("model") or "").strip()
+            if not model or model.lower() in {"null", "undefined", "default", "none"}:
+                model = "gpt-4o-mini" if provider == "openai" else ("claude-3-5-sonnet-20241022" if provider == "anthropic" else "gemini-2.0-flash")
             self.stage_bindings[row["pipeline_stage"]] = StageBinding(
                 pipeline_stage=row["pipeline_stage"],
-                provider=row["provider"],
-                model=row["model"],
+                provider=provider,
+                model=model,
                 base_url=row.get("base_url"),
             )
 

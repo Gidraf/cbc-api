@@ -28,22 +28,43 @@ class ProviderRouter:
     def resolve_for_stage(self, stage: str) -> ResolvedModelConfig:
         binding = self.state.stage_bindings.get(stage)
         if not binding:
-            raise_api_error("MODEL_NOT_CONFIGURED_FOR_STAGE", f"No provider/model mapping found for stage: {stage}")
+            # Fallback to default binding if stage not explicitly bound
+            provider = Provider.OPENAI.value
+            model = "gpt-4o-mini"
+            resolved_base_url = OFFICIAL_BASE_URLS[Provider.OPENAI]
+            binding_base_url = None
+        else:
+            provider = binding.provider
+            model = (binding.model or "").strip()
+            binding_base_url = binding.base_url
 
-        provider = binding.provider
+        # Ensure valid non-empty model name
+        if not model or model.lower() in {"null", "undefined", "default", "none", ""}:
+            if provider == Provider.OPENAI.value:
+                model = "gpt-4o-mini"
+            elif provider == Provider.ANTHROPIC.value:
+                model = "claude-3-5-sonnet-20241022"
+            elif provider == Provider.GEMINI.value:
+                model = "gemini-2.0-flash"
+            elif provider == Provider.OLLAMA.value:
+                model = "llama3.1"
+            else:
+                model = "gpt-4o-mini"
+
         provider_config = self.state.provider_credentials.get(provider)
         if not provider_config:
             raise_api_error("UNSUPPORTED_MODEL_PROVIDER", f"Unsupported provider: {provider}")
 
         if provider in {Provider.OPENAI.value, Provider.ANTHROPIC.value, Provider.GEMINI.value}:
             default_base_url = OFFICIAL_BASE_URLS[Provider(provider)]
-            resolved_base_url = binding.base_url or provider_config.base_url or default_base_url
+            resolved_base_url = binding_base_url or provider_config.base_url or default_base_url
         else:
-            resolved_base_url = binding.base_url or provider_config.base_url
+            resolved_base_url = binding_base_url or provider_config.base_url
             if not resolved_base_url:
                 raise_api_error("MODEL_ENDPOINT_UNAVAILABLE", "Ollama base_url is not configured")
-            if binding.model not in provider_config.ollama_models:
-                raise_api_error("MODEL_NOT_CONFIGURED_FOR_STAGE", f"Ollama model not allowed/configured: {binding.model}")
+            if provider_config.ollama_models and model not in provider_config.ollama_models:
+                # Add to allowed ollama models dynamically if custom model passed
+                provider_config.ollama_models.append(model)
 
         api_key = self.state.decrypt_api_key(provider)
         if provider in {Provider.OPENAI.value, Provider.ANTHROPIC.value, Provider.GEMINI.value} and not api_key:
@@ -55,7 +76,7 @@ class ProviderRouter:
         return ResolvedModelConfig(
             pipeline_stage=stage,
             provider=provider,
-            model=binding.model,
+            model=model,
             resolved_base_url=resolved_base_url,
             credential_ref_id=credential_ref_id,
             api_key=api_key,

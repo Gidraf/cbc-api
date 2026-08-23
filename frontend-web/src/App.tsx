@@ -2738,8 +2738,103 @@ export function App() {
                 <h2>Stage-to-Model Bindings</h2>
                 <p>Configure which LLM powers each stage (notes, diagrams, activities, questions, reviewers).</p>
               </div>
+              <div style={{ display: "flex", gap: "8px" }}>
+                <button
+                  onClick={async () => {
+                    await run("Bootstrap OpenAI Bindings", async () => {
+                      const res = await fetchJson<any>("/admin/pipeline-bindings/bootstrap", {
+                        method: "POST",
+                        body: JSON.stringify({ provider: "openai", model: "gpt-4o-mini", base_url: null }),
+                      }, auth());
+                      setStageDrafts({
+                        notes_generation: { provider: "openai", model: "gpt-4o-mini", base_url: "" },
+                        diagram_generation: { provider: "openai", model: "gpt-4o-mini", base_url: "" },
+                        activity_generation: { provider: "openai", model: "gpt-4o-mini", base_url: "" },
+                        question_generation: { provider: "openai", model: "gpt-4o-mini", base_url: "" },
+                        reviewer_panel: { provider: "openai", model: "gpt-4o-mini", base_url: "" },
+                        regeneration: { provider: "openai", model: "gpt-4o-mini", base_url: "" },
+                      });
+                      return res;
+                    });
+                  }}
+                  disabled={isRunning}
+                >
+                  ⚡ Set All Stages to OpenAI (gpt-4o-mini)
+                </button>
+              </div>
             </div>
-            <pre>{pretty(stageDrafts)}</pre>
+
+            <div className="stack" style={{ gap: "12px", marginTop: "12px" }}>
+              {(Object.keys(stageDrafts) as Stage[]).map((stage) => {
+                const draft = stageDrafts[stage];
+                return (
+                  <div key={stage} className="surface" style={{ padding: "14px", border: "1px solid #e2e8f0", borderRadius: "8px" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
+                      <strong style={{ fontSize: "14px", color: "#0f172a" }}>{stage}</strong>
+                      <span className="pill ok" style={{ fontSize: "11px" }}>{draft.provider} • {draft.model}</span>
+                    </div>
+
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr auto", gap: "8px", alignItems: "flex-end" }}>
+                      <label style={{ fontSize: "12px" }}>
+                        Provider:
+                        <select
+                          value={draft.provider}
+                          onChange={(e) => {
+                            const p = e.target.value as Provider;
+                            const defaultModel = p === "openai" ? "gpt-4o-mini" : (p === "anthropic" ? "claude-3-5-sonnet-20241022" : (p === "gemini" ? "gemini-2.0-flash" : "llama3.1"));
+                            setStageDrafts({
+                              ...stageDrafts,
+                              [stage]: { ...draft, provider: p, model: defaultModel },
+                            });
+                          }}
+                          style={{ marginTop: "4px" }}
+                        >
+                          <option value="openai">OpenAI</option>
+                          <option value="anthropic">Anthropic</option>
+                          <option value="gemini">Google Gemini</option>
+                          <option value="ollama">Ollama / Local</option>
+                        </select>
+                      </label>
+
+                      <label style={{ fontSize: "12px" }}>
+                        Model ID:
+                        <input
+                          value={draft.model}
+                          onChange={(e) => setStageDrafts({ ...stageDrafts, [stage]: { ...draft, model: e.target.value } })}
+                          placeholder="e.g. gpt-4o-mini, gpt-4o, claude-3-5-sonnet-20241022"
+                          style={{ marginTop: "4px" }}
+                        />
+                      </label>
+
+                      <label style={{ fontSize: "12px" }}>
+                        Custom Base URL (optional):
+                        <input
+                          value={draft.base_url || ""}
+                          onChange={(e) => setStageDrafts({ ...stageDrafts, [stage]: { ...draft, base_url: e.target.value } })}
+                          placeholder="Default official API URL"
+                          style={{ marginTop: "4px" }}
+                        />
+                      </label>
+
+                      <button
+                        onClick={() => run(`Save ${stage}`, () => fetchJson(`/admin/pipeline-bindings/${stage}`, {
+                          method: "POST",
+                          body: JSON.stringify({
+                            provider: draft.provider,
+                            model: draft.model || "gpt-4o-mini",
+                            base_url: draft.base_url || null,
+                          }),
+                        }, auth()))}
+                        disabled={isRunning}
+                        style={{ height: "36px" }}
+                      >
+                        💾 Save
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
           </section>
         )}
 

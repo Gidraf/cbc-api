@@ -101,6 +101,12 @@ class LlmClient:
             )
         elif status == 400:
             body_lower = resp.text.lower() if resp.text else ""
+            if "invalid model" in body_lower or "model_not_found" in body_lower or "does not exist" in body_lower or "unknown model" in body_lower:
+                raise_api_error(
+                    "LLM_INVALID_MODEL",
+                    f"Model '{model_name}' is not recognized or invalid on {provider_name} ({body_preview}). "
+                    f"Please update your model name to a supported model (e.g. 'gpt-4o-mini', 'gpt-4o') in the Stage Bindings tab.",
+                )
             if "content_filter" in body_lower or "content_policy" in body_lower or "safety" in body_lower:
                 raise_api_error(
                     "LLM_CONTENT_FILTER",
@@ -136,8 +142,12 @@ class LlmClient:
         base_url = config.resolved_base_url.rstrip("/")
         url = f"{base_url}/chat/completions" if not base_url.endswith("/v1") else f"{base_url}/chat/completions"
 
-        payload = {
-            "model": config.model or "gpt-4o-mini",
+        model_name = (config.model or "gpt-4o-mini").strip()
+        if not model_name or model_name.lower() in {"null", "undefined", "default", "none"}:
+            model_name = "gpt-4o-mini"
+
+        payload: dict[str, Any] = {
+            "model": model_name,
             "messages": messages,
             "temperature": temperature,
             "top_p": top_p,
@@ -146,6 +156,11 @@ class LlmClient:
 
         with httpx.Client(timeout=self.timeout) as client:
             resp = client.post(url, headers=headers, json=payload)
+            # If 400 is returned because of response_format on some custom gateways, retry without response_format
+            if resp.status_code == 400 and ("response_format" in resp.text or "json_object" in resp.text):
+                payload.pop("response_format", None)
+                resp = client.post(url, headers=headers, json=payload)
+
             if resp.status_code >= 400:
                 self._classify_http_error(config, resp)
 
