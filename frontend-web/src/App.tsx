@@ -322,6 +322,26 @@ export function App() {
     });
   }
 
+  async function syncLangfuseDatasets() {
+    await run("Pull & Structure All Datasets from Langfuse", async () => {
+      const res = await fetchJson<any>("/api/v1/curriculum/sync-langfuse-datasets", {
+        method: "POST"
+      }, auth());
+      await loadDatasets();
+      if (res.structured_blueprints && res.structured_blueprints.length > 0) {
+        setIngestedDesignResult(res.structured_blueprints[0]);
+        const firstGrade = res.structured_blueprints[0].grade;
+        if (firstGrade) {
+          setSelectedGrade(firstGrade);
+          setGenGrade(firstGrade);
+          await loadGradeDataset(firstGrade);
+          await loadGradeSubjects(firstGrade);
+        }
+      }
+      return res;
+    });
+  }
+
   // Prompt preview
   async function previewPromptContext() {
     await run("Assemble Prompt Context", async () => {
@@ -662,9 +682,12 @@ export function App() {
                   style={{width: '100%', fontFamily: 'monospace', fontSize: '0.82rem'}}
                   placeholder="Paste raw curriculum design text or JSON dataset payload here..."
                 />
-                <div style={{display: 'flex', gap: '0.5rem', marginTop: '0.5rem'}}>
+                <div style={{display: 'flex', gap: '0.5rem', marginTop: '0.5rem', flexWrap: 'wrap'}}>
                   <button onClick={onIngestRawCurriculum} disabled={isRunning || !rawCurriculumInput.trim()}>
                     {isRunning ? "Structuring Curriculum..." : "Ingest & Structure Curriculum Design"}
+                  </button>
+                  <button onClick={syncLangfuseDatasets} disabled={isRunning} style={{background: '#4338ca', borderColor: '#4338ca'}}>
+                    {isRunning ? "Fetching from Langfuse..." : "📥 Pull & Structure All Datasets from Langfuse"}
                   </button>
                   <button
                     className="ghost"

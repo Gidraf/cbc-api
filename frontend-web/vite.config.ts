@@ -11,8 +11,35 @@ export default defineConfig(({ mode }) => {
       proxy: {
         "/api": {
           target: proxyTarget,
-          changeOrigin: true,
-          rewrite: (path) => path.replace(/^\/api/, "")
+          changeOrigin: true
+        },
+        "/generate": {
+          target: proxyTarget,
+          changeOrigin: true
+        },
+        "/questions": {
+          target: proxyTarget,
+          changeOrigin: true
+        },
+        "/targets": {
+          target: proxyTarget,
+          changeOrigin: true
+        },
+        "/review": {
+          target: proxyTarget,
+          changeOrigin: true
+        },
+        "/human-review": {
+          target: proxyTarget,
+          changeOrigin: true
+        },
+        "/production": {
+          target: proxyTarget,
+          changeOrigin: true
+        },
+        "/agents": {
+          target: proxyTarget,
+          changeOrigin: true
         }
       }
     }

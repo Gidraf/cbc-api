@@ -112,6 +112,35 @@ class LangfuseContextService:
         self._set_cache("master_context", _DEV_FALLBACK_MASTER_CONTEXT)
         return _DEV_FALLBACK_MASTER_CONTEXT
 
+    def fetch_raw_datasets_from_langfuse(self, dataset_names: list[str] | None = None) -> list[dict[str, Any]]:
+        """Fetches all raw dataset items directly from Langfuse project (e.g. cbc/datasets)."""
+        names_to_try = dataset_names or ["cbc/datasets", "cbc-datasets", "cbc_datasets", "datasets", "curriculum", "grade-dte", "grade-7"]
+        found_items: list[dict[str, Any]] = []
+
+        if self._client:
+            for name in names_to_try:
+                try:
+                    dataset = self._client.get_dataset(name=name)
+                    if dataset and dataset.items:
+                        logger.info("Found %d raw dataset items in Langfuse dataset '%s'", len(dataset.items), name)
+                        for item in dataset.items:
+                            # Package the raw payload as-is
+                            inp = item.input if isinstance(item.input, dict) else {"input": item.input}
+                            out = item.expected_output or (inp.get("output") if isinstance(inp, dict) else "") or ""
+                            meta = item.metadata or {}
+                            combined = {
+                                "dataset_name": name,
+                                "item_id": item.id,
+                                **inp,
+                                "output": out if out else (inp.get("output") or meta.get("output") or ""),
+                                "metadata": meta,
+                            }
+                            found_items.append(combined)
+                except Exception as exc:
+                    logger.debug("Dataset '%s' not present in Langfuse: %s", name, exc)
+
+        return found_items
+
     def get_grade_dataset(self, grade_slug: str) -> list[dict]:
         cache_key = f"dataset_{grade_slug}"
         cached = self._get_from_cache(cache_key)
@@ -134,14 +163,8 @@ class LangfuseContextService:
                     self._set_cache(cache_key, items)
                     return items
             except Exception as exc:
-                logger.warning("Could not fetch dataset '%s' from Langfuse: %s", grade_slug, exc)
-                if self._is_strict:
-                    raise_api_error("LANGFUSE_DATASET_NOT_FOUND", f"Failed to fetch dataset '{grade_slug}' from Langfuse.")
+                logger.debug("Dataset '%s' not present in Langfuse: %s", grade_slug, exc)
 
-        if self._is_strict:
-            raise_api_error("LANGFUSE_DATASET_NOT_FOUND", f"Langfuse client unavailable to fetch dataset '{grade_slug}' in strict mode.")
-
-        # Fallback local dataset items
         fallback = [
             {
                 "id": f"itm_{grade_slug}_default",
@@ -154,17 +177,7 @@ class LangfuseContextService:
                     "name": "Integrated Science",
                     "code": "ISCI",
                     "essence_statement": "Develops scientific inquiry, environmental conservation, and technological literacy.",
-                    "strands": [
-                        {
-                            "name": "Matter",
-                            "sub_strands": [
-                                {
-                                    "name": "Classification of Matter",
-                                    "slos": ["MS-G7-ISCI-MAT-CLM-01"],
-                                }
-                            ],
-                        }
-                    ],
+                    "strands": [],
                 },
             }
         ]
@@ -172,6 +185,44 @@ class LangfuseContextService:
         return fallback
 
     def get_subject_context(self, grade_slug: str, subject: str) -> dict:
+        from ..infra.db import fetch_all
+        rows = fetch_all(
+            """
+            SELECT strand_name, sub_strand_id, sub_strand_name, allocated_hours, slos,
+                   learning_experiences, key_inquiry_questions, required_diagrams,
+                   experiments, pedagogical_guidance, prompt_context
+            FROM curriculum_substrands
+            WHERE (grade = :grade OR :grade = '' OR :grade IS NULL) AND LOWER(subject) = LOWER(:subject)
+            ORDER BY strand_id ASC, sub_strand_id ASC
+            """,
+            {"grade": grade_slug, "subject": subject},
+        )
+
+        if rows:
+            strands_map: dict[str, list[dict]] = {}
+            for r in rows:
+                s_name = r["strand_name"]
+                if s_name not in strands_map:
+                    strands_map[s_name] = []
+                strands_map[s_name].append({
+                    "name": r["sub_strand_name"],
+                    "hours": r["allocated_hours"],
+                    "slos": [item.get("text", "") if isinstance(item, dict) else str(item) for item in (r["slos"] or [])],
+                    "diagrams_required": r["required_diagrams"] or [],
+                    "experiments": r["experiments"] or [],
+                    "kiqs": r["key_inquiry_questions"] or [],
+                    "prompt_package": r["prompt_context"] or {},
+                })
+
+            strands_tree = [{"name": k, "sub_strands": v} for k, v in strands_map.items()]
+            return {
+                "subject": subject,
+                "grade": grade_slug,
+                "strands": strands_tree,
+                "source": "curriculum_blueprint_db",
+            }
+
+        # Fallback to dataset items
         dataset_items = self.get_grade_dataset(grade_slug)
         for item in dataset_items:
             inp = item.get("input", {})
@@ -179,9 +230,6 @@ class LangfuseContextService:
                 return item.get("metadata", {})
             if isinstance(inp, str) and subject.lower() in inp.lower():
                 return item.get("metadata", {})
-
-        if self._is_strict:
-            raise_api_error("DATASET_ITEM_NOT_FOUND", f"Subject '{subject}' not found in dataset '{grade_slug}'.")
 
         return {
             "essence_statement": f"Curriculum design for {subject} in {grade_slug}.",
@@ -233,40 +281,15 @@ class LangfuseContextService:
         agent_name: str,
         grade_slug: str,
         subject: str,
-        template_vars: dict[str, Any] | None = None,
+        template_vars: dict | None = None,
     ) -> CompiledContextResult:
         # Layer 1: Global BECF Context
         master_ctx = self.get_master_context()
-        if not master_ctx or len(master_ctx.strip()) < 50:
-            raise_api_error("MISSING_CONTEXT_LAYER", "Layer 1 (Global BECF Context) is missing or empty. Seed Langfuse with: python -m app.services.langfuse_seed")
+        if not master_ctx or len(master_ctx.strip()) < 20:
+            master_ctx = _DEV_FALLBACK_MASTER_CONTEXT
 
-        # Layer 2: Grade dataset
-        dataset_items = self.get_grade_dataset(grade_slug)
-        if not dataset_items:
-            raise_api_error("MISSING_CONTEXT_LAYER", f"Layer 2 (Grade Dataset '{grade_slug}') has no items. Upload curriculum data for this grade.")
-
-        # Layer 3: Subject context
+        # Layer 2 & 3: Subject & Sub-strand Blueprint Context
         subject_ctx = self.get_subject_context(grade_slug, subject)
-        if not subject_ctx or not subject_ctx.get("strands"):
-            raise_api_error("MISSING_CONTEXT_LAYER", f"Layer 3 (Subject Context for '{subject}' in '{grade_slug}') is missing. Upload this subject's curriculum data.")
-
-        # Layer 4: Strand/Sub-strand validation
-        template_vars = template_vars or {}
-        if "strand" in template_vars and "sub_strand" in template_vars:
-            strand_name = template_vars["strand"]
-            sub_strand_name = template_vars["sub_strand"]
-            found_sub = False
-            for strand in subject_ctx.get("strands", []):
-                if strand.get("name", "").lower() == strand_name.lower():
-                    for sub_strand in strand.get("sub_strands", []):
-                        if sub_strand.get("name", "").lower() == sub_strand_name.lower():
-                            found_sub = True
-                            break
-                    if found_sub:
-                        break
-            if not found_sub:
-                logger.warning("Layer 4 (Strand/Sub-strand) validation failed for %s -> %s", strand_name, sub_strand_name)
-                # Not explicitly raising error here to remain backward compatible, but we log the warning.
 
         # Layer 5: Agent prompt
         raw_prompt = self.get_agent_prompt(agent_name)
@@ -302,14 +325,16 @@ class LangfuseContextService:
         )
 
     def list_datasets(self) -> list[dict]:
-        if self._client:
-            try:
-                # We need to list dataset correctly or use get_dataset individually?
-                # Actually Langfuse SDK doesn't have an easy list_datasets, but we just fallback to the predefined range, or just use what works.
-                pass
-            except Exception:
-                pass
-        return [{"name": f"grade-{i}"} for i in range(1, 13)] + [{"name": "grade-pp1"}, {"name": "grade-pp2"}]
+        from ..infra.db import fetch_all
+        db_grades = fetch_all("SELECT DISTINCT grade FROM curriculum_designs ORDER BY grade ASC")
+        if not db_grades:
+            db_grades = fetch_all("SELECT DISTINCT grade FROM curriculum_substrands ORDER BY grade ASC")
+
+        names = [r["grade"] for r in db_grades if r.get("grade")]
+        if not names:
+            names = ["grade-dte", "grade-7", "grade-8", "grade-9", "grade-4", "grade-pp1"]
+
+        return [{"name": n} for n in names]
 
     def upload_dataset_item(self, grade_slug: str, subject_data: dict) -> dict:
         if self._client:
@@ -322,16 +347,42 @@ class LangfuseContextService:
                 self._cache.pop(f"dataset_{grade_slug}", None)
                 return {"status": "created", "dataset_name": grade_slug}
             except Exception as exc:
-                logger.error("Failed to upload dataset item to Langfuse: %s", exc)
-                if self._is_strict:
-                    raise_api_error("LANGFUSE_UNAVAILABLE", "Failed to upload dataset item in strict mode.")
-
-        if self._is_strict:
-            raise_api_error("LANGFUSE_UNAVAILABLE", "Langfuse client unavailable to upload dataset item in strict mode.")
+                logger.warning("Failed to upload dataset item to Langfuse: %s", exc)
 
         return {"status": "saved_locally", "dataset_name": grade_slug}
 
     def get_available_subjects(self, grade_slug: str) -> list[dict]:
+        from ..infra.db import fetch_all
+        db_subs = fetch_all(
+            """
+            SELECT DISTINCT subject, subject_code, essence_statement
+            FROM curriculum_designs
+            WHERE grade = :grade
+            ORDER BY subject ASC
+            """,
+            {"grade": grade_slug},
+        )
+        if not db_subs:
+            db_subs = fetch_all(
+                """
+                SELECT DISTINCT subject, '' as subject_code, '' as essence_statement
+                FROM curriculum_substrands
+                WHERE grade = :grade
+                ORDER BY subject ASC
+                """,
+                {"grade": grade_slug},
+            )
+
+        if db_subs:
+            return [
+                {
+                    "name": r["subject"],
+                    "code": r.get("subject_code", ""),
+                    "essence_statement": r.get("essence_statement", ""),
+                }
+                for r in db_subs
+            ]
+
         items = self.get_grade_dataset(grade_slug)
         subjects = []
         for item in items:

@@ -1,5 +1,5 @@
 export const API_BASE_URL =
-  import.meta.env.VITE_API_BASE_URL?.replace(/\/$/, "") || "http://localhost:8000";
+  import.meta.env.VITE_API_BASE_URL?.replace(/\/$/, "") || "";
 
 export type AuthHeaders = {
   bearerToken?: string;
@@ -18,7 +18,16 @@ export async function fetchJson<T>(path: string, init?: RequestInit, auth?: Auth
     headers.set("x-api-key", auth.apiKey);
   }
 
-  const response = await fetch(`${API_BASE_URL}${path}`, {
+  // Normalize path and base URL to prevent duplicate /api/api
+  let cleanPath = path.startsWith("/") ? path : `/${path}`;
+  let baseUrl = API_BASE_URL;
+  if (baseUrl.endsWith("/api") && cleanPath.startsWith("/api")) {
+    cleanPath = cleanPath.slice(4);
+  }
+
+  const url = baseUrl ? `${baseUrl}${cleanPath}` : cleanPath;
+
+  const response = await fetch(url, {
     headers,
     ...init
   });

@@ -40,6 +40,30 @@ def ingest_raw_curriculum(
     return curriculum_extractor.ingest_raw_curriculum(data)
 
 
+@router.post("/sync-langfuse-datasets")
+def sync_langfuse_datasets(
+    _: AuthContext = Depends(require_roles("admin", "operator")),
+) -> dict[str, Any]:
+    """Fetches all raw dataset items directly from Langfuse (e.g. cbc/datasets),
+    runs the AI curriculum structuring & dynamic prompt generation on each,
+    and returns all structured blueprints."""
+    from ..services.langfuse_context import langfuse_context_service
+
+    raw_items = langfuse_context_service.fetch_raw_datasets_from_langfuse()
+    results = []
+    for item in raw_items:
+        try:
+            res = curriculum_extractor.ingest_raw_curriculum(item)
+            results.append(res)
+        except Exception as exc:
+            results.append({"status": "error", "item_id": item.get("item_id"), "error": str(exc)})
+
+    return {
+        "fetched_from_langfuse_count": len(raw_items),
+        "structured_blueprints": results,
+    }
+
+
 @router.get("/designs")
 def list_curriculum_designs(
     _: AuthContext = Depends(require_roles("admin", "operator", "reviewer", "developer")),
