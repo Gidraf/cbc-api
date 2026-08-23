@@ -467,11 +467,28 @@ Return ONLY valid JSON.
 """,
     "substrand-generator": """
 You are the SubstrandIntelligenceAgent for the Kenyan Basic Education Curriculum Framework (BECF).
-For the specified Subject and Strand, generate a complete, rigorous, and curriculum-aligned pedagogical breakdown of all required Sub-strands.
+For the specified Subject and Strand, generate a complete, exhaustive, and curriculum-aligned pedagogical breakdown of all required Sub-strands.
 
-You must ground every sub-strand strictly in the provided Subject Curriculum Design Blueprint, including its Essence Statement and General Learning Outcomes.
+You must ground every sub-strand strictly in the provided:
+1. KICD Basic Education Curriculum Framework (BECF) Global Guidelines
+2. Full Curriculum Design Source Document Materials
+3. Subject Blueprint, Essence Statement, and General Learning Outcomes
 
-=== Master Subject Curriculum Design Context ===
+=== KICD BASIC EDUCATION CURRICULUM FRAMEWORK (BECF) GLOBAL CONTEXT ===
+{{ master_context }}
+
+BECF Core Pillars to Mandate Across All Sub-strands:
+- 7 Core Competencies: Communication & Collaboration, Critical Thinking & Problem Solving, Creativity & Imagination, Citizenship, Digital Literacy, Learning to Learn, Self-efficacy.
+- 8 Core Constitutional Values: Love, Responsibility, Respect, Unity, Peace, Patriotism, Social Justice, Integrity.
+- Constructivist & Experiential Learning: Student-centered hands-on inquiry, real community problem solving.
+- Criterion-Referenced Assessment: 4-Level rubric measurement (Exceeding, Meeting, Approaching, Below Expectations) without normative ranking.
+- Pertinent & Contemporary Issues (PCIs): Environmental sustainability, disaster risk reduction, health & safety.
+- Inclusion & Special Needs Education (SNE): Differentiated learning experiences and accessibility.
+
+=== FULL CURRICULUM DESIGN SOURCE MATERIALS & DOCUMENT TEXT ===
+{{ source_material_text }}
+
+=== MASTER SUBJECT CURRICULUM DESIGN BLUEPRINT ===
 Level: {{ level }}
 Grade: {{ grade }}
 Subject: {{ subject }}
@@ -484,18 +501,19 @@ Subject General Learning Outcomes:
 Target Strand to Break Down:
 {{ strand }}
 
-=== Custom Production Instructions ===
+=== CUSTOM PRODUCTION DIRECTIVES ===
 {{ custom_instructions }}
 
-Generation Requirements:
-1. Generate all required sub-strands for this strand (e.g. 1.1, 1.2, 1.3, 1.4...) ensuring full coverage of the strand scope.
-2. Specify realistic allocated teaching hours (e.g. '4 hours', '6 hours').
-3. Specify 2 to 4 actionable Specific Learning Outcomes (SLOs) using Bloom's active verbs (e.g., 'explain...', 'investigate...', 'demonstrate...', 'evaluate...').
-4. Include authentic Suggested Learning Experiences tailored to Kenyan educational institutions and local resources.
-5. Provide thought-provoking Key Inquiry Questions (KIQs) that drive inquiry-based learning.
-6. Identify required Visual Vector Diagram models/flowcharts needed for conceptual mastery.
-7. Outline hands-on practical experiments with apparatus and local materials.
-8. MANDATORY SAFETY HAZARD CRITERIA: Formulate explicit safety protocols for any hazardous tools, toxic substances, open fire, or biological/soil hygiene.
+Generation Directives:
+1. Examine the curriculum design source materials thoroughly. Extract and formulate all sub-strands defined for this strand (e.g. 1.1, 1.2, 1.3, 1.4...).
+2. Allocated Teaching Hours: Specify realistic allocated teaching hours (e.g. '4 hours', '6 hours').
+3. Specific Learning Outcomes (SLOs): 2 to 4 actionable SLOs using Bloom's active verbs (e.g. 'explain...', 'investigate...', 'demonstrate...', 'relate...').
+4. Suggested Learning Experiences: Hands-on student activities utilizing Kenyan school settings, farm plots, and community resources.
+5. Key Inquiry Questions (KIQs): Thought-provoking inquiry questions stimulating deep critical thinking.
+6. Core Competencies & Values: Specify 2-3 core competencies and constitutional values aligned to BECF.
+7. Required Visual Vector Diagram Concepts: Detailed diagram prompts (e.g. 'Flowchart of Agricultural Economic Sectors in Kenya with clear sector callouts').
+8. Practical Experiments & Tasks: Step-by-step practical tasks with local apparatus.
+9. MANDATORY SAFETY HAZARD AUDIT: Formulate explicit safety protocols for toxic chemical handling, sharp tool safety, open flame/heat supervision, biological/soil hygiene, or animal handling.
 
 Output MUST be a valid JSON object matching this schema:
 {

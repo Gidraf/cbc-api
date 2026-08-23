@@ -171,6 +171,8 @@ export function App() {
   const [substrandGenModal, setSubstrandGenModal] = useState<{ strand_name: string; strand_id?: string } | null>(null);
   const [generatedSubstrandsDraft, setGeneratedSubstrandsDraft] = useState<any[]>([]);
   const [substrandPromptInput, setSubstrandPromptInput] = useState("");
+  const [substrandSourceMaterial, setSubstrandSourceMaterial] = useState("");
+  const [showSourceMaterialText, setShowSourceMaterialText] = useState(false);
   const [strandPromptInput, setStrandPromptInput] = useState("");
 
   // Audit & Deliberation
@@ -716,6 +718,13 @@ export function App() {
       (cd.grade === genGrade || cd.grade === genGrade.replace("grade-", ""))
     ) || (ingestedDesignResult?.subject?.toLowerCase() === genSubject?.toLowerCase() ? ingestedDesignResult : null);
 
+    const rawSrcText =
+      activeCd?.raw_payload?.raw_text ||
+      activeCd?.raw_payload?.text ||
+      activeCd?.raw_payload?.output ||
+      rawCurriculumInput ||
+      "";
+
     setSubstrandGenModal({
       strand_name: strandName,
       strand_id: strandId,
@@ -725,6 +734,7 @@ export function App() {
         level: activeCd.level,
       } : {})
     });
+    setSubstrandSourceMaterial(rawSrcText);
     setGeneratedSubstrandsDraft([]);
     setSubstrandPromptInput(`Generate all required comprehensive sub-strands for ${strandName} with allocated hours (e.g. 4 hours), SLOs, practical experiments, and safety protocols.`);
   }
@@ -745,6 +755,7 @@ export function App() {
         level: activeCd?.level || "Basic Education",
         essence_statement: activeCd?.essence_statement || "",
         general_learning_outcomes: activeCd?.general_learning_outcomes || [],
+        source_material_text: substrandSourceMaterial,
         custom_instructions: customInstructions || substrandPromptInput,
       };
       const res = await fetchJson<any>("/api/v1/curriculum/factory/generate-substrands", {
@@ -1709,10 +1720,25 @@ export function App() {
                         <button className="ghost" onClick={() => setSubstrandGenModal(null)}>✕ Close</button>
                       </div>
 
-                      {/* Inherited Subject Curriculum Blueprint Context */}
-                      <div style={{ marginTop: "12px", padding: "10px 14px", background: "#f8fafc", borderRadius: "8px", border: "1px solid #e2e8f0", fontSize: "12px" }}>
+                      {/* Global BECF Framework Context Banner */}
+                      <div style={{ marginTop: "12px", padding: "10px 14px", background: "#fdf4ff", borderRadius: "8px", border: "1px solid #f5d0fe", fontSize: "12px" }}>
                         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                          <strong style={{ color: "#0369a1" }}>📘 Active Subject Curriculum Design Context (Auto-Injected from Previous Generation):</strong>
+                          <strong style={{ color: "#86198f" }}>🏛️ Global BECF Master Framework Context (Auto-Injected):</strong>
+                          <span className="pill ok" style={{ fontSize: "10px", background: "#fae8ff", color: "#86198f", border: "1px solid #f0abfc" }}>BECF Grounded</span>
+                        </div>
+                        <div style={{ margin: "4px 0 0", color: "#701a75", fontSize: "11px" }}>
+                          <span><strong>7 Core Competencies:</strong> Communication & Collaboration, Critical Thinking & Problem Solving, Creativity, Citizenship, Digital Literacy, Learning to Learn, Self-efficacy.</span>
+                          <br />
+                          <span><strong>8 Core Values:</strong> Love, Responsibility, Respect, Unity, Peace, Patriotism, Social Justice, Integrity.</span>
+                          <br />
+                          <span><strong>Assessment Mandate:</strong> 4-Level Criterion Rubrics (Exceeding, Meeting, Approaching, Below) • Constructivist experiential inquiry.</span>
+                        </div>
+                      </div>
+
+                      {/* Inherited Subject Curriculum Blueprint Context */}
+                      <div style={{ marginTop: "10px", padding: "10px 14px", background: "#f8fafc", borderRadius: "8px", border: "1px solid #e2e8f0", fontSize: "12px" }}>
+                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                          <strong style={{ color: "#0369a1" }}>📘 Active Subject Curriculum Design Context:</strong>
                           <span className="pill ok" style={{ fontSize: "10px" }}>Blueprint Linked</span>
                         </div>
                         <p style={{ margin: "4px 0 6px", color: "#334155" }}>
@@ -1723,6 +1749,38 @@ export function App() {
                           <div style={{ color: "#475569" }}>
                             <strong>General Outcomes:</strong>{" "}
                             {(substrandGenModal as any).general_learning_outcomes.join(" • ")}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Complete Curriculum Source Design Materials Drawer */}
+                      <div style={{ marginTop: "12px", padding: "10px 14px", background: "#eff6ff", borderRadius: "8px", border: "1px solid #bfdbfe", fontSize: "12px" }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                          <div>
+                            <strong style={{ color: "#1e40af" }}>📄 Complete Curriculum Design Source Materials Context:</strong>
+                            <span style={{ marginLeft: "8px", fontSize: "11px", color: "#3b82f6" }}>
+                              {substrandSourceMaterial ? `${substrandSourceMaterial.length.toLocaleString()} characters • ${substrandSourceMaterial.split(/\s+/).filter(Boolean).length.toLocaleString()} words injected` : "Auto-loading from uploaded syllabus..."}
+                            </span>
+                          </div>
+                          <button
+                            className="ghost"
+                            style={{ fontSize: "11px", padding: "2px 8px" }}
+                            onClick={() => setShowSourceMaterialText(!showSourceMaterialText)}
+                          >
+                            {showSourceMaterialText ? "▲ Hide Source Document" : "▼ Inspect / Edit Source Document"}
+                          </button>
+                        </div>
+
+                        {showSourceMaterialText && (
+                          <div style={{ marginTop: "8px" }}>
+                            <textarea
+                              rows={8}
+                              style={{ width: "100%", fontFamily: "monospace", fontSize: "11px", padding: "8px", background: "#fff" }}
+                              value={substrandSourceMaterial}
+                              onChange={(e) => setSubstrandSourceMaterial(e.target.value)}
+                              placeholder="Paste or inspect full curriculum design pages, syllabus tables, and guidelines here..."
+                            />
+                            <small className="muted">The AI model reads this entire source document to extract every sub-strand, exact teaching hours, SLOs, experiments, diagrams, and safety protocols.</small>
                           </div>
                         )}
                       </div>
@@ -1741,7 +1799,7 @@ export function App() {
 
                         <div style={{ display: "flex", justifyContent: "flex-end", gap: "8px", marginTop: "10px" }}>
                           <button onClick={() => handleGenerateSubstrands(substrandPromptInput)} disabled={isRunning}>
-                            {isRunning ? "⚡ AI Generating Sub-strands..." : (generatedSubstrandsDraft.length > 0 ? "🔄 Regenerate Sub-strands" : "⚡ AI Generate Sub-strands for this Strand")}
+                            {isRunning ? "⚡ AI Generating Sub-strands with Full Design Context..." : (generatedSubstrandsDraft.length > 0 ? "🔄 Regenerate Sub-strands" : "⚡ AI Generate Sub-strands for this Strand")}
                           </button>
                         </div>
                       </div>

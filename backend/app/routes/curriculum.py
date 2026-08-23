@@ -201,12 +201,12 @@ def list_curriculum_designs(
     designs = fetch_all(
         """
         SELECT cd.design_id, cd.subject, cd.subject_code, cd.grade, cd.level,
-               cd.essence_statement, cd.general_learning_outcomes, cd.metadata,
+               cd.essence_statement, cd.general_learning_outcomes, cd.raw_payload, cd.metadata,
                cd.review_status, cd.human_review_notes, cd.created_at, cd.updated_at,
                COUNT(cs.id) as substrand_count
         FROM curriculum_designs cd
         LEFT JOIN curriculum_substrands cs ON cd.design_id = cs.design_id
-        GROUP BY cd.design_id, cd.review_status, cd.human_review_notes
+        GROUP BY cd.design_id, cd.review_status, cd.human_review_notes, cd.raw_payload
         ORDER BY cd.updated_at DESC
         """
     )
@@ -556,6 +556,7 @@ class FactoryGenerateSubstrandsRequest(BaseModel):
     level: str = "Basic Education"
     essence_statement: str = ""
     general_learning_outcomes: list[str] = []
+    source_material_text: str = ""
     custom_instructions: str = ""
     design_id: str = ""
 
@@ -630,6 +631,7 @@ def factory_generate_substrands(
     from ..services.llm_client import llm_client
     from ..services.pipeline import pipeline_orchestrator
 
+    source_material = payload.source_material_text
     essence_stmt = payload.essence_statement
     gen_outcomes = payload.general_learning_outcomes
     level = payload.level
@@ -637,7 +639,7 @@ def factory_generate_substrands(
     # Look up previous curriculum design context from database if not supplied
     row = query_one(
         """
-        SELECT design_id, subject, level, essence_statement, general_learning_outcomes
+        SELECT design_id, subject, level, essence_statement, general_learning_outcomes, raw_payload
         FROM curriculum_designs
         WHERE (grade = :grade OR grade = :alt_grade) AND LOWER(subject) = LOWER(:subject)
         ORDER BY updated_at DESC LIMIT 1
@@ -651,8 +653,12 @@ def factory_generate_substrands(
             gen_outcomes = row.get("general_learning_outcomes") or []
         if level == "Basic Education" and row.get("level"):
             level = row.get("level")
+        if not source_material:
+            raw_payload = row.get("raw_payload") or {}
+            source_material = raw_payload.get("raw_text") or raw_payload.get("text") or raw_payload.get("output") or ""
 
     outcomes_str = "\n".join([f"- {o}" for o in gen_outcomes]) if gen_outcomes else "Standard KICD BECF Outcomes."
+    master_context = langfuse_context_service.get_master_context()
 
     resolved = pipeline_orchestrator.router.resolve_for_stage("notes_generation")
     context = langfuse_context_service.assemble_agent_context(
@@ -660,24 +666,32 @@ def factory_generate_substrands(
         grade_slug=payload.grade,
         subject=payload.subject,
         template_vars={
+            "master_context": master_context,
             "level": level,
             "essence_statement": essence_stmt or f"Comprehensive curriculum design for {payload.subject} ({payload.grade}).",
             "general_learning_outcomes": outcomes_str,
             "strand": payload.strand_name,
+            "source_material_text": source_material or "(Official curriculum design syllabus document attached below)",
             "custom_instructions": payload.custom_instructions,
         },
     )
 
-    # Ensure explicit design context is present in messages
+    # Ensure explicit BECF framework, design context, and full design material is present in messages
     context.messages.append({
         "role": "user",
         "content": (
-            f"CURRICULUM BLUEPRINT CONTEXT FOR {payload.subject.upper()}:\n"
+            f"=== KICD BASIC EDUCATION CURRICULUM FRAMEWORK (BECF) GLOBAL MANDATES ===\n"
+            f"{master_context}\n\n"
+            f"=== OFFICIAL CURRICULUM DESIGN SOURCE MATERIALS & DOCUMENT TEXT ===\n"
+            f"{source_material}\n\n"
+            f"=== CURRICULUM BLUEPRINT CONTEXT FOR {payload.subject.upper()} ===\n"
             f"Level: {level}\n"
             f"Essence Statement: {essence_stmt}\n"
-            f"General Outcomes:\n{outcomes_str}\n\n"
-            f"TARGET STRAND TO GENERATE SUB-STRANDS FOR: {payload.strand_name}\n"
-            f"ADDITIONAL DIRECTIVES: {payload.custom_instructions}"
+            f"General Learning Outcomes:\n{outcomes_str}\n\n"
+            f"=== TARGET STRAND TO GENERATE SUB-STRANDS FOR ===\n"
+            f"{payload.strand_name}\n\n"
+            f"=== ADDITIONAL PRODUCTION DIRECTIVES ===\n"
+            f"{payload.custom_instructions}"
         ),
     })
 
@@ -689,6 +703,7 @@ def factory_generate_substrands(
         "strand_name": payload.strand_name,
         "sub_strands": sub_strands,
         "essence_statement_used": essence_stmt,
+        "source_material_length": len(source_material),
         "usage": resp.usage,
         "model": resp.model,
     }
