@@ -192,6 +192,67 @@ MIGRATIONS: list[tuple[str, str]] = [
         ALTER TABLE substrand_resources ADD COLUMN IF NOT EXISTS total_cost_usd NUMERIC(10,6) DEFAULT 0;
         """,
     ),
+    (
+        "005_curriculum_intelligence_and_universal_dna",
+        """
+        CREATE TABLE IF NOT EXISTS curriculum_designs (
+            design_id TEXT PRIMARY KEY,
+            subject TEXT NOT NULL,
+            subject_code TEXT NOT NULL DEFAULT '',
+            grade TEXT NOT NULL,
+            level TEXT NOT NULL DEFAULT '',
+            essence_statement TEXT NOT NULL DEFAULT '',
+            general_learning_outcomes JSONB NOT NULL DEFAULT '[]'::jsonb,
+            raw_payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+            metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+
+        CREATE TABLE IF NOT EXISTS curriculum_substrands (
+            id SERIAL PRIMARY KEY,
+            design_id TEXT NOT NULL REFERENCES curriculum_designs(design_id) ON DELETE CASCADE,
+            grade TEXT NOT NULL,
+            subject TEXT NOT NULL,
+            strand_id TEXT NOT NULL,
+            strand_name TEXT NOT NULL,
+            sub_strand_id TEXT NOT NULL,
+            sub_strand_name TEXT NOT NULL,
+            allocated_hours TEXT NOT NULL DEFAULT '',
+            slos JSONB NOT NULL DEFAULT '[]'::jsonb,
+            learning_experiences JSONB NOT NULL DEFAULT '[]'::jsonb,
+            key_inquiry_questions JSONB NOT NULL DEFAULT '[]'::jsonb,
+            core_competencies JSONB NOT NULL DEFAULT '[]'::jsonb,
+            values JSONB NOT NULL DEFAULT '[]'::jsonb,
+            assessment_rubrics JSONB NOT NULL DEFAULT '[]'::jsonb,
+            required_diagrams JSONB NOT NULL DEFAULT '[]'::jsonb,
+            experiments JSONB NOT NULL DEFAULT '[]'::jsonb,
+            pedagogical_guidance JSONB NOT NULL DEFAULT '{}'::jsonb,
+            prompt_context JSONB NOT NULL DEFAULT '{}'::jsonb,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            CONSTRAINT uq_grade_subject_substrand UNIQUE (grade, subject, strand_name, sub_strand_name)
+        );
+
+        CREATE TABLE IF NOT EXISTS artifact_dna (
+            dna_id TEXT PRIMARY KEY,
+            artifact_type TEXT NOT NULL, -- 'notes', 'diagram', 'activity', 'question', 'bundle'
+            artifact_id TEXT NOT NULL,
+            universal_slo_id TEXT NOT NULL DEFAULT '',
+            curriculum_link JSONB NOT NULL DEFAULT '{}'::jsonb,
+            dna_payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+            compliance_scores JSONB NOT NULL DEFAULT '{}'::jsonb,
+            provenance JSONB NOT NULL DEFAULT '{}'::jsonb,
+            status TEXT NOT NULL DEFAULT 'verified',
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_curriculum_substrands_lookup ON curriculum_substrands(grade, subject);
+        CREATE INDEX IF NOT EXISTS idx_artifact_dna_artifact ON artifact_dna(artifact_type, artifact_id);
+        CREATE INDEX IF NOT EXISTS idx_artifact_dna_slo ON artifact_dna(universal_slo_id);
+        """,
+    ),
 ]
 
 

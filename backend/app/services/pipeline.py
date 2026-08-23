@@ -109,13 +109,70 @@ class PipelineService:
         is_approved = review_audit.get("status") == "approved"
         workflow_status = "published" if is_approved else "needs_human_review"
 
-        # 8. Persist Individual Question DNA Lineage
+        # 8. Generate Universal Artifact DNA Lineage for All Stages
+        from ..services.artifact_dna import artifact_dna_service
+
+        curr_dict = request.curriculum.model_dump()
+
+        # Lookup parent Substrand DNA from curriculum database for unbroken Merkle custody
+        parent_sub_dna = fetch_one(
+            """
+            SELECT prompt_context->>'substrand_dna_id' as substrand_dna_id
+            FROM curriculum_substrands
+            WHERE grade = :grade AND LOWER(subject) = LOWER(:subject) AND (
+                LOWER(sub_strand_name) LIKE LOWER(:sub) OR LOWER(sub_strand_id) = LOWER(:sub)
+            )
+            LIMIT 1
+            """,
+            {
+                "grade": grade_slug,
+                "subject": subject,
+                "sub": f"%{request.curriculum.sub_strand}%",
+            },
+        )
+        parent_substrand_dna_id = parent_sub_dna.get("substrand_dna_id") if parent_sub_dna else None
+
+        notes_dna = artifact_dna_service.generate_notes_dna(
+            notes_id=f"notes_{run_id}",
+            curriculum=curr_dict,
+            notes_content=notes_stage.output,
+            provenance=notes_stage.provenance.model_dump(),
+            parent_substrand_dna_id=parent_substrand_dna_id,
+        )
+
+        diagram_dna = artifact_dna_service.generate_diagram_dna(
+            diagram_id=diagram_stage.output.get("diagram_id", f"diag_{run_id}"),
+            curriculum=curr_dict,
+            diagram_data=diagram_stage.output,
+            provenance=diagram_stage.provenance.model_dump(),
+            parent_substrand_dna_id=parent_substrand_dna_id,
+        )
+
+        activity_dna = artifact_dna_service.generate_activity_dna(
+            activity_id=f"act_{run_id}",
+            curriculum=curr_dict,
+            activity_data=activity_stage.output,
+            provenance=activity_stage.provenance.model_dump(),
+            parent_substrand_dna_id=parent_substrand_dna_id,
+        )
+
+        question_dnas = []
         for q in question_stage.output.get("questions", []):
             qid = q.get("question_id", f"Q-{grade_slug}-{request.curriculum.slo_id}")
+            q_cert = artifact_dna_service.generate_question_dna(
+                question_id=qid,
+                curriculum=curr_dict,
+                question_item=q,
+                provenance=question_stage.provenance.model_dump(),
+                parent_substrand_dna_id=parent_substrand_dna_id,
+            )
+            question_dnas.append(q_cert)
+
+            # Backwards-compatible save to question_dna
             question_dna_service.save_question(
                 question_id=qid,
                 universal_id=q.get("universal_id", request.curriculum.slo_id),
-                curriculum_link=request.curriculum.model_dump(),
+                curriculum_link=curr_dict,
                 pedagogical_dna=q.get("pedagogical_dna", {}),
                 content=q.get("content", {}),
                 provenance=question_stage.provenance.model_dump(),
@@ -123,15 +180,28 @@ class PipelineService:
                 status="approved" if is_approved else "needs_review",
             )
 
+        # Generate composite Bundle DNA with parent Substrand DNA link
+        bundle_id = f"res_{request.request_id[-12:].lower()}"
+        bundle_dna = artifact_dna_service.generate_bundle_dna(
+            bundle_id=bundle_id,
+            curriculum=curr_dict,
+            stage_dnas=[notes_dna, diagram_dna, activity_dna] + question_dnas,
+            provenance={
+                "run_id": run_id,
+                "stages": len(stage_runs),
+                "generated_at": now_iso(),
+            },
+            parent_substrand_dna_id=parent_substrand_dna_id,
+        )
+
         # 9. Compute Cost Summary
         cost_summary = format_cost_summary(stage_costs)
         total_pipeline_ms = (time.time() - start_time) * 1000
 
         # 10. Assemble Sub-strand Resource Bundle
-        bundle_id = f"res_{request.request_id[-12:].lower()}"
         bundle = {
             "bundle_id": bundle_id,
-            "curriculum": request.curriculum.model_dump(),
+            "curriculum": curr_dict,
             "notes": notes_stage.output,
             "diagrams": [diagram_stage.output],
             "activities": [activity_stage.output],
@@ -139,6 +209,18 @@ class PipelineService:
             "review_audit": review_audit,
             "status": workflow_status,
             "cost_summary": cost_summary,
+            "bundle_dna": {
+                "dna_id": bundle_dna.dna_id,
+                "status": bundle_dna.status,
+                "compliance_scores": bundle_dna.compliance_scores,
+                "payload": bundle_dna.dna_payload,
+            },
+            "stage_dna_ids": {
+                "notes_dna_id": notes_dna.dna_id,
+                "diagram_dna_id": diagram_dna.dna_id,
+                "activity_dna_id": activity_dna.dna_id,
+                "bundle_dna_id": bundle_dna.dna_id,
+            },
             "total_latency_ms": round(total_pipeline_ms, 2),
             "updated_at": now_iso(),
         }

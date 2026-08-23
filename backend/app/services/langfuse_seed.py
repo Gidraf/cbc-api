@@ -354,17 +354,18 @@ def seed_langfuse() -> None:
         logger.error("Failed to initialize Langfuse SDK: %s", exc)
         return
 
-    # Create Master Context prompt
-    try:
-        client.create_prompt(
-            name="cbc-master-context",
-            prompt=SEED_MASTER_CONTEXT,
-            type="text",
-            labels=["prod", "staging", "dev"],
-        )
-        logger.info("Successfully created prompt 'cbc-master-context'.")
-    except Exception as exc:
-        logger.info("Prompt 'cbc-master-context' may already exist or failed: %s", exc)
+    # Create Master Context prompt (BECF & alias cbc-master-context)
+    for p_name in ["BECF", "cbc-master-context"]:
+        try:
+            client.create_prompt(
+                name=p_name,
+                prompt=SEED_MASTER_CONTEXT,
+                type="text",
+                labels=["production", "latest", "prod", "staging", "dev"],
+            )
+            logger.info("Successfully created prompt '%s'.", p_name)
+        except Exception as exc:
+            logger.info("Prompt '%s' may already exist or failed: %s", p_name, exc)
 
     # Create agent prompts
     for name, content in SEED_AGENT_PROMPTS.items():

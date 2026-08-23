@@ -77,16 +77,34 @@ class LangfuseContextService:
             return cached
 
         if self._client:
-            try:
-                prompt = self._client.get_prompt("cbc-master-context", label=settings.langfuse_env)
-                if prompt and prompt.prompt:
-                    text = prompt.compile()
-                    self._set_cache("master_context", text)
-                    return text
-            except Exception as exc:
-                logger.warning("Could not fetch 'cbc-master-context' from Langfuse: %s", exc)
-                if self._is_strict:
-                    raise_api_error("LANGFUSE_UNAVAILABLE", "Failed to fetch master context from Langfuse in strict mode.")
+            # Try BECF first with multiple standard labels (production, latest, prod, settings.langfuse_env)
+            prompt_names = ["BECF", "cbc-master-context"]
+            labels_to_try = [settings.langfuse_env, "production", "latest", "prod"]
+
+            for pname in prompt_names:
+                for lbl in labels_to_try:
+                    try:
+                        prompt = self._client.get_prompt(pname, label=lbl)
+                        if prompt and prompt.prompt:
+                            text = prompt.compile() if hasattr(prompt, "compile") else prompt.prompt
+                            self._set_cache("master_context", text)
+                            logger.info("Loaded master context from Langfuse prompt '%s' (label: '%s')", pname, lbl)
+                            return text
+                    except Exception:
+                        continue
+                # Also try unlabelled latest
+                try:
+                    prompt = self._client.get_prompt(pname)
+                    if prompt and prompt.prompt:
+                        text = prompt.compile() if hasattr(prompt, "compile") else prompt.prompt
+                        self._set_cache("master_context", text)
+                        logger.info("Loaded master context from Langfuse prompt '%s' (default)", pname)
+                        return text
+                except Exception:
+                    pass
+
+            if self._is_strict:
+                raise_api_error("LANGFUSE_UNAVAILABLE", "Failed to fetch master context 'BECF' from Langfuse in strict mode.")
 
         if self._is_strict:
             raise_api_error("LANGFUSE_UNAVAILABLE", "Langfuse client unavailable in strict mode.")
@@ -353,11 +371,21 @@ class LangfuseContextService:
         if self._client:
             try:
                 prompt = self._client.create_prompt(
-                    name="cbc-master-context",
+                    name="BECF",
                     prompt=text,
                     type="text",
-                    labels=[settings.langfuse_env],
+                    labels=["production", "latest", "prod", settings.langfuse_env],
                 )
+                try:
+                    # Also keep alias in sync
+                    self._client.create_prompt(
+                        name="cbc-master-context",
+                        prompt=text,
+                        type="text",
+                        labels=["production", "latest", "prod", settings.langfuse_env],
+                    )
+                except Exception:
+                    pass
                 self._cache.pop("master_context", None)
                 return {"status": "success", "prompt_name": prompt.name, "version": prompt.version}
             except Exception as exc:
