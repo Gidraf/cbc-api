@@ -27,7 +27,7 @@ class LlmResponse:
 
 
 class LlmClient:
-    def __init__(self, timeout_seconds: float = 45.0) -> None:
+    def __init__(self, timeout_seconds: float = 120.0) -> None:
         self.timeout = timeout_seconds
 
     @retry_llm
@@ -151,6 +151,7 @@ class LlmClient:
             "messages": messages,
             "temperature": temperature,
             "top_p": top_p,
+            "max_tokens": 8192,
             "response_format": {"type": "json_object"},
         }
 
@@ -193,7 +194,7 @@ class LlmClient:
 
         payload = {
             "model": config.model or "claude-3-5-sonnet-20241022",
-            "max_tokens": 4096,
+            "max_tokens": 8192,
             "system": system_prompt,
             "messages": user_messages,
             "temperature": temperature,
@@ -235,6 +236,7 @@ class LlmClient:
             "generationConfig": {
                 "temperature": temperature,
                 "topP": top_p,
+                "maxOutputTokens": 8192,
                 "responseMimeType": "application/json",
             },
         }

@@ -734,24 +734,90 @@ def factory_generate_notes(
         template_vars=template_vars,
     )
 
+    hours_count = substrand_row.get("allocated_hours", 4) if substrand_row else 4
+
     context.messages.append({
         "role": "user",
         "content": (
             f"{ct_profile.format_for_prompt()}\n\n"
             f"{dossier.formatted_context}\n\n"
-            f"CURRICULUM PRODUCTION DIRECTIVE:\n"
-            f"You are authoring exhaustive master lesson notes for:\n"
+            f"=== 4-HOUR FULL INSTRUCTIONAL DEPTH DIRECTIVE ===\n"
             f"Subject: {payload.subject} ({payload.grade}, {level}) [Content Type: {ct_profile.content_type.upper()}]\n"
             f"Strand: {payload.strand} ➔ Sub-strand: {payload.sub_strand}\n"
+            f"Allocated Syllabus Time: {hours_count} CONTACT HOURS (240 instructional minutes)\n"
             f"SLOs to Cover Completely:\n{slos_formatted}\n"
             f"Key Inquiry Questions to Address:\n{kiqs_formatted}\n\n"
-            f"ESSENCE CONTEXT:\n{essence_stmt}\n\n"
-            f"DO NOT write brief summaries. Provide 3-5 comprehensive core concept analyses, in-depth pedagogical content knowledge (PCK) guidance, common learner misconception diagnostics, formative assessment checks, full worked case studies, practical activities, and SNE plain-language adaptations.\n"
+            f"ESSENCE STATEMENT & CURRICULUM CONTEXT:\n{essence_stmt}\n\n"
+            f"CRITICAL RIGOR & ZERO HALLUCINATION RULES:\n"
+            f"1. This is a publication-grade, 4-hour master revision and teaching guide for teacher trainees / senior students. DO NOT write shallow summaries or 1-paragraph overviews.\n"
+            f"2. Every section MUST provide substantive, deeply articulated paragraphs (400-600 words per concept) with exact scientific mechanisms, ecological principles, quantitative statistics, and authentic Kenyan county case examples.\n"
+            f"3. IN-TEXT RESEARCH CITATIONS: Every statistic, policy target, or scientific claim MUST cite verifiable sources in brackets directly in the text (e.g. [KNBS Economic Survey 2024], [KALRO Technical Bulletin 2023], [KICD DTE Agriculture Curriculum Design 2024], [Ministry of Agriculture ASTGS 2019-2029], [UNEP Kenya Environmental Assessment]).\n"
+            f"4. Include a dedicated 'hourly_breakdown' section dividing the {hours_count} hours into 60-minute modular blocks with specific teacher facilitation protocols and trainee active tasks.\n"
+            f"5. Include a dedicated 'research_references' bibliography list at the bottom.\n\n"
+            f"RETURN JSON FORMAT MATCHING:\n"
+            f"{{\n"
+            f'  "title": "Comprehensive {hours_count}-Hour Master Revision & Teaching Guide: {payload.sub_strand}",\n'
+            f'  "allocated_hours": {hours_count},\n'
+            f'  "intro": "In-depth multi-paragraph theoretical, constitutional, and socio-economic introduction (300+ words) citing relevant frameworks...",\n'
+            f'  "hourly_breakdown": [\n'
+            f'    {{\n'
+            f'      "hour_number": 1,\n'
+            f'      "hour_title": "Hour 1: ...",\n'
+            f'      "duration_minutes": 60,\n'
+            f'      "learning_intent": "...",\n'
+            f'      "teacher_facilitation_steps": "...",\n'
+            f'      "learner_active_tasks": "...",\n'
+            f'      "empirical_citations": ["KNBS Economic Survey 2024"]\n'
+            f'    }}\n'
+            f'  ],\n'
+            f'  "key_concepts": [\n'
+            f'    {{\n'
+            f'      "concept_id": "concept_1",\n'
+            f'      "heading": "1. In-Depth Concept Title",\n'
+            f'      "content": "Exhaustive, multi-paragraph conceptual treatise (500+ words) with technical depth, quantitative metrics, mechanisms, and in-text citations [KNBS 2024]...",\n'
+            f'      "sub_sections": [\n'
+            f'        {{"title": "1.1 Sub-topic", "content": "Detailed technical analysis..."}}\n'
+            f'      ],\n'
+            f'      "pedagogical_notes": "Deep PCK guidance for teacher facilitation using 5E constructivist model...",\n'
+            f'      "common_misconceptions": "Prevalent learner misconception, root cause, and clinical cognitive remediation protocol...",\n'
+            f'      "formative_checks": "Diagnostic evaluation cues with model answers and scoring rationales..."\n'
+            f'    }}\n'
+            f'  ],\n'
+            f'  "worked_examples": [\n'
+            f'    {{\n'
+            f'      "scenario": "Authentic Kenyan county/enterprise problem scenario...",\n'
+            f'      "solution_steps": ["Step 1...", "Step 2...", "Step 3..."],\n'
+            f'      "explanation": "Detailed scientific and economic rationale...",\n'
+            f'      "research_source": "KALRO Advisory"\n'
+            f'    }}\n'
+            f'  ],\n'
+            f'  "practical_connections": {{\n'
+            f'    "activity_title": "60-Minute Hands-on Fieldwork / Laboratory Investigation",\n'
+            f'    "materials_needed": ["..."],\n'
+            f'    "procedure": ["Step 1...", "Step 2..."],\n'
+            f'    "safety_precautions": "Mandatory PPE and safety protocols.",\n'
+            f'    "expected_observations": "Scientific observations and recording table."\n'
+            f'  }},\n'
+            f'  "key_inquiry_questions": ["..."],\n'
+            f'  "summary_points": ["..."],\n'
+            f'  "accessibility_support": {{\n'
+            f'    "plain_language_summary": "...",\n'
+            f'    "tactile_and_audio_cues": "..."\n'
+            f'  }},\n'
+            f'  "research_references": [\n'
+            f'    {{\n'
+            f'      "source_title": "KNBS Economic Survey 2024",\n'
+            f'      "author_organization": "Kenya National Bureau of Statistics",\n'
+            f'      "year": 2024,\n'
+            f'      "key_data_points_cited": "Agriculture 33% GDP contribution"\n'
+            f'    }}\n'
+            f'  ]\n'
+            f"}}\n\n"
             f"ADDITIONAL PRODUCTION DIRECTIVES: {payload.custom_instructions}"
         ),
     })
 
-    resp = llm_client.generate(resolved, context.messages, temperature=0.2)
+    resp = llm_client.generate(resolved, context.messages, temperature=0.15)
     audit_report = web_research_agent.perform_quality_audit(resp.content, "notes", dossier)
 
     # 5. Run 3-Agent Quality Gate

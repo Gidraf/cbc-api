@@ -2612,16 +2612,74 @@ export function App() {
                     <div className="factory-preview-pane">
                       {stationNotes ? (
                         <div style={{ display: "grid", gap: "10px" }}>
-                          <div style={{ padding: "10px", background: "#f0f9ff", borderRadius: "8px", border: "1px solid #bae6fd" }}>
-                            <strong style={{ fontSize: "15px", color: "#0369a1" }}>📘 {stationNotes.title}</strong>
-                            <p style={{ margin: "6px 0 0", fontSize: "13px", lineHeight: "1.5", color: "#334155" }}>{stationNotes.intro}</p>
+                          <div style={{ padding: "12px", background: "#f0f9ff", borderRadius: "8px", border: "1px solid #bae6fd" }}>
+                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                              <strong style={{ fontSize: "15px", color: "#0369a1" }}>📘 {stationNotes.title}</strong>
+                              <span className="pill ok" style={{ fontSize: "11px", fontWeight: 700 }}>
+                                ⏱️ {stationNotes.allocated_hours || 4} Contact Hours (240 mins)
+                              </span>
+                            </div>
+                            <p style={{ margin: "8px 0 0", fontSize: "13px", lineHeight: "1.6", color: "#334155" }}>{stationNotes.intro}</p>
                           </div>
+
+                          {/* 4-Hour Modular Syllabus Breakdown */}
+                          {stationNotes.hourly_breakdown?.length > 0 && (
+                            <div style={{ padding: "12px", background: "#f8fafc", borderRadius: "8px", border: "1px solid #cbd5e1" }}>
+                              <strong style={{ fontSize: "13px", color: "#0c4a6e" }}>⏱️ Modular Hour-by-Hour Syllabus Structure:</strong>
+                              <div style={{ display: "grid", gap: "8px", marginTop: "8px" }}>
+                                {stationNotes.hourly_breakdown.map((hb: any, hIdx: number) => (
+                                  <div key={hIdx} style={{ padding: "10px 12px", background: "#fff", borderRadius: "6px", border: "1px solid #e2e8f0", fontSize: "12px" }}>
+                                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                                      <strong style={{ color: "#0284c7" }}>
+                                        Hour {hb.hour_number || hIdx + 1}: {hb.hour_title || `Session ${hIdx + 1}`}
+                                      </strong>
+                                      <span className="pill idle" style={{ fontSize: "10px" }}>60 Minutes</span>
+                                    </div>
+                                    {hb.learning_intent && (
+                                      <div style={{ marginTop: "4px", color: "#334155" }}>
+                                        <strong>Learning Intent:</strong> {hb.learning_intent}
+                                      </div>
+                                    )}
+                                    {hb.teacher_facilitation_steps && (
+                                      <div style={{ marginTop: "4px", color: "#166534", background: "#f0fdf4", padding: "4px 8px", borderRadius: "4px" }}>
+                                        👩‍🏫 <strong>Teacher Facilitation:</strong> {hb.teacher_facilitation_steps}
+                                      </div>
+                                    )}
+                                    {hb.learner_active_tasks && (
+                                      <div style={{ marginTop: "4px", color: "#0369a1", background: "#f0f9ff", padding: "4px 8px", borderRadius: "4px" }}>
+                                        ✍️ <strong>Trainee Active Tasks:</strong> {hb.learner_active_tasks}
+                                      </div>
+                                    )}
+                                    {hb.empirical_citations?.length > 0 && (
+                                      <div style={{ marginTop: "4px", color: "#64748b", fontSize: "10.5px" }}>
+                                        📚 <strong>Citations:</strong> {hb.empirical_citations.join(" • ")}
+                                      </div>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
 
                           {/* Core Concepts Breakdown */}
                           {stationNotes.key_concepts?.map((kc: any, idx: number) => (
-                            <div key={idx} style={{ padding: "12px", background: "#fff", borderRadius: "8px", border: "1px solid #e2e8f0", boxShadow: "0 1px 3px rgba(0,0,0,0.05)" }}>
-                              <strong style={{ fontSize: "13px", color: "#0f172a" }}>{kc.heading || `Concept ${idx + 1}`}</strong>
-                              <p style={{ margin: "6px 0 8px", fontSize: "12.5px", lineHeight: "1.5", color: "#1e293b", whiteSpace: "pre-line" }}>{kc.content}</p>
+                            <div key={idx} style={{ padding: "14px", background: "#fff", borderRadius: "8px", border: "1px solid #e2e8f0", boxShadow: "0 1px 3px rgba(0,0,0,0.05)" }}>
+                              <strong style={{ fontSize: "14px", color: "#0f172a" }}>{kc.heading || `Concept ${idx + 1}`}</strong>
+                              <p style={{ margin: "8px 0 10px", fontSize: "13px", lineHeight: "1.6", color: "#1e293b", whiteSpace: "pre-line" }}>
+                                {kc.detailed_exposition || kc.content}
+                              </p>
+
+                              {/* Detailed Sub-sections */}
+                              {kc.sub_sections?.length > 0 && (
+                                <div style={{ display: "grid", gap: "6px", margin: "8px 0", paddingLeft: "10px", borderLeft: "3px solid #0284c7" }}>
+                                  {kc.sub_sections.map((sub: any, sIdx: number) => (
+                                    <div key={sIdx} style={{ fontSize: "12px", background: "#f8fafc", padding: "8px 10px", borderRadius: "6px" }}>
+                                      <strong style={{ color: "#0369a1" }}>{sub.title}</strong>
+                                      <p style={{ margin: "4px 0 0", color: "#334155", lineHeight: "1.5" }}>{sub.content}</p>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
 
                               {/* PCK Teacher Note */}
                               {kc.pedagogical_notes && (
@@ -2676,7 +2734,16 @@ export function App() {
                                 <div key={idx} style={{ fontSize: "12px", marginTop: "6px", padding: "8px", background: "#fff", borderRadius: "6px", border: "1px solid #e2e8f0" }}>
                                   <div style={{ color: "#0f172a" }}><strong>Scenario:</strong> {we.scenario}</div>
                                   <div style={{ marginTop: "4px", color: "#0369a1" }}><strong>Resolution Steps:</strong> {Array.isArray(we.solution_steps) ? we.solution_steps.join(" ➔ ") : we.solution_steps}</div>
-                                  {we.explanation && <div style={{ marginTop: "4px", color: "#475569", fontStyle: "italic" }}><strong>Rationale:</strong> {we.explanation}</div>}
+                                  {(we.explanation || we.solution_explanation) && (
+                                    <div style={{ marginTop: "4px", color: "#475569", fontStyle: "italic" }}>
+                                      <strong>Rationale:</strong> {we.explanation || we.solution_explanation}
+                                    </div>
+                                  )}
+                                  {we.research_source && (
+                                    <div style={{ marginTop: "4px", color: "#64748b", fontSize: "11px" }}>
+                                      📚 <strong>Source:</strong> {we.research_source}
+                                    </div>
+                                  )}
                                 </div>
                               ))}
                             </div>
@@ -2691,6 +2758,23 @@ export function App() {
                                   <li key={idx}>{kiq}</li>
                                 ))}
                               </ul>
+                            </div>
+                          )}
+
+                          {/* Research References & Bibliography */}
+                          {stationNotes.research_references?.length > 0 && (
+                            <div style={{ padding: "12px", background: "#f1f5f9", borderRadius: "8px", border: "1px solid #cbd5e1", fontSize: "12px" }}>
+                              <strong style={{ color: "#1e293b", fontSize: "13px" }}>📚 Verifiable Research References & Policy Documents:</strong>
+                              <div style={{ display: "grid", gap: "6px", marginTop: "6px" }}>
+                                {stationNotes.research_references.map((ref: any, rIdx: number) => (
+                                  <div key={rIdx} style={{ padding: "6px 10px", background: "#fff", borderRadius: "4px", border: "1px solid #e2e8f0" }}>
+                                    <strong style={{ color: "#0f172a" }}>{ref.source_title || ref.title}</strong> ({ref.year || "2024"})
+                                    <div style={{ color: "#475569", fontSize: "11px", marginTop: "2px" }}>
+                                      Author / Agency: {ref.author_organization || ref.agency || "Government of Kenya"} • Cites: {ref.key_data_points_cited || ref.data_point}
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
                             </div>
                           )}
 
