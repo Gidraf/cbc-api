@@ -467,16 +467,35 @@ Return ONLY valid JSON.
 """,
     "substrand-generator": """
 You are the SubstrandIntelligenceAgent for the Kenyan Basic Education Curriculum Framework (BECF).
-For the specified Subject and Strand, generate a complete pedagogical breakdown of Sub-strands with allocated hours, Specific Learning Outcomes (SLOs), Suggested Learning Experiences, Key Inquiry Questions (KIQs), Core Competencies, Values, Required Diagrams, Practical Experiments, and Safety Hazard checks.
+For the specified Subject and Strand, generate a complete, rigorous, and curriculum-aligned pedagogical breakdown of all required Sub-strands.
 
-Curriculum Context:
+You must ground every sub-strand strictly in the provided Subject Curriculum Design Blueprint, including its Essence Statement and General Learning Outcomes.
+
+=== Master Subject Curriculum Design Context ===
 Level: {{ level }}
 Grade: {{ grade }}
 Subject: {{ subject }}
-Strand: {{ strand }}
+Subject Essence Statement:
+{{ essence_statement }}
 
-Custom Instructions:
+Subject General Learning Outcomes:
+{{ general_learning_outcomes }}
+
+Target Strand to Break Down:
+{{ strand }}
+
+=== Custom Production Instructions ===
 {{ custom_instructions }}
+
+Generation Requirements:
+1. Generate all required sub-strands for this strand (e.g. 1.1, 1.2, 1.3, 1.4...) ensuring full coverage of the strand scope.
+2. Specify realistic allocated teaching hours (e.g. '4 hours', '6 hours').
+3. Specify 2 to 4 actionable Specific Learning Outcomes (SLOs) using Bloom's active verbs (e.g., 'explain...', 'investigate...', 'demonstrate...', 'evaluate...').
+4. Include authentic Suggested Learning Experiences tailored to Kenyan educational institutions and local resources.
+5. Provide thought-provoking Key Inquiry Questions (KIQs) that drive inquiry-based learning.
+6. Identify required Visual Vector Diagram models/flowcharts needed for conceptual mastery.
+7. Outline hands-on practical experiments with apparatus and local materials.
+8. MANDATORY SAFETY HAZARD CRITERIA: Formulate explicit safety protocols for any hazardous tools, toxic substances, open fire, or biological/soil hygiene.
 
 Output MUST be a valid JSON object matching this schema:
 {
@@ -484,29 +503,30 @@ Output MUST be a valid JSON object matching this schema:
   "sub_strands": [
     {
       "sub_strand_id": "1.1",
-      "sub_strand_name": "1.1 Overview of Topic",
+      "sub_strand_name": "1.1 Name of Sub-strand",
       "allocated_hours": "4 hours",
       "slos": [
-        "explain the foundational principles of...",
-        "relate practical applications to local community contexts in Kenya"
+        "explain the foundational concepts of...",
+        "investigate practical applications of... in Kenyan agriculture/industry"
       ],
       "learning_experiences": [
-        "Through research and group inquiry, explore...",
-        "Participate in practical field observations of..."
+        "In groups, learners research on...",
+        "Learners conduct a practical field or lab activity on..."
       ],
       "key_inquiry_questions": [
-        "How does this concept impact sustainable development in Kenya?"
+        "How does... contribute to national development and environmental sustainability?"
       ],
-      "core_competencies": ["Critical Thinking and Problem Solving", "Communication and Collaboration"],
-      "values": ["Responsibility", "Integrity", "Patriotism"],
+      "core_competencies": ["Critical Thinking and Problem Solving", "Communication and Collaboration", "Digital Literacy"],
+      "values": ["Responsibility", "Integrity", "Patriotism", "Respect"],
       "required_diagrams": [
-        "Flowchart / Conceptual diagram of the process"
+        "Flowchart / Vector Model illustrating..."
       ],
       "experiments": [
-        "Practical step-by-step investigation of..."
+        "Practical investigation of... using local apparatus"
       ],
       "safety_hazards_to_check": [
-        "Ensure strict hygiene protocols and non-toxic materials are used"
+        "Ensure strict hygiene protocols and non-toxic materials are used",
+        "Wash hands thoroughly with soap and water after handling samples"
       ]
     }
   ]

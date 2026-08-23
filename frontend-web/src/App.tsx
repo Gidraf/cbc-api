@@ -711,20 +711,40 @@ export function App() {
   }
 
   function handleOpenSubstrandGenerator(strandName: string, strandId: string = "1.0") {
-    setSubstrandGenModal({ strand_name: strandName, strand_id: strandId });
+    const activeCd = curriculumDesignsList.find((cd: any) =>
+      cd.subject?.toLowerCase() === genSubject?.toLowerCase() &&
+      (cd.grade === genGrade || cd.grade === genGrade.replace("grade-", ""))
+    ) || (ingestedDesignResult?.subject?.toLowerCase() === genSubject?.toLowerCase() ? ingestedDesignResult : null);
+
+    setSubstrandGenModal({
+      strand_name: strandName,
+      strand_id: strandId,
+      ...(activeCd ? {
+        essence_statement: activeCd.essence_statement,
+        general_learning_outcomes: activeCd.general_learning_outcomes,
+        level: activeCd.level,
+      } : {})
+    });
     setGeneratedSubstrandsDraft([]);
-    setSubstrandPromptInput(`Generate 4 comprehensive sub-strands for ${strandName} with allocated hours (e.g. 4 hours), SLOs, practical experiments, and safety protocols.`);
+    setSubstrandPromptInput(`Generate all required comprehensive sub-strands for ${strandName} with allocated hours (e.g. 4 hours), SLOs, practical experiments, and safety protocols.`);
   }
 
   async function handleGenerateSubstrands(customInstructions?: string) {
     if (!substrandGenModal) return;
     await run(`Generating Sub-strands for ${substrandGenModal.strand_name}...`, async () => {
+      const activeCd = curriculumDesignsList.find((cd: any) =>
+        cd.subject?.toLowerCase() === genSubject?.toLowerCase() &&
+        (cd.grade === genGrade || cd.grade === genGrade.replace("grade-", ""))
+      ) || (ingestedDesignResult?.subject?.toLowerCase() === genSubject?.toLowerCase() ? ingestedDesignResult : null);
+
       const payload = {
         grade: genGrade,
         subject: genSubject,
         strand_name: substrandGenModal.strand_name,
         strand_id: substrandGenModal.strand_id || "1.0",
-        level: "Basic Education",
+        level: activeCd?.level || "Basic Education",
+        essence_statement: activeCd?.essence_statement || "",
+        general_learning_outcomes: activeCd?.general_learning_outcomes || [],
         custom_instructions: customInstructions || substrandPromptInput,
       };
       const res = await fetchJson<any>("/api/v1/curriculum/factory/generate-substrands", {
@@ -1689,15 +1709,33 @@ export function App() {
                         <button className="ghost" onClick={() => setSubstrandGenModal(null)}>✕ Close</button>
                       </div>
 
-                      <div style={{ marginTop: "16px" }}>
+                      {/* Inherited Subject Curriculum Blueprint Context */}
+                      <div style={{ marginTop: "12px", padding: "10px 14px", background: "#f8fafc", borderRadius: "8px", border: "1px solid #e2e8f0", fontSize: "12px" }}>
+                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                          <strong style={{ color: "#0369a1" }}>📘 Active Subject Curriculum Design Context (Auto-Injected from Previous Generation):</strong>
+                          <span className="pill ok" style={{ fontSize: "10px" }}>Blueprint Linked</span>
+                        </div>
+                        <p style={{ margin: "4px 0 6px", color: "#334155" }}>
+                          <strong>Essence Statement:</strong>{" "}
+                          {(substrandGenModal as any).essence_statement || `Comprehensive curriculum blueprint for ${genSubject} (${genGrade}). Focus on practical application, environmental stewardship, and CBC core competencies.`}
+                        </p>
+                        {(substrandGenModal as any).general_learning_outcomes?.length > 0 && (
+                          <div style={{ color: "#475569" }}>
+                            <strong>General Outcomes:</strong>{" "}
+                            {(substrandGenModal as any).general_learning_outcomes.join(" • ")}
+                          </div>
+                        )}
+                      </div>
+
+                      <div style={{ marginTop: "14px" }}>
                         <label style={{ fontWeight: 600, fontSize: "13px" }}>
-                          Custom Prompt & Pedagogical Directives for this Strand:
+                          Custom Production Directives for this Strand:
                           <textarea
                             rows={3}
                             style={{ width: "100%", marginTop: "6px", fontFamily: "inherit", fontSize: "13px", padding: "8px" }}
                             value={substrandPromptInput}
                             onChange={(e) => setSubstrandPromptInput(e.target.value)}
-                            placeholder="e.g. Generate 4 sub-strands covering overview, soil composition, water conservation, and farm layout with 4 hours each..."
+                            placeholder="e.g. Generate all required comprehensive sub-strands for 1.0 AGRICULTURE AND ENVIRONMENT with allocated hours (e.g. 4 hours), SLOs, practical experiments, and safety protocols."
                           />
                         </label>
 

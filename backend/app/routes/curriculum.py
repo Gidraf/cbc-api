@@ -554,7 +554,10 @@ class FactoryGenerateSubstrandsRequest(BaseModel):
     strand_name: str
     strand_id: str = "1.0"
     level: str = "Basic Education"
+    essence_statement: str = ""
+    general_learning_outcomes: list[str] = []
     custom_instructions: str = ""
+    design_id: str = ""
 
 
 class FactorySaveSubstrandsRequest(BaseModel):
@@ -571,10 +574,28 @@ def factory_generate_strands(
     payload: FactoryGenerateStrandsRequest,
     _: AuthContext = Depends(require_roles("admin", "operator", "reviewer")),
 ) -> dict[str, Any]:
-    """Generates the top-level strands for a subject using Langfuse prompt management."""
+    """Generates the top-level strands for a subject using Langfuse prompt management and subject design context."""
+    from ..infra.db import query_one
     from ..services.langfuse_context import langfuse_context_service
     from ..services.llm_client import llm_client
     from ..services.pipeline import pipeline_orchestrator
+
+    essence_statement = payload.essence_statement
+    level = payload.level
+
+    if not essence_statement:
+        row = query_one(
+            """
+            SELECT essence_statement, level
+            FROM curriculum_designs
+            WHERE (grade = :grade OR grade = :alt_grade) AND LOWER(subject) = LOWER(:subject)
+            ORDER BY updated_at DESC LIMIT 1
+            """,
+            {"grade": payload.grade, "alt_grade": payload.grade.replace("grade-", ""), "subject": payload.subject},
+        )
+        if row:
+            essence_statement = row.get("essence_statement") or ""
+            level = row.get("level") or level
 
     resolved = pipeline_orchestrator.router.resolve_for_stage("notes_generation")
     context = langfuse_context_service.assemble_agent_context(
@@ -582,8 +603,8 @@ def factory_generate_strands(
         grade_slug=payload.grade,
         subject=payload.subject,
         template_vars={
-            "level": payload.level,
-            "essence_statement": payload.essence_statement,
+            "level": level,
+            "essence_statement": essence_statement,
             "custom_instructions": payload.custom_instructions,
         },
     )
@@ -603,10 +624,35 @@ def factory_generate_substrands(
     payload: FactoryGenerateSubstrandsRequest,
     _: AuthContext = Depends(require_roles("admin", "operator", "reviewer")),
 ) -> dict[str, Any]:
-    """Generates detailed sub-strands with SLOs, hours, diagrams, experiments, and hazard protocols for a specific strand."""
+    """Generates detailed sub-strands with SLOs, hours, diagrams, experiments, and hazard protocols using curriculum design blueprint context."""
+    from ..infra.db import query_one
     from ..services.langfuse_context import langfuse_context_service
     from ..services.llm_client import llm_client
     from ..services.pipeline import pipeline_orchestrator
+
+    essence_stmt = payload.essence_statement
+    gen_outcomes = payload.general_learning_outcomes
+    level = payload.level
+
+    # Look up previous curriculum design context from database if not supplied
+    row = query_one(
+        """
+        SELECT design_id, subject, level, essence_statement, general_learning_outcomes
+        FROM curriculum_designs
+        WHERE (grade = :grade OR grade = :alt_grade) AND LOWER(subject) = LOWER(:subject)
+        ORDER BY updated_at DESC LIMIT 1
+        """,
+        {"grade": payload.grade, "alt_grade": payload.grade.replace("grade-", ""), "subject": payload.subject},
+    )
+    if row:
+        if not essence_stmt:
+            essence_stmt = row.get("essence_statement") or ""
+        if not gen_outcomes:
+            gen_outcomes = row.get("general_learning_outcomes") or []
+        if level == "Basic Education" and row.get("level"):
+            level = row.get("level")
+
+    outcomes_str = "\n".join([f"- {o}" for o in gen_outcomes]) if gen_outcomes else "Standard KICD BECF Outcomes."
 
     resolved = pipeline_orchestrator.router.resolve_for_stage("notes_generation")
     context = langfuse_context_service.assemble_agent_context(
@@ -614,16 +660,26 @@ def factory_generate_substrands(
         grade_slug=payload.grade,
         subject=payload.subject,
         template_vars={
-            "level": payload.level,
+            "level": level,
+            "essence_statement": essence_stmt or f"Comprehensive curriculum design for {payload.subject} ({payload.grade}).",
+            "general_learning_outcomes": outcomes_str,
             "strand": payload.strand_name,
             "custom_instructions": payload.custom_instructions,
         },
     )
-    if payload.custom_instructions:
-        context.messages.append({
-            "role": "user",
-            "content": f"ADDITIONAL SUB-STRAND INSTRUCTIONS: {payload.custom_instructions}",
-        })
+
+    # Ensure explicit design context is present in messages
+    context.messages.append({
+        "role": "user",
+        "content": (
+            f"CURRICULUM BLUEPRINT CONTEXT FOR {payload.subject.upper()}:\n"
+            f"Level: {level}\n"
+            f"Essence Statement: {essence_stmt}\n"
+            f"General Outcomes:\n{outcomes_str}\n\n"
+            f"TARGET STRAND TO GENERATE SUB-STRANDS FOR: {payload.strand_name}\n"
+            f"ADDITIONAL DIRECTIVES: {payload.custom_instructions}"
+        ),
+    })
 
     resp = llm_client.generate(resolved, context.messages, temperature=0.2)
     sub_strands = resp.content.get("sub_strands", []) if isinstance(resp.content, dict) else []
@@ -632,6 +688,7 @@ def factory_generate_substrands(
         "grade": payload.grade,
         "strand_name": payload.strand_name,
         "sub_strands": sub_strands,
+        "essence_statement_used": essence_stmt,
         "usage": resp.usage,
         "model": resp.model,
     }
