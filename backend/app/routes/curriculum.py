@@ -2094,6 +2094,19 @@ def factory_get_bundle_by_substrand(
     latest_bundle_id = ""
     latest_updated_at = ""
 
+    def _norm(s: str) -> str:
+        return re.sub(r"[^a-z0-9]", "", s.lower())
+
+    def _matches_ss(a: str, b: str) -> bool:
+        if not a or not b:
+            return False
+        na, nb = _norm(a), _norm(b)
+        if na == nb or na in nb or nb in na:
+            return True
+        wa = set(re.findall(r"[a-z0-9]+", a.lower())) - {"and", "of", "the", "in", "to", "for", "a", "1", "2", "3", "4", "5", "6", "7", "8", "9", "0"}
+        wb = set(re.findall(r"[a-z0-9]+", b.lower())) - {"and", "of", "the", "in", "to", "for", "a", "1", "2", "3", "4", "5", "6", "7", "8", "9", "0"}
+        return len(wa & wb) >= 2
+
     for row in rows:
         c = row.get("curriculum") or {}
         row_grade = str(c.get("grade", "")).lower().replace("grade-", "").strip()
@@ -2101,8 +2114,8 @@ def factory_get_bundle_by_substrand(
         row_ss = str(c.get("sub_strand", "")).lower().strip()
 
         # Match subject and sub-strand (fuzzy or exact)
-        match_subj = (row_subj == clean_subj or clean_subj in row_subj or row_subj in clean_subj)
-        match_ss = (row_ss == clean_ss or clean_ss in row_ss or row_ss in clean_ss)
+        match_subj = (not clean_subj or not row_subj or _norm(clean_subj) in _norm(row_subj) or _norm(row_subj) in _norm(clean_subj))
+        match_ss = _matches_ss(clean_ss, row_ss)
 
         if match_subj and match_ss:
             found_any = True
@@ -2171,11 +2184,15 @@ class FactoryAutoPersistStationRequest(BaseModel):
     bundle_id: str
     grade: str
     subject: str
-    strand: str
+    strand: str = ""
     sub_strand: str
     level: str = "Basic Education"
-    station_type: str  # "notes" | "diagrams" | "activities" | "questions" | "approval"
+    station_type: str = "notes"  # "notes" | "diagrams" | "activities" | "questions" | "approval"
     data: Any = None
+    notes: Optional[Any] = None
+    diagrams: Optional[Any] = None
+    activities: Optional[Any] = None
+    questions: Optional[Any] = None
     review_status: str = "draft"
     human_notes: str = ""
 
@@ -2225,6 +2242,7 @@ def factory_auto_persist_station(
     # Use existing bundle_id if found to update the same record
     target_bundle_id = existing.get("bundle_id") if (existing and existing.get("bundle_id")) else payload.bundle_id
 
+    # Initialize from existing record if present
     notes = existing.get("notes") if existing and existing.get("notes") else {}
     diagrams = existing.get("diagrams") if existing and existing.get("diagrams") else []
     activities = existing.get("activities") if existing and existing.get("activities") else {}
@@ -2232,19 +2250,39 @@ def factory_auto_persist_station(
     review_audit = existing.get("review_audit") if existing and existing.get("review_audit") else {}
     status = existing.get("status") if existing and existing.get("status") else payload.review_status
 
-    if payload.station_type == "notes" and payload.data:
+    # Priority 1: Direct full bundle payload fields passed from frontend
+    if payload.notes and isinstance(payload.notes, dict) and payload.notes:
+        notes = payload.notes
+    elif payload.station_type == "notes" and payload.data:
         notes = payload.data
+
+    if payload.diagrams is not None:
+        incoming_diag = payload.diagrams if isinstance(payload.diagrams, list) else [payload.diagrams]
+        if incoming_diag:
+            diagrams = incoming_diag
     elif payload.station_type == "diagrams" and payload.data is not None:
         incoming_diag = payload.data if isinstance(payload.data, list) else [payload.data]
         if incoming_diag:
             diagrams = incoming_diag
+
+    if payload.activities is not None:
+        if isinstance(payload.activities, dict) and payload.activities:
+            activities = payload.activities
+        elif isinstance(payload.activities, list) and payload.activities:
+            activities = {"activities": payload.activities}
     elif payload.station_type == "activities" and payload.data is not None:
-        activities = payload.data
+        activities = payload.data if isinstance(payload.data, dict) else {"activities": payload.data}
+
+    if payload.questions is not None:
+        incoming_qs = payload.questions if isinstance(payload.questions, list) else [payload.questions]
+        if incoming_qs:
+            questions = incoming_qs
     elif payload.station_type == "questions" and payload.data is not None:
         incoming_qs = payload.data if isinstance(payload.data, list) else [payload.data]
         if incoming_qs:
             questions = incoming_qs
-    elif payload.station_type == "approval":
+
+    if payload.station_type == "approval" or payload.review_status in {"approved", "published"}:
         status = payload.review_status
         review_audit = {"status": payload.review_status, "human_notes": payload.human_notes}
 

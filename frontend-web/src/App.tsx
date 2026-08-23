@@ -243,6 +243,7 @@ export function App() {
   const [diagramConceptInput, setDiagramConceptInput] = useState("");
   const [diagramRefinePrompt, setDiagramRefinePrompt] = useState("");
   const [diagramViewMode, setDiagramViewMode] = useState<"visual" | "image_spec" | "code" | "tactile">("visual");
+  const [svgCodeDraft, setSvgCodeDraft] = useState<string>("");
   const [diagramApproved, setDiagramApproved] = useState(false);
 
   // Station 3: Multi-Activities, Experiments & Video Storyboards Studio
@@ -878,54 +879,74 @@ export function App() {
   }
 
   async function loadSavedBundleForSubstrand(grade: string, subject: string, strand: string, subStrand: string) {
-    const storageKey = `cbc:bundle:${grade}:${subject}:${strand}:${subStrand}`;
-    
-    // 1. Instant local restore from localStorage with multiple candidate keys
-    const candidateKeys = [
-      storageKey,
-      `cbc:bundle:${grade.replace("grade-", "")}:${subject}:${strand}:${subStrand}`,
-      `cbc:bundle:grade-${grade.replace("grade-", "")}:${subject}:${strand}:${subStrand}`,
-      `cbc:bundle:${grade}:${subject}::${subStrand}`,
-    ];
-    
-    // Also search all localStorage keys for subStrand matches
+    const curSubj = (subject || "").toLowerCase().trim();
+    const curSS = (subStrand || "").toLowerCase().trim();
+
+    let mergedNotes: any = null;
+    let mergedVisuals: any[] = [];
+    let mergedActs: any[] = [];
+    let mergedQs: any[] = [];
+    let nApp = false, dApp = false, aApp = false, qApp = false;
+
+    // 1. Instant local restore by aggregating all matching localStorage keys
     try {
       for (let i = 0; i < localStorage.length; i++) {
         const k = localStorage.key(i);
-        if (k && k.startsWith("cbc:bundle:") && subStrand && k.toLowerCase().includes(subStrand.toLowerCase().slice(0, 20))) {
-          if (!candidateKeys.includes(k)) candidateKeys.push(k);
+        if (k && k.startsWith("cbc:bundle:")) {
+          const raw = localStorage.getItem(k);
+          if (raw) {
+            try {
+              const data = JSON.parse(raw);
+              const dataSubj = (data.subject || "").toLowerCase().trim();
+              const dataSS = (data.sub_strand || "").toLowerCase().trim();
+
+              const subjMatch = !curSubj || !dataSubj || dataSubj.includes(curSubj) || curSubj.includes(dataSubj);
+              const ssMatch = !curSS || !dataSS || dataSS.includes(curSS) || curSS.includes(dataSS) ||
+                (curSS.length > 4 && dataSS.length > 4 && (curSS.slice(0, 12) === dataSS.slice(0, 12)));
+
+              if (subjMatch && ssMatch) {
+                if (data.notes && Object.keys(data.notes).length > 0 && !mergedNotes) {
+                  mergedNotes = data.notes;
+                }
+                const normVis = normalizeVisualsList(data.diagrams);
+                if (normVis.length > 0 && mergedVisuals.length === 0) {
+                  mergedVisuals = normVis;
+                }
+                const normActs = normalizeActivitiesList(data.activities);
+                if (normActs.length > 0 && mergedActs.length === 0) {
+                  mergedActs = normActs;
+                }
+                const normQs = normalizeQuestionsList(data.questions);
+                if (normQs.length > 0 && mergedQs.length === 0) {
+                  mergedQs = normQs;
+                }
+                if (data.notesApproved) nApp = true;
+                if (data.diagramApproved) dApp = true;
+                if (data.activityApproved) aApp = true;
+                if (data.questionsApproved) qApp = true;
+              }
+            } catch (e) {}
+          }
         }
       }
-    } catch (e) {}
 
-    for (const key of candidateKeys) {
-      try {
-        const cached = localStorage.getItem(key);
-        if (cached) {
-          const data = JSON.parse(cached);
-          if (data.notes && Object.keys(data.notes).length > 0) setStationNotes(data.notes);
-          const normVis = normalizeVisualsList(data.diagrams);
-          if (normVis.length > 0) {
-            setStationVisualsList(normVis);
-            setStationDiagram(normVis[0]);
-          }
-          const normActs = normalizeActivitiesList(data.activities);
-          if (normActs.length > 0) {
-            setStationActivitiesList(normActs);
-            setStationActivity(normActs[0]);
-          }
-          const normQs = normalizeQuestionsList(data.questions);
-          if (normQs.length > 0) {
-            setStationQuestions(normQs);
-          }
-          if (typeof data.notesApproved === "boolean") setNotesApproved(data.notesApproved);
-          if (typeof data.diagramApproved === "boolean") setDiagramApproved(data.diagramApproved);
-          if (typeof data.activityApproved === "boolean") setActivityApproved(data.activityApproved);
-          if (typeof data.questionsApproved === "boolean") setQuestionsApproved(data.questionsApproved);
-          break;
-        }
-      } catch (e) {}
-    }
+      if (mergedNotes) setStationNotes(mergedNotes);
+      if (mergedVisuals.length > 0) {
+        setStationVisualsList(mergedVisuals);
+        setStationDiagram(mergedVisuals[0]);
+      }
+      if (mergedActs.length > 0) {
+        setStationActivitiesList(mergedActs);
+        setStationActivity(mergedActs[0]);
+      }
+      if (mergedQs.length > 0) {
+        setStationQuestions(mergedQs);
+      }
+      if (nApp) setNotesApproved(true);
+      if (dApp) setDiagramApproved(true);
+      if (aApp) setActivityApproved(true);
+      if (qApp) setQuestionsApproved(true);
+    } catch (e) {}
 
     // 2. Authoritative restore from backend DB & MinIO
     try {
@@ -1033,6 +1054,10 @@ export function App() {
           sub_strand: genSubstrand,
           station_type: stationType,
           data: data,
+          notes: currentNotes,
+          diagrams: currentVisuals,
+          activities: { activities: currentActs },
+          questions: currentQs,
           review_status: isAllApproved ? "approved" : "draft",
           human_notes: humanBlueprintNotes || "",
         }),
@@ -3932,9 +3957,58 @@ export function App() {
                                 )}
 
                                 {diagramViewMode === "code" && (
-                                  <pre style={{ fontSize: "10px", maxHeight: "250px" }}>
-                                    {curVis.diagram_svg || "<svg .../>"}
-                                  </pre>
+                                  <div style={{ padding: "12px", background: "#0f172a", borderRadius: "8px", border: "1px solid #334155" }}>
+                                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px", flexWrap: "wrap", gap: "6px" }}>
+                                      <strong style={{ color: "#38bdf8", fontSize: "12px" }}>💻 Raw SVG XML Code & Direct Editor:</strong>
+                                      <div style={{ display: "flex", gap: "6px" }}>
+                                        <button
+                                          className="ghost"
+                                          style={{ fontSize: "10.5px", padding: "2px 8px", background: "#1e293b", color: "#94a3b8", borderColor: "#475569" }}
+                                          onClick={() => {
+                                            navigator.clipboard.writeText(curVis.diagram_svg || "");
+                                            alert("SVG XML markup copied to clipboard!");
+                                          }}
+                                        >
+                                          📋 Copy SVG
+                                        </button>
+                                        <button
+                                          style={{ fontSize: "11px", padding: "3px 10px", background: "#0284c7", color: "#fff", borderColor: "#0284c7" }}
+                                          onClick={() => {
+                                            const nextSvg = svgCodeDraft || curVis.diagram_svg;
+                                            const updated = { ...curVis, diagram_svg: nextSvg, status: "generated" };
+                                            const nextList = [...stationVisualsList];
+                                            if (nextList.length > 0) {
+                                              nextList[activeVisualIdx] = updated;
+                                              setStationVisualsList(nextList);
+                                            } else {
+                                              setStationVisualsList([updated]);
+                                            }
+                                            setStationDiagram(updated);
+                                            autoPersistStation("diagrams", nextList.length > 0 ? nextList : [updated], undefined, nextList.length > 0 ? nextList : [updated]);
+                                            alert("SVG XML markup changes saved and applied to canvas!");
+                                          }}
+                                        >
+                                          💾 Save & Apply SVG Edit
+                                        </button>
+                                      </div>
+                                    </div>
+                                    <textarea
+                                      rows={10}
+                                      value={svgCodeDraft !== "" ? svgCodeDraft : (curVis.diagram_svg || "")}
+                                      onChange={(e) => setSvgCodeDraft(e.target.value)}
+                                      style={{
+                                        width: "100%",
+                                        fontFamily: "monospace",
+                                        fontSize: "11px",
+                                        background: "#020617",
+                                        color: "#38bdf8",
+                                        border: "1px solid #1e293b",
+                                        borderRadius: "6px",
+                                        padding: "8px",
+                                        lineHeight: 1.4,
+                                      }}
+                                    />
+                                  </div>
                                 )}
 
                                 {diagramViewMode === "tactile" && (
