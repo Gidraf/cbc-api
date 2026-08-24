@@ -362,14 +362,20 @@ class CurriculumExtractorService:
 
         # 1. Extract Specific Learning Outcomes (SLOs)
         slos: list[dict[str, str]] = []
+        clean_sub_code = re.sub(r"[^a-zA-Z0-9]", "-", sub_id).strip("-") or "SS"
+        subj_code = re.sub(r"[^a-zA-Z0-9]", "", subject[:3]).upper() if subject else "CBC"
         slo_matches = re.findall(r"([a-h]\))\s*([^\n\.\;]+[\.\;]?)", body, re.IGNORECASE)
         for letter, content in slo_matches:
-            slos.append({"code": letter.strip(")"), "text": content.strip()})
+            let_code = letter.strip(")").lower()
+            slo_id = f"{grade}-{subj_code}-{clean_sub_code}-{let_code}"
+            slos.append({"id": slo_id, "code": let_code, "text": content.strip()})
 
         if not slos:
             bullet_matches = re.findall(r"(?:•|-|\*)\s*([^\n]+)", body)
             for k, bm in enumerate(bullet_matches[:6]):
-                slos.append({"code": chr(ord("a") + k), "text": bm.strip()})
+                let_code = chr(ord("a") + k)
+                slo_id = f"{grade}-{subj_code}-{clean_sub_code}-{let_code}"
+                slos.append({"id": slo_id, "code": let_code, "text": bm.strip()})
 
         # 2. Extract Suggested Learning Experiences
         learning_experiences: list[str] = []
@@ -458,17 +464,18 @@ class CurriculumExtractorService:
         ]
 
         # 9. Build Comprehensive Dynamic Prompt Package for all downstream agents (fetched from Langfuse)
-        slo_texts = [s["text"] for s in slos]
+        slo_texts = [s.get("text", str(s)) if isinstance(s, dict) else str(s) for s in slos]
+        first_slo_id = (slos[0].get("id") or slos[0].get("code")) if slos and isinstance(slos[0], dict) else f"{grade}-{subj_code}-01"
         prompt_vars = {
             "level": level,
             "grade": grade,
             "subject": subject,
-            "subject_code": subject[:3].upper() if subject else "CORE",
+            "subject_code": subj_code,
             "strand": strand_name,
             "sub_strand": sub_name,
-            "slo_id": slos[0]["id"] if slos else f"{grade}-{subject[:3]}-01",
+            "slo_id": first_slo_id,
             "difficulty": 0.65,
-            "diagram_id": f"diag_{slos[0]['id'] if slos else '01'}",
+            "diagram_id": f"diag_{first_slo_id}",
             "notes_title": f"Revision Notes for {sub_name}",
             "concept": required_diagrams[0] if required_diagrams else sub_name,
             "subject_context": {
@@ -650,7 +657,7 @@ class CurriculumExtractorService:
                 {
                     "name": s.sub_strand_name,
                     "hours": s.allocated_hours,
-                    "slos": [item["text"] for item in s.slos],
+                    "slos": [item.get("text", str(item)) if isinstance(item, dict) else str(item) for item in s.slos],
                     "diagrams_required": s.required_diagrams,
                     "experiments": s.experiments,
                     "safety_hazards_to_check": s.safety_hazards_to_check,

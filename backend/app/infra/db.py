@@ -243,6 +243,7 @@ MIGRATIONS: list[tuple[str, str]] = [
             dna_payload JSONB NOT NULL DEFAULT '{}'::jsonb,
             compliance_scores JSONB NOT NULL DEFAULT '{}'::jsonb,
             provenance JSONB NOT NULL DEFAULT '{}'::jsonb,
+            parent_dna_id TEXT NULL,
             status TEXT NOT NULL DEFAULT 'verified',
             created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
             updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -251,6 +252,7 @@ MIGRATIONS: list[tuple[str, str]] = [
         CREATE INDEX IF NOT EXISTS idx_curriculum_substrands_lookup ON curriculum_substrands(grade, subject);
         CREATE INDEX IF NOT EXISTS idx_artifact_dna_artifact ON artifact_dna(artifact_type, artifact_id);
         CREATE INDEX IF NOT EXISTS idx_artifact_dna_slo ON artifact_dna(universal_slo_id);
+        CREATE INDEX IF NOT EXISTS idx_artifact_dna_parent ON artifact_dna(parent_dna_id);
         """,
     ),
     (
@@ -292,6 +294,13 @@ MIGRATIONS: list[tuple[str, str]] = [
         ALTER TABLE curriculum_designs ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'accepted_active';
         ALTER TABLE curriculum_designs ADD COLUMN IF NOT EXISTS review_status TEXT NOT NULL DEFAULT 'accepted_active';
         ALTER TABLE curriculum_designs ADD COLUMN IF NOT EXISTS human_review_notes TEXT NULL;
+        """,
+    ),
+    (
+        "009_artifact_dna_parent_col",
+        """
+        ALTER TABLE artifact_dna ADD COLUMN IF NOT EXISTS parent_dna_id TEXT NULL;
+        CREATE INDEX IF NOT EXISTS idx_artifact_dna_parent ON artifact_dna(parent_dna_id);
         """,
     ),
 ]
