@@ -1267,6 +1267,181 @@ export function App() {
     );
   }
 
+  // ── Modular Granular Element Deletion & Manipulation ────────────────────
+
+  function deleteVisualAsset(assetKey: string) {
+    const updatedList = (stationVisualsList || []).filter((v: any) => (v.asset_id || v.diagram_id) !== assetKey);
+    setStationVisualsList(updatedList);
+    if (updatedList.length === 0) {
+      setStationDiagram(null);
+      setActiveVisualIdx(0);
+      setDiagramApproved(false);
+    } else {
+      const nextIdx = Math.min(activeVisualIdx, updatedList.length - 1);
+      setActiveVisualIdx(nextIdx);
+      setStationDiagram(updatedList[nextIdx]);
+    }
+    autoPersistStation("diagrams", updatedList, undefined, updatedList);
+    loadDatasetProgress(genGrade);
+  }
+
+  function clearVisualsForHour(hourNum: number | "all") {
+    let updatedList: any[] = [];
+    if (hourNum === "all") {
+      updatedList = [];
+      setStationDiagram(null);
+      setActiveVisualIdx(0);
+      setDiagramApproved(false);
+    } else {
+      updatedList = (stationVisualsList || []).filter((v: any) => v.hour_index !== hourNum && !(hourNum === 1 && !v.hour_index));
+      if (updatedList.length === 0) {
+        setStationDiagram(null);
+        setActiveVisualIdx(0);
+      } else {
+        setActiveVisualIdx(0);
+        setStationDiagram(updatedList[0]);
+      }
+    }
+    setStationVisualsList(updatedList);
+    autoPersistStation("diagrams", updatedList, undefined, updatedList);
+    loadDatasetProgress(genGrade);
+  }
+
+  function reassignVisualHour(assetKey: string, newHour: number) {
+    const updatedList = (stationVisualsList || []).map((v: any) => {
+      if ((v.asset_id || v.diagram_id) === assetKey) {
+        return { ...v, hour_index: newHour };
+      }
+      return v;
+    });
+    setStationVisualsList(updatedList);
+    if (stationDiagram && (stationDiagram.asset_id || stationDiagram.diagram_id) === assetKey) {
+      setStationDiagram({ ...stationDiagram, hour_index: newHour });
+    }
+    autoPersistStation("diagrams", updatedList, undefined, updatedList);
+  }
+
+  function deleteActivityAsset(actKey: string) {
+    const updatedList = (stationActivitiesList || []).filter((a: any) => a.activity_id !== actKey);
+    setStationActivitiesList(updatedList);
+    if (updatedList.length === 0) {
+      setStationActivity(null);
+      setActiveActivityIdx(0);
+      setActivityApproved(false);
+    } else {
+      const nextIdx = Math.min(activeActivityIdx, updatedList.length - 1);
+      setActiveActivityIdx(nextIdx);
+      setStationActivity(updatedList[nextIdx]);
+    }
+    autoPersistStation("activities", { activities: updatedList }, undefined, undefined, updatedList);
+    loadDatasetProgress(genGrade);
+  }
+
+  function clearActivitiesForHour(hourNum: number | "all") {
+    let updatedList: any[] = [];
+    if (hourNum === "all") {
+      updatedList = [];
+      setStationActivity(null);
+      setActiveActivityIdx(0);
+      setActivityApproved(false);
+    } else {
+      updatedList = (stationActivitiesList || []).filter((a: any) => a.hour_index !== hourNum && !(hourNum === 1 && !a.hour_index));
+      if (updatedList.length === 0) {
+        setStationActivity(null);
+        setActiveActivityIdx(0);
+      } else {
+        setActiveActivityIdx(0);
+        setStationActivity(updatedList[0]);
+      }
+    }
+    setStationActivitiesList(updatedList);
+    autoPersistStation("activities", { activities: updatedList }, undefined, undefined, updatedList);
+    loadDatasetProgress(genGrade);
+  }
+
+  function reassignActivityHour(actKey: string, newHour: number) {
+    const updatedList = (stationActivitiesList || []).map((a: any) => {
+      if (a.activity_id === actKey) {
+        return { ...a, hour_index: newHour };
+      }
+      return a;
+    });
+    setStationActivitiesList(updatedList);
+    if (stationActivity && stationActivity.activity_id === actKey) {
+      setStationActivity({ ...stationActivity, hour_index: newHour });
+    }
+    autoPersistStation("activities", { activities: updatedList }, undefined, undefined, updatedList);
+  }
+
+  function deleteQuestionAsset(qIdx: number) {
+    const updatedList = (stationQuestions || []).filter((_: any, idx: number) => idx !== qIdx);
+    setStationQuestions(updatedList);
+    if (updatedList.length === 0) {
+      setQuestionsApproved(false);
+    }
+    autoPersistStation("questions", { questions: updatedList }, undefined, undefined, undefined, updatedList);
+    loadDatasetProgress(genGrade);
+  }
+
+  function clearQuestionsForHour(hourNum: number | "all") {
+    let updatedList: any[] = [];
+    if (hourNum === "all") {
+      updatedList = [];
+      setQuestionsApproved(false);
+    } else {
+      updatedList = (stationQuestions || []).filter((q: any) => q.hour_index !== hourNum && !(hourNum === 1 && !q.hour_index));
+    }
+    setStationQuestions(updatedList);
+    autoPersistStation("questions", { questions: updatedList }, undefined, undefined, undefined, updatedList);
+    loadDatasetProgress(genGrade);
+  }
+
+  function reassignQuestionHour(qIdx: number, newHour: number) {
+    const updatedList = (stationQuestions || []).map((q: any, idx: number) => {
+      if (idx === qIdx) {
+        return { ...q, hour_index: newHour };
+      }
+      return q;
+    });
+    setStationQuestions(updatedList);
+    autoPersistStation("questions", { questions: updatedList }, undefined, undefined, undefined, updatedList);
+  }
+
+  function clearNotesForHour(hourNum: number | "all") {
+    if (hourNum === "all") {
+      setStationNotes(null);
+      setNotesApproved(false);
+      autoPersistStation("notes", null, null);
+    } else if (stationNotes) {
+      const hMods = [...(stationNotes.hour_modules || stationNotes.key_concepts || [])];
+      if (hMods[hourNum - 1]) {
+        hMods[hourNum - 1] = {
+          ...hMods[hourNum - 1],
+          full_lecture_notes: "",
+          content: "",
+          detailed_explanation: "",
+          worked_examples: null,
+          misconceptions: null,
+        };
+      }
+      const updatedNotes = { ...stationNotes, hour_modules: hMods };
+      setStationNotes(updatedNotes);
+      autoPersistStation("notes", updatedNotes, updatedNotes);
+    }
+    loadDatasetProgress(genGrade);
+  }
+
+  function updateNotesForHour(hourNum: number, updatedFields: Partial<any>) {
+    if (!stationNotes) return;
+    const hMods = [...(stationNotes.hour_modules || stationNotes.key_concepts || [])];
+    if (hMods[hourNum - 1]) {
+      hMods[hourNum - 1] = { ...hMods[hourNum - 1], ...updatedFields };
+    }
+    const updatedNotes = { ...stationNotes, hour_modules: hMods };
+    setStationNotes(updatedNotes);
+    autoPersistStation("notes", updatedNotes, updatedNotes);
+  }
+
   function selectSubstrandForFactory(ss: any, grade: string, subject: string) {
     setFactorySelectedSubstrand(ss);
     setGenGrade(grade);
@@ -4484,6 +4659,19 @@ export function App() {
                         <span className={`pill ${notesApproved ? "ok" : stationNotes ? "warn" : "idle"}`}>
                           {notesApproved ? "Approved" : stationNotes ? "Generated" : "Pending"}
                         </span>
+                        <button
+                          className="ghost"
+                          style={{ fontSize: "11px", padding: "3px 8px", color: "#b91c1c", borderColor: "#fca5a5" }}
+                          onClick={() => {
+                            if (confirm("Are you sure you want to clear all notes for this sub-strand?")) {
+                              clearNotesForHour("all");
+                            }
+                          }}
+                          disabled={!stationNotes}
+                          title="Clear all lecture notes for this sub-strand"
+                        >
+                          🗑️ Clear All Notes
+                        </button>
                       </div>
                     </div>
 
@@ -4566,11 +4754,25 @@ export function App() {
 
                               return (
                                 <div key={idx} style={{ padding: "16px", background: "#fff", borderRadius: "8px", border: "1px solid #cbd5e1", boxShadow: "0 2px 4px rgba(0,0,0,0.04)" }}>
-                                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #f1f5f9", paddingBottom: "8px", marginBottom: "10px" }}>
+                                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #f1f5f9", paddingBottom: "8px", marginBottom: "10px", flexWrap: "wrap", gap: "6px" }}>
                                     <strong style={{ fontSize: "14.5px", color: "#0f172a" }}>
                                       {hTitle.startsWith("Hour") ? hTitle : `Hour ${hNum}: ${hTitle}`}
                                     </strong>
-                                    <span className="pill ok" style={{ fontSize: "10.5px" }}>60 Contact Minutes</span>
+                                    <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
+                                      <span className="pill ok" style={{ fontSize: "10.5px" }}>60 Contact Minutes</span>
+                                      <button
+                                        className="ghost"
+                                        style={{ fontSize: "10.5px", padding: "2px 8px", color: "#b91c1c", borderColor: "#fca5a5" }}
+                                        onClick={() => {
+                                          if (confirm(`Are you sure you want to clear notes for Hour ${hNum}?`)) {
+                                            clearNotesForHour(hNum);
+                                          }
+                                        }}
+                                        title={`Clear and remove lecture notes specifically for Hour ${hNum}`}
+                                      >
+                                        🗑️ Clear Hour {hNum} Notes
+                                      </button>
+                                    </div>
                                   </div>
 
                                   {hm.learning_intent && (
@@ -4909,6 +5111,19 @@ export function App() {
                         >
                           ✅ Approve All ({stationVisualsList.length})
                         </button>
+                        <button
+                          className="ghost"
+                          style={{ fontSize: "11px", padding: "3px 8px", color: "#b91c1c", borderColor: "#fca5a5" }}
+                          onClick={() => {
+                            if (confirm(`Are you sure you want to clear ${visualActiveHourTab === "all" ? "all visual assets" : `visuals for Hour ${visualActiveHourTab}`}?`)) {
+                              clearVisualsForHour(visualActiveHourTab);
+                            }
+                          }}
+                          disabled={stationVisualsList.length === 0 && !stationDiagram}
+                          title="Clear visual models for current filter or all"
+                        >
+                          🗑️ Clear {visualActiveHourTab === "all" ? "All Visuals" : `Hour ${visualActiveHourTab}`}
+                        </button>
                         {diagramResearchDossier && (
                           <span
                             className="pill ok"
@@ -5065,6 +5280,18 @@ export function App() {
                                   </span>
                                 </div>
                                 <div style={{ display: "flex", gap: "6px", alignItems: "center", flexWrap: "wrap" }}>
+                                  <label style={{ fontSize: "11px", color: "#64748b", display: "flex", alignItems: "center", gap: "4px" }}>
+                                    ⏱️ Hour:
+                                    <select
+                                      value={curVis.hour_index || 1}
+                                      onChange={(e) => reassignVisualHour(curVis.asset_id || curVis.diagram_id, Number(e.target.value))}
+                                      style={{ fontSize: "11px", padding: "2px 4px", borderRadius: "4px", border: "1px solid #cbd5e1" }}
+                                    >
+                                      {[1, 2, 3, 4].map((h) => (
+                                        <option key={h} value={h}>Hour {h}</option>
+                                      ))}
+                                    </select>
+                                  </label>
                                   <span className={`pill ${curVis.approved || curVis.status === "approved" ? "ok" : "warn"}`} style={{ fontSize: "10px" }}>
                                     {curVis.approved || curVis.status === "approved" ? "✓ Approved" : "Draft"}
                                   </span>
@@ -5096,26 +5323,23 @@ export function App() {
                                   </button>
                                   <button
                                     className="ghost"
-                                    style={{ fontSize: "11px", padding: "3px 8px", background: "#fff", borderColor: "#fca5a5", color: "#b91c1c" }}
-                                    onClick={() => {
-                                      if (window.confirm(`Delete visual asset "${curVis.title}"?`)) {
-                                        const updated = stationVisualsList.filter((v: any) => (v.asset_id || v.diagram_id) !== (curVis.asset_id || curVis.diagram_id));
-                                        setStationVisualsList(updated);
-                                        setActiveVisualIdx(Math.max(0, activeVisualIdx - 1));
-                                        autoPersistStation("diagrams", updated, undefined, updated);
-                                      }
-                                    }}
-                                    title="Remove this visual asset"
-                                  >
-                                    🗑️
-                                  </button>
-                                  <button
-                                    className="ghost"
                                     style={{ fontSize: "11px", padding: "3px 8px", background: "#fff", borderColor: "#7c3aed", color: "#7c3aed" }}
                                     onClick={() => setActiveVisualModal(curVis)}
                                     title="Open Fullscreen Asset & Spec Modal"
                                   >
                                     🔍 Fullscreen
+                                  </button>
+                                  <button
+                                    className="ghost"
+                                    style={{ fontSize: "11px", padding: "3px 8px", color: "#b91c1c", borderColor: "#fca5a5" }}
+                                    onClick={() => {
+                                      if (confirm(`Delete visual '${curVis.title || 'this diagram'}'?`)) {
+                                        deleteVisualAsset(curVis.asset_id || curVis.diagram_id);
+                                      }
+                                    }}
+                                    title="Permanently delete this specific visual asset"
+                                  >
+                                    🗑️ Delete
                                   </button>
                                 </div>
                               </div>
@@ -5637,6 +5861,19 @@ export function App() {
                         >
                           ✅ Approve All ({stationActivitiesList.length})
                         </button>
+                        <button
+                          className="ghost"
+                          style={{ fontSize: "11px", padding: "3px 8px", color: "#b91c1c", borderColor: "#fca5a5" }}
+                          onClick={() => {
+                            if (confirm(`Are you sure you want to clear ${activityActiveHourTab === "all" ? "all practical activities" : `practicals for Hour ${activityActiveHourTab}`}?`)) {
+                              clearActivitiesForHour(activityActiveHourTab);
+                            }
+                          }}
+                          disabled={stationActivitiesList.length === 0 && !stationActivity}
+                          title="Clear practical activities for current filter or all"
+                        >
+                          🗑️ Clear {activityActiveHourTab === "all" ? "All Practicals" : `Hour ${activityActiveHourTab}`}
+                        </button>
                         {activityResearchDossier && (
                           <span
                             className="pill ok"
@@ -5791,6 +6028,18 @@ export function App() {
                                   </span>
                                 </div>
                                 <div style={{ display: "flex", gap: "6px", alignItems: "center", flexWrap: "wrap" }}>
+                                  <label style={{ fontSize: "11px", color: "#64748b", display: "flex", alignItems: "center", gap: "4px" }}>
+                                    ⏱️ Hour:
+                                    <select
+                                      value={curAct.hour_index || 1}
+                                      onChange={(e) => reassignActivityHour(curAct.activity_id, Number(e.target.value))}
+                                      style={{ fontSize: "11px", padding: "2px 4px", borderRadius: "4px", border: "1px solid #cbd5e1" }}
+                                    >
+                                      {[1, 2, 3, 4].map((h) => (
+                                        <option key={h} value={h}>Hour {h}</option>
+                                      ))}
+                                    </select>
+                                  </label>
                                   <span className={`pill ${curAct.approved || curAct.status === "approved" ? "ok" : "warn"}`} style={{ fontSize: "10px" }}>
                                     {curAct.approved || curAct.status === "approved" ? "✓ Approved" : "Draft"}
                                   </span>
@@ -5817,18 +6066,15 @@ export function App() {
                                   </button>
                                   <button
                                     className="ghost"
-                                    style={{ fontSize: "11px", padding: "3px 8px", background: "#fff", borderColor: "#fca5a5", color: "#b91c1c" }}
+                                    style={{ fontSize: "11px", padding: "3px 8px", color: "#b91c1c", borderColor: "#fca5a5" }}
                                     onClick={() => {
-                                      if (window.confirm(`Delete practical activity "${curAct.activity_name}"?`)) {
-                                        const updated = stationActivitiesList.filter((a: any) => a.activity_id !== curAct.activity_id);
-                                        setStationActivitiesList(updated);
-                                        setActiveActivityIdx(Math.max(0, activeActivityIdx - 1));
-                                        autoPersistStation("activities", { activities: updated }, undefined, undefined, updated);
+                                      if (confirm(`Delete practical activity "${curAct.activity_name}"?`)) {
+                                        deleteActivityAsset(curAct.activity_id);
                                       }
                                     }}
-                                    title="Remove this practical activity"
+                                    title="Permanently delete this specific practical activity"
                                   >
-                                    🗑️
+                                    🗑️ Delete
                                   </button>
                                 </div>
                               </div>
@@ -6088,6 +6334,19 @@ export function App() {
                         <span className={`pill ${questionsApproved ? "ok" : stationQuestions.length > 0 ? "warn" : "idle"}`}>
                           {questionsApproved ? "Approved" : stationQuestions.length > 0 ? "Generated" : "Pending"}
                         </span>
+                        <button
+                          className="ghost"
+                          style={{ fontSize: "11px", padding: "3px 8px", color: "#b91c1c", borderColor: "#fca5a5" }}
+                          onClick={() => {
+                            if (confirm("Are you sure you want to clear all questions for this sub-strand?")) {
+                              clearQuestionsForHour("all");
+                            }
+                          }}
+                          disabled={stationQuestions.length === 0}
+                          title="Clear all generated questions for this sub-strand"
+                        >
+                          🗑️ Clear All Questions
+                        </button>
                       </div>
                     </div>
 
@@ -6148,13 +6407,37 @@ export function App() {
 
                             return (
                               <div key={idx} className="card-item" style={{ marginBottom: "16px", border: "1px solid #cbd5e1" }}>
-                                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
+                                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px", flexWrap: "wrap", gap: "6px" }}>
                                   <strong style={{ fontSize: "13.5px", color: "#0c4a6e" }}>
                                     {idx + 1}. {qType.replace("_", " ").toUpperCase()}
                                   </strong>
-                                  <div style={{ display: "flex", gap: "6px" }}>
+                                  <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
+                                    <label style={{ fontSize: "10.5px", color: "#64748b", display: "flex", alignItems: "center", gap: "3px" }}>
+                                      ⏱️ Hour:
+                                      <select
+                                        value={c.hour_index || 1}
+                                        onChange={(e) => reassignQuestionHour(idx, Number(e.target.value))}
+                                        style={{ fontSize: "10.5px", padding: "1px 4px", borderRadius: "4px", border: "1px solid #cbd5e1" }}
+                                      >
+                                        {[1, 2, 3, 4].map((h) => (
+                                          <option key={h} value={h}>Hour {h}</option>
+                                        ))}
+                                      </select>
+                                    </label>
                                     <span className="pill ok" style={{ fontSize: "10px" }}>{q.pedagogical_dna?.cognitive_level || c.bloom_level || "Application"}</span>
                                     {c.max_marks && <span className="pill ok" style={{ fontSize: "10px" }}>{c.max_marks} Marks</span>}
+                                    <button
+                                      className="ghost"
+                                      style={{ fontSize: "10.5px", padding: "2px 6px", color: "#b91c1c", borderColor: "#fca5a5" }}
+                                      onClick={() => {
+                                        if (confirm(`Delete Question ${idx + 1}?`)) {
+                                          deleteQuestionAsset(idx);
+                                        }
+                                      }}
+                                      title="Permanently delete this specific question"
+                                    >
+                                      🗑️ Delete
+                                    </button>
                                   </div>
                                 </div>
 
@@ -6470,9 +6753,25 @@ export function App() {
 
                         {/* 1. Core Lecture Notes & Exposition */}
                         <section style={{ marginBottom: "20px" }}>
-                          <h3 style={{ color: "#1e293b", fontSize: "15px", borderLeft: "4px solid #0284c7", paddingLeft: "10px", margin: "0 0 10px" }}>
-                            📝 Pedagogical Lecture Exposition & Theory
-                          </h3>
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "10px" }}>
+                            <h3 style={{ color: "#1e293b", fontSize: "15px", borderLeft: "4px solid #0284c7", paddingLeft: "10px", margin: 0 }}>
+                              📝 Pedagogical Lecture Exposition & Theory
+                            </h3>
+                            {hMod?.full_lecture_notes && (
+                              <button
+                                className="ghost"
+                                style={{ fontSize: "10.5px", padding: "2px 6px", color: "#b91c1c", borderColor: "#fca5a5" }}
+                                onClick={() => {
+                                  if (confirm(`Clear lecture notes for Hour ${hNum}?`)) {
+                                    clearNotesForHour(hNum);
+                                  }
+                                }}
+                                title={`Clear notes for Hour ${hNum}`}
+                              >
+                                🗑️ Clear Notes
+                              </button>
+                            )}
+                          </div>
                           <div
                             style={{
                               fontSize: "14px",
@@ -6526,7 +6825,21 @@ export function App() {
                                     <strong style={{ color: "#0369a1", fontSize: "13.5px" }}>
                                       🖼️ {vis.title || `Visual Model ${vIdx + 1}`}
                                     </strong>
-                                    <span className="pill ok" style={{ fontSize: "10px" }}>{vis.asset_type || "SVG"}</span>
+                                    <div style={{ display: "flex", gap: "4px", alignItems: "center" }}>
+                                      <span className="pill ok" style={{ fontSize: "10px" }}>{vis.asset_type || "SVG"}</span>
+                                      <button
+                                        className="ghost"
+                                        style={{ fontSize: "10px", padding: "1px 5px", color: "#b91c1c", borderColor: "#fca5a5" }}
+                                        onClick={() => {
+                                          if (confirm(`Remove visual '${vis.title || 'this diagram'}'?`)) {
+                                            deleteVisualAsset(vis.asset_id || vis.diagram_id);
+                                          }
+                                        }}
+                                        title="Remove diagram"
+                                      >
+                                        🗑️
+                                      </button>
+                                    </div>
                                   </div>
                                   <div
                                     className="svg-canvas-box"
@@ -6563,9 +6876,23 @@ export function App() {
                                   <h4 style={{ margin: 0, color: "#0f766e", fontSize: "15px" }}>
                                     🔬 {act.activity_name || `Practical Task ${aIdx + 1}`}
                                   </h4>
-                                  <span className="pill ok" style={{ fontSize: "10.5px" }}>
-                                    {act.activity_type || "laboratory_experiment"}
-                                  </span>
+                                  <div style={{ display: "flex", gap: "4px", alignItems: "center" }}>
+                                    <span className="pill ok" style={{ fontSize: "10.5px" }}>
+                                      {act.activity_type || "laboratory_experiment"}
+                                    </span>
+                                    <button
+                                      className="ghost"
+                                      style={{ fontSize: "10px", padding: "1px 5px", color: "#b91c1c", borderColor: "#fca5a5" }}
+                                      onClick={() => {
+                                        if (confirm(`Remove practical '${act.activity_name}'?`)) {
+                                          deleteActivityAsset(act.activity_id);
+                                        }
+                                      }}
+                                      title="Remove practical activity"
+                                    >
+                                      🗑️
+                                    </button>
+                                  </div>
                                 </div>
                                 <p style={{ margin: "4px 0 10px", color: "#134e4a", fontSize: "13px" }}>
                                   <strong>Objective:</strong> {act.objective}
@@ -6622,7 +6949,22 @@ export function App() {
                                       <strong style={{ color: "#581c87", fontSize: "13.5px" }}>
                                         Question {qIdx + 1}: {qItem.question_text || qItem.prompt || qItem.text}
                                       </strong>
-                                      <span className="pill ok" style={{ fontSize: "10px" }}>{qItem.cognitive_level || "Bloom: Application"}</span>
+                                      <div style={{ display: "flex", gap: "4px", alignItems: "center" }}>
+                                        <span className="pill ok" style={{ fontSize: "10px" }}>{qItem.cognitive_level || "Bloom: Application"}</span>
+                                        <button
+                                          className="ghost"
+                                          style={{ fontSize: "10px", padding: "1px 5px", color: "#b91c1c", borderColor: "#fca5a5" }}
+                                          onClick={() => {
+                                            if (confirm(`Remove this question?`)) {
+                                              const realIdx = stationQuestions.indexOf(qItem);
+                                              if (realIdx >= 0) deleteQuestionAsset(realIdx);
+                                            }
+                                          }}
+                                          title="Remove question"
+                                        >
+                                          🗑️
+                                        </button>
+                                      </div>
                                     </div>
 
                                     {/* Options */}
