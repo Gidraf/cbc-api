@@ -269,6 +269,25 @@ export function App() {
   const [questionsApproved, setQuestionsApproved] = useState(false);
   const [lastPersistedTime, setLastPersistedTime] = useState<string | null>(null);
 
+  // Curriculum Digital Textbook / Educational Blog Reader Mode State
+  const [factoryStudioMode, setFactoryStudioMode] = useState<"quadrant" | "reader">("quadrant");
+  const [readerActiveHour, setReaderActiveHour] = useState<number | "all">("all");
+  const [readerShowAnswers, setReaderShowAnswers] = useState<Record<string, boolean>>({});
+
+  // Dataset Clearing & Cascading Children Deletion Modal State
+  const [clearDatasetModalOpen, setClearDatasetModalOpen] = useState(false);
+  const [clearDatasetGrade, setClearDatasetGrade] = useState("grade-7");
+  const [clearDatasetSubject, setClearDatasetSubject] = useState("");
+  const [clearDatasetStrand, setClearDatasetStrand] = useState("");
+  const [clearDatasetMode, setClearDatasetMode] = useState<"datasets_only" | "cascade_all">("cascade_all");
+  const [deletionInspectionData, setDeletionInspectionData] = useState<any>(null);
+  const [isInspectingDeletion, setIsInspectingDeletion] = useState(false);
+
+  // Generation Progress Dashboard State
+  const [datasetProgressData, setDatasetProgressData] = useState<any>(null);
+  const [isLoadingProgress, setIsLoadingProgress] = useState(false);
+  const [showProgressDashboard, setShowProgressDashboard] = useState(false);
+
   // Live Web Research, Thinking Trace & Quality Audit States
   const [notesResearchDossier, setNotesResearchDossier] = useState<any>(null);
   const [notesQualityAudit, setNotesQualityAudit] = useState<any>(null);
@@ -1295,6 +1314,62 @@ export function App() {
 
     // Automatically load existing saved bundle for this sub-strand from DB / MinIO / LocalStorage
     loadSavedBundleForSubstrand(grade, subject, strandName, substrandName);
+  }
+
+  async function loadDatasetProgress(grade: string, subject?: string) {
+    setIsLoadingProgress(true);
+    try {
+      let url = `/api/v1/admin/langfuse/datasets/${grade}/progress`;
+      if (subject) url += `?subject=${encodeURIComponent(subject)}`;
+      const res = await fetchJson<any>(url, { method: "GET" }, auth());
+      setDatasetProgressData(res);
+    } catch (e) {
+      console.error("Failed to load dataset progress", e);
+    } finally {
+      setIsLoadingProgress(false);
+    }
+  }
+
+  async function inspectDatasetDeletion(grade: string, subject?: string, strand?: string) {
+    setIsInspectingDeletion(true);
+    try {
+      let url = `/api/v1/admin/langfuse/datasets/${grade}/inspect-deletion`;
+      const q: string[] = [];
+      if (subject) q.push(`subject=${encodeURIComponent(subject)}`);
+      if (strand) q.push(`strand=${encodeURIComponent(strand)}`);
+      if (q.length > 0) url += `?${q.join("&")}`;
+      const res = await fetchJson<any>(url, { method: "GET" }, auth());
+      setDeletionInspectionData(res);
+      setClearDatasetGrade(grade);
+      setClearDatasetSubject(subject || "");
+      setClearDatasetStrand(strand || "");
+      setClearDatasetModalOpen(true);
+    } catch (e: any) {
+      alert(`Failed to inspect dataset deletion: ${e.message || e}`);
+    } finally {
+      setIsInspectingDeletion(false);
+    }
+  }
+
+  async function executeDatasetClear() {
+    await run(`Clearing Dataset (${clearDatasetMode === 'cascade_all' ? 'Cascade All Generations' : 'Definitions Only'})...`, async () => {
+      const res = await fetchJson<any>(`/api/v1/admin/langfuse/datasets/${clearDatasetGrade}/clear`, {
+        method: "POST",
+        body: JSON.stringify({
+          clear_mode: clearDatasetMode,
+          subject: clearDatasetSubject || undefined,
+          strand: clearDatasetStrand || undefined,
+        }),
+      }, auth());
+      setClearDatasetModalOpen(false);
+      setDeletionInspectionData(null);
+      await loadDatasets();
+      if (clearDatasetGrade === genGrade) {
+        await loadGradeSubjects(genGrade);
+        await loadDatasetProgress(genGrade);
+      }
+      return res;
+    });
   }
 
   async function generateFactoryNotes(customInstructions?: string) {
@@ -2477,15 +2552,353 @@ export function App() {
                 <h2>Live Langfuse Datasets & Curriculum Blueprints</h2>
                 <p>All datasets are pulled directly from Langfuse. Click <strong>"⚡ Process with AI"</strong> to extract the subject, grade, strands, diagrams, experiments with safety hazard criteria, and dynamic agent prompts, then manually review and approve the blueprint.</p>
               </div>
-              <div style={{display: 'flex', gap: '0.5rem'}}>
+              <div style={{display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center'}}>
+                <button
+                  onClick={() => {
+                    if (!showProgressDashboard) loadDatasetProgress(selectedGrade);
+                    setShowProgressDashboard(!showProgressDashboard);
+                  }}
+                  disabled={isRunning}
+                  style={{ background: '#0284c7', borderColor: '#0284c7', color: '#fff', fontWeight: 600 }}
+                >
+                  {showProgressDashboard ? "📋 Hide Progress Dashboard" : "📊 View Quantified Progress Dashboard"}
+                </button>
+                <button
+                  onClick={() => inspectDatasetDeletion(selectedGrade)}
+                  disabled={isRunning || isInspectingDeletion}
+                  style={{ background: '#b91c1c', borderColor: '#b91c1c', color: '#fff', fontWeight: 600 }}
+                  title="Inspect all children and clear dataset definitions or cascade delete all generated notes, visuals, practicals, and questions"
+                >
+                  {isInspectingDeletion ? "🔍 Inspecting Children..." : "🧹 Clear Dataset / Cascading Children"}
+                </button>
                 <button onClick={loadRawLangfuseDatasets} disabled={isRunning} className="ghost">
-                  🔄 Refresh Langfuse Datasets
+                  🔄 Refresh
                 </button>
                 <button onClick={syncLangfuseDatasets} disabled={isRunning} style={{background: '#4338ca', borderColor: '#4338ca'}}>
-                  {isRunning ? "Syncing..." : "📥 Auto-Pull & Sync All from Langfuse"}
+                  {isRunning ? "Syncing..." : "📥 Auto-Pull & Sync All"}
                 </button>
               </div>
             </div>
+
+            {/* CASCADING DATASET DELETION INSPECTION MODAL */}
+            {clearDatasetModalOpen && deletionInspectionData && (
+              <div style={{
+                position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+                background: 'rgba(15, 23, 42, 0.8)', zIndex: 9999,
+                display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem'
+              }}>
+                <div style={{
+                  background: '#ffffff', borderRadius: '12px', width: '100%', maxWidth: '780px',
+                  maxHeight: '90vh', overflowY: 'auto', padding: '1.5rem', boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)', border: '1px solid #f87171'
+                }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #fee2e2", paddingBottom: "10px", marginBottom: "14px" }}>
+                    <div>
+                      <h3 style={{ margin: 0, color: "#991b1b", fontSize: "16px" }}>
+                        🧹 Clear Dataset & Cascading Children ({deletionInspectionData.grade})
+                      </h3>
+                      <p style={{ margin: "2px 0 0", fontSize: "12px", color: "#64748b" }}>
+                        {deletionInspectionData.filter_subject} • {deletionInspectionData.filter_strand}
+                      </p>
+                    </div>
+                    <button className="ghost" onClick={() => setClearDatasetModalOpen(false)} style={{ fontSize: "14px", padding: "4px 8px" }}>✕</button>
+                  </div>
+
+                  {/* Children Inventory Overview */}
+                  <div style={{ padding: "12px 14px", background: "#fef2f2", borderRadius: "8px", border: "1px solid #fecaca", marginBottom: "14px" }}>
+                    <strong style={{ color: "#991b1b", display: "block", marginBottom: "8px", fontSize: "13px" }}>
+                      📋 Inventory of All Children Associated with this Dataset:
+                    </strong>
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: "8px", fontSize: "12px" }}>
+                      <div style={{ background: "#fff", padding: "8px 10px", borderRadius: "6px", border: "1px solid #fca5a5" }}>
+                        <span style={{ color: "#64748b", fontSize: "11px" }}>📚 Subjects:</span>
+                        <strong style={{ display: "block", color: "#991b1b", fontSize: "14px" }}>{deletionInspectionData.dataset_children?.subjects_count || 0}</strong>
+                        <div style={{ fontSize: "10px", color: "#64748b" }}>{deletionInspectionData.dataset_children?.subjects_list?.join(", ") || "None"}</div>
+                      </div>
+                      <div style={{ background: "#fff", padding: "8px 10px", borderRadius: "6px", border: "1px solid #fca5a5" }}>
+                        <span style={{ color: "#64748b", fontSize: "11px" }}>🗂️ Strands / Sub-strands:</span>
+                        <strong style={{ display: "block", color: "#991b1b", fontSize: "14px" }}>
+                          {deletionInspectionData.dataset_children?.strands_count || 0} Strands / {deletionInspectionData.dataset_children?.substrands_count || 0} Sub-strands
+                        </strong>
+                      </div>
+                      <div style={{ background: "#fff", padding: "8px 10px", borderRadius: "6px", border: "1px solid #fca5a5" }}>
+                        <span style={{ color: "#64748b", fontSize: "11px" }}>📝 4-Hour Lesson Notes:</span>
+                        <strong style={{ display: "block", color: "#991b1b", fontSize: "14px" }}>{deletionInspectionData.generations_children?.total_notes_hours || 0} Hours</strong>
+                      </div>
+                      <div style={{ background: "#fff", padding: "8px 10px", borderRadius: "6px", border: "1px solid #fca5a5" }}>
+                        <span style={{ color: "#64748b", fontSize: "11px" }}>📐 Visuals & Diagrams:</span>
+                        <strong style={{ display: "block", color: "#991b1b", fontSize: "14px" }}>{deletionInspectionData.generations_children?.total_visuals || 0} Assets</strong>
+                      </div>
+                      <div style={{ background: "#fff", padding: "8px 10px", borderRadius: "6px", border: "1px solid #fca5a5" }}>
+                        <span style={{ color: "#64748b", fontSize: "11px" }}>🧪 Practical Modules:</span>
+                        <strong style={{ display: "block", color: "#991b1b", fontSize: "14px" }}>{deletionInspectionData.generations_children?.total_activities || 0} Experiments</strong>
+                      </div>
+                      <div style={{ background: "#fff", padding: "8px 10px", borderRadius: "6px", border: "1px solid #fca5a5" }}>
+                        <span style={{ color: "#64748b", fontSize: "11px" }}>🎯 Questions & Answers:</span>
+                        <strong style={{ display: "block", color: "#991b1b", fontSize: "14px" }}>{deletionInspectionData.generations_children?.total_questions || 0} Questions</strong>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Deletion Mode Selector */}
+                  <div style={{ marginBottom: "14px", padding: "12px", background: "#f8fafc", borderRadius: "8px", border: "1px solid #e2e8f0" }}>
+                    <strong style={{ display: "block", marginBottom: "8px", fontSize: "13px", color: "#334155" }}>
+                      Select Clear / Deletion Scope:
+                    </strong>
+                    <label style={{ display: "flex", alignItems: "flex-start", gap: "8px", marginBottom: "8px", cursor: "pointer" }}>
+                      <input
+                        type="radio"
+                        name="clear_mode"
+                        checked={clearDatasetMode === "cascade_all"}
+                        onChange={() => setClearDatasetMode("cascade_all")}
+                        style={{ marginTop: "3px" }}
+                      />
+                      <div>
+                        <strong style={{ color: "#991b1b", fontSize: "12.5px" }}>
+                          🔥 Cascade Clear Everything (Recommended for Clean Restart)
+                        </strong>
+                        <p style={{ margin: "2px 0 0", fontSize: "11.5px", color: "#64748b" }}>
+                          Deletes dataset blueprint definitions AND all generated 4-hour lesson notes, vector SVG diagrams, practical experiments, and assessment items in one click.
+                        </p>
+                      </div>
+                    </label>
+                    <label style={{ display: "flex", alignItems: "flex-start", gap: "8px", cursor: "pointer" }}>
+                      <input
+                        type="radio"
+                        name="clear_mode"
+                        checked={clearDatasetMode === "datasets_only"}
+                        onChange={() => setClearDatasetMode("datasets_only")}
+                        style={{ marginTop: "3px" }}
+                      />
+                      <div>
+                        <strong style={{ color: "#d97706", fontSize: "12.5px" }}>
+                          ⚡ Clear Dataset Definitions Only
+                        </strong>
+                        <p style={{ margin: "2px 0 0", fontSize: "11.5px", color: "#64748b" }}>
+                          Clears the raw syllabus blueprint/curriculum metadata while preserving previously generated notes and questions in storage.
+                        </p>
+                      </div>
+                    </label>
+                  </div>
+
+                  {/* Action Buttons */}
+                  <div style={{ display: "flex", justifyContent: "flex-end", gap: "8px" }}>
+                    <button className="ghost" onClick={() => setClearDatasetModalOpen(false)}>
+                      Cancel
+                    </button>
+                    <button
+                      onClick={executeDatasetClear}
+                      disabled={isRunning}
+                      style={{ background: "#b91c1c", borderColor: "#b91c1c", color: "#fff", fontWeight: 700 }}
+                    >
+                      {isRunning ? "Deleting..." : `🗑️ Confirm & Clear (${clearDatasetMode === 'cascade_all' ? 'Cascade All' : 'Definitions Only'})`}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* 0. QUANTIFIED CURRICULUM GENERATION PROGRESS DASHBOARD */}
+            {showProgressDashboard && (
+              <div className="panel" style={{ marginTop: '0.5rem', marginBottom: '1.5rem', border: '1px solid #7dd3fc', background: '#f0f9ff' }}>
+                <div className="panel-head" style={{ borderBottom: '1px solid #bae6fd' }}>
+                  <div>
+                    <h3 style={{ color: '#0369a1' }}>📊 Quantified Curriculum Generation Progress Dashboard</h3>
+                    <p style={{ fontSize: '0.85rem', color: '#075985' }}>
+                      Hierarchical progress tracking across Strands, Sub-strands, 4-Hour Lesson Notes, Diagrams, Practicals, and Questions.
+                    </p>
+                  </div>
+                  <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                    <select
+                      value={selectedGrade}
+                      onChange={(e) => {
+                        setSelectedGrade(e.target.value);
+                        loadDatasetProgress(e.target.value);
+                      }}
+                      style={{ fontSize: '12px', padding: '4px 8px' }}
+                    >
+                      {datasetsList.map((g) => (
+                        <option key={g} value={g}>{g.toUpperCase()}</option>
+                      ))}
+                    </select>
+                    <button
+                      className="ghost"
+                      style={{ fontSize: '11px', padding: '4px 8px', background: '#fff' }}
+                      onClick={() => loadDatasetProgress(selectedGrade)}
+                      disabled={isLoadingProgress}
+                    >
+                      🔄 Refresh Progress
+                    </button>
+                  </div>
+                </div>
+
+                <div style={{ padding: '1rem' }}>
+                  {isLoadingProgress ? (
+                    <div style={{ textAlign: 'center', padding: '1.5rem', color: '#0369a1' }}>
+                      ⚡ Calculating multi-layer curriculum progress...
+                    </div>
+                  ) : datasetProgressData ? (
+                    <div>
+                      {/* KPI Progress Cards */}
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '10px', marginBottom: '16px' }}>
+                        <div style={{ background: '#fff', padding: '12px 14px', borderRadius: '8px', border: '1px solid #bae6fd' }}>
+                          <span style={{ fontSize: '11px', color: '#64748b' }}>Overall Grade Progress</span>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '4px' }}>
+                            <strong style={{ fontSize: '20px', color: '#0284c7' }}>{datasetProgressData.overall_grade_percentage || 0}%</strong>
+                            <div style={{ flex: 1, height: '8px', background: '#e2e8f0', borderRadius: '4px', overflow: 'hidden' }}>
+                              <div style={{ width: `${datasetProgressData.overall_grade_percentage || 0}%`, height: '100%', background: '#0284c7' }} />
+                            </div>
+                          </div>
+                        </div>
+                        <div style={{ background: '#fff', padding: '12px 14px', borderRadius: '8px', border: '1px solid #bae6fd' }}>
+                          <span style={{ fontSize: '11px', color: '#64748b' }}>Total Sub-strands</span>
+                          <strong style={{ display: 'block', fontSize: '20px', color: '#0f172a', marginTop: '4px' }}>
+                            {datasetProgressData.total_substrands || 0}
+                          </strong>
+                        </div>
+                        <div style={{ background: '#fff', padding: '12px 14px', borderRadius: '8px', border: '1px solid #bae6fd' }}>
+                          <span style={{ fontSize: '11px', color: '#64748b' }}>Completed (≥90%)</span>
+                          <strong style={{ display: 'block', fontSize: '20px', color: '#166534', marginTop: '4px' }}>
+                            {datasetProgressData.completed_substrands || 0} / {datasetProgressData.total_substrands || 0}
+                          </strong>
+                        </div>
+                        <div style={{ background: '#fff', padding: '12px 14px', borderRadius: '8px', border: '1px solid #bae6fd' }}>
+                          <span style={{ fontSize: '11px', color: '#64748b' }}>Remaining Sub-strands</span>
+                          <strong style={{ display: 'block', fontSize: '20px', color: '#b91c1c', marginTop: '4px' }}>
+                            {datasetProgressData.remaining_substrands || 0}
+                          </strong>
+                        </div>
+                        <div style={{ background: '#fff', padding: '12px 14px', borderRadius: '8px', border: '1px solid #bae6fd' }}>
+                          <span style={{ fontSize: '11px', color: '#64748b' }}>Production Ready</span>
+                          <div style={{ marginTop: '4px' }}>
+                            <span className={`pill ${datasetProgressData.is_all_production_ready ? 'ok' : 'warn'}`} style={{ fontSize: '12px', fontWeight: 700 }}>
+                              {datasetProgressData.production_ready_substrands || 0} Sub-strands Ready
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Hierarchical Breakdown Table */}
+                      {(datasetProgressData.subjects || []).map((sub: any, sIdx: number) => (
+                        <div key={sIdx} style={{ background: '#fff', borderRadius: '8px', border: '1px solid #e2e8f0', marginBottom: '14px', overflow: 'hidden' }}>
+                          <div style={{ padding: '10px 14px', background: '#f8fafc', borderBottom: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <div>
+                              <strong style={{ color: '#0f172a', fontSize: '14px' }}>📖 Subject: {sub.subject}</strong>
+                              <span style={{ fontSize: '12px', color: '#64748b', marginLeft: '10px' }}>
+                                {sub.total_substrands} Sub-strands • {sub.completed_substrands} Completed • {sub.remaining_substrands} Remaining
+                              </span>
+                            </div>
+                            <span className="pill ok" style={{ fontSize: '11.5px', fontWeight: 700 }}>
+                              {sub.subject_percentage}% Complete
+                            </span>
+                          </div>
+
+                          <div style={{ padding: '10px 14px' }}>
+                            {(sub.strands || []).map((st: any, stIdx: number) => (
+                              <div key={stIdx} style={{ marginBottom: '12px', paddingBottom: '12px', borderBottom: stIdx < sub.strands.length - 1 ? '1px dashed #e2e8f0' : 'none' }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                                  <strong style={{ color: '#0369a1', fontSize: '13px' }}>
+                                    🗂️ Strand: {st.strand_name}
+                                  </strong>
+                                  <span style={{ fontSize: '11.5px', color: '#475569' }}>
+                                    Strand Progress: <strong>{st.strand_percentage}%</strong> ({st.completed_substrands}/{st.total_substrands} Sub-strands)
+                                  </span>
+                                </div>
+
+                                <table style={{ width: '100%', fontSize: '11.5px', borderCollapse: 'collapse' }}>
+                                  <thead>
+                                    <tr style={{ background: '#f8fafc', textAlign: 'left', borderBottom: '1px solid #cbd5e1' }}>
+                                      <th style={{ padding: '6px 8px' }}>Sub-strand</th>
+                                      <th style={{ padding: '6px 8px' }}>📝 4-Hour Notes</th>
+                                      <th style={{ padding: '6px 8px' }}>📐 Visuals & SVGs</th>
+                                      <th style={{ padding: '6px 8px' }}>🧪 Practicals</th>
+                                      <th style={{ padding: '6px 8px' }}>🎯 Questions</th>
+                                      <th style={{ padding: '6px 8px' }}>Overall</th>
+                                      <th style={{ padding: '6px 8px', textAlign: 'right' }}>Action</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {(st.substrands || []).map((ss: any, ssIdx: number) => (
+                                      <tr key={ssIdx} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                                        <td style={{ padding: '6px 8px' }}>
+                                          <strong>{ss.sub_strand_name}</strong>
+                                          <div style={{ fontSize: '10.5px', color: '#64748b' }}>Allocated: {ss.allocated_hours}</div>
+                                        </td>
+                                        <td style={{ padding: '6px 8px' }}>
+                                          <span className={`pill ${ss.notes?.percentage >= 100 ? 'ok' : ss.notes?.percentage > 0 ? 'warn' : 'idle'}`} style={{ fontSize: '10.5px' }}>
+                                            {ss.notes?.generated_hours}/4 Hours ({ss.notes?.percentage}%)
+                                          </span>
+                                          {ss.notes?.remaining_hours > 0 && (
+                                            <div style={{ fontSize: '10px', color: '#b91c1c' }}>{ss.notes.remaining_hours} hrs needed</div>
+                                          )}
+                                        </td>
+                                        <td style={{ padding: '6px 8px' }}>
+                                          <span className={`pill ${ss.visuals?.percentage >= 100 ? 'ok' : ss.visuals?.percentage > 0 ? 'warn' : 'idle'}`} style={{ fontSize: '10.5px' }}>
+                                            {ss.visuals?.generated_count}/8 Visuals ({ss.visuals?.percentage}%)
+                                          </span>
+                                          {ss.visuals?.remaining_count > 0 && (
+                                            <div style={{ fontSize: '10px', color: '#b91c1c' }}>{ss.visuals.remaining_count} needed</div>
+                                          )}
+                                        </td>
+                                        <td style={{ padding: '6px 8px' }}>
+                                          <span className={`pill ${ss.practicals?.percentage >= 100 ? 'ok' : ss.practicals?.percentage > 0 ? 'warn' : 'idle'}`} style={{ fontSize: '10.5px' }}>
+                                            {ss.practicals?.generated_count}/4 Practicals ({ss.practicals?.percentage}%)
+                                          </span>
+                                          {ss.practicals?.remaining_count > 0 && (
+                                            <div style={{ fontSize: '10px', color: '#b91c1c' }}>{ss.practicals.remaining_count} needed</div>
+                                          )}
+                                        </td>
+                                        <td style={{ padding: '6px 8px' }}>
+                                          <span className={`pill ${ss.questions?.percentage >= 100 ? 'ok' : ss.questions?.percentage > 0 ? 'warn' : 'idle'}`} style={{ fontSize: '10.5px' }}>
+                                            {ss.questions?.generated_count}/10 Items ({ss.questions?.percentage}%)
+                                          </span>
+                                          {ss.questions?.remaining_count > 0 && (
+                                            <div style={{ fontSize: '10px', color: '#b91c1c' }}>{ss.questions.remaining_count} needed</div>
+                                          )}
+                                        </td>
+                                        <td style={{ padding: '6px 8px' }}>
+                                          <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                            <strong>{ss.overall_percentage}%</strong>
+                                            {ss.production_ready ? (
+                                              <span className="pill ok" style={{ fontSize: '9.5px' }}>🚀 Ready</span>
+                                            ) : (
+                                              <span className="pill warn" style={{ fontSize: '9.5px' }}>In Progress</span>
+                                            )}
+                                          </div>
+                                        </td>
+                                        <td style={{ padding: '6px 8px', textAlign: 'right' }}>
+                                          <button
+                                            style={{ fontSize: '11px', padding: '3px 8px', background: '#0284c7', borderColor: '#0284c7', color: '#fff' }}
+                                            onClick={() => {
+                                              selectSubstrandForFactory(
+                                                { strand_name: st.strand_name, sub_strand_name: ss.sub_strand_name, name: ss.sub_strand_name },
+                                                selectedGrade,
+                                                sub.subject
+                                              );
+                                              setView("generation");
+                                              setFactoryStep(2);
+                                            }}
+                                          >
+                                            ⚡ Open Studio ➔
+                                          </button>
+                                        </td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div style={{ textAlign: 'center', padding: '1.5rem', color: '#64748b' }}>
+                      Click <strong>"🔄 Refresh Progress"</strong> to load live metrics for {selectedGrade}.
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
 
             {/* 1. LIVE LANGFUSE RAW DATASETS LIST */}
             <div className="panel" style={{marginTop: '0.5rem', marginBottom: '1.5rem', border: '1px solid #cbd5e1'}}>
@@ -3548,6 +3961,19 @@ export function App() {
                         </span>
                       ) : null}
                       <button
+                        style={{
+                          fontSize: "12px",
+                          background: factoryStudioMode === "reader" ? "#0284c7" : "#f0f9ff",
+                          color: factoryStudioMode === "reader" ? "#fff" : "#0284c7",
+                          borderColor: "#0284c7",
+                          fontWeight: 700,
+                        }}
+                        onClick={() => setFactoryStudioMode(factoryStudioMode === "reader" ? "quadrant" : "reader")}
+                        title="Toggle between 4-Quadrant Multi-Station Studio and Compacted Textbook / Educational Blog Reader View"
+                      >
+                        {factoryStudioMode === "reader" ? "🎛️ Switch to 4-Station Studio" : "📖 Open Textbook / Blog Reader"}
+                      </button>
+                      <button
                         style={{ fontSize: "12px", background: "#15803d", color: "#fff", borderColor: "#15803d", fontWeight: 700 }}
                         onClick={approveEntireSubstrandBundle}
                         disabled={isRunning}
@@ -3750,9 +4176,10 @@ export function App() {
                   </div>
                 </div>
 
-                {/* 4-Station Interactive Production Quadrant */}
-                <div className="factory-quadrant">
-                  {/* STATION 1: REVISION NOTES */}
+                {/* 4-Station Interactive Production Quadrant / Compacted Textbook Blog Reader */}
+                {factoryStudioMode === "quadrant" ? (
+                  <div className="factory-quadrant">
+                    {/* STATION 1: REVISION NOTES */}
                   <div className="factory-station-card">
                     <div className="factory-station-header">
                       <div>
@@ -5652,6 +6079,333 @@ export function App() {
                     </div>
                   </div>
                 </div>
+              ) : (
+                /* MASTER CURRICULUM DIGITAL TEXTBOOK & EDUCATIONAL BLOG READER */
+                <div className="curriculum-blog-reader" style={{ background: "#fff", borderRadius: "12px", border: "1px solid #cbd5e1", padding: "24px 32px", marginTop: "16px", boxShadow: "0 4px 6px -1px rgba(0,0,0,0.05)" }}>
+                  {/* 1. Blog / Textbook Article Masthead */}
+                  <div style={{ borderBottom: "2px solid #0284c7", paddingBottom: "16px", marginBottom: "24px" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: "12px" }}>
+                      <div>
+                        <div style={{ display: "flex", gap: "6px", alignItems: "center", flexWrap: "wrap", marginBottom: "8px" }}>
+                          <span className="pill ok" style={{ fontSize: "11px", fontWeight: 700 }}>{genGrade.toUpperCase()}</span>
+                          <span className="pill" style={{ background: "#e0e7ff", color: "#3730a3", fontSize: "11px", fontWeight: 700 }}>{genSubject}</span>
+                          <span className="pill" style={{ background: "#f0fdf4", color: "#166534", fontSize: "11px" }}>Strand: {genStrand}</span>
+                        </div>
+                        <h1 style={{ margin: "0 0 6px", color: "#0f172a", fontSize: "26px", fontWeight: 800, letterSpacing: "-0.5px" }}>
+                          📖 {genSubstrand || "Complete Sub-strand Master Lecture & Practical Reader"}
+                        </h1>
+                        <p style={{ margin: 0, color: "#475569", fontSize: "14px", fontStyle: "italic", maxWidth: "800px", lineHeight: "1.5" }}>
+                          {factorySelectedSubstrand?.essence_statement || `Exhaustive 4-hour CBC curriculum exposition, laboratory experiments, vector models, and criterion assessment.`}
+                        </p>
+                      </div>
+                      <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", alignItems: "center" }}>
+                        <button
+                          style={{ fontSize: "12px", background: "#0284c7", color: "#fff", borderColor: "#0284c7", fontWeight: 700 }}
+                          onClick={() => setFactoryStudioMode("quadrant")}
+                        >
+                          🎛️ Return to 4-Station Studio
+                        </button>
+                        <button
+                          className="ghost"
+                          style={{ fontSize: "12px" }}
+                          onClick={() => window.print()}
+                        >
+                          🖨️ Print / Save PDF
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Filter Hour in Reader */}
+                    <div style={{ display: "flex", gap: "8px", marginTop: "16px", flexWrap: "wrap", alignItems: "center" }}>
+                      <strong style={{ fontSize: "12px", color: "#334155" }}>Jump to Chapter:</strong>
+                      <button
+                        className={readerActiveHour === "all" ? "" : "ghost"}
+                        style={{ fontSize: "11.5px", padding: "3px 10px" }}
+                        onClick={() => setReaderActiveHour("all")}
+                      >
+                        📚 Full 4-Hour Module
+                      </button>
+                      {[1, 2, 3, 4].map((h) => {
+                        const hMod = (stationNotes?.hour_modules || [])[h - 1] || (stationNotes?.key_concepts || [])[h - 1];
+                        const hTitle = hMod?.hour_title || hMod?.concept_name || `Hour ${h}`;
+                        return (
+                          <button
+                            key={h}
+                            className={readerActiveHour === h ? "" : "ghost"}
+                            style={{ fontSize: "11.5px", padding: "3px 10px" }}
+                            onClick={() => setReaderActiveHour(h)}
+                          >
+                            ⏰ Hour {h}: {hTitle.slice(0, 20)}...
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* 2. Key Inquiry Questions & Syllabus DNA Banner */}
+                  {factorySelectedSubstrand?.key_inquiry_questions && (
+                    <div style={{ padding: "14px 18px", background: "#f0f9ff", borderRadius: "10px", border: "1px solid #bae6fd", marginBottom: "28px" }}>
+                      <strong style={{ color: "#0369a1", fontSize: "13px", display: "block", marginBottom: "4px" }}>
+                        ❓ Fundamental Key Inquiry Questions (KIQs):
+                      </strong>
+                      <div style={{ color: "#0f172a", fontSize: "13px", lineHeight: "1.5" }}>
+                        {Array.isArray(factorySelectedSubstrand.key_inquiry_questions)
+                          ? factorySelectedSubstrand.key_inquiry_questions.map((q: string, i: number) => (
+                              <div key={i} style={{ marginBottom: "2px" }}>• {q}</div>
+                            ))
+                          : factorySelectedSubstrand.key_inquiry_questions}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* 3. Integrated Hourly Chapters (Hours 1 through 4) */}
+                  {[1, 2, 3, 4].map((hNum) => {
+                    if (readerActiveHour !== "all" && readerActiveHour !== hNum) return null;
+
+                    const hMod = (stationNotes?.hour_modules || [])[hNum - 1] || (stationNotes?.key_concepts || [])[hNum - 1];
+                    const hVisuals = stationVisualsList.filter((v: any) => v.hour_index === hNum || (!v.hour_index && hNum === 1));
+                    const hPracticals = stationActivitiesList.filter((a: any) => a.hour_index === hNum || (!a.hour_index && hNum === 1));
+                    const hQuestions = stationQuestions.filter((q: any) => q.hour_index === hNum || (!q.hour_index && hNum === 1));
+
+                    return (
+                      <article
+                        key={hNum}
+                        id={`hour-chapter-${hNum}`}
+                        style={{
+                          marginBottom: "36px",
+                          paddingBottom: "32px",
+                          borderBottom: hNum < 4 ? "2px dashed #e2e8f0" : "none",
+                        }}
+                      >
+                        {/* Chapter Header */}
+                        <header style={{ marginBottom: "16px" }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "6px" }}>
+                            <span className="pill ok" style={{ fontSize: "11px", fontWeight: 700, background: "#0284c7", color: "#fff" }}>
+                              ⏰ Lesson Hour {hNum} (60 Contact Minutes)
+                            </span>
+                            <span className="pill" style={{ background: "#f8fafc", color: "#475569", fontSize: "11px", border: "1px solid #cbd5e1" }}>
+                              Anchor: {hMod?.learning_intent || `Specific Learning Outcome Micro-Module`}
+                            </span>
+                          </div>
+                          <h2 style={{ margin: "4px 0 0", color: "#0f172a", fontSize: "20px", fontWeight: 700 }}>
+                            {hMod?.hour_title || hMod?.concept_name || `Hour ${hNum}: Core Concept Mastery & Inquiry`}
+                          </h2>
+                        </header>
+
+                        {/* 1. Core Lecture Notes & Exposition */}
+                        <section style={{ marginBottom: "20px" }}>
+                          <h3 style={{ color: "#1e293b", fontSize: "15px", borderLeft: "4px solid #0284c7", paddingLeft: "10px", margin: "0 0 10px" }}>
+                            📝 Pedagogical Lecture Exposition & Theory
+                          </h3>
+                          <div
+                            style={{
+                              fontSize: "14px",
+                              lineHeight: "1.75",
+                              color: "#1e293b",
+                              background: "#f8fafc",
+                              padding: "16px 20px",
+                              borderRadius: "8px",
+                              border: "1px solid #e2e8f0",
+                              whiteSpace: "pre-line",
+                            }}
+                          >
+                            {hMod?.full_lecture_notes || hMod?.content || hMod?.detailed_explanation || (
+                              <em style={{ color: "#64748b" }}>
+                                Lesson notes for Hour {hNum} not yet generated. Switch to Studio to generate notes.
+                              </em>
+                            )}
+                          </div>
+
+                          {/* Worked Examples / Real-World Kenyan Applications */}
+                          {hMod?.worked_examples && (
+                            <div style={{ marginTop: "12px", padding: "12px 16px", background: "#f0fdf4", borderRadius: "8px", border: "1px solid #bbf7d0", fontSize: "13px" }}>
+                              <strong style={{ color: "#166534" }}>🌱 Real-World Application / Worked Example:</strong>
+                              <div style={{ color: "#14532d", marginTop: "4px", lineHeight: "1.6" }}>
+                                {typeof hMod.worked_examples === "string" ? hMod.worked_examples : JSON.stringify(hMod.worked_examples)}
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Misconceptions & PCK Tips */}
+                          {hMod?.misconceptions && (
+                            <div style={{ marginTop: "10px", padding: "10px 14px", background: "#fffbeb", borderRadius: "8px", border: "1px solid #fde68a", fontSize: "12.5px" }}>
+                              <strong style={{ color: "#92400e" }}>⚠️ Common Learner Misconception to Clarify:</strong>
+                              <div style={{ color: "#78350f", marginTop: "2px" }}>
+                                {typeof hMod.misconceptions === "string" ? hMod.misconceptions : JSON.stringify(hMod.misconceptions)}
+                              </div>
+                            </div>
+                          )}
+                        </section>
+
+                        {/* 2. Embedded Vector Diagrams & Photorealistic Models */}
+                        {hVisuals.length > 0 && (
+                          <section style={{ marginBottom: "24px" }}>
+                            <h3 style={{ color: "#0c4a6e", fontSize: "15px", borderLeft: "4px solid #0ea5e9", paddingLeft: "10px", margin: "0 0 12px" }}>
+                              📐 Vector SVG Models & Visual Diagrams ({hVisuals.length})
+                            </h3>
+                            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: "14px" }}>
+                              {hVisuals.map((vis: any, vIdx: number) => (
+                                <div key={vIdx} style={{ background: "#fff", borderRadius: "10px", border: "1px solid #bae6fd", padding: "14px", overflow: "hidden" }}>
+                                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
+                                    <strong style={{ color: "#0369a1", fontSize: "13.5px" }}>
+                                      🖼️ {vis.title || `Visual Model ${vIdx + 1}`}
+                                    </strong>
+                                    <span className="pill ok" style={{ fontSize: "10px" }}>{vis.asset_type || "SVG"}</span>
+                                  </div>
+                                  <div
+                                    className="svg-canvas-box"
+                                    style={{ minHeight: "220px", maxHeight: "300px", border: "1px solid #e2e8f0", borderRadius: "6px" }}
+                                    dangerouslySetInnerHTML={{ __html: sanitizeSvgForDisplay(vis.diagram_svg || "<svg viewBox='0 0 400 200'><text x='200' y='100' text-anchor='middle'>SVG Model</text></svg>") }}
+                                  />
+                                  {vis.pedagogical_purpose && (
+                                    <p style={{ margin: "8px 0 0", fontSize: "12px", color: "#475569", lineHeight: "1.4" }}>
+                                      <strong>Purpose:</strong> {vis.pedagogical_purpose}
+                                    </p>
+                                  )}
+                                  {vis.storage_url && (
+                                    <div style={{ marginTop: "6px", fontSize: "11px" }}>
+                                      <a href={vis.storage_url} target="_blank" rel="noreferrer" style={{ color: "#0284c7" }}>
+                                        🔗 Open High-Res SVG Asset (MinIO)
+                                      </a>
+                                    </div>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          </section>
+                        )}
+
+                        {/* 3. Embedded Hands-On Laboratory / Fieldwork Practical */}
+                        {hPracticals.length > 0 && (
+                          <section style={{ marginBottom: "24px" }}>
+                            <h3 style={{ color: "#0f766e", fontSize: "15px", borderLeft: "4px solid #14b8a6", paddingLeft: "10px", margin: "0 0 12px" }}>
+                              🧪 Hands-On Practical Experiment & Fieldwork ({hPracticals.length})
+                            </h3>
+                            {hPracticals.map((act: any, aIdx: number) => (
+                              <div key={aIdx} style={{ background: "#f0fdfa", borderRadius: "10px", border: "1px solid #99f6e4", padding: "16px", marginBottom: "12px" }}>
+                                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
+                                  <h4 style={{ margin: 0, color: "#0f766e", fontSize: "15px" }}>
+                                    🔬 {act.activity_name || `Practical Task ${aIdx + 1}`}
+                                  </h4>
+                                  <span className="pill ok" style={{ fontSize: "10.5px" }}>
+                                    {act.activity_type || "laboratory_experiment"}
+                                  </span>
+                                </div>
+                                <p style={{ margin: "4px 0 10px", color: "#134e4a", fontSize: "13px" }}>
+                                  <strong>Objective:</strong> {act.objective}
+                                </p>
+
+                                {/* Apparatus */}
+                                {act.materials && (
+                                  <div style={{ marginBottom: "10px", fontSize: "12.5px" }}>
+                                    <strong style={{ color: "#0f766e" }}>🧰 Apparatus & Required Local Materials:</strong>
+                                    <span style={{ color: "#134e4a", marginLeft: "6px" }}>
+                                      {Array.isArray(act.materials) ? act.materials.join(" • ") : act.materials}
+                                    </span>
+                                  </div>
+                                )}
+
+                                {/* Procedure Steps */}
+                                {act.procedure_steps && (
+                                  <div style={{ marginBottom: "10px" }}>
+                                    <strong style={{ color: "#0f766e", fontSize: "12.5px" }}>📋 Step-by-Step Procedure:</strong>
+                                    <ol style={{ margin: "4px 0 0", paddingLeft: "20px", fontSize: "12.5px", color: "#134e4a" }}>
+                                      {Array.isArray(act.procedure_steps)
+                                        ? act.procedure_steps.map((st: string, sIdx: number) => <li key={sIdx} style={{ marginBottom: "2px" }}>{st}</li>)
+                                        : <li>{act.procedure_steps}</li>}
+                                    </ol>
+                                  </div>
+                                )}
+
+                                {/* Safety Precautions */}
+                                {act.safety_hazards_to_check && (
+                                  <div style={{ padding: "8px 12px", background: "#fef2f2", borderRadius: "6px", border: "1px solid #fecaca", fontSize: "12px", color: "#991b1b" }}>
+                                    <strong>⚠️ Safety & Hazard Protocol:</strong> {Array.isArray(act.safety_hazards_to_check) ? act.safety_hazards_to_check.join(" • ") : act.safety_hazards_to_check}
+                                  </div>
+                                )}
+                              </div>
+                            ))}
+                          </section>
+                        )}
+
+                        {/* 4. Formative Assessment Questions with Direct Paragraph Justifications */}
+                        {hQuestions.length > 0 && (
+                          <section>
+                            <h3 style={{ color: "#6b21a8", fontSize: "15px", borderLeft: "4px solid #a855f7", paddingLeft: "10px", margin: "0 0 12px" }}>
+                              🎯 Formative Assessment Questions & Detailed Answer Keys ({hQuestions.length})
+                            </h3>
+                            <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+                              {hQuestions.map((qItem: any, qIdx: number) => {
+                                const qKey = `${hNum}-${qIdx}`;
+                                const isExpanded = !!readerShowAnswers[qKey];
+                                const optionsList = normalizeQuestionOptions(qItem.options, qItem.correct_answer, qItem.distractor_explanations);
+
+                                return (
+                                  <div key={qIdx} style={{ background: "#faf5ff", borderRadius: "8px", border: "1px solid #e9d5ff", padding: "14px" }}>
+                                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "6px" }}>
+                                      <strong style={{ color: "#581c87", fontSize: "13.5px" }}>
+                                        Question {qIdx + 1}: {qItem.question_text || qItem.prompt || qItem.text}
+                                      </strong>
+                                      <span className="pill ok" style={{ fontSize: "10px" }}>{qItem.cognitive_level || "Bloom: Application"}</span>
+                                    </div>
+
+                                    {/* Options */}
+                                    {optionsList.length > 0 && (
+                                      <div style={{ margin: "8px 0 10px", display: "grid", gap: "6px" }}>
+                                        {optionsList.map((opt: any, oIdx: number) => (
+                                          <div
+                                            key={oIdx}
+                                            style={{
+                                              padding: "6px 10px",
+                                              borderRadius: "6px",
+                                              border: isExpanded && opt.is_correct ? "1.5px solid #16a34a" : "1px solid #e2e8f0",
+                                              background: isExpanded && opt.is_correct ? "#dcfce7" : "#fff",
+                                              fontSize: "12.5px",
+                                              color: isExpanded && opt.is_correct ? "#166534" : "#334155",
+                                              fontWeight: isExpanded && opt.is_correct ? 700 : 400,
+                                            }}
+                                          >
+                                            <strong>{opt.id}.</strong> {opt.text}
+                                            {isExpanded && opt.is_correct && <span style={{ marginLeft: "6px", color: "#16a34a" }}>✓ (Correct Answer)</span>}
+                                          </div>
+                                        ))}
+                                      </div>
+                                    )}
+
+                                    {/* Reveal Answer & Pedagogical Notes Justification Button */}
+                                    <button
+                                      className="ghost"
+                                      style={{ fontSize: "11px", padding: "3px 8px", color: "#7e22ce", borderColor: "#c084fc", background: "#fff" }}
+                                      onClick={() => setReaderShowAnswers({ ...readerShowAnswers, [qKey]: !isExpanded })}
+                                    >
+                                      {isExpanded ? "▲ Hide Answer & Notes Link" : "▼ Reveal Answer & Notes Justification"}
+                                    </button>
+
+                                    {/* Expanded Answer Key & Cross-Link Justification */}
+                                    {isExpanded && (
+                                      <div style={{ marginTop: "10px", padding: "10px 12px", background: "#f0fdf4", borderRadius: "6px", border: "1px solid #bbf7d0", fontSize: "12px", color: "#14532d" }}>
+                                        <strong style={{ color: "#166534", display: "block", marginBottom: "4px" }}>
+                                          💡 Model Answer & Pedagogical Justification:
+                                        </strong>
+                                        <div style={{ lineHeight: "1.5" }}>
+                                          {qItem.model_answer || qItem.explanation || `Derived directly from the core lecture exposition of Hour ${hNum}.`}
+                                        </div>
+                                        <div style={{ marginTop: "6px", padding: "6px 8px", background: "#fff", borderRadius: "4px", border: "1px solid #86efac", fontSize: "11px", color: "#15803d" }}>
+                                          🔗 <strong>Direct Lecture Note Cross-Reference:</strong> Grounded in <em>"{hMod?.hour_title || `Hour ${hNum}`}"</em> — see section on <em>{hMod?.learning_intent || 'Micro-Concept'}</em> above.
+                                        </div>
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </section>
+                        )}
+                      </article>
+                    );
+                  })}
+                </div>
+              )}
 
                 {/* Bottom Navigation */}
                 <div style={{ display: "flex", justifyContent: "space-between", marginTop: "24px", padding: "16px", background: "#f8fafc", borderRadius: "10px", border: "1px solid #e2e8f0", flexWrap: "wrap", gap: "10px" }}>
