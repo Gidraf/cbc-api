@@ -1269,15 +1269,39 @@ export function App() {
 
   // ── Modular Granular Element Deletion & Manipulation ────────────────────
 
-  function deleteVisualAsset(assetKey: string) {
-    const updatedList = (stationVisualsList || []).filter((v: any) => (v.asset_id || v.diagram_id) !== assetKey);
+  function deleteVisualAsset(assetKeyOrItem: any, indexFallback?: number) {
+    const currentList = (stationVisualsList && stationVisualsList.length > 0)
+      ? stationVisualsList
+      : (stationDiagram ? [stationDiagram] : []);
+
+    let targetKey = "";
+    let targetTitle = "";
+
+    if (typeof assetKeyOrItem === "string") {
+      targetKey = assetKeyOrItem.trim();
+    } else if (assetKeyOrItem && typeof assetKeyOrItem === "object") {
+      targetKey = (assetKeyOrItem.asset_id || assetKeyOrItem.diagram_id || assetKeyOrItem.id || "").toString().trim();
+      targetTitle = (assetKeyOrItem.title || assetKeyOrItem.diagram_title || assetKeyOrItem.micro_concept || "").toString().trim();
+    }
+
+    const updatedList = currentList.filter((v: any, idx: number) => {
+      if (assetKeyOrItem && typeof assetKeyOrItem === "object" && v === assetKeyOrItem) return false;
+      if (indexFallback !== undefined && idx === indexFallback) return false;
+      const vKey = (v.asset_id || v.diagram_id || v.id || "").toString().trim();
+      if (targetKey && vKey && vKey === targetKey) return false;
+      const vTitle = (v.title || v.diagram_title || v.micro_concept || "").toString().trim();
+      if (targetTitle && vTitle && vTitle.toLowerCase() === targetTitle.toLowerCase()) return false;
+      if (targetKey && vTitle && vTitle.toLowerCase() === targetKey.toLowerCase()) return false;
+      return true;
+    });
+
     setStationVisualsList(updatedList);
     if (updatedList.length === 0) {
       setStationDiagram(null);
       setActiveVisualIdx(0);
       setDiagramApproved(false);
     } else {
-      const nextIdx = Math.min(activeVisualIdx, updatedList.length - 1);
+      const nextIdx = Math.min(Math.max(0, activeVisualIdx), updatedList.length - 1);
       setActiveVisualIdx(nextIdx);
       setStationDiagram(updatedList[nextIdx]);
     }
@@ -1286,6 +1310,10 @@ export function App() {
   }
 
   function clearVisualsForHour(hourNum: number | "all") {
+    const currentList = (stationVisualsList && stationVisualsList.length > 0)
+      ? stationVisualsList
+      : (stationDiagram ? [stationDiagram] : []);
+
     let updatedList: any[] = [];
     if (hourNum === "all") {
       updatedList = [];
@@ -1293,7 +1321,7 @@ export function App() {
       setActiveVisualIdx(0);
       setDiagramApproved(false);
     } else {
-      updatedList = (stationVisualsList || []).filter((v: any) => v.hour_index !== hourNum && !(hourNum === 1 && !v.hour_index));
+      updatedList = currentList.filter((v: any) => v.hour_index !== hourNum && !(hourNum === 1 && !v.hour_index));
       if (updatedList.length === 0) {
         setStationDiagram(null);
         setActiveVisualIdx(0);
@@ -1321,15 +1349,39 @@ export function App() {
     autoPersistStation("diagrams", updatedList, undefined, updatedList);
   }
 
-  function deleteActivityAsset(actKey: string) {
-    const updatedList = (stationActivitiesList || []).filter((a: any) => a.activity_id !== actKey);
+  function deleteActivityAsset(actKeyOrItem: any, indexFallback?: number) {
+    const currentList = (stationActivitiesList && stationActivitiesList.length > 0)
+      ? stationActivitiesList
+      : (stationActivity ? [stationActivity] : []);
+
+    let targetKey = "";
+    let targetName = "";
+
+    if (typeof actKeyOrItem === "string") {
+      targetKey = actKeyOrItem.trim();
+    } else if (actKeyOrItem && typeof actKeyOrItem === "object") {
+      targetKey = (actKeyOrItem.activity_id || actKeyOrItem.id || "").toString().trim();
+      targetName = (actKeyOrItem.activity_name || actKeyOrItem.title || actKeyOrItem.objective || "").toString().trim();
+    }
+
+    const updatedList = currentList.filter((a: any, idx: number) => {
+      if (actKeyOrItem && typeof actKeyOrItem === "object" && a === actKeyOrItem) return false;
+      if (indexFallback !== undefined && idx === indexFallback) return false;
+      const aKey = (a.activity_id || a.id || "").toString().trim();
+      if (targetKey && aKey && aKey === targetKey) return false;
+      const aName = (a.activity_name || a.title || a.objective || "").toString().trim();
+      if (targetName && aName && aName.toLowerCase() === targetName.toLowerCase()) return false;
+      if (targetKey && aName && aName.toLowerCase() === targetKey.toLowerCase()) return false;
+      return true;
+    });
+
     setStationActivitiesList(updatedList);
     if (updatedList.length === 0) {
       setStationActivity(null);
       setActiveActivityIdx(0);
       setActivityApproved(false);
     } else {
-      const nextIdx = Math.min(activeActivityIdx, updatedList.length - 1);
+      const nextIdx = Math.min(Math.max(0, activeActivityIdx), updatedList.length - 1);
       setActiveActivityIdx(nextIdx);
       setStationActivity(updatedList[nextIdx]);
     }
@@ -1338,6 +1390,10 @@ export function App() {
   }
 
   function clearActivitiesForHour(hourNum: number | "all") {
+    const currentList = (stationActivitiesList && stationActivitiesList.length > 0)
+      ? stationActivitiesList
+      : (stationActivity ? [stationActivity] : []);
+
     let updatedList: any[] = [];
     if (hourNum === "all") {
       updatedList = [];
@@ -1345,7 +1401,7 @@ export function App() {
       setActiveActivityIdx(0);
       setActivityApproved(false);
     } else {
-      updatedList = (stationActivitiesList || []).filter((a: any) => a.hour_index !== hourNum && !(hourNum === 1 && !a.hour_index));
+      updatedList = currentList.filter((a: any) => a.hour_index !== hourNum && !(hourNum === 1 && !a.hour_index));
       if (updatedList.length === 0) {
         setStationActivity(null);
         setActiveActivityIdx(0);
@@ -5334,7 +5390,7 @@ export function App() {
                                     style={{ fontSize: "11px", padding: "3px 8px", color: "#b91c1c", borderColor: "#fca5a5" }}
                                     onClick={() => {
                                       if (confirm(`Delete visual '${curVis.title || 'this diagram'}'?`)) {
-                                        deleteVisualAsset(curVis.asset_id || curVis.diagram_id);
+                                        deleteVisualAsset(curVis, activeVisualIdx);
                                       }
                                     }}
                                     title="Permanently delete this specific visual asset"
