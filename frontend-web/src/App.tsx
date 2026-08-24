@@ -243,7 +243,7 @@ export function App() {
   const [visualActiveHourTab, setVisualActiveHourTab] = useState<number | "all">("all");
   const [diagramConceptInput, setDiagramConceptInput] = useState("");
   const [diagramRefinePrompt, setDiagramRefinePrompt] = useState("");
-  const [diagramViewMode, setDiagramViewMode] = useState<"visual" | "image_spec" | "code" | "tactile">("visual");
+  const [diagramViewMode, setDiagramViewMode] = useState<"visual" | "prompt_spec" | "image_spec" | "code" | "tactile">("visual");
   const [svgCodeDraft, setSvgCodeDraft] = useState<string>("");
   const [diagramApproved, setDiagramApproved] = useState(false);
 
@@ -1399,9 +1399,22 @@ export function App() {
     });
   }
 
-  async function generateSingleVisual(visualItem: any, generationMode: "svg" | "photo_spec" | "video_storyboard" = "svg", customInstructions?: string) {
+  async function generateSingleVisual(
+    visualItem: any,
+    generationMode: "prompt_only" | "svg" | "photo_spec" | "video_storyboard" = "svg",
+    customInstructions?: string,
+    constructionPrompt?: string,
+  ) {
     if (!visualItem) return;
-    await run(`Layer 2: Synthesizing ${generationMode === "photo_spec" ? "Realistic Photo Spec" : (generationMode === "video_storyboard" ? "Video Storyboard" : "Vector SVG")} for (${visualItem.title || 'Visual'})...`, async () => {
+    const actionLabel = generationMode === "prompt_only"
+      ? "Generating Visual Construction Prompt & Context"
+      : generationMode === "photo_spec"
+      ? "Synthesizing Realistic Photo Spec"
+      : generationMode === "video_storyboard"
+      ? "Synthesizing Video Storyboard"
+      : "Synthesizing Vector SVG";
+
+    await run(`Layer 2: ${actionLabel} for (${visualItem.title || 'Visual'})...`, async () => {
       const payload = {
         grade: genGrade,
         subject: genSubject,
@@ -1409,6 +1422,7 @@ export function App() {
         sub_strand: genSubstrand,
         visual_item: visualItem,
         generation_mode: generationMode,
+        construction_prompt: constructionPrompt || visualItem.vivid_prompt || "",
         notes_content: stationNotes || undefined,
         custom_instructions: customInstructions || diagramRefinePrompt,
       };
@@ -1428,6 +1442,7 @@ export function App() {
         setStationVisualsList(next);
         setStationDiagram(updated);
         if (generationMode === "photo_spec") setDiagramViewMode("image_spec");
+        else if (generationMode === "prompt_only") setDiagramViewMode("prompt_spec");
         else setDiagramViewMode("visual");
 
         autoPersistStation("diagrams", next, undefined, next);
@@ -4407,46 +4422,96 @@ export function App() {
                                 </p>
                               )}
 
-                              {/* Multi-Format Independent Synthesis Controls */}
-                              <div style={{ display: "flex", gap: "8px", marginTop: "10px", flexWrap: "wrap", paddingTop: "8px", borderTop: "1px dashed #e2e8f0" }}>
-                                <button
-                                  className="ghost"
-                                  style={{ fontSize: "11.5px", padding: "4px 10px", background: "#f0f9ff", color: "#0369a1", borderColor: "#bae6fd", fontWeight: 600 }}
-                                  onClick={() => {
-                                    if (curVis) {
-                                      generateSingleVisual(curVis, "svg", diagramRefinePrompt);
-                                    } else {
-                                      generateFactoryDiagram(diagramRefinePrompt);
-                                    }
-                                  }}
-                                  disabled={isRunning}
-                                >
-                                  🎨 Synthesize Vector SVG
-                                </button>
-                                <button
-                                  className="ghost"
-                                  style={{ fontSize: "11.5px", padding: "4px 10px", background: "#faf5ff", color: "#7e22ce", borderColor: "#e9d5ff", fontWeight: 600 }}
-                                  onClick={() => {
-                                    if (curVis) {
-                                      generateSingleVisual(curVis, "photo_spec", diagramRefinePrompt);
-                                    }
-                                  }}
-                                  disabled={isRunning || !curVis}
-                                >
-                                  📸 Synthesize Realistic Photo Specs
-                                </button>
-                                <button
-                                  className="ghost"
-                                  style={{ fontSize: "11.5px", padding: "4px 10px", background: "#fdf4ff", color: "#86198f", borderColor: "#f5d0fe", fontWeight: 600 }}
-                                  onClick={() => {
-                                    if (curVis) {
-                                      generateSingleVisual(curVis, "video_storyboard", diagramRefinePrompt);
-                                    }
-                                  }}
-                                  disabled={isRunning || !curVis}
-                                >
-                                  🎥 Synthesize Video Storyboard
-                                </button>
+                              {/* STAGE 1: VISUAL PROMPT & CONTEXT SPECIFICATION BOX */}
+                              <div style={{ margin: "10px 0", padding: "12px 14px", background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: "8px", fontSize: "12px" }}>
+                                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px", flexWrap: "wrap", gap: "6px" }}>
+                                  <div>
+                                    <strong style={{ color: "#166534", fontSize: "13px" }}>
+                                      📝 Stage 1: Visual Blueprint Prompt & Pedagogical Context
+                                    </strong>
+                                    {curVis.hour_index && (
+                                      <span className="pill ok" style={{ fontSize: "10px", marginLeft: "6px", background: "#dcfce7", color: "#15803d" }}>
+                                        ⏰ Anchored in Hour {curVis.hour_index}: {curVis.hour_title || `Hour ${curVis.hour_index}`}
+                                      </span>
+                                    )}
+                                  </div>
+                                  <div style={{ display: "flex", gap: "6px" }}>
+                                    <button
+                                      className="ghost"
+                                      style={{ fontSize: "11px", padding: "3px 10px", background: "#fff", color: "#15803d", borderColor: "#86efac", fontWeight: 700 }}
+                                      onClick={() => generateSingleVisual(curVis, "prompt_only", diagramRefinePrompt)}
+                                      disabled={isRunning}
+                                      title="Generate or refine the explicit visual prompt, coordinate blueprint, and context grounding from notes"
+                                    >
+                                      ✨ {curVis.vivid_prompt ? "Refine Prompt & Context" : "Generate Prompt & Context"}
+                                    </button>
+                                  </div>
+                                </div>
+
+                                {/* Context Grounding Excerpt */}
+                                {curVis.context_grounding ? (
+                                  <div style={{ marginBottom: "8px", padding: "6px 10px", background: "#fff", borderRadius: "4px", border: "1px solid #dcfce7", color: "#166534", fontSize: "11.5px" }}>
+                                    <strong>🎯 Pedagogical Context Grounding:</strong> {curVis.context_grounding}
+                                  </div>
+                                ) : (
+                                  <div style={{ marginBottom: "8px", fontSize: "11.5px", color: "#4b5563" }}>
+                                    <em>Context: Derived from Lesson Notes Hour {curVis.hour_index || 1} & Syllabus Specific Learning Outcomes.</em>
+                                  </div>
+                                )}
+
+                                {/* Editable Prompt & Construction Blueprint */}
+                                <div style={{ marginTop: "6px" }}>
+                                  <label style={{ display: "block", fontSize: "11px", fontWeight: 700, color: "#374151", marginBottom: "4px" }}>
+                                    📐 Vector SVG & Multi-Modal Construction Blueprint (Editable Prompt):
+                                  </label>
+                                  <textarea
+                                    style={{ width: "100%", minHeight: "75px", fontSize: "11.5px", fontFamily: "monospace", padding: "6px 8px", borderRadius: "6px", border: "1px solid #cbd5e1", background: "#fff", resize: "vertical" }}
+                                    value={curVis.vivid_prompt || ""}
+                                    placeholder="Enter or generate explicit construction blueprint: viewBox (800x500), shape coordinates, color palette (hex codes), callout leader lines, text annotations..."
+                                    onChange={(e) => {
+                                      const updated = { ...curVis, vivid_prompt: e.target.value };
+                                      setStationDiagram(updated);
+                                      const next = stationVisualsList.map((v: any) => (v.asset_id === curVis.asset_id || v.title === curVis.title ? updated : v));
+                                      setStationVisualsList(next);
+                                    }}
+                                  />
+                                </div>
+
+                                {/* STAGE 2 ACTION BUTTONS */}
+                                <div style={{ display: "flex", gap: "8px", marginTop: "10px", flexWrap: "wrap", paddingTop: "8px", borderTop: "1px dashed #bbf7d0", alignItems: "center" }}>
+                                  <span style={{ fontSize: "11.5px", fontWeight: 700, color: "#166534" }}>🚀 Stage 2 Synthesizers:</span>
+                                  <button
+                                    style={{ fontSize: "11.5px", padding: "5px 12px", background: "#0284c7", color: "#fff", borderColor: "#0284c7", fontWeight: 700 }}
+                                    onClick={() => generateSingleVisual(curVis, "svg", diagramRefinePrompt, curVis.vivid_prompt)}
+                                    disabled={isRunning}
+                                  >
+                                    🎨 Render Vector SVG from Prompt
+                                  </button>
+                                  <button
+                                    className="ghost"
+                                    style={{ fontSize: "11.5px", padding: "5px 12px", background: "#faf5ff", color: "#7e22ce", borderColor: "#e9d5ff", fontWeight: 600 }}
+                                    onClick={() => generateSingleVisual(curVis, "photo_spec", diagramRefinePrompt, curVis.vivid_prompt)}
+                                    disabled={isRunning}
+                                  >
+                                    📸 Render 4K Photo Spec from Prompt
+                                  </button>
+                                  <button
+                                    className="ghost"
+                                    style={{ fontSize: "11.5px", padding: "5px 12px", background: "#fdf4ff", color: "#86198f", borderColor: "#f5d0fe", fontWeight: 600 }}
+                                    onClick={() => generateSingleVisual(curVis, "video_storyboard", diagramRefinePrompt, curVis.vivid_prompt)}
+                                    disabled={isRunning}
+                                  >
+                                    🎥 Render Video Storyboard from Prompt
+                                  </button>
+                                  <button
+                                    className="ghost"
+                                    style={{ fontSize: "11.5px", padding: "5px 12px", background: "#fff", color: "#15803d", borderColor: "#86efac", fontWeight: 600 }}
+                                    onClick={() => updateVisualAsset(curVis)}
+                                    disabled={isRunning}
+                                  >
+                                    💾 Save Blueprint Spec
+                                  </button>
+                                </div>
                               </div>
                             </div>
                           )}
@@ -4460,7 +4525,7 @@ export function App() {
                             <button
                               onClick={() => {
                                 if (curVis) {
-                                  generateSingleVisual(curVis, "svg", diagramRefinePrompt);
+                                  generateSingleVisual(curVis, "svg", diagramRefinePrompt, curVis.vivid_prompt);
                                 } else {
                                   generateFactoryDiagram(diagramRefinePrompt);
                                 }
@@ -4468,7 +4533,7 @@ export function App() {
                               disabled={isRunning}
                               style={{ whiteSpace: "nowrap" }}
                             >
-                              {curVis?.diagram_svg || curVis?.image_prompt ? "🔄 Regenerate Visual" : "⚡ Generate Active Visual"}
+                              {curVis?.diagram_svg || curVis?.image_prompt ? "🔄 Regenerate Visual from Prompt" : "⚡ Generate Active Visual"}
                             </button>
                           </div>
 
@@ -4480,6 +4545,13 @@ export function App() {
                               onClick={() => setDiagramViewMode("visual")}
                             >
                               🖼️ Vector Canvas (SVG)
+                            </button>
+                            <button
+                              className={diagramViewMode === "prompt_spec" ? "" : "ghost"}
+                              style={{ fontSize: "11px", padding: "4px 8px" }}
+                              onClick={() => setDiagramViewMode("prompt_spec")}
+                            >
+                              📝 Construction Prompt & Context Spec
                             </button>
                             <button
                               className={diagramViewMode === "image_spec" ? "" : "ghost"}
@@ -4585,6 +4657,94 @@ export function App() {
                                         </div>
                                       </div>
                                     )}
+                                  </div>
+                                )}
+
+                                {diagramViewMode === "prompt_spec" && (
+                                  <div style={{ padding: "14px", background: "#f8fafc", borderRadius: "8px", border: "1px solid #cbd5e1", fontSize: "12.5px" }}>
+                                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px", flexWrap: "wrap", gap: "6px" }}>
+                                      <div>
+                                        <strong style={{ color: "#0369a1", fontSize: "13.5px" }}>
+                                          📝 Full Visual Construction Prompt & Context Dossier
+                                        </strong>
+                                        <span className="pill ok" style={{ fontSize: "10px", marginLeft: "8px" }}>
+                                          {curVis.asset_type || "technical_svg"} • Hour {curVis.hour_index || 1}
+                                        </span>
+                                      </div>
+                                      <div style={{ display: "flex", gap: "6px" }}>
+                                        <button
+                                          className="ghost"
+                                          style={{ fontSize: "11px", padding: "3px 10px", background: "#fff", borderColor: "#0284c7", color: "#0284c7", fontWeight: 700 }}
+                                          onClick={() => generateSingleVisual(curVis, "prompt_only", diagramRefinePrompt)}
+                                          disabled={isRunning}
+                                        >
+                                          ✨ Refine with AI
+                                        </button>
+                                        <button
+                                          style={{ fontSize: "11px", padding: "3px 10px", background: "#0284c7", color: "#fff", borderColor: "#0284c7", fontWeight: 700 }}
+                                          onClick={() => generateSingleVisual(curVis, "svg", diagramRefinePrompt, curVis.vivid_prompt)}
+                                          disabled={isRunning}
+                                        >
+                                          🎨 Render SVG from Prompt
+                                        </button>
+                                      </div>
+                                    </div>
+
+                                    {/* 1. Context Grounding */}
+                                    <div style={{ marginBottom: "12px", padding: "10px 12px", background: "#f0f9ff", borderRadius: "6px", border: "1px solid #bae6fd" }}>
+                                      <strong style={{ color: "#0369a1", display: "block", marginBottom: "4px", fontSize: "12px" }}>
+                                        🎯 Pedagogical Grounding & Lesson Hour Notes Anchor:
+                                      </strong>
+                                      <div style={{ color: "#0f172a", fontSize: "12px", lineHeight: "1.5" }}>
+                                        {curVis.context_grounding || `Directly grounded in Hour ${curVis.hour_index || 1} Lesson Notes for ${curVis.title || 'Micro-Concept'}. Formative visual model designed to meet KICD Specific Learning Outcomes.`}
+                                      </div>
+                                    </div>
+
+                                    {/* 2. Vector SVG Construction Specification */}
+                                    <div style={{ marginBottom: "12px" }}>
+                                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "4px" }}>
+                                        <strong style={{ color: "#334155", fontSize: "12px" }}>
+                                          📐 Vector SVG Layout & Coordinate Specification (800x500):
+                                        </strong>
+                                        <button
+                                          className="ghost"
+                                          style={{ fontSize: "10px", padding: "2px 6px" }}
+                                          onClick={() => {
+                                            navigator.clipboard.writeText(curVis.vivid_prompt || "");
+                                            alert("Vector construction prompt copied!");
+                                          }}
+                                        >
+                                          📋 Copy
+                                        </button>
+                                      </div>
+                                      <textarea
+                                        style={{ width: "100%", minHeight: "100px", fontSize: "11.5px", fontFamily: "monospace", padding: "8px", borderRadius: "6px", border: "1px solid #cbd5e1", background: "#fff", lineHeight: "1.45" }}
+                                        value={curVis.vivid_prompt || ""}
+                                        onChange={(e) => {
+                                          const updated = { ...curVis, vivid_prompt: e.target.value };
+                                          setStationDiagram(updated);
+                                          const next = stationVisualsList.map((v: any) => (v.asset_id === curVis.asset_id || v.title === curVis.title ? updated : v));
+                                          setStationVisualsList(next);
+                                        }}
+                                      />
+                                    </div>
+
+                                    {/* 3. Photorealistic AI Prompt */}
+                                    <div style={{ marginBottom: "12px" }}>
+                                      <strong style={{ color: "#7e22ce", display: "block", marginBottom: "4px", fontSize: "12px" }}>
+                                        📸 Photorealistic Scene Prompt (4K / Midjourney / Imagen):
+                                      </strong>
+                                      <textarea
+                                        style={{ width: "100%", minHeight: "75px", fontSize: "11.5px", fontFamily: "monospace", padding: "8px", borderRadius: "6px", border: "1px solid #e9d5ff", background: "#faf5ff", color: "#3b0764", lineHeight: "1.45" }}
+                                        value={curVis.image_prompt || ""}
+                                        onChange={(e) => {
+                                          const updated = { ...curVis, image_prompt: e.target.value };
+                                          setStationDiagram(updated);
+                                          const next = stationVisualsList.map((v: any) => (v.asset_id === curVis.asset_id || v.title === curVis.title ? updated : v));
+                                          setStationVisualsList(next);
+                                        }}
+                                      />
+                                    </div>
                                   </div>
                                 )}
 

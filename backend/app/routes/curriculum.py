@@ -507,7 +507,9 @@ class FactoryGenerateSingleVisualRequest(BaseModel):
     strand: str
     sub_strand: str
     visual_item: dict[str, Any]
-    generation_mode: str = "svg"  # "svg" | "photo_spec" | "video_storyboard"
+    generation_mode: str = "svg"  # "prompt_only" | "svg" | "photo_spec" | "video_storyboard"
+    construction_prompt: str = ""
+    target_hour: int | None = None
     notes_content: dict[str, Any] | None = None
     custom_instructions: str = ""
 
@@ -1513,7 +1515,52 @@ def factory_generate_single_visual(
         },
     )
 
-    if mode == "photo_spec":
+    construction_spec = payload.construction_prompt or item.get("vivid_prompt") or ""
+
+    if mode == "prompt_only":
+        context.messages.append({
+            "role": "user",
+            "content": (
+                f"{ct_profile.format_for_prompt()}\n\n"
+                f"{dossier.formatted_context}\n\n"
+                f"{specific_hour_notes}\n\n"
+                f"=== 🎯 STAGE 1: GENERATE COMPREHENSIVE DIAGRAM CONSTRUCTION PROMPT & CONTEXT GROUNDING ===\n"
+                f"Target Concept Title: {title} (Parent Hour {hour_idx or 1})\n"
+                f"Existing Meta: {vivid_desc}\n\n"
+                f"DIRECTIVE:\n"
+                f"Analyze the Layer 1 Lesson Notes for Hour {hour_idx or 1} and syllabus requirements. Generate an exhaustive, scientifically rigorous Visual Construction Specification and Multi-Modal Prompt Package before any rendering occurs.\n\n"
+                f"Specify in detail:\n"
+                f"1. 'context_grounding': Excerpt and pedagogical rationale from Hour {hour_idx or 1} notes explaining why this visual is required.\n"
+                f"2. 'vivid_prompt' (Vector SVG Construction Blueprint): Exact visual layout, viewBox coordinates (800x500), background tones, shape coordinates, color palette (hex codes), callout boxes, leader lines, text labels, and scientific mechanism flow.\n"
+                f"3. 'image_prompt' (4K Photorealistic Prompt): 150-word photorealistic prompt describing authentic Kenyan field/lab environment, lighting, camera angle, and subject actions for Midjourney/Imagen.\n"
+                f"4. 'video_storyboard': 4-scene video script breakdown with camera shots and voiceover.\n"
+                f"5. 'accessibility': Alt-text and tactile description for visually impaired learners.\n\n"
+                f"Return JSON:\n"
+                f"{{\n"
+                f'  "diagram_id": "{item.get("asset_id", "vis_1")}",\n'
+                f'  "diagram_title": "{title}",\n'
+                f'  "hour_index": {hour_idx or 1},\n'
+                f'  "micro_concept": "{item.get("micro_concept", title)}",\n'
+                f'  "pedagogical_purpose": "...",\n'
+                f'  "context_grounding": "...",\n'
+                f'  "vivid_prompt": "...",\n'
+                f'  "image_prompt": "...",\n'
+                f'  "negative_prompt": "blurry, low quality, distorted anatomy, western setting, unrealistic tools",\n'
+                f'  "aspect_ratio": "16:9",\n'
+                f'  "composition_guide": "...",\n'
+                f'  "video_storyboard": {{\n'
+                f'    "video_title": "{title}",\n'
+                f'    "target_duration": "75s",\n'
+                f'    "scenes": [\n'
+                f'      {{"scene_number": 1, "time_range": "0:00-0:15", "shot_type": "Wide Establishing Shot", "visual_action": "...", "voiceover_narration": "...", "on_screen_text": "...", "ai_video_prompt": "..."}}\n'
+                f'    ]\n'
+                f'  }},\n'
+                f'  "accessibility": {{"alt_text": "...", "tactile_description": "..."}}\n'
+                f"}}\n\n"
+                f"ADDITIONAL INSTRUCTIONS: {payload.custom_instructions}"
+            ),
+        })
+    elif mode == "photo_spec":
         context.messages.append({
             "role": "user",
             "content": (
@@ -1522,7 +1569,7 @@ def factory_generate_single_visual(
                 f"{specific_hour_notes}\n\n"
                 f"=== SPECIFICATION FOR PHOTOREALISTIC IMAGE SPECIFICATION ===\n"
                 f"Title: {title} (Hour {hour_idx or 'All'})\n"
-                f"Scene Description: {vivid_desc}\n\n"
+                f"Construction Prompt / Scene Description:\n{construction_spec or vivid_desc}\n\n"
                 f"AI IMAGE GENERATION PROMPT DIRECTIVE:\n"
                 f"Generate an ultra-detailed, 4K photorealistic prompt for AI image generation models (Imagen 3, Midjourney v6, Flux) depicting authentic Kenyan learners, teachers, crops, tools, and environments specifically illustrating the concept from Hour {hour_idx or 'All'}.\n"
                 f"Also create a clean SVG preview schematic illustrating the scene layout.\n\n"
@@ -1550,7 +1597,7 @@ def factory_generate_single_visual(
                 f"{specific_hour_notes}\n\n"
                 f"=== SPECIFICATION FOR VIDEO SIMULATION STORYBOARD ===\n"
                 f"Title: {title} (Hour {hour_idx or 'All'})\n"
-                f"Description: {vivid_desc}\n\n"
+                f"Construction Prompt / Scene Description:\n{construction_spec or vivid_desc}\n\n"
                 f"VIDEO SIMULATION SCRIPT DIRECTIVE:\n"
                 f"Generate a multi-scene educational video simulation storyboard (60-90s) detailing the concept progression.\n\n"
                 f"Return JSON:\n"
@@ -1583,13 +1630,13 @@ def factory_generate_single_visual(
                 f"{ct_profile.format_for_prompt()}\n\n"
                 f"{dossier.formatted_context}\n\n"
                 f"{specific_hour_notes}\n\n"
-                f"=== SPECIFICATION FOR THIS VECTOR SVG ASSET ===\n"
+                f"=== STAGE 2: SYNTHESIZE VECTOR SVG ASSET FROM CONSTRUCTION PROMPT ===\n"
                 f"Title: {title} (Hour {hour_idx or 'All'})\n"
                 f"Type: {asset_type}\n"
-                f"Vivid Description & Scene Elements:\n{vivid_desc}\n\n"
+                f"EXPLICIT CONSTRUCTION BLUEPRINT & SCENE ELEMENTS (MANDATORY TO FOLLOW):\n{construction_spec or vivid_desc}\n\n"
                 f"VECTOR SVG CODE DIRECTIVE:\n"
                 f"Generate a crisp, responsive, high-contrast standalone SVG specifically illustrating the concept '{title}' from Hour {hour_idx or 'All'}.\n"
-                f"CRITICAL: Draw the actual scientific, morphological, or agricultural system (e.g. soil strata layers, agroforestry tree-crop canopies, water swale contours, or lab apparatus). DO NOT generate a macroeconomic flowchart unless this is Hour 1 overview.\n\n"
+                f"CRITICAL: Follow the exact layout, shapes, leader lines, colors, and text annotations described in the Construction Blueprint above. Draw the actual scientific, morphological, or agricultural system (e.g. soil strata layers, agroforestry tree-crop canopies, water swale contours, or lab apparatus). DO NOT generate a generic macroeconomic flowchart unless this is Hour 1 overview.\n\n"
                 f"STRICT RULES:\n"
                 f"1. Root MUST be <svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 800 500\" width=\"100%\" height=\"100%\">\n"
                 f"2. All styles enclosed inside <defs><style type=\"text/css\"><![CDATA[ ... ]]></style><marker id=\"arrowhead\" markerWidth=\"10\" markerHeight=\"7\" refX=\"10\" refY=\"3.5\" orient=\"auto\"><polygon points=\"0 0, 10 3.5, 0 7\" fill=\"#0284c7\" /></marker></defs>\n"
@@ -1652,11 +1699,15 @@ def factory_generate_single_visual(
 
     updated_visual = {
         "asset_id": item.get("asset_id") or dedup.diagram_id,
-        "title": title,
+        "title": resp.content.get("diagram_title") or title,
         "asset_type": asset_type,
         "generation_mode": mode,
-        "pedagogical_purpose": item.get("pedagogical_purpose", ""),
-        "vivid_prompt": item.get("vivid_prompt", ""),
+        "hour_index": hour_idx or item.get("hour_index") or 1,
+        "hour_title": item.get("hour_title") or f"Hour {hour_idx or 1}",
+        "micro_concept": resp.content.get("micro_concept") or item.get("micro_concept", title),
+        "pedagogical_purpose": resp.content.get("pedagogical_purpose") or item.get("pedagogical_purpose", ""),
+        "context_grounding": resp.content.get("context_grounding") or item.get("context_grounding", ""),
+        "vivid_prompt": resp.content.get("vivid_prompt") or item.get("vivid_prompt", ""),
         "diagram_svg": dedup.diagram_svg if (dedup.diagram_svg and len(dedup.diagram_svg.strip()) > 30) else existing_svg,
         "diagram_hash": dedup.diagram_hash,
         "storage_url": minio_url or dedup.storage_url,
@@ -1671,7 +1722,8 @@ def factory_generate_single_visual(
             "alt_text": dedup.alt_text,
             "tactile_description": dedup.tactile_description,
         },
-        "status": "generated",
+        "status": "planned" if mode == "prompt_only" else "generated",
+        "prompt_ready": True if (resp.content.get("vivid_prompt") or item.get("vivid_prompt")) else False,
     }
 
     audit_report = web_research_agent.perform_quality_audit(resp.content, "diagram", dossier)
