@@ -309,15 +309,31 @@ def factory_generate_questions_batch(
     elif payload.target_hour:
         hour_idx = int(payload.target_hour)
         h_mods = (notes_obj.get("hour_modules") or notes_obj.get("key_concepts") or []) if isinstance(notes_obj, dict) else []
-        selected_mod = h_mods[hour_idx - 1] if hour_idx <= len(h_mods) else None
+        selected_mod = h_mods[hour_idx - 1] if (isinstance(h_mods, list) and 0 <= hour_idx - 1 < len(h_mods)) else None
+        
+        # Find all diagrams and experiments belonging specifically to this hour
+        h_diags = [d for d in (diagrams_obj if isinstance(diagrams_obj, list) else []) if isinstance(d, dict) and (d.get("hour_index") == hour_idx or (not d.get("hour_index") and hour_idx == 1))]
+        h_diags_str = ""
+        for hd in h_diags:
+            h_diags_str += f"- Asset [{hd.get('asset_id', 'vis')}]: {hd.get('title')} ({hd.get('micro_concept', '')})\n  Prompt/Description: {hd.get('vivid_prompt') or hd.get('description', '')}\n"
+
+        acts_list = (activities_obj.get("activities") or []) if isinstance(activities_obj, dict) else (activities_obj if isinstance(activities_obj, list) else [])
+        h_acts = [a for a in acts_list if isinstance(a, dict) and (a.get("hour_index") == hour_idx or (not a.get("hour_index") and hour_idx == 1))]
+        h_acts_str = ""
+        for ha in h_acts:
+            h_acts_str += f"- Activity [{ha.get('activity_id', 'act')}]: {ha.get('activity_name')} (Objective: {ha.get('objective', '')})\n  Procedure: {ha.get('procedure_steps')}\n"
+
         if selected_mod:
             h_title = selected_mod.get("hour_title") or selected_mod.get("heading") or f"Hour {hour_idx}"
             h_body = selected_mod.get("full_lecture_notes") or selected_mod.get("detailed_exposition") or selected_mod.get("content") or ""
             parent_anchor_directive = (
-                f"\n=== ⏰ TARGET PARENT ANCHOR: LESSON HOUR MODULE {hour_idx} ===\n"
+                f"\n=== ⏰ TARGET PARENT ANCHOR: LESSON HOUR MODULE {hour_idx} ({h_title}) ===\n"
                 f"Hour Title: {h_title}\n"
-                f"Hour Content Summary: {h_body[:1500]}\n"
-                f"CRITICAL RULE: ALL GENERATED QUESTIONS MUST DIRECTLY TEST THE CONCEPTS AND WORKED EXAMPLES TAUGHT IN THIS SPECIFIC HOUR MODULE.\n"
+                f"Hour Lesson Notes Content:\n{h_body[:2500]}\n\n"
+                f"Hour {hour_idx} Visual Assets / Diagrams Available:\n{h_diags_str or 'None'}\n\n"
+                f"Hour {hour_idx} Practical Activities / Lab Experiments Available:\n{h_acts_str or 'None'}\n\n"
+                f"CRITICAL RULE: ALL GENERATED QUESTIONS MUST DIRECTLY TEST THE CONCEPTS, DIAGRAMS, AND EXPERIMENTS TAUGHT IN THIS SPECIFIC HOUR {hour_idx}.\n"
+                f"If testing a diagram or experiment from this hour, set 'diagram_ref' to that asset's ID and evaluate its specific mechanisms and data.\n"
             )
 
     # 3. Assemble Langfuse Context
@@ -539,6 +555,9 @@ def factory_generate_questions_batch(
                     "below": "Requires clinical remediation.",
                 }
 
+            src_hour = int(payload.target_hour) if payload.target_hour else (q.get("source_hour") or (matched_diag.get("hour_index") if matched_diag else (target_exp_obj.get("hour_index") if target_exp_obj else None)))
+            src_hour_title = (selected_mod.get("hour_title") if selected_mod else None) or (matched_diag.get("hour_title") if matched_diag else (target_exp_obj.get("hour_title") if target_exp_obj else None)) or (f"Hour {src_hour}" if src_hour else "Sub-strand Holistic")
+
             normalized_questions.append({
                 "question_id": q_id,
                 "universal_id": u_id,
@@ -549,6 +568,8 @@ def factory_generate_questions_batch(
                 "estimated_time_mins": q.get("estimated_time_mins", 4),
                 "micro_concept": q.get("micro_concept", payload.sub_strand),
                 "target_slo": q.get("target_slo", payload.slo_id or "SLO-01"),
+                "source_hour": src_hour,
+                "source_hour_title": src_hour_title,
                 "stimulus_context": q.get("stimulus_context", ""),
                 "question_text": q.get("question_text", ""),
                 "diagram_ref": diag_ref or (diagram_id if diagram_id else ""),
@@ -556,6 +577,9 @@ def factory_generate_questions_batch(
                 "diagram_title": diagram_title,
                 "diagram_id": diagram_id,
                 "diagram_url": diagram_url,
+                "activity_ref": q.get("activity_ref") or (payload.target_experiment_id if payload.target_experiment_id else ""),
+                "activity_title": target_exp_obj.get("activity_name") if target_exp_obj else q.get("activity_title", ""),
+                "pedagogical_lineage": f"Directly anchored in {src_hour_title} & Layer 1 Notes",
                 "options": norm_opts if norm_opts else None,
                 "correct_answer": correct or (norm_opts[0]["id"] if norm_opts else None),
                 "structured_parts": q.get("structured_parts"),

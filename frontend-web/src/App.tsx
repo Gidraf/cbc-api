@@ -1137,6 +1137,117 @@ export function App() {
     autoPersistStation("approval", null, undefined, undefined, undefined, undefined, { questions: next });
   }
 
+  function updateVisualAsset(updatedItem: any) {
+    const assetKey = updatedItem.asset_id || updatedItem.diagram_id;
+    const updatedList = (stationVisualsList || []).map((v: any) => {
+      const vKey = v.asset_id || v.diagram_id;
+      if (assetKey && vKey === assetKey) {
+        return { ...v, ...updatedItem, status: updatedItem.status || "saved" };
+      }
+      return v;
+    });
+    setStationVisualsList(updatedList);
+    setStationDiagram(updatedItem);
+    autoPersistStation("diagrams", updatedList, undefined, updatedList);
+  }
+
+  function approveSingleVisual(visItem: any) {
+    const assetKey = visItem.asset_id || visItem.diagram_id;
+    const updatedList = (stationVisualsList || []).map((v: any) => {
+      const vKey = v.asset_id || v.diagram_id;
+      if (assetKey && vKey === assetKey) {
+        return { ...v, ...visItem, approved: true, status: "approved" };
+      }
+      return v;
+    });
+    setStationVisualsList(updatedList);
+    setStationDiagram({ ...visItem, approved: true, status: "approved" });
+    const allApp = updatedList.every((v: any) => v.approved || v.status === "approved");
+    if (allApp) setDiagramApproved(true);
+    autoPersistStation("diagrams", updatedList, undefined, updatedList, undefined, undefined, { diagram: allApp });
+  }
+
+  function approveAllVisuals() {
+    const updatedList = (stationVisualsList || []).map((v: any) => ({
+      ...v,
+      approved: true,
+      status: "approved",
+    }));
+    setStationVisualsList(updatedList);
+    setDiagramApproved(true);
+    if (updatedList[activeVisualIdx]) {
+      setStationDiagram(updatedList[activeVisualIdx]);
+    }
+    autoPersistStation("diagrams", updatedList, undefined, updatedList, undefined, undefined, { diagram: true });
+  }
+
+  function updateActivityAsset(updatedItem: any) {
+    const actKey = updatedItem.activity_id;
+    const updatedList = (stationActivitiesList || []).map((a: any) => {
+      if (actKey && a.activity_id === actKey) {
+        return { ...a, ...updatedItem, status: updatedItem.status || "saved" };
+      }
+      return a;
+    });
+    setStationActivitiesList(updatedList);
+    setStationActivity(updatedItem);
+    autoPersistStation("activities", { activities: updatedList }, undefined, undefined, updatedList);
+  }
+
+  function approveSingleActivity(actItem: any) {
+    const actKey = actItem.activity_id;
+    const updatedList = (stationActivitiesList || []).map((a: any) => {
+      if (actKey && a.activity_id === actKey) {
+        return { ...a, ...actItem, approved: true, status: "approved" };
+      }
+      return a;
+    });
+    setStationActivitiesList(updatedList);
+    setStationActivity({ ...actItem, approved: true, status: "approved" });
+    const allApp = updatedList.every((a: any) => a.approved || a.status === "approved");
+    if (allApp) setActivityApproved(true);
+    autoPersistStation("activities", { activities: updatedList }, undefined, undefined, updatedList, undefined, { activity: allApp });
+  }
+
+  function approveAllActivities() {
+    const updatedList = (stationActivitiesList || []).map((a: any) => ({
+      ...a,
+      approved: true,
+      status: "approved",
+    }));
+    setStationActivitiesList(updatedList);
+    setActivityApproved(true);
+    if (updatedList[activeActivityIdx]) {
+      setStationActivity(updatedList[activeActivityIdx]);
+    }
+    autoPersistStation("activities", { activities: updatedList }, undefined, undefined, updatedList, undefined, { activity: true });
+  }
+
+  function approveEntireSubstrandBundle() {
+    setNotesApproved(true);
+    setDiagramApproved(true);
+    setActivityApproved(true);
+    setQuestionsApproved(true);
+
+    const approvedVisuals = (stationVisualsList || []).map((v: any) => ({ ...v, approved: true, status: "approved" }));
+    const approvedActivities = (stationActivitiesList || []).map((a: any) => ({ ...a, approved: true, status: "approved" }));
+    const approvedQuestions = (stationQuestions || []).map((q: any) => ({ ...q, approved: true }));
+
+    setStationVisualsList(approvedVisuals);
+    setStationActivitiesList(approvedActivities);
+    setStationQuestions(approvedQuestions);
+
+    autoPersistStation(
+      "approval",
+      null,
+      stationNotes,
+      approvedVisuals,
+      approvedActivities,
+      approvedQuestions,
+      { notes: true, diagram: true, activity: true, questions: true }
+    );
+  }
+
   function selectSubstrandForFactory(ss: any, grade: string, subject: string) {
     setFactorySelectedSubstrand(ss);
     setGenGrade(grade);
@@ -1452,6 +1563,20 @@ export function App() {
     }
     for (let i = 0; i < list.length; i++) {
       await generateSingleActivity(list[i]);
+    }
+  }
+
+  function selectActiveHour(h: number | "all") {
+    setActiveHourView(h);
+    setVisualActiveHourTab(h);
+    setActivityActiveHourTab(h);
+    setActiveVisualIdx(0);
+    setActiveActivityIdx(0);
+    if (typeof h === "number") {
+      setQfTargetHour(h);
+      setQfParentAnchorType("hour");
+    } else {
+      setQfParentAnchorType("holistic");
     }
   }
 
@@ -3408,6 +3533,14 @@ export function App() {
                         </span>
                       ) : null}
                       <button
+                        style={{ fontSize: "12px", background: "#15803d", color: "#fff", borderColor: "#15803d", fontWeight: 700 }}
+                        onClick={approveEntireSubstrandBundle}
+                        disabled={isRunning}
+                        title="Approve all 4 stations at once (Notes, Visuals, Practicals, Questions) and publish bundle"
+                      >
+                        🚀 Approve Entire Bundle
+                      </button>
+                      <button
                         style={{ fontSize: "12px", background: "#7c3aed", color: "#fff", borderColor: "#7c3aed", fontWeight: 700 }}
                         onClick={openQuestionsFactoryFromContentFactory}
                       >
@@ -3547,6 +3680,59 @@ export function App() {
                   >
                     🧠 Inspect Agent Thinking Trace & Citations
                   </button>
+                </div>
+
+                {/* Master Synchronized 4-Hour Lockstep Navigation Bar */}
+                <div style={{ marginBottom: "16px", padding: "12px 16px", background: "#f8fafc", border: "1px solid #cbd5e1", borderRadius: "10px", boxShadow: "0 2px 6px rgba(0,0,0,0.03)" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px", flexWrap: "wrap", gap: "6px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                      <span style={{ fontSize: "16px" }}>⏱️</span>
+                      <strong style={{ fontSize: "13px", color: "#1e293b" }}>
+                        Master 4-Hour Lesson Modules (Synchronized Selection Across All Stations):
+                      </strong>
+                    </div>
+                    <span className="pill ok" style={{ fontSize: "10.5px" }}>
+                      Lockstep: Notes ➔ Visuals ➔ Practicals ➔ Questions
+                    </span>
+                  </div>
+
+                  <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
+                    <button
+                      className={activeHourView === "all" ? "" : "ghost"}
+                      style={{ fontSize: "12px", padding: "6px 14px", borderRadius: "6px", fontWeight: activeHourView === "all" ? 700 : 500 }}
+                      onClick={() => selectActiveHour("all")}
+                    >
+                      📖 All 4 Hours (Holistic Sub-strand)
+                    </button>
+                    {[1, 2, 3, 4].map((hNum) => {
+                      const hMod = (stationNotes?.hour_modules || [])[hNum - 1];
+                      const hTitle = hMod?.hour_title || `Hour ${hNum}: Core Concept`;
+                      const shortTitle = hTitle.length > 38 ? hTitle.substring(0, 35) + "..." : hTitle;
+                      const vCount = (stationVisualsList || []).filter((v: any) => v.hour_index === hNum || (!v.hour_index && hNum === 1)).length;
+                      const aCount = (stationActivitiesList || []).filter((a: any) => a.hour_index === hNum || (!a.hour_index && hNum === 1)).length;
+                      const isSelected = activeHourView === hNum;
+
+                      return (
+                        <button
+                          key={hNum}
+                          className={isSelected ? "" : "ghost"}
+                          style={{
+                            fontSize: "11.5px",
+                            padding: "6px 12px",
+                            borderRadius: "6px",
+                            background: isSelected ? "#0284c7" : "#fff",
+                            color: isSelected ? "#fff" : "#334155",
+                            borderColor: isSelected ? "#0284c7" : "#cbd5e1",
+                            fontWeight: isSelected ? 700 : 500,
+                          }}
+                          onClick={() => selectActiveHour(hNum)}
+                          title={hTitle}
+                        >
+                          ⏰ Hour {hNum}: {shortTitle} <span style={{ opacity: 0.85, fontSize: "10.5px" }}>(📐{vCount} | 🧪{aCount})</span>
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
 
                 {/* 4-Station Interactive Production Quadrant */}
@@ -3720,24 +3906,84 @@ export function App() {
                                     </div>
                                   )}
 
-                                  {/* Linked Hour Visuals & Practicals */}
+                                  {/* Linked Hour Visuals & Practicals Interactive Workbench */}
                                   {(() => {
                                     const linkedVisuals = (stationVisualsList || []).filter((v: any) => v.hour_index === hNum || (!v.hour_index && hNum === 1));
                                     const linkedPracticals = (stationActivitiesList || []).filter((a: any) => a.hour_index === hNum || (!a.hour_index && hNum === 1));
-                                    if (linkedVisuals.length === 0 && linkedPracticals.length === 0) return null;
                                     return (
-                                      <div style={{ marginTop: "10px", padding: "8px 12px", background: "#f8fafc", borderRadius: "6px", border: "1px solid #e2e8f0", display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap", fontSize: "11.5px" }}>
-                                        <strong style={{ color: "#334155" }}>🔗 Linked Hour {hNum} Assets:</strong>
-                                        {linkedVisuals.map((v: any, vIdx: number) => (
-                                          <span key={vIdx} className="pill ok" style={{ fontSize: "10.5px", background: "#e0f2fe", color: "#0369a1", borderColor: "#bae6fd" }}>
-                                            📐 {v.title || `Visual ${vIdx+1}`} ({v.diagram_svg ? "SVG ✓" : (v.image_prompt ? "Photo Spec ✓" : "Planned")})
-                                          </span>
-                                        ))}
-                                        {linkedPracticals.map((a: any, aIdx: number) => (
-                                          <span key={aIdx} className="pill ok" style={{ fontSize: "10.5px", background: "#ccfbf1", color: "#0f766e", borderColor: "#99f6e4" }}>
-                                            🧪 {a.activity_name || `Practical ${aIdx+1}`} ({a.procedure_steps ? "Ready ✓" : "Planned"})
-                                          </span>
-                                        ))}
+                                      <div style={{ marginTop: "12px", padding: "12px", background: "#f8fafc", borderRadius: "8px", border: "1px solid #e2e8f0" }}>
+                                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px", flexWrap: "wrap", gap: "6px" }}>
+                                          <strong style={{ fontSize: "12px", color: "#1e293b" }}>
+                                            🔬 Hour {hNum} Linked Visuals & Practicals ({linkedVisuals.length} Visuals | {linkedPracticals.length} Practicals):
+                                          </strong>
+                                          <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
+                                            <button
+                                              className="ghost"
+                                              style={{ fontSize: "11px", padding: "3px 8px", background: "#e0f2fe", color: "#0369a1", borderColor: "#bae6fd", fontWeight: 600 }}
+                                              onClick={() => {
+                                                selectActiveHour(hNum);
+                                                setFactoryStep(2);
+                                              }}
+                                            >
+                                              📐 View/Edit Hour {hNum} Visuals ➔
+                                            </button>
+                                            <button
+                                              className="ghost"
+                                              style={{ fontSize: "11px", padding: "3px 8px", background: "#ccfbf1", color: "#0f766e", borderColor: "#99f6e4", fontWeight: 600 }}
+                                              onClick={() => {
+                                                selectActiveHour(hNum);
+                                                setFactoryStep(3);
+                                              }}
+                                            >
+                                              🧪 View/Edit Hour {hNum} Practicals ➔
+                                            </button>
+                                            <button
+                                              style={{ fontSize: "11px", padding: "3px 8px", background: "#7c3aed", color: "#fff", borderColor: "#7c3aed", fontWeight: 600 }}
+                                              onClick={() => {
+                                                selectActiveHour(hNum);
+                                                openQuestionsFactoryFromContentFactory();
+                                              }}
+                                            >
+                                              🎯 Questions for Hour {hNum} ➔
+                                            </button>
+                                          </div>
+                                        </div>
+
+                                        {/* Visuals Preview Row for this Hour */}
+                                        {linkedVisuals.length > 0 && (
+                                          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: "8px", marginTop: "8px" }}>
+                                            {linkedVisuals.map((lv: any, lvIdx: number) => (
+                                              <div key={lvIdx} style={{ padding: "8px", background: "#fff", borderRadius: "6px", border: "1px solid #cbd5e1", fontSize: "11.5px" }}>
+                                                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "4px" }}>
+                                                  <strong style={{ color: "#0369a1" }}>📐 {lv.title || `Figure ${lvIdx+1}`}</strong>
+                                                  <span className="pill ok" style={{ fontSize: "9.5px" }}>{lv.status === "generated" ? "✓ Ready" : "Planned"}</span>
+                                                </div>
+                                                {lv.diagram_svg && (
+                                                  <div
+                                                    style={{ maxHeight: "120px", overflow: "hidden", borderRadius: "4px", background: "#f8fafc", border: "1px solid #f1f5f9" }}
+                                                    dangerouslySetInnerHTML={{ __html: lv.diagram_svg }}
+                                                  />
+                                                )}
+                                                {lv.image_prompt && !lv.diagram_svg && (
+                                                  <p style={{ margin: "2px 0 0", color: "#64748b", fontStyle: "italic", fontSize: "10.5px" }}>
+                                                    📸 Photo Spec: {lv.image_prompt.substring(0, 80)}...
+                                                  </p>
+                                                )}
+                                              </div>
+                                            ))}
+                                          </div>
+                                        )}
+
+                                        {/* Practicals Preview Row for this Hour */}
+                                        {linkedPracticals.length > 0 && (
+                                          <div style={{ display: "flex", gap: "6px", flexWrap: "wrap", marginTop: "8px" }}>
+                                            {linkedPracticals.map((lp: any, lpIdx: number) => (
+                                              <span key={lpIdx} className="pill ok" style={{ fontSize: "10.5px", background: "#ccfbf1", color: "#0f766e", borderColor: "#99f6e4" }}>
+                                                🧪 {lp.activity_name || `Practical ${lpIdx+1}`} ({lp.procedure_steps ? "✓ Ready" : "Planned"})
+                                              </span>
+                                            ))}
+                                          </div>
+                                        )}
                                       </div>
                                     );
                                   })()}
@@ -3937,6 +4183,14 @@ export function App() {
                         >
                           ➕ Add Custom Visual
                         </button>
+                        <button
+                          style={{ fontSize: "11px", padding: "3px 10px", background: "#0284c7", color: "#fff", borderColor: "#0284c7", fontWeight: 700 }}
+                          onClick={approveAllVisuals}
+                          disabled={isRunning || (stationVisualsList && stationVisualsList.length === 0)}
+                          title="Approve all visual assets and SVG diagrams in this sub-strand at once"
+                        >
+                          ✅ Approve All ({stationVisualsList.length})
+                        </button>
                         {diagramResearchDossier && (
                           <span
                             className="pill ok"
@@ -3988,19 +4242,19 @@ export function App() {
                             <button
                               className={visualActiveHourTab === "all" ? "" : "ghost"}
                               style={{ fontSize: "11px", padding: "3px 10px", borderRadius: "16px" }}
-                              onClick={() => { setVisualActiveHourTab("all"); setActiveVisualIdx(0); }}
+                              onClick={() => selectActiveHour("all")}
                             >
                               📖 All Visuals ({allVisuals.length})
                             </button>
                             {[1, 2, 3, 4].map((hNum) => {
-                              const hCount = allVisuals.filter((v: any) => v.hour_index === hNum).length;
+                              const hCount = allVisuals.filter((v: any) => v.hour_index === hNum || (!v.hour_index && hNum === 1)).length;
                               const hTitle = stationNotes?.hour_modules?.[hNum - 1]?.hour_title || `Hour ${hNum}`;
                               return (
                                 <button
                                   key={hNum}
                                   className={visualActiveHourTab === hNum ? "" : "ghost"}
                                   style={{ fontSize: "11px", padding: "3px 10px", borderRadius: "16px" }}
-                                  onClick={() => { setVisualActiveHourTab(hNum); setActiveVisualIdx(0); }}
+                                  onClick={() => selectActiveHour(hNum)}
                                   title={hTitle}
                                 >
                                   ⏰ Hour {hNum} ({hCount})
@@ -4009,12 +4263,50 @@ export function App() {
                             })}
                           </div>
 
+                          {/* Empty State when no visuals for selected hour */}
+                          {visualsToShow.length === 0 && (
+                            <div style={{ padding: "18px", background: "#f0f9ff", border: "1px dashed #7dd3fc", borderRadius: "8px", textAlign: "center", marginBottom: "14px" }}>
+                              <div style={{ fontSize: "22px", marginBottom: "4px" }}>📐</div>
+                              <h4 style={{ margin: "0 0 4px", color: "#0369a1", fontSize: "13.5px" }}>
+                                No Visual Assets Generated for Hour {visualActiveHourTab} Yet
+                              </h4>
+                              <p style={{ margin: "0 0 10px", fontSize: "12px", color: "#475569" }}>
+                                {stationNotes?.hour_modules?.[(visualActiveHourTab as number) - 1]?.hour_title || `Hour ${visualActiveHourTab}`} currently has no dedicated diagram. Synthesize a Vector SVG, Photo Spec, or Video Storyboard for this hour.
+                              </p>
+                              <div style={{ display: "flex", gap: "8px", justifyContent: "center", flexWrap: "wrap" }}>
+                                <button
+                                  style={{ background: "#0284c7", color: "#fff", borderColor: "#0284c7", fontSize: "11.5px", padding: "5px 12px", fontWeight: 700 }}
+                                  onClick={() => generateSingleVisual({
+                                    asset_id: `vis_h${visualActiveHourTab}_01`,
+                                    title: stationNotes?.hour_modules?.[(visualActiveHourTab as number) - 1]?.hour_title || `Hour ${visualActiveHourTab} Scientific Diagram`,
+                                    hour_index: visualActiveHourTab,
+                                    hour_title: stationNotes?.hour_modules?.[(visualActiveHourTab as number) - 1]?.hour_title || `Hour ${visualActiveHourTab}`,
+                                    asset_type: "technical_svg",
+                                    micro_concept: stationNotes?.hour_modules?.[(visualActiveHourTab as number) - 1]?.hour_title || `Hour ${visualActiveHourTab}`,
+                                  }, "svg")}
+                                  disabled={isRunning}
+                                >
+                                  🎨 Synthesize Vector SVG for Hour {visualActiveHourTab}
+                                </button>
+                                <button
+                                  className="ghost"
+                                  style={{ fontSize: "11.5px", padding: "5px 12px", borderColor: "#0284c7", color: "#0369a1", fontWeight: 600 }}
+                                  onClick={() => planFactoryVisuals()}
+                                  disabled={isRunning}
+                                >
+                                  ✨ Discover All 4-Hour Visuals
+                                </button>
+                              </div>
+                            </div>
+                          )}
+
                           {/* Multi-Visual Selection Tabs */}
                           {visualsToShow.length > 0 && (
                             <div style={{ display: "flex", flexWrap: "wrap", gap: "6px", marginBottom: "8px" }}>
                               {visualsToShow.map((vis: any, vIdx: number) => {
                                 const isActive = vIdx === activeVisualIdx;
                                 const isGen = vis.status === "generated" || vis.diagram_svg || vis.image_prompt;
+                                const isApp = vis.approved || vis.status === "approved";
                                 return (
                                   <button
                                     key={vIdx}
@@ -4035,7 +4327,7 @@ export function App() {
                                   >
                                     {vis.asset_type === "realistic_image" ? "🎨" : "📐"} {vIdx + 1}. {vis.title || `Visual ${vIdx + 1}`}{" "}
                                     {vis.hour_index && <span style={{ fontSize: "10px", opacity: 0.85 }}>[H{vis.hour_index}]</span>}{" "}
-                                    <span style={{ opacity: 0.8, fontSize: "10px" }}>({isGen ? "✓ Ready" : "Planned"})</span>
+                                    <span style={{ opacity: 0.85, fontSize: "10px" }}>({isApp ? "✓ Approved" : isGen ? "Ready" : "Planned"})</span>
                                   </button>
                                 );
                               })}
@@ -4054,7 +4346,10 @@ export function App() {
                                     {curVis.asset_type || "technical_svg"}
                                   </span>
                                 </div>
-                                <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
+                                <div style={{ display: "flex", gap: "6px", alignItems: "center", flexWrap: "wrap" }}>
+                                  <span className={`pill ${curVis.approved || curVis.status === "approved" ? "ok" : "warn"}`} style={{ fontSize: "10px" }}>
+                                    {curVis.approved || curVis.status === "approved" ? "✓ Approved" : "Draft"}
+                                  </span>
                                   {curVis.storage_url && (
                                     <span className="pill ok" style={{ fontSize: "10px", background: "#ecfdf5", color: "#065f46" }} title={curVis.storage_url}>
                                       💾 MinIO S3
@@ -4062,11 +4357,47 @@ export function App() {
                                   )}
                                   <button
                                     className="ghost"
+                                    style={{ fontSize: "11px", padding: "3px 8px", background: curVis.approved ? "#f0fdf4" : "#166534", color: curVis.approved ? "#166534" : "#fff", borderColor: "#86efac", fontWeight: 600 }}
+                                    onClick={() => approveSingleVisual(curVis)}
+                                    title="Approve this specific visual asset"
+                                  >
+                                    {curVis.approved ? "✓ Approved" : "✅ Approve Visual"}
+                                  </button>
+                                  <button
+                                    className="ghost"
+                                    style={{ fontSize: "11px", padding: "3px 8px", background: "#fff", borderColor: "#0284c7", color: "#0284c7" }}
+                                    onClick={() => {
+                                      const newTitle = window.prompt("Edit Visual Title:", curVis.title || "");
+                                      if (newTitle !== null) {
+                                        updateVisualAsset({ ...curVis, title: newTitle.trim() });
+                                      }
+                                    }}
+                                    title="Edit visual title and metadata"
+                                  >
+                                    ✏️ Edit
+                                  </button>
+                                  <button
+                                    className="ghost"
+                                    style={{ fontSize: "11px", padding: "3px 8px", background: "#fff", borderColor: "#fca5a5", color: "#b91c1c" }}
+                                    onClick={() => {
+                                      if (window.confirm(`Delete visual asset "${curVis.title}"?`)) {
+                                        const updated = stationVisualsList.filter((v: any) => (v.asset_id || v.diagram_id) !== (curVis.asset_id || curVis.diagram_id));
+                                        setStationVisualsList(updated);
+                                        setActiveVisualIdx(Math.max(0, activeVisualIdx - 1));
+                                        autoPersistStation("diagrams", updated, undefined, updated);
+                                      }
+                                    }}
+                                    title="Remove this visual asset"
+                                  >
+                                    🗑️
+                                  </button>
+                                  <button
+                                    className="ghost"
                                     style={{ fontSize: "11px", padding: "3px 8px", background: "#fff", borderColor: "#7c3aed", color: "#7c3aed" }}
                                     onClick={() => setActiveVisualModal(curVis)}
                                     title="Open Fullscreen Asset & Spec Modal"
                                   >
-                                    🔍 Fullscreen Modal
+                                    🔍 Fullscreen
                                   </button>
                                 </div>
                               </div>
@@ -4435,6 +4766,14 @@ export function App() {
                         >
                           ➕ Add Custom Activity
                         </button>
+                        <button
+                          style={{ fontSize: "11px", padding: "3px 10px", background: "#0d9488", color: "#fff", borderColor: "#0d9488", fontWeight: 700 }}
+                          onClick={approveAllActivities}
+                          disabled={isRunning || stationActivitiesList.length === 0}
+                          title="Approve all practical activities and laboratory experiments in this sub-strand at once"
+                        >
+                          ✅ Approve All ({stationActivitiesList.length})
+                        </button>
                         {activityResearchDossier && (
                           <span
                             className="pill ok"
@@ -4486,19 +4825,19 @@ export function App() {
                             <button
                               className={activityActiveHourTab === "all" ? "" : "ghost"}
                               style={{ fontSize: "11px", padding: "3px 10px", borderRadius: "16px" }}
-                              onClick={() => { setActivityActiveHourTab("all"); setActiveActivityIdx(0); }}
+                              onClick={() => selectActiveHour("all")}
                             >
                               🧪 All Practicals ({allActivities.length})
                             </button>
                             {[1, 2, 3, 4].map((hNum) => {
-                              const hCount = allActivities.filter((a: any) => a.hour_index === hNum).length;
+                              const hCount = allActivities.filter((a: any) => a.hour_index === hNum || (!a.hour_index && hNum === 1)).length;
                               const hTitle = stationNotes?.hour_modules?.[hNum - 1]?.hour_title || `Hour ${hNum}`;
                               return (
                                 <button
                                   key={hNum}
                                   className={activityActiveHourTab === hNum ? "" : "ghost"}
                                   style={{ fontSize: "11px", padding: "3px 10px", borderRadius: "16px" }}
-                                  onClick={() => { setActivityActiveHourTab(hNum); setActiveActivityIdx(0); }}
+                                  onClick={() => selectActiveHour(hNum)}
                                   title={hTitle}
                                 >
                                   ⏰ Hour {hNum} ({hCount})
@@ -4507,12 +4846,49 @@ export function App() {
                             })}
                           </div>
 
+                          {/* Empty State when no practicals for selected hour */}
+                          {activitiesToShow.length === 0 && (
+                            <div style={{ padding: "18px", background: "#f0fdfa", border: "1px dashed #5eead4", borderRadius: "8px", textAlign: "center", marginBottom: "14px" }}>
+                              <div style={{ fontSize: "22px", marginBottom: "4px" }}>🧪</div>
+                              <h4 style={{ margin: "0 0 4px", color: "#0f766e", fontSize: "13.5px" }}>
+                                No Practical Experiments Generated for Hour {activityActiveHourTab} Yet
+                              </h4>
+                              <p style={{ margin: "0 0 10px", fontSize: "12px", color: "#475569" }}>
+                                {stationNotes?.hour_modules?.[(activityActiveHourTab as number) - 1]?.hour_title || `Hour ${activityActiveHourTab}`} currently has no dedicated practical module. Synthesize a hands-on investigation, lab protocol, or CSL fieldwork project for this hour.
+                              </p>
+                              <div style={{ display: "flex", gap: "8px", justifyContent: "center", flexWrap: "wrap" }}>
+                                <button
+                                  style={{ background: "#0d9488", color: "#fff", borderColor: "#0d9488", fontSize: "11.5px", padding: "5px 12px", fontWeight: 700 }}
+                                  onClick={() => generateSingleActivity({
+                                    activity_id: `act_h${activityActiveHourTab}_01`,
+                                    activity_name: `Hour ${activityActiveHourTab} Practical Investigation: ${stationNotes?.hour_modules?.[(activityActiveHourTab as number) - 1]?.hour_title || ''}`,
+                                    hour_index: activityActiveHourTab,
+                                    hour_title: stationNotes?.hour_modules?.[(activityActiveHourTab as number) - 1]?.hour_title || `Hour ${activityActiveHourTab}`,
+                                    activity_type: "laboratory_experiment",
+                                  })}
+                                  disabled={isRunning}
+                                >
+                                  🧪 Synthesize Practical Module for Hour {activityActiveHourTab}
+                                </button>
+                                <button
+                                  className="ghost"
+                                  style={{ fontSize: "11.5px", padding: "5px 12px", borderColor: "#0d9488", color: "#0f766e", fontWeight: 600 }}
+                                  onClick={() => planFactoryActivities()}
+                                  disabled={isRunning}
+                                >
+                                  ✨ Discover All 4-Hour Practicals
+                                </button>
+                              </div>
+                            </div>
+                          )}
+
                           {/* Multi-Activity Selection Tabs */}
                           {activitiesToShow.length > 0 && (
                             <div style={{ display: "flex", flexWrap: "wrap", gap: "6px", marginBottom: "8px" }}>
                               {activitiesToShow.map((act: any, aIdx: number) => {
                                 const isActive = aIdx === activeActivityIdx;
                                 const isGen = act.status === "generated" || (act.procedure_steps && act.procedure_steps.length > 0);
+                                const isApp = act.approved || act.status === "approved";
                                 return (
                                   <button
                                     key={aIdx}
@@ -4533,7 +4909,7 @@ export function App() {
                                   >
                                     🧪 {aIdx + 1}. {act.activity_name || `Practical ${aIdx + 1}`}{" "}
                                     {act.hour_index && <span style={{ fontSize: "10px", opacity: 0.85 }}>[H{act.hour_index}]</span>}{" "}
-                                    <span style={{ opacity: 0.8, fontSize: "10px" }}>({isGen ? "✓ Ready" : "Planned"})</span>
+                                    <span style={{ opacity: 0.85, fontSize: "10px" }}>({isApp ? "✓ Approved" : isGen ? "Ready" : "Planned"})</span>
                                   </button>
                                 );
                               })}
@@ -4541,17 +4917,60 @@ export function App() {
                           )}
 
                           {curAct && (
-                            <div style={{ padding: "8px 12px", background: "#f8fafc", borderRadius: "8px", border: "1px solid #e2e8f0", marginBottom: "8px", fontSize: "12px" }}>
-                              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                                <strong style={{ color: "#0891b2", fontSize: "13px" }}>
-                                  {curAct.activity_name || curAct.title || "Active Practical Module"}
-                                </strong>
-                                <span className="pill ok" style={{ fontSize: "10.5px" }}>
-                                  {curAct.activity_type || "laboratory_experiment"}
-                                </span>
+                            <div style={{ padding: "10px 14px", background: "#f8fafc", borderRadius: "8px", border: "1px solid #e2e8f0", marginBottom: "8px", fontSize: "12px" }}>
+                              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "6px" }}>
+                                <div>
+                                  <strong style={{ color: "#0891b2", fontSize: "13.5px" }}>
+                                    {curAct.activity_name || curAct.title || "Active Practical Module"}
+                                  </strong>
+                                  <span className="pill ok" style={{ fontSize: "10.5px", marginLeft: "8px" }}>
+                                    {curAct.activity_type || "laboratory_experiment"}
+                                  </span>
+                                </div>
+                                <div style={{ display: "flex", gap: "6px", alignItems: "center", flexWrap: "wrap" }}>
+                                  <span className={`pill ${curAct.approved || curAct.status === "approved" ? "ok" : "warn"}`} style={{ fontSize: "10px" }}>
+                                    {curAct.approved || curAct.status === "approved" ? "✓ Approved" : "Draft"}
+                                  </span>
+                                  <button
+                                    className="ghost"
+                                    style={{ fontSize: "11px", padding: "3px 8px", background: curAct.approved ? "#f0fdf4" : "#0f766e", color: curAct.approved ? "#0f766e" : "#fff", borderColor: "#5eead4", fontWeight: 600 }}
+                                    onClick={() => approveSingleActivity(curAct)}
+                                    title="Approve this specific practical activity"
+                                  >
+                                    {curAct.approved ? "✓ Approved" : "✅ Approve Practical"}
+                                  </button>
+                                  <button
+                                    className="ghost"
+                                    style={{ fontSize: "11px", padding: "3px 8px", background: "#fff", borderColor: "#0d9488", color: "#0d9488" }}
+                                    onClick={() => {
+                                      const newName = window.prompt("Edit Practical Activity Name:", curAct.activity_name || "");
+                                      if (newName !== null) {
+                                        updateActivityAsset({ ...curAct, activity_name: newName.trim() });
+                                      }
+                                    }}
+                                    title="Edit practical activity name and objective"
+                                  >
+                                    ✏️ Edit
+                                  </button>
+                                  <button
+                                    className="ghost"
+                                    style={{ fontSize: "11px", padding: "3px 8px", background: "#fff", borderColor: "#fca5a5", color: "#b91c1c" }}
+                                    onClick={() => {
+                                      if (window.confirm(`Delete practical activity "${curAct.activity_name}"?`)) {
+                                        const updated = stationActivitiesList.filter((a: any) => a.activity_id !== curAct.activity_id);
+                                        setStationActivitiesList(updated);
+                                        setActiveActivityIdx(Math.max(0, activeActivityIdx - 1));
+                                        autoPersistStation("activities", { activities: updated }, undefined, undefined, updated);
+                                      }
+                                    }}
+                                    title="Remove this practical activity"
+                                  >
+                                    🗑️
+                                  </button>
+                                </div>
                               </div>
                               {curAct.objective && (
-                                <p style={{ margin: "4px 0 0", color: "#475569" }}>
+                                <p style={{ margin: "6px 0 0", color: "#475569" }}>
                                   <strong>Objective:</strong> {curAct.objective}
                                 </p>
                               )}
@@ -6975,6 +7394,11 @@ export function App() {
                                 <strong style={{ fontSize: "14px", color: "#1e293b" }}>
                                   Question {qIdx + 1}: {qType}
                                 </strong>
+                                {q.source_hour && (
+                                  <span className="pill ok" style={{ fontSize: "10px", background: "#f0f9ff", color: "#0369a1", borderColor: "#bae6fd", fontWeight: 700 }}>
+                                    ⏰ Hour {q.source_hour}
+                                  </span>
+                                )}
                                 <span className="pill ok" style={{ fontSize: "10px", background: "#ede9fe", color: "#5b21b6", borderColor: "#c4b5fd" }}>
                                   🧠 {q.bloom_level || "Application"} • {q.max_marks || 2} Marks • ⏱️ {q.estimated_time_mins || 3} mins
                                 </span>
@@ -7307,7 +7731,8 @@ export function App() {
 
                           {/* DNA Provenance Citation Tag */}
                           <div style={{ marginTop: "12px", paddingTop: "8px", borderTop: "1px solid #f1f5f9", display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: "11px", color: "#64748b", flexWrap: "wrap", gap: "6px" }}>
-                            <span>🧬 <strong>Verifiable DNA Lineage:</strong> {q.provenance_citation || `Linked to Layer 1 Lesson Notes (${qfSubstrand})`}</span>
+                            <span>🧬 <strong>Verifiable DNA Lineage:</strong> {q.pedagogical_lineage || `Anchored in Hour ${q.source_hour || 'All'} Lesson Notes (${qfSubstrand})`}</span>
+                            {q.provenance_citation && <span style={{ color: "#0369a1" }}>📚 {q.provenance_citation}</span>}
                             <span style={{ fontStyle: "italic" }}>Criterion-referenced assessment</span>
                           </div>
                         </div>
