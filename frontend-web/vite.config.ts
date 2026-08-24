@@ -8,6 +8,15 @@ export default defineConfig(({ mode }) => {
     server: {
       host: "0.0.0.0",
       port: 5173,
+      watch: {
+        ignored: [
+          "**/broadcast/**",
+          "**/deployments/**",
+          "**/artifacts/**",
+          "**/out/**",
+          "**/.git/**"
+        ]
+      },
       proxy: {
         "/api": {
           target: proxyTarget,

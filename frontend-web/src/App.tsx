@@ -286,7 +286,7 @@ export function App() {
   // Generation Progress Dashboard State
   const [datasetProgressData, setDatasetProgressData] = useState<any>(null);
   const [isLoadingProgress, setIsLoadingProgress] = useState(false);
-  const [showProgressDashboard, setShowProgressDashboard] = useState(false);
+  const [showProgressDashboard, setShowProgressDashboard] = useState(true);
 
   // Live Web Research, Thinking Trace & Quality Audit States
   const [notesResearchDossier, setNotesResearchDossier] = useState<any>(null);
@@ -2310,6 +2310,7 @@ export function App() {
     loadMasterContext();
     loadReviewBundles(reviewFilter);
     loadProfilesList();
+    loadDatasetProgress(selectedGrade);
 
     // Restore last active factory sub-strand and load its persisted notes, diagrams, activities, and questions
     try {
@@ -2514,6 +2515,132 @@ export function App() {
                 <div className="muted">Generation Runs</div>
                 <div className="kpi-value">{costSummary?.total_runs || 0}</div>
               </div>
+            </div>
+
+            {/* Modular Curriculum Generation Progress Matrix */}
+            <div style={{ marginTop: '1.5rem', background: '#f8fafc', borderRadius: '10px', border: '1px solid #cbd5e1', padding: '16px 20px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', flexWrap: 'wrap', gap: '8px' }}>
+                <div>
+                  <h3 style={{ margin: 0, color: '#0f172a', fontSize: '16px' }}>📊 Modular Curriculum Generation Progress Matrix</h3>
+                  <small style={{ color: '#64748b' }}>Live generation completion status across Notes, Visuals, Practicals, and Questions</small>
+                </div>
+                <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                  <select
+                    value={selectedGrade}
+                    onChange={(e) => {
+                      setSelectedGrade(e.target.value);
+                      loadDatasetProgress(e.target.value);
+                    }}
+                    style={{ fontSize: '12px', padding: '4px 8px' }}
+                  >
+                    {datasetsList.map((g) => (
+                      <option key={g} value={g}>{g.toUpperCase()}</option>
+                    ))}
+                  </select>
+                  <button
+                    className="ghost"
+                    style={{ fontSize: '11px', padding: '4px 8px' }}
+                    onClick={() => loadDatasetProgress(selectedGrade)}
+                    disabled={isLoadingProgress}
+                  >
+                    🔄 Refresh
+                  </button>
+                </div>
+              </div>
+
+              {datasetProgressData ? (
+                <div>
+                  {/* Progress KPI Tiles */}
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '10px', marginBottom: '14px' }}>
+                    <div style={{ background: '#fff', padding: '10px 14px', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
+                      <span style={{ fontSize: '11px', color: '#64748b' }}>Overall {selectedGrade.toUpperCase()} Progress</span>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '4px' }}>
+                        <strong style={{ fontSize: '18px', color: '#0284c7' }}>{datasetProgressData.overall_grade_percentage || 0}%</strong>
+                        <div style={{ flex: 1, height: '6px', background: '#e2e8f0', borderRadius: '3px', overflow: 'hidden' }}>
+                          <div style={{ width: `${datasetProgressData.overall_grade_percentage || 0}%`, height: '100%', background: '#0284c7' }} />
+                        </div>
+                      </div>
+                    </div>
+                    <div style={{ background: '#fff', padding: '10px 14px', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
+                      <span style={{ fontSize: '11px', color: '#64748b' }}>📝 Notes (4-Hr Modules)</span>
+                      <strong style={{ display: 'block', fontSize: '16px', color: '#0f172a', marginTop: '4px' }}>
+                        {datasetProgressData.notes_totals?.generated_hours || 0} / {datasetProgressData.notes_totals?.required_hours || 0} Hrs ({datasetProgressData.notes_totals?.percentage || 0}%)
+                      </strong>
+                    </div>
+                    <div style={{ background: '#fff', padding: '10px 14px', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
+                      <span style={{ fontSize: '11px', color: '#64748b' }}>📐 Visuals & SVGs</span>
+                      <strong style={{ display: 'block', fontSize: '16px', color: '#0f172a', marginTop: '4px' }}>
+                        {datasetProgressData.visuals_totals?.generated_count || 0} / {datasetProgressData.visuals_totals?.required_count || 0} Assets ({datasetProgressData.visuals_totals?.percentage || 0}%)
+                      </strong>
+                    </div>
+                    <div style={{ background: '#fff', padding: '10px 14px', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
+                      <span style={{ fontSize: '11px', color: '#64748b' }}>🧪 Practicals & Labs</span>
+                      <strong style={{ display: 'block', fontSize: '16px', color: '#0f172a', marginTop: '4px' }}>
+                        {datasetProgressData.practicals_totals?.generated_count || 0} / {datasetProgressData.practicals_totals?.required_count || 0} Tasks ({datasetProgressData.practicals_totals?.percentage || 0}%)
+                      </strong>
+                    </div>
+                    <div style={{ background: '#fff', padding: '10px 14px', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
+                      <span style={{ fontSize: '11px', color: '#64748b' }}>🎯 Question Bank Items</span>
+                      <strong style={{ display: 'block', fontSize: '16px', color: '#0f172a', marginTop: '4px' }}>
+                        {datasetProgressData.questions_totals?.generated_count || 0} / {datasetProgressData.questions_totals?.required_count || 0} Items ({datasetProgressData.questions_totals?.percentage || 0}%)
+                      </strong>
+                    </div>
+                  </div>
+
+                  {/* Immediate Actionable Directives */}
+                  {datasetProgressData.focus_recommendations?.length > 0 && (
+                    <div style={{ background: '#fff', padding: '10px 14px', borderRadius: '8px', border: '1px solid #fde68a', marginBottom: '8px' }}>
+                      <div style={{ fontSize: '12px', fontWeight: 700, color: '#92400e', marginBottom: '6px' }}>
+                        🎯 Highest Priority Content to Generate (Where to focus next):
+                      </div>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '8px' }}>
+                        {datasetProgressData.focus_recommendations.slice(0, 4).map((rec: any, rIdx: number) => (
+                          <div
+                            key={rIdx}
+                            style={{
+                              background: '#fffbeb',
+                              padding: '8px 10px',
+                              borderRadius: '6px',
+                              border: rec.priority === 'ready' ? '1px solid #86efac' : '1px solid #fde68a',
+                              display: 'flex',
+                              justifyContent: 'space-between',
+                              alignItems: 'center',
+                              gap: '6px',
+                            }}
+                          >
+                            <span style={{ fontSize: '11.5px', color: '#1e293b' }}>{rec.message}</span>
+                            <button
+                              style={{
+                                fontSize: '10px',
+                                padding: '3px 6px',
+                                background: rec.priority === 'ready' ? '#166534' : '#0284c7',
+                                borderColor: rec.priority === 'ready' ? '#166534' : '#0284c7',
+                                color: '#fff',
+                                whiteSpace: 'nowrap',
+                              }}
+                              onClick={() => {
+                                selectSubstrandForFactory(
+                                  { strand_name: rec.strand, sub_strand_name: rec.sub_strand, name: rec.sub_strand },
+                                  selectedGrade,
+                                  rec.subject
+                                );
+                                setView('generation');
+                                setFactoryStep(2);
+                              }}
+                            >
+                              ⚡ Studio ➔
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div style={{ textAlign: 'center', padding: '12px', color: '#64748b', fontSize: '12px' }}>
+                  Loading modular progress metrics...
+                </div>
+              )}
             </div>
 
             {/* Cost Breakdown by Provider Table */}
@@ -2776,6 +2903,121 @@ export function App() {
                           </div>
                         </div>
                       </div>
+
+                      {/* 1. Modular Totals Strip */}
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '10px', marginBottom: '16px' }}>
+                        <div style={{ background: '#fff', padding: '10px 14px', borderRadius: '8px', border: '1px solid #cbd5e1' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <strong style={{ fontSize: '12px', color: '#0369a1' }}>📝 Lecture Notes (4-Hr Modules)</strong>
+                            <span className="pill ok" style={{ fontSize: '10px' }}>{datasetProgressData.notes_totals?.percentage || 0}%</span>
+                          </div>
+                          <div style={{ fontSize: '16px', fontWeight: 800, color: '#0f172a', margin: '4px 0 2px' }}>
+                            {datasetProgressData.notes_totals?.generated_hours || 0} / {datasetProgressData.notes_totals?.required_hours || 0} Contact Hours
+                          </div>
+                          <div style={{ fontSize: '11px', color: datasetProgressData.notes_totals?.remaining_hours > 0 ? '#b91c1c' : '#166534' }}>
+                            {datasetProgressData.notes_totals?.remaining_hours > 0 ? `⚠️ ${datasetProgressData.notes_totals.remaining_hours} hours remaining` : '✓ 100% Notes Complete'}
+                          </div>
+                        </div>
+
+                        <div style={{ background: '#fff', padding: '10px 14px', borderRadius: '8px', border: '1px solid #cbd5e1' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <strong style={{ fontSize: '12px', color: '#0284c7' }}>📐 Vector SVG Models & Images</strong>
+                            <span className="pill ok" style={{ fontSize: '10px' }}>{datasetProgressData.visuals_totals?.percentage || 0}%</span>
+                          </div>
+                          <div style={{ fontSize: '16px', fontWeight: 800, color: '#0f172a', margin: '4px 0 2px' }}>
+                            {datasetProgressData.visuals_totals?.generated_count || 0} / {datasetProgressData.visuals_totals?.required_count || 0} Assets
+                          </div>
+                          <div style={{ fontSize: '11px', color: datasetProgressData.visuals_totals?.remaining_count > 0 ? '#b91c1c' : '#166534' }}>
+                            {datasetProgressData.visuals_totals?.remaining_count > 0 ? `⚠️ ${datasetProgressData.visuals_totals.remaining_count} visuals needed` : '✓ 100% Visuals Complete'}
+                          </div>
+                        </div>
+
+                        <div style={{ background: '#fff', padding: '10px 14px', borderRadius: '8px', border: '1px solid #cbd5e1' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <strong style={{ fontSize: '12px', color: '#0f766e' }}>🧪 Practical Labs & Fieldwork</strong>
+                            <span className="pill ok" style={{ fontSize: '10px' }}>{datasetProgressData.practicals_totals?.percentage || 0}%</span>
+                          </div>
+                          <div style={{ fontSize: '16px', fontWeight: 800, color: '#0f172a', margin: '4px 0 2px' }}>
+                            {datasetProgressData.practicals_totals?.generated_count || 0} / {datasetProgressData.practicals_totals?.required_count || 0} Experiments
+                          </div>
+                          <div style={{ fontSize: '11px', color: datasetProgressData.practicals_totals?.remaining_count > 0 ? '#b91c1c' : '#166534' }}>
+                            {datasetProgressData.practicals_totals?.remaining_count > 0 ? `⚠️ ${datasetProgressData.practicals_totals.remaining_count} practicals needed` : '✓ 100% Practicals Complete'}
+                          </div>
+                        </div>
+
+                        <div style={{ background: '#fff', padding: '10px 14px', borderRadius: '8px', border: '1px solid #cbd5e1' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <strong style={{ fontSize: '12px', color: '#7e22ce' }}>🎯 Formative & Summative Items</strong>
+                            <span className="pill ok" style={{ fontSize: '10px' }}>{datasetProgressData.questions_totals?.percentage || 0}%</span>
+                          </div>
+                          <div style={{ fontSize: '16px', fontWeight: 800, color: '#0f172a', margin: '4px 0 2px' }}>
+                            {datasetProgressData.questions_totals?.generated_count || 0} / {datasetProgressData.questions_totals?.required_count || 0} Questions
+                          </div>
+                          <div style={{ fontSize: '11px', color: datasetProgressData.questions_totals?.remaining_count > 0 ? '#b91c1c' : '#166534' }}>
+                            {datasetProgressData.questions_totals?.remaining_count > 0 ? `⚠️ ${datasetProgressData.questions_totals.remaining_count} items needed` : '✓ 100% Questions Ready'}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* 2. Actionable Focus Directives Card (Where to Focus, How and What) */}
+                      {datasetProgressData.focus_recommendations?.length > 0 && (
+                        <div style={{ background: '#fffbeb', border: '1px solid #fcd34d', borderRadius: '8px', padding: '12px 16px', marginBottom: '16px' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px', flexWrap: 'wrap', gap: '6px' }}>
+                            <strong style={{ color: '#92400e', fontSize: '13px' }}>
+                              🎯 Immediate Focus Areas (What to generate next and where):
+                            </strong>
+                            <span style={{ fontSize: '11px', color: '#b45309', fontWeight: 600 }}>
+                              Prioritized by pedagogical dependencies (Notes ➔ Visuals ➔ Practicals ➔ Questions)
+                            </span>
+                          </div>
+                          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '8px' }}>
+                            {datasetProgressData.focus_recommendations.slice(0, 6).map((rec: any, rIdx: number) => (
+                              <div
+                                key={rIdx}
+                                style={{
+                                  background: '#fff',
+                                  padding: '8px 12px',
+                                  borderRadius: '6px',
+                                  border: rec.priority === 'ready' ? '1px solid #86efac' : rec.priority === 'high' ? '1px solid #fca5a5' : '1px solid #fde68a',
+                                  display: 'flex',
+                                  justifyContent: 'space-between',
+                                  alignItems: 'center',
+                                  gap: '8px',
+                                }}
+                              >
+                                <div style={{ fontSize: '12px', color: '#1e293b' }}>
+                                  {rec.message}
+                                </div>
+                                <button
+                                  style={{
+                                    fontSize: '10.5px',
+                                    padding: '3px 8px',
+                                    background: rec.priority === 'ready' ? '#166534' : '#0284c7',
+                                    borderColor: rec.priority === 'ready' ? '#166534' : '#0284c7',
+                                    color: '#fff',
+                                    whiteSpace: 'nowrap',
+                                  }}
+                                  onClick={() => {
+                                    selectSubstrandForFactory(
+                                      { strand_name: rec.strand, sub_strand_name: rec.sub_strand, name: rec.sub_strand },
+                                      selectedGrade,
+                                      rec.subject
+                                    );
+                                    if (rec.action === 'open_questions_factory') {
+                                      openQuestionsFactoryFromContentFactory();
+                                    } else {
+                                      setView('generation');
+                                      setFactoryStep(2);
+                                    }
+                                  }}
+                                >
+                                  {rec.priority === 'ready' ? '🎯 Questions ➔' : '⚡ Go to Studio ➔'}
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
 
                       {/* Hierarchical Breakdown Table */}
                       {(datasetProgressData.subjects || []).map((sub: any, sIdx: number) => (
@@ -3122,76 +3364,110 @@ export function App() {
                         <th style={{padding: '8px'}}>Subject</th>
                         <th style={{padding: '8px'}}>Grade / Level</th>
                         <th style={{padding: '8px'}}>Sub-strands</th>
+                        <th style={{padding: '8px'}}>Modular Progress</th>
                         <th style={{padding: '8px'}}>Status</th>
                         <th style={{padding: '8px'}}>Updated</th>
                         <th style={{padding: '8px', textAlign: 'right'}}>Action</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {curriculumDesignsList.map((d: any, idx: number) => (
-                        <tr key={idx} style={{borderBottom: '1px solid #f1f5f9'}}>
-                          <td style={{padding: '8px'}}>
-                            <strong>{d.subject}</strong>
-                            <div style={{fontSize: '0.75rem', color: '#64748b'}}>{d.essence_statement?.slice(0, 60)}...</div>
-                          </td>
-                          <td style={{padding: '8px'}}>
-                            <span className="pill" style={{background: '#e0e7ff', color: '#3730a3'}}>{d.grade}</span>
-                            <div style={{fontSize: '0.75rem', color: '#64748b', marginTop: '2px'}}>{d.level}</div>
-                          </td>
-                          <td style={{padding: '8px'}}>
-                            <strong>{d.substrand_count || 0}</strong> sub-strands
-                          </td>
-                          <td style={{padding: '8px'}}>
-                            <span className={`pill ${d.review_status === 'accepted_active' ? 'ok' : 'warn'}`}>
-                              {d.review_status === 'accepted_active' ? '✓ Active in Studio' : d.review_status || 'Draft'}
-                            </span>
-                          </td>
-                          <td style={{padding: '8px', fontSize: '0.78rem', color: '#64748b'}}>
-                            {new Date(d.updated_at).toLocaleDateString()}
-                          </td>
-                          <td style={{padding: '8px', textAlign: 'right'}}>
-                            <div style={{ display: "flex", gap: "6px", justifyContent: "flex-end" }}>
-                              <button
-                                className="ghost"
-                                style={{ fontSize: '0.78rem', padding: '5px 10px', background: '#f0fdf4', color: '#166534', borderColor: '#86efac' }}
-                                title="Synthesize an exhaustive Pedagogical Profile from this complete curriculum design"
-                                onClick={async () => {
-                                  await run(`Generating Profile for ${d.subject}`, async () => {
-                                    const res = await fetchJson<any>(`/api/v1/curriculum/profiles/generate-from-design/${d.design_id}`, { method: "POST" }, auth());
-                                    if (res?.profile) {
-                                      await loadProfilesList();
-                                      setActiveProfileEdit(res.profile);
-                                      setView("profiles");
-                                    }
-                                    return res;
-                                  });
-                                }}
-                              >
-                                🎭 Generate Profile
-                              </button>
-                              <button
-                                onClick={() => {
-                                  setGenGrade(d.grade);
-                                  setGenSubject(d.subject);
-                                  loadGradeSubjects(d.grade);
-                                  setView("generation");
-                                }}
-                                style={{fontSize: '0.8rem', padding: '6px 12px'}}
-                              >
-                                🚀 Open in Factory
-                              </button>
-                              <button
-                                className="ghost"
-                                style={{ fontSize: '0.78rem', padding: '5px 8px', color: '#b91c1c', borderColor: '#fca5a5' }}
-                                title="Permanently delete this entire subject and all its generations"
-                                onClick={() => deleteSubjectWithGenerations(d.grade, d.subject)}
-                              >
-                                🗑️ Delete
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
+                      {curriculumDesignsList.map((d: any, idx: number) => {
+                        const subjProg = (datasetProgressData?.subjects || []).find(
+                          (s: any) => s.subject.toLowerCase() === d.subject.toLowerCase()
+                        );
+                        return (
+                          <tr key={idx} style={{borderBottom: '1px solid #f1f5f9'}}>
+                            <td style={{padding: '8px'}}>
+                              <strong>{d.subject}</strong>
+                              <div style={{fontSize: '0.75rem', color: '#64748b'}}>{d.essence_statement?.slice(0, 60)}...</div>
+                            </td>
+                            <td style={{padding: '8px'}}>
+                              <span className="pill" style={{background: '#e0e7ff', color: '#3730a3'}}>{d.grade}</span>
+                              <div style={{fontSize: '0.75rem', color: '#64748b', marginTop: '2px'}}>{d.level}</div>
+                            </td>
+                            <td style={{padding: '8px'}}>
+                              <strong>{d.substrand_count || 0}</strong> sub-strands
+                            </td>
+                            <td style={{padding: '8px', minWidth: '220px'}}>
+                              {subjProg ? (
+                                <div>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
+                                    <strong style={{ fontSize: '12px', color: '#0284c7' }}>{subjProg.subject_percentage}%</strong>
+                                    <div style={{ flex: 1, height: '6px', background: '#e2e8f0', borderRadius: '3px', overflow: 'hidden' }}>
+                                      <div style={{ width: `${subjProg.subject_percentage}%`, height: '100%', background: '#0284c7' }} />
+                                    </div>
+                                  </div>
+                                  <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', fontSize: '10px' }}>
+                                    <span className={`pill ${subjProg.notes_summary?.remaining === 0 ? 'ok' : 'warn'}`}>
+                                      📝 {subjProg.notes_summary?.generated}/{subjProg.notes_summary?.required}h
+                                    </span>
+                                    <span className={`pill ${subjProg.visuals_summary?.remaining === 0 ? 'ok' : 'warn'}`}>
+                                      📐 {subjProg.visuals_summary?.generated}/{subjProg.visuals_summary?.required}v
+                                    </span>
+                                    <span className={`pill ${subjProg.practicals_summary?.remaining === 0 ? 'ok' : 'warn'}`}>
+                                      🧪 {subjProg.practicals_summary?.generated}/{subjProg.practicals_summary?.required}p
+                                    </span>
+                                    <span className={`pill ${subjProg.questions_summary?.remaining === 0 ? 'ok' : 'warn'}`}>
+                                      🎯 {subjProg.questions_summary?.generated}/{subjProg.questions_summary?.required}q
+                                    </span>
+                                  </div>
+                                </div>
+                              ) : (
+                                <span className="pill idle" style={{ fontSize: '10px' }}>0% (Ready in Studio)</span>
+                              )}
+                            </td>
+                            <td style={{padding: '8px'}}>
+                              <span className={`pill ${d.review_status === 'accepted_active' ? 'ok' : 'warn'}`}>
+                                {d.review_status === 'accepted_active' ? '✓ Active in Studio' : d.review_status || 'Draft'}
+                              </span>
+                            </td>
+                            <td style={{padding: '8px', fontSize: '0.78rem', color: '#64748b'}}>
+                              {new Date(d.updated_at).toLocaleDateString()}
+                            </td>
+                            <td style={{padding: '8px', textAlign: 'right'}}>
+                              <div style={{ display: "flex", gap: "6px", justifyContent: "flex-end" }}>
+                                <button
+                                  className="ghost"
+                                  style={{ fontSize: '0.78rem', padding: '5px 10px', background: '#f0fdf4', color: '#166534', borderColor: '#86efac' }}
+                                  title="Synthesize an exhaustive Pedagogical Profile from this complete curriculum design"
+                                  onClick={async () => {
+                                    await run(`Generating Profile for ${d.subject}`, async () => {
+                                      const res = await fetchJson<any>(`/api/v1/curriculum/profiles/generate-from-design/${d.design_id}`, { method: "POST" }, auth());
+                                      if (res?.profile) {
+                                        await loadProfilesList();
+                                        setActiveProfileEdit(res.profile);
+                                        setView("profiles");
+                                      }
+                                      return res;
+                                    });
+                                  }}
+                                >
+                                  🎭 Generate Profile
+                                </button>
+                                <button
+                                  onClick={() => {
+                                    setGenGrade(d.grade);
+                                    setGenSubject(d.subject);
+                                    loadGradeSubjects(d.grade);
+                                    setView("generation");
+                                  }}
+                                  style={{fontSize: '0.8rem', padding: '6px 12px'}}
+                                >
+                                  🏭 Launch Studio ➔
+                                </button>
+                                <button
+                                  className="ghost"
+                                  style={{ fontSize: '0.78rem', padding: '5px 8px', color: '#b91c1c', borderColor: '#fca5a5' }}
+                                  title="Permanently delete this entire subject and all its generations"
+                                  onClick={() => deleteSubjectWithGenerations(d.grade, d.subject)}
+                                >
+                                  🗑️ Delete
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 )}
