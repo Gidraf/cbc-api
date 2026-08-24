@@ -1240,10 +1240,18 @@ export function App() {
       }, auth());
       if (res.diagram) {
         setStationDiagram(res.diagram);
-        const updated = [res.diagram];
-        setStationVisualsList(updated);
+        const next = [...stationVisualsList];
+        const matchIdx = next.findIndex((v: any) => (v.asset_id && v.asset_id === res.diagram.asset_id) || (v.diagram_id && v.diagram_id === res.diagram.diagram_id) || v.title === res.diagram.diagram_title);
+        if (matchIdx >= 0) {
+          next[matchIdx] = { ...next[matchIdx], ...res.diagram };
+        } else if (next.length > 0) {
+          next.unshift(res.diagram);
+        } else {
+          next.push(res.diagram);
+        }
+        setStationVisualsList(next);
         setDiagramApproved(false);
-        autoPersistStation("diagrams", updated, undefined, updated, undefined, undefined, { diagram: false });
+        autoPersistStation("diagrams", next, undefined, next, undefined, undefined, { diagram: false });
       }
       if (res.content_type) setDetectedContentType(res.content_type);
       if (res.research_dossier) setDiagramResearchDossier(res.research_dossier);
@@ -1254,7 +1262,7 @@ export function App() {
   }
 
   async function planFactoryVisuals(customInstructions?: string) {
-    await run("Layer 2: Planning Minimum 5+ Visual Assets, Photos & Diagrams for Sub-strand...", async () => {
+    return await run("Layer 2: Planning Minimum 5+ Visual Assets, Photos & Diagrams for Sub-strand...", async () => {
       const payload = {
         grade: genGrade,
         subject: genSubject,
@@ -1280,8 +1288,9 @@ export function App() {
     });
   }
 
-  async function generateSingleVisual(visualItem: any, index: number, generationMode: "svg" | "photo_spec" | "video_storyboard" = "svg", customInstructions?: string) {
-    await run(`Layer 2: Synthesizing ${generationMode === "photo_spec" ? "Realistic Photo Spec" : (generationMode === "video_storyboard" ? "Video Storyboard" : "Vector SVG")} for Asset ${index + 1} (${visualItem.title || 'Visual'})...`, async () => {
+  async function generateSingleVisual(visualItem: any, generationMode: "svg" | "photo_spec" | "video_storyboard" = "svg", customInstructions?: string) {
+    if (!visualItem) return;
+    await run(`Layer 2: Synthesizing ${generationMode === "photo_spec" ? "Realistic Photo Spec" : (generationMode === "video_storyboard" ? "Video Storyboard" : "Vector SVG")} for (${visualItem.title || 'Visual'})...`, async () => {
       const payload = {
         grade: genGrade,
         subject: genSubject,
@@ -1297,12 +1306,16 @@ export function App() {
         body: JSON.stringify(payload),
       }, auth());
       if (res.visual) {
+        const updated = res.visual;
         const next = [...stationVisualsList];
-        next[index] = res.visual;
-        setStationVisualsList(next);
-        if (index === activeVisualIdx || !stationDiagram) {
-          setStationDiagram(res.visual);
+        const matchIdx = next.findIndex((v: any) => (v.asset_id && v.asset_id === updated.asset_id) || (v.diagram_id && v.diagram_id === updated.diagram_id) || v.title === updated.title);
+        if (matchIdx >= 0) {
+          next[matchIdx] = { ...next[matchIdx], ...updated };
+        } else {
+          next.push(updated);
         }
+        setStationVisualsList(next);
+        setStationDiagram(updated);
         if (generationMode === "photo_spec") setDiagramViewMode("image_spec");
         else setDiagramViewMode("visual");
 
@@ -1320,11 +1333,13 @@ export function App() {
   }
 
   async function generateAllVisuals() {
-    if (stationVisualsList.length === 0) {
-      await planFactoryVisuals();
+    let list = stationVisualsList;
+    if (list.length === 0) {
+      const planRes = await planFactoryVisuals();
+      list = planRes?.visuals || [];
     }
-    for (let i = 0; i < stationVisualsList.length; i++) {
-      await generateSingleVisual(stationVisualsList[i], i, "svg");
+    for (let i = 0; i < list.length; i++) {
+      await generateSingleVisual(list[i], "svg");
     }
   }
 
@@ -1346,10 +1361,18 @@ export function App() {
       }, auth());
       if (res.activity) {
         setStationActivity(res.activity);
-        const updated = [res.activity];
-        setStationActivitiesList(updated);
+        const next = [...stationActivitiesList];
+        const matchIdx = next.findIndex((a: any) => (a.activity_id && a.activity_id === res.activity.activity_id) || a.activity_name === res.activity.activity_name);
+        if (matchIdx >= 0) {
+          next[matchIdx] = { ...next[matchIdx], ...res.activity };
+        } else if (next.length > 0) {
+          next.unshift(res.activity);
+        } else {
+          next.push(res.activity);
+        }
+        setStationActivitiesList(next);
         setActivityApproved(false);
-        autoPersistStation("activities", { activities: updated }, undefined, undefined, updated, undefined, { activity: false });
+        autoPersistStation("activities", { activities: next }, undefined, undefined, next, undefined, { activity: false });
       }
       if (res.content_type) setDetectedContentType(res.content_type);
       if (res.research_dossier) setActivityResearchDossier(res.research_dossier);
@@ -1360,7 +1383,7 @@ export function App() {
   }
 
   async function planFactoryActivities(customInstructions?: string) {
-    await run("Layer 3: Planning Multi-Item Practical Tasks & Video Storyboards...", async () => {
+    return await run("Layer 3: Planning Multi-Item Practical Tasks & Video Storyboards...", async () => {
       const payload = {
         grade: genGrade,
         subject: genSubject,
@@ -1386,8 +1409,9 @@ export function App() {
     });
   }
 
-  async function generateSingleActivity(activityItem: any, index: number, customInstructions?: string) {
-    await run(`Layer 3: Synthesizing Practical Module ${index + 1} (${activityItem.activity_name || 'Activity'})...`, async () => {
+  async function generateSingleActivity(activityItem: any, customInstructions?: string) {
+    if (!activityItem) return;
+    await run(`Layer 3: Synthesizing Practical Module (${activityItem.activity_name || 'Activity'})...`, async () => {
       const payload = {
         grade: genGrade,
         subject: genSubject,
@@ -1402,12 +1426,16 @@ export function App() {
         body: JSON.stringify(payload),
       }, auth());
       if (res.activity) {
+        const updated = res.activity;
         const next = [...stationActivitiesList];
-        next[index] = res.activity;
-        setStationActivitiesList(next);
-        if (index === activeActivityIdx || !stationActivity) {
-          setStationActivity(res.activity);
+        const matchIdx = next.findIndex((a: any) => (a.activity_id && a.activity_id === updated.activity_id) || a.activity_name === updated.activity_name);
+        if (matchIdx >= 0) {
+          next[matchIdx] = { ...next[matchIdx], ...updated };
+        } else {
+          next.push(updated);
         }
+        setStationActivitiesList(next);
+        setStationActivity(updated);
         autoPersistStation("activities", { activities: next }, undefined, undefined, next);
       }
       if (res.quality_audit) setActivityQualityAudit(res.quality_audit);
@@ -1417,11 +1445,13 @@ export function App() {
   }
 
   async function generateAllActivities() {
-    if (stationActivitiesList.length === 0) {
-      await planFactoryActivities();
+    let list = stationActivitiesList;
+    if (list.length === 0) {
+      const planRes = await planFactoryActivities();
+      list = planRes?.activities || [];
     }
-    for (let i = 0; i < stationActivitiesList.length; i++) {
-      await generateSingleActivity(stationActivitiesList[i], i);
+    for (let i = 0; i < list.length; i++) {
+      await generateSingleActivity(list[i]);
     }
   }
 
@@ -3690,6 +3720,28 @@ export function App() {
                                     </div>
                                   )}
 
+                                  {/* Linked Hour Visuals & Practicals */}
+                                  {(() => {
+                                    const linkedVisuals = (stationVisualsList || []).filter((v: any) => v.hour_index === hNum || (!v.hour_index && hNum === 1));
+                                    const linkedPracticals = (stationActivitiesList || []).filter((a: any) => a.hour_index === hNum || (!a.hour_index && hNum === 1));
+                                    if (linkedVisuals.length === 0 && linkedPracticals.length === 0) return null;
+                                    return (
+                                      <div style={{ marginTop: "10px", padding: "8px 12px", background: "#f8fafc", borderRadius: "6px", border: "1px solid #e2e8f0", display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap", fontSize: "11.5px" }}>
+                                        <strong style={{ color: "#334155" }}>🔗 Linked Hour {hNum} Assets:</strong>
+                                        {linkedVisuals.map((v: any, vIdx: number) => (
+                                          <span key={vIdx} className="pill ok" style={{ fontSize: "10.5px", background: "#e0f2fe", color: "#0369a1", borderColor: "#bae6fd" }}>
+                                            📐 {v.title || `Visual ${vIdx+1}`} ({v.diagram_svg ? "SVG ✓" : (v.image_prompt ? "Photo Spec ✓" : "Planned")})
+                                          </span>
+                                        ))}
+                                        {linkedPracticals.map((a: any, aIdx: number) => (
+                                          <span key={aIdx} className="pill ok" style={{ fontSize: "10.5px", background: "#ccfbf1", color: "#0f766e", borderColor: "#99f6e4" }}>
+                                            🧪 {a.activity_name || `Practical ${aIdx+1}`} ({a.procedure_steps ? "Ready ✓" : "Planned"})
+                                          </span>
+                                        ))}
+                                      </div>
+                                    );
+                                  })()}
+
                                   {/* Misconception Diagnostics */}
                                   {misc && (
                                     <div style={{ marginTop: "8px", padding: "8px 12px", background: "#fff1f2", borderRadius: "6px", border: "1px solid #fecdd3", fontSize: "12px", color: "#9f1239" }}>
@@ -4030,8 +4082,8 @@ export function App() {
                                   className="ghost"
                                   style={{ fontSize: "11.5px", padding: "4px 10px", background: "#f0f9ff", color: "#0369a1", borderColor: "#bae6fd", fontWeight: 600 }}
                                   onClick={() => {
-                                    if (stationVisualsList[activeVisualIdx]) {
-                                      generateSingleVisual(stationVisualsList[activeVisualIdx], activeVisualIdx, "svg", diagramRefinePrompt);
+                                    if (curVis) {
+                                      generateSingleVisual(curVis, "svg", diagramRefinePrompt);
                                     } else {
                                       generateFactoryDiagram(diagramRefinePrompt);
                                     }
@@ -4044,11 +4096,11 @@ export function App() {
                                   className="ghost"
                                   style={{ fontSize: "11.5px", padding: "4px 10px", background: "#faf5ff", color: "#7e22ce", borderColor: "#e9d5ff", fontWeight: 600 }}
                                   onClick={() => {
-                                    if (stationVisualsList[activeVisualIdx]) {
-                                      generateSingleVisual(stationVisualsList[activeVisualIdx], activeVisualIdx, "photo_spec", diagramRefinePrompt);
+                                    if (curVis) {
+                                      generateSingleVisual(curVis, "photo_spec", diagramRefinePrompt);
                                     }
                                   }}
-                                  disabled={isRunning || !stationVisualsList[activeVisualIdx]}
+                                  disabled={isRunning || !curVis}
                                 >
                                   📸 Synthesize Realistic Photo Specs
                                 </button>
@@ -4056,11 +4108,11 @@ export function App() {
                                   className="ghost"
                                   style={{ fontSize: "11.5px", padding: "4px 10px", background: "#fdf4ff", color: "#86198f", borderColor: "#f5d0fe", fontWeight: 600 }}
                                   onClick={() => {
-                                    if (stationVisualsList[activeVisualIdx]) {
-                                      generateSingleVisual(stationVisualsList[activeVisualIdx], activeVisualIdx, "video_storyboard", diagramRefinePrompt);
+                                    if (curVis) {
+                                      generateSingleVisual(curVis, "video_storyboard", diagramRefinePrompt);
                                     }
                                   }}
-                                  disabled={isRunning || !stationVisualsList[activeVisualIdx]}
+                                  disabled={isRunning || !curVis}
                                 >
                                   🎥 Synthesize Video Storyboard
                                 </button>
@@ -4076,8 +4128,8 @@ export function App() {
                             />
                             <button
                               onClick={() => {
-                                if (stationVisualsList.length > 0 && stationVisualsList[activeVisualIdx]) {
-                                  generateSingleVisual(stationVisualsList[activeVisualIdx], activeVisualIdx, "svg", diagramRefinePrompt);
+                                if (curVis) {
+                                  generateSingleVisual(curVis, "svg", diagramRefinePrompt);
                                 } else {
                                   generateFactoryDiagram(diagramRefinePrompt);
                                 }
@@ -4514,8 +4566,8 @@ export function App() {
                             />
                             <button
                               onClick={() => {
-                                if (stationActivitiesList.length > 0 && stationActivitiesList[activeActivityIdx]) {
-                                  generateSingleActivity(stationActivitiesList[activeActivityIdx], activeActivityIdx, activityRefinePrompt);
+                                if (curAct) {
+                                  generateSingleActivity(curAct, activityRefinePrompt);
                                 } else {
                                   generateFactoryActivity(activityRefinePrompt);
                                 }

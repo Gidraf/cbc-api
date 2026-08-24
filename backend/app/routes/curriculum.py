@@ -2537,22 +2537,79 @@ def factory_auto_persist_station(
     elif payload.station_type == "notes" and payload.data:
         notes = payload.data
 
-    if payload.diagrams is not None:
-        incoming_diag = payload.diagrams if isinstance(payload.diagrams, list) else [payload.diagrams]
-        if incoming_diag:
-            diagrams = incoming_diag
-    elif payload.station_type == "diagrams" and payload.data is not None:
-        incoming_diag = payload.data if isinstance(payload.data, list) else [payload.data]
-        if incoming_diag:
-            diagrams = incoming_diag
+    # Non-destructive merging of diagrams by asset_id / diagram_id / title
+    if payload.diagrams is not None or (payload.station_type == "diagrams" and payload.data is not None):
+        raw_incoming = payload.diagrams if payload.diagrams is not None else payload.data
+        incoming_diag = raw_incoming if isinstance(raw_incoming, list) else [raw_incoming]
+        
+        diag_map = {}
+        for d in (diagrams if isinstance(diagrams, list) else []):
+            if isinstance(d, dict):
+                k = str(d.get("asset_id") or d.get("diagram_id") or d.get("title") or f"diag_{len(diag_map)+1}")
+                diag_map[k] = d
 
-    if payload.activities is not None:
-        if isinstance(payload.activities, dict) and payload.activities:
-            activities = payload.activities
-        elif isinstance(payload.activities, list) and payload.activities:
-            activities = {"activities": payload.activities}
-    elif payload.station_type == "activities" and payload.data is not None:
-        activities = payload.data if isinstance(payload.data, dict) else {"activities": payload.data}
+        for d in incoming_diag:
+            if isinstance(d, dict):
+                k = str(d.get("asset_id") or d.get("diagram_id") or d.get("title") or f"diag_{len(diag_map)+1}")
+                if k in diag_map:
+                    merged_item = dict(diag_map[k])
+                    for field, val in d.items():
+                        if val is not None and val != "" and val != []:
+                            merged_item[field] = val
+                    diag_map[k] = merged_item
+                else:
+                    diag_map[k] = d
+
+        diagrams = list(diag_map.values())
+
+    # Non-destructive merging of activities by activity_id / activity_name
+    if payload.activities is not None or (payload.station_type == "activities" and payload.data is not None):
+        raw_incoming = payload.activities if payload.activities is not None else payload.data
+        if isinstance(raw_incoming, dict) and "activities" in raw_incoming:
+            incoming_acts = raw_incoming.get("activities", [])
+        elif isinstance(raw_incoming, list):
+            incoming_acts = raw_incoming
+        elif isinstance(raw_incoming, dict):
+            incoming_acts = [raw_incoming]
+        else:
+            incoming_acts = []
+
+        existing_acts_list = []
+        if isinstance(activities, dict) and "activities" in activities:
+            existing_acts_list = activities.get("activities", [])
+        elif isinstance(activities, list):
+            existing_acts_list = activities
+
+        act_map = {}
+        for a in existing_acts_list:
+            if isinstance(a, dict):
+                k = str(a.get("activity_id") or a.get("activity_name") or a.get("title") or f"act_{len(act_map)+1}")
+                act_map[k] = a
+
+        for a in incoming_acts:
+            if isinstance(a, dict):
+                k = str(a.get("activity_id") or a.get("activity_name") or a.get("title") or f"act_{len(act_map)+1}")
+                if k in act_map:
+                    merged_item = dict(act_map[k])
+                    for field, val in a.items():
+                        if val is not None and val != "" and val != []:
+                            merged_item[field] = val
+                    act_map[k] = merged_item
+                else:
+                    act_map[k] = a
+
+        activities = {"activities": list(act_map.values())}
+
+    # Bi-directional linking: Link diagrams and activities directly into notes.hour_modules
+    if notes and isinstance(notes, dict) and "hour_modules" in notes and isinstance(notes["hour_modules"], list):
+        acts_list = activities.get("activities", []) if isinstance(activities, dict) else (activities if isinstance(activities, list) else [])
+        for idx, hm in enumerate(notes["hour_modules"]):
+            if isinstance(hm, dict):
+                h_num = hm.get("hour_number", idx + 1)
+                h_diags = [d for d in diagrams if isinstance(d, dict) and (d.get("hour_index") == h_num or (not d.get("hour_index") and h_num == 1))]
+                h_acts = [a for a in acts_list if isinstance(a, dict) and (a.get("hour_index") == h_num or (not a.get("hour_index") and h_num == 1))]
+                hm["visual_assets"] = h_diags
+                hm["practical_activities"] = h_acts
 
     if payload.questions is not None:
         incoming_qs = payload.questions if isinstance(payload.questions, list) else [payload.questions]
