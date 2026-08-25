@@ -17,8 +17,16 @@ export default defineConfig(({ mode }) => {
           "**/.git/**"
         ]
       },
+      // Only paths the app actually calls are proxied. `/questions` and
+      // `/review` used to be proxied too, which shadowed the client routes of
+      // the same name — navigating to /questions returned raw API JSON instead
+      // of the page. The console calls those endpoints under /api/v1.
       proxy: {
         "/api": {
+          target: proxyTarget,
+          changeOrigin: true
+        },
+        "/admin": {
           target: proxyTarget,
           changeOrigin: true
         },
@@ -26,27 +34,15 @@ export default defineConfig(({ mode }) => {
           target: proxyTarget,
           changeOrigin: true
         },
-        "/questions": {
+        "/auth": {
           target: proxyTarget,
           changeOrigin: true
         },
-        "/targets": {
+        "/pipeline": {
           target: proxyTarget,
           changeOrigin: true
         },
-        "/review": {
-          target: proxyTarget,
-          changeOrigin: true
-        },
-        "/human-review": {
-          target: proxyTarget,
-          changeOrigin: true
-        },
-        "/production": {
-          target: proxyTarget,
-          changeOrigin: true
-        },
-        "/agents": {
+        "/health": {
           target: proxyTarget,
           changeOrigin: true
         }
