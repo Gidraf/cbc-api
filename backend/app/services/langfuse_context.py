@@ -469,16 +469,24 @@ class LangfuseContextService:
         )
 
     def list_datasets(self) -> list[dict]:
+        """Grades in CBC progression order, lowest first.
+
+        ``ORDER BY grade`` on a text column sorts grade-1, grade-10, grade-11,
+        grade-12, grade-2, so the ordering is applied in Python against the
+        canonical ordinal instead.
+        """
         from ..infra.db import fetch_all
-        db_grades = fetch_all("SELECT DISTINCT grade FROM curriculum_designs ORDER BY grade ASC")
+        from .grade_order import describe, sort_grades
+
+        db_grades = fetch_all("SELECT DISTINCT grade FROM curriculum_designs")
         if not db_grades:
-            db_grades = fetch_all("SELECT DISTINCT grade FROM curriculum_substrands ORDER BY grade ASC")
+            db_grades = fetch_all("SELECT DISTINCT grade FROM curriculum_substrands")
 
-        names = [r["grade"] for r in db_grades if r.get("grade")]
+        names = sort_grades([r["grade"] for r in db_grades if r.get("grade")])
         if not names:
-            names = ["grade-dte", "grade-7", "grade-8", "grade-9", "grade-4", "grade-pp1"]
+            names = sort_grades(["grade-pp1", "grade-4", "grade-7", "grade-8", "grade-9", "grade-dte"])
 
-        return [{"name": n} for n in names]
+        return [{"name": slug, **describe(slug)} for slug in names]
 
     def upload_dataset_item(self, grade_slug: str, subject_data: dict) -> dict:
         if self._client:

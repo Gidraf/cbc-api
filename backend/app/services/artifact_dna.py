@@ -8,8 +8,26 @@ from typing import Any
 
 from ..infra.db import execute, fetch_all, fetch_one, to_json
 from ..models import now_iso
+from . import dna_scoring
+from .dna_scoring import ScoreSet
+from .grade_order import grade_ordinal
 
 logger = logging.getLogger("cbc-artifact-dna")
+
+# A certificate is only marked verified when its computed metrics clear this bar.
+VERIFY_THRESHOLD = 0.75
+REVIEW_THRESHOLD = 0.55
+
+
+def _status_for(mean: float | None, verified_label: str = "verified") -> str:
+    """Derive status from measured quality rather than asserting it."""
+    if mean is None:
+        return "unscored"
+    if mean >= VERIFY_THRESHOLD:
+        return verified_label
+    if mean >= REVIEW_THRESHOLD:
+        return "needs_review"
+    return "rejected"
 
 
 @dataclass(slots=True)
@@ -20,11 +38,14 @@ class DnaCertificate:
     universal_slo_id: str
     curriculum_link: dict[str, Any]
     dna_payload: dict[str, Any]
-    compliance_scores: dict[str, float]
+    compliance_scores: dict[str, Any]
     provenance: dict[str, Any]
     parent_dna_id: str | None
     status: str
     created_at: str
+    # Retained in memory so a bundle can aggregate its stages' measurements.
+    # Not persisted directly; the detail lives in dna_payload["score_detail"].
+    score_set: ScoreSet | None = field(default=None, compare=False)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -43,10 +64,15 @@ class DnaCertificate:
 
 
 class UniversalArtifactDnaService:
-    """Generates cryptographic, anti-hallucination, and pedagogical DNA compliance certificates
-    for the entire CBC hierarchy: Dataset -> Subject -> Strand -> Substrand -> Artifacts -> Bundle."""
+    """Compliance certificates for the CBC hierarchy: Dataset → Subject → Strand
+    → Substrand → Artifacts → Bundle.
 
-    # ── 1. CURRICULUM LEVEL DNAs (Dataset -> Subject -> Strand -> Substrand) ────
+    Every score carries the method that produced it. Metrics that cannot be known
+    at generation time — item discrimination, for instance, which needs learner
+    response data — are recorded as pending rather than asserted as a constant.
+    """
+
+    # ── 1. CURRICULUM LEVEL DNAs (Dataset → Subject → Strand → Substrand) ────
 
     def generate_dataset_dna(
         self,
@@ -55,20 +81,20 @@ class UniversalArtifactDnaService:
         source_meta: dict[str, Any],
     ) -> DnaCertificate:
         raw_hash = hashlib.sha256(raw_text.encode("utf-8")).hexdigest()
-        char_count = len(raw_text)
 
         dna_payload = {
             "dataset_id": dataset_id,
             "raw_sha256": raw_hash,
-            "char_count": char_count,
+            "char_count": len(raw_text),
             "source_meta": source_meta,
             "provenance_signature": f"KICD_RAW_SOURCE_{raw_hash[:16]}",
         }
 
+        # Integrity of a stored blob genuinely is deterministic: the bytes either
+        # hash to the recorded digest or they do not.
         scores = {
-            "source_authenticity": 1.0,
-            "data_integrity": 1.0,
-            "anti_tamper_fidelity": 1.0,
+            "data_integrity": 1.0 if raw_text else 0.0,
+            "source_present": 1.0 if raw_text.strip() else 0.0,
         }
 
         cert = DnaCertificate(
@@ -81,7 +107,7 @@ class UniversalArtifactDnaService:
             compliance_scores=scores,
             provenance=source_meta,
             parent_dna_id=None,
-            status="verified",
+            status="verified" if raw_text.strip() else "rejected",
             created_at=now_iso(),
         )
         self._persist_dna(cert)
@@ -97,14 +123,12 @@ class UniversalArtifactDnaService:
         parent_dataset_dna_id: str,
         raw_snippet: str,
     ) -> DnaCertificate:
-        subject_corpus = f"{subject} {grade} {level} {essence_statement} {json.dumps(general_outcomes)}"
-        subject_hash = hashlib.sha256(subject_corpus.encode("utf-8")).hexdigest()
         raw_source_hash = hashlib.sha256(raw_snippet.encode("utf-8")).hexdigest()
 
-        # Anti-hallucination check: essence statement should not be empty and should have ground words in raw snippet
-        grounded_terms = [w.lower() for w in subject.split() if len(w) > 3]
-        is_grounded = any(t in raw_snippet.lower() for t in grounded_terms) if grounded_terms else True
-        anti_hallucination_score = 1.0 if is_grounded else 0.85
+        grounding = dna_scoring.containment(subject, raw_snippet)
+        essence_grounding = (
+            dna_scoring.containment(essence_statement, raw_snippet) if essence_statement.strip() else 0.0
+        )
 
         dna_payload = {
             "subject": subject,
@@ -113,14 +137,26 @@ class UniversalArtifactDnaService:
             "essence_statement_hash": hashlib.sha256(essence_statement.encode()).hexdigest(),
             "general_outcomes_count": len(general_outcomes),
             "raw_source_hash": raw_source_hash,
-            "anti_hallucination_audit": "GROUNDED_TO_SOURCE_DESIGN" if is_grounded else "INFERRED_SUBJECT",
+            "score_detail": {
+                "subject_name_grounding": {
+                    "value": grounding,
+                    "method": "term_containment_in_source",
+                    "evidence": "fraction of the subject name's terms found in the source design",
+                },
+                "essence_grounding": {
+                    "value": essence_grounding,
+                    "method": "term_containment_in_source",
+                    "evidence": "how much of the essence statement traces to the source text",
+                },
+            },
         }
 
         scores = {
-            "becf_master_conformance": 0.99,
-            "anti_hallucination_fidelity": anti_hallucination_score,
-            "curriculum_grounding": 1.0,
+            "subject_name_grounding": grounding,
+            "essence_grounding": essence_grounding,
+            "outcomes_present": 1.0 if general_outcomes else 0.0,
         }
+        mean = round(sum(scores.values()) / len(scores), 4)
 
         subject_slug = subject.lower().replace(" ", "_")[:12]
         cert = DnaCertificate(
@@ -133,7 +169,7 @@ class UniversalArtifactDnaService:
             compliance_scores=scores,
             provenance={"parent_dataset_dna_id": parent_dataset_dna_id},
             parent_dna_id=parent_dataset_dna_id,
-            status="verified",
+            status=_status_for(mean),
             created_at=now_iso(),
         )
         self._persist_dna(cert)
@@ -148,22 +184,16 @@ class UniversalArtifactDnaService:
         parent_subject_dna_id: str,
         raw_strand_snippet: str,
     ) -> DnaCertificate:
-        strand_hash = hashlib.sha256(strand_name.encode("utf-8")).hexdigest()
-        source_hash = hashlib.sha256(raw_strand_snippet.encode("utf-8")).hexdigest()
+        grounding = dna_scoring.containment(strand_name, raw_strand_snippet)
 
         dna_payload = {
             "strand_id": strand_id,
             "strand_name": strand_name,
-            "strand_hash": strand_hash,
-            "raw_source_hash": source_hash,
-            "anti_hallucination_audit": "GROUNDED_STRAND_HEADER",
+            "strand_hash": hashlib.sha256(strand_name.encode("utf-8")).hexdigest(),
+            "raw_source_hash": hashlib.sha256(raw_strand_snippet.encode("utf-8")).hexdigest(),
         }
 
-        scores = {
-            "becf_master_conformance": 0.98,
-            "anti_hallucination_fidelity": 1.0,
-            "structural_grounding": 1.0,
-        }
+        scores = {"strand_name_grounding": grounding}
 
         clean_strand = strand_id.replace(".", "_")
         cert = DnaCertificate(
@@ -176,7 +206,7 @@ class UniversalArtifactDnaService:
             compliance_scores=scores,
             provenance={"parent_subject_dna_id": parent_subject_dna_id},
             parent_dna_id=parent_subject_dna_id,
-            status="verified",
+            status=_status_for(grounding),
             created_at=now_iso(),
         )
         self._persist_dna(cert)
@@ -197,39 +227,41 @@ class UniversalArtifactDnaService:
         parent_strand_dna_id: str,
         raw_substrand_snippet: str,
     ) -> DnaCertificate:
-        substrand_corpus = f"{sub_strand_name} {allocated_hours} {json.dumps(slos)} {json.dumps(kiqs)}"
-        substrand_hash = hashlib.sha256(substrand_corpus.encode("utf-8")).hexdigest()
         source_hash = hashlib.sha256(raw_substrand_snippet.encode("utf-8")).hexdigest()
 
-        # Strict anti-hallucination check: ensure SLO count >= 1 and text is grounded in raw snippet
-        grounded_slos = 0
-        for s in slos:
-            text = s.get("text", "")
-            words = [w.lower() for w in text.split() if len(w) > 4]
-            if any(w in raw_substrand_snippet.lower() for w in words):
-                grounded_slos += 1
-
-        grounding_ratio = grounded_slos / max(1, len(slos))
+        per_slo = [
+            dna_scoring.containment(s.get("text", "") if isinstance(s, dict) else str(s), raw_substrand_snippet)
+            for s in (slos or [])
+        ]
+        grounded_slos = sum(1 for c in per_slo if c >= 0.5)
+        grounding_ratio = round(grounded_slos / len(per_slo), 4) if per_slo else 0.0
 
         dna_payload = {
             "sub_strand_id": sub_strand_id,
             "sub_strand_name": sub_strand_name,
             "allocated_hours": allocated_hours,
-            "slo_count": len(slos),
-            "kiq_count": len(kiqs),
+            "slo_count": len(slos or []),
+            "kiq_count": len(kiqs or []),
             "diagrams_discovered": diagrams_required,
             "experiments_discovered": experiments,
             "raw_source_hash": source_hash,
-            "substrand_hash": substrand_hash,
-            "anti_hallucination_audit": f"GROUNDED ({grounded_slos}/{len(slos)} SLOs verified against source)",
+            "score_detail": {
+                "slo_grounding": {
+                    "value": grounding_ratio,
+                    "method": "slo_term_containment_in_source",
+                    "evidence": f"{grounded_slos} of {len(per_slo)} SLOs traced to the source design",
+                    "sample_size": len(per_slo),
+                }
+            },
         }
 
         scores = {
-            "becf_master_conformance": 0.99,
-            "anti_hallucination_fidelity": round(grounding_ratio, 4),
-            "rubric_criterion_alignment": 0.97,
-            "slo_grounding_score": round(grounding_ratio, 4),
+            "slo_grounding": grounding_ratio,
+            "blueprint_completeness": round(
+                sum([bool(slos), bool(kiqs), bool(allocated_hours), bool(diagrams_required)]) / 4, 4
+            ),
         }
+        mean = round(sum(scores.values()) / len(scores), 4)
 
         clean_sub = sub_strand_id.replace(".", "_")
         cert = DnaCertificate(
@@ -247,13 +279,13 @@ class UniversalArtifactDnaService:
             compliance_scores=scores,
             provenance={"parent_strand_dna_id": parent_strand_dna_id},
             parent_dna_id=parent_strand_dna_id,
-            status="verified" if grounding_ratio >= 0.75 else "flagged_hallucination_risk",
+            status=_status_for(mean) if mean >= REVIEW_THRESHOLD else "flagged_hallucination_risk",
             created_at=now_iso(),
         )
         self._persist_dna(cert)
         return cert
 
-    # ── 2. GENERATION STAGE ARTIFACT DNAs (Notes, Diagrams, Activities, Questions) ──
+    # ── 2. GENERATION STAGE ARTIFACT DNAs ───────────────────────────────────
 
     def generate_notes_dna(
         self,
@@ -262,47 +294,41 @@ class UniversalArtifactDnaService:
         notes_content: dict[str, Any],
         provenance: dict[str, Any],
         parent_substrand_dna_id: str | None = None,
+        blueprint_slos: list[Any] | None = None,
+        raw_source: str = "",
     ) -> DnaCertificate:
-        slo_id = curriculum.get("slo_id", "SLO-GEN")
-        text_corpus = f"{notes_content.get('title', '')} {json.dumps(notes_content.get('sections', []))}"
-        citation_hash = hashlib.sha256(text_corpus.encode("utf-8")).hexdigest()
+        scores = dna_scoring.score_notes(
+            notes_content,
+            blueprint_slos or [],
+            grade_ordinal(curriculum.get("grade")),
+            raw_source,
+        )
 
-        key_terms = notes_content.get("key_inquiry_terms", [])
-        sections = notes_content.get("sections", [])
-        has_summary = bool(notes_content.get("summary"))
-
-        slo_coverage = min(1.0, max(0.85, (len(sections) * 0.2) + (0.3 if has_summary else 0.0)))
-        becf_adherence = 0.98 if "competencies" in notes_content or "kicd" in text_corpus.lower() else 0.95
-
+        modules = notes_content.get("hour_modules") or notes_content.get("key_concepts") or notes_content.get("sections") or []
         dna_payload = {
             "title": notes_content.get("title", ""),
-            "section_count": len(sections),
-            "key_inquiry_terms": key_terms,
-            "kicd_citation_hash": citation_hash,
-            "pedagogical_approach": "Criterion-Referenced CBC Constructivism",
-            "reading_level": "Age-appropriate Middle/Upper Basic",
+            "module_count": len(modules) if isinstance(modules, list) else 0,
+            "kicd_citation_hash": hashlib.sha256(
+                f"{notes_content.get('title', '')}{json.dumps(modules, default=str)}".encode("utf-8")
+            ).hexdigest(),
             "parent_substrand_dna_id": parent_substrand_dna_id,
-        }
-
-        scores = {
-            "curriculum_alignment": slo_coverage,
-            "becf_adherence": becf_adherence,
-            "pedagogical_clarity": 0.96,
-            "anti_hallucination_fidelity": 0.98,
+            "score_detail": scores.detail(),
+            "weakest_metrics": scores.weakest(),
         }
 
         cert = DnaCertificate(
             dna_id=f"dna_notes_{notes_id[-10:]}",
             artifact_type="notes",
             artifact_id=notes_id,
-            universal_slo_id=slo_id,
+            universal_slo_id=curriculum.get("slo_id", "SLO-GEN"),
             curriculum_link=curriculum,
             dna_payload=dna_payload,
-            compliance_scores=scores,
+            compliance_scores=scores.values_only(),
             provenance=provenance,
             parent_dna_id=parent_substrand_dna_id,
-            status="verified" if slo_coverage >= 0.9 else "needs_review",
+            status=_status_for(scores.mean()),
             created_at=now_iso(),
+            score_set=scores,
         )
         self._persist_dna(cert)
         return cert
@@ -314,48 +340,39 @@ class UniversalArtifactDnaService:
         diagram_data: dict[str, Any],
         provenance: dict[str, Any],
         parent_substrand_dna_id: str | None = None,
+        concept: str = "",
     ) -> DnaCertificate:
-        slo_id = curriculum.get("slo_id", "SLO-GEN")
-        svg_content = diagram_data.get("diagram_svg", "")
-        svg_hash = hashlib.sha256(svg_content.encode("utf-8")).hexdigest()
-
-        accessibility = diagram_data.get("accessibility", {})
-        has_alt = bool(accessibility.get("alt_text"))
-        has_tactile = bool(accessibility.get("tactile_description"))
-
-        accessibility_score = 1.0 if (has_alt and has_tactile) else (0.8 if has_alt else 0.5)
+        scores = dna_scoring.score_diagram(
+            diagram_data,
+            concept or curriculum.get("sub_strand", ""),
+        )
 
         dna_payload = {
             "diagram_title": diagram_data.get("diagram_title", ""),
-            "diagram_hash": svg_hash,
+            "diagram_hash": hashlib.sha256(
+                str(diagram_data.get("diagram_svg", "")).encode("utf-8")
+            ).hexdigest(),
             "storage_url": diagram_data.get("storage_url", ""),
             "dedup_status": diagram_data.get("dedup_status", "new"),
-            "sne_accessibility": {
-                "has_alt_text": has_alt,
-                "has_tactile_description": has_tactile,
-            },
+            "has_scene_document": bool(diagram_data.get("scene_document")),
             "parent_substrand_dna_id": parent_substrand_dna_id,
-        }
-
-        scores = {
-            "scientific_accuracy": 0.99,
-            "sne_accessibility": accessibility_score,
-            "vector_semantic_validity": 1.0 if "<svg" in svg_content else 0.0,
-            "anti_hallucination_fidelity": 1.0,
+            "score_detail": scores.detail(),
+            "weakest_metrics": scores.weakest(),
         }
 
         cert = DnaCertificate(
             dna_id=f"dna_diag_{diagram_id[-10:]}",
             artifact_type="diagram",
             artifact_id=diagram_id,
-            universal_slo_id=slo_id,
+            universal_slo_id=curriculum.get("slo_id", "SLO-GEN"),
             curriculum_link=curriculum,
             dna_payload=dna_payload,
-            compliance_scores=scores,
+            compliance_scores=scores.values_only(),
             provenance=provenance,
             parent_dna_id=parent_substrand_dna_id,
-            status="verified" if accessibility_score >= 0.8 else "needs_accessibility_review",
+            status=_status_for(scores.mean()),
             created_at=now_iso(),
+            score_set=scores,
         )
         self._persist_dna(cert)
         return cert
@@ -367,37 +384,34 @@ class UniversalArtifactDnaService:
         activity_data: dict[str, Any],
         provenance: dict[str, Any],
         parent_substrand_dna_id: str | None = None,
+        content_type: str = "generic",
     ) -> DnaCertificate:
-        slo_id = curriculum.get("slo_id", "SLO-GEN")
-        activities_list = activity_data.get("activities", []) if isinstance(activity_data, dict) else []
+        scores = dna_scoring.score_activity(activity_data, content_type)
 
+        activities = activity_data.get("activities") or []
+        experiments = activity_data.get("experiments") or []
         dna_payload = {
-            "activity_count": len(activities_list),
-            "inquiry_model": "Experiential & Collaborative Investigation",
-            "safety_guidelines_included": bool(activity_data.get("safety_precautions", True)),
-            "local_materials_emphasis": True,
+            "activity_count": len(activities) if isinstance(activities, list) else 0,
+            "experiment_count": len(experiments) if isinstance(experiments, list) else 0,
+            "content_type": content_type,
             "parent_substrand_dna_id": parent_substrand_dna_id,
-        }
-
-        scores = {
-            "inquiry_pedagogy": 0.97,
-            "hands_on_feasibility": 0.95,
-            "safety_compliance": 1.0,
-            "anti_hallucination_fidelity": 0.99,
+            "score_detail": scores.detail(),
+            "weakest_metrics": scores.weakest(),
         }
 
         cert = DnaCertificate(
             dna_id=f"dna_act_{activity_id[-10:]}",
             artifact_type="activity",
             artifact_id=activity_id,
-            universal_slo_id=slo_id,
+            universal_slo_id=curriculum.get("slo_id", "SLO-GEN"),
             curriculum_link=curriculum,
             dna_payload=dna_payload,
-            compliance_scores=scores,
+            compliance_scores=scores.values_only(),
             provenance=provenance,
             parent_dna_id=parent_substrand_dna_id,
-            status="verified",
+            status=_status_for(scores.mean()),
             created_at=now_iso(),
+            score_set=scores,
         )
         self._persist_dna(cert)
         return cert
@@ -409,38 +423,43 @@ class UniversalArtifactDnaService:
         question_item: dict[str, Any],
         provenance: dict[str, Any],
         parent_substrand_dna_id: str | None = None,
+        notes_body: str = "",
     ) -> DnaCertificate:
-        slo_id = curriculum.get("slo_id", "SLO-GEN")
-        ped_dna = question_item.get("pedagogical_dna", {})
+        content = question_item.get("content", question_item) or {}
+        pedagogy = question_item.get("pedagogical_dna", {}) or {}
+
+        scores = dna_scoring.score_question(
+            {**content, "rubric": question_item.get("rubric") or content.get("rubric") or {}},
+            slo_text=str(curriculum.get("slo_text") or ""),
+            notes_body=notes_body,
+            grade_ordinal=grade_ordinal(curriculum.get("grade")),
+        )
 
         dna_payload = {
-            "universal_id": question_item.get("universal_id", slo_id),
-            "question_type": question_item.get("content", {}).get("question_type", "multiple_choice"),
-            "bloom_taxonomy": ped_dna.get("bloom_level", "Applying"),
-            "difficulty_index": ped_dna.get("difficulty_index", 0.5),
-            "rubric_aligned": bool(question_item.get("rubric")),
+            "universal_id": question_item.get("universal_id", curriculum.get("slo_id", "")),
+            "question_type": content.get("question_type", "multiple_choice"),
+            "bloom_taxonomy": pedagogy.get("bloom_level", "Applying"),
+            "difficulty_index": pedagogy.get("difficulty_index", 0.5),
+            "max_marks": pedagogy.get("max_marks", 1),
+            "rubric_aligned": bool(question_item.get("rubric") or content.get("rubric")),
             "parent_substrand_dna_id": parent_substrand_dna_id,
-        }
-
-        scores = {
-            "item_discrimination": 0.98,
-            "distractor_plausibility": 0.95,
-            "slo_congruence": 0.99,
-            "anti_hallucination_fidelity": 1.0,
+            "score_detail": scores.detail(),
+            "weakest_metrics": scores.weakest(),
         }
 
         cert = DnaCertificate(
             dna_id=f"dna_q_{question_id[-10:]}",
             artifact_type="question",
             artifact_id=question_id,
-            universal_slo_id=slo_id,
+            universal_slo_id=curriculum.get("slo_id", "SLO-GEN"),
             curriculum_link=curriculum,
             dna_payload=dna_payload,
-            compliance_scores=scores,
+            compliance_scores=scores.values_only(),
             provenance=provenance,
             parent_dna_id=parent_substrand_dna_id,
-            status="verified",
+            status=_status_for(scores.mean()),
             created_at=now_iso(),
+            score_set=scores,
         )
         self._persist_dna(cert)
         return cert
@@ -453,65 +472,68 @@ class UniversalArtifactDnaService:
         provenance: dict[str, Any],
         parent_substrand_dna_id: str | None = None,
     ) -> DnaCertificate:
-        slo_id = curriculum.get("slo_id", "SLO-GEN")
-        merkle_inputs = "".join([d.dna_id + str(d.compliance_scores) for d in stage_dnas])
-        merkle_root = hashlib.sha256(merkle_inputs.encode("utf-8")).hexdigest()
+        merkle_root = hashlib.sha256(
+            "".join(d.dna_id + json.dumps(d.compliance_scores, sort_keys=True, default=str) for d in stage_dnas).encode("utf-8")
+        ).hexdigest()
 
-        avg_alignment = sum(
-            sum(d.compliance_scores.values()) / max(1, len(d.compliance_scores)) for d in stage_dnas
-        ) / max(1, len(stage_dnas))
+        scores = dna_scoring.score_bundle([d.score_set for d in stage_dnas if d.score_set])
+
+        failing = [d.dna_id for d in stage_dnas if d.status in {"needs_review", "rejected"}]
 
         dna_payload = {
             "bundle_merkle_root": merkle_root,
             "verified_artifact_stages": [d.artifact_type for d in stage_dnas],
             "stage_dna_ids": [d.dna_id for d in stage_dnas],
-            "total_artifacts_verified": len(stage_dnas),
+            "total_artifacts": len(stage_dnas),
+            "stages_needing_attention": failing,
             "parent_substrand_dna_id": parent_substrand_dna_id,
-            "becf_master_conformance": "CERTIFIED_CBC_KICD_ALIGNED",
-            "anti_hallucination_lineage_verified": True,
+            "score_detail": scores.detail(),
         }
 
-        scores = {
-            "composite_curriculum_fidelity": round(avg_alignment, 4),
-            "universal_dna_integrity": 1.0,
-            "anti_hallucination_score": 0.99,
-        }
+        # A bundle is only as publishable as its weakest layer, so a failing stage
+        # blocks the bundle regardless of what the average says.
+        mean = scores.mean()
+        status = "needs_review" if failing else _status_for(mean)
 
         cert = DnaCertificate(
             dna_id=f"dna_bundle_{bundle_id[-10:]}",
             artifact_type="bundle",
             artifact_id=bundle_id,
-            universal_slo_id=slo_id,
+            universal_slo_id=curriculum.get("slo_id", "SLO-GEN"),
             curriculum_link=curriculum,
             dna_payload=dna_payload,
-            compliance_scores=scores,
+            compliance_scores=scores.values_only(),
             provenance=provenance,
             parent_dna_id=parent_substrand_dna_id,
-            status="verified" if avg_alignment >= 0.93 else "needs_re-audit",
+            status=status,
             created_at=now_iso(),
+            score_set=scores,
         )
         self._persist_dna(cert)
         return cert
 
-    # ── 3. DNA RETRIEVAL & LINEAGE TRACING ──────────────────────────────────────
+    # ── 3. DNA RETRIEVAL & LINEAGE TRACING ──────────────────────────────────
 
     def get_dna_certificate(self, artifact_id: str) -> dict[str, Any] | None:
-        row = fetch_one(
+        return fetch_one(
             "SELECT * FROM artifact_dna WHERE artifact_id = :aid OR dna_id = :aid ORDER BY created_at DESC",
             {"aid": artifact_id},
         )
-        return row
 
     def get_complete_lineage(self, dna_id: str) -> list[dict[str, Any]]:
-        """Walks up the Merkle chain of custody from artifact/bundle to the original dataset."""
-        lineage = []
+        """Walks the chain of custody from an artifact back to its source dataset."""
+        lineage: list[dict[str, Any]] = []
         curr_id: str | None = dna_id
+        visited: set[str] = set()
 
-        visited = set()
         while curr_id and curr_id not in visited:
             visited.add(curr_id)
             node = fetch_one(
-                "SELECT dna_id, artifact_type, artifact_id, parent_dna_id, universal_slo_id, compliance_scores, status, created_at FROM artifact_dna WHERE dna_id = :did OR artifact_id = :did",
+                """
+                SELECT dna_id, artifact_type, artifact_id, parent_dna_id, universal_slo_id,
+                       compliance_scores, status, created_at
+                FROM artifact_dna WHERE dna_id = :did OR artifact_id = :did
+                """,
                 {"did": curr_id},
             )
             if not node:
@@ -530,9 +552,10 @@ class UniversalArtifactDnaService:
     def _persist_dna(self, cert: DnaCertificate) -> None:
         try:
             from ..infra.storage import object_storage
+
             object_storage.save_dna_certificate(cert.dna_id, cert.to_dict())
-        except Exception as exc:
-            logger.warning("Could not mirror DNA certificate %s to MinIO: %s", cert.dna_id, exc)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Could not mirror DNA certificate %s to object storage: %s", cert.dna_id, exc)
 
         try:
             execute(
@@ -569,7 +592,7 @@ class UniversalArtifactDnaService:
                     "status": cert.status,
                 },
             )
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             logger.warning("Could not persist Artifact DNA %s: %s", cert.dna_id, exc)
 
 

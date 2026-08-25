@@ -186,15 +186,21 @@ class PipelineService:
             notes_content=notes_stage.output,
             provenance=notes_stage.provenance.model_dump(),
             parent_substrand_dna_id=parent_substrand_dna_id,
+            blueprint_slos=blueprint.get("slos") or [],
         )
 
-        diagram_dna = artifact_dna_service.generate_diagram_dna(
-            diagram_id=diagram_stage.output.get("diagram_id", f"diag_{run_id}"),
-            curriculum=curr_dict,
-            diagram_data=diagram_stage.output,
-            provenance=diagram_stage.provenance.model_dump(),
-            parent_substrand_dna_id=parent_substrand_dna_id,
-        )
+        generated_diagrams = diagram_stage.output.get("diagrams") or []
+        diagram_dnas = [
+            artifact_dna_service.generate_diagram_dna(
+                diagram_id=d.get("diagram_id", f"diag_{run_id}_{idx}"),
+                curriculum=curr_dict,
+                diagram_data=d,
+                provenance=diagram_stage.provenance.model_dump(),
+                parent_substrand_dna_id=parent_substrand_dna_id,
+                concept=d.get("concept", ""),
+            )
+            for idx, d in enumerate(generated_diagrams)
+        ]
 
         activity_dna = artifact_dna_service.generate_activity_dna(
             activity_id=f"act_{run_id}",
@@ -231,7 +237,7 @@ class PipelineService:
         bundle_dna = artifact_dna_service.generate_bundle_dna(
             bundle_id=bundle_id,
             curriculum=curr_dict,
-            stage_dnas=[notes_dna, diagram_dna, activity_dna] + question_dnas,
+            stage_dnas=[notes_dna, *diagram_dnas, activity_dna] + question_dnas,
             provenance={
                 "run_id": run_id,
                 "stages": len(stage_runs),
@@ -248,7 +254,7 @@ class PipelineService:
             "bundle_id": bundle_id,
             "curriculum": curr_dict,
             "notes": notes_stage.output,
-            "diagrams": [diagram_stage.output],
+            "diagrams": generated_diagrams,
             "activities": activity_stage.output.get("activities", []),
             "experiments": activity_stage.output.get("experiments", []),
             "safety_guidelines": activity_stage.output.get("safety_guidelines", []),
@@ -265,7 +271,7 @@ class PipelineService:
             },
             "stage_dna_ids": {
                 "notes_dna_id": notes_dna.dna_id,
-                "diagram_dna_id": diagram_dna.dna_id,
+                "diagram_dna_ids": [d.dna_id for d in diagram_dnas],
                 "activity_dna_id": activity_dna.dna_id,
                 "bundle_dna_id": bundle_dna.dna_id,
             },
@@ -298,7 +304,7 @@ class PipelineService:
                 "bundle_id": bundle_id,
                 "curriculum": to_json(curr_dict),
                 "notes": to_json(notes_stage.output),
-                "diagrams": to_json([diagram_stage.output]),
+                "diagrams": to_json(generated_diagrams),
                 "activities": to_json(activity_stage.output),
                 "questions": to_json(question_stage.output.get("questions", [])),
                 "review_audit": to_json({"review": review_audit, "deliberation": approver_audit}),
@@ -417,47 +423,100 @@ class PipelineService:
         notes_output: dict,
         blueprint: dict,
     ) -> LlmResponse:
-        required_diagrams = blueprint.get("required_diagrams", [])
-        concept_name = required_diagrams[0] if required_diagrams else f"{request.curriculum.sub_strand} visual model"
+        """Generate every diagram the blueprint requires, not just the first.
 
-        context = langfuse_context_service.assemble_agent_context(
-            agent_name="diagram-generator",
-            grade_slug=grade_slug,
-            subject=subject,
-            template_vars={
+        This previously took ``required_diagrams[0]`` and stored a single-element
+        list, so a bundle could never satisfy a coverage requirement of more than
+        one visual no matter how often it was re-run.
+        """
+        required_diagrams = [d for d in (blueprint.get("required_diagrams") or []) if d]
+        if not required_diagrams:
+            required_diagrams = [f"{request.curriculum.sub_strand} visual model"]
+
+        diagrams: list[dict] = []
+        last_response: LlmResponse | None = None
+        total_usage_prompt = total_usage_completion = 0
+
+        for index, concept_name in enumerate(required_diagrams, start=1):
+            context = langfuse_context_service.assemble_agent_context(
+                agent_name="diagram-generator",
+                grade_slug=grade_slug,
+                subject=subject,
+                template_vars={
+                    "concept": concept_name,
+                    "notes_title": notes_output.get("title", request.curriculum.sub_strand),
+                    "diagrams_required": required_diagrams,
+                    "diagram_index": index,
+                    "diagram_total": len(required_diagrams),
+                },
+            )
+
+            try:
+                llm_resp = llm_client.generate(resolved, context.messages, temperature=0.1)
+            except Exception as exc:  # noqa: BLE001
+                # One failed visual should not lose the diagrams already produced.
+                logger.warning("Diagram %d/%d ('%s') failed: %s", index, len(required_diagrams), concept_name, exc)
+                continue
+
+            last_response = llm_resp
+            total_usage_prompt += llm_resp.usage.prompt_tokens
+            total_usage_completion += llm_resp.usage.completion_tokens
+
+            content = llm_resp.content if isinstance(llm_resp.content, dict) else {}
+            accessibility = content.get("accessibility", {}) or {}
+
+            dedup_result = diagram_deduplicator.deduplicate_and_store(
+                svg_str=content.get("diagram_svg", ""),
+                diagram_title=content.get("diagram_title", concept_name),
+                alt_text=accessibility.get("alt_text", ""),
+                tactile_description=accessibility.get("tactile_description", ""),
+                scene_document=content.get("scene_document"),
+                metadata={
+                    "grade": grade_slug,
+                    "subject": subject,
+                    "strand": request.curriculum.strand,
+                    "sub_strand": request.curriculum.sub_strand,
+                    "concept": concept_name,
+                },
+            )
+            metrics_service.record_diagram_dedup(reused=(dedup_result.dedup_status == "reused"))
+
+            diagrams.append({
+                "diagram_id": dedup_result.diagram_id,
+                "asset_id": dedup_result.diagram_id,
+                "diagram_title": dedup_result.diagram_title,
+                "title": dedup_result.diagram_title,
                 "concept": concept_name,
-                "notes_title": notes_output.get("title", request.curriculum.sub_strand),
-                "diagrams_required": required_diagrams,
-            },
-        )
-        llm_resp = llm_client.generate(resolved, context.messages, temperature=0.1)
+                "micro_concept": concept_name,
+                "diagram_svg": dedup_result.diagram_svg,
+                "diagram_hash": dedup_result.diagram_hash,
+                "storage_url": dedup_result.storage_url,
+                "dedup_status": dedup_result.dedup_status,
+                "scene_document": dedup_result.scene_document,
+                "accessibility": {
+                    "alt_text": dedup_result.alt_text,
+                    "tactile_description": dedup_result.tactile_description,
+                },
+            })
 
-        svg_markup = llm_resp.content.get("diagram_svg", "<svg xmlns='http://www.w3.org/2000/svg'></svg>")
-        accessibility = llm_resp.content.get("accessibility", {})
+        if last_response is None:
+            raise_api_error(
+                "DIAGRAM_GENERATION_FAILED",
+                f"None of the {len(required_diagrams)} required diagrams could be generated "
+                f"for '{request.curriculum.sub_strand}'.",
+            )
 
-        dedup_result = diagram_deduplicator.deduplicate_and_store(
-            svg_str=svg_markup,
-            diagram_title=llm_resp.content.get("diagram_title", concept_name),
-            alt_text=accessibility.get("alt_text", ""),
-            tactile_description=accessibility.get("tactile_description", ""),
-            metadata={"grade": grade_slug, "subject": subject, "strand": request.curriculum.strand},
-        )
-
-        metrics_service.record_diagram_dedup(reused=(dedup_result.dedup_status == "reused"))
-
-        llm_resp.content = {
-            "diagram_id": dedup_result.diagram_id,
-            "diagram_title": dedup_result.diagram_title,
-            "diagram_svg": dedup_result.diagram_svg,
-            "diagram_hash": dedup_result.diagram_hash,
-            "storage_url": dedup_result.storage_url,
-            "dedup_status": dedup_result.dedup_status,
-            "accessibility": {
-                "alt_text": dedup_result.alt_text,
-                "tactile_description": dedup_result.tactile_description,
-            },
+        last_response.usage.prompt_tokens = total_usage_prompt
+        last_response.usage.completion_tokens = total_usage_completion
+        last_response.usage.total_tokens = total_usage_prompt + total_usage_completion
+        last_response.content = {
+            "diagrams": diagrams,
+            "diagram_count": len(diagrams),
+            "required_count": len(required_diagrams),
+            # First diagram promoted for callers that still read a single visual.
+            **(diagrams[0] if diagrams else {}),
         }
-        return llm_resp
+        return last_response
 
     def _generate_experiments_and_activities(
         self,

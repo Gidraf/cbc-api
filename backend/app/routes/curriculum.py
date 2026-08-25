@@ -937,14 +937,14 @@ def factory_generate_notes(
             f"MANDATORY MULTI-HOUR PRODUCTION RULES:\n"
             f"1. YOU MUST GENERATE ALL {hours_count} COMPLETE, INDEPENDENT HOUR MODULES in the 'hour_modules' array (Hour 1, Hour 2, Hour 3, Hour 4). DO NOT combine them into one concept.\n"
             f"2. Each Hour Module must be a comprehensive, uncompressed chapter of 600-900 words containing:\n"
-            f"   - An in-depth 'full_lecture_notes' multi-paragraph exposition with technical vocabulary, chemical/physical/ecological principles, quantitative statistics, and authentic Kenyan county examples (e.g. Uasin Gishu, Nakuru, Kericho, Trans-Nzoia, Makueni).\n"
+            f"   - An in-depth 'full_lecture_notes' multi-paragraph exposition with this subject's own technical vocabulary and principles, quantitative data drawn from the Verified Subject Data above, and authentic Kenyan contexts appropriate to THIS subject.\n"
             f"   - 2 to 3 detailed 'subsections' with exhaustive explanations.\n"
             f"   - 'quantitative_data_summary': specific cited metrics and statistics.\n"
             f"   - 'pedagogical_notes': 5E instructional plan (Engage, Explore, Explain, Elaborate, Evaluate) for teacher trainees.\n"
             f"   - 'common_misconceptions': specific learner misconception, root cause, and clinical cognitive remediation.\n"
             f"   - 'formative_checks': 3 high-order diagnostic assessment questions with model answers.\n"
             f"   - 'active_trainee_tasks': specific practical or inquiry task conducted during that 60-minute session.\n"
-            f"3. IN-TEXT RESEARCH CITATIONS: Every statistic, policy target, or scientific claim MUST cite verifiable sources in brackets directly in the text (e.g. [KNBS Economic Survey 2024], [KALRO Technical Bulletin 2023], [KICD DTE Agriculture Curriculum Design 2024], [Ministry of Agriculture ASTGS 2019-2029], [UNEP Kenya Environmental Assessment]).\n"
+            f"3. IN-TEXT RESEARCH CITATIONS: Every statistic or factual claim MUST cite, in brackets in the text, a source from the Permitted Citation Sources list in the directives above. Never cite a source belonging to a different subject.\n"
             f"4. Total combined text across all {hours_count} hours must be substantial (3,000+ words).\n\n"
             f"RETURN JSON FORMAT MATCHING:\n"
             f"{{\n"
@@ -957,17 +957,17 @@ def factory_generate_notes(
             f'      "hour_title": "Hour 1: Macro-Economic Architecture, Agricultural GDP Contribution & Employment Dynamics",\n'
             f'      "duration_minutes": 60,\n'
             f'      "learning_intent": "Analyze the quantitative and structural contribution of agriculture to Kenya\'s GDP, rural livelihoods, and industrialization...",\n'
-            f'      "full_lecture_notes": "Exhaustive multi-paragraph deep technical text (600-800 words) with exact KNBS data, agro-based industry linkages, export earnings, and multi-sectoral multipliers [KNBS Economic Survey 2024]...",\n'
+            f'      "full_lecture_notes": "Exhaustive multi-paragraph deep technical text (600-800 words) grounded in the Verified Subject Data above, with permitted citations...",\n'
             f'      "subsections": [\n'
             f'        {{"title": "1.1 Direct vs. Indirect GDP Contributions", "content": "Detailed breakdown of the 33% direct and 27% indirect GDP share..."}},\n'
             f'        {{"title": "1.2 Employment Multipliers & Rural Poverty Alleviation", "content": "Analysis of the 70% rural workforce dependency..."}},\n'
             f'        {{"title": "1.3 Agro-Industrial Value Chains & Export Foreign Exchange", "content": "Horticulture, tea, and pyrethrum value addition dynamics..."}}\n'
             f'      ],\n'
             f'      "quantitative_data_summary": [\n'
-            f'        {{"metric": "Direct GDP Contribution", "value": "33.0%", "source": "KNBS Economic Survey 2024"}},\n'
-            f'        {{"metric": "Rural Population Employment Dependency", "value": ">70.0%", "source": "KNBS / MoA 2024"}}\n'
+            f'        {{"metric": "<metric name>", "value": "<value>", "source": "<permitted source>"}},\n'
+            f'        {{"metric": "<metric name>", "value": "<value>", "source": "<permitted source>"}}\n'
             f'      ],\n'
-            f'      "pedagogical_notes": "Teacher Trainee Guidance: Conduct a 5E guided inquiry session where trainees analyze KNBS district data...",\n'
+            f'      "pedagogical_notes": "Teacher Trainee Guidance: Conduct a 5E guided inquiry session appropriate to this subject...",\n'
             f'      "common_misconceptions": "Misconception: Agriculture is limited to subsistence food farming. Correction: Agriculture encompasses high-tech horticulture, biotechnology, agro-processing, and agro-tourism.",\n'
             f'      "formative_checks": [\n'
             f'        "1. Quantify the direct and indirect GDP contribution of Kenya\'s agricultural sector and cite the reporting authority.",\n'
@@ -977,10 +977,10 @@ def factory_generate_notes(
             f'    }},\n'
             f'    {{\n'
             f'      "hour_number": 2,\n'
-            f'      "hour_title": "Hour 2: Agriculture & Environmental Systems — Soil Chemistry, Water Cycles & Agroforestry",\n'
+            f'      "hour_title": "Hour 2: <the actual title of the second hour>",\n'
             f'      "duration_minutes": 60,\n'
             f'      "learning_intent": "Evaluate the biophysical interactions between farming systems and ecological equilibrium...",\n'
-            f'      "full_lecture_notes": "Exhaustive multi-paragraph deep technical text (600-800 words) on soil organic matter, nutrient cycling, watershed conservation, and agroforestry species (*Grevillea robusta*, *Calliandra*) [KALRO 2023]...",\n'
+            f'      "full_lecture_notes": "Exhaustive multi-paragraph deep technical text (600-800 words) developing the concepts of this hour in depth, citing only sources permitted for this subject...",\n'
             f'      "subsections": [\n'
             f'        {{"title": "2.1 Soil Microbiome & Humus Dynamics", "content": "Detailed analysis of mycorrhizal fungi and soil aggregation..."}},\n'
             f'        {{"title": "2.2 Hydrological Cycles & Swale Water Infiltration", "content": "Terracing and catchment hydrology in semi-arid zones..."}},\n'
@@ -988,7 +988,7 @@ def factory_generate_notes(
             f'      ],\n'
             f'      "pedagogical_notes": "Teacher Trainee Guidance: 5E lesson plan on soil structure demonstration...",\n'
             f'      "common_misconceptions": "Misconception: Trees always compete with crops for nutrients. Correction: Deep-rooted nitrogen-fixing trees pump deep subsoil nutrients to topsoil.",\n'
-            f'      "formative_checks": ["1. Describe the biological mechanism of nitrogen fixation in Calliandra calothyrsus."],\n'
+            f'      "formative_checks": ["1. <a formative check question drawn from this hour\'s content>"],\n'
             f'      "active_trainee_tasks": "Trainees design an agroforestry layout for a 2-acre farm in Embu County."\n'
             f'    }},\n'
             f'    {{\n'
@@ -1016,7 +1016,7 @@ def factory_generate_notes(
             f'      "subsections": [\n'
             f'        {{"title": "4.1 Standardized Soil Sampling & Colorimetric/Electrometric pH Testing", "content": "1:2.5 soil-water ratio protocol and electrode calibration..."}},\n'
             f'        {{"title": "4.2 Agricultural Lime Requirement Calculations", "content": "Formulas for calculating CaCO3 tonnage per hectare based on buffering index..."}},\n'
-            f'        {{"title": "4.3 Policy Synthesis & Community Outreach Strategy", "content": "Bridging research from KALRO to smallholder farmer extension..."}}\n'
+            f'        {{"title": "4.3 Policy Synthesis & Community Outreach Strategy", "content": "<how the concepts of this hour connect to practice in this subject>"}}\n'
             f'      ],\n'
             f'      "pedagogical_notes": "Teacher Trainee Guidance: Lead the 60-minute laboratory investigation and supervise safety PPE...",\n'
             f'      "common_misconceptions": "Misconception: Adding lime immediately changes soil pH permanently. Correction: Lime requires soil moisture and 4-8 weeks to react with exchangeable aluminum ions.",\n'
@@ -1026,10 +1026,10 @@ def factory_generate_notes(
             f'  ],\n'
             f'  "worked_examples": [\n'
             f'    {{\n'
-            f'      "scenario": "Authentic Kenyan county problem scenario (e.g. Soil acidity in Uasin Gishu maize farms)...",\n'
+            f'      "scenario": "<an authentic Kenyan scenario appropriate to THIS subject>",\n'
             f'      "solution_steps": ["Step 1...", "Step 2...", "Step 3..."],\n'
             f'      "explanation": "Detailed scientific and economic rationale...",\n'
-            f'      "research_source": "KALRO Advisory Bulletin"\n'
+            f'      "research_source": "<a permitted source for this subject>"\n'
             f'    }}\n'
             f'  ],\n'
             f'  "practical_connections": {{\n'
@@ -1044,7 +1044,7 @@ def factory_generate_notes(
             f'    "What policy mechanisms can balance smallholder productivity with national watershed protection?"\n'
             f'  ],\n'
             f'  "summary_points": [\n'
-            f'    "Agriculture provides 33% direct GDP, 27% indirect GDP, and over 70% of rural employment [KNBS 2024].",\n'
+            f'    "<a key factual claim for this sub-strand, with a permitted citation>",\n'
             f'    "Soil health and organic matter conservation are the biophysical foundation of agricultural climate resilience.",\n'
             f'    "Standardized diagnostics (pH testing, lime application, IPM) provide scientifically verified pathways to sustainable yield growth."\n'
             f'  ],\n'
@@ -1054,13 +1054,13 @@ def factory_generate_notes(
             f'  }},\n'
             f'  "research_references": [\n'
             f'    {{\n'
-            f'      "source_title": "KNBS Economic Survey 2024",\n'
+            f'      "source_title": "<permitted source title>",\n'
             f'      "author_organization": "Kenya National Bureau of Statistics",\n'
             f'      "year": 2024,\n'
             f'      "key_data_points_cited": "Agriculture 33% direct GDP, 70% rural workforce"\n'
             f'    }},\n'
             f'    {{\n'
-            f'      "source_title": "KALRO Soil Fertility & Plant Nutrition Bulletin 2023",\n'
+            f'      "source_title": "<another permitted source title>",\n'
             f'      "author_organization": "Kenya Agricultural and Livestock Research Organization",\n'
             f'      "year": 2023,\n'
             f'      "key_data_points_cited": "Soil acidity remediation protocols and lime buffer guidelines in Western Kenya"\n'
@@ -1406,14 +1406,14 @@ def factory_plan_visuals(
             f"MANDATORY 4-HOUR BALANCED MULTI-VISUAL ASSET DISCOVERY DIRECTIVE:\n"
             f"You MUST discover and specify 2 to 3 distinct pedagogical visual assets FOR EACH of the 4 Lesson Hours listed above (Total 8 to 12 distinct assets):\n"
             f"1. For Hour 1 ({h_mods[0].get('hour_title', 'Hour 1') if len(h_mods) > 0 else 'Hour 1'}): Generate 2-3 visuals illustrating Hour 1 concepts (flowcharts, economic dynamics, overview models) -> set 'hour_index': 1, 'hour_title': 'Hour 1: ...'\n"
-            f"2. For Hour 2 ({h_mods[1].get('hour_title', 'Hour 2') if len(h_mods) > 1 else 'Hour 2'}): Generate 2-3 visuals illustrating Hour 2 concepts (e.g. Soil Chemistry, pH Scale, Swale Water Infiltration, Grevillea robusta / Calliandra Agroforestry Systems) -> set 'hour_index': 2, 'hour_title': 'Hour 2: ...'\n"
+            f"2. For Hour 2 ({h_mods[1].get('hour_title', 'Hour 2') if len(h_mods) > 1 else 'Hour 2'}): Generate 2-3 visuals illustrating that hour's own concepts, in the visual style named in the directives above -> set 'hour_index': 2, 'hour_title': 'Hour 2: ...'\n"
             f"3. For Hour 3 ({h_mods[2].get('hour_title', 'Hour 3') if len(h_mods) > 2 else 'Hour 3'}): Generate 2-3 visuals illustrating Hour 3 concepts (e.g. Soil Erosion types, Contour Bunds, Gabions, Ecological Equilibrium) -> set 'hour_index': 3, 'hour_title': 'Hour 3: ...'\n"
             f"4. For Hour 4 ({h_mods[3].get('hour_title', 'Hour 4') if len(h_mods) > 3 else 'Hour 4'}): Generate 2-3 visuals illustrating Hour 4 concepts (e.g. Soil Profile Horizon Strata O-A-B-C, pH Titration & Buffer Capacity Apparatus) -> set 'hour_index': 4, 'hour_title': 'Hour 4: ...'\n\n"
             f"For EACH visual asset provide:\n"
             f"- asset_id (e.g. vis_01, vis_02, vis_03, vis_04, vis_05, vis_06, vis_07, vis_08)\n"
             f"- hour_index (1 | 2 | 3 | 4 - the specific hour module in the lesson notes this visual illustrates)\n"
             f"- hour_title (e.g. 'Hour 1: ...' or 'Hour 2: ...')\n"
-            f"- title (e.g. 'Agroforestry System: Grevillea robusta & Maize Canopy Stratification' or 'Soil Profile Strata')\n"
+            f"- title (a specific, descriptive name for what the visual depicts in this subject)\n"
             f"- asset_type ('technical_svg' | 'realistic_image' | 'apparatus_schematic' | 'process_flowchart' | 'infographic_chart' | 'video_storyboard')\n"
             f"- micro_concept (the specific sub-topic tested)\n"
             f"- pedagogical_purpose (why this visual is essential for learner mastery and exam assessment)\n"

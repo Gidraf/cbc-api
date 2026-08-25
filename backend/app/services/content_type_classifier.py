@@ -96,9 +96,16 @@ class ContentTypeProfile:
         )
 
     def format_for_prompt(self) -> str:
-        """Format as an authoritative directive block to inject into LLM prompts."""
+        """Format as an authoritative directive block to inject into LLM prompts.
+
+        This carries the subject's own worked examples, data and sources. The
+        shared prompts must not hardcode examples of their own: a model follows a
+        concrete example over an abstract instruction, so a soil-chemistry
+        example baked into the generic prompt leaks into Kiswahili and Music.
+        """
         lines = [
             f"=== PEDAGOGICAL CONTENT-TYPE DIRECTIVES ({self.content_type.upper()}) ===",
+            f"Subject: {self.subject}",
             f"Agent Persona: {self.persona}",
             f"Note Writing Style: {self.note_style}",
             f"Diagram/Visual Type: {self.diagram_type}",
@@ -109,9 +116,69 @@ class ContentTypeProfile:
         ]
         if self.special_directives:
             lines.append("Mandatory Subject Directives:")
-            for d in self.special_directives:
-                lines.append(f"  - {d}")
+            lines.extend(f"  - {d}" for d in self.special_directives)
+
+        if self.empirical_insights:
+            lines.append("Verified Subject Data (use these, do not invent statistics):")
+            for insight in self.empirical_insights[:6]:
+                if isinstance(insight, dict):
+                    metric = insight.get("metric") or insight.get("name") or ""
+                    value = insight.get("value", "")
+                    source = insight.get("source", "")
+                    lines.append(f"  - {metric}: {value}" + (f" [{source}]" if source else ""))
+
+        if self.case_studies:
+            lines.append("Authentic Contexts For Scenarios (draw situated examples from these):")
+            for case in self.case_studies[:4]:
+                if isinstance(case, dict):
+                    where = case.get("county") or case.get("context") or case.get("location") or ""
+                    scenario = case.get("scenario", "")
+                    lines.append(f"  - {where}: {scenario}" if where else f"  - {scenario}")
+
+        allowed = self.citation_sources()
+        if allowed:
+            lines.append(
+                "Permitted Citation Sources: " + ", ".join(allowed)
+                + ". Do not cite sources outside this list for this subject."
+            )
+
         return "\n".join(lines)
+
+    def citation_sources(self) -> list[str]:
+        """Sources this subject may cite, derived from its own verified data.
+
+        Prevents the situation where every subject cited KNBS and KALRO because
+        those were hardcoded into the shared question prompt.
+        """
+        sources: list[str] = []
+        for insight in self.empirical_insights or []:
+            if isinstance(insight, dict) and insight.get("source"):
+                source = str(insight["source"]).strip()
+                if source and source not in sources:
+                    sources.append(source)
+        for case in self.case_studies or []:
+            if isinstance(case, dict) and case.get("source"):
+                source = str(case["source"]).strip()
+                if source and source not in sources:
+                    sources.append(source)
+        # KICD's own design is always a legitimate citation.
+        sources.append("KICD Curriculum Design")
+        return sources[:8]
+
+    def example_citation(self) -> str:
+        sources = self.citation_sources()
+        return f"[{sources[0]}]" if sources else "[KICD Curriculum Design]"
+
+    def scenario_seed(self) -> str:
+        """One short, subject-appropriate scenario opener for the prompt."""
+        for case in self.case_studies or []:
+            if isinstance(case, dict) and case.get("scenario"):
+                where = case.get("county") or case.get("context") or "a Kenyan school"
+                return f"{where} — {case['scenario']}"
+        return (
+            f"an authentic {self.subject} situation a Kenyan learner would recognise "
+            f"from their own school or community"
+        )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
