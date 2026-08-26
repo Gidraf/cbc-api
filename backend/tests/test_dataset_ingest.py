@@ -70,10 +70,16 @@ def db(monkeypatch):
     return fake
 
 
+# Long enough to clear MIN_DOCUMENT_CHARS: a real curriculum design runs to
+# tens of thousands of characters, and sync now refuses anything shorter as
+# not-a-document.
+DOC_TEXT = "CURRICULUM DESIGN\n" + ("STRAND 1.0 CONTENT LINE\n" * 60)
+
+
 def items(*specs):
     return [
         {"id": i, "input": {"file_id": f, "title": t, "subject": s},
-         "expected_output": "TEXT", "metadata": {}}
+         "expected_output": DOC_TEXT, "metadata": {}}
         for i, f, t, s in specs
     ]
 
@@ -345,3 +351,32 @@ def test_external_ingest_marks_the_item_done(db, monkeypatch):
 
 def test_external_ingest_of_an_untracked_payload_is_harmless(db):
     assert di.record_external_ingest({"file_id": "nope", "output": "x"}, {"subject": "X"}) is None
+
+
+def test_result_records_written_back_by_the_extractor_are_never_queued(db, monkeypatch):
+    """The shape that polluted grade-dte: no text, random id, no file_id.
+
+    _sync_to_langfuse used to write ingest *results* into the same per-grade
+    dataset that holds input, so they appeared as empty documents waiting to be
+    processed.
+    """
+    stub_dataset(monkeypatch, [
+        {"id": "1821b492-fb90-42b2-bb73-5c666da75250",
+         "input": {"subject": "Diploma In Teacher Education"},
+         "expected_output": "", "metadata": {"source": "curriculum_extractor"}},
+        {"id": "grade-dte__real", "input": {"file_id": "real", "title": "DTE Agriculture.pdf"},
+         "expected_output": DOC_TEXT, "metadata": {}},
+    ], grade="grade-dte")
+
+    result = di.sync_grade("grade-dte")
+    assert result["added"] == 1
+    assert result["skipped_empty"] == 1
+    assert list(db.rows) == ["grade-dte__real"]
+
+
+def test_blueprints_go_to_their_own_dataset():
+    """Results must not be written into the dataset that holds input."""
+    from app.services.langfuse_context import langfuse_context_service as svc
+
+    assert svc.blueprint_dataset_name("grade-dte") == "grade-dte-blueprints"
+    assert svc.blueprint_dataset_name("grade-dte") != "grade-dte"

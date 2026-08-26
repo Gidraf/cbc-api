@@ -590,20 +590,40 @@ class LangfuseContextService:
 
         return datasets
 
+    @staticmethod
+    def blueprint_dataset_name(grade_slug: str) -> str:
+        """Where parsed designs are written back for provenance.
+
+        Deliberately NOT the grade dataset. That one holds the raw curriculum
+        text waiting to be ingested; writing results into it mixes input and
+        output in one namespace, and the results — which carry no document text
+        — then look like empty documents queued for processing.
+        """
+        return f"{grade_slug}-blueprints"
+
     def upload_dataset_item(self, grade_slug: str, subject_data: dict) -> dict:
+        dataset_name = self.blueprint_dataset_name(grade_slug)
         if self._client:
             try:
+                design_id = str((subject_data.get("metadata") or {}).get("design_id") or "").strip()
                 self._client.create_dataset_item(
-                    dataset_name=grade_slug,
-                    input={"subject": subject_data.get("subject", "General")},
+                    dataset_name=dataset_name,
+                    # Deterministic id: re-ingesting a design updates its record
+                    # instead of leaving another copy behind on every run.
+                    id=design_id or None,
+                    input={
+                        "subject": subject_data.get("subject", "General"),
+                        "grade": grade_slug,
+                        "design_id": design_id,
+                    },
                     metadata=subject_data,
                 )
-                self._cache.pop(f"dataset_{grade_slug}", None)
-                return {"status": "created", "dataset_name": grade_slug}
+                self._cache.pop(f"dataset_{dataset_name}", None)
+                return {"status": "created", "dataset_name": dataset_name}
             except Exception as exc:
                 logger.warning("Failed to upload dataset item to Langfuse: %s", exc)
 
-        return {"status": "saved_locally", "dataset_name": grade_slug}
+        return {"status": "saved_locally", "dataset_name": dataset_name}
 
     def get_available_subjects(self, grade_slug: str) -> list[dict]:
         from ..infra.db import fetch_all

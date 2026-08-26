@@ -35,6 +35,10 @@ STATUSES = (PENDING, SELECTED, PROCESSING, INGESTED, FAILED)
 # Terminal for display purposes; failed items can be retried back to pending.
 ACTIVE_STATUSES = (SELECTED, PROCESSING)
 
+# Below this a dataset item cannot be a curriculum design. A real design runs to
+# tens of thousands of characters; the shortest in the corpus is over 50,000.
+MIN_DOCUMENT_CHARS = 500
+
 
 def _text(value: Any) -> str:
     return "" if value is None else str(value).strip()
@@ -71,10 +75,21 @@ def sync_grade(grade_slug: str) -> dict[str, int]:
     }
     added = 0
 
+    skipped_empty = 0
+
     for item in items:
         if item.get("is_placeholder"):
             skipped_placeholder += 1
             continue
+
+        # An item with no document text is not curriculum waiting to be
+        # ingested — it is a result record or a stray write. Queueing it would
+        # put a row on screen that can only ever fail.
+        text = _text(item.get("expected_output") or item.get("expectedOutput"))
+        if len(text) < MIN_DOCUMENT_CHARS:
+            skipped_empty += 1
+            continue
+
         item_id = _text(item.get("id"))
         if not item_id or item_id in known:
             continue
@@ -98,7 +113,18 @@ def sync_grade(grade_slug: str) -> dict[str, int]:
             skipped_placeholder, grade_slug,
         )
 
-    return {"seen": len(items), "added": added, "placeholders": skipped_placeholder}
+    if skipped_empty:
+        logger.info(
+            "Skipped %d item(s) in '%s' with no document text; they are not curriculum designs.",
+            skipped_empty, grade_slug,
+        )
+
+    return {
+        "seen": len(items),
+        "added": added,
+        "placeholders": skipped_placeholder,
+        "skipped_empty": skipped_empty,
+    }
 
 
 def set_status(item_id: str, status: str, **fields: Any) -> None:
