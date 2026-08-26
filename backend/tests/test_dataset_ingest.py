@@ -53,6 +53,14 @@ class FakeDb:
             })
             return
         row = self.rows[item_id]
+        if "SET status = 'pending'" in query:
+            # The un-ingest reset: status is a literal in the SQL, not a param.
+            row.update({
+                "status": "pending", "design_id": None, "resolved_subject": "",
+                "char_count": 0, "error": "", "selected_at": None,
+                "started_at": None, "finished_at": None,
+            })
+            return
         row["status"] = params["status"]
         for key in ("error", "resolved_subject", "design_id", "char_count"):
             if key in params:
@@ -520,3 +528,107 @@ def test_each_grade_is_processed_and_marked_independently(db, monkeypatch):
     assert db.rows["grade-3__cre"]["status"] == "pending"
     assert di.list_grade("grade-2")["counts"]["ingested"] == 1
     assert di.list_grade("grade-1")["counts"]["pending"] == 1
+
+
+# ── Un-ingest ────────────────────────────────────────────────────────────────
+
+def test_uningest_removes_the_design_and_returns_the_item_to_pending(db, monkeypatch):
+    stub_dataset(monkeypatch, items(("x", "x", "Chem.pdf", "Pure Sciences")), grade="grade-10")
+    di.sync_grade("grade-10")
+    _stub_extractor(monkeypatch, subject="Chemistry", design_id="d1")
+    di.process_item("grade-10__x")
+    assert db.rows["grade-10__x"]["status"] == "ingested"
+
+    deleted: list[str] = []
+    real_execute = di.execute
+
+    def spy(query, params=None):
+        if "DELETE FROM curriculum_designs" in query:
+            deleted.append((params or {})["design_id"])
+            return
+        return real_execute(query, params)
+
+    monkeypatch.setattr(di, "execute", spy)
+    monkeypatch.setattr(di, "fetch_all", lambda q, p=None: [{"n": 4}] if "COUNT(*)" in q else [])
+
+    result = di.uningest_item("grade-10__x")
+
+    assert deleted == ["d1"]
+    assert result["removed"]["design"] == 1
+    assert result["removed"]["substrands"] == 4
+
+
+def test_uningest_leaves_generated_content_alone_by_default(db, monkeypatch):
+    stub_dataset(monkeypatch, items(("x", "x", "Chem.pdf", "Pure Sciences")), grade="grade-10")
+    di.sync_grade("grade-10")
+    _stub_extractor(monkeypatch, subject="Chemistry", design_id="d1")
+    di.process_item("grade-10__x")
+
+    touched: list[str] = []
+    real_execute = di.execute
+
+    def spy(query, params=None):
+        if "substrand_resources" in query or "question_dna" in query:
+            touched.append(query)
+            return
+        if "DELETE FROM curriculum_designs" in query:
+            return
+        return real_execute(query, params)
+
+    monkeypatch.setattr(di, "execute", spy)
+    monkeypatch.setattr(di, "fetch_all", lambda q, p=None: [{"n": 0}] if "COUNT(*)" in q else [])
+
+    di.uningest_item("grade-10__x")
+    assert touched == [], "notes and questions must survive unless purge is asked for"
+
+
+def test_uningest_with_purge_removes_generated_content(db, monkeypatch):
+    stub_dataset(monkeypatch, items(("x", "x", "Chem.pdf", "Pure Sciences")), grade="grade-10")
+    di.sync_grade("grade-10")
+    _stub_extractor(monkeypatch, subject="Chemistry", design_id="d1")
+    di.process_item("grade-10__x")
+
+    deletes: list[str] = []
+    real_execute = di.execute
+
+    def spy(query, params=None):
+        if query.strip().upper().startswith("DELETE"):
+            deletes.append(query)
+            return
+        return real_execute(query, params)
+
+    monkeypatch.setattr(di, "execute", spy)
+    monkeypatch.setattr(di, "fetch_all", lambda q, p=None: [{"n": 2}] if "COUNT(*)" in q else [])
+
+    result = di.uningest_item("grade-10__x", purge_generated=True)
+
+    assert any("substrand_resources" in q for q in deletes)
+    assert any("question_dna" in q for q in deletes)
+    assert result["removed"]["bundles"] == 2
+    assert result["removed"]["questions"] == 2
+
+
+def test_uningest_does_not_delete_a_design_another_grade_still_uses(db, monkeypatch):
+    doc = items(("a", "a", "Maths.pdf", "Mathematics"))
+    for g in ("grade-1", "grade-2"):
+        stub_dataset(monkeypatch, doc, grade=g)
+        di.sync_grade(g)
+    _stub_extractor(monkeypatch, subject="Mathematics", design_id="shared")
+    di.process_item("grade-1__a")
+    di.process_item("grade-2__a")
+
+    deleted: list[str] = []
+    real_execute = di.execute
+
+    def spy(query, params=None):
+        if "DELETE FROM curriculum_designs" in query:
+            deleted.append((params or {})["design_id"])
+            return
+        return real_execute(query, params)
+
+    monkeypatch.setattr(di, "execute", spy)
+    di.uningest_item("grade-1__a")
+
+    assert deleted == [], "Grade 2 still points at that design"
+    assert db.rows["grade-1__a"]["status"] == "pending"
+    assert db.rows["grade-2__a"]["status"] == "ingested"

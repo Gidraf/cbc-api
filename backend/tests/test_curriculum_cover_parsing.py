@@ -9,6 +9,8 @@ from __future__ import annotations
 import pytest
 
 from app.services.curriculum_extractor import (
+    _looks_like_a_heading,
+    subject_from_filename,
     _grade_from_text,
     _looks_like_subject,
     _subject_from_cover,
@@ -174,3 +176,58 @@ def test_a_grade_mentioned_far_into_the_body_does_not_override_the_cover():
 def test_spaced_hyphen_spellings_are_still_rejected_as_subjects(spelling):
     """'Pre - Primary 1' slipped past the level filter and became a subject."""
     assert not _looks_like_subject(spelling)
+
+
+# ── Subjects must be learning areas, never prose lifted from the body ────────
+# Ingests produced 'Self-Awareness As Learners Talk About Their N' and
+# 'Of The Basic Education Curriculum.' because any line after any occurrence of
+# "curriculum design" was accepted.
+
+@pytest.mark.parametrize("fragment", [
+    "Self-Awareness As Learners Talk About Their N",
+    "Of The Basic Education Curriculum.",
+    "the learner should be able to identify",
+    "This design builds on competencies acquired earlier,",
+])
+def test_prose_is_not_mistaken_for_a_heading(fragment):
+    assert not _looks_like_a_heading(fragment)
+
+
+@pytest.mark.parametrize("heading", [
+    "MATHEMATICS", "LANGUAGE ACTIVITIES", "Christian Religious Education",
+    "Art & Craft", "CRE",
+])
+def test_real_headings_are_accepted(heading):
+    assert _looks_like_a_heading(heading)
+
+
+@pytest.mark.parametrize("filename,expected", [
+    ("Grade 1-3 CRE - Revised.pdf", "CRE"),
+    ("Grade 1-3 English Activities - Revised Sept.pdf", "English Activities"),
+    ("Grade 1-3 Mathematics - Revised.pdf", "Mathematics"),
+    ("Chemistry Grade 12 - March 2026.pdf", "Chemistry"),
+    ("DTE SOCIAL STUDIES.pdf", "SOCIAL STUDIES"),
+])
+def test_subject_is_read_from_the_filename(filename, expected):
+    assert subject_from_filename(filename) == expected
+
+
+def test_a_known_learning_area_on_the_cover_wins_over_any_heuristic():
+    """The catalogue is the strongest signal: no guessing needed."""
+    text = (
+        "KENYA INSTITUTE OF CURRICULUM DEVELOPMENT\n"
+        "Self-awareness as learners talk about their needs\n"
+        "PRIMARY SCHOOL EDUCATION CURRICULUM DESIGN\n"
+        "MATHEMATICS\nGRADE 4\n"
+    )
+    assert _subject_from_cover(text) == "Mathematics"
+
+
+def test_a_body_sentence_mentioning_curriculum_design_is_not_a_subject():
+    text = (
+        "KENYA INSTITUTE OF CURRICULUM DEVELOPMENT\n"
+        "PRE-PRIMARY 1\n"
+        "This forms part of the basic education curriculum design framework.\n"
+        "Of The Basic Education Curriculum.\n"
+    )
+    assert _subject_from_cover(text) != "Of The Basic Education Curriculum."

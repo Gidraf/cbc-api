@@ -110,9 +110,82 @@ def _looks_like_subject(line: str) -> bool:
     return letters >= 3 and letters / len(line) > 0.6
 
 
+_MONTHS = (
+    "january|february|march|april|may|june|july|august|september|october|"
+    "november|december|jan|feb|mar|apr|jun|jul|aug|sept|sep|oct|nov|dec"
+)
+# Tokens that decorate a KICD filename without naming the learning area.
+_FILENAME_NOISE = re.compile(
+    rf"\.(pdf|docx?)$|\bgrades?\s*\d{{1,2}}(\s*[-–]\s*\d{{1,2}})?\b|\bdte\b|"
+    rf"\bpp\s*[12]\b|\brevised\b|\bfinal\b|\bcurriculum\b|\bdesigns?\b|"
+    rf"\b(20\d{{2}})\b|\b({_MONTHS})\b",
+    re.IGNORECASE,
+)
+
+
+def _known_subjects() -> dict[str, str]:
+    """Every learning area KICD publishes, keyed for case-insensitive lookup.
+
+    The catalogue is the strongest signal available: a cover line that *is* a
+    known learning area needs no heuristics, and a heuristic that disagrees with
+    it is wrong.
+    """
+    from .curriculum_catalogue import EXPECTED_SUBJECTS
+
+    out: dict[str, str] = {}
+    for names in EXPECTED_SUBJECTS.values():
+        for name in names:
+            out[re.sub(r"[^a-z0-9]+", "", name.lower())] = name
+    return out
+
+
+def _match_known_subject(candidate: str) -> str:
+    key = re.sub(r"[^a-z0-9]+", "", (candidate or "").lower())
+    return _known_subjects().get(key, "") if key else ""
+
+
+def subject_from_filename(title: str) -> str:
+    """The learning area named by a document's filename.
+
+    KICD filenames say it plainly — "Grade 1-3 CRE - Revised.pdf",
+    "Chemistry Grade 12 - March 2026.pdf", "DTE SOCIAL STUDIES.pdf" — once the
+    grade, programme and revision tokens are stripped.
+    """
+    cleaned = _FILENAME_NOISE.sub(" ", title or "")
+    cleaned = re.sub(r"[_\-–—]+", " ", cleaned)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip(" .-")
+    return cleaned
+
+
+def _looks_like_a_heading(line: str) -> bool:
+    """A title-page heading, not a sentence lifted out of the body.
+
+    "Self-Awareness As Learners Talk About Their N" and "Of The Basic Education
+    Curriculum." both passed the old test; both are prose.
+    """
+    line = line.strip()
+    if not line or line.endswith((".", ",", ";", ":")):
+        return False
+    words = line.split()
+    if not (1 <= len(words) <= 6):
+        return False
+    # Covers are set in capitals or title case; running prose is neither.
+    letters = [c for c in line if c.isalpha()]
+    if not letters:
+        return False
+    if sum(c.isupper() for c in letters) / len(letters) > 0.8:
+        return True
+    return all(w[:1].isupper() or not w[:1].isalpha() for w in words)
+
+
 def _subject_from_cover(text: str) -> str:
     """The learning area as printed on the title page."""
     lines = [l.strip() for l in text.split("\n")[:60] if l.strip()]
+
+    for line in lines:
+        known = _match_known_subject(line)
+        if known:
+            return known
 
     for index, line in enumerate(lines):
         if not re.search(r"CURRICULUM\s+DESIGN", line, re.IGNORECASE):
@@ -120,12 +193,12 @@ def _subject_from_cover(text: str) -> str:
 
         # Usual layout: the learning area is the next usable line.
         for candidate in lines[index + 1: index + 4]:
-            if _looks_like_subject(candidate):
+            if _looks_like_subject(candidate) and _looks_like_a_heading(candidate):
                 return candidate
 
         # Diploma covers invert it, naming the area before the words.
         for candidate in reversed(lines[max(0, index - 3): index]):
-            if _looks_like_subject(candidate):
+            if _looks_like_subject(candidate) and _looks_like_a_heading(candidate):
                 return candidate
 
     match = re.search(r"LEARNING AREA\s*:\s*([^\n]{3,45})", text, re.IGNORECASE)
@@ -328,9 +401,10 @@ class CurriculumExtractorService:
         subject = _subject_from_cover(text)
 
         if not subject and meta.get("title"):
-            candidate = re.sub(r"\.pdf$", "", str(meta["title"]), flags=re.IGNORECASE).strip()
-            if _looks_like_subject(candidate):
-                subject = candidate
+            from_name = subject_from_filename(str(meta["title"]))
+            subject = _match_known_subject(from_name) or (
+                from_name if _looks_like_subject(from_name) else ""
+            )
 
         if not subject:
             declared = str(meta.get("subject") or "").strip()

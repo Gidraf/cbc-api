@@ -53,9 +53,99 @@ def get_grade_dataset(
 
 class ProcessItemsRequest(BaseModel):
     item_ids: list[str] = []
+    # Un-ingest only: also delete notes, diagrams, activities and questions
+    # generated from the design. Off by default — that is real token spend.
+    purge_generated: bool = False
     # Replace what a previous run produced instead of refusing. Off by default
     # so re-processing is always a deliberate act.
     force: bool = False
+
+
+@router.get("/datasets/{grade}/diagnostics")
+def grade_diagnostics(
+    grade: str,
+    _: AuthContext = Depends(require_roles("admin", "operator", "reviewer", "developer")),
+) -> dict[str, Any]:
+    """What is actually stored for this grade, table by table.
+
+    Coverage and the content factory read sub-strands, so a design that ingests
+    "successfully" but produces no sub-strand rows looks like nothing happened.
+    This reports each table separately, and the grade each row is filed under,
+    so the gap is visible instead of inferred.
+    """
+    from ..infra.db import fetch_all
+
+    grade_slug = validate_grade_dataset(grade)
+    alt_grade = grade_slug.replace("grade-", "")
+
+    designs = fetch_all(
+        """
+        SELECT d.design_id, d.subject, d.grade, d.level, d.review_status,
+               (SELECT COUNT(*) FROM curriculum_substrands s
+                 WHERE s.design_id = d.design_id) AS substrand_count
+        FROM curriculum_designs d
+        WHERE d.grade = :grade OR d.grade = :alt_grade
+        ORDER BY d.subject
+        """,
+        {"grade": grade_slug, "alt_grade": alt_grade},
+    )
+
+    substrands = fetch_all(
+        """
+        SELECT subject, strand_name, COUNT(*) AS n
+        FROM curriculum_substrands
+        WHERE grade = :grade OR grade = :alt_grade
+        GROUP BY subject, strand_name
+        ORDER BY subject, strand_name
+        """,
+        {"grade": grade_slug, "alt_grade": alt_grade},
+    )
+
+    # Sub-strands whose design says one grade while the row says another: the
+    # symptom of a cover parsed differently from the queue it was launched from.
+    orphans = fetch_all(
+        """
+        SELECT s.grade AS substrand_grade, d.grade AS design_grade, COUNT(*) AS n
+        FROM curriculum_substrands s
+        JOIN curriculum_designs d ON d.design_id = s.design_id
+        WHERE (d.grade = :grade OR d.grade = :alt_grade) AND s.grade <> d.grade
+        GROUP BY s.grade, d.grade
+        """,
+        {"grade": grade_slug, "alt_grade": alt_grade},
+    )
+
+    tracked = fetch_all(
+        """
+        SELECT item_id, source_item_id, status, title, resolved_subject, design_id
+        FROM dataset_ingest_status WHERE grade = :grade ORDER BY title
+        """,
+        {"grade": grade_slug},
+    )
+
+    def count(table: str, column: str) -> int:
+        rows = fetch_all(
+            f"SELECT COUNT(*) AS n FROM {table} "
+            f"WHERE LOWER({column}->>'grade') IN (LOWER(:grade), LOWER(:alt_grade))",
+            {"grade": grade_slug, "alt_grade": alt_grade},
+        )
+        return int((rows[0] if rows else {}).get("n") or 0)
+
+    return {
+        "grade": grade_slug,
+        "also_matching": alt_grade,
+        "curriculum_designs": {"count": len(designs), "rows": designs},
+        "curriculum_substrands": {
+            "total": sum(int(r["n"]) for r in substrands),
+            "by_subject_and_strand": substrands,
+        },
+        "grade_mismatches": orphans,
+        "generated": {
+            "substrand_resources": count("substrand_resources", "curriculum"),
+            "question_dna": count("question_dna", "curriculum_link"),
+        },
+        "tracked_items": tracked,
+        "reads_substrands_from": "curriculum_substrands WHERE grade = :grade OR grade = :alt_grade",
+    }
 
 
 @router.post("/datasets/{grade}/sync")
@@ -143,6 +233,42 @@ def process_grade_items(
         "processed": sum(1 for r in results if r["ok"]),
         "skipped_already_ingested": sum(1 for r in results if r.get("already_ingested")),
         "failed": sum(1 for r in results if not r["ok"] and not r.get("already_ingested")),
+        "results": results,
+        **list_grade(grade_slug),
+    }
+
+
+@router.post("/datasets/{grade}/uningest")
+def uningest_grade_items(
+    grade: str,
+    payload: ProcessItemsRequest,
+    _: AuthContext = Depends(require_roles("admin", "operator")),
+) -> dict[str, Any]:
+    """Remove what these items produced and return them to pending."""
+    from ..services.dataset_ingest import list_grade, uningest_item
+
+    grade_slug = validate_grade_dataset(grade)
+    if not payload.item_ids:
+        raise_api_error("SCHEMA_VALIDATION_FAILED", "No item_ids given to un-ingest.")
+
+    results = []
+    for item_id in payload.item_ids:
+        try:
+            results.append({"item_id": item_id, "ok": True,
+                            **uningest_item(item_id, purge_generated=payload.purge_generated)})
+        except Exception as exc:  # noqa: BLE001
+            results.append({"item_id": item_id, "ok": False, "error": str(exc)[:300]})
+
+    totals: dict[str, int] = {}
+    for r in results:
+        for key, value in (r.get("removed") or {}).items():
+            totals[key] = totals.get(key, 0) + int(value)
+
+    return {
+        "grade": grade_slug,
+        "uningested": sum(1 for r in results if r["ok"]),
+        "failed": sum(1 for r in results if not r["ok"]),
+        "removed": totals,
         "results": results,
         **list_grade(grade_slug),
     }

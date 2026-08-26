@@ -483,3 +483,91 @@ def record_external_ingest(payload: dict[str, Any], result: dict[str, Any]) -> s
         error="",
     )
     return row["item_id"]
+
+
+def uningest_item(item_id: str, purge_generated: bool = False) -> dict[str, Any]:
+    """Undo an ingest: remove the design it produced and return it to pending.
+
+    ``purge_generated`` also deletes the notes, diagrams, activities and
+    questions produced from that design's sub-strands. Off by default because
+    that is real token spend — but a design re-parsed under a different subject
+    leaves its old generated content orphaned under a name nothing references,
+    so there are times you want it gone.
+    """
+    row = fetch_one(
+        "SELECT * FROM dataset_ingest_status WHERE item_id = :item_id",
+        {"item_id": item_id},
+    )
+    if not row:
+        raise LookupError(f"no dataset item tracked with id '{item_id}'")
+
+    design_id = _text(row.get("design_id"))
+    grade = _text(row.get("grade"))
+    subject = _text(row.get("resolved_subject"))
+    removed = {"design": 0, "substrands": 0, "bundles": 0, "questions": 0}
+
+    if design_id:
+        # Count before deleting so the caller can be told what actually went.
+        rows = fetch_all(
+            "SELECT COUNT(*) AS n FROM curriculum_substrands WHERE design_id = :design_id",
+            {"design_id": design_id},
+        )
+        removed["substrands"] = int((rows[0] if rows else {}).get("n") or 0)
+
+        if purge_generated and grade and subject:
+            for table, column, key in (
+                ("substrand_resources", "curriculum", "bundles"),
+                ("question_dna", "curriculum_link", "questions"),
+            ):
+                counted = fetch_all(
+                    f"""
+                    SELECT COUNT(*) AS n FROM {table}
+                    WHERE LOWER({column}->>'grade') = LOWER(:grade)
+                      AND LOWER({column}->>'subject') = LOWER(:subject)
+                    """,
+                    {"grade": grade, "subject": subject},
+                )
+                removed[key] = int((counted[0] if counted else {}).get("n") or 0)
+                execute(
+                    f"""
+                    DELETE FROM {table}
+                    WHERE LOWER({column}->>'grade') = LOWER(:grade)
+                      AND LOWER({column}->>'subject') = LOWER(:subject)
+                    """,
+                    {"grade": grade, "subject": subject},
+                )
+
+        # Only if no other ingested grade still points at this design.
+        others = fetch_all(
+            """
+            SELECT item_id FROM dataset_ingest_status
+            WHERE design_id = :design_id AND item_id <> :item_id AND status = 'ingested'
+            """,
+            {"design_id": design_id, "item_id": item_id},
+        )
+        if others:
+            logger.info(
+                "Design %s is still claimed by %d other ingested item(s); left in place.",
+                design_id, len(others),
+            )
+            removed["substrands"] = 0
+        else:
+            execute(
+                "DELETE FROM curriculum_designs WHERE design_id = :design_id",
+                {"design_id": design_id},
+            )
+            removed["design"] = 1
+
+    execute(
+        """
+        UPDATE dataset_ingest_status
+        SET status = 'pending', design_id = NULL, resolved_subject = '',
+            char_count = 0, error = '', selected_at = NULL, started_at = NULL,
+            finished_at = NULL, updated_at = NOW()
+        WHERE item_id = :item_id
+        """,
+        {"item_id": item_id},
+    )
+
+    logger.info("Un-ingested %s (design %s): %s", item_id, design_id or "none", removed)
+    return {"item_id": item_id, "design_id": design_id, "removed": removed}

@@ -63,6 +63,21 @@ export function Datasets() {
     actions.process.mutate({ item_ids: pending.map((i) => i.item_id) });
   }
 
+  function uningest(item: DatasetItem) {
+    const purge = window.confirm(
+      `Un-ingest "${item.resolved_subject || item.title}"?\n\n` +
+        `Its curriculum design and sub-strands are removed and the document goes ` +
+        `back to Not processed.\n\n` +
+        `OK — also delete the notes, diagrams, activities and questions generated ` +
+        `from it (this throws away real token spend).\n` +
+        `Cancel — keep that generated content.`
+    );
+    // Cancel means "keep the generated content", not "abort", so ask once more
+    // rather than letting a stray Escape do something unintended.
+    if (!purge && !window.confirm("Un-ingest but keep the generated content?")) return;
+    actions.uningest.mutate({ item_ids: [item.item_id], purge_generated: purge });
+  }
+
   function reprocess(item: DatasetItem) {
     // Replacing ingested work is destructive enough to be worth a sentence.
     const ok = window.confirm(
@@ -128,6 +143,27 @@ export function Datasets() {
           description="Each row is one curriculum design. Titles and subjects shown are the ones resolved from the document itself, not the catalogue label."
           actions={
             <Stack direction="row" gap="var(--s2)">
+              {(counts?.ingested ?? 0) > 0 && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  disabled={busy}
+                  onClick={() => {
+                    const done = items.filter((i) => i.status === "ingested");
+                    if (
+                      window.confirm(
+                        `Un-ingest all ${done.length} ingested document(s) for this grade?\n\n` +
+                          `Their designs and sub-strands are removed and they return to ` +
+                          `Not processed. Generated content is kept.`
+                      )
+                    ) {
+                      actions.uningest.mutate({ item_ids: done.map((i) => i.item_id) });
+                    }
+                  }}
+                >
+                  Un-ingest all
+                </Button>
+              )}
               {failed.length > 0 && (
                 <Button
                   size="sm"
@@ -207,14 +243,16 @@ export function Datasets() {
                       </Td>
                       <Td>
                         {item.status === "ingested" ? (
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            disabled={busy}
-                            onClick={() => reprocess(item)}
-                          >
-                            Re-process
-                          </Button>
+                          <Stack direction="row" gap="var(--s2)">
+                            <Button size="sm" variant="ghost" disabled={busy}
+                                    onClick={() => reprocess(item)}>
+                              Re-process
+                            </Button>
+                            <Button size="sm" variant="ghost" disabled={busy}
+                                    onClick={() => uningest(item)}>
+                              Un-ingest
+                            </Button>
+                          </Stack>
                         ) : item.status === "processing" ? (
                           <span style={{ color: "var(--ink-3)", fontSize: "var(--text-sm)" }}>
                             Running…

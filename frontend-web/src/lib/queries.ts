@@ -405,5 +405,9 @@ export function useIngestActions(grade: string) {
       mutationFn: (v: { item_ids?: string[] }) => post("retry", v),
       onSuccess: done,
     }),
+    uningest: useMutation({
+      mutationFn: (v: { item_ids: string[]; purge_generated?: boolean }) => post("uningest", v),
+      onSuccess: done,
+    }),
   };
 }
