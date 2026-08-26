@@ -19,7 +19,10 @@ import {
   Th,
   useToast,
 } from "../ui/components";
-import { gradeOptionLabel, subjectOptionLabel, useApi, useGrades, useProgress, useSubjects } from "../lib/queries";
+import { Link } from "react-router-dom";
+import { CurriculumStructure } from "./CurriculumStructure";
+import { HourWorkbench } from "./HourWorkbench";
+import { profileFor, useProfiles, gradeOptionLabel, subjectOptionLabel, useApi, useGrades, useProgress, useSubjects } from "../lib/queries";
 import { useQueryClient } from "@tanstack/react-query";
 
 /**
@@ -89,6 +92,11 @@ export function ContentFactory() {
   }
 
   // Locate the selected sub-strand's coverage record.
+  React.useEffect(() => {
+    setNotes(null);
+    setLastResult(null);
+  }, [substrand, subject, effectiveGrade]);
+
   const selected = React.useMemo(() => {
     if (!progress.data || !substrand) return null;
     for (const subj of progress.data.subjects ?? []) {
@@ -156,6 +164,7 @@ export function ContentFactory() {
       qc.invalidateQueries({ queryKey: ["progress"] });
       qc.invalidateQueries({ queryKey: ["bundle"] });
       setLastResult({ station: station.id, res });
+      if (station.id === "notes") setNotes(res?.notes ?? res);
     } catch (err) {
       toast(err instanceof Error ? err.message : `${station.label} failed.`, "danger");
     } finally {
@@ -164,6 +173,13 @@ export function ContentFactory() {
   }
 
   const [lastResult, setLastResult] = React.useState<{ station: string; res: any } | null>(null);
+  // The notes are the source for every per-hour asset, so they are held for the
+  // workbench rather than only shown as the last station's output.
+  const [notes, setNotes] = React.useState<any>(null);
+  // A subject with no skill still generates — with a generic profile. That is
+  // invisible in the output, so say it before the tokens are spent.
+  const profiles = useProfiles();
+  const skill = profileFor(profiles.data, subject, effectiveGrade);
 
   return (
     <>
@@ -204,6 +220,31 @@ export function ContentFactory() {
 
       <QueryState query={grades} label="Loading grades" rows={2} />
       <QueryState query={progress} label="Loading sub-strands" rows={4} />
+
+      {/* A design can ingest cleanly and still yield no sub-strands when its
+          layout defeats the text parser — Pre-Primary is organised by activity
+          areas, not "STRAND 1.0" headings. Everything downstream is keyed on
+          sub-strands, so offer a way to create them rather than a dead end. */}
+      {subject && profiles.data && !skill && (
+        <EmptyState
+          title={`No teaching skill for ${subject}`}
+          description="Notes, diagrams, activities and questions for this subject will be generated with a generic profile rather than its own expertise."
+          tone="warn"
+          action={
+            <Link to="/skills">
+              <Button size="sm">Define the skill</Button>
+            </Link>
+          }
+        />
+      )}
+
+      {progress.data && !substrand && allSubstrands.length === 0 && (
+        <CurriculumStructure
+          grade={effectiveGrade}
+          subject={subject}
+          onSaved={() => progress.refetch()}
+        />
+      )}
 
       {progress.data && !substrand && (
         <Card title="Choose a sub-strand" description={`${allSubstrands.length} available in this selection`}>
@@ -380,6 +421,21 @@ export function ContentFactory() {
                 </Card>
               );
             })}
+
+            {/* Assets belong to an hour, not to the sub-strand as a whole:
+                KICD allocates hours, the notes return one module per hour, and
+                each diagram, photo prompt, video prompt, experiment and
+                activity is produced against a specific hour. */}
+            {notes && selected && (
+              <HourWorkbench
+                grade={effectiveGrade}
+                subject={selected.subject}
+                strand={selected.strand}
+                subStrand={selected.report.sub_strand_name}
+                notes={notes}
+                allocatedHours={selected.report.allocated_hours}
+              />
+            )}
           </Stack>
         </>
       )}

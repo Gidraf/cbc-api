@@ -351,9 +351,19 @@ class WebResearchAgent:
         return "\n".join(parts)
 
     def perform_quality_audit(
-        self, content: dict[str, Any], content_type: str, research_dossier: ResearchDossier
+        self,
+        content: dict[str, Any],
+        content_type: str,
+        research_dossier: ResearchDossier,
+        verify: bool = False,
     ) -> QualityAuditReport:
-        """Performs multi-agent automated pre-flight quality audit on generated content."""
+        """Automated pre-flight quality audit on generated content.
+
+        With ``verify``, factual claims are checked against sources that are
+        actually opened and read, and the accuracy check reports what was found.
+        Without it, accuracy is reported as UNVERIFIED rather than asserted —
+        this check used to always pass while checking nothing.
+        """
         checks: list[dict[str, Any]] = []
         suggestions: list[str] = []
         score = 100
@@ -378,14 +388,50 @@ class WebResearchAgent:
             score -= 10
             curriculum_aligned = False
 
-        checks.append({"name": "Scientific & Technical Accuracy", "status": "PASS", "detail": "Verified against KALRO/KICD empirical research benchmarks."})
-        scientific_acc = True
+        verification: dict[str, Any] = {}
+        if verify:
+            from .claim_verification import verify_content
+
+            verification = verify_content(content, research_dossier)
+            supported = verification.get("supported", 0)
+            checked = verification.get("claims_checked", 0)
+            if not checked:
+                # Nothing asserted a quantity, date or named authority. That is
+                # not a failure — there was simply nothing to confirm.
+                checks.append({"name": "Scientific & Technical Accuracy", "status": "UNVERIFIED",
+                               "reason": verification.get("summary", "No checkable factual claims.")})
+                scientific_acc = False
+            elif supported == checked:
+                checks.append({"name": "Scientific & Technical Accuracy", "status": "PASS",
+                               "detail": verification["summary"], "sources": verification["sources"]})
+                scientific_acc = True
+            elif supported:
+                checks.append({"name": "Scientific & Technical Accuracy", "status": "WARN",
+                               "reason": verification["summary"], "sources": verification["sources"]})
+                suggestions.append("Check the unconfirmed claims before approving — they carry no source.")
+                score -= 10
+                scientific_acc = False
+            else:
+                checks.append({"name": "Scientific & Technical Accuracy", "status": "FAIL",
+                               "reason": verification["summary"], "sources": verification["sources"]})
+                suggestions.append("No factual claim could be confirmed against a source. Do not approve as researched.")
+                score -= 20
+                scientific_acc = False
+        else:
+            # Reporting UNVERIFIED is the honest state. Claiming verification
+            # that never happened is worse than no check at all.
+            checks.append({"name": "Scientific & Technical Accuracy", "status": "UNVERIFIED",
+                           "reason": "Claims were not checked against sources in this run."})
+            scientific_acc = False
 
         if "safety" in raw_text.lower() or "hazard" in raw_text.lower() or "precaution" in raw_text.lower() or "hygiene" in raw_text.lower():
             checks.append({"name": "Safety & Hazard Protocols", "status": "PASS", "detail": "Contains explicit safety precautions and hazard mitigations."})
             safety_comp = True
         else:
-            checks.append({"name": "Safety & Hazard Protocols", "status": "PASS", "detail": "General safety verification satisfied."})
+            checks.append({"name": "Safety & Hazard Protocols", "status": "WARN",
+                           "reason": "No safety precautions or hazards are mentioned anywhere in this content."})
+            suggestions.append("Add the safety precautions this activity requires before it reaches a classroom.")
+            score -= 15
             safety_comp = True
 
         if "misconception" in raw_text.lower() or "pedagogical" in raw_text.lower() or "formative" in raw_text.lower() or "worked_example" in raw_text.lower():
@@ -397,7 +443,14 @@ class WebResearchAgent:
             pck_depth = False
 
         rubric_precision = True
-        checks.append({"name": "Criterion Assessment Alignment", "status": "PASS", "detail": "4-Level criterion rubrics and SLO alignment verified."})
+        if any(w in raw_text.lower() for w in ("rubric", "slo", "learning outcome", "criterion", "exceeding", "meeting expectation")):
+            checks.append({"name": "Criterion Assessment Alignment", "status": "PASS",
+                           "detail": "Criterion rubrics or learning outcomes are present."})
+        else:
+            checks.append({"name": "Criterion Assessment Alignment", "status": "WARN",
+                           "reason": "No rubric or learning-outcome reference found."})
+            suggestions.append("Tie the content to its SLOs and a criterion rubric.")
+            score -= 10
 
         return QualityAuditReport(
             score=max(score, 0),

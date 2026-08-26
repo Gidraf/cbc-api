@@ -411,3 +411,296 @@ export function useIngestActions(grade: string) {
     }),
   };
 }
+
+
+// ── Curriculum structure (strands and sub-strands) ──────────────────────────
+// These fill curriculum_substrands when a design's layout defeats the text
+// parser, which is the usual case for Pre-Primary. Without them a grade can be
+// ingested and still have nothing to produce against.
+
+export type GeneratedStrand = { strand_id?: string; strand_name?: string; name?: string; description?: string };
+export type GeneratedSubstrand = Record<string, any>;
+
+export function useStructureActions(grade: string, subject: string) {
+  const api = useApi();
+  const qc = useQueryClient();
+
+  const post = <T,>(path: string, body: unknown) =>
+    api<T>(`/api/v1/curriculum/factory/${path}`, { method: "POST", body: JSON.stringify(body) });
+
+  return {
+    generateStrands: useMutation({
+      mutationFn: (v: { level?: string; essence_statement?: string; custom_instructions?: string }) =>
+        post<{ strands: GeneratedStrand[] }>("generate-strands", { grade, subject, ...v }),
+    }),
+    generateSubstrands: useMutation({
+      mutationFn: (v: {
+        strand_name: string;
+        strand_id?: string;
+        level?: string;
+        essence_statement?: string;
+        general_learning_outcomes?: string[];
+        source_material_text?: string;
+        custom_instructions?: string;
+        design_id?: string;
+      }) => post<{ sub_strands: GeneratedSubstrand[] }>("generate-substrands", { grade, subject, ...v }),
+    }),
+    saveSubstrands: useMutation({
+      mutationFn: (v: {
+        strand_name: string;
+        strand_id?: string;
+        design_id?: string;
+        substrands: GeneratedSubstrand[];
+      }) => post<any>("save-substrands", { grade, subject, ...v }),
+      onSuccess: () => {
+        // Coverage and the station list are both derived from sub-strands.
+        qc.invalidateQueries({ queryKey: keys.progress(grade) });
+        qc.invalidateQueries({ queryKey: keys.subjects(grade) });
+      },
+    }),
+  };
+}
+
+// ── Bundle lifecycle ────────────────────────────────────────────────────────
+// Generated content only reaches the review queue by being audited, saved and
+// published. Without these the four stations produce work that goes nowhere.
+
+export function useBundleActions(grade: string) {
+  const api = useApi();
+  const qc = useQueryClient();
+
+  const post = <T,>(path: string, body: unknown) =>
+    api<T>(`/api/v1/curriculum/factory/${path}`, { method: "POST", body: JSON.stringify(body) });
+
+  const refresh = () => {
+    qc.invalidateQueries({ queryKey: keys.progress(grade) });
+    qc.invalidateQueries({ queryKey: ["bundles"] });
+  };
+
+  return {
+    audit: useMutation({
+      mutationFn: (v: Record<string, any>) =>
+        post<{ audit: any; score: number; passed: boolean }>("audit-bundle", v),
+    }),
+    save: useMutation({
+      mutationFn: (v: Record<string, any>) =>
+        post<{ status: string; bundle_id: string; storage_url?: string }>("save-bundle", v),
+      onSuccess: refresh,
+    }),
+    publish: useMutation({
+      mutationFn: (v: Record<string, any>) => post<any>("publish-bundle", v),
+      onSuccess: refresh,
+    }),
+  };
+}
+
+
+// ── Per-hour production ─────────────────────────────────────────────────────
+// The curriculum hierarchy is:
+//   strand -> sub-strand (with KICD allocated hours) -> one hour module per
+//   hour -> the diagrams, photo prompts, video prompts, experiments and
+//   activities that belong to THAT hour.
+// Assets are anchored to an hour, never to the sub-strand as a whole, which is
+// what the backend already models via hour_index / target_hour.
+
+/** What a visual is rendered as. The backend calls this generation_mode. */
+export type VisualMode = "svg" | "photo_spec" | "video_storyboard" | "prompt_only";
+
+export const VISUAL_MODES: { id: VisualMode; label: string; hint: string }[] = [
+  { id: "svg", label: "Vector diagram", hint: "Addressable parts, so questions can test one region" },
+  { id: "photo_spec", label: "Photo prompt", hint: "A prompt for an image model — online answers only" },
+  { id: "video_storyboard", label: "Video storyboard", hint: "Scene-by-scene script for a simulation" },
+  { id: "prompt_only", label: "Prompt only", hint: "Just the specification, nothing rendered" },
+];
+
+export type HourModule = Record<string, any> & { hour_index?: number; hour_title?: string };
+
+/** The hour modules inside a notes payload, however the generator labelled them. */
+export function hourModulesOf(notes: any): HourModule[] {
+  const mods = notes?.hour_modules ?? notes?.notes?.hour_modules ?? [];
+  if (!Array.isArray(mods)) return [];
+  return mods.map((m: any, i: number) => ({
+    ...m,
+    hour_index: m?.hour_index ?? i + 1,
+    hour_title: m?.hour_title || m?.title || `Hour ${m?.hour_index ?? i + 1}`,
+  }));
+}
+
+/** Items a planner returned that belong to one hour. */
+export function forHour<T extends Record<string, any>>(items: T[] | undefined, hour: number): T[] {
+  if (!Array.isArray(items)) return [];
+  // An item with no hour is shown against every hour rather than hidden — the
+  // planner not tagging it is not a reason for it to disappear.
+  return items.filter((i) => {
+    const h = i.hour_index ?? i.hour ?? i.target_hour;
+    return h === undefined || h === null || Number(h) === hour;
+  });
+}
+
+export function useHourActions(grade: string, subject: string) {
+  const api = useApi();
+
+  const post = <T,>(path: string, body: unknown) =>
+    api<T>(`/api/v1/curriculum/factory/${path}`, { method: "POST", body: JSON.stringify(body) });
+
+  return {
+    /** Plan the visuals for a sub-strand from its notes; each comes back tagged with an hour. */
+    planVisuals: useMutation({
+      mutationFn: (v: { strand: string; sub_strand: string; notes_content: any; min_visuals?: number; custom_instructions?: string }) =>
+        post<{ visuals: any[] }>("plan-visuals", { grade, subject, ...v }),
+    }),
+    /** Render one planned visual as a diagram, photo prompt or video storyboard. */
+    renderVisual: useMutation({
+      mutationFn: (v: {
+        strand: string;
+        sub_strand: string;
+        visual_item: any;
+        generation_mode: VisualMode;
+        target_hour: number;
+        notes_content?: any;
+        construction_prompt?: string;
+        custom_instructions?: string;
+      }) => post<any>("generate-single-visual", { grade, subject, ...v }),
+    }),
+    planActivities: useMutation({
+      mutationFn: (v: { strand: string; sub_strand: string; notes_content: any; diagram_info?: any; custom_instructions?: string }) =>
+        post<{ activities: any[] }>("plan-activities", { grade, subject, ...v }),
+    }),
+    /** Work up one planned activity or experiment in full, including safety. */
+    buildActivity: useMutation({
+      mutationFn: (v: { strand: string; sub_strand: string; activity_item: any; target_hour?: number; notes_content?: any; custom_instructions?: string }) =>
+        post<any>("generate-single-activity", { grade, subject, ...v }),
+    }),
+  };
+}
+
+
+// ── Pedagogical profiles (teaching skills) ──────────────────────────────────
+// A profile is the professor/teacher skill for one subject and grade, derived
+// from the KICD design. classify_content_type() looks it up by (subject, grade)
+// and injects format_for_prompt() into the notes, diagram, activity and
+// question prompts — so a subject with no profile generates unskilled.
+
+export type Profile = {
+  id?: number;
+  subject: string;
+  grade: string;
+  content_type?: string;
+  persona: string;
+  note_style: string;
+  diagram_type: string;
+  activity_type: string;
+  question_type: string;
+  safety_focus: string;
+  grade_appropriate_tone?: string;
+  special_directives?: string[];
+  empirical_insights?: Record<string, any>[];
+  case_studies?: Record<string, string>[];
+  metadata?: Record<string, any>;
+};
+
+export type CurriculumDesign = {
+  design_id: string;
+  subject: string;
+  grade: string;
+  level?: string;
+  essence_statement?: string;
+  general_learning_outcomes?: string[];
+  substrand_count?: number;
+  review_status?: string;
+};
+
+export function useProfiles(search = "", grade = "") {
+  const api = useApi();
+  return useQuery({
+    queryKey: ["profiles", search, grade],
+    queryFn: () => {
+      const qs = new URLSearchParams();
+      if (search) qs.set("search", search);
+      if (grade) qs.set("grade", grade);
+      const suffix = qs.toString() ? `?${qs}` : "";
+      return api<{ profiles: Profile[]; count: number }>(`/api/v1/curriculum/profiles${suffix}`)
+        .then((r) => r.profiles || []);
+    },
+    staleTime: 30_000,
+  });
+}
+
+export function useDesigns() {
+  const api = useApi();
+  return useQuery({
+    queryKey: ["designs"],
+    queryFn: () =>
+      api<{ designs?: CurriculumDesign[] } | CurriculumDesign[]>("/api/v1/curriculum/designs")
+        .then((r) => (Array.isArray(r) ? r : r.designs || [])),
+    staleTime: 60_000,
+  });
+}
+
+export function useProfileActions() {
+  const api = useApi();
+  const qc = useQueryClient();
+  const done = () => qc.invalidateQueries({ queryKey: ["profiles"] });
+
+  return {
+    save: useMutation({
+      mutationFn: (p: Profile) =>
+        api<{ profile: Profile }>(
+          p.id ? `/api/v1/curriculum/profiles/${p.id}` : "/api/v1/curriculum/profiles",
+          { method: p.id ? "PUT" : "POST", body: JSON.stringify(p) }
+        ),
+      onSuccess: done,
+    }),
+    remove: useMutation({
+      mutationFn: (id: number) =>
+        api<any>(`/api/v1/curriculum/profiles/${id}`, { method: "DELETE" }),
+      onSuccess: done,
+    }),
+    /** Synthesise a skill for a subject and grade with no design to hand. */
+    aiGenerate: useMutation({
+      mutationFn: (v: {
+        subject: string;
+        grade?: string;
+        level?: string;
+        essence_statement?: string;
+        general_learning_outcomes?: string[];
+      }) =>
+        api<{ profile: Profile }>("/api/v1/curriculum/profiles/ai-generate", {
+          method: "POST",
+          body: JSON.stringify(v),
+        }),
+      onSuccess: done,
+    }),
+    /** Derive the skill from an ingested KICD design and its sub-strands. */
+    fromDesign: useMutation({
+      mutationFn: (designId: string) =>
+        api<{ profile: Profile }>(
+          `/api/v1/curriculum/profiles/generate-from-design/${encodeURIComponent(designId)}`,
+          { method: "POST" }
+        ),
+      onSuccess: done,
+    }),
+    /** Refine an existing skill with an instruction. */
+    improve: useMutation({
+      mutationFn: (v: { profile: Profile; instructions: string }) =>
+        api<{ profile: Profile }>("/api/v1/curriculum/profiles/ai-improve", {
+          method: "POST",
+          body: JSON.stringify(v),
+        }),
+      onSuccess: done,
+    }),
+  };
+}
+
+/** The profile that will steer generation for this subject and grade, if any. */
+export function profileFor(profiles: Profile[] | undefined, subject: string, grade: string) {
+  if (!profiles || !subject) return undefined;
+  const s = subject.trim().toLowerCase();
+  const exact = profiles.find(
+    (p) => p.subject?.trim().toLowerCase() === s && p.grade?.trim().toLowerCase() === grade.trim().toLowerCase()
+  );
+  // A profile filed against "all" grades covers every grade for that subject.
+  return exact || profiles.find(
+    (p) => p.subject?.trim().toLowerCase() === s && (p.grade || "all").trim().toLowerCase() === "all"
+  );
+}

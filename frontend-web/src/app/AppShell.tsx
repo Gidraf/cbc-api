@@ -29,6 +29,7 @@ const NAV: { group: string; items: NavItem[] }[] = [
       // actually accept. There is no "datasets" right, so naming one would have
       // hidden this screen from every role.
       { to: "/datasets", label: "Datasets", icon: "▤", right: "generate", hint: "Curriculum designs waiting to be ingested" },
+      { to: "/skills", label: "Teaching skills", icon: "◎", right: "generate", hint: "Per-subject expertise injected into every prompt" },
       { to: "/review", label: "Review queue", icon: "✓", right: "review", hint: "Bundles awaiting a human decision" },
       { to: "/legacy", label: "Advanced console", icon: "⚙", hint: "Prompts, providers, pipelines, profiles" },
     ],

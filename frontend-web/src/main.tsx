@@ -11,6 +11,7 @@ import { LoadingBlock, ToastProvider } from "./ui/components";
 import { Coverage } from "./views/Coverage";
 import { ContentFactory } from "./views/ContentFactory";
 import { Datasets } from "./views/Datasets";
+import { Profiles } from "./views/Profiles";
 import { DiagramLibrary } from "./views/DiagramLibrary";
 import { ExamBuilder } from "./views/ExamBuilder";
 import { Overview } from "./views/Overview";
@@ -71,6 +72,7 @@ function Router() {
         <Route path="diagrams" element={<Screen name="Diagram library"><DiagramLibrary /></Screen>} />
         <Route path="review" element={<Screen name="Review queue"><Review /></Screen>} />
         <Route path="datasets" element={<Screen name="Datasets"><Datasets /></Screen>} />
+        <Route path="skills" element={<Screen name="Teaching skills"><Profiles /></Screen>} />
         <Route
           path="legacy"
           element={
