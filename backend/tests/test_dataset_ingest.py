@@ -63,6 +63,10 @@ class FakeDb:
 @pytest.fixture
 def db(monkeypatch):
     _DATASETS.clear()
+    # Default the cross-dataset sweep to empty; tests that exercise it override.
+    monkeypatch.setattr(
+        di.langfuse_context_service, "fetch_raw_datasets_from_langfuse", lambda: []
+    )
     fake = FakeDb()
     monkeypatch.setattr(di, "fetch_all", fake.fetch_all)
     monkeypatch.setattr(di, "fetch_one", fake.fetch_one)
@@ -125,6 +129,8 @@ def test_placeholder_items_are_never_tracked(db, monkeypatch):
     stub_dataset(monkeypatch, [
         {"id": "itm_grade-4_default", "is_placeholder": True, "input": {}, "metadata": {}},
     ], grade="grade-4")
+    # The sweep over other datasets must not resurrect it either.
+    monkeypatch.setattr(di.langfuse_context_service, "fetch_raw_datasets_from_langfuse", lambda: [])
     result = di.sync_grade("grade-4")
     assert result["added"] == 0
     assert result["placeholders"] == 1

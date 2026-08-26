@@ -118,9 +118,9 @@ def candidate_items(grade_slug: str) -> list[dict[str, Any]]:
     """
     found: dict[str, dict[str, Any]] = {}
 
+    # Placeholders are passed through, not filtered here: sync_grade owns the
+    # decision to skip them and the count it reports.
     for item in langfuse_context_service.get_grade_dataset(grade_slug):
-        if item.get("is_placeholder"):
-            continue
         item_id = _text(item.get("id"))
         if item_id:
             found[item_id] = item
@@ -160,7 +160,9 @@ def sync_grade(grade_slug: str) -> dict[str, int]:
     Existing rows are left alone: re-syncing must never reset an item that has
     already been ingested, or a refresh would silently queue duplicate work.
     """
-    items = langfuse_context_service.get_grade_dataset(grade_slug)
+    # Not just this grade's own dataset: documents may sit anywhere, and
+    # candidate_items routes each one by the grade it declares.
+    items = candidate_items(grade_slug)
     skipped_placeholder = 0
 
     # execute() returns nothing, so "was this row new?" is answered before the
