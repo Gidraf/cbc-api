@@ -341,3 +341,69 @@ export function useDailyTarget() {
     staleTime: 60_000,
   });
 }
+
+
+// ── Dataset ingestion ───────────────────────────────────────────────────────
+
+export type IngestStatus = "pending" | "selected" | "processing" | "ingested" | "failed";
+
+export type DatasetItem = {
+  item_id: string;
+  grade: string;
+  file_id: string;
+  title: string;
+  declared_subject: string;
+  resolved_subject: string;
+  design_id: string | null;
+  status: IngestStatus;
+  char_count: number;
+  error: string;
+  finished_at?: string | null;
+};
+
+export type IngestState = {
+  grade: string;
+  items: DatasetItem[];
+  counts: Record<IngestStatus, number>;
+  total: number;
+  ingested_percentage: number;
+  in_progress: number;
+};
+
+export function useIngestStatus(grade: string) {
+  const api = useApi();
+  return useQuery({
+    queryKey: ["ingest-status", grade],
+    queryFn: () => api<IngestState>(`/api/v1/admin/langfuse/datasets/${grade}/ingest-status`),
+    enabled: Boolean(grade),
+    refetchInterval: (q) => ((q.state.data?.in_progress ?? 0) > 0 ? 2000 : false),
+  });
+}
+
+export function useIngestActions(grade: string) {
+  const api = useApi();
+  const qc = useQueryClient();
+  const done = () => {
+    qc.invalidateQueries({ queryKey: ["ingest-status", grade] });
+    qc.invalidateQueries({ queryKey: keys.grades });
+    qc.invalidateQueries({ queryKey: keys.subjects(grade) });
+  };
+
+  const post = (path: string, body?: unknown) =>
+    api<any>(`/api/v1/admin/langfuse/datasets/${grade}/${path}`, {
+      method: "POST",
+      body: JSON.stringify(body ?? {}),
+    });
+
+  return {
+    sync: useMutation({ mutationFn: () => post("sync"), onSuccess: done }),
+    process: useMutation({
+      mutationFn: (v: { item_ids: string[]; force?: boolean }) => post("process", v),
+      onSuccess: done,
+    }),
+    retry: useMutation({
+      mutationFn: (v: { item_ids?: string[] }) => post("retry", v),
+      onSuccess: done,
+    }),
+  };
+}

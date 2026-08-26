@@ -14,9 +14,16 @@ class FakeDb:
 
     def fetch_all(self, query, params=None):
         params = params or {}
-        if "SELECT item_id FROM dataset_ingest_status" in query:
+        if "SELECT item_id FROM dataset_ingest_status WHERE grade = :grade" in query:
             return [{"item_id": r["item_id"]} for r in self.rows.values()
                     if r["grade"] == params.get("grade")]
+        if "design_id = :design_id AND item_id <> :item_id" in query:
+            return [
+                {"item_id": r["item_id"]} for r in self.rows.values()
+                if r.get("design_id") == params.get("design_id")
+                and r["item_id"] != params.get("item_id")
+                and r["status"] == "ingested"
+            ]
         if "GROUP BY grade, status" in query:
             out: dict[tuple, int] = {}
             for r in self.rows.values():
@@ -52,6 +59,7 @@ class FakeDb:
 
 @pytest.fixture
 def db(monkeypatch):
+    _DATASETS.clear()
     fake = FakeDb()
     monkeypatch.setattr(di, "fetch_all", fake.fetch_all)
     monkeypatch.setattr(di, "fetch_one", fake.fetch_one)
@@ -67,8 +75,19 @@ def items(*specs):
     ]
 
 
-def stub_dataset(monkeypatch, data):
-    monkeypatch.setattr(di.langfuse_context_service, "get_grade_dataset", lambda _g: data)
+# Datasets are per grade, so the stub has to be too: replacing every grade's
+# items at once made one grade's fixture erase another's.
+_DATASETS: dict[str, list] = {}
+
+
+def stub_dataset(monkeypatch, data, grade=None):
+    if grade is None:
+        grade = data[0]["id"].split("__")[0] if data else "grade-4"
+    _DATASETS[grade] = data
+    monkeypatch.setattr(
+        di.langfuse_context_service, "get_grade_dataset",
+        lambda g: _DATASETS.get(g, []),
+    )
 
 
 def test_sync_registers_new_items_as_pending(db, monkeypatch):
@@ -96,7 +115,7 @@ def test_placeholder_items_are_never_tracked(db, monkeypatch):
     """The development fallback is not curriculum and must not enter the queue."""
     stub_dataset(monkeypatch, [
         {"id": "itm_grade-4_default", "is_placeholder": True, "input": {}, "metadata": {}},
-    ])
+    ], grade="grade-4")
     result = di.sync_grade("grade-4")
     assert result["added"] == 0
     assert result["placeholders"] == 1
@@ -194,8 +213,89 @@ def test_a_failed_ingest_is_recorded_and_reraised(db, monkeypatch):
 def test_item_removed_from_langfuse_is_marked_failed(db, monkeypatch):
     stub_dataset(monkeypatch, items(("grade-4__a", "a", "A.pdf", "French")))
     di.sync_grade("grade-4")
-    stub_dataset(monkeypatch, [])
+    stub_dataset(monkeypatch, [], grade="grade-4")
 
     with pytest.raises(LookupError):
         di.process_item("grade-4__a")
     assert db.rows["grade-4__a"]["status"] == "failed"
+
+
+# ── Reprocessing and data hygiene ────────────────────────────────────────────
+
+def _stub_extractor(monkeypatch, subject="Chemistry", design_id="d1"):
+    import app.services.curriculum_extractor as extractor
+    monkeypatch.setattr(
+        extractor.curriculum_extractor, "ingest_raw_curriculum",
+        lambda payload: {"subject": subject, "grade": "grade-10", "design_id": design_id},
+    )
+
+
+def test_processing_twice_is_refused(db, monkeypatch):
+    """The same document must not be ingested repeatedly by accident."""
+    stub_dataset(monkeypatch, items(("grade-10__x", "x", "Chem.pdf", "Pure Sciences")))
+    di.sync_grade("grade-10")
+    _stub_extractor(monkeypatch)
+
+    di.process_item("grade-10__x")
+    with pytest.raises(di.AlreadyIngested, match="already been ingested"):
+        di.process_item("grade-10__x")
+
+
+def test_force_replaces_the_previous_design(db, monkeypatch):
+    stub_dataset(monkeypatch, items(("grade-10__x", "x", "Chem.pdf", "Pure Sciences")))
+    di.sync_grade("grade-10")
+    _stub_extractor(monkeypatch, design_id="d1")
+    di.process_item("grade-10__x")
+
+    deleted: list[str] = []
+    real_execute = di.execute
+
+    def spy(query, params=None):
+        if "DELETE FROM curriculum_designs" in query:
+            deleted.append((params or {})["design_id"])
+            return
+        return real_execute(query, params)
+
+    monkeypatch.setattr(di, "execute", spy)
+    _stub_extractor(monkeypatch, subject="Chemistry", design_id="d1")
+    di.process_item("grade-10__x", force=True)
+
+    assert deleted == ["d1"], "the previous design should be discarded before re-ingest"
+    assert db.rows["grade-10__x"]["status"] == "ingested"
+
+
+def test_force_does_not_delete_a_design_another_item_still_claims(db, monkeypatch):
+    """The Lower Primary design is filed under Grades 1-3; one must not wipe another."""
+    stub_dataset(monkeypatch, items(("grade-1__a", "a", "Maths.pdf", "Mathematics")))
+    di.sync_grade("grade-1")
+    stub_dataset(monkeypatch, items(("grade-2__a", "a", "Maths.pdf", "Mathematics")))
+    di.sync_grade("grade-2")
+
+    _stub_extractor(monkeypatch, subject="Mathematics", design_id="shared")
+    di.process_item("grade-1__a")
+    di.process_item("grade-2__a")
+
+    deleted: list[str] = []
+    real_execute = di.execute
+
+    def spy(query, params=None):
+        if "DELETE FROM curriculum_designs" in query:
+            deleted.append((params or {})["design_id"])
+            return
+        return real_execute(query, params)
+
+    monkeypatch.setattr(di, "execute", spy)
+    stub_dataset(monkeypatch, items(("grade-1__a", "a", "Maths.pdf", "Mathematics")))
+    di.process_item("grade-1__a", force=True)
+
+    assert deleted == [], "a design another ingested item still points at must survive"
+
+
+def test_force_on_a_never_ingested_item_just_processes_it(db, monkeypatch):
+    stub_dataset(monkeypatch, items(("grade-10__x", "x", "Chem.pdf", "Pure Sciences")))
+    di.sync_grade("grade-10")
+    _stub_extractor(monkeypatch)
+
+    result = di.process_item("grade-10__x", force=True)
+    assert result["subject"] == "Chemistry"
+    assert db.rows["grade-10__x"]["status"] == "ingested"

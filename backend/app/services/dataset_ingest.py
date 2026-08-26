@@ -189,11 +189,48 @@ def grade_summaries() -> dict[str, dict[str, Any]]:
     return out
 
 
-def process_item(item_id: str) -> dict[str, Any]:
+class AlreadyIngested(RuntimeError):
+    """The item has been ingested already and ``force`` was not given."""
+
+
+def _discard_previous_design(design_id: str, item_id: str) -> None:
+    """Remove what a previous run of this item produced.
+
+    Sub-strands cascade from the design, so deleting the design is enough to
+    leave no orphans. The design is only removed if this item is the sole
+    tracked source for it — two dataset items resolving to the same design
+    (the Lower Primary design filed under Grades 1-3) must not delete each
+    other's work.
+    """
+    others = fetch_all(
+        """
+        SELECT item_id FROM dataset_ingest_status
+        WHERE design_id = :design_id AND item_id <> :item_id AND status = 'ingested'
+        """,
+        {"design_id": design_id, "item_id": item_id},
+    )
+    if others:
+        logger.info(
+            "Design %s is also claimed by %d other ingested item(s); rewriting in place "
+            "rather than deleting.", design_id, len(others),
+        )
+        return
+
+    execute("DELETE FROM curriculum_designs WHERE design_id = :design_id", {"design_id": design_id})
+    logger.info("Discarded design %s before re-ingesting %s.", design_id, item_id)
+
+
+def process_item(item_id: str, force: bool = False) -> dict[str, Any]:
     """Run one dataset item through curriculum extraction.
 
     Manual by design for now: the caller decides what gets processed and when,
     so a bad extraction cannot quietly propagate across a whole grade.
+
+    Processing the same item twice is refused rather than silently repeated.
+    With ``force``, the design this item produced last time is replaced in
+    place: the same deterministic design_id is rewritten and sub-strands it no
+    longer contains are deleted, so a second run leaves one clean design rather
+    than a merge of two.
     """
     from .curriculum_extractor import curriculum_extractor
 
@@ -205,12 +242,20 @@ def process_item(item_id: str) -> dict[str, Any]:
         raise LookupError(f"no dataset item tracked with id '{item_id}'")
     if row["status"] == PROCESSING:
         raise RuntimeError(f"item '{item_id}' is already being processed")
+    if row["status"] == INGESTED and not force:
+        raise AlreadyIngested(
+            f"'{row.get('resolved_subject') or row.get('title') or item_id}' has already been "
+            f"ingested as design {row.get('design_id')}. Re-run with force to replace it."
+        )
 
     items = langfuse_context_service.get_grade_dataset(row["grade"])
     source = next((i for i in items if _text(i.get("id")) == item_id), None)
     if source is None:
         set_status(item_id, FAILED, error="Item is no longer in the Langfuse dataset")
         raise LookupError(f"item '{item_id}' is no longer in dataset '{row['grade']}'")
+
+    if force and row.get("design_id"):
+        _discard_previous_design(str(row["design_id"]), item_id)
 
     set_status(item_id, PROCESSING)
 

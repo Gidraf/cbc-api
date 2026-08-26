@@ -21,6 +21,7 @@ import "./ui/tokens.css";
 
 // The legacy console is ~9,600 lines and its own stylesheet. Loading it lazily
 // keeps it out of the initial bundle for the screens that replaced it.
+const Datasets = React.lazy(() => import("./views/Datasets").then((m) => ({ default: m.Datasets })));
 const Legacy = React.lazy(() => import("./views/Legacy").then((m) => ({ default: m.Legacy })));
 
 const queryClient = new QueryClient({
@@ -60,6 +61,7 @@ function Router() {
         <Route path="exams" element={<Screen name="Exam builder"><ExamBuilder /></Screen>} />
         <Route path="diagrams" element={<Screen name="Diagram library"><DiagramLibrary /></Screen>} />
         <Route path="review" element={<Screen name="Review queue"><Review /></Screen>} />
+        <Route path="datasets" element={<Screen name="Datasets"><Datasets /></Screen>} />
         <Route
           path="legacy"
           element={

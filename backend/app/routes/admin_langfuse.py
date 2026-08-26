@@ -53,6 +53,9 @@ def get_grade_dataset(
 
 class ProcessItemsRequest(BaseModel):
     item_ids: list[str] = []
+    # Replace what a previous run produced instead of refusing. Off by default
+    # so re-processing is always a deliberate act.
+    force: bool = False
 
 
 @router.post("/datasets/{grade}/sync")
@@ -108,7 +111,7 @@ def process_grade_items(
     document rather than propagate across a grade. Each item reports its own
     outcome, so one failure does not discard the successes before it.
     """
-    from ..services.dataset_ingest import list_grade, process_item
+    from ..services.dataset_ingest import AlreadyIngested, list_grade, process_item
 
     grade_slug = validate_grade_dataset(grade)
     if not payload.item_ids:
@@ -117,13 +120,20 @@ def process_grade_items(
     results = []
     for item_id in payload.item_ids:
         try:
-            outcome = process_item(item_id)
+            outcome = process_item(item_id, force=payload.force)
             results.append({
                 "item_id": item_id,
                 "ok": True,
+                "replaced": payload.force,
                 "subject": outcome.get("subject"),
                 "grade": outcome.get("grade"),
                 "design_id": outcome.get("design_id"),
+            })
+        except AlreadyIngested as exc:
+            # Not a failure: the work is already done. Reported separately so
+            # the caller can offer to replace rather than showing an error.
+            results.append({
+                "item_id": item_id, "ok": False, "already_ingested": True, "error": str(exc),
             })
         except Exception as exc:  # noqa: BLE001
             results.append({"item_id": item_id, "ok": False, "error": str(exc)[:300]})
@@ -131,7 +141,8 @@ def process_grade_items(
     return {
         "grade": grade_slug,
         "processed": sum(1 for r in results if r["ok"]),
-        "failed": sum(1 for r in results if not r["ok"]),
+        "skipped_already_ingested": sum(1 for r in results if r.get("already_ingested")),
+        "failed": sum(1 for r in results if not r["ok"] and not r.get("already_ingested")),
         "results": results,
         **list_grade(grade_slug),
     }

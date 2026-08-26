@@ -670,7 +670,14 @@ class CurriculumExtractorService:
             },
         )
 
+        # Re-ingesting a design must leave it looking exactly as this run
+        # describes it. Sub-strands upsert by name, so a renamed or dropped
+        # sub-strand would otherwise survive forever and keep counting towards
+        # the grade's required work, quietly inflating every coverage figure.
+        written_keys: list[str] = []
+
         for s in design.substrands:
+            written_keys.append(f"{s.strand_name}||{s.sub_strand_name}")
             execute(
                 """
                 INSERT INTO curriculum_substrands (
@@ -730,6 +737,53 @@ class CurriculumExtractorService:
                     ),
                 },
             )
+
+        self._prune_stale_substrands(design, written_keys)
+
+    def _prune_stale_substrands(
+        self, design: "ParsedCurriculumDesign", written_keys: list[str]
+    ) -> None:
+        """Drop sub-strands this design no longer contains.
+
+        Deleting by design_id alone would be simpler, but sub-strands are keyed
+        on (grade, subject, strand, sub_strand) and can legitimately be claimed
+        by a newer design_id, so only rows still attributed to *this* design and
+        absent from this run are removed.
+        """
+        if not written_keys:
+            # An extraction that found nothing is far more likely to be a bad
+            # parse than a genuinely empty design; deleting on that basis would
+            # destroy good data.
+            logger.warning(
+                "Design %s produced no sub-strands; leaving existing rows untouched.",
+                design.design_id,
+            )
+            return
+
+        rows = fetch_all(
+            """
+            SELECT id, strand_name, sub_strand_name
+            FROM curriculum_substrands
+            WHERE design_id = :design_id
+            """,
+            {"design_id": design.design_id},
+        )
+        keep = set(written_keys)
+        stale = [
+            r["id"] for r in rows
+            if f"{r['strand_name']}||{r['sub_strand_name']}" not in keep
+        ]
+        if not stale:
+            return
+
+        execute(
+            "DELETE FROM curriculum_substrands WHERE id = ANY(:ids)",
+            {"ids": stale},
+        )
+        logger.info(
+            "Removed %d sub-strand(s) from %s that this re-ingest no longer contains.",
+            len(stale), design.design_id,
+        )
 
     def _sync_to_langfuse(self, design: ParsedCurriculumDesign) -> dict[str, Any]:
         strands_tree: list[dict[str, Any]] = []
