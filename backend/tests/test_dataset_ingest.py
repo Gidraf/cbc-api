@@ -43,7 +43,8 @@ class FakeDb:
         item_id = params.get("item_id")
         if query.strip().upper().startswith("INSERT"):
             self.rows.setdefault(item_id, {
-                "item_id": item_id, "grade": params["grade"],
+                "item_id": item_id, "source_item_id": params.get("source_item_id", item_id),
+                "grade": params["grade"],
                 "file_id": params.get("file_id", ""), "title": params.get("title", ""),
                 "declared_subject": params.get("declared_subject", ""),
                 "resolved_subject": "", "design_id": None, "status": "pending",
@@ -93,9 +94,7 @@ def items(*specs):
 _DATASETS: dict[str, list] = {}
 
 
-def stub_dataset(monkeypatch, data, grade=None):
-    if grade is None:
-        grade = data[0]["id"].split("__")[0] if data else "grade-4"
+def stub_dataset(monkeypatch, data, grade="grade-4"):
     _DATASETS[grade] = data
     monkeypatch.setattr(
         di.langfuse_context_service, "get_grade_dataset",
@@ -105,8 +104,8 @@ def stub_dataset(monkeypatch, data, grade=None):
 
 def test_sync_registers_new_items_as_pending(db, monkeypatch):
     stub_dataset(monkeypatch, items(
-        ("grade-4__a", "a", "French.pdf", "French"),
-        ("grade-4__b", "b", "Maths.pdf", "Mathematics"),
+        ("a", "a", "French.pdf", "French"),
+        ("b", "b", "Maths.pdf", "Mathematics"),
     ))
     result = di.sync_grade("grade-4")
     assert result["added"] == 2
@@ -115,7 +114,7 @@ def test_sync_registers_new_items_as_pending(db, monkeypatch):
 
 def test_resync_does_not_requeue_finished_work(db, monkeypatch):
     """A refresh must never reset an item that has already been ingested."""
-    stub_dataset(monkeypatch, items(("grade-4__a", "a", "French.pdf", "French")))
+    stub_dataset(monkeypatch, items(("a", "a", "French.pdf", "French")))
     di.sync_grade("grade-4")
     di.set_status("grade-4__a", di.INGESTED, resolved_subject="French")
 
@@ -138,10 +137,10 @@ def test_placeholder_items_are_never_tracked(db, monkeypatch):
 
 def test_status_progression_and_percentage(db, monkeypatch):
     stub_dataset(monkeypatch, items(
-        ("grade-4__a", "a", "A.pdf", "French"),
-        ("grade-4__b", "b", "B.pdf", "Maths"),
-        ("grade-4__c", "c", "C.pdf", "CRE"),
-        ("grade-4__d", "d", "D.pdf", "IRE"),
+        ("a", "a", "A.pdf", "French"),
+        ("b", "b", "B.pdf", "Maths"),
+        ("c", "c", "C.pdf", "CRE"),
+        ("d", "d", "D.pdf", "IRE"),
     ))
     di.sync_grade("grade-4")
     di.set_status("grade-4__a", di.INGESTED)
@@ -156,7 +155,7 @@ def test_status_progression_and_percentage(db, monkeypatch):
 
 
 def test_retry_clears_the_stale_error(db, monkeypatch):
-    stub_dataset(monkeypatch, items(("grade-4__a", "a", "A.pdf", "French")))
+    stub_dataset(monkeypatch, items(("a", "a", "A.pdf", "French")))
     di.sync_grade("grade-4")
     di.set_status("grade-4__a", di.FAILED, error="cover unreadable")
     assert db.rows["grade-4__a"]["error"] == "cover unreadable"
@@ -172,12 +171,12 @@ def test_unknown_status_is_rejected(db):
 
 
 def test_grade_summaries_report_each_grade_separately(db, monkeypatch):
-    stub_dataset(monkeypatch, items(("grade-4__a", "a", "A.pdf", "French")))
+    stub_dataset(monkeypatch, items(("a", "a", "A.pdf", "French")))
     di.sync_grade("grade-4")
     stub_dataset(monkeypatch, items(
-        ("grade-10__x", "x", "X.pdf", "Pure Sciences"),
-        ("grade-10__y", "y", "Y.pdf", "Pure Sciences"),
-    ))
+        ("x", "x", "X.pdf", "Pure Sciences"),
+        ("y", "y", "Y.pdf", "Pure Sciences"),
+    ), grade="grade-10")
     di.sync_grade("grade-10")
     di.set_status("grade-10__x", di.INGESTED)
 
@@ -189,7 +188,7 @@ def test_grade_summaries_report_each_grade_separately(db, monkeypatch):
 
 def test_processing_records_the_resolved_subject(db, monkeypatch):
     """The subject stored is the one the cover gave, not the catalogue label."""
-    stub_dataset(monkeypatch, items(("grade-10__x", "x", "Chem.pdf", "Pure Sciences #2")))
+    stub_dataset(monkeypatch, items(("x", "x", "Chem.pdf", "Pure Sciences #2")), grade="grade-10")
     di.sync_grade("grade-10")
 
     import app.services.curriculum_extractor as extractor
@@ -207,7 +206,7 @@ def test_processing_records_the_resolved_subject(db, monkeypatch):
 
 
 def test_a_failed_ingest_is_recorded_and_reraised(db, monkeypatch):
-    stub_dataset(monkeypatch, items(("grade-4__a", "a", "A.pdf", "French")))
+    stub_dataset(monkeypatch, items(("a", "a", "A.pdf", "French")))
     di.sync_grade("grade-4")
 
     import app.services.curriculum_extractor as extractor
@@ -226,7 +225,7 @@ def test_a_failed_ingest_is_recorded_and_reraised(db, monkeypatch):
 
 
 def test_item_removed_from_langfuse_is_marked_failed(db, monkeypatch):
-    stub_dataset(monkeypatch, items(("grade-4__a", "a", "A.pdf", "French")))
+    stub_dataset(monkeypatch, items(("a", "a", "A.pdf", "French")))
     di.sync_grade("grade-4")
     stub_dataset(monkeypatch, [], grade="grade-4")
 
@@ -247,7 +246,7 @@ def _stub_extractor(monkeypatch, subject="Chemistry", design_id="d1"):
 
 def test_processing_twice_is_refused(db, monkeypatch):
     """The same document must not be ingested repeatedly by accident."""
-    stub_dataset(monkeypatch, items(("grade-10__x", "x", "Chem.pdf", "Pure Sciences")))
+    stub_dataset(monkeypatch, items(("x", "x", "Chem.pdf", "Pure Sciences")), grade="grade-10")
     di.sync_grade("grade-10")
     _stub_extractor(monkeypatch)
 
@@ -257,7 +256,7 @@ def test_processing_twice_is_refused(db, monkeypatch):
 
 
 def test_force_replaces_the_previous_design(db, monkeypatch):
-    stub_dataset(monkeypatch, items(("grade-10__x", "x", "Chem.pdf", "Pure Sciences")))
+    stub_dataset(monkeypatch, items(("x", "x", "Chem.pdf", "Pure Sciences")), grade="grade-10")
     di.sync_grade("grade-10")
     _stub_extractor(monkeypatch, design_id="d1")
     di.process_item("grade-10__x")
@@ -281,9 +280,10 @@ def test_force_replaces_the_previous_design(db, monkeypatch):
 
 def test_force_does_not_delete_a_design_another_item_still_claims(db, monkeypatch):
     """The Lower Primary design is filed under Grades 1-3; one must not wipe another."""
-    stub_dataset(monkeypatch, items(("grade-1__a", "a", "Maths.pdf", "Mathematics")))
+    doc = items(("a", "a", "Maths.pdf", "Mathematics"))
+    stub_dataset(monkeypatch, doc, grade="grade-1")
     di.sync_grade("grade-1")
-    stub_dataset(monkeypatch, items(("grade-2__a", "a", "Maths.pdf", "Mathematics")))
+    stub_dataset(monkeypatch, doc, grade="grade-2")
     di.sync_grade("grade-2")
 
     _stub_extractor(monkeypatch, subject="Mathematics", design_id="shared")
@@ -300,14 +300,14 @@ def test_force_does_not_delete_a_design_another_item_still_claims(db, monkeypatc
         return real_execute(query, params)
 
     monkeypatch.setattr(di, "execute", spy)
-    stub_dataset(monkeypatch, items(("grade-1__a", "a", "Maths.pdf", "Mathematics")))
+    stub_dataset(monkeypatch, items(("a", "a", "Maths.pdf", "Mathematics")))
     di.process_item("grade-1__a", force=True)
 
     assert deleted == [], "a design another ingested item still points at must survive"
 
 
 def test_force_on_a_never_ingested_item_just_processes_it(db, monkeypatch):
-    stub_dataset(monkeypatch, items(("grade-10__x", "x", "Chem.pdf", "Pure Sciences")))
+    stub_dataset(monkeypatch, items(("x", "x", "Chem.pdf", "Pure Sciences")), grade="grade-10")
     di.sync_grade("grade-10")
     _stub_extractor(monkeypatch)
 
@@ -319,13 +319,13 @@ def test_force_on_a_never_ingested_item_just_processes_it(db, monkeypatch):
 # ── Reconciling ingestion started outside process_item ───────────────────────
 
 def test_finds_the_tracked_row_by_item_id(db, monkeypatch):
-    stub_dataset(monkeypatch, items(("grade-10__x", "x", "Chem.pdf", "Pure Sciences")))
+    stub_dataset(monkeypatch, items(("x", "x", "Chem.pdf", "Pure Sciences")), grade="grade-10")
     di.sync_grade("grade-10")
     assert di.find_tracked_item({"item_id": "grade-10__x"})["item_id"] == "grade-10__x"
 
 
 def test_finds_the_tracked_row_by_file_id_when_unambiguous(db, monkeypatch):
-    stub_dataset(monkeypatch, items(("grade-10__x", "chem-file", "Chem.pdf", "Pure Sciences")))
+    stub_dataset(monkeypatch, items(("x", "chem-file", "Chem.pdf", "Pure Sciences")), grade="grade-10")
     di.sync_grade("grade-10")
     assert di.find_tracked_item({"file_id": "chem-file"})["item_id"] == "grade-10__x"
 
@@ -333,14 +333,14 @@ def test_finds_the_tracked_row_by_file_id_when_unambiguous(db, monkeypatch):
 def test_ambiguous_file_id_matches_nothing(db, monkeypatch):
     """One document tracked under Grades 1-3 cannot be resolved by file_id alone."""
     for g in ("grade-1", "grade-2", "grade-3"):
-        stub_dataset(monkeypatch, items((f"{g}__a", "shared-file", "Maths.pdf", "Mathematics")), grade=g)
+        stub_dataset(monkeypatch, items(("a", "shared-file", "Maths.pdf", "Mathematics")), grade=g)
         di.sync_grade(g)
     assert di.find_tracked_item({"file_id": "shared-file"}) is None
 
 
 def test_external_ingest_marks_the_item_done(db, monkeypatch):
     """A run started from the legacy screen must still show as ingested."""
-    stub_dataset(monkeypatch, items(("grade-10__x", "x", "Chem.pdf", "Pure Sciences")))
+    stub_dataset(monkeypatch, items(("x", "x", "Chem.pdf", "Pure Sciences")), grade="grade-10")
     di.sync_grade("grade-10")
     assert db.rows["grade-10__x"]["status"] == "pending"
 
@@ -370,7 +370,7 @@ def test_result_records_written_back_by_the_extractor_are_never_queued(db, monke
         {"id": "1821b492-fb90-42b2-bb73-5c666da75250",
          "input": {"subject": "Diploma In Teacher Education"},
          "expected_output": "", "metadata": {"source": "curriculum_extractor"}},
-        {"id": "grade-dte__real", "input": {"file_id": "real", "title": "DTE Agriculture.pdf"},
+        {"id": "real", "input": {"file_id": "real", "title": "DTE Agriculture.pdf"},
          "expected_output": DOC_TEXT, "metadata": {}},
     ], grade="grade-dte")
 
@@ -429,8 +429,8 @@ def test_sync_picks_up_documents_from_the_combined_dataset(db, monkeypatch):
 
     result = di.sync_grade("grade-12")
     assert result["added"] == 2, "only the Grade 12 documents belong to this grade"
-    assert sorted(db.rows) == ["chem", "geo"]
-    assert db.rows["chem"]["title"] == "Chemistry Grade 12 - March 2026.pdf"
+    assert sorted(db.rows) == ["grade-12__chem", "grade-12__geo"]
+    assert db.rows["grade-12__chem"]["title"] == "Chemistry Grade 12 - March 2026.pdf"
 
 
 def test_sweep_still_ignores_the_empty_result_records(db, monkeypatch):
@@ -445,7 +445,7 @@ def test_sweep_still_ignores_the_empty_result_records(db, monkeypatch):
 
     result = di.sync_grade("grade-dte")
     assert result["added"] == 1
-    assert list(db.rows) == ["dte-real"]
+    assert list(db.rows) == ["grade-dte__dte-real"]
 
 
 def test_an_item_in_both_places_is_registered_once(db, monkeypatch):
@@ -455,3 +455,68 @@ def test_an_item_in_both_places_is_registered_once(db, monkeypatch):
         lambda: [raw_row("CBC_Research_Curriculum_Designs", "dup", "Chemistry Grade 12.pdf")],
     )
     assert di.sync_grade("grade-12")["added"] == 1
+
+
+# ── One document, several grades ─────────────────────────────────────────────
+# KICD publishes a single Lower Primary design covering Grades 1-3. It must be
+# tracked and processed independently under each, not claimed by whichever
+# grade happened to sync first.
+
+@pytest.mark.parametrize("title,expected", [
+    ("Grade 1-3 CRE - Revised.pdf", ["grade-1", "grade-2", "grade-3"]),
+    ("Grade 1-3 Mathematics - Revised.pdf", ["grade-1", "grade-2", "grade-3"]),
+    ("Grades 1 to 3 Kiswahili.pdf", ["grade-1", "grade-2", "grade-3"]),
+    ("Grade 4-6 Science.pdf", ["grade-4", "grade-5", "grade-6"]),
+    # A single grade must still resolve to exactly one.
+    ("Chemistry Grade 12 - March 2026.pdf", ["grade-12"]),
+])
+def test_a_grade_range_in_the_title_covers_every_grade_in_it(title, expected):
+    assert di.grades_for_item(raw_row("CBC_Research_Curriculum_Designs", "x", title)) == expected
+
+
+def test_the_same_document_is_tracked_under_each_of_its_grades(db, monkeypatch):
+    """Grade 1 syncing first must not leave Grades 2 and 3 empty."""
+    lower_primary = [
+        raw_row("CBC_Research_Curriculum_Designs", "cre", "Grade 1-3 CRE - Revised.pdf"),
+        raw_row("CBC_Research_Curriculum_Designs", "mat", "Grade 1-3 Mathematics - Revised.pdf"),
+    ]
+    for g in ("grade-1", "grade-2", "grade-3"):
+        stub_dataset(monkeypatch, [], grade=g)
+    monkeypatch.setattr(
+        di.langfuse_context_service, "fetch_raw_datasets_from_langfuse", lambda: lower_primary
+    )
+
+    for g in ("grade-1", "grade-2", "grade-3"):
+        assert di.sync_grade(g)["added"] == 2, f"{g} should get both documents"
+
+    for g in ("grade-1", "grade-2", "grade-3"):
+        assert di.list_grade(g)["total"] == 2
+
+    # Six tracking rows over two documents.
+    assert len(db.rows) == 6
+    assert db.rows["grade-2__cre"]["source_item_id"] == "cre"
+
+
+def test_each_grade_is_processed_and_marked_independently(db, monkeypatch):
+    docs = [raw_row("CBC_Research_Curriculum_Designs", "cre", "Grade 1-3 CRE - Revised.pdf")]
+    for g in ("grade-1", "grade-2", "grade-3"):
+        stub_dataset(monkeypatch, [], grade=g)
+    monkeypatch.setattr(
+        di.langfuse_context_service, "fetch_raw_datasets_from_langfuse", lambda: docs
+    )
+    for g in ("grade-1", "grade-2", "grade-3"):
+        di.sync_grade(g)
+
+    import app.services.curriculum_extractor as extractor
+    monkeypatch.setattr(
+        extractor.curriculum_extractor, "ingest_raw_curriculum",
+        lambda payload: {"subject": "CRE", "grade": payload.get("grade"), "design_id": "d-cre"},
+    )
+
+    di.process_item("grade-2__cre")
+
+    assert db.rows["grade-2__cre"]["status"] == "ingested"
+    assert db.rows["grade-1__cre"]["status"] == "pending"
+    assert db.rows["grade-3__cre"]["status"] == "pending"
+    assert di.list_grade("grade-2")["counts"]["ingested"] == 1
+    assert di.list_grade("grade-1")["counts"]["pending"] == 1

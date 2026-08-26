@@ -426,6 +426,28 @@ MIGRATIONS: list[tuple[str, str]] = [
         CREATE INDEX IF NOT EXISTS idx_dataset_ingest_design ON dataset_ingest_status(design_id);
         """,
     ),
+    (
+        "014_dataset_ingest_grade_scoped",
+        """
+        -- One document can belong to several grades: KICD publishes a single
+        -- Lower Primary design covering Grades 1-3. Tracking keyed on the
+        -- Langfuse item id alone allowed only one row, so whichever grade
+        -- synced first claimed the document and the others stayed empty.
+        --
+        -- item_id becomes a grade-scoped tracking id ("grade-2__<item>"), and
+        -- source_item_id keeps the Langfuse id used to fetch the document.
+
+        ALTER TABLE dataset_ingest_status
+            ADD COLUMN IF NOT EXISTS source_item_id TEXT NOT NULL DEFAULT '';
+
+        UPDATE dataset_ingest_status
+            SET source_item_id = item_id
+            WHERE source_item_id = '';
+
+        CREATE INDEX IF NOT EXISTS idx_dataset_ingest_source
+            ON dataset_ingest_status(source_item_id);
+        """,
+    ),
 ]
 
 

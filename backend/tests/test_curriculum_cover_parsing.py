@@ -137,3 +137,40 @@ def test_two_diploma_designs_do_not_collapse_into_one_subject():
 
     subjects = {_subject_from_cover(cover(a)).title() for a in ("AGRICULTURE", "MUSIC", "HOME SCIENCE")}
     assert subjects == {"Agriculture", "Music", "Home Science"}
+
+
+# ── The grade comes from the cover, never from the body ──────────────────────
+# A design's body mentions other grades constantly ("as introduced in Grade 1"),
+# so searching the whole document filed a Pre-Primary design under Grade 1.
+
+def test_pre_primary_is_not_claimed_by_a_grade_mentioned_in_the_body():
+    text = (
+        "KENYA INSTITUTE OF CURRICULUM DEVELOPMENT\n"
+        "PRE-PRIMARY 1\nCURRICULUM DESIGN\nLANGUAGE ACTIVITIES\n"
+        + "\n" * 5
+        + "This builds on competencies acquired before Grade 1 and prepares the "
+          "learner for Grade 1 and Grade 2 work.\n"
+    )
+    assert _grade_from_text(text, {}) == ("grade-pp1", "Pre-Primary")
+
+
+def test_pre_primary_2_is_distinguished_from_pre_primary_1():
+    text = "KENYA INSTITUTE OF CURRICULUM DEVELOPMENT\nPRE-PRIMARY 2\nCURRICULUM DESIGN\n"
+    assert _grade_from_text(text, {})[0] == "grade-pp2"
+
+
+def test_a_grade_mentioned_far_into_the_body_does_not_override_the_cover():
+    text = (
+        "KENYA INSTITUTE OF CURRICULUM DEVELOPMENT\n"
+        "PRIMARY SCHOOL EDUCATION CURRICULUM DESIGN\nMATHEMATICS\nGRADE 4\n"
+        + "\n".join("Learners revisit Grade 9 content." for _ in range(200))
+    )
+    assert _grade_from_text(text, {})[0] == "grade-4"
+
+
+@pytest.mark.parametrize("spelling", [
+    "Pre - Primary 1", "Pre-Primary 1", "Pre Primary 2", "PRE - PRIMARY",
+])
+def test_spaced_hyphen_spellings_are_still_rejected_as_subjects(spelling):
+    """'Pre - Primary 1' slipped past the level filter and became a subject."""
+    assert not _looks_like_subject(spelling)

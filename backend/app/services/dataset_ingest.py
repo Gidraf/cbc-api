@@ -65,6 +65,13 @@ def _item_fields(item: dict[str, Any]) -> dict[str, str]:
 
 _GRADE_IN_TEXT = re.compile(r"\bgrade\s*(\d{1,2})\b", re.IGNORECASE)
 
+# "Grade 1-3", "Grades 1 to 3" — a single document covering a span of grades.
+# Checked before the single-grade pattern, which would otherwise read
+# "Grade 1-3 CRE" as Grade 1 and leave Grades 2 and 3 with nothing.
+_GRADE_RANGE = re.compile(
+    r"\bgrades?\s*(\d{1,2})\s*(?:-|–|—|to)\s*(\d{1,2})\b", re.IGNORECASE
+)
+
 _LEVEL_TO_GRADES: dict[str, list[str]] = {
     "pre-primary 1 (pp1)": ["grade-pp1"], "pre-primary 1": ["grade-pp1"],
     "pre-primary 2 (pp2)": ["grade-pp2"], "pre-primary 2": ["grade-pp2"],
@@ -95,6 +102,12 @@ def grades_for_item(item: dict[str, Any]) -> list[str]:
         return list(_LEVEL_TO_GRADES[level])
 
     for source in (level, field("title"), field("name")):
+        span = _GRADE_RANGE.search(source)
+        if span:
+            low, high = int(span.group(1)), int(span.group(2))
+            if 1 <= low <= high <= 12:
+                return [f"grade-{n}" for n in range(low, high + 1)]
+
         match = _GRADE_IN_TEXT.search(source)
         if match and 1 <= int(match.group(1)) <= 12:
             return [f"grade-{int(match.group(1))}"]
@@ -191,21 +204,34 @@ def sync_grade(grade_slug: str) -> dict[str, int]:
             skipped_empty += 1
             continue
 
-        item_id = _text(item.get("id"))
-        if not item_id or item_id in known:
+        source_id = _text(item.get("id"))
+        if not source_id:
+            continue
+
+        # Scoped by grade so the one Lower Primary design can be tracked and
+        # processed independently under Grades 1, 2 and 3.
+        tracking_id = f"{grade_slug}__{source_id}"
+        if tracking_id in known:
             continue
 
         execute(
             """
             INSERT INTO dataset_ingest_status (
-                item_id, grade, file_id, title, declared_subject, status
+                item_id, source_item_id, grade, file_id, title, declared_subject, status
             )
-            VALUES (:item_id, :grade, :file_id, :title, :declared_subject, 'pending')
+            VALUES (
+                :item_id, :source_item_id, :grade, :file_id, :title, :declared_subject, 'pending'
+            )
             ON CONFLICT (item_id) DO NOTHING
             """,
-            {"item_id": item_id, "grade": grade_slug, **_item_fields(item)},
+            {
+                "item_id": tracking_id,
+                "source_item_id": source_id,
+                "grade": grade_slug,
+                **_item_fields(item),
+            },
         )
-        known.add(item_id)
+        known.add(tracking_id)
         added += 1
 
     if skipped_placeholder:
@@ -375,11 +401,14 @@ def process_item(item_id: str, force: bool = False) -> dict[str, Any]:
             f"ingested as design {row.get('design_id')}. Re-run with force to replace it."
         )
 
+    # Rows written before tracking became grade-scoped have no source_item_id.
+    source_id = _text(row.get("source_item_id")) or item_id
+
     items = candidate_items(row["grade"])
-    source = next((i for i in items if _text(i.get("id")) == item_id), None)
+    source = next((i for i in items if _text(i.get("id")) == source_id), None)
     if source is None:
         set_status(item_id, FAILED, error="Item is no longer in the Langfuse dataset")
-        raise LookupError(f"item '{item_id}' is no longer in dataset '{row['grade']}'")
+        raise LookupError(f"document '{source_id}' is no longer available for '{row['grade']}'")
 
     if force and row.get("design_id"):
         _discard_previous_design(str(row["design_id"]), item_id)

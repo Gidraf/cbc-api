@@ -605,6 +605,14 @@ class LangfuseContextService:
         dataset_name = self.blueprint_dataset_name(grade_slug)
         if self._client:
             try:
+                # Langfuse 404s when writing an item to a dataset that does not
+                # exist yet, so make sure it does. Creating an existing dataset
+                # is a no-op.
+                try:
+                    self._client.create_dataset(name=dataset_name)
+                except Exception:
+                    pass
+
                 design_id = str((subject_data.get("metadata") or {}).get("design_id") or "").strip()
                 self._client.create_dataset_item(
                     dataset_name=dataset_name,

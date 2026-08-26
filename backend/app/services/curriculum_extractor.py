@@ -72,8 +72,8 @@ class ParsedCurriculumDesign:
 # key on (grade, subject, strand, sub_strand), so every design that resolves to
 # the same wrong subject overwrites the previous one's sub-strands.
 _BANNER = re.compile(
-    r"^(GRADE\b|SENIOR\b|JUNIOR\b|UPPER\b|LOWER\b|PRE-?PRIMARY\b|"
-    r"DIPLOMA\b|CERTIFICATE\b|TEACHER EDUCATION\b|"
+    r"^(GRADE\b|SENIOR\b|JUNIOR\b|UPPER\b|LOWER\b|PRE\s*-?\s*PRIMARY\b|"
+    r"DIPLOMA\b|CERTIFICATE\b|TEACHER\s+EDUCATION\b|"
     r"BASIC EDUCATION\b|PRIMARY SCHOOL\b|SECONDARY SCHOOL\b|EARLY YEARS\b|"
     r"KENYA INSTITUTE|A SKILLED|REPUBLIC OF|MINISTRY OF|CURRICULUM DESIGN)",
     re.IGNORECASE,
@@ -81,8 +81,9 @@ _BANNER = re.compile(
 
 # A resolved subject that is really the level under another spelling.
 _LEVEL_WORDS = re.compile(
-    r"^(diploma|teacher education|pre-?primary|lower primary|upper primary|"
-    r"junior school|senior school|basic education|general curriculum)",
+    r"^(diploma|teacher\s+education|pre\s*-?\s*primary|lower\s+primary|"
+    r"upper\s+primary|junior\s+school|senior\s+school|basic\s+education|"
+    r"general\s+curriculum)",
     re.IGNORECASE,
 )
 # A pathway label carrying the index this pipeline assigned it, e.g.
@@ -131,24 +132,36 @@ def _subject_from_cover(text: str) -> str:
     return match.group(1).strip() if match else ""
 
 
+# Only the title page decides the grade. A design's body mentions other grades
+# constantly ("as introduced in Grade 1"), so searching the whole document filed
+# a Pre-Primary design under Grade 1.
+_COVER_LINES = 60
+
+
+def _cover_text(text: str) -> str:
+    return "\n".join(text.split("\n")[:_COVER_LINES])
+
+
 def _grade_from_text(text: str, meta: dict[str, Any]) -> tuple[str, str]:
     """Grade and level, read as a number so 10-12 are not mistaken for 1-2."""
-    upper = text.upper()
+    cover = _cover_text(text)
+    upper = cover.upper()
 
     if "DIPLOMA IN TEACHER EDUCATION" in upper:
         return "grade-dte", "Diploma in Teacher Education (Pre-Primary and Primary)"
 
-    # The first "GRADE n" in the document is the one on the cover.
-    match = _GRADE_NUM.search(text)
+    # Pre-primary first: those covers carry a bare "1" or "2" that a numeric
+    # grade match would otherwise claim.
+    if re.search(r"\bPP\s*2\b|PRE\s*-?\s*PRIMARY\s*2", upper):
+        return "grade-pp2", "Pre-Primary"
+    if re.search(r"\bPP\s*1\b|PRE\s*-?\s*PRIMARY", upper):
+        return "grade-pp1", "Pre-Primary"
+
+    match = _GRADE_NUM.search(cover)
     if match:
         number = int(match.group(1))
         if 1 <= number <= 12:
             return f"grade-{number}", _LEVEL_BY_GRADE[number]
-
-    if re.search(r"\bPP\s*2\b|PRE-?PRIMARY\s*2", upper):
-        return "grade-pp2", "Pre-Primary"
-    if re.search(r"\bPP\s*1\b|PRE-?PRIMARY", upper):
-        return "grade-pp1", "Pre-Primary"
 
     # Fall back to what the ingesting catalogue declared.
     declared = str(meta.get("grade") or meta.get("level") or "")
