@@ -129,13 +129,15 @@ export type SubstrandReport = {
 
 export type ProgressReport = {
   grade: string;
-  grade_label: string;
-  overall_grade_percentage: number;
-  rollup_method: string;
-  weights: Record<string, number>;
-  total_substrands: number;
-  completed_substrands: number;
-  production_ready_substrands: number;
+  // Everything below is optional because the API does not always send it, and
+  // typing it as required is what put the literal text "undefined" on screen.
+  grade_label?: string;
+  overall_grade_percentage?: number;
+  rollup_method?: string;
+  weights?: Record<string, number>;
+  total_substrands?: number;
+  completed_substrands?: number;
+  production_ready_substrands?: number;
   measurement_confidence: {
     substrands_with_estimated_requirements: number;
     substrands_measured_from_blueprint: number;

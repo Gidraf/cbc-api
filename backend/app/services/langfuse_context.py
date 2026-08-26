@@ -211,11 +211,26 @@ class LangfuseContextService:
                     self._set_cache(cache_key, items)
                     return items
             except Exception as exc:
-                logger.debug("Dataset '%s' not present in Langfuse: %s", grade_slug, exc)
+                # Not a routine event: a missing grade dataset means the whole
+                # pipeline for that grade has nothing to work from. Logged at
+                # debug, this was invisible while the fallback below made the
+                # console look populated.
+                logger.warning(
+                    "Langfuse has no dataset named '%s' (%s). Curriculum designs must be "
+                    "uploaded to one dataset per grade for this grade to be produced.",
+                    grade_slug, exc,
+                )
+
+        if self._is_strict():
+            # Never invent curriculum in production. An empty grade is the truth
+            # and shows up as 0 coverage rather than as a subject nobody ingested.
+            self._set_cache(cache_key, [])
+            return []
 
         fallback = [
             {
                 "id": f"itm_{grade_slug}_default",
+                "is_placeholder": True,
                 "input": {
                     "grade": grade_slug,
                     "subject": "Integrated Science",

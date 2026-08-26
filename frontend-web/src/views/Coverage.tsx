@@ -58,6 +58,17 @@ export function Coverage() {
   const recommendations = report?.focus_recommendations ?? [];
   const subjects = report?.subjects ?? [];
 
+  // A grade with no ingested designs has nothing to measure. That is a
+  // different state from "everything is done", and saying the wrong one is
+  // worse than saying nothing.
+  const totalSubstrands = report?.total_substrands ?? 0;
+  const hasCurriculum = totalSubstrands > 0;
+  const overallPct = report?.overall_grade_percentage;
+  const gradeLabel =
+    report?.grade_label ||
+    (grades.data || []).find((g) => (g.slug || g.name) === grade)?.label ||
+    "Grade";
+
   return (
     <>
       <PageHeader
@@ -107,10 +118,14 @@ export function Coverage() {
         <>
           <Grid min="190px">
             <Stat
-              label={`${report.grade_label} overall`}
-              value={`${report.overall_grade_percentage}%`}
-              progress={report.overall_grade_percentage}
-              sub={`${report.completed_substrands} of ${report.total_substrands} sub-strands complete`}
+              label={`${gradeLabel} overall`}
+              value={overallPct === undefined ? "—" : `${overallPct}%`}
+              progress={overallPct ?? 0}
+              sub={
+                hasCurriculum
+                  ? `${report.completed_substrands ?? 0} of ${totalSubstrands} sub-strands complete`
+                  : "No curriculum ingested for this grade"
+              }
             />
             {DIMENSIONS.map((d) => {
               const totals = (report as any)[`${d.key}_totals`];
@@ -134,7 +149,15 @@ export function Coverage() {
             description="Ordered by pipeline dependency — notes gate diagrams and activities, which gate questions."
           >
             {recommendations.length === 0 ? (
-              <EmptyState title="Nothing outstanding" description="Every sub-strand in this grade is complete." />
+              hasCurriculum ? (
+                <EmptyState title="Nothing outstanding" description="Every sub-strand in this grade is complete." />
+              ) : (
+                <EmptyState
+                  title="No curriculum ingested"
+                  description="Ingest this grade's KICD curriculum designs before coverage can be measured."
+                  tone="warn"
+                />
+              )
             ) : (
               <Stack gap="var(--s2)">
                 {recommendations.slice(0, 8).map((rec, i) => (

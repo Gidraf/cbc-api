@@ -34,6 +34,9 @@ export function Overview() {
   // rather than assuming the shape the type describes.
   const recommendations = report?.focus_recommendations ?? [];
   const subjects = report?.subjects ?? [];
+  const totalSubstrands = report?.total_substrands ?? 0;
+  const hasCurriculum = totalSubstrands > 0;
+  const overallPct = report?.overall_grade_percentage;
   const todayPct = target.data?.target_count
     ? Math.round((target.data.completed_count / target.data.target_count) * 100)
     : 0;
@@ -68,10 +71,16 @@ export function Overview() {
           sub={`${target.data?.approved_count ?? 0} approved, ${target.data?.rejected_count ?? 0} rejected`}
         />
         <Stat
-          label={report ? `${report.grade_label} coverage` : "Grade coverage"}
-          value={report ? `${report.overall_grade_percentage}%` : "—"}
-          progress={report?.overall_grade_percentage ?? 0}
-          sub={report ? `${report.completed_substrands} of ${report.total_substrands} sub-strands complete` : undefined}
+          label={report?.grade_label ? `${report.grade_label} coverage` : "Grade coverage"}
+          value={overallPct === undefined ? "—" : `${overallPct}%`}
+          progress={overallPct ?? 0}
+          sub={
+            !report
+              ? undefined
+              : hasCurriculum
+              ? `${report.completed_substrands ?? 0} of ${totalSubstrands} sub-strands complete`
+              : "No curriculum ingested for this grade"
+          }
         />
         <Stat
           label="SLO coverage"
@@ -109,7 +118,15 @@ export function Overview() {
             }
           >
             {recommendations.length === 0 ? (
-              <EmptyState title="Nothing outstanding" description="This grade is fully produced." />
+              hasCurriculum ? (
+                <EmptyState title="Nothing outstanding" description="This grade is fully produced." />
+              ) : (
+                <EmptyState
+                  title="No curriculum ingested"
+                  description="Ingest this grade's KICD curriculum designs before anything can be produced."
+                  tone="warn"
+                />
+              )
             ) : (
               <Stack gap="var(--s2)">
                 {recommendations.slice(0, 6).map((rec, i) => (

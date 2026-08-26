@@ -5,6 +5,7 @@ from typing import Any
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
+from ..errors import raise_api_error
 from ..services.auth import AuthContext, require_roles
 from ..services.langfuse_context import langfuse_context_service
 from ..services.validation import validate_grade_dataset
@@ -48,6 +49,111 @@ def get_grade_dataset(
     grade_slug = validate_grade_dataset(grade)
     items = langfuse_context_service.get_grade_dataset(grade_slug)
     return {"grade": grade_slug, "items": items}
+
+
+class ProcessItemsRequest(BaseModel):
+    item_ids: list[str] = []
+
+
+@router.post("/datasets/{grade}/sync")
+def sync_grade_dataset(
+    grade: str,
+    _: AuthContext = Depends(require_roles("admin", "operator")),
+) -> dict[str, Any]:
+    """Register this grade's Langfuse dataset items for tracking."""
+    from ..services.dataset_ingest import list_grade, sync_grade
+
+    grade_slug = validate_grade_dataset(grade)
+    result = sync_grade(grade_slug)
+    return {"grade": grade_slug, **result, **list_grade(grade_slug)}
+
+
+@router.get("/datasets/{grade}/ingest-status")
+def get_grade_ingest_status(
+    grade: str,
+    _: AuthContext = Depends(require_roles("admin", "operator", "reviewer", "developer")),
+) -> dict[str, Any]:
+    """Every tracked item for this grade and how far each has got."""
+    from ..services.dataset_ingest import list_grade
+
+    return list_grade(validate_grade_dataset(grade))
+
+
+@router.post("/datasets/{grade}/select")
+def select_grade_items(
+    grade: str,
+    payload: ProcessItemsRequest,
+    _: AuthContext = Depends(require_roles("admin", "operator")),
+) -> dict[str, Any]:
+    """Mark items as queued for processing without starting them."""
+    from ..services.dataset_ingest import PENDING, SELECTED, list_grade, set_status
+
+    grade_slug = validate_grade_dataset(grade)
+    for item_id in payload.item_ids:
+        set_status(item_id, SELECTED)
+    if not payload.item_ids:
+        raise_api_error("SCHEMA_VALIDATION_FAILED", "No item_ids given to select.")
+    return {"grade": grade_slug, "selected": len(payload.item_ids), **list_grade(grade_slug)}
+
+
+@router.post("/datasets/{grade}/process")
+def process_grade_items(
+    grade: str,
+    payload: ProcessItemsRequest,
+    _: AuthContext = Depends(require_roles("admin", "operator")),
+) -> dict[str, Any]:
+    """Ingest the named items, one at a time.
+
+    Deliberately manual and sequential: a bad extraction should stop at one
+    document rather than propagate across a grade. Each item reports its own
+    outcome, so one failure does not discard the successes before it.
+    """
+    from ..services.dataset_ingest import list_grade, process_item
+
+    grade_slug = validate_grade_dataset(grade)
+    if not payload.item_ids:
+        raise_api_error("SCHEMA_VALIDATION_FAILED", "No item_ids given to process.")
+
+    results = []
+    for item_id in payload.item_ids:
+        try:
+            outcome = process_item(item_id)
+            results.append({
+                "item_id": item_id,
+                "ok": True,
+                "subject": outcome.get("subject"),
+                "grade": outcome.get("grade"),
+                "design_id": outcome.get("design_id"),
+            })
+        except Exception as exc:  # noqa: BLE001
+            results.append({"item_id": item_id, "ok": False, "error": str(exc)[:300]})
+
+    return {
+        "grade": grade_slug,
+        "processed": sum(1 for r in results if r["ok"]),
+        "failed": sum(1 for r in results if not r["ok"]),
+        "results": results,
+        **list_grade(grade_slug),
+    }
+
+
+@router.post("/datasets/{grade}/retry")
+def retry_failed_items(
+    grade: str,
+    payload: ProcessItemsRequest,
+    _: AuthContext = Depends(require_roles("admin", "operator")),
+) -> dict[str, Any]:
+    """Return failed items to pending so they can be run again."""
+    from ..services.dataset_ingest import FAILED, PENDING, list_grade, set_status
+
+    grade_slug = validate_grade_dataset(grade)
+    state = list_grade(grade_slug)
+    targets = payload.item_ids or [
+        row["item_id"] for row in state["items"] if row["status"] == FAILED
+    ]
+    for item_id in targets:
+        set_status(item_id, PENDING, error="")
+    return {"grade": grade_slug, "reset": len(targets), **list_grade(grade_slug)}
 
 
 @router.get("/datasets/{grade}/subjects")
