@@ -57,6 +57,25 @@ class QuestionSingleGenerateRequest(BaseModel):
     custom_instructions: str = ""
 
 
+class DiagramAuthoredRequest(BaseModel):
+    """Author questions from a diagram by blanking part of it.
+
+    ``part_ids`` pins exactly which parts to blank; leave it empty to let the
+    planner choose deterministically in reading order.
+    """
+
+    diagram_id: str
+    grade: str = ""
+    subject: str = ""
+    strand: str = ""
+    sub_strand: str = ""
+    mode: Literal["label_blanks", "hide_parts", "crop_region", "missing_parameters"] = "label_blanks"
+    max_blanks: int = 3
+    part_ids: list[str] = []
+    region_id: str | None = None
+    custom_instructions: str = ""
+
+
 class QuestionBatchApproveRequest(BaseModel):
     grade: str
     subject: str
@@ -210,6 +229,7 @@ def factory_generate_questions_batch(
     """
     from ..infra.db import fetch_one
     from ..services.content_type_classifier import classify_content_type
+    from ..services.diagram_scene import describe_scene_for_prompt
     from ..services.diagram_binding import resolve_binding
     from ..services.langfuse_context import langfuse_context_service
     from ..services.llm_client import llm_client
@@ -330,9 +350,13 @@ def factory_generate_questions_batch(
                 f"Hour Module: {target_diag_obj.get('hour_title', 'All')}\n"
                 f"Micro-Concept: {target_diag_obj.get('micro_concept')}\n"
                 f"Visual Specification: {target_diag_obj.get('vivid_prompt') or target_diag_obj.get('description')}\n"
-                f"SVG Markup snippet: {str(target_diag_obj.get('diagram_svg', ''))[:800]}\n"
+                # A truncated slice of raw SVG cannot tell a model which part_id
+                # to name. The parts catalogue can, and is far shorter.
+                f"{describe_scene_for_prompt(target_diag_obj.get('scene_document') or {})}\n"
                 f"CRITICAL RULE: ALL GENERATED QUESTIONS MUST DIRECTLY TEST THIS ATTACHED DIAGRAM ({target_diag_obj.get('title')}). "
                 f"Set 'diagram_ref': '{target_diag_obj.get('asset_id')}'. Include sub-questions asking to label specific parts, explain flow arrows, or deduce conclusions from this exact graphic.\n"
+                f"To ask about specific parts, set 'diagram_part_ids' to part_id values from the catalogue above — "
+                f"never invent one. To ask about a section only, set 'diagram_region_id' to a region_id listed above.\n"
             )
 
     elif payload.target_experiment_id:
@@ -575,6 +599,100 @@ def factory_generate_single_question(
         custom_instructions=f"Target Concept: {payload.concept_target}. {payload.custom_instructions}",
     )
     return factory_generate_questions_batch(batch_req)
+
+
+@router.post("/factory/author-from-diagram")
+def factory_author_questions_from_diagram(
+    payload: DiagramAuthoredRequest,
+    _: AuthContext = Depends(require_roles("admin", "operator", "reviewer")),
+) -> dict[str, Any]:
+    """Write questions *from* a diagram rather than matching one to a question.
+
+    Blanks part of the figure, then asks only about the gaps. The marking scheme
+    is taken from the diagram, so a model that mislabels a part cannot put a
+    wrong answer into the answer key — it is corrected and the correction is
+    reported.
+    """
+    from ..infra.db import fetch_one
+    from ..services.diagram_question_agent import (
+        OcclusionNotPossible,
+        author_questions_from_diagram,
+    )
+    from ..services.llm_client import llm_client
+    from ..services.pipeline import pipeline_orchestrator
+
+    row = fetch_one(
+        """
+        SELECT diagram_id, title, svg_markup, scene_document, storage_url, grade, subject
+        FROM diagram_registry WHERE diagram_id = :did
+        """,
+        {"did": payload.diagram_id},
+    )
+    if not row:
+        raise_api_error("NOT_FOUND", f"No diagram with id {payload.diagram_id}")
+
+    diagram = {
+        "asset_id": row["diagram_id"],
+        "diagram_id": row["diagram_id"],
+        "title": row.get("title", ""),
+        "svg_markup": row.get("svg_markup", ""),
+        "scene_document": row.get("scene_document") or {},
+        "storage_url": row.get("storage_url", ""),
+    }
+
+    resolved = pipeline_orchestrator.router.resolve_for_stage("question_generation")
+
+    def _generate(prompt: str) -> dict[str, Any]:
+        messages = [{"role": "user", "content": prompt + (
+            f"\n\nADDITIONAL INSTRUCTIONS: {payload.custom_instructions}"
+            if payload.custom_instructions else ""
+        )}]
+        resp = llm_client.generate(resolved, messages, temperature=0.2)
+        return resp.content if isinstance(resp.content, dict) else {}
+
+    try:
+        result = author_questions_from_diagram(
+            diagram,
+            generate=_generate,
+            mode=payload.mode,
+            max_blanks=payload.max_blanks,
+            part_ids=payload.part_ids or None,
+            region_id=payload.region_id,
+            context={
+                "grade": payload.grade or row.get("grade", ""),
+                "subject": payload.subject or row.get("subject", ""),
+                "strand": payload.strand,
+                "sub_strand": payload.sub_strand,
+            },
+        )
+    except OcclusionNotPossible as exc:
+        # A diagram with nothing safe to blank is a content problem, not a
+        # server fault — say which diagram and why.
+        raise_api_error("UNPROCESSABLE_DIAGRAM", str(exc))
+
+    corrections = [
+        note
+        for question in result["questions"]
+        for note in question.get("answer_corrections", [])
+    ]
+
+    return {
+        "diagram_id": payload.diagram_id,
+        "diagram_title": diagram["title"],
+        "mode": result["occlusion"]["mode"],
+        "questions": result["questions"],
+        "rejected": result["rejected"],
+        "occlusion": result["occlusion"],
+        "removed_facts": result["removed_facts"],
+        "paper_svg": result["paper_svg"],
+        "answer_svg": result["answer_svg"],
+        "answer_corrections": corrections,
+        "counts": {
+            "accepted": len(result["questions"]),
+            "rejected": len(result["rejected"]),
+            "answers_corrected": len(corrections),
+        },
+    }
 
 
 @router.post("/factory/approve-batch")

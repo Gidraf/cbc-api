@@ -470,7 +470,7 @@ class PipelineService:
                 diagram_title=content.get("diagram_title", concept_name),
                 alt_text=accessibility.get("alt_text", ""),
                 tactile_description=accessibility.get("tactile_description", ""),
-                scene_document=content.get("scene_document"),
+                scene_document=content.get("scene_document") or content.get("scene"),
                 metadata={
                     "grade": grade_slug,
                     "subject": subject,

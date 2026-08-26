@@ -54,6 +54,7 @@ def _build(
     confidence: float,
     requested_parts: list[str] | None = None,
     region_id: str | None = None,
+    occlusion: dict[str, Any] | None = None,
 ) -> DiagramBinding:
     """Construct the binding, resolving requested part IDs against the scene document."""
     scene = diagram.get("scene_document") or {}
@@ -74,15 +75,36 @@ def _build(
 
     resolved_parts = [p for p in (requested_parts or []) if p in known_parts] if known_parts else []
 
+    # An occlusion plan is precise about which parts vanish, so it replaces the
+    # blunt "hide the whole label layer" fallback. Only parts the scene actually
+    # knows about survive, so a hallucinated part_id cannot reach the renderer.
+    hide_part_ids: list[str] = []
+    slots: dict[str, str] = {}
+    variant_mode = "full"
+
+    if occlusion:
+        variant_mode = str(occlusion.get("mode") or "label_blanks")
+        raw_slots = dict(occlusion.get("slots") or {})
+        hide_part_ids = [
+            pid for pid in (occlusion.get("hidden_part_ids") or [])
+            if not known_parts or pid in known_parts
+        ]
+        slots = {pid: marker for pid, marker in raw_slots.items() if pid in hide_part_ids}
+
     return DiagramBinding(
         diagram_id=_diagram_identity(diagram) or "diag_unknown",
         diagram_title=str(diagram.get("title") or diagram.get("diagram_title") or "").strip(),
         region_id=region_id,
         part_ids=resolved_parts,
-        hide_layers=label_layers if resolved_parts else [],
+        # Layer stripping is the fallback for a question that names parts but
+        # carries no occlusion plan; with a plan, per-part hiding is exact.
+        hide_layers=[] if hide_part_ids else (label_layers if resolved_parts else []),
         storage_url=str(diagram.get("storage_url") or ""),
         binding_method=method,  # type: ignore[arg-type]
         binding_confidence=round(confidence, 4),
+        variant_mode=variant_mode,  # type: ignore[arg-type]
+        hide_part_ids=hide_part_ids,
+        slots=slots,
     )
 
 
@@ -100,8 +122,14 @@ def resolve_binding(
     requested_parts = [str(p) for p in (raw_question.get("diagram_part_ids") or []) if p]
     region_id = str(raw_question.get("diagram_region_id") or "").strip() or None
 
+    # A question authored *from* an occlusion plan already knows its diagram, so
+    # it binds exactly and never falls through to similarity guessing.
+    occlusion = raw_question.get("diagram_occlusion") if isinstance(raw_question.get("diagram_occlusion"), dict) else None
+    if occlusion and anchored_diagram:
+        return _build(anchored_diagram, "authored", 1.0, requested_parts, region_id, occlusion)
+
     if anchored_diagram:
-        return _build(anchored_diagram, "anchored", 1.0, requested_parts, region_id)
+        return _build(anchored_diagram, "anchored", 1.0, requested_parts, region_id, occlusion)
 
     if not diagrams:
         return None

@@ -164,6 +164,8 @@ def build_scene_from_svg(svg_markup: str, title: str = "", model_scene: dict | N
                 "role": "label",
                 "assessable": True,
                 "alt_text": label,
+                "function": "",
+                "occludable": True,
             })
 
         elif tag in {"rect", "circle", "ellipse"}:
@@ -186,6 +188,8 @@ def build_scene_from_svg(svg_markup: str, title: str = "", model_scene: dict | N
                 "role": "region",
                 "assessable": False,
                 "alt_text": "",
+                "function": "",
+                "occludable": False,
             })
 
         elif tag in {"path", "polygon", "polyline", "line"}:
@@ -203,6 +207,11 @@ def build_scene_from_svg(svg_markup: str, title: str = "", model_scene: dict | N
                 target["alt_text"] = supplied.get("alt_text") or target["alt_text"]
                 target["role"] = supplied.get("role") or target["role"]
                 target["assessable"] = bool(supplied.get("assessable", target["assessable"]))
+                # What the part *does*. Without this an occlusion question can be
+                # posed ("name part A") but not marked beyond the bare label, and
+                # the generator cannot ask why the part matters.
+                target["function"] = str(supplied.get("function") or target.get("function") or "").strip()
+                target["occludable"] = bool(supplied.get("occludable", target.get("occludable", True)))
 
     regions = _derive_regions(parts, viewbox)
     if isinstance(model_scene, dict) and model_scene.get("regions"):
@@ -274,11 +283,19 @@ def render_svg(
     hide_layers: list[str] | None = None,
     region_id: str | None = None,
     highlight_part_ids: list[str] | None = None,
+    hide_part_ids: list[str] | None = None,
+    blank_slots: dict[str, str] | None = None,
 ) -> str:
     """Render a variant of a diagram.
 
-    ``hide_layers=["labels"]`` produces the learner's copy; rendering the same
-    diagram without it produces the marking scheme's copy.
+    ``hide_layers=["labels"]`` blanks every label at once; ``hide_part_ids``
+    blanks named parts only, which is what lets one figure carry several
+    different questions.
+
+    ``blank_slots`` maps a hidden ``part_id`` to the marker printed in its place
+    ("A", "B", …). Removing a label without leaving a marker produces a paper
+    where the learner cannot tell which parts they are being asked to name, so
+    an occlusion question should always pass slots.
     """
     source = (scene or {}).get("instrumented_svg") or svg_markup
     if not source:
@@ -286,8 +303,10 @@ def render_svg(
 
     hide = {h for h in (hide_layers or []) if h}
     highlight = {h for h in (highlight_part_ids or []) if h}
+    hide_parts = {h for h in (hide_part_ids or []) if h}
+    slots = dict(blank_slots or {})
 
-    if not hide and not region_id and not highlight:
+    if not hide and not region_id and not highlight and not hide_parts:
         return source
 
     try:
@@ -296,12 +315,15 @@ def render_svg(
         logger.warning("Could not render diagram variant, SVG did not parse: %s", exc)
         return svg_markup
 
-    if hide:
+    if hide or hide_parts:
         # ElementTree has no parent pointers, so walk parents explicitly.
         for parent in list(root.iter()):
             for child in list(parent):
-                if child.get("data-layer") in hide:
+                if child.get("data-layer") in hide or child.get("data-part-id") in hide_parts:
                     parent.remove(child)
+
+    if slots:
+        _draw_blank_slots(root, scene or {}, slots)
 
     if highlight:
         for elem in root.iter():
@@ -339,10 +361,249 @@ def render_for_question(
     if not binding:
         return render_svg(svg, scene)
 
+    hidden = list(binding.get("hide_part_ids") or [])
+    slots = dict(binding.get("slots") or {})
+
+    if with_answers:
+        # The marking copy shows everything, and highlights whatever the learner
+        # had to supply so a marker's eye goes straight to it.
+        return render_svg(
+            svg,
+            scene,
+            region_id=binding.get("region_id"),
+            highlight_part_ids=hidden or list(binding.get("part_ids") or []),
+        )
+
     return render_svg(
         svg,
         scene,
-        hide_layers=[] if with_answers else list(binding.get("hide_layers") or []),
+        hide_layers=list(binding.get("hide_layers") or []),
         region_id=binding.get("region_id"),
-        highlight_part_ids=list(binding.get("part_ids") or []),
+        highlight_part_ids=[] if hidden else list(binding.get("part_ids") or []),
+        hide_part_ids=hidden,
+        blank_slots=slots,
     )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Occlusion variants
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Slot markers printed where a label was removed.
+_SLOT_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+
+VARIANT_MODES = ("label_blanks", "hide_parts", "crop_region", "missing_parameters", "full")
+
+# A number, optionally signed/decimal, with a unit — "37 °C", "4.5 cm", "250 ml".
+_PARAMETER = re.compile(r"^[^\d]*[-+]?\d+(?:\.\d+)?\s*[^\d]*$")
+
+
+def _draw_blank_slots(root: ET.Element, scene: dict[str, Any], slots: dict[str, str]) -> None:
+    """Print a marker where each removed label used to be.
+
+    A dashed box plus a letter, so the paper reads "name the part labelled A"
+    and the learner can see exactly which part is meant.
+    """
+    by_id = {p.get("part_id"): p for p in (scene.get("parts") or []) if isinstance(p, dict)}
+
+    for part_id, marker in slots.items():
+        part = by_id.get(part_id)
+        bbox = part.get("bbox") if isinstance(part, dict) else None
+        if not bbox or len(bbox) != 4:
+            continue
+
+        x, y, w, h = (float(v) for v in bbox)
+        w = max(w, 26.0)
+        h = max(h, 16.0)
+
+        box = ET.SubElement(root, f"{{{SVG_NS}}}rect")
+        box.set("x", f"{round(x, 2)}")
+        box.set("y", f"{round(y, 2)}")
+        box.set("width", f"{round(w, 2)}")
+        box.set("height", f"{round(h, 2)}")
+        box.set("fill", "none")
+        box.set("stroke", "#111827")
+        box.set("stroke-width", "1")
+        box.set("stroke-dasharray", "4 3")
+        box.set("data-blank-slot", marker)
+        box.set("data-part-id", f"{part_id}__slot")
+
+        text = ET.SubElement(root, f"{{{SVG_NS}}}text")
+        text.set("x", f"{round(x + w / 2, 2)}")
+        text.set("y", f"{round(y + h * 0.78, 2)}")
+        text.set("text-anchor", "middle")
+        text.set("font-family", "system-ui, sans-serif")
+        text.set("font-size", f"{round(min(h * 0.8, 16.0), 1)}")
+        text.set("font-weight", "700")
+        text.set("fill", "#111827")
+        text.set("data-blank-slot", marker)
+        text.text = marker
+
+
+def occludable_parts(scene: dict[str, Any], mode: str = "label_blanks") -> list[dict[str, Any]]:
+    """The parts a question may legitimately hide.
+
+    A part is only fair game if it is assessable, not explicitly pinned as
+    non-occludable, and has geometry to put a marker on. ``missing_parameters``
+    narrows further to labels that are a measured value, since "what reading is
+    missing" is a different question from "name this part".
+    """
+    parts = [
+        p for p in (scene.get("parts") or [])
+        if isinstance(p, dict)
+        and p.get("assessable")
+        and p.get("occludable", True)
+        and p.get("bbox")
+        and p.get("part_id")
+    ]
+
+    if mode == "missing_parameters":
+        return [p for p in parts if _PARAMETER.match(str(p.get("label") or "").strip())]
+    if mode == "hide_parts":
+        return parts
+    return [p for p in parts if p.get("role") == "label"]
+
+
+def plan_occlusion(
+    scene: dict[str, Any],
+    mode: str = "label_blanks",
+    max_blanks: int = 3,
+    part_ids: list[str] | None = None,
+) -> dict[str, Any]:
+    """Choose what to remove and record what removing it costs the learner.
+
+    Returns the plan rather than applying it, so a caller can inspect (or an
+    operator can approve) the occlusion before any question is written against
+    it. ``removed_facts`` is the ground truth the question and the marking
+    scheme must both be derived from — generating the answer separately from
+    the occlusion is how a paper and its marking scheme drift apart.
+    """
+    if mode not in VARIANT_MODES:
+        mode = "label_blanks"
+
+    candidates = occludable_parts(scene, mode)
+    by_id = {p["part_id"]: p for p in candidates}
+
+    if part_ids:
+        chosen = [by_id[pid] for pid in part_ids if pid in by_id]
+        rejected = [pid for pid in part_ids if pid not in by_id]
+    else:
+        # Deterministic: reading order down the figure, so the same diagram and
+        # mode always yield the same paper.
+        ordered = sorted(candidates, key=lambda p: (p["bbox"][1], p["bbox"][0]))
+        chosen = ordered[: max(0, max_blanks)]
+        rejected = []
+
+    slots: dict[str, str] = {}
+    removed_facts: list[dict[str, Any]] = []
+
+    for index, part in enumerate(chosen):
+        marker = _SLOT_ALPHABET[index] if index < len(_SLOT_ALPHABET) else f"X{index}"
+        slots[part["part_id"]] = marker
+        removed_facts.append({
+            "slot": marker,
+            "part_id": part["part_id"],
+            "label": part.get("label", ""),
+            "role": part.get("role", ""),
+            "function": part.get("function", ""),
+            "alt_text": part.get("alt_text", ""),
+        })
+
+    # What the learner can still see. A question is only answerable if enough
+    # context survives the occlusion, so the caller gets the remainder too.
+    hidden = set(slots)
+    retained = [
+        {"part_id": p["part_id"], "label": p.get("label", ""), "function": p.get("function", "")}
+        for p in (scene.get("parts") or [])
+        if isinstance(p, dict) and p.get("part_id") not in hidden and p.get("assessable")
+    ]
+
+    return {
+        "mode": mode,
+        "hidden_part_ids": list(slots),
+        "slots": slots,
+        "removed_facts": removed_facts,
+        "retained_parts": retained,
+        "rejected_part_ids": rejected,
+        "answerable": bool(removed_facts) and bool(retained or mode == "missing_parameters"),
+    }
+
+
+def apply_occlusion(
+    diagram: dict[str, Any],
+    plan: dict[str, Any],
+    region_id: str | None = None,
+) -> dict[str, Any]:
+    """Render the learner's copy and the marking copy from one occlusion plan.
+
+    Both come from the same source and the same plan, so they cannot disagree
+    about which parts were removed.
+    """
+    svg = str(diagram.get("svg_markup") or diagram.get("diagram_svg") or "")
+    scene = diagram.get("scene_document") or {}
+    hidden = list(plan.get("hidden_part_ids") or [])
+    slots = dict(plan.get("slots") or {})
+
+    paper_svg = render_svg(
+        svg, scene,
+        hide_part_ids=hidden,
+        blank_slots=slots,
+        region_id=region_id,
+    )
+    answer_svg = render_svg(
+        svg, scene,
+        highlight_part_ids=hidden,
+        region_id=region_id,
+    )
+    return {
+        "paper_svg": paper_svg,
+        "answer_svg": answer_svg,
+        "mode": plan.get("mode", "label_blanks"),
+        "slots": slots,
+        "removed_facts": list(plan.get("removed_facts") or []),
+        "region_id": region_id,
+    }
+
+
+def describe_scene_for_prompt(scene: dict[str, Any], max_parts: int = 40) -> str:
+    """A compact catalogue of what a diagram contains, for a model prompt.
+
+    Prompts used to paste a truncated slice of raw SVG markup, from which a model
+    cannot reliably name a single ``part_id``. Listing the addressable parts,
+    their roles and their functions is both shorter and actually usable.
+    """
+    if not isinstance(scene, dict) or not scene.get("parts"):
+        return "(no structured parts available for this diagram)"
+
+    lines: list[str] = []
+    title = str(scene.get("title") or "").strip()
+    if title:
+        lines.append(f"Diagram: {title}")
+
+    parts = [p for p in scene["parts"] if isinstance(p, dict) and p.get("assessable")]
+    lines.append(f"Addressable parts ({len(parts)}):")
+    for part in parts[:max_parts]:
+        bits = [f"  - part_id={part.get('part_id')}", f'label="{part.get("label", "")}"']
+        if part.get("function"):
+            bits.append(f'function="{part["function"]}"')
+        if not part.get("occludable", True):
+            bits.append("occludable=false")
+        lines.append(" ".join(bits))
+    if len(parts) > max_parts:
+        lines.append(f"  … and {len(parts) - max_parts} more")
+
+    regions = [r for r in (scene.get("regions") or []) if isinstance(r, dict)]
+    if regions:
+        lines.append("Croppable regions:")
+        for region in regions:
+            lines.append(f"  - region_id={region.get('region_id')} covering {len(region.get('part_ids') or [])} part(s)")
+
+    removable = [
+        str(layer.get("layer_id"))
+        for layer in (scene.get("layers") or [])
+        if isinstance(layer, dict) and layer.get("removable")
+    ]
+    if removable:
+        lines.append(f"Removable layers: {', '.join(removable)}")
+
+    return "\n".join(lines)

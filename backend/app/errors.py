@@ -45,6 +45,9 @@ ERRORS = {
     "INSUFFICIENT_WRITTEN_RESPONSE_ITEMS": (422, False),
     "SCHEMA_VALIDATION_FAILED": (422, False),
     "REGENERATION_LIMIT_EXCEEDED": (422, False),
+    # A diagram with no part safe to blank cannot carry an occlusion question.
+    # That is a content problem the operator can fix, not a server fault.
+    "UNPROCESSABLE_DIAGRAM": (422, False),
     "HUMAN_REVIEW_REQUIRED": (409, False),
     "APPROVER_VERIFICATION_REQUIRED": (412, False),
     # Idempotency & Concurrency

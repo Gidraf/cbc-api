@@ -1214,6 +1214,10 @@ def factory_generate_diagram(
         diagram_title=resp.content.get("diagram_title", concept_name),
         alt_text=accessibility.get("alt_text", ""),
         tactile_description=accessibility.get("tactile_description", ""),
+        # The generator's part list carries each part's function, which is what
+        # a question needs to ask for more than the bare label. Dropping it here
+        # is why diagrams reached the question stage with unnamed parts.
+        scene_document=resp.content.get("scene_document") or resp.content.get("scene"),
         metadata={"grade": payload.grade, "subject": payload.subject, "strand": payload.strand},
     )
 
@@ -1418,7 +1422,15 @@ def factory_plan_visuals(
             f"- micro_concept (the specific sub-topic tested)\n"
             f"- pedagogical_purpose (why this visual is essential for learner mastery and exam assessment)\n"
             f"- vivid_prompt (exhaustive, vivid visual scene description: layout, perspective, objects, lighting, color palette, labels, callouts for AI image/SVG generation)\n"
-            f"- accessibility: {{ 'alt_text': '...', 'tactile_description': '...' }}\n\n"
+            f"- accessibility: {{ 'alt_text': '...', 'tactile_description': '...' }}\n"
+            # Part functions are what let a question ask "state the function of the
+            # part labelled B" and be marked automatically. Without them every
+            # diagram question collapses to bare recall of a label.
+            f"- scene: the addressable parts of the visual. For EACH labelled part give\n"
+            f"    'label' (exactly as it appears in the drawing), 'function' (what that part does,\n"
+            f"    in one sentence a learner of this grade would be marked correct for),\n"
+            f"    'assessable' (true if a learner could reasonably be asked to name or explain it),\n"
+            f"    and 'occludable' (false only if hiding it would make the figure unreadable).\n\n"
             f"Return JSON format:\n"
             f'{{\n  "sub_strand": "{payload.sub_strand}",\n  "visuals": [\n'
             f'    {{\n'
@@ -1431,6 +1443,9 @@ def factory_plan_visuals(
             f'      "pedagogical_purpose": "...",\n'
             f'      "vivid_prompt": "...",\n'
             f'      "accessibility": {{"alt_text": "...", "tactile_description": "..."}},\n'
+            f'      "scene": {{"parts": [\n'
+            f'        {{"label": "Stigma", "function": "receives pollen during pollination", "assessable": true, "occludable": true}}\n'
+            f'      ]}},\n'
             f'      "status": "planned"\n'
             f'    }}\n  ]\n}}\n\n'
             f"ADDITIONAL INSTRUCTIONS: {payload.custom_instructions}"
@@ -1678,6 +1693,11 @@ def factory_generate_single_visual(
         diagram_title=title,
         alt_text=new_accessibility.get("alt_text") or item.get("accessibility", {}).get("alt_text", f"Vector diagram of {title}"),
         tactile_description=new_accessibility.get("tactile_description") or item.get("accessibility", {}).get("tactile_description", "Tactile raised-line diagram with embossed contours."),
+        scene_document=(
+            resp.content.get("scene_document")
+            or resp.content.get("scene")
+            or item.get("scene_document")
+        ),
         metadata={"grade": payload.grade, "subject": payload.subject, "strand": payload.strand},
     )
 

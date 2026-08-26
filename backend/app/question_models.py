@@ -110,8 +110,31 @@ class DiagramBinding(BaseModel):
     part_ids: list[str] = Field(default_factory=list)
     hide_layers: list[str] = Field(default_factory=list)
     storage_url: str = ""
-    binding_method: Literal["explicit", "semantic", "anchored", "unbound"] = "unbound"
+    binding_method: Literal["explicit", "semantic", "anchored", "authored", "unbound"] = "unbound"
     binding_confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+
+    # Occlusion. ``hide_part_ids`` blanks named parts rather than a whole layer,
+    # and ``slots`` names the marker printed in each gap. Both are carried on the
+    # binding so the learner's paper, the marking scheme and the question text
+    # are rendered from one description instead of three.
+    variant_mode: Literal["label_blanks", "hide_parts", "crop_region", "missing_parameters", "full"] = "full"
+    hide_part_ids: list[str] = Field(default_factory=list)
+    slots: dict[str, str] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _check_slots_cover_hidden_parts(self) -> "DiagramBinding":
+        """Every blanked part must have a marker.
+
+        A part removed without a marker leaves a silent hole: the learner sees
+        nothing to answer, and the marking scheme still expects a response.
+        """
+        missing = [pid for pid in self.hide_part_ids if pid not in self.slots]
+        if missing:
+            raise ValueError(
+                f"diagram binding '{self.diagram_id}' hides {missing} without a blank marker; "
+                f"the learner would not know which part to name."
+            )
+        return self
 
 
 class QuestionCurriculum(BaseModel):
