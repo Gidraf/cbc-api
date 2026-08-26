@@ -3,6 +3,7 @@ import {
   Badge,
   Button,
   Card,
+  CopyButton,
   EmptyState,
   ErrorNotice,
   Stack,
@@ -11,6 +12,7 @@ import {
   Textarea,
   Th,
 } from "../ui/components";
+import { allStrandsToText, strandToText } from "../lib/serialize";
 import {
   useStructureActions,
   type GeneratedStrand,
@@ -108,6 +110,16 @@ export function CurriculumStructure({
       title="Build the curriculum structure"
       description={`Generate strands and sub-strands for ${subject || "this subject"} with the curriculum agent. Nothing is written until you save.`}
       actions={
+        <Stack direction="row" gap="var(--s2)">
+        {strands.length > 0 && (
+          <CopyButton
+            label="Copy all"
+            title="Copy every strand and its drafted sub-strands, to check in another model"
+            getText={() =>
+              allStrandsToText(strands, drafts, { grade, subject })
+            }
+          />
+        )}
         <Button size="sm" disabled={busy || !subject} onClick={makeStrands}>
           {actions.generateStrands.isPending
             ? "Generating…"
@@ -115,6 +127,7 @@ export function CurriculumStructure({
             ? "Regenerate strands"
             : "Generate strands"}
         </Button>
+        </Stack>
       }
     >
       {actions.generateStrands.error && <ErrorNotice error={actions.generateStrands.error} />}
@@ -161,6 +174,11 @@ export function CurriculumStructure({
                   <strong style={{ flex: 1 }}>{name}</strong>
                   {savedCount !== undefined && <Badge tone="ok">{savedCount} saved</Badge>}
                   {draft && <Badge tone="warn">{draft.length} draft</Badge>}
+                  <CopyButton
+                    label="Copy"
+                    title="Copy this strand and its sub-strands"
+                    getText={() => strandToText(strand, drafts[name], { grade, subject })}
+                  />
                   <Button
                     size="sm"
                     variant="secondary"
@@ -191,6 +209,7 @@ export function CurriculumStructure({
                           <Th numeric>Outcomes</Th>
                           <Th numeric>Diagrams</Th>
                           <Th numeric>Experiments</Th>
+                          <Th />
                         </tr>
                       </thead>
                       <tbody>
@@ -201,6 +220,15 @@ export function CurriculumStructure({
                             <Td numeric>{subCount(sub, "slos")}</Td>
                             <Td numeric>{subCount(sub, "required_diagrams")}</Td>
                             <Td numeric>{subCount(sub, "experiments")}</Td>
+                            <Td>
+                              <CopyButton
+                                label="Copy"
+                                title="Copy just this sub-strand"
+                                getText={() =>
+                                  strandToText(strand, [sub], { grade, subject })
+                                }
+                              />
+                            </Td>
                           </tr>
                         ))}
                       </tbody>

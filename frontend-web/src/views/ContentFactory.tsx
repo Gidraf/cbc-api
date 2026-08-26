@@ -1,27 +1,10 @@
 import React from "react";
 import { useSearchParams } from "react-router-dom";
-import {
-  Badge,
-  Button,
-  Card,
-  EmptyState,
-  ErrorNotice,
-  Grid,
-  Label,
-  LoadingBlock,
-  QueryState,
-  PageHeader,
-  ProgressBar,
-  Select,
-  Stack,
-  Table,
-  Td,
-  Th,
-  useToast,
-} from "../ui/components";
+import { Badge, Button, Card, CopyButton, EmptyState, ErrorNotice, Grid, Label, LoadingBlock, PageHeader, ProgressBar, QueryState, Select, Stack, Table, Td, Th, useToast } from "../ui/components";
 import { Link } from "react-router-dom";
 import { CurriculumStructure } from "./CurriculumStructure";
 import { HourWorkbench } from "./HourWorkbench";
+import { stationToText } from "../lib/serialize";
 import { profileFor, useProfiles, gradeOptionLabel, subjectOptionLabel, useApi, useGrades, useProgress, useSubjects } from "../lib/queries";
 import { useQueryClient } from "@tanstack/react-query";
 
@@ -417,7 +400,25 @@ export function ContentFactory() {
                     </p>
                   )}
 
-                  {lastResult?.station === station.id && <StationResult result={lastResult.res} />}
+                  {lastResult?.station === station.id && (
+                    <>
+                      <Stack direction="row" justify="flex-end" style={{ marginTop: "var(--s2)" }}>
+                        <CopyButton
+                          label={`Copy ${station.label.toLowerCase()}`}
+                          title="Copy this station's output to check it in another model"
+                          getText={() =>
+                            stationToText(station.label, lastResult.res, {
+                              grade: effectiveGrade,
+                              subject: selected?.subject,
+                              strand: selected?.strand,
+                              "sub strand": selected?.report.sub_strand_name,
+                            })
+                          }
+                        />
+                      </Stack>
+                      <StationResult result={lastResult.res} />
+                    </>
+                  )}
                 </Card>
               );
             })}

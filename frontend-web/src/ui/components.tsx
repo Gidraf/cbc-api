@@ -808,3 +808,65 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
     </ToastContext.Provider>
   );
 }
+
+
+/**
+ * Copy generated content so it can be checked in another model.
+ *
+ * `navigator.clipboard` needs a secure context and is not available over plain
+ * http on a LAN address, which is exactly how this console is served — so fall
+ * back to a hidden textarea rather than failing silently.
+ */
+export function CopyButton({
+  label = "Copy",
+  getText,
+  size = "sm",
+  variant = "ghost",
+  title,
+}: {
+  label?: string;
+  getText: () => string;
+  size?: "sm" | "md";
+  variant?: "primary" | "secondary" | "ghost" | "danger";
+  title?: string;
+}) {
+  const [state, setState] = React.useState<"idle" | "done" | "failed">("idle");
+
+  async function copy() {
+    const text = getText();
+    if (!text.trim()) {
+      setState("failed");
+      window.setTimeout(() => setState("idle"), 1600);
+      return;
+    }
+    try {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        const area = document.createElement("textarea");
+        area.value = text;
+        area.style.position = "fixed";
+        area.style.opacity = "0";
+        document.body.appendChild(area);
+        area.select();
+        document.execCommand("copy");
+        area.remove();
+      }
+      setState("done");
+    } catch {
+      setState("failed");
+    }
+    window.setTimeout(() => setState("idle"), 1600);
+  }
+
+  return (
+    <Button
+      size={size}
+      variant={variant}
+      onClick={copy}
+      title={title || "Copy as text for checking in another model"}
+    >
+      {state === "done" ? "Copied" : state === "failed" ? "Nothing to copy" : label}
+    </Button>
+  );
+}

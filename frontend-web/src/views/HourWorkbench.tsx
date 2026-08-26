@@ -3,6 +3,7 @@ import {
   Badge,
   Button,
   Card,
+  CopyButton,
   EmptyState,
   ErrorNotice,
   Stack,
@@ -10,6 +11,7 @@ import {
   Td,
   Th,
 } from "../ui/components";
+import { allHoursToText, hourToText, toReadable } from "../lib/serialize";
 import {
   VISUAL_MODES,
   forHour,
@@ -136,6 +138,19 @@ export function HourWorkbench({
         allocatedHours ? ` · KICD allocates ${allocatedHours}` : ""
       }. Diagrams, photo and video prompts, experiments and activities all belong to a specific hour.`}
       actions={
+        <Stack direction="row" gap="var(--s2)">
+        <CopyButton
+          label="Copy all hours"
+          title="Copy every hour's notes and its planned assets, to check in another model"
+          getText={() =>
+            allHoursToText(
+              hours,
+              (h) => forHour(visuals, h),
+              (h) => forHour(activities, h),
+              { grade, subject, strand, "sub strand": subStrand }
+            )
+          }
+        />
         <Button size="sm" disabled={busy} onClick={plan}>
           {actions.planVisuals.isPending || actions.planActivities.isPending
             ? "Planning…"
@@ -143,6 +158,7 @@ export function HourWorkbench({
             ? "Re-plan all hours"
             : "Plan assets for all hours"}
         </Button>
+        </Stack>
       }
     >
       {actions.planVisuals.error && <ErrorNotice error={actions.planVisuals.error} />}
@@ -173,7 +189,17 @@ export function HourWorkbench({
         .filter((h) => h.hour_index === active)
         .map((h) => (
           <div key={h.hour_index} style={{ marginBottom: "var(--s4)" }}>
-            <strong style={{ display: "block", marginBottom: 4 }}>{h.hour_title}</strong>
+            <Stack direction="row" gap="var(--s3)" align="center" style={{ marginBottom: 4 }}>
+              <strong style={{ flex: 1 }}>{h.hour_title}</strong>
+              <CopyButton
+                label="Copy this hour"
+                getText={() =>
+                  hourToText(h, forHour(visuals, active), forHour(activities, active), {
+                    grade, subject, strand, "sub strand": subStrand,
+                  })
+                }
+              />
+            </Stack>
             <div style={{ color: "var(--ink-3)", fontSize: "var(--text-sm)", lineHeight: 1.6 }}>
               {String(h.full_lecture_notes || h.summary || "").slice(0, 420) || "No lecture text in this module."}
               {String(h.full_lecture_notes || "").length > 420 ? "…" : ""}
@@ -199,6 +225,7 @@ export function HourWorkbench({
                     <Th>Visual</Th>
                     <Th>Micro-concept</Th>
                     <Th>Render as</Th>
+                    <Th />
                   </tr>
                 </thead>
                 <tbody>
@@ -225,6 +252,18 @@ export function HourWorkbench({
                             );
                           })}
                         </Stack>
+                      </Td>
+                      <Td>
+                        <CopyButton
+                          label="Copy"
+                          title="Copy this visual, including anything rendered from it"
+                          getText={() => {
+                            const made = VISUAL_MODES
+                              .map((m) => rendered[`${active}:${titleOf(v, "visual")}:${m.id}`])
+                              .filter(Boolean);
+                            return toReadable({ visual: v, rendered: made });
+                          }}
+                        />
                       </Td>
                     </tr>
                   ))}
@@ -267,6 +306,11 @@ export function HourWorkbench({
                           >
                             {working === key ? "Building…" : done ? "✓ Built" : "Build in full"}
                           </Button>
+                          <CopyButton
+                            label="Copy"
+                            title="Copy this activity, including the built detail"
+                            getText={() => toReadable({ activity: a, built: done })}
+                          />
                         </Td>
                       </tr>
                     );
