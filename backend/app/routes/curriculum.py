@@ -2762,6 +2762,10 @@ class FactoryGenerateStrandsRequest(BaseModel):
     level: str = "Basic Education"
     essence_statement: str = ""
     custom_instructions: str = ""
+    # The published design. Without it the architect invents strands rather
+    # than reading the ones KICD wrote.
+    source_material_text: str = ""
+    design_id: str = ""
 
 
 class FactoryGenerateSubstrandsRequest(BaseModel):
@@ -2799,20 +2803,46 @@ def factory_generate_strands(
 
     essence_statement = payload.essence_statement
     level = payload.level
+    source_material = payload.source_material_text
 
-    if not essence_statement:
-        row = fetch_one(
-            """
-            SELECT essence_statement, level
-            FROM curriculum_designs
-            WHERE (grade = :grade OR grade = :alt_grade) AND LOWER(subject) = LOWER(:subject)
-            ORDER BY updated_at DESC LIMIT 1
-            """,
-            {"grade": payload.grade, "alt_grade": payload.grade.replace("grade-", ""), "subject": payload.subject},
+    # Always look the design up, not only when the essence statement is missing:
+    # the published document is what the strands must be read from.
+    row = fetch_one(
+        """
+        SELECT design_id, essence_statement, level, raw_payload
+        FROM curriculum_designs
+        WHERE (design_id = :design_id)
+           OR ((grade = :grade OR grade = :alt_grade) AND LOWER(subject) = LOWER(:subject))
+        ORDER BY updated_at DESC LIMIT 1
+        """,
+        {
+            "design_id": payload.design_id or "",
+            "grade": payload.grade,
+            "alt_grade": payload.grade.replace("grade-", ""),
+            "subject": payload.subject,
+        },
+    )
+    if row:
+        essence_statement = essence_statement or row.get("essence_statement") or ""
+        level = row.get("level") or level
+        if not source_material:
+            raw_payload = row.get("raw_payload") or {}
+            source_material = (
+                raw_payload.get("source_text")
+                or raw_payload.get("raw_text")
+                or raw_payload.get("text")
+                or raw_payload.get("output")
+                or ""
+            )
+
+    if not source_material:
+        # Say so rather than letting the agent quietly invent a curriculum that
+        # reads plausibly and matches no published design.
+        logger.warning(
+            "No source document for %s %s — strands will be generated from the model's "
+            "own knowledge, not from the KICD design. Re-ingest the design to ground them.",
+            payload.grade, payload.subject,
         )
-        if row:
-            essence_statement = row.get("essence_statement") or ""
-            level = row.get("level") or level
 
     resolved = pipeline_orchestrator.router.resolve_for_stage("notes_generation")
     context = langfuse_context_service.assemble_agent_context(
@@ -2821,7 +2851,10 @@ def factory_generate_strands(
         subject=payload.subject,
         template_vars={
             "level": level,
+            "grade": payload.grade,
+            "subject": payload.subject,
             "essence_statement": essence_statement,
+            "source_material_text": source_material or "(NO SOURCE DOCUMENT AVAILABLE)",
             "custom_instructions": payload.custom_instructions,
         },
     )
@@ -2833,7 +2866,17 @@ def factory_generate_strands(
 
     resp = llm_client.generate(resolved, context.messages, temperature=0.2)
     strands = resp.content.get("strands", []) if isinstance(resp.content, dict) else []
-    return {"subject": payload.subject, "grade": payload.grade, "strands": strands, "usage": resp.usage, "model": resp.model}
+    return {
+        "subject": payload.subject,
+        "grade": payload.grade,
+        "strands": strands,
+        # A reviewer needs to know whether these were read from the design or
+        # produced from the model's own knowledge.
+        "grounded": bool(source_material),
+        "source_chars": len(source_material),
+        "usage": resp.usage,
+        "model": resp.model,
+    }
 
 
 @router.post("/factory/generate-substrands")
@@ -2871,7 +2914,13 @@ def factory_generate_substrands(
             level = row.get("level")
         if not source_material:
             raw_payload = row.get("raw_payload") or {}
-            source_material = raw_payload.get("raw_text") or raw_payload.get("text") or raw_payload.get("output") or ""
+            source_material = (
+                raw_payload.get("source_text")
+                or raw_payload.get("raw_text")
+                or raw_payload.get("text")
+                or raw_payload.get("output")
+                or ""
+            )
 
     outcomes_str = "\n".join([f"- {o}" for o in gen_outcomes]) if gen_outcomes else "Standard KICD BECF Outcomes."
     master_context = langfuse_context_service.get_master_context()

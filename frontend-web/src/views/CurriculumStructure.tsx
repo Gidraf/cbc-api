@@ -57,6 +57,9 @@ export function CurriculumStructure({
   const [drafts, setDrafts] = React.useState<Record<string, GeneratedSubstrand[]>>({});
   const [saved, setSaved] = React.useState<Record<string, number>>({});
   const [instructions, setInstructions] = React.useState("");
+  // Whether the last generation actually read the KICD design, or produced a
+  // plausible curriculum from the model's own knowledge.
+  const [grounded, setGrounded] = React.useState<{ ok: boolean; chars: number } | null>(null);
 
   const busy =
     actions.generateStrands.isPending ||
@@ -66,6 +69,7 @@ export function CurriculumStructure({
   async function makeStrands() {
     const res = await actions.generateStrands.mutateAsync({ custom_instructions: instructions });
     setStrands(res.strands || []);
+    setGrounded({ ok: Boolean(res.grounded), chars: res.source_chars ?? 0 });
   }
 
   async function makeSubstrands(strand: GeneratedStrand) {
@@ -131,6 +135,21 @@ export function CurriculumStructure({
       }
     >
       {actions.generateStrands.error && <ErrorNotice error={actions.generateStrands.error} />}
+
+      {grounded && !grounded.ok && (
+        <EmptyState
+          title="Generated without the curriculum design"
+          description="No source document was found for this subject, so these strands come from the model's own knowledge rather than the KICD design. They will read plausibly and may match nothing KICD published. Ingest the design for this subject first."
+          tone="warn"
+        />
+      )}
+      {grounded && grounded.ok && (
+        <div style={{ marginBottom: "var(--s3)" }}>
+          <Badge tone="ok">
+            Read from the KICD design ({(grounded.chars / 1000).toFixed(0)}k characters)
+          </Badge>
+        </div>
+      )}
       {actions.generateSubstrands.error && <ErrorNotice error={actions.generateSubstrands.error} />}
       {actions.saveSubstrands.error && <ErrorNotice error={actions.saveSubstrands.error} />}
 

@@ -430,8 +430,17 @@ export function useStructureActions(grade: string, subject: string) {
 
   return {
     generateStrands: useMutation({
-      mutationFn: (v: { level?: string; essence_statement?: string; custom_instructions?: string }) =>
-        post<{ strands: GeneratedStrand[] }>("generate-strands", { grade, subject, ...v }),
+      mutationFn: (v: {
+        level?: string;
+        essence_statement?: string;
+        custom_instructions?: string;
+        design_id?: string;
+        source_material_text?: string;
+      }) =>
+        post<{ strands: GeneratedStrand[]; grounded?: boolean; source_chars?: number }>(
+          "generate-strands",
+          { grade, subject, ...v }
+        ),
     }),
     generateSubstrands: useMutation({
       mutationFn: (v: {

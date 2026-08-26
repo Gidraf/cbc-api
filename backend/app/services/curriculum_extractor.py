@@ -468,7 +468,15 @@ class CurriculumExtractorService:
             essence_statement=essence_statement,
             general_learning_outcomes=general_outcomes,
             substrands=substrands,
-            raw_payload={"meta": meta, "char_count": len(text)},
+            # The document itself, not just its size. Every downstream agent —
+            # strand architect, sub-strand generator, reviewer — needs the
+            # source to work from, and without it they generate from prior
+            # knowledge instead of from the design KICD published.
+            raw_payload={
+                "meta": meta,
+                "char_count": len(text),
+                "source_text": text[:400_000],
+            },
             metadata={"source": meta.get("source", "raw_ingest"), "file_id": meta.get("file_id", "")},
             dataset_dna_id=dataset_dna_id,
         )
