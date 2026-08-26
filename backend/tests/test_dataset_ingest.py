@@ -380,3 +380,72 @@ def test_blueprints_go_to_their_own_dataset():
 
     assert svc.blueprint_dataset_name("grade-dte") == "grade-dte-blueprints"
     assert svc.blueprint_dataset_name("grade-dte") != "grade-dte"
+
+
+# ── Documents are found wherever they live ───────────────────────────────────
+# All 242 designs sit in one combined dataset. Requiring a re-upload before the
+# console shows anything is a worse answer than routing by each item's grade.
+
+def raw_row(dataset, item_id, title, level="", subject="", grade="", text=None):
+    return {
+        "dataset_name": dataset, "item_id": item_id, "title": title,
+        "level": level, "subject": subject, "grade": grade,
+        "file_id": item_id, "output": DOC_TEXT if text is None else text,
+        "metadata": {},
+    }
+
+
+@pytest.mark.parametrize("row,expected", [
+    (raw_row("CBC_Research_Curriculum_Designs", "a", "French Grade 4.pdf", level="Grade 4"), ["grade-4"]),
+    (raw_row("CBC_Research_Curriculum_Designs", "b", "Chemistry Grade 12 - March 2026.pdf"), ["grade-12"]),
+    (raw_row("CBC_Research_Curriculum_Designs", "c", "Maths.pdf", level="Lower Primary (Grades 1-3)"),
+     ["grade-1", "grade-2", "grade-3"]),
+    (raw_row("CBC_Research_Curriculum_Designs", "d", "DTE SOCIAL STUDIES.pdf"), ["grade-dte"]),
+    (raw_row("CBC_Research_Curriculum_Designs", "e", "PP1.pdf", level="Pre-Primary 1 (PP1)"), ["grade-pp1"]),
+    (raw_row("CBC_Research_Curriculum_Designs", "f", "x.pdf", grade="grade-9"), ["grade-9"]),
+    (raw_row("CBC_Research_Curriculum_Designs", "g", "unknown.pdf"), []),
+])
+def test_grade_is_resolved_from_the_item_itself(row, expected):
+    assert di.grades_for_item(row) == expected
+
+
+def test_sync_picks_up_documents_from_the_combined_dataset(db, monkeypatch):
+    """The real situation: grade datasets empty, everything in one dataset."""
+    stub_dataset(monkeypatch, [], grade="grade-12")
+    monkeypatch.setattr(
+        di.langfuse_context_service, "fetch_raw_datasets_from_langfuse",
+        lambda: [
+            raw_row("CBC_Research_Curriculum_Designs", "chem", "Chemistry Grade 12 - March 2026.pdf"),
+            raw_row("CBC_Research_Curriculum_Designs", "geo", "Geography Grade 12 - March 2026.pdf"),
+            raw_row("CBC_Research_Curriculum_Designs", "fr", "French Grade 4.pdf", level="Grade 4"),
+        ],
+    )
+
+    result = di.sync_grade("grade-12")
+    assert result["added"] == 2, "only the Grade 12 documents belong to this grade"
+    assert sorted(db.rows) == ["chem", "geo"]
+    assert db.rows["chem"]["title"] == "Chemistry Grade 12 - March 2026.pdf"
+
+
+def test_sweep_still_ignores_the_empty_result_records(db, monkeypatch):
+    stub_dataset(monkeypatch, [], grade="grade-dte")
+    monkeypatch.setattr(
+        di.langfuse_context_service, "fetch_raw_datasets_from_langfuse",
+        lambda: [
+            raw_row("grade-dte", "1821b492-uuid", "", level="", text=""),
+            raw_row("CBC_Research_Curriculum_Designs", "dte-real", "DTE SOCIAL STUDIES.pdf"),
+        ],
+    )
+
+    result = di.sync_grade("grade-dte")
+    assert result["added"] == 1
+    assert list(db.rows) == ["dte-real"]
+
+
+def test_an_item_in_both_places_is_registered_once(db, monkeypatch):
+    stub_dataset(monkeypatch, items(("dup", "dup", "Chemistry Grade 12.pdf", "Chemistry")), grade="grade-12")
+    monkeypatch.setattr(
+        di.langfuse_context_service, "fetch_raw_datasets_from_langfuse",
+        lambda: [raw_row("CBC_Research_Curriculum_Designs", "dup", "Chemistry Grade 12.pdf")],
+    )
+    assert di.sync_grade("grade-12")["added"] == 1

@@ -17,9 +17,11 @@ Ingestion is manual for now — nothing advances an item except an explicit call
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
 from ..infra.db import execute, fetch_all, fetch_one
+from .grade_order import normalize_grade
 from .langfuse_context import langfuse_context_service
 
 logger = logging.getLogger("cbc-dataset-ingest")
@@ -53,6 +55,103 @@ def _item_fields(item: dict[str, Any]) -> dict[str, str]:
         "title": _text(inp.get("title") or meta.get("name")),
         "declared_subject": _text(inp.get("subject") or meta.get("subject")),
     }
+
+
+# ── Finding a grade's documents wherever they actually live ──────────────────
+# Curriculum designs are not necessarily filed one dataset per grade. The
+# extractor originally wrote every document into one combined dataset, and
+# requiring a re-upload before anything works is a worse answer than reading
+# what is there and routing by each item's own grade.
+
+_GRADE_IN_TEXT = re.compile(r"\bgrade\s*(\d{1,2})\b", re.IGNORECASE)
+
+_LEVEL_TO_GRADES: dict[str, list[str]] = {
+    "pre-primary 1 (pp1)": ["grade-pp1"], "pre-primary 1": ["grade-pp1"],
+    "pre-primary 2 (pp2)": ["grade-pp2"], "pre-primary 2": ["grade-pp2"],
+    # One combined design covers Grades 1-3, so it belongs to each of them.
+    "lower primary (grades 1-3)": ["grade-1", "grade-2", "grade-3"],
+    "lower primary": ["grade-1", "grade-2", "grade-3"],
+    "diploma in teacher education": ["grade-dte"],
+}
+for _n in range(1, 13):
+    _LEVEL_TO_GRADES[f"grade {_n}"] = [f"grade-{_n}"]
+
+
+def grades_for_item(item: dict[str, Any]) -> list[str]:
+    """Which grade(s) a dataset item belongs to, from the item itself."""
+    inp = item.get("input") if isinstance(item.get("input"), dict) else {}
+    meta = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+
+    # A flattened raw-datasets row carries these at the top level.
+    def field(name: str) -> str:
+        return _text(inp.get(name) or meta.get(name) or item.get(name))
+
+    explicit = normalize_grade(field("grade"))
+    if explicit:
+        return [explicit]
+
+    level = field("level").lower()
+    if level in _LEVEL_TO_GRADES:
+        return list(_LEVEL_TO_GRADES[level])
+
+    for source in (level, field("title"), field("name")):
+        match = _GRADE_IN_TEXT.search(source)
+        if match and 1 <= int(match.group(1)) <= 12:
+            return [f"grade-{int(match.group(1))}"]
+
+    haystack = f"{level} {field('title')}".lower()
+    if "diploma" in haystack or haystack.strip().startswith("dte"):
+        return ["grade-dte"]
+    if re.search(r"\bpp\s*2\b|pre-?primary\s*2", haystack):
+        return ["grade-pp2"]
+    if re.search(r"\bpp\s*1\b|pre-?primary", haystack):
+        return ["grade-pp1"]
+
+    return []
+
+
+def candidate_items(grade_slug: str) -> list[dict[str, Any]]:
+    """Every document that belongs to this grade, from any dataset.
+
+    Reads the grade's own dataset first, then sweeps the rest and keeps whatever
+    resolves to this grade. An item found in both is returned once.
+    """
+    found: dict[str, dict[str, Any]] = {}
+
+    for item in langfuse_context_service.get_grade_dataset(grade_slug):
+        if item.get("is_placeholder"):
+            continue
+        item_id = _text(item.get("id"))
+        if item_id:
+            found[item_id] = item
+
+    try:
+        raw = langfuse_context_service.fetch_raw_datasets_from_langfuse()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Could not sweep other Langfuse datasets: %s", exc)
+        raw = []
+
+    for row in raw:
+        if grade_slug not in grades_for_item(row):
+            continue
+        item_id = _text(row.get("item_id") or row.get("id"))
+        if not item_id or item_id in found:
+            continue
+        # raw-datasets flattens input onto the row; rebuild the item shape.
+        found[item_id] = {
+            "id": item_id,
+            "input": {
+                "file_id": _text(row.get("file_id")),
+                "title": _text(row.get("title")),
+                "subject": _text(row.get("subject")),
+                "level": _text(row.get("level")),
+            },
+            "expected_output": row.get("output") or "",
+            "metadata": row.get("metadata") or {},
+            "source_dataset": _text(row.get("dataset_name")),
+        }
+
+    return list(found.values())
 
 
 def sync_grade(grade_slug: str) -> dict[str, int]:
@@ -274,7 +373,7 @@ def process_item(item_id: str, force: bool = False) -> dict[str, Any]:
             f"ingested as design {row.get('design_id')}. Re-run with force to replace it."
         )
 
-    items = langfuse_context_service.get_grade_dataset(row["grade"])
+    items = candidate_items(row["grade"])
     source = next((i for i in items if _text(i.get("id")) == item_id), None)
     if source is None:
         set_status(item_id, FAILED, error="Item is no longer in the Langfuse dataset")
