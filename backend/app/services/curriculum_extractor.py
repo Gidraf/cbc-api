@@ -67,9 +67,22 @@ class ParsedCurriculumDesign:
 # level banner ("PRIMARY SCHOOL EDUCATION"), or spanned lines and were thrown
 # away — which is why every document parsed as "General Curriculum".
 
+# Lines naming the level, the programme or the publisher. None of these is a
+# learning area, and accepting one is worse than finding nothing: sub-strands
+# key on (grade, subject, strand, sub_strand), so every design that resolves to
+# the same wrong subject overwrites the previous one's sub-strands.
 _BANNER = re.compile(
     r"^(GRADE\b|SENIOR\b|JUNIOR\b|UPPER\b|LOWER\b|PRE-?PRIMARY\b|"
+    r"DIPLOMA\b|CERTIFICATE\b|TEACHER EDUCATION\b|"
+    r"BASIC EDUCATION\b|PRIMARY SCHOOL\b|SECONDARY SCHOOL\b|EARLY YEARS\b|"
     r"KENYA INSTITUTE|A SKILLED|REPUBLIC OF|MINISTRY OF|CURRICULUM DESIGN)",
+    re.IGNORECASE,
+)
+
+# A resolved subject that is really the level under another spelling.
+_LEVEL_WORDS = re.compile(
+    r"^(diploma|teacher education|pre-?primary|lower primary|upper primary|"
+    r"junior school|senior school|basic education|general curriculum)",
     re.IGNORECASE,
 )
 # A pathway label carrying the index this pipeline assigned it, e.g.
@@ -90,7 +103,7 @@ def _looks_like_subject(line: str) -> bool:
     line = line.strip()
     if not (3 <= len(line) <= 45):
         return False
-    if _BANNER.match(line) or _INDEXED_PATHWAY.search(line):
+    if _BANNER.match(line) or _INDEXED_PATHWAY.search(line) or _LEVEL_WORDS.match(line):
         return False
     letters = sum(c.isalpha() for c in line)
     return letters >= 3 and letters / len(line) > 0.6
@@ -311,6 +324,13 @@ class CurriculumExtractorService:
             if declared and _looks_like_subject(declared):
                 subject = declared
 
+        if not subject:
+            logger.warning(
+                "Could not read a learning area from the cover of '%s' (file_id=%s). "
+                "Filing as 'General Curriculum' — check the extraction, because designs "
+                "sharing a subject overwrite each other's sub-strands.",
+                meta.get("title", "?"), meta.get("file_id", "?"),
+            )
         subject = subject.title() if subject else "General Curriculum"
 
         grade, level = _grade_from_text(text, meta)

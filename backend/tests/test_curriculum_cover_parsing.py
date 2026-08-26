@@ -84,3 +84,56 @@ def test_grade_falls_back_to_the_declared_catalogue_grade():
 
 def test_missing_grade_everywhere_reports_nothing_rather_than_guessing():
     assert _grade_from_text("CURRICULUM DESIGN\nCHEMISTRY\n", {}) == ("", "")
+
+
+# ── A level name must never become a subject ─────────────────────────────────
+# Sub-strands key on (grade, subject, strand, sub_strand), so two designs that
+# resolve to the same subject overwrite each other. Accepting "Diploma in
+# Teacher Education" as a learning area collapsed all 30 DTE designs into one.
+
+@pytest.mark.parametrize("level_name", [
+    "Diploma in Teacher Education",
+    "Pre-Primary and Primary",
+    "Senior School",
+    "Junior School",
+    "Lower Primary",
+    "Upper Primary",
+    "Basic Education",
+    "General Curriculum",
+    "Primary School Education",
+])
+def test_level_names_are_rejected_as_subjects(level_name):
+    assert not _looks_like_subject(level_name)
+
+
+@pytest.mark.parametrize("subject", [
+    "Agriculture", "Chemistry", "English", "Kiswahili", "Art & Craft",
+    "Kenyan Sign Language", "ICT Integration in Education", "Home Science",
+    "Christian Religious Education", "Pre-Technical Studies",
+])
+def test_real_learning_areas_are_still_accepted(subject):
+    assert _looks_like_subject(subject)
+
+
+def test_diploma_cover_resolves_to_the_learning_area_not_the_programme():
+    text = (
+        "KENYA INSTITUTE OF CURRICULUM DEVELOPMENT\n"
+        "DIPLOMA IN TEACHER EDUCATION\n"
+        "PRE-PRIMARY AND PRIMARY\n"
+        "AGRICULTURE\n"
+        "CURRICULUM DESIGN\n"
+    )
+    assert _subject_from_cover(text).title() == "Agriculture"
+
+
+def test_two_diploma_designs_do_not_collapse_into_one_subject():
+    """The failure mode from the logs: every DTE design becoming one subject."""
+    def cover(area):
+        return (
+            "KENYA INSTITUTE OF CURRICULUM DEVELOPMENT\n"
+            "DIPLOMA IN TEACHER EDUCATION\nPRE-PRIMARY AND PRIMARY\n"
+            f"{area}\nCURRICULUM DESIGN\n"
+        )
+
+    subjects = {_subject_from_cover(cover(a)).title() for a in ("AGRICULTURE", "MUSIC", "HOME SCIENCE")}
+    assert subjects == {"Agriculture", "Music", "Home Science"}
