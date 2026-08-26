@@ -221,7 +221,7 @@ class LangfuseContextService:
                     grade_slug, exc,
                 )
 
-        if self._is_strict():
+        if self._is_strict:
             # Never invent curriculum in production. An empty grade is the truth
             # and shows up as 0 coverage rather than as a subject nobody ingested.
             self._set_cache(cache_key, [])
