@@ -10,6 +10,7 @@ import { LoadingBlock, ToastProvider } from "./ui/components";
 
 import { Coverage } from "./views/Coverage";
 import { ContentFactory } from "./views/ContentFactory";
+import { Datasets } from "./views/Datasets";
 import { DiagramLibrary } from "./views/DiagramLibrary";
 import { ExamBuilder } from "./views/ExamBuilder";
 import { Overview } from "./views/Overview";
@@ -21,7 +22,6 @@ import "./ui/tokens.css";
 
 // The legacy console is ~9,600 lines and its own stylesheet. Loading it lazily
 // keeps it out of the initial bundle for the screens that replaced it.
-const Datasets = React.lazy(() => import("./views/Datasets").then((m) => ({ default: m.Datasets })));
 const Legacy = React.lazy(() => import("./views/Legacy").then((m) => ({ default: m.Legacy })));
 
 const queryClient = new QueryClient({
@@ -43,7 +43,16 @@ const queryClient = new QueryClient({
 
 /** Each route gets its own boundary so one broken screen cannot blank the console. */
 function Screen({ name, children }: { name: string; children: React.ReactNode }) {
-  return <RouteBoundary name={name}>{children}</RouteBoundary>;
+  // Suspense here as well as at the boundary: a lazy child suspending during a
+  // navigation is a normal thing to do, and without a boundary above it React
+  // treats it as an error and blanks the screen.
+  return (
+    <RouteBoundary name={name}>
+      <React.Suspense fallback={<LoadingBlock rows={5} label={`Loading ${name}`} />}>
+        {children}
+      </React.Suspense>
+    </RouteBoundary>
+  );
 }
 
 function Router() {

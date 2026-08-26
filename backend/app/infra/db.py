@@ -195,27 +195,6 @@ MIGRATIONS: list[tuple[str, str]] = [
     (
         "005_curriculum_intelligence_and_universal_dna",
         """
-        CREATE TABLE IF NOT EXISTS dataset_ingest_status (
-            item_id TEXT PRIMARY KEY,
-            grade TEXT NOT NULL,
-            file_id TEXT NOT NULL DEFAULT '',
-            title TEXT NOT NULL DEFAULT '',
-            declared_subject TEXT NOT NULL DEFAULT '',
-            resolved_subject TEXT NOT NULL DEFAULT '',
-            design_id TEXT NULL,
-            status TEXT NOT NULL DEFAULT 'pending',
-            char_count INT NOT NULL DEFAULT 0,
-            error TEXT NOT NULL DEFAULT '',
-            selected_at TIMESTAMPTZ NULL,
-            started_at TIMESTAMPTZ NULL,
-            finished_at TIMESTAMPTZ NULL,
-            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-        );
-
-        CREATE INDEX IF NOT EXISTS idx_dataset_ingest_grade ON dataset_ingest_status(grade);
-        CREATE INDEX IF NOT EXISTS idx_dataset_ingest_status ON dataset_ingest_status(status);
-
         CREATE TABLE IF NOT EXISTS curriculum_designs (
             design_id TEXT PRIMARY KEY,
             subject TEXT NOT NULL,
@@ -415,6 +394,36 @@ MIGRATIONS: list[tuple[str, str]] = [
         );
 
         CREATE INDEX IF NOT EXISTS idx_exams_curriculum ON exams(grade_ordinal, subject);
+        """,
+    ),
+    (
+        "013_dataset_ingest_status",
+        """
+        -- Tracks each Langfuse dataset item from arrival to ingested design, so
+        -- the same document is not processed twice and every screen agrees on
+        -- what has been done.
+
+        CREATE TABLE IF NOT EXISTS dataset_ingest_status (
+            item_id TEXT PRIMARY KEY,
+            grade TEXT NOT NULL,
+            file_id TEXT NOT NULL DEFAULT '',
+            title TEXT NOT NULL DEFAULT '',
+            declared_subject TEXT NOT NULL DEFAULT '',
+            resolved_subject TEXT NOT NULL DEFAULT '',
+            design_id TEXT NULL,
+            status TEXT NOT NULL DEFAULT 'pending',
+            char_count INT NOT NULL DEFAULT 0,
+            error TEXT NOT NULL DEFAULT '',
+            selected_at TIMESTAMPTZ NULL,
+            started_at TIMESTAMPTZ NULL,
+            finished_at TIMESTAMPTZ NULL,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_dataset_ingest_grade ON dataset_ingest_status(grade);
+        CREATE INDEX IF NOT EXISTS idx_dataset_ingest_status ON dataset_ingest_status(status);
+        CREATE INDEX IF NOT EXISTS idx_dataset_ingest_design ON dataset_ingest_status(design_id);
         """,
     ),
 ]
