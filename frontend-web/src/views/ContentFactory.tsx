@@ -19,7 +19,7 @@ import {
   Th,
   useToast,
 } from "../ui/components";
-import { useApi, useGrades, useProgress, useSubjects } from "../lib/queries";
+import { gradeOptionLabel, subjectOptionLabel, useApi, useGrades, useProgress, useSubjects } from "../lib/queries";
 import { useQueryClient } from "@tanstack/react-query";
 
 /**
@@ -91,7 +91,7 @@ export function ContentFactory() {
   // Locate the selected sub-strand's coverage record.
   const selected = React.useMemo(() => {
     if (!progress.data || !substrand) return null;
-    for (const subj of progress.data.subjects) {
+    for (const subj of progress.data.subjects ?? []) {
       if (subject && subj.subject !== subject) continue;
       for (const st of subj.strands) {
         for (const ss of st.substrands) {
@@ -107,7 +107,7 @@ export function ContentFactory() {
   const allSubstrands = React.useMemo(() => {
     if (!progress.data) return [];
     const out: { subject: string; strand: string; name: string; pct: number }[] = [];
-    for (const subj of progress.data.subjects) {
+    for (const subj of progress.data.subjects ?? []) {
       if (subject && subj.subject !== subject) continue;
       for (const st of subj.strands) {
         for (const ss of st.substrands) {
@@ -181,7 +181,7 @@ export function ContentFactory() {
             >
               {(grades.data || []).map((g) => (
                 <option key={g.slug || g.name} value={g.slug || g.name}>
-                  {g.label || g.name}
+                  {gradeOptionLabel(g)}
                 </option>
               ))}
             </Select>
@@ -194,7 +194,7 @@ export function ContentFactory() {
               <option value="">All subjects</option>
               {(subjects.data || []).map((s) => (
                 <option key={s.name} value={s.name}>
-                  {s.name}
+                  {subjectOptionLabel(s)}
                 </option>
               ))}
             </Select>

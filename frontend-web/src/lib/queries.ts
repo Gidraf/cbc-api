@@ -36,7 +36,26 @@ export const keys = {
 
 /* ── Curriculum ─────────────────────────────────────────────────────────── */
 
-export type GradeInfo = { name: string; slug: string; label: string; level: string; ordinal: number };
+export type GradeInfo = {
+  name: string;
+  slug: string;
+  label: string;
+  level: string;
+  ordinal: number;
+  /** Curriculum designs ingested so far. Absent on older API builds. */
+  design_count?: number;
+  /** How many KICD publishes for this grade. */
+  expected_design_count?: number;
+  has_data?: boolean;
+};
+
+/** Label a grade option, showing ingest progress once the API reports it. */
+export function gradeOptionLabel(g: GradeInfo): string {
+  const label = g.label || g.name;
+  if (g.design_count === undefined || g.expected_design_count === undefined) return label;
+  if (g.expected_design_count === 0) return label;
+  return `${label} — ${g.design_count}/${g.expected_design_count}`;
+}
 
 export function useGrades() {
   const api = useApi();
@@ -53,12 +72,27 @@ export function useGrades() {
   });
 }
 
+export type SubjectInfo = {
+  name: string;
+  code?: string;
+  essence_statement?: string;
+  /** KICD publishes a design for this subject at this grade. */
+  expected?: boolean;
+  /** A design has actually been ingested. Absent on older API builds. */
+  ingested?: boolean;
+};
+
+/** Mark subjects KICD publishes but nothing has been ingested for yet. */
+export function subjectOptionLabel(s: SubjectInfo): string {
+  return s.ingested === false ? `${s.name} (not ingested)` : s.name;
+}
+
 export function useSubjects(grade: string) {
   const api = useApi();
   return useQuery({
     queryKey: keys.subjects(grade),
     queryFn: () =>
-      api<{ subjects: { name: string; code?: string; essence_statement?: string }[] }>(
+      api<{ subjects: SubjectInfo[] }>(
         `/api/v1/admin/langfuse/datasets/${grade}/subjects`
       ).then((r) => r.subjects || []),
     enabled: Boolean(grade),
@@ -112,7 +146,9 @@ export type ProgressReport = {
   practicals_totals: CoverageDimension;
   questions_totals: CoverageDimension;
   slo_coverage_totals: CoverageDimension;
-  focus_recommendations: {
+  // Optional on purpose: the API omits these on some payloads, and typing them
+  // as required is what let three screens crash on `.length` of undefined.
+  focus_recommendations?: {
     type: string;
     priority: string;
     action: string;
@@ -124,7 +160,7 @@ export type ProgressReport = {
     remaining?: number;
     estimated_requirement?: boolean;
   }[];
-  subjects: {
+  subjects?: {
     subject: string;
     subject_percentage: number;
     total_substrands: number;

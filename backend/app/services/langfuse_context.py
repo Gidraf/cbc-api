@@ -476,17 +476,54 @@ class LangfuseContextService:
         canonical ordinal instead.
         """
         from ..infra.db import fetch_all
-        from .grade_order import describe, sort_grades
+        from .curriculum_catalogue import all_grade_slugs, expected_design_count
+        from .grade_order import describe, normalize_grade
 
-        db_grades = fetch_all("SELECT DISTINCT grade FROM curriculum_designs")
-        if not db_grades:
-            db_grades = fetch_all("SELECT DISTINCT grade FROM curriculum_substrands")
+        # Every grade KICD publishes for, not only the ones already ingested.
+        # Listing only what is in the database hides the grades that most need
+        # work, and the old fallback list happened to name exactly the six a
+        # since-fixed parser bug could produce.
+        counts: dict[str, int] = {}
+        for row in fetch_all(
+            "SELECT grade, COUNT(*) AS n FROM curriculum_designs GROUP BY grade"
+        ):
+            slug = normalize_grade(row.get("grade"))
+            if slug:
+                counts[slug] = counts.get(slug, 0) + int(row.get("n") or 0)
 
-        names = sort_grades([r["grade"] for r in db_grades if r.get("grade")])
-        if not names:
-            names = sort_grades(["grade-pp1", "grade-4", "grade-7", "grade-8", "grade-9", "grade-dte"])
+        if not counts:
+            for row in fetch_all(
+                "SELECT DISTINCT grade FROM curriculum_substrands"
+            ):
+                slug = normalize_grade(row.get("grade"))
+                if slug:
+                    counts.setdefault(slug, 0)
 
-        return [{"name": slug, **describe(slug)} for slug in names]
+        datasets = []
+        for slug in all_grade_slugs():
+            ingested = counts.get(slug, 0)
+            expected = expected_design_count(slug)
+            datasets.append({
+                "name": slug,
+                **describe(slug),
+                "design_count": ingested,
+                "expected_design_count": expected,
+                "has_data": ingested > 0,
+            })
+
+        # A grade ingested under a slug outside the published ladder still has
+        # to be reachable, or its content becomes invisible.
+        for slug, ingested in sorted(counts.items()):
+            if slug not in {d["name"] for d in datasets}:
+                datasets.append({
+                    "name": slug,
+                    **describe(slug),
+                    "design_count": ingested,
+                    "expected_design_count": 0,
+                    "has_data": ingested > 0,
+                })
+
+        return datasets
 
     def upload_dataset_item(self, grade_slug: str, subject_data: dict) -> dict:
         if self._client:
@@ -548,6 +585,58 @@ class LangfuseContextService:
                     "essence_statement": meta.get("essence_statement", ""),
                 })
         return subjects
+
+    def get_expected_subjects(self, grade_slug: str) -> list[dict]:
+        """Every subject KICD publishes for this grade, ingested or not.
+
+        Ingested subjects are matched case-insensitively against the published
+        list so a design can be seen to be missing rather than merely absent.
+        """
+        from .curriculum_catalogue import (
+            GRADES_WITH_PATHWAY_LABELS,
+            expected_design_count,
+            expected_subjects,
+        )
+
+        ingested = self.get_available_subjects(grade_slug)
+        by_key = {str(s.get("name", "")).strip().lower(): s for s in ingested if s.get("name")}
+
+        rows: list[dict] = []
+        for name in expected_subjects(grade_slug):
+            match = by_key.pop(name.strip().lower(), None)
+            rows.append({
+                "name": match["name"] if match else name,
+                "code": (match or {}).get("code", ""),
+                "essence_statement": (match or {}).get("essence_statement", ""),
+                "expected": True,
+                "ingested": match is not None,
+            })
+
+        # Anything ingested that the published list does not name. For senior
+        # school this is the normal case, not an anomaly: KICD lists pathways,
+        # and the real learning area is read off each design's cover.
+        for leftover in by_key.values():
+            rows.append({
+                "name": leftover.get("name", ""),
+                "code": leftover.get("code", ""),
+                "essence_statement": leftover.get("essence_statement", ""),
+                "expected": False,
+                "ingested": True,
+            })
+
+        return sorted(rows, key=lambda r: (not r["ingested"], r["name"].lower()))
+
+    def get_grade_subject_summary(self, grade_slug: str) -> dict:
+        from .curriculum_catalogue import GRADES_WITH_PATHWAY_LABELS, expected_design_count
+
+        rows = self.get_expected_subjects(grade_slug)
+        return {
+            "subjects": rows,
+            "ingested_count": sum(1 for r in rows if r["ingested"]),
+            "expected_subject_count": sum(1 for r in rows if r["expected"]),
+            "expected_design_count": expected_design_count(grade_slug),
+            "subjects_are_pathways": grade_slug in GRADES_WITH_PATHWAY_LABELS,
+        }
 
     def get_strands_for_subject(self, grade_slug: str, subject: str) -> list[dict]:
         ctx = self.get_subject_context(grade_slug, subject)

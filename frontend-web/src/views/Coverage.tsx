@@ -19,7 +19,7 @@ import {
   Td,
   Th,
 } from "../ui/components";
-import { useGrades, useProgress, type SubstrandReport } from "../lib/queries";
+import { gradeOptionLabel, type SubstrandReport, useGrades, useProgress } from "../lib/queries";
 
 const DIMENSIONS = [
   { key: "notes", label: "Lesson hours", noun: "hours" },
@@ -55,6 +55,8 @@ export function Coverage() {
   }
 
   const report = progress.data;
+  const recommendations = report?.focus_recommendations ?? [];
+  const subjects = report?.subjects ?? [];
 
   return (
     <>
@@ -79,7 +81,7 @@ export function Coverage() {
             >
               {(grades.data || []).map((g) => (
                 <option key={g.slug || g.name} value={g.slug || g.name}>
-                  {g.label || g.name}
+                  {gradeOptionLabel(g)}
                 </option>
               ))}
             </Select>
@@ -131,11 +133,11 @@ export function Coverage() {
             title="What to do next"
             description="Ordered by pipeline dependency — notes gate diagrams and activities, which gate questions."
           >
-            {report.focus_recommendations.length === 0 ? (
+            {recommendations.length === 0 ? (
               <EmptyState title="Nothing outstanding" description="Every sub-strand in this grade is complete." />
             ) : (
               <Stack gap="var(--s2)">
-                {report.focus_recommendations.slice(0, 8).map((rec, i) => (
+                {recommendations.slice(0, 8).map((rec, i) => (
                   <div
                     key={i}
                     style={{
@@ -190,13 +192,13 @@ export function Coverage() {
             )}
           </Card>
 
-          {report.subjects.length === 0 ? (
+          {subjects.length === 0 ? (
             <EmptyState
               title="No curriculum designs for this grade"
               description="Ingest a KICD curriculum design before the factory can measure or produce anything."
             />
           ) : (
-            report.subjects.map((subj) => (
+            subjects.map((subj) => (
               <SubjectPanel
                 key={subj.subject}
                 subject={subj}

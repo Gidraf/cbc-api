@@ -18,7 +18,7 @@ import {
   Td,
   Th,
 } from "../ui/components";
-import { useCostSummary, useDailyTarget, useGrades, useProgress } from "../lib/queries";
+import { gradeOptionLabel, useCostSummary, useDailyTarget, useGrades, useProgress } from "../lib/queries";
 
 export function Overview() {
   const grades = useGrades();
@@ -30,6 +30,10 @@ export function Overview() {
   const target = useDailyTarget();
 
   const report = progress.data;
+  // The API omits these on some payloads, so read them through a default
+  // rather than assuming the shape the type describes.
+  const recommendations = report?.focus_recommendations ?? [];
+  const subjects = report?.subjects ?? [];
   const todayPct = target.data?.target_count
     ? Math.round((target.data.completed_count / target.data.target_count) * 100)
     : 0;
@@ -49,7 +53,7 @@ export function Overview() {
           >
             {(grades.data || []).map((g) => (
               <option key={g.slug || g.name} value={g.slug || g.name}>
-                {g.label || g.name}
+                {gradeOptionLabel(g)}
               </option>
             ))}
           </Select>
@@ -104,11 +108,11 @@ export function Overview() {
               </Link>
             }
           >
-            {report.focus_recommendations.length === 0 ? (
+            {recommendations.length === 0 ? (
               <EmptyState title="Nothing outstanding" description="This grade is fully produced." />
             ) : (
               <Stack gap="var(--s2)">
-                {report.focus_recommendations.slice(0, 6).map((rec, i) => (
+                {recommendations.slice(0, 6).map((rec, i) => (
                   <Link
                     key={i}
                     to={
@@ -150,7 +154,7 @@ export function Overview() {
           </Card>
 
           <Card title="Coverage by subject" description="Weighted by allocated teaching hours.">
-            {report.subjects.length === 0 ? (
+            {subjects.length === 0 ? (
               <EmptyState title="No curriculum designs" description="Ingest a design for this grade first." />
             ) : (
               <Table caption="Subject coverage">
@@ -162,7 +166,7 @@ export function Overview() {
                   </tr>
                 </thead>
                 <tbody>
-                  {[...report.subjects]
+                  {[...subjects]
                     .sort((a, b) => a.subject_percentage - b.subject_percentage)
                     .map((s) => (
                       <tr key={s.subject}>

@@ -16,7 +16,7 @@ import {
   Th,
 } from "../ui/components";
 import { API_BASE_URL } from "../api";
-import { useExams, useGrades } from "../lib/queries";
+import { gradeOptionLabel, useExams, useGrades } from "../lib/queries";
 
 /**
  * Composed papers. Rendering opens the print-ready HTML in a new tab, where the
@@ -46,7 +46,7 @@ export function ExamBuilder() {
             <option value="">All grades</option>
             {(grades.data || []).map((g) => (
               <option key={g.slug || g.name} value={g.slug || g.name}>
-                {g.label || g.name}
+                {gradeOptionLabel(g)}
               </option>
             ))}
           </Select>

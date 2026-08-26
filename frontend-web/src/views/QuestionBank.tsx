@@ -18,7 +18,7 @@ import {
   Th,
   useToast,
 } from "../ui/components";
-import { useGrades, useQuestionActions, useQuestions, useSubjects } from "../lib/queries";
+import { gradeOptionLabel, subjectOptionLabel, useGrades, useQuestionActions, useQuestions, useSubjects } from "../lib/queries";
 import { useComposeExam } from "../lib/queries";
 
 const PAGE_SIZE = 25;
@@ -104,14 +104,14 @@ export function QuestionBank() {
               <option value="">All grades</option>
               {(grades.data || []).map((g) => (
                 <option key={g.slug || g.name} value={g.slug || g.name}>
-                  {g.label || g.name}
+                  {gradeOptionLabel(g)}
                 </option>
               ))}
             </Select>
             <Select aria-label="Subject" value={subject} onChange={(e) => setParam({ subject: e.target.value })} style={{ width: "auto" }}>
               <option value="">All subjects</option>
               {(subjects.data || []).map((s) => (
-                <option key={s.name} value={s.name}>{s.name}</option>
+                <option key={s.name} value={s.name}>{subjectOptionLabel(s)}</option>
               ))}
             </Select>
             <Select aria-label="Status" value={status} onChange={(e) => setParam({ status: e.target.value })} style={{ width: "auto" }}>

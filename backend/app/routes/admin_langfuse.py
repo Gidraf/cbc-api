@@ -55,10 +55,10 @@ def get_grade_subjects(
     grade: str,
     _: AuthContext = Depends(require_roles("admin", "operator", "reviewer", "developer")),
 ) -> dict[str, Any]:
-    """Returns all subjects available in a grade dataset, with their metadata."""
+    """Subjects KICD publishes for this grade, each marked ingested or missing."""
     grade_slug = validate_grade_dataset(grade)
-    subjects = langfuse_context_service.get_available_subjects(grade_slug)
-    return {"grade": grade_slug, "subjects": subjects}
+    summary = langfuse_context_service.get_grade_subject_summary(grade_slug)
+    return {"grade": grade_slug, **summary}
 
 
 @router.get("/datasets/{grade}/{subject}")

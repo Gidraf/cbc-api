@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from ..errors import raise_api_error
+from .grade_order import GRADE_SEQUENCE, normalize_grade
 
 
 WRITTEN_RESPONSE_TYPES = {
@@ -12,22 +13,27 @@ WRITTEN_RESPONSE_TYPES = {
 }
 
 
+VALID_GRADE_SLUGS = frozenset(slug for slug, _label, _level in GRADE_SEQUENCE)
+
+
 def validate_grade_dataset(grade: str) -> str:
+    """Normalise a grade to its canonical slug, rejecting anything off the ladder.
+
+    This used to normalise without checking, so "grade-15" or a typo became a
+    dataset slug of its own and quietly produced an empty grade that nothing
+    would ever fill.
+    """
     if not grade:
         return "grade-7"
-    grade_norm = grade.strip().lower()
-    if grade_norm.startswith("grade-"):
-        return grade_norm
-    if grade_norm.startswith("grade"):
-        suffix = grade_norm[5:].lstrip("-").strip()
-        return f"grade-{suffix}" if suffix else "grade-7"
-    if grade_norm in {"dte", "diploma", "teacher-education"}:
-        return "grade-dte"
-    if grade_norm in {"pp1", "pp2"}:
-        return f"grade-{grade_norm}"
-    if grade_norm.isdigit():
-        return f"grade-{grade_norm}"
-    return f"grade-{grade_norm}"
+
+    slug = normalize_grade(grade)
+    if slug not in VALID_GRADE_SLUGS:
+        raise_api_error(
+            "INVALID_GRADE_DATASET",
+            f"'{grade}' is not a CBC grade. Expected one of: "
+            f"{', '.join(sorted(VALID_GRADE_SLUGS))}.",
+        )
+    return slug
 
 
 def validate_question_batch(questions: list[dict]) -> None:
