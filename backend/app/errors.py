@@ -48,6 +48,9 @@ ERRORS = {
     # A diagram with no part safe to blank cannot carry an occlusion question.
     # That is a content problem the operator can fix, not a server fault.
     "UNPROCESSABLE_DIAGRAM": (422, False),
+    # The work is already done. A conflict, not a failure: the caller can retry
+    # with force to replace what the previous run produced.
+    "ALREADY_INGESTED": (409, False),
     "HUMAN_REVIEW_REQUIRED": (409, False),
     "APPROVER_VERIFICATION_REQUIRED": (412, False),
     # Idempotency & Concurrency

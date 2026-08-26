@@ -21,6 +21,9 @@ class IngestRawCurriculumRequest(BaseModel):
     raw_text: str | None = None
     title: str | None = None
     source: str | None = None
+    # Re-ingest a document that has already been processed, replacing what the
+    # previous run produced. Off by default so it is always deliberate.
+    force: bool = False
 
 
 @router.post("/ingest-raw")
@@ -40,7 +43,32 @@ def ingest_raw_curriculum(
             "source": payload.source or "manual_upload",
         }
 
-    return curriculum_extractor.ingest_raw_curriculum(data)
+    # Ingestion can be reached from more than one screen, so the "already done"
+    # check lives here rather than in any one of them.
+    from ..services.dataset_ingest import (
+        INGESTED,
+        find_tracked_item,
+        process_item,
+        record_external_ingest,
+    )
+
+    tracked = find_tracked_item(data)
+    if tracked and tracked["status"] == INGESTED and not payload.force:
+        raise_api_error(
+            "ALREADY_INGESTED",
+            f"'{tracked.get('resolved_subject') or tracked.get('title') or tracked['item_id']}' "
+            f"has already been ingested as design {tracked.get('design_id')}. "
+            f"Re-send with force to replace it.",
+        )
+
+    # A tracked item goes through the tracked path, so the replace-and-prune
+    # behaviour is identical no matter which screen started it.
+    if tracked:
+        return process_item(tracked["item_id"], force=payload.force)
+
+    result = curriculum_extractor.ingest_raw_curriculum(data)
+    record_external_ingest(data, result)
+    return result
 
 
 @router.post("/sync-langfuse-datasets")

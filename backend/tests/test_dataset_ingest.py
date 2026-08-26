@@ -17,6 +17,9 @@ class FakeDb:
         if "SELECT item_id FROM dataset_ingest_status WHERE grade = :grade" in query:
             return [{"item_id": r["item_id"]} for r in self.rows.values()
                     if r["grade"] == params.get("grade")]
+        if "WHERE file_id = :file_id" in query:
+            return [dict(r) for r in self.rows.values()
+                    if r["file_id"] == params.get("file_id")]
         if "design_id = :design_id AND item_id <> :item_id" in query:
             return [
                 {"item_id": r["item_id"]} for r in self.rows.values()
@@ -299,3 +302,46 @@ def test_force_on_a_never_ingested_item_just_processes_it(db, monkeypatch):
     result = di.process_item("grade-10__x", force=True)
     assert result["subject"] == "Chemistry"
     assert db.rows["grade-10__x"]["status"] == "ingested"
+
+
+# ── Reconciling ingestion started outside process_item ───────────────────────
+
+def test_finds_the_tracked_row_by_item_id(db, monkeypatch):
+    stub_dataset(monkeypatch, items(("grade-10__x", "x", "Chem.pdf", "Pure Sciences")))
+    di.sync_grade("grade-10")
+    assert di.find_tracked_item({"item_id": "grade-10__x"})["item_id"] == "grade-10__x"
+
+
+def test_finds_the_tracked_row_by_file_id_when_unambiguous(db, monkeypatch):
+    stub_dataset(monkeypatch, items(("grade-10__x", "chem-file", "Chem.pdf", "Pure Sciences")))
+    di.sync_grade("grade-10")
+    assert di.find_tracked_item({"file_id": "chem-file"})["item_id"] == "grade-10__x"
+
+
+def test_ambiguous_file_id_matches_nothing(db, monkeypatch):
+    """One document tracked under Grades 1-3 cannot be resolved by file_id alone."""
+    for g in ("grade-1", "grade-2", "grade-3"):
+        stub_dataset(monkeypatch, items((f"{g}__a", "shared-file", "Maths.pdf", "Mathematics")), grade=g)
+        di.sync_grade(g)
+    assert di.find_tracked_item({"file_id": "shared-file"}) is None
+
+
+def test_external_ingest_marks_the_item_done(db, monkeypatch):
+    """A run started from the legacy screen must still show as ingested."""
+    stub_dataset(monkeypatch, items(("grade-10__x", "x", "Chem.pdf", "Pure Sciences")))
+    di.sync_grade("grade-10")
+    assert db.rows["grade-10__x"]["status"] == "pending"
+
+    di.record_external_ingest(
+        {"item_id": "grade-10__x", "output": "TEXT"},
+        {"subject": "Chemistry", "design_id": "d1"},
+    )
+
+    row = db.rows["grade-10__x"]
+    assert row["status"] == "ingested"
+    assert row["resolved_subject"] == "Chemistry"
+    assert row["design_id"] == "d1"
+
+
+def test_external_ingest_of_an_untracked_payload_is_harmless(db):
+    assert di.record_external_ingest({"file_id": "nope", "output": "x"}, {"subject": "X"}) is None

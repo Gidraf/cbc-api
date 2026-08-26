@@ -280,3 +280,50 @@ def process_item(item_id: str, force: bool = False) -> dict[str, Any]:
         error="",
     )
     return result
+
+
+def find_tracked_item(payload: dict[str, Any]) -> dict[str, Any] | None:
+    """Locate the tracked row a raw ingest payload belongs to.
+
+    Ingestion can be triggered outside :func:`process_item` — the legacy console
+    posts straight to /curriculum/ingest-raw. Matching the payload back to its
+    tracked row is what keeps one source of truth about what has been processed,
+    rather than two screens each believing something different.
+    """
+    item_id = _text(payload.get("item_id") or payload.get("id"))
+    if item_id:
+        row = fetch_one(
+            "SELECT * FROM dataset_ingest_status WHERE item_id = :item_id",
+            {"item_id": item_id},
+        )
+        if row:
+            return row
+
+    file_id = _text(payload.get("file_id"))
+    if not file_id:
+        return None
+
+    # One document can be tracked under several grades (Lower Primary), so an
+    # unqualified file_id is only conclusive when it matches exactly one row.
+    rows = fetch_all(
+        "SELECT * FROM dataset_ingest_status WHERE file_id = :file_id",
+        {"file_id": file_id},
+    )
+    return rows[0] if len(rows) == 1 else None
+
+
+def record_external_ingest(payload: dict[str, Any], result: dict[str, Any]) -> str | None:
+    """Mark a tracked item ingested after it was processed elsewhere."""
+    row = find_tracked_item(payload)
+    if not row:
+        return None
+
+    set_status(
+        row["item_id"],
+        INGESTED,
+        resolved_subject=_text(result.get("subject")),
+        design_id=_text(result.get("design_id")),
+        char_count=len(_text(payload.get("output"))),
+        error="",
+    )
+    return row["item_id"]
