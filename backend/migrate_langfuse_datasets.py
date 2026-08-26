@@ -111,27 +111,21 @@ class Langfuse:
             raw = resp.read().decode("utf-8", "replace")
             return json.loads(raw) if raw else {}
 
+    def list_datasets(self) -> list[str]:
+        payload = self._request("GET", "/api/public/datasets?limit=100")
+        return [d.get("name") for d in (payload.get("data") or []) if d.get("name")]
+
     def list_items(self, dataset: str) -> list[dict]:
-        """Every item in a dataset, following pagination."""
-        items: list[dict] = []
-        page = 1
-        while True:
-            encoded = urllib.parse.quote(dataset, safe="")
-            payload = self._request(
-                "GET", f"/api/public/dataset-items?datasetName={encoded}&page={page}&limit=50"
-            )
-            batch = payload.get("data") or payload.get("items") or []
-            if not batch:
-                break
-            items.extend(batch)
-            meta = payload.get("meta") or {}
-            total_pages = meta.get("totalPages")
-            if total_pages is not None and page >= int(total_pages):
-                break
-            if len(batch) < 50:
-                break
-            page += 1
-        return items
+        """Every item in a dataset.
+
+        The dataset *detail* endpoint returns items inline. The separate
+        /dataset-items collection is not what this Langfuse version serves, and
+        querying it returns nothing at all rather than an error — which is how a
+        migration can look like it ran and move zero rows.
+        """
+        encoded = urllib.parse.quote(dataset, safe="")
+        payload = self._request("GET", f"/api/public/datasets/{encoded}")
+        return payload.get("items") or []
 
     def upsert_item(self, dataset: str, item_id: str, item: dict) -> dict:
         inp = dict(item.get("input") or {})
@@ -164,9 +158,25 @@ def main() -> int:
 
     client = Langfuse(args.host, args.public_key, args.secret_key)
 
-    print(f"Reading '{args.source}' from {args.host} …")
+    available = client.list_datasets()
+    print(f"Datasets in Langfuse at {args.host}:")
+    for name in available:
+        print(f"  - {name}")
+    print()
+
+    if args.source not in available:
+        sys.exit(
+            f"No dataset named '{args.source}'. Pass --source with one of the names above."
+        )
+
+    print(f"Reading '{args.source}' …")
     items = client.list_items(args.source)
     print(f"  {len(items)} item(s) found\n")
+
+    if not items:
+        sys.exit(
+            f"'{args.source}' listed but returned no items. Nothing to migrate."
+        )
 
     plan: list[tuple[str, str, dict]] = []
     unmapped: list[str] = []

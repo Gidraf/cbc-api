@@ -189,6 +189,42 @@ class LangfuseContextService:
 
         return found_items
 
+    def _fetch_dataset_items_http(self, dataset_name: str) -> list[dict]:
+        """Read a dataset's items straight from the Langfuse HTTP API.
+
+        The dataset detail endpoint returns items inline; the separate
+        /dataset-items collection is not served by every Langfuse version and
+        answers with an empty list rather than an error.
+        """
+        if not (settings.langfuse_public_key and settings.langfuse_secret_key):
+            return []
+
+        try:
+            import httpx
+            from urllib.parse import quote
+
+            base_url = settings.langfuse_host.rstrip("/")
+            auth = (settings.langfuse_public_key, settings.langfuse_secret_key)
+            with httpx.Client(timeout=15.0) as client:
+                resp = client.get(
+                    f"{base_url}/api/public/datasets/{quote(dataset_name, safe='')}", auth=auth
+                )
+            if resp.status_code != 200:
+                return []
+
+            return [
+                {
+                    "id": item.get("id"),
+                    "input": item.get("input"),
+                    "expected_output": item.get("expectedOutput") or item.get("expected_output") or "",
+                    "metadata": item.get("metadata") or {},
+                }
+                for item in (resp.json().get("items") or [])
+            ]
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("HTTP read of dataset '%s' failed: %s", dataset_name, exc)
+            return []
+
     def get_grade_dataset(self, grade_slug: str) -> list[dict]:
         cache_key = f"dataset_{grade_slug}"
         cached = self._get_from_cache(cache_key)
@@ -216,10 +252,24 @@ class LangfuseContextService:
                 # debug, this was invisible while the fallback below made the
                 # console look populated.
                 logger.warning(
-                    "Langfuse has no dataset named '%s' (%s). Curriculum designs must be "
-                    "uploaded to one dataset per grade for this grade to be produced.",
+                    "Langfuse SDK could not read dataset '%s' (%s); trying the HTTP API.",
                     grade_slug, exc,
                 )
+
+        # The SDK and the HTTP API do not always agree — fetch_raw_datasets_from_langfuse
+        # reads datasets over HTTP successfully in deployments where the SDK call
+        # returns nothing. Falling back to the proven path costs one request and
+        # removes a whole class of "the data is there but the app cannot see it".
+        http_items = self._fetch_dataset_items_http(grade_slug)
+        if http_items:
+            self._set_cache(cache_key, http_items)
+            return http_items
+
+        logger.warning(
+            "No dataset named '%s' in Langfuse. Curriculum designs must be uploaded "
+            "to one dataset per grade before this grade can be produced.",
+            grade_slug,
+        )
 
         if self._is_strict:
             # Never invent curriculum in production. An empty grade is the truth
