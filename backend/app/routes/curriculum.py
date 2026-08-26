@@ -13,6 +13,8 @@ from ..services.artifact_dna import artifact_dna_service
 from ..services.auth import AuthContext, require_roles
 from ..services.curriculum_extractor import curriculum_extractor
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/api/v1/curriculum", tags=["Curriculum Intelligence & DNA"])
 
 
