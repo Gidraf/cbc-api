@@ -7,11 +7,13 @@ import re
 import secrets
 import unicodedata
 import xml.etree.ElementTree as ET
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from ..infra.db import execute, fetch_one, to_json
 from ..infra.storage import object_storage
+from .diagram_scene import build_scene_from_svg
+from .ids import mint_diagram_id
 
 logger = logging.getLogger(__name__)
 
@@ -23,9 +25,11 @@ class DeduplicatedDiagramResult:
     diagram_svg: str
     diagram_hash: str
     storage_url: str
-    dedup_status: str  # "created" | "reused"
+    dedup_status: str  # "created" | "reused_exact" | "reused_semantic"
     alt_text: str
     tactile_description: str
+    scene_document: dict[str, Any] = field(default_factory=dict)
+    semantic_key: str = ""
 
 
 def extract_and_sanitize_svg(raw_svg: str, default_title: str = "Diagram") -> str:
@@ -113,19 +117,23 @@ def _generate_fallback_svg(title: str) -> str:
 
 
 class DiagramDeduplicator:
+    """Exact-match and semantic diagram deduplication.
+
+    The SHA-256 over canonicalised markup catches byte-identical redraws. It does
+    not catch the same concept drawn slightly differently, which is the common
+    case and used to fill the registry with near-duplicates. The semantic key —
+    sorted, stemmed label terms plus the title — catches those.
+    """
+
     def canonicalize_svg(self, svg_str: str) -> tuple[str, str]:
-        """
-        Normalizes SVG XML attributes alphabetically, rounds float precision to 4dp,
-        strips whitespace, and normalizes labels to NFC lowercase for deterministic SHA-256 computation ONLY.
-        """
+        """Normalise attributes, round floats and lowercase labels for hashing only."""
         try:
             clean_svg = re.sub(r"<!--.*?-->", "", svg_str, flags=re.DOTALL).strip()
             root = ET.fromstring(clean_svg)
         except Exception:  # noqa: BLE001
             clean_svg = re.sub(r"\s+", " ", svg_str).strip()
             labels = " ".join(re.findall(r">([^<]+)<", clean_svg)).strip()
-            norm_labels = unicodedata.normalize("NFC", labels.lower())
-            return clean_svg.lower(), norm_labels
+            return clean_svg.lower(), unicodedata.normalize("NFC", labels.lower())
 
         labels_list: list[str] = []
 
@@ -135,9 +143,8 @@ class DiagramDeduplicator:
                 labels_list.append(clean_text)
                 elem.text = clean_text.lower()
 
-            sorted_keys = sorted(elem.attrib.keys())
             new_attribs = {}
-            for k in sorted_keys:
+            for k in sorted(elem.attrib.keys()):
                 v = elem.attrib[k]
                 try:
                     num = round(float(v), 4)
@@ -152,19 +159,25 @@ class DiagramDeduplicator:
                 _walk_and_normalize(child)
 
         _walk_and_normalize(root)
-        canonical_xml = ET.tostring(root, encoding="unicode", method="xml")
-        canonical_xml = re.sub(r"\s+", " ", canonical_xml).strip()
-
-        combined_labels = " ".join(labels_list)
-        norm_labels = unicodedata.normalize("NFC", combined_labels.lower())
+        canonical_xml = re.sub(r"\s+", " ", ET.tostring(root, encoding="unicode", method="xml")).strip()
+        norm_labels = unicodedata.normalize("NFC", " ".join(labels_list).lower())
 
         return canonical_xml, norm_labels
 
     def compute_diagram_hash(self, svg_str: str) -> tuple[str, str]:
         canonical_svg, canonical_labels = self.canonicalize_svg(svg_str)
-        hash_input = f"{canonical_svg}:{canonical_labels}".encode("utf-8")
-        diagram_hash = hashlib.sha256(hash_input).hexdigest()
+        diagram_hash = hashlib.sha256(f"{canonical_svg}:{canonical_labels}".encode("utf-8")).hexdigest()
         return diagram_hash, canonical_svg
+
+    def compute_semantic_key(self, title: str, svg_str: str, concept: str = "") -> str:
+        """A key that is stable across cosmetic redraws of the same concept."""
+        from .dna_scoring import tokens
+
+        labels = " ".join(re.findall(r">([^<>]{2,})<", svg_str))
+        terms = sorted(tokens(f"{title} {concept} {labels}"))
+        if not terms:
+            return ""
+        return hashlib.sha256(" ".join(terms).encode("utf-8")).hexdigest()
 
     def deduplicate_and_store(
         self,
@@ -173,57 +186,98 @@ class DiagramDeduplicator:
         alt_text: str = "",
         tactile_description: str = "",
         metadata: dict[str, Any] | None = None,
+        scene_document: dict[str, Any] | None = None,
     ) -> DeduplicatedDiagramResult:
-        # Sanitize and ensure valid visual SVG structure
+        meta = metadata or {}
         clean_svg = extract_and_sanitize_svg(svg_str, default_title=diagram_title)
-        diagram_hash, canonical_svg = self.compute_diagram_hash(clean_svg)
+        diagram_hash, _canonical = self.compute_diagram_hash(clean_svg)
+        semantic_key = self.compute_semantic_key(diagram_title, clean_svg, str(meta.get("concept", "")))
 
         existing = fetch_one(
-            "SELECT diagram_id, storage_url, alt_text, tactile_description FROM diagram_registry WHERE content_hash = :hash",
+            "SELECT * FROM diagram_registry WHERE content_hash = :hash",
             {"hash": diagram_hash},
         )
+        reuse_reason = "reused_exact"
+
+        if not existing and semantic_key:
+            existing = fetch_one(
+                """
+                SELECT * FROM diagram_registry
+                WHERE semantic_key = :skey AND grade = :grade AND LOWER(subject) = LOWER(:subject)
+                LIMIT 1
+                """,
+                {"skey": semantic_key, "grade": meta.get("grade", ""), "subject": meta.get("subject", "")},
+            )
+            reuse_reason = "reused_semantic"
 
         if existing:
+            execute(
+                "UPDATE diagram_registry SET reuse_count = reuse_count + 1 WHERE diagram_id = :did",
+                {"did": existing["diagram_id"]},
+            )
+            stored_scene = existing.get("scene_document") or {}
+            stored_svg = existing.get("svg_markup") or clean_svg
             return DeduplicatedDiagramResult(
                 diagram_id=existing["diagram_id"],
-                diagram_title=diagram_title,
-                diagram_svg=clean_svg,
-                diagram_hash=diagram_hash,
+                diagram_title=existing.get("title") or diagram_title,
+                diagram_svg=stored_svg,
+                diagram_hash=existing.get("content_hash", diagram_hash),
                 storage_url=existing["storage_url"],
-                dedup_status="reused",
+                dedup_status=reuse_reason,
                 alt_text=existing.get("alt_text") or alt_text,
                 tactile_description=existing.get("tactile_description") or tactile_description,
+                scene_document=stored_scene if isinstance(stored_scene, dict) else {},
+                semantic_key=existing.get("semantic_key") or semantic_key,
             )
 
-        diagram_id = f"diag_{secrets.token_hex(6)}"
-        object_name = f"diagrams/{diagram_id}.svg"
-        storage_url = object_storage.save_svg(object_name, clean_svg)
+        # Structure the diagram so questions can address parts of it.
+        scene = build_scene_from_svg(clean_svg, diagram_title, scene_document)
+        instrumented = scene.get("instrumented_svg") or clean_svg
+
+        diagram_id = mint_diagram_id(str(meta.get("subject", "")), str(meta.get("sub_strand", "")))
+        storage_url = object_storage.save_svg(f"diagrams/{diagram_id}.svg", instrumented)
 
         execute(
             """
-            INSERT INTO diagram_registry (diagram_id, content_hash, storage_url, alt_text, tactile_description, metadata, created_at)
-            VALUES (:diagram_id, :content_hash, :storage_url, :alt_text, :tactile_description, CAST(:metadata AS jsonb), NOW())
+            INSERT INTO diagram_registry (
+                diagram_id, content_hash, semantic_key, title, grade, subject,
+                storage_url, svg_markup, scene_document, alt_text, tactile_description,
+                metadata, reuse_count, created_at
+            )
+            VALUES (
+                :diagram_id, :content_hash, :semantic_key, :title, :grade, :subject,
+                :storage_url, :svg_markup, CAST(:scene_document AS jsonb), :alt_text,
+                :tactile_description, CAST(:metadata AS jsonb), 1, NOW()
+            )
             ON CONFLICT (content_hash) DO NOTHING
             """,
             {
                 "diagram_id": diagram_id,
                 "content_hash": diagram_hash,
+                "semantic_key": semantic_key,
+                "title": diagram_title,
+                "grade": str(meta.get("grade", "")),
+                "subject": str(meta.get("subject", "")),
                 "storage_url": storage_url,
+                "svg_markup": instrumented,
+                "scene_document": to_json(scene),
                 "alt_text": alt_text,
                 "tactile_description": tactile_description,
-                "metadata": to_json(metadata or {}),
+                "metadata": to_json(meta),
             },
         )
 
         return DeduplicatedDiagramResult(
             diagram_id=diagram_id,
             diagram_title=diagram_title,
-            diagram_svg=clean_svg,
+            diagram_svg=instrumented,
             diagram_hash=diagram_hash,
             storage_url=storage_url,
             dedup_status="created",
             alt_text=alt_text,
             tactile_description=tactile_description,
+            scene_document=scene,
+            semantic_key=semantic_key,
         )
 
 

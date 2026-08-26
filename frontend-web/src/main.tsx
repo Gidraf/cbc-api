@@ -1,57 +1,93 @@
-import React, { Component, ErrorInfo, ReactNode } from "react";
+import React from "react";
 import ReactDOM from "react-dom/client";
-import { App } from "./App";
-import "./styles.css";
+import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
-interface Props {
-  children: ReactNode;
+import { AppShell } from "./app/AppShell";
+import { RouteBoundary } from "./app/RouteBoundary";
+import { AuthProvider, useAuth } from "./lib/auth";
+import { LoadingBlock, ToastProvider } from "./ui/components";
+
+import { Coverage } from "./views/Coverage";
+import { ContentFactory } from "./views/ContentFactory";
+import { DiagramLibrary } from "./views/DiagramLibrary";
+import { ExamBuilder } from "./views/ExamBuilder";
+import { Overview } from "./views/Overview";
+import { QuestionBank } from "./views/QuestionBank";
+import { Review } from "./views/Review";
+import { SignIn } from "./views/SignIn";
+
+import "./ui/tokens.css";
+
+// The legacy console is ~9,600 lines and its own stylesheet. Loading it lazily
+// keeps it out of the initial bundle for the screens that replaced it.
+const Legacy = React.lazy(() => import("./views/Legacy").then((m) => ({ default: m.Legacy })));
+
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      // Generation is slow and expensive; refetching on every window focus
+      // would re-run reports the operator is still reading.
+      refetchOnWindowFocus: false,
+      retry: (failureCount, error) => {
+        const status = (error as any)?.status;
+        // Never retry an auth or validation failure — it will fail identically.
+        if (status === 401 || status === 403 || (status >= 400 && status < 500)) return false;
+        return failureCount < 2;
+      },
+      staleTime: 20_000,
+    },
+  },
+});
+
+/** Each route gets its own boundary so one broken screen cannot blank the console. */
+function Screen({ name, children }: { name: string; children: React.ReactNode }) {
+  return <RouteBoundary name={name}>{children}</RouteBoundary>;
 }
 
-interface State {
-  hasError: boolean;
-  error: Error | null;
-}
+function Router() {
+  const { token } = useAuth();
 
-class ErrorBoundary extends Component<Props, State> {
-  public state: State = {
-    hasError: false,
-    error: null,
-  };
+  if (!token) return <SignIn />;
 
-  public static getDerivedStateFromError(error: Error): State {
-    return { hasError: true, error };
-  }
-
-  public componentDidCatch(error: Error, errorInfo: ErrorInfo) {
-    console.error("Uncaught React Error:", error, errorInfo);
-  }
-
-  public render() {
-    if (this.state.hasError) {
-      return (
-        <div style={{ padding: "2rem", maxWidth: "600px", margin: "2rem auto", background: "#fef2f2", border: "1px solid #f87171", borderRadius: "8px" }}>
-          <h2 style={{ color: "#991b1b", marginTop: 0 }}>An unexpected UI error occurred</h2>
-          <p style={{ color: "#7f1d1d", fontSize: "0.9rem" }}>{this.state.error?.message}</p>
-          <button
-            onClick={() => {
-              this.setState({ hasError: false, error: null });
-              window.location.reload();
-            }}
-            style={{ marginTop: "1rem", padding: "8px 16px", background: "#dc2626", color: "#ffffff", border: "none", borderRadius: "4px", cursor: "pointer" }}
-          >
-            Reload Application
-          </button>
-        </div>
-      );
-    }
-    return this.props.children;
-  }
+  return (
+    <Routes>
+      <Route element={<AppShell />}>
+        <Route index element={<Screen name="Overview"><Overview /></Screen>} />
+        <Route path="coverage" element={<Screen name="Curriculum coverage"><Coverage /></Screen>} />
+        <Route path="factory" element={<Screen name="Content factory"><ContentFactory /></Screen>} />
+        <Route path="questions" element={<Screen name="Question bank"><QuestionBank /></Screen>} />
+        <Route path="exams" element={<Screen name="Exam builder"><ExamBuilder /></Screen>} />
+        <Route path="diagrams" element={<Screen name="Diagram library"><DiagramLibrary /></Screen>} />
+        <Route path="review" element={<Screen name="Review queue"><Review /></Screen>} />
+        <Route
+          path="legacy"
+          element={
+            <Screen name="Advanced console">
+              <React.Suspense fallback={<LoadingBlock rows={6} label="Loading the advanced console" />}>
+                <Legacy />
+              </React.Suspense>
+            </Screen>
+          }
+        />
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Route>
+    </Routes>
+  );
 }
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
-    <ErrorBoundary>
-      <App />
-    </ErrorBoundary>
+    <QueryClientProvider client={queryClient}>
+      <BrowserRouter>
+        <AuthProvider>
+          <ToastProvider>
+            <RouteBoundary name="Application">
+              <Router />
+            </RouteBoundary>
+          </ToastProvider>
+        </AuthProvider>
+      </BrowserRouter>
+    </QueryClientProvider>
   </React.StrictMode>
 );

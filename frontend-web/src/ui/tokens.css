@@ -1,0 +1,272 @@
+/* Design tokens for the CBC production console.
+ *
+ * Operators sit in this tool for long stretches, so the palette is low-glare:
+ * a slightly green-biased neutral rather than pure grey, with one deep pine
+ * accent. Semantic colours (ok / warn / danger) are separate from the accent so
+ * status never competes with navigation for attention.
+ *
+ * Every colour is defined once here and consumed through var(). Components must
+ * not hardcode hex values — that is how the previous UI ended up with 1,287
+ * inline style objects that could not be themed or audited.
+ */
+
+:root {
+  /* Surfaces */
+  --ground: #F2F4F3;
+  --surface: #FFFFFF;
+  --surface-2: #E9EDEB;
+  --surface-3: #DFE5E2;
+
+  /* Text */
+  --ink: #131A1F;
+  --ink-2: #4C5A61;
+  --ink-3: #77858B;
+
+  /* Lines */
+  --line: #D5DCDA;
+  --line-2: #E4E9E7;
+
+  /* Accent */
+  --accent: #0B6E5F;
+  --accent-hover: #095A4E;
+  --accent-wash: #E3EFEC;
+  --accent-ink: #FFFFFF;
+
+  /* Semantic — deliberately not the accent hue */
+  --ok: #2F7D4F;
+  --ok-wash: #E4F0E8;
+  --warn: #8A5D06;
+  --warn-wash: #F7EFDC;
+  --danger: #A32D24;
+  --danger-wash: #F8E8E6;
+  --info: #1F5F8B;
+  --info-wash: #E4EEF5;
+
+  /* Typography */
+  --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+  --text-xs: 0.72rem;
+  --text-sm: 0.82rem;
+  --text-md: 0.925rem;
+  --text-lg: 1.08rem;
+  --text-xl: 1.35rem;
+  --text-2xl: 1.75rem;
+  --text-3xl: 2.25rem;
+
+  /* Spacing */
+  --s1: 0.25rem;
+  --s2: 0.5rem;
+  --s3: 0.75rem;
+  --s4: 1rem;
+  --s5: 1.5rem;
+  --s6: 2rem;
+  --s7: 3rem;
+
+  --radius: 6px;
+  --radius-sm: 4px;
+  --radius-lg: 10px;
+
+  --shadow-1: 0 1px 2px rgba(19, 26, 31, 0.06);
+  --shadow-2: 0 4px 12px rgba(19, 26, 31, 0.08);
+  --shadow-3: 0 12px 32px rgba(19, 26, 31, 0.14);
+
+  --nav-w: 232px;
+  --header-h: 56px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --ground: #10161A;
+    --surface: #171F24;
+    --surface-2: #1D262B;
+    --surface-3: #253036;
+
+    --ink: #E8EDEA;
+    --ink-2: #A3B0B6;
+    --ink-3: #74838A;
+
+    --line: #2A353A;
+    --line-2: #212B30;
+
+    --accent: #4FBFA8;
+    --accent-hover: #6BD0BB;
+    --accent-wash: #16302C;
+    --accent-ink: #08201C;
+
+    --ok: #62B383;
+    --ok-wash: #17291E;
+    --warn: #D2A257;
+    --warn-wash: #2C2418;
+    --danger: #E0857C;
+    --danger-wash: #2F1E1C;
+    --info: #6FA8CE;
+    --info-wash: #17242D;
+
+    --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4);
+    --shadow-2: 0 4px 12px rgba(0, 0, 0, 0.45);
+    --shadow-3: 0 12px 32px rgba(0, 0, 0, 0.55);
+  }
+}
+
+:root[data-theme="dark"] {
+  --ground: #10161A;
+  --surface: #171F24;
+  --surface-2: #1D262B;
+  --surface-3: #253036;
+
+  --ink: #E8EDEA;
+  --ink-2: #A3B0B6;
+  --ink-3: #74838A;
+
+  --line: #2A353A;
+  --line-2: #212B30;
+
+  --accent: #4FBFA8;
+  --accent-hover: #6BD0BB;
+  --accent-wash: #16302C;
+  --accent-ink: #08201C;
+
+  --ok: #62B383;
+  --ok-wash: #17291E;
+  --warn: #D2A257;
+  --warn-wash: #2C2418;
+  --danger: #E0857C;
+  --danger-wash: #2F1E1C;
+  --info: #6FA8CE;
+  --info-wash: #17242D;
+
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-2: 0 4px 12px rgba(0, 0, 0, 0.45);
+  --shadow-3: 0 12px 32px rgba(0, 0, 0, 0.55);
+}
+
+/* ── Reset & base ─────────────────────────────────────────────────────────── */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--ground);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-size: var(--text-md);
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1,
+h2,
+h3,
+h4 {
+  margin: 0;
+  line-height: 1.25;
+  text-wrap: balance;
+  letter-spacing: -0.011em;
+}
+
+h1 { font-size: var(--text-2xl); font-weight: 650; }
+h2 { font-size: var(--text-xl); font-weight: 620; }
+h3 { font-size: var(--text-lg); font-weight: 600; }
+h4 { font-size: var(--text-md); font-weight: 600; }
+
+p { margin: 0; }
+
+a {
+  color: var(--accent);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+}
+
+code,
+.mono {
+  font-family: var(--font-mono);
+  font-size: 0.88em;
+}
+
+/* Visible focus everywhere. The previous UI had none, which made the whole
+ * console unusable by keyboard. */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+button {
+  font: inherit;
+  color: inherit;
+}
+
+input,
+select,
+textarea {
+  font: inherit;
+  color: var(--ink);
+}
+
+::placeholder {
+  color: var(--ink-3);
+}
+
+/* Wide content scrolls inside its own container, never the page body. */
+.scroll-x {
+  overflow-x: auto;
+  max-width: 100%;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.skip-link {
+  position: absolute;
+  left: var(--s4);
+  top: -3rem;
+  z-index: 100;
+  background: var(--accent);
+  color: var(--accent-ink);
+  padding: var(--s2) var(--s4);
+  border-radius: var(--radius);
+  transition: top 0.15s ease;
+}
+
+.skip-link:focus {
+  top: var(--s4);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+@keyframes cbc-shimmer {
+  0% { background-position: -400px 0; }
+  100% { background-position: 400px 0; }
+}
+
+@keyframes cbc-spin {
+  to { transform: rotate(360deg); }
+}

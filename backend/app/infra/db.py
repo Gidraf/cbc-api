@@ -303,6 +303,99 @@ MIGRATIONS: list[tuple[str, str]] = [
         CREATE INDEX IF NOT EXISTS idx_artifact_dna_parent ON artifact_dna(parent_dna_id);
         """,
     ),
+    (
+        "010_question_identity_and_ordering",
+        """
+        -- Questions were keyed on the model's positional label ("Q1"), so every
+        -- approved batch overwrote the previous one. Give surviving rows unique
+        -- IDs, then add the columns that make ordering and versioning possible.
+
+        ALTER TABLE question_dna ADD COLUMN IF NOT EXISTS grade_ordinal INT NOT NULL DEFAULT 999;
+        ALTER TABLE question_dna ADD COLUMN IF NOT EXISTS version INT NOT NULL DEFAULT 1;
+        ALTER TABLE question_dna ADD COLUMN IF NOT EXISTS display_label TEXT NOT NULL DEFAULT '';
+        ALTER TABLE question_dna ADD COLUMN IF NOT EXISTS superseded_by TEXT NULL;
+
+        -- Rescue legacy positional IDs so they can never collide again.
+        UPDATE question_dna
+        SET display_label = CASE WHEN display_label = '' THEN question_id ELSE display_label END,
+            question_id = 'q-legacy-'
+                || lower(regexp_replace(question_id, '[^A-Za-z0-9]+', '-', 'g'))
+                || '-'
+                || substr(md5(random()::text || clock_timestamp()::text), 1, 10)
+        WHERE question_id NOT LIKE 'q-%' AND length(question_id) < 40;
+
+        -- Backfill the CBC progression ordinal from the stored grade slug.
+        UPDATE question_dna SET grade_ordinal = CASE lower(curriculum_link->>'grade')
+            WHEN 'grade-pp1' THEN 1  WHEN 'pp1' THEN 1
+            WHEN 'grade-pp2' THEN 2  WHEN 'pp2' THEN 2
+            WHEN 'grade-1'  THEN 3   WHEN '1'  THEN 3
+            WHEN 'grade-2'  THEN 4   WHEN '2'  THEN 4
+            WHEN 'grade-3'  THEN 5   WHEN '3'  THEN 5
+            WHEN 'grade-4'  THEN 6   WHEN '4'  THEN 6
+            WHEN 'grade-5'  THEN 7   WHEN '5'  THEN 7
+            WHEN 'grade-6'  THEN 8   WHEN '6'  THEN 8
+            WHEN 'grade-7'  THEN 9   WHEN '7'  THEN 9
+            WHEN 'grade-8'  THEN 10  WHEN '8'  THEN 10
+            WHEN 'grade-9'  THEN 11  WHEN '9'  THEN 11
+            WHEN 'grade-10' THEN 12  WHEN '10' THEN 12
+            WHEN 'grade-11' THEN 13  WHEN '11' THEN 13
+            WHEN 'grade-12' THEN 14  WHEN '12' THEN 14
+            WHEN 'grade-dte' THEN 15 WHEN 'dte' THEN 15
+            ELSE 999 END;
+
+        CREATE INDEX IF NOT EXISTS idx_question_dna_curriculum
+            ON question_dna(grade_ordinal, (curriculum_link->>'subject'), (curriculum_link->>'sub_strand'));
+        CREATE INDEX IF NOT EXISTS idx_question_dna_status ON question_dna(status);
+        CREATE INDEX IF NOT EXISTS idx_question_dna_superseded ON question_dna(superseded_by);
+        CREATE INDEX IF NOT EXISTS idx_question_dna_slo ON question_dna((curriculum_link->>'slo_id'));
+        """,
+    ),
+    (
+        "011_diagram_scene_documents",
+        """
+        -- A diagram was an opaque SVG string: no addressable parts, no layers, so
+        -- "ask about part of this diagram" was not expressible. The scene document
+        -- is the structured source of truth; SVG becomes a render target.
+
+        ALTER TABLE diagram_registry ADD COLUMN IF NOT EXISTS scene_document JSONB NOT NULL DEFAULT '{}'::jsonb;
+        ALTER TABLE diagram_registry ADD COLUMN IF NOT EXISTS semantic_key TEXT NULL;
+        ALTER TABLE diagram_registry ADD COLUMN IF NOT EXISTS title TEXT NOT NULL DEFAULT '';
+        ALTER TABLE diagram_registry ADD COLUMN IF NOT EXISTS grade TEXT NOT NULL DEFAULT '';
+        ALTER TABLE diagram_registry ADD COLUMN IF NOT EXISTS subject TEXT NOT NULL DEFAULT '';
+        ALTER TABLE diagram_registry ADD COLUMN IF NOT EXISTS svg_markup TEXT NOT NULL DEFAULT '';
+        ALTER TABLE diagram_registry ADD COLUMN IF NOT EXISTS reuse_count INT NOT NULL DEFAULT 1;
+
+        CREATE INDEX IF NOT EXISTS idx_diagram_registry_semantic ON diagram_registry(semantic_key);
+        CREATE INDEX IF NOT EXISTS idx_diagram_registry_lookup ON diagram_registry(grade, subject);
+        """,
+    ),
+    (
+        "012_exam_composition",
+        """
+        -- Composed papers are frozen: an exam records the exact question versions
+        -- it contains, so reprinting it next term yields the same paper.
+
+        CREATE TABLE IF NOT EXISTS exams (
+            exam_id TEXT PRIMARY KEY,
+            title TEXT NOT NULL DEFAULT '',
+            grade TEXT NOT NULL DEFAULT '',
+            grade_ordinal INT NOT NULL DEFAULT 999,
+            subject TEXT NOT NULL DEFAULT '',
+            strand TEXT NOT NULL DEFAULT '',
+            sub_strand TEXT NOT NULL DEFAULT '',
+            time_allowed TEXT NOT NULL DEFAULT '',
+            total_marks INT NOT NULL DEFAULT 0,
+            instructions JSONB NOT NULL DEFAULT '[]'::jsonb,
+            question_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
+            snapshot JSONB NOT NULL DEFAULT '{}'::jsonb,
+            created_by TEXT NOT NULL DEFAULT '',
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_exams_curriculum ON exams(grade_ordinal, subject);
+        """,
+    ),
 ]
 
 

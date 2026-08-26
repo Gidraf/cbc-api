@@ -397,6 +397,8 @@ def get_dataset_progress_report(
 ) -> dict[str, Any]:
     """Computes comprehensive multi-level progress percentage (Grade -> Subject -> Strand -> Sub-strand -> 4-Hour Notes -> Diagrams -> Practicals -> Questions) with actionable focus recommendations."""
     from ..infra.db import fetch_all
+    from ..services.coverage import WEIGHTS, compute_substrand_coverage, next_action, weighted_rollup
+    from ..services.grade_order import grade_label, grade_ordinal
     from ..services.validation import validate_grade_dataset
 
     grade_slug = validate_grade_dataset(grade)
@@ -514,6 +516,11 @@ def get_dataset_progress_report(
                         add_node(d_subj, st_name, ss_name)
 
     # 3. Build hierarchical tree: Subject -> Strand -> Sub-strands
+    #
+    # Requirements come from each sub-strand's own blueprint (allocated hours,
+    # required diagrams, experiments, SLOs) rather than fixed constants, and
+    # roll-ups are weighted by teaching hours so a 10-hour sub-strand counts for
+    # more than a 2-hour one.
     subjects_tree: dict[str, dict[str, list[dict]]] = {}
     focus_recommendations: list[dict[str, Any]] = []
 
@@ -522,279 +529,251 @@ def get_dataset_progress_report(
         st_name = node["strand_name"]
         ss_name = node["sub_strand_name"]
 
-        if s_name not in subjects_tree:
-            subjects_tree[s_name] = {}
-        if st_name not in subjects_tree[s_name]:
-            subjects_tree[s_name][st_name] = []
+        subjects_tree.setdefault(s_name, {}).setdefault(st_name, [])
 
-        # Check generation status
         gen_res = res_index.get((s_name.lower(), ss_name.lower()))
-        notes_data = gen_res.get("notes") if gen_res else None
-        h_mods = (notes_data.get("hour_modules") or notes_data.get("key_concepts") or []) if isinstance(notes_data, dict) else []
-        notes_hours_gen = len(h_mods) if isinstance(h_mods, list) and len(h_mods) > 0 else (4 if notes_data and notes_data.get("full_lecture_notes") else 0)
-        required_hours = 4
-        remaining_hours = max(0, required_hours - notes_hours_gen)
-        notes_pct = min(100, round((notes_hours_gen / required_hours) * 100))
+        report = compute_substrand_coverage(node, gen_res)
+        dims = report["dimensions"]
 
-        diagrams_list = (gen_res.get("diagrams") or []) if gen_res else []
-        visuals_gen = len(diagrams_list) if isinstance(diagrams_list, list) else 0
-        required_visuals = 8  # 2 per hour
-        remaining_visuals = max(0, required_visuals - visuals_gen)
-        visuals_pct = min(100, round((visuals_gen / required_visuals) * 100))
+        is_approved = bool(
+            gen_res
+            and (
+                gen_res.get("status") == "published"
+                or (isinstance(gen_res.get("notes"), dict) and gen_res.get("notes", {}).get("approved"))
+            )
+        )
 
-        activities_list = (gen_res.get("activities") or []) if gen_res else []
-        activities_gen = len(activities_list) if isinstance(activities_list, list) else 0
-        required_activities = 4  # 1 per hour
-        remaining_activities = max(0, required_activities - activities_gen)
-        activities_pct = min(100, round((activities_gen / required_activities) * 100))
-
-        questions_list = (gen_res.get("questions") or []) if gen_res else []
-        questions_gen = len(questions_list) if isinstance(questions_list, list) else 0
-        required_questions = 10
-        remaining_questions = max(0, required_questions - questions_gen)
-        questions_pct = min(100, round((questions_gen / required_questions) * 100))
-
-        overall_ss_pct = round((notes_pct * 0.25) + (visuals_pct * 0.25) + (activities_pct * 0.25) + (questions_pct * 0.25))
-        is_approved = gen_res.get("status") == "published" or (isinstance(gen_res.get("notes"), dict) and gen_res.get("notes", {}).get("approved")) if gen_res else False
-        is_production_ready = notes_hours_gen >= 4 and visuals_gen >= 2 and activities_gen >= 1 and questions_gen >= 3
-
-        # Formulate actionable focus recommendations
-        if is_production_ready:
+        action = next_action(report)
+        if action:
+            focus_recommendations.append({
+                **action,
+                "subject": s_name,
+                "strand": st_name,
+                "sub_strand": ss_name,
+                "percentage": report["overall_percentage"],
+                "message": f"{action['message']} for '{ss_name}' ({s_name}).",
+            })
+        else:
             focus_recommendations.append({
                 "type": "ready",
                 "priority": "ready",
-                "subject": s_name,
-                "strand": st_name,
-                "sub_strand": ss_name,
-                "percentage": overall_ss_pct,
-                "message": f"🚀 '{ss_name}' ({s_name}) is 100% complete — ready for unlimited Questions Factory generation.",
                 "action": "open_questions_factory",
-            })
-        elif remaining_hours > 0:
-            focus_recommendations.append({
-                "type": "notes",
-                "priority": "high",
                 "subject": s_name,
                 "strand": st_name,
                 "sub_strand": ss_name,
-                "percentage": overall_ss_pct,
-                "remaining_hours": remaining_hours,
-                "message": f"📝 Generate {remaining_hours} missing 60-min lecture hours in '{ss_name}' ({s_name}).",
-                "action": "open_studio_station_1",
+                "percentage": 100,
+                "message": f"'{ss_name}' ({s_name}) is complete and ready to publish.",
             })
-        elif remaining_visuals > 0:
-            focus_recommendations.append({
-                "type": "visuals",
-                "priority": "medium",
-                "subject": s_name,
-                "strand": st_name,
-                "sub_strand": ss_name,
-                "percentage": overall_ss_pct,
-                "remaining_visuals": remaining_visuals,
-                "message": f"📐 Render {remaining_visuals} remaining SVG vector models for '{ss_name}' ({s_name}).",
-                "action": "open_studio_station_2",
-            })
-        elif remaining_activities > 0:
-            focus_recommendations.append({
-                "type": "practicals",
-                "priority": "medium",
-                "subject": s_name,
-                "strand": st_name,
-                "sub_strand": ss_name,
-                "percentage": overall_ss_pct,
-                "remaining_activities": remaining_activities,
-                "message": f"🧪 Synthesize {remaining_activities} practical experiments with hazard safety criteria for '{ss_name}'.",
-                "action": "open_studio_station_3",
-            })
-        elif remaining_questions > 0:
-            focus_recommendations.append({
-                "type": "questions",
-                "priority": "low",
-                "subject": s_name,
-                "strand": st_name,
-                "sub_strand": ss_name,
-                "percentage": overall_ss_pct,
-                "remaining_questions": remaining_questions,
-                "message": f"🎯 Add {remaining_questions} more assessment items for '{ss_name}'.",
-                "action": "open_studio_station_4",
-            })
+
+        h_mods = []
+        if gen_res and isinstance(gen_res.get("notes"), dict):
+            h_mods = gen_res["notes"].get("hour_modules") or gen_res["notes"].get("key_concepts") or []
+        diagrams_list = (gen_res.get("diagrams") or []) if gen_res else []
+        activities_raw = (gen_res.get("activities") or []) if gen_res else []
+        activities_list = (
+            (activities_raw.get("activities") or []) if isinstance(activities_raw, dict) else activities_raw
+        )
 
         subjects_tree[s_name][st_name].append({
             "sub_strand_name": ss_name,
-            "allocated_hours": node["allocated_hours"],
+            "allocated_hours": report["allocated_hours"],
+            "weight_hours": report["weight_hours"],
+            "estimated": report["estimated"],
+            # Legacy key names kept so existing dashboards keep rendering.
             "notes": {
-                "generated_hours": notes_hours_gen,
-                "required_hours": required_hours,
-                "remaining_hours": remaining_hours,
-                "percentage": notes_pct,
+                "generated_hours": dims["notes"]["generated"],
+                "required_hours": dims["notes"]["required"],
+                "remaining_hours": dims["notes"]["remaining"],
+                "percentage": dims["notes"]["percentage"],
+                "estimated": dims["notes"]["estimated"],
                 "hour_modules": [
                     {
                         "hour_number": hm.get("hour_number", h_idx + 1),
                         "hour_title": hm.get("hour_title", f"Hour {h_idx + 1}"),
                         "has_notes": bool(hm.get("full_lecture_notes") or hm.get("content")),
-                        "visuals_count": len([v for v in diagrams_list if v.get("hour_index") == (h_idx + 1)]),
-                        "activities_count": len([a for a in activities_list if a.get("hour_index") == (h_idx + 1)]),
+                        "visuals_count": len([
+                            v for v in diagrams_list
+                            if isinstance(v, dict) and v.get("hour_index") == (h_idx + 1)
+                        ]),
+                        "activities_count": len([
+                            a for a in activities_list
+                            if isinstance(a, dict) and a.get("hour_index") == (h_idx + 1)
+                        ]),
                     }
-                    for h_idx, hm in enumerate(h_mods[:4])
-                ] if len(h_mods) > 0 else [],
+                    for h_idx, hm in enumerate(h_mods)
+                    if isinstance(hm, dict)
+                ],
             },
             "visuals": {
-                "generated_count": visuals_gen,
-                "required_count": required_visuals,
-                "remaining_count": remaining_visuals,
-                "percentage": visuals_pct,
+                "generated_count": dims["visuals"]["generated"],
+                "required_count": dims["visuals"]["required"],
+                "remaining_count": dims["visuals"]["remaining"],
+                "percentage": dims["visuals"]["percentage"],
+                "estimated": dims["visuals"]["estimated"],
             },
             "practicals": {
-                "generated_count": activities_gen,
-                "required_count": required_activities,
-                "remaining_count": remaining_activities,
-                "percentage": activities_pct,
+                "generated_count": dims["practicals"]["generated"],
+                "required_count": dims["practicals"]["required"],
+                "remaining_count": dims["practicals"]["remaining"],
+                "percentage": dims["practicals"]["percentage"],
+                "estimated": dims["practicals"]["estimated"],
             },
             "questions": {
-                "generated_count": questions_gen,
-                "required_count": required_questions,
-                "remaining_count": remaining_questions,
-                "percentage": questions_pct,
+                "generated_count": dims["questions"]["generated"],
+                "required_count": dims["questions"]["required"],
+                "remaining_count": dims["questions"]["remaining"],
+                "percentage": dims["questions"]["percentage"],
+                "estimated": dims["questions"]["estimated"],
             },
-            "overall_percentage": overall_ss_pct,
-            "production_ready": is_production_ready,
+            "slo_coverage": {
+                "generated_count": dims["slo_coverage"]["generated"],
+                "required_count": dims["slo_coverage"]["required"],
+                "remaining_count": dims["slo_coverage"]["remaining"],
+                "percentage": dims["slo_coverage"]["percentage"],
+                "estimated": dims["slo_coverage"]["estimated"],
+            },
+            "overall_percentage": report["overall_percentage"],
+            "production_ready": report["production_ready"],
             "approved": is_approved,
             "bundle_id": gen_res.get("bundle_id") if gen_res else None,
         })
 
-    # 4. Roll up metrics by Strand, Subject, and Grade
-    total_grade_substrands = 0
-    completed_grade_substrands = 0
-    production_ready_grade_substrands = 0
-    total_grade_notes_hours_gen = 0
-    total_grade_notes_hours_req = 0
-    total_grade_visuals_gen = 0
-    total_grade_visuals_req = 0
-    total_grade_practicals_gen = 0
-    total_grade_practicals_req = 0
-    total_grade_questions_gen = 0
-    total_grade_questions_req = 0
+    # 4. Roll up by Strand, Subject and Grade, weighted by teaching hours.
+    DIMENSION_KEYS = {
+        "notes": ("generated_hours", "required_hours"),
+        "visuals": ("generated_count", "required_count"),
+        "practicals": ("generated_count", "required_count"),
+        "questions": ("generated_count", "required_count"),
+        "slo_coverage": ("generated_count", "required_count"),
+    }
+
+    def _sum_dimensions(items: list[dict]) -> dict[str, dict[str, int]]:
+        totals: dict[str, dict[str, int]] = {}
+        for dim, (gen_key, req_key) in DIMENSION_KEYS.items():
+            generated = sum(item[dim][gen_key] for item in items)
+            required = sum(item[dim][req_key] for item in items)
+            totals[dim] = {
+                "generated": generated,
+                "required": required,
+                "remaining": max(0, required - generated),
+                "percentage": min(100, round((generated / required) * 100)) if required else 0,
+            }
+        return totals
+
     subject_reports: list[dict[str, Any]] = []
+    all_substrands: list[dict[str, Any]] = []
 
     for s_name, strands_dict in subjects_tree.items():
-        total_sub_count = 0
-        completed_sub_count = 0
-        prod_ready_sub_count = 0
-        subj_notes_gen = 0
-        subj_notes_req = 0
-        subj_vis_gen = 0
-        subj_vis_req = 0
-        subj_act_gen = 0
-        subj_act_req = 0
-        subj_q_gen = 0
-        subj_q_req = 0
         strand_reports: list[dict[str, Any]] = []
+        subject_substrands: list[dict[str, Any]] = []
 
         for st_name, ss_list in strands_dict.items():
-            st_total = len(ss_list)
-            st_completed = sum(1 for item in ss_list if item["overall_percentage"] >= 90)
-            st_prod_ready = sum(1 for item in ss_list if item["production_ready"])
-            st_pct = round(sum(item["overall_percentage"] for item in ss_list) / st_total) if st_total > 0 else 0
-
-            st_notes_gen = sum(item["notes"]["generated_hours"] for item in ss_list)
-            st_notes_req = sum(item["notes"]["required_hours"] for item in ss_list)
-            st_vis_gen = sum(item["visuals"]["generated_count"] for item in ss_list)
-            st_vis_req = sum(item["visuals"]["required_count"] for item in ss_list)
-            st_act_gen = sum(item["practicals"]["generated_count"] for item in ss_list)
-            st_act_req = sum(item["practicals"]["required_count"] for item in ss_list)
-            st_q_gen = sum(item["questions"]["generated_count"] for item in ss_list)
-            st_q_req = sum(item["questions"]["required_count"] for item in ss_list)
-
+            if not ss_list:
+                continue
+            strand_totals = _sum_dimensions(ss_list)
             strand_reports.append({
                 "strand_name": st_name,
-                "total_substrands": st_total,
-                "completed_substrands": st_completed,
-                "remaining_substrands": max(0, st_total - st_completed),
-                "production_ready_substrands": st_prod_ready,
-                "strand_percentage": st_pct,
-                "notes_summary": {"generated": st_notes_gen, "required": st_notes_req, "remaining": max(0, st_notes_req - st_notes_gen)},
-                "visuals_summary": {"generated": st_vis_gen, "required": st_vis_req, "remaining": max(0, st_vis_req - st_vis_gen)},
-                "practicals_summary": {"generated": st_act_gen, "required": st_act_req, "remaining": max(0, st_act_req - st_act_gen)},
-                "questions_summary": {"generated": st_q_gen, "required": st_q_req, "remaining": max(0, st_q_req - st_q_gen)},
+                "total_substrands": len(ss_list),
+                "completed_substrands": sum(1 for i in ss_list if i["production_ready"]),
+                "remaining_substrands": sum(1 for i in ss_list if not i["production_ready"]),
+                "production_ready_substrands": sum(1 for i in ss_list if i["production_ready"]),
+                "strand_percentage": weighted_rollup(ss_list),
+                "estimated": any(i["estimated"] for i in ss_list),
+                "notes_summary": strand_totals["notes"],
+                "visuals_summary": strand_totals["visuals"],
+                "practicals_summary": strand_totals["practicals"],
+                "questions_summary": strand_totals["questions"],
+                "slo_coverage_summary": strand_totals["slo_coverage"],
                 "substrands": ss_list,
             })
+            subject_substrands.extend(ss_list)
 
-            total_sub_count += st_total
-            completed_sub_count += st_completed
-            prod_ready_sub_count += st_prod_ready
-            subj_notes_gen += st_notes_gen
-            subj_notes_req += st_notes_req
-            subj_vis_gen += st_vis_gen
-            subj_vis_req += st_vis_req
-            subj_act_gen += st_act_gen
-            subj_act_req += st_act_req
-            subj_q_gen += st_q_gen
-            subj_q_req += st_q_req
+        if not subject_substrands:
+            continue
 
-        sub_pct = round(sum(str_rep["strand_percentage"] for str_rep in strand_reports) / len(strand_reports)) if strand_reports else 0
+        subject_totals = _sum_dimensions(subject_substrands)
         subject_reports.append({
             "subject": s_name,
-            "total_substrands": total_sub_count,
-            "completed_substrands": completed_sub_count,
-            "remaining_substrands": max(0, total_sub_count - completed_sub_count),
-            "production_ready_substrands": prod_ready_sub_count,
-            "subject_percentage": sub_pct,
-            "notes_summary": {"generated": subj_notes_gen, "required": subj_notes_req, "remaining": max(0, subj_notes_req - subj_notes_gen)},
-            "visuals_summary": {"generated": subj_vis_gen, "required": subj_vis_req, "remaining": max(0, subj_vis_req - subj_vis_gen)},
-            "practicals_summary": {"generated": subj_act_gen, "required": subj_act_req, "remaining": max(0, subj_act_req - subj_act_gen)},
-            "questions_summary": {"generated": subj_q_gen, "required": subj_q_req, "remaining": max(0, subj_q_req - subj_q_gen)},
+            "total_substrands": len(subject_substrands),
+            "completed_substrands": sum(1 for i in subject_substrands if i["production_ready"]),
+            "remaining_substrands": sum(1 for i in subject_substrands if not i["production_ready"]),
+            "production_ready_substrands": sum(1 for i in subject_substrands if i["production_ready"]),
+            "subject_percentage": weighted_rollup(subject_substrands),
+            "estimated": any(i["estimated"] for i in subject_substrands),
+            "notes_summary": subject_totals["notes"],
+            "visuals_summary": subject_totals["visuals"],
+            "practicals_summary": subject_totals["practicals"],
+            "questions_summary": subject_totals["questions"],
+            "slo_coverage_summary": subject_totals["slo_coverage"],
             "strands": strand_reports,
         })
+        all_substrands.extend(subject_substrands)
 
-        total_grade_substrands += total_sub_count
-        completed_grade_substrands += completed_sub_count
-        production_ready_grade_substrands += prod_ready_sub_count
-        total_grade_notes_hours_gen += subj_notes_gen
-        total_grade_notes_hours_req += subj_notes_req
-        total_grade_visuals_gen += subj_vis_gen
-        total_grade_visuals_req += subj_vis_req
-        total_grade_practicals_gen += subj_act_gen
-        total_grade_practicals_req += subj_act_req
-        total_grade_questions_gen += subj_q_gen
-        total_grade_questions_req += subj_q_req
+    subject_reports.sort(key=lambda s: s["subject"].lower())
 
-    grade_pct = round(sum(s["subject_percentage"] for s in subject_reports) / len(subject_reports)) if subject_reports else 0
+    grade_totals = _sum_dimensions(all_substrands) if all_substrands else {
+        dim: {"generated": 0, "required": 0, "remaining": 0, "percentage": 0} for dim in DIMENSION_KEYS
+    }
+    grade_pct = weighted_rollup(all_substrands)
+    production_ready_count = sum(1 for i in all_substrands if i["production_ready"])
 
-    # Sort focus recommendations: high priority first
     priority_order = {"high": 0, "medium": 1, "low": 2, "ready": 3}
-    focus_recommendations.sort(key=lambda x: priority_order.get(x.get("priority", "low"), 2))
+    focus_recommendations.sort(
+        key=lambda x: (priority_order.get(x.get("priority", "low"), 2), x.get("percentage", 0))
+    )
+
+    estimated_count = sum(1 for i in all_substrands if i["estimated"])
 
     return {
         "grade": grade_slug,
+        "grade_label": grade_label(grade_slug),
+        "grade_ordinal": grade_ordinal(grade_slug),
         "overall_grade_percentage": grade_pct,
-        "total_substrands": total_grade_substrands,
-        "completed_substrands": completed_grade_substrands,
-        "remaining_substrands": max(0, total_grade_substrands - completed_grade_substrands),
-        "production_ready_substrands": production_ready_grade_substrands,
-        "is_all_production_ready": production_ready_grade_substrands > 0 and production_ready_grade_substrands == total_grade_substrands,
+        "rollup_method": "weighted_by_allocated_hours",
+        "weights": WEIGHTS,
+        "total_substrands": len(all_substrands),
+        "completed_substrands": production_ready_count,
+        "remaining_substrands": max(0, len(all_substrands) - production_ready_count),
+        "production_ready_substrands": production_ready_count,
+        "is_all_production_ready": bool(all_substrands) and production_ready_count == len(all_substrands),
+        "measurement_confidence": {
+            "substrands_with_estimated_requirements": estimated_count,
+            "substrands_measured_from_blueprint": len(all_substrands) - estimated_count,
+            "note": (
+                "Estimated sub-strands had no allocated hours, required diagrams, "
+                "experiments or SLOs in their curriculum design, so a fallback "
+                "requirement was used. Ingest a fuller design to measure them."
+            ) if estimated_count else "All requirements derived from curriculum blueprints.",
+        },
         "notes_totals": {
-            "generated_hours": total_grade_notes_hours_gen,
-            "required_hours": total_grade_notes_hours_req,
-            "remaining_hours": max(0, total_grade_notes_hours_req - total_grade_notes_hours_gen),
-            "percentage": min(100, round((total_grade_notes_hours_gen / total_grade_notes_hours_req) * 100)) if total_grade_notes_hours_req > 0 else 0,
+            "generated_hours": grade_totals["notes"]["generated"],
+            "required_hours": grade_totals["notes"]["required"],
+            "remaining_hours": grade_totals["notes"]["remaining"],
+            "percentage": grade_totals["notes"]["percentage"],
         },
         "visuals_totals": {
-            "generated_count": total_grade_visuals_gen,
-            "required_count": total_grade_visuals_req,
-            "remaining_count": max(0, total_grade_visuals_req - total_grade_visuals_gen),
-            "percentage": min(100, round((total_grade_visuals_gen / total_grade_visuals_req) * 100)) if total_grade_visuals_req > 0 else 0,
+            "generated_count": grade_totals["visuals"]["generated"],
+            "required_count": grade_totals["visuals"]["required"],
+            "remaining_count": grade_totals["visuals"]["remaining"],
+            "percentage": grade_totals["visuals"]["percentage"],
         },
         "practicals_totals": {
-            "generated_count": total_grade_practicals_gen,
-            "required_count": total_grade_practicals_req,
-            "remaining_count": max(0, total_grade_practicals_req - total_grade_practicals_gen),
-            "percentage": min(100, round((total_grade_practicals_gen / total_grade_practicals_req) * 100)) if total_grade_practicals_req > 0 else 0,
+            "generated_count": grade_totals["practicals"]["generated"],
+            "required_count": grade_totals["practicals"]["required"],
+            "remaining_count": grade_totals["practicals"]["remaining"],
+            "percentage": grade_totals["practicals"]["percentage"],
         },
         "questions_totals": {
-            "generated_count": total_grade_questions_gen,
-            "required_count": total_grade_questions_req,
-            "remaining_count": max(0, total_grade_questions_req - total_grade_questions_gen),
-            "percentage": min(100, round((total_grade_questions_gen / total_grade_questions_req) * 100)) if total_grade_questions_req > 0 else 0,
+            "generated_count": grade_totals["questions"]["generated"],
+            "required_count": grade_totals["questions"]["required"],
+            "remaining_count": grade_totals["questions"]["remaining"],
+            "percentage": grade_totals["questions"]["percentage"],
+        },
+        "slo_coverage_totals": {
+            "generated_count": grade_totals["slo_coverage"]["generated"],
+            "required_count": grade_totals["slo_coverage"]["required"],
+            "remaining_count": grade_totals["slo_coverage"]["remaining"],
+            "percentage": grade_totals["slo_coverage"]["percentage"],
         },
         "focus_recommendations": focus_recommendations[:15],
         "subjects": subject_reports,

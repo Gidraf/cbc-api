@@ -54,6 +54,104 @@ class ParsedCurriculumDesign:
     subject_dna_id: str = ""
 
 
+
+# ── Cover-page parsing ───────────────────────────────────────────────────────
+# KICD covers put the learning area on its OWN line, between the words
+# "CURRICULUM DESIGN" and the grade banner:
+#
+#     PRIMARY SCHOOL EDUCATION CURRICULUM DESIGN
+#     FRENCH
+#     GRADE 4
+#
+# Patterns that looked for "<SUBJECT> CURRICULUM DESIGN" therefore matched the
+# level banner ("PRIMARY SCHOOL EDUCATION"), or spanned lines and were thrown
+# away — which is why every document parsed as "General Curriculum".
+
+_BANNER = re.compile(
+    r"^(GRADE\b|SENIOR\b|JUNIOR\b|UPPER\b|LOWER\b|PRE-?PRIMARY\b|"
+    r"KENYA INSTITUTE|A SKILLED|REPUBLIC OF|MINISTRY OF|CURRICULUM DESIGN)",
+    re.IGNORECASE,
+)
+# A pathway label carrying the index this pipeline assigned it, e.g.
+# "Pure Sciences #2". That is a group, never a learning area.
+_INDEXED_PATHWAY = re.compile(r"#\s*\d+\s*$")
+
+_GRADE_NUM = re.compile(r"\bGRADE\s+(\d{1,2})\b", re.IGNORECASE)
+
+_LEVEL_BY_GRADE = {
+    1: "Lower Primary", 2: "Lower Primary", 3: "Lower Primary",
+    4: "Upper Primary", 5: "Upper Primary", 6: "Upper Primary",
+    7: "Junior School", 8: "Junior School", 9: "Junior School",
+    10: "Senior School", 11: "Senior School", 12: "Senior School",
+}
+
+
+def _looks_like_subject(line: str) -> bool:
+    line = line.strip()
+    if not (3 <= len(line) <= 45):
+        return False
+    if _BANNER.match(line) or _INDEXED_PATHWAY.search(line):
+        return False
+    letters = sum(c.isalpha() for c in line)
+    return letters >= 3 and letters / len(line) > 0.6
+
+
+def _subject_from_cover(text: str) -> str:
+    """The learning area as printed on the title page."""
+    lines = [l.strip() for l in text.split("\n")[:60] if l.strip()]
+
+    for index, line in enumerate(lines):
+        if not re.search(r"CURRICULUM\s+DESIGN", line, re.IGNORECASE):
+            continue
+
+        # Usual layout: the learning area is the next usable line.
+        for candidate in lines[index + 1: index + 4]:
+            if _looks_like_subject(candidate):
+                return candidate
+
+        # Diploma covers invert it, naming the area before the words.
+        for candidate in reversed(lines[max(0, index - 3): index]):
+            if _looks_like_subject(candidate):
+                return candidate
+
+    match = re.search(r"LEARNING AREA\s*:\s*([^\n]{3,45})", text, re.IGNORECASE)
+    return match.group(1).strip() if match else ""
+
+
+def _grade_from_text(text: str, meta: dict[str, Any]) -> tuple[str, str]:
+    """Grade and level, read as a number so 10-12 are not mistaken for 1-2."""
+    upper = text.upper()
+
+    if "DIPLOMA IN TEACHER EDUCATION" in upper:
+        return "grade-dte", "Diploma in Teacher Education (Pre-Primary and Primary)"
+
+    # The first "GRADE n" in the document is the one on the cover.
+    match = _GRADE_NUM.search(text)
+    if match:
+        number = int(match.group(1))
+        if 1 <= number <= 12:
+            return f"grade-{number}", _LEVEL_BY_GRADE[number]
+
+    if re.search(r"\bPP\s*2\b|PRE-?PRIMARY\s*2", upper):
+        return "grade-pp2", "Pre-Primary"
+    if re.search(r"\bPP\s*1\b|PRE-?PRIMARY", upper):
+        return "grade-pp1", "Pre-Primary"
+
+    # Fall back to what the ingesting catalogue declared.
+    declared = str(meta.get("grade") or meta.get("level") or "")
+    declared_match = _GRADE_NUM.search(declared)
+    if declared_match:
+        number = int(declared_match.group(1))
+        if 1 <= number <= 12:
+            return f"grade-{number}", _LEVEL_BY_GRADE[number]
+    if "PP2" in declared.upper():
+        return "grade-pp2", "Pre-Primary"
+    if "PP1" in declared.upper() or "PRE-PRIMARY" in declared.upper():
+        return "grade-pp1", "Pre-Primary"
+
+    return "", ""
+
+
 class CurriculumExtractorService:
     """Extracts curriculum specifications/blueprints from raw datasets.
     Generates tailored guidance, safety hazard criteria, and dynamic agent prompts
@@ -198,45 +296,32 @@ class CurriculumExtractorService:
     def _parse_curriculum_text(
         self, text: str, meta: dict[str, Any], dataset_dna_id: str
     ) -> ParsedCurriculumDesign:
-        subject = "General Curriculum"
-        subject_patterns = [
-            r"(?:DIPLOMA IN TEACHER EDUCATION[^\n]*\n(?:PRE-PRIMARY AND PRIMARY\n)?([A-Z\s]{3,30})\nCURRICULUM DESIGN)",
-            r"([A-Z\s]{3,30})\s+CURRICULUM DESIGN",
-            r"CURRICULUM DESIGN FOR\s+([A-Z\s]{3,30})",
-            r"LEARNING AREA:\s*([A-Za-z\s]+)",
-        ]
-        for pat in subject_patterns:
-            m = re.search(pat, text, re.IGNORECASE)
-            if m:
-                cand = m.group(1).strip()
-                cand = re.sub(r"^(FOR|IN|THE|DIPLOMA|GRADE)\s+", "", cand, flags=re.IGNORECASE).strip()
-                if len(cand) >= 3 and "\n" not in cand:
-                    subject = cand.title()
-                    break
+        # The document's own cover is the authority on what it teaches. The
+        # ingesting catalogue only knows the pathway a link sat under, which for
+        # senior school is a group ("Pure Sciences") rather than a learning area.
+        subject = _subject_from_cover(text)
 
-        if subject == "General Curriculum" and meta.get("title"):
-            subject = str(meta["title"]).replace(".pdf", "").title()
+        if not subject and meta.get("title"):
+            candidate = re.sub(r"\.pdf$", "", str(meta["title"]), flags=re.IGNORECASE).strip()
+            if _looks_like_subject(candidate):
+                subject = candidate
 
-        grade = "grade-7"
-        level = "Basic Education"
-        if "DIPLOMA IN TEACHER EDUCATION" in text.upper() or "DTE" in text.upper():
-            level = "Diploma in Teacher Education (Pre-Primary and Primary)"
-            grade = "grade-dte"
-        elif "JUNIOR SCHOOL" in text.upper() or "GRADE 7" in text.upper():
-            level = "Junior School"
-            grade = "grade-7"
-        elif "GRADE 8" in text.upper():
-            level = "Junior School"
-            grade = "grade-8"
-        elif "GRADE 9" in text.upper():
-            level = "Junior School"
-            grade = "grade-9"
-        elif "GRADE 4" in text.upper() or "GRADE 5" in text.upper() or "GRADE 6" in text.upper():
-            level = "Upper Primary"
-            grade = "grade-4"
-        elif "PRE-PRIMARY" in text.upper() or "PP1" in text.upper():
-            level = "Pre-Primary"
-            grade = "grade-pp1"
+        if not subject:
+            declared = str(meta.get("subject") or "").strip()
+            if declared and _looks_like_subject(declared):
+                subject = declared
+
+        subject = subject.title() if subject else "General Curriculum"
+
+        grade, level = _grade_from_text(text, meta)
+        if not grade:
+            # Guessing a grade silently files a design under the wrong cohort,
+            # which is invisible until questions are generated for it.
+            logger.warning(
+                "No grade found on the cover of '%s' (file_id=%s); defaulting to grade-7.",
+                subject, meta.get("file_id", "?"),
+            )
+            grade, level = "grade-7", "Basic Education"
 
         subject_code = "".join([w[0] for w in subject.split() if w]).upper()[:4]
 

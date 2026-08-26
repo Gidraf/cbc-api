@@ -25,6 +25,7 @@ from .models import (
 from .routes.admin_langfuse import router as admin_langfuse_router
 from .routes.auth import router as auth_router
 from .routes.curriculum import router as curriculum_router
+from .routes.exams import router as exams_router
 from .routes.questions import router as questions_router
 from .routes.targets import router as targets_router
 from .services.auth import AuthContext, authenticate_login, create_access_token, get_auth_context, require_roles
@@ -51,6 +52,7 @@ app.include_router(auth_router)
 app.include_router(admin_langfuse_router)
 app.include_router(curriculum_router)
 app.include_router(questions_router)
+app.include_router(exams_router)
 app.include_router(targets_router)
 
 router = ProviderRouter(runtime_state)
