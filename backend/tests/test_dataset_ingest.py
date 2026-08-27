@@ -806,26 +806,57 @@ def test_reprocess_runs_the_same_split_as_a_first_ingest(db, monkeypatch):
     assert db.rows["grade-pp1__a"]["status"] == "ingested"
 
 
-def test_a_partial_ingest_is_not_recorded_as_ingested(db, monkeypatch):
-    """Six of seven learning areas is not "ingested". Recording it as such is
-    how a dropdown showed "(not ingested)" with nothing to explain it."""
+def test_a_partial_ingest_raises_so_the_caller_can_catch_it(db, monkeypatch):
+    """Six of seven learning areas is not "ingested". Returning quietly is how
+    three learning areas sat unnoticed through several rounds of generation."""
+    from app.errors import ApiError
+    from app.services import curriculum_extractor as extractor
+
     stub_dataset(monkeypatch, items(("a", "a", "PP1.pdf", "Pre-Primary 1")), grade="grade-pp1")
     di.sync_grade("grade-pp1")
 
-    _stub_combined_extractor(
-        monkeypatch, PP1_AREAS[:4],
-        missing=["Christian Religious Education", "Hindu Religious Education",
-                 "Mathematical Activities"],
-    )
-    di.process_item("grade-pp1__a")
+    missing = ["Christian Religious Education", "Hindu Religious Education",
+               "Mathematical Activities"]
+    partial = {
+        "status": "partial", "complete": False,
+        "subject": "Language Activities", "design_id": "cd_language",
+        "expected_learning_areas": PP1_AREAS, "learning_areas_missing": missing,
+        "learning_areas": [
+            {"subject": a, "status": "success", "design_id": f"cd_{a[:4].lower()}",
+             "substrand_count": 2} for a in PP1_AREAS[:4]
+        ],
+    }
 
+    def raising(payload, strict=True):
+        raise ApiError(
+            code="PARTIAL_INGEST",
+            message="Ingested 4 of 7 learning areas for grade-pp1. "
+                    "Everything that succeeded has been saved; not found in the "
+                    "document: " + ", ".join(missing) + ".",
+            status_code=422, retryable=False, detail=partial,
+        )
+
+    monkeypatch.setattr(extractor.curriculum_extractor, "ingest_raw_curriculum", raising)
+
+    with pytest.raises(ApiError) as caught:
+        di.process_item("grade-pp1__a")
+
+    error = caught.value
+    assert error.code == "PARTIAL_INGEST"
+    assert error.status_code == 422
+    assert "Hindu Religious Education" in error.message
+    # The caller gets the specifics without parsing prose.
+    assert error.detail["learning_areas_missing"] == missing
+    assert error.detail["complete"] is False
+    saved = [a["subject"] for a in error.detail["learning_areas"]]
+    assert "Language Activities" in saved and len(saved) == 4
+
+    # And the four that DID succeed are still tracked, not thrown away.
     row = db.rows["grade-pp1__a"]
     assert row["status"] == "failed", "a partial ingest must not look complete"
-    assert "Missing:" in row["error"]
+    assert row["learning_areas_missing"] == missing
+    assert len(row["design_ids"]) == 4, "work that succeeded must stay tracked"
     assert "Hindu Religious Education" in row["error"]
-    assert row["learning_areas_missing"] == [
-        "Christian Religious Education", "Hindu Religious Education", "Mathematical Activities"
-    ]
 
 
 def test_uningesting_a_combined_item_removes_every_design(db, monkeypatch):

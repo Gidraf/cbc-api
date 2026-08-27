@@ -173,6 +173,7 @@ async def api_error_handler(_, exc: ApiError):
                     "code": exc.code,
                     "message": exc.message,
                     "retryable": exc.retryable,
+                    **({"detail": exc.detail} if exc.detail else {}),
                 }
             ],
         },

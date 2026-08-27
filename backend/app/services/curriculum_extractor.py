@@ -262,7 +262,18 @@ class CurriculumExtractorService:
     Generates tailored guidance, safety hazard criteria, and dynamic agent prompts
     (Generator, Reviewer with Hazard Check, Multi-Agent Approvers) for downstream pipeline stages."""
 
-    def ingest_raw_curriculum(self, raw_input: dict[str, Any] | str) -> dict[str, Any]:
+    def ingest_raw_curriculum(
+        self, raw_input: dict[str, Any] | str, strict: bool = True
+    ) -> dict[str, Any]:
+        """Ingest a design. With ``strict`` (the default), an incomplete result
+        raises PARTIAL_INGEST after the work that succeeded has been persisted.
+
+        Raising instead of persisting would throw away four good learning areas
+        in order to report three bad ones. Persisting and returning quietly let
+        a half-ingested grade look finished, which is how three learning areas
+        sat unnoticed through several rounds of generation. So: keep the work,
+        then fail loudly.
+        """
         raw_text = ""
         payload_meta = {}
 
@@ -366,7 +377,7 @@ class CurriculumExtractorService:
             r for r in results if r.get("status") != "success"
         ]
 
-        return {
+        outcome = {
             **primary,
             "combined_design": True,
             "learning_areas": areas,
@@ -377,6 +388,33 @@ class CurriculumExtractorService:
             "complete": complete,
             "status": "success" if complete else "partial",
         }
+
+        if strict and not complete:
+            # "not_found_in_document" is already reported as missing; counting
+            # it again as a parse failure named the same three areas twice and
+            # made the message read as six problems instead of three.
+            failed = [
+                a for a in areas
+                if a.get("status") not in ("success", "not_found_in_document", None)
+            ]
+            summary = []
+            if absent:
+                summary.append(f"not found in the document: {', '.join(absent)}")
+            if failed:
+                summary.append(
+                    "failed to parse: "
+                    + ", ".join(str(a.get("subject")) for a in failed)
+                )
+            raise_api_error(
+                "PARTIAL_INGEST",
+                f"Ingested {len(succeeded)} of {len(published)} learning areas for "
+                f"{grade}. Everything that succeeded has been saved; "
+                + "; ".join(summary)
+                + ". Generation for the missing areas would be ungrounded.",
+                detail=outcome,
+            )
+
+        return outcome
 
     def _ingest_one(
         self, raw_text: str, payload_meta: dict[str, Any], learning_area: str = "",

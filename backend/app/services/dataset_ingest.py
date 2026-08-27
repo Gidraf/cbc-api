@@ -21,6 +21,7 @@ import logging
 import re
 from typing import Any
 
+from ..errors import ApiError
 from ..infra.db import execute, fetch_all, fetch_one, to_json
 from .grade_order import normalize_grade
 from .langfuse_context import langfuse_context_service
@@ -425,6 +426,45 @@ def _discard_previous_designs(row: dict[str, Any], item_id: str) -> int:
     return len(ids)
 
 
+def _record_outcome(
+    item_id: str,
+    result: dict[str, Any],
+    payload: dict[str, Any],
+    *,
+    status: str,
+    error: str,
+) -> None:
+    """Write what an ingest produced, complete or not.
+
+    A combined design produces one row per learning area. Recording only the
+    first meant a later forced re-run orphaned the rest, and the console
+    reported the whole document as ingested under one area's name.
+    """
+    areas = result.get("learning_areas") or []
+    design_ids = [
+        _text(a.get("design_id")) for a in areas
+        if _text(a.get("design_id")) and a.get("status") == "success"
+    ] or [_text(result.get("design_id"))]
+    design_ids = [d for d in design_ids if d]
+
+    missing = list(result.get("learning_areas_missing") or [])
+    subject = _text(result.get("subject"))
+    if len(areas) > 1:
+        ingested = [_text(a.get("subject")) for a in areas if a.get("status") == "success"]
+        subject = ", ".join(s for s in ingested if s) or subject
+
+    set_status(
+        item_id,
+        FAILED if missing else status,
+        resolved_subject=subject,
+        design_id=_text(result.get("design_id")),
+        design_ids=design_ids,
+        learning_areas_missing=missing,
+        char_count=len(payload.get("output") or ""),
+        error=error,
+    )
+
+
 def process_item(item_id: str, force: bool = False) -> dict[str, Any]:
     """Run one dataset item through curriculum extraction.
 
@@ -474,43 +514,24 @@ def process_item(item_id: str, force: bool = False) -> dict[str, Any]:
 
     try:
         result = curriculum_extractor.ingest_raw_curriculum(payload)
+    except ApiError as exc:
+        # A partial ingest still saved several learning areas. Recording only
+        # "failed" would lose track of them, and a later forced re-run would
+        # then orphan the designs it could no longer see.
+        if exc.code == "PARTIAL_INGEST" and isinstance(exc.detail, dict):
+            _record_outcome(item_id, exc.detail, payload, status=FAILED,
+                            error=exc.message[:500])
+            logger.error("Partial ingest for %s: %s", item_id, exc.message)
+        else:
+            set_status(item_id, FAILED, error=exc.message[:500])
+            logger.warning("Ingest failed for %s: %s", item_id, exc.message)
+        raise
     except Exception as exc:  # noqa: BLE001
         set_status(item_id, FAILED, error=str(exc)[:500])
         logger.warning("Ingest failed for %s: %s", item_id, exc)
         raise
 
-    # A combined design produces one row per learning area. Recording only the
-    # first meant a later forced re-run orphaned the rest, and the console
-    # reported the whole document as ingested under one area's name.
-    areas = result.get("learning_areas") or []
-    design_ids = [
-        _text(a.get("design_id")) for a in areas if _text(a.get("design_id"))
-    ] or [_text(result.get("design_id"))]
-    design_ids = [d for d in design_ids if d]
-
-    missing = list(result.get("learning_areas_missing") or [])
-    subject = _text(result.get("subject"))
-    if len(areas) > 1:
-        ingested = [_text(a.get("subject")) for a in areas if a.get("status") == "success"]
-        subject = ", ".join(s for s in ingested if s) or subject
-
-    # An ingest that produced only some of a grade's learning areas is not the
-    # same as one that produced them all, and reporting it as INGESTED is how
-    # "(not ingested)" appeared in a dropdown with nothing to explain it.
-    set_status(
-        item_id,
-        FAILED if missing else INGESTED,
-        resolved_subject=subject,
-        design_id=_text(result.get("design_id")),
-        design_ids=design_ids,
-        learning_areas_missing=missing,
-        char_count=len(payload["output"]),
-        error=(
-            f"Ingested {len(design_ids)} of {len(result.get('expected_learning_areas') or [])} "
-            f"learning areas. Missing: {', '.join(missing)}."
-            if missing else ""
-        ),
-    )
+    _record_outcome(item_id, result, payload, status=INGESTED, error="")
     return result
 
 

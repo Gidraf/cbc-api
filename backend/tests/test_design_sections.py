@@ -7,6 +7,8 @@ with the strands of Christian Religious Education.
 """
 from __future__ import annotations
 
+import pytest
+
 from app.services.design_sections import is_combined_design, split_learning_areas
 
 PP1_AREAS = [
@@ -159,7 +161,10 @@ def test_one_unreadable_learning_area_does_not_cost_the_others(monkeypatch) -> N
         extractor.CurriculumExtractorService, "_ingest_one", flaky, raising=True
     )
 
-    result = extractor.curriculum_extractor.ingest_raw_curriculum({"output": _pp1_document()})
+    # Strict mode raises on a partial run; the payload it carries is the point.
+    result = extractor.curriculum_extractor.ingest_raw_curriculum(
+        {"output": _pp1_document()}, strict=False
+    )
 
     statuses = {a["subject"]: a["status"] for a in result["learning_areas"]}
     assert statuses["Creative Activities"] == "failed"
@@ -468,7 +473,7 @@ def test_ingest_reports_which_learning_areas_are_missing(monkeypatch) -> None:
     )
 
     result = extractor.curriculum_extractor.ingest_raw_curriculum(
-        {"output": _pp1_document(), "grade": "grade-pp1"}
+        {"output": _pp1_document(), "grade": "grade-pp1"}, strict=False
     )
 
     assert result["status"] == "partial", "a partial ingest must not report success"
@@ -522,3 +527,74 @@ def test_diagnose_writes_nothing() -> None:
     source = __import__("inspect").getsource(ds.diagnose)
     for forbidden in ("execute(", "INSERT", "UPDATE", "DELETE", "save_"):
         assert forbidden not in source, f"diagnose must not write: found {forbidden}"
+
+
+def test_a_partial_ingest_raises_but_keeps_the_work(monkeypatch) -> None:
+    """Raising instead of persisting would throw away four good learning areas
+    in order to report three bad ones. Keep the work, then fail loudly."""
+    from app.errors import ApiError
+    from app.services import curriculum_extractor as extractor
+
+    persisted: list[str] = []
+
+    def fake_ingest_one(self, raw_text, meta, learning_area=""):
+        persisted.append(learning_area)
+        return {"status": "success", "subject": learning_area,
+                "design_id": f"cd_{learning_area[:4]}", "substrand_count": 2}
+
+    real_split = extractor.split_learning_areas if hasattr(extractor, "split_learning_areas") else None
+    import app.services.design_sections as ds
+    original = ds.split_learning_areas
+    monkeypatch.setattr(
+        ds, "split_learning_areas",
+        lambda text, published=None: [
+            s for s in original(text, published)
+            if s.learning_area != "Mathematical Activities"
+        ],
+    )
+    monkeypatch.setattr(extractor.CurriculumExtractorService, "_ingest_one",
+                        fake_ingest_one, raising=True)
+
+    with pytest.raises(ApiError) as caught:
+        extractor.curriculum_extractor.ingest_raw_curriculum(
+            {"output": _pp1_document(), "grade": "grade-pp1"}
+        )
+
+    error = caught.value
+    assert error.code == "PARTIAL_INGEST"
+    assert error.status_code == 422
+    assert "Mathematical Activities" in error.message
+    assert "has been saved" in error.message
+    assert "would be ungrounded" in error.message
+
+    # The six that worked were persisted BEFORE the raise.
+    assert len(persisted) == 6
+    assert "Language Activities" in persisted
+    assert error.detail["learning_areas_missing"] == ["Mathematical Activities"]
+
+
+def test_strict_can_be_turned_off_for_a_caller_that_wants_the_payload() -> None:
+    """Some callers prefer to inspect the result rather than catch."""
+    import app.services.design_sections as ds
+    from app.services import curriculum_extractor as extractor
+
+    original = ds.split_learning_areas
+    import pytest as _pytest
+    with _pytest.MonkeyPatch.context() as mp:
+        mp.setattr(ds, "split_learning_areas",
+                   lambda text, published=None: [
+                       s for s in original(text, published)
+                       if s.learning_area != "Mathematical Activities"])
+        mp.setattr(extractor.CurriculumExtractorService, "_ingest_one",
+                   lambda self, t, m, learning_area="": {
+                       "status": "success", "subject": learning_area,
+                       "design_id": "cd_x", "substrand_count": 1},
+                   raising=True)
+
+        result = extractor.curriculum_extractor.ingest_raw_curriculum(
+            {"output": _pp1_document(), "grade": "grade-pp1"}, strict=False
+        )
+
+    assert result["status"] == "partial"
+    assert result["complete"] is False
+    assert result["learning_areas_missing"] == ["Mathematical Activities"]

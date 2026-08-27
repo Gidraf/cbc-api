@@ -9,6 +9,10 @@ class ApiError(Exception):
     message: str
     status_code: int
     retryable: bool = False
+    # Machine-readable specifics for errors where "what failed" is a list rather
+    # than a sentence — which learning areas are missing, which pages were
+    # rejected. A caller catching this should not have to parse the message.
+    detail: dict | None = None
 
 
 ERRORS = {
@@ -51,6 +55,11 @@ ERRORS = {
     # A stage was asked to generate without an ancestor it depends on. The
     # remedy is to produce the missing parent, so this is the caller's to fix.
     "MISSING_PARENT_CONTEXT": (422, False),
+    # Some of a design's learning areas were ingested and some were not. The
+    # work that succeeded is kept — raising instead of persisting would throw
+    # away four good learning areas to report three bad ones — but the caller
+    # must not be told this succeeded. 422: the document is the thing to fix.
+    "PARTIAL_INGEST": (422, False),
     # The work is already done. A conflict, not a failure: the caller can retry
     # with force to replace what the previous run produced.
     "ALREADY_INGESTED": (409, False),
@@ -62,6 +71,9 @@ ERRORS = {
 }
 
 
-def raise_api_error(code: str, message: str) -> None:
+def raise_api_error(code: str, message: str, detail: dict | None = None) -> None:
     status, retryable = ERRORS.get(code, (500, False))
-    raise ApiError(code=code, message=message, status_code=status, retryable=retryable)
+    raise ApiError(
+        code=code, message=message, status_code=status,
+        retryable=retryable, detail=detail,
+    )
