@@ -8,10 +8,14 @@ from typing import Any, Optional
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 
+from ..errors import raise_api_error
 from ..infra.db import execute, fetch_all, fetch_one
 from ..services.artifact_dna import artifact_dna_service
 from ..services.auth import AuthContext, require_roles
 from ..services.curriculum_extractor import curriculum_extractor
+from ..services.faith_scope import prompt_block as faith_prompt_block
+from ..services.grade_scope import notes_for as grade_scope_notes
+from ..services.level_register import register_block
 
 logger = logging.getLogger(__name__)
 
@@ -948,7 +952,11 @@ def factory_generate_notes(
 
     template_vars = {
         "master_context": master_context,
-        "level_register": register_block(payload.grade),
+        "level_register": register_block(
+                    payload.grade,
+                    notes=grade_scope_notes(payload.grade, payload.subject),
+                ),
+        "faith_scope": faith_prompt_block(payload.subject),
         "content_type_directives": ct_profile.format_for_prompt(),
         "level": level,
         "strand": payload.strand,
@@ -1250,7 +1258,11 @@ def factory_generate_diagram(
             "strand": payload.strand,
             "sub_strand": payload.sub_strand,
             "concept": concept_name,
-            "level_register": register_block(payload.grade),
+            "level_register": register_block(
+                    payload.grade,
+                    notes=grade_scope_notes(payload.grade, payload.subject),
+                ),
+            "faith_scope": faith_prompt_block(payload.subject),
             "content_type_directives": ct_profile.format_for_prompt(),
             "notes_content": notes_summary_str or payload.notes_title or payload.sub_strand,
         },
@@ -1366,7 +1378,11 @@ def factory_generate_activity(
         template_vars={
             "strand": payload.strand,
             "sub_strand": payload.sub_strand,
-            "level_register": register_block(payload.grade),
+            "level_register": register_block(
+                    payload.grade,
+                    notes=grade_scope_notes(payload.grade, payload.subject),
+                ),
+            "faith_scope": faith_prompt_block(payload.subject),
             "content_type_directives": ct_profile.format_for_prompt(),
             "notes_content": notes_str or payload.notes_title or payload.sub_strand,
             "diagram_info": diagram_str or "Visual model integrated with sub-strand.",
@@ -1479,7 +1495,11 @@ def factory_plan_visuals(
         template_vars={
             "strand": payload.strand,
             "sub_strand": payload.sub_strand,
-            "level_register": register_block(payload.grade),
+            "level_register": register_block(
+                    payload.grade,
+                    notes=grade_scope_notes(payload.grade, payload.subject),
+                ),
+            "faith_scope": faith_prompt_block(payload.subject),
             "content_type_directives": ct_profile.format_for_prompt(),
             "notes_content": notes_str or payload.notes_title or payload.sub_strand,
         },
@@ -1620,7 +1640,11 @@ def factory_generate_single_visual(
             "strand": payload.strand,
             "sub_strand": payload.sub_strand,
             "concept": title,
-            "level_register": register_block(payload.grade),
+            "level_register": register_block(
+                    payload.grade,
+                    notes=grade_scope_notes(payload.grade, payload.subject),
+                ),
+            "faith_scope": faith_prompt_block(payload.subject),
             "content_type_directives": ct_profile.format_for_prompt(),
             "notes_content": notes_str or payload.sub_strand,
         },
@@ -1926,7 +1950,11 @@ def factory_plan_activities(
         template_vars={
             "strand": payload.strand,
             "sub_strand": payload.sub_strand,
-            "level_register": register_block(payload.grade),
+            "level_register": register_block(
+                    payload.grade,
+                    notes=grade_scope_notes(payload.grade, payload.subject),
+                ),
+            "faith_scope": faith_prompt_block(payload.subject),
             "content_type_directives": ct_profile.format_for_prompt(),
             "notes_content": notes_str or payload.notes_title or payload.sub_strand,
             "diagram_info": json_lib.dumps(payload.diagram_info, ensure_ascii=False) if payload.diagram_info else "Visual diagram context",
@@ -2061,7 +2089,11 @@ def factory_generate_single_activity(
         template_vars={
             "strand": payload.strand,
             "sub_strand": payload.sub_strand,
-            "level_register": register_block(payload.grade),
+            "level_register": register_block(
+                    payload.grade,
+                    notes=grade_scope_notes(payload.grade, payload.subject),
+                ),
+            "faith_scope": faith_prompt_block(payload.subject),
             "content_type_directives": ct_profile.format_for_prompt(),
             "notes_content": notes_str or payload.sub_strand,
         },
@@ -2175,7 +2207,11 @@ def factory_generate_questions(
             "sub_strand": payload.sub_strand,
             "slo_id": payload.slo_id or f"{payload.grade}-{payload.subject_code}-01",
             "difficulty": payload.difficulty,
-            "level_register": register_block(payload.grade),
+            "level_register": register_block(
+                    payload.grade,
+                    notes=grade_scope_notes(payload.grade, payload.subject),
+                ),
+            "faith_scope": faith_prompt_block(payload.subject),
             "content_type_directives": ct_profile.format_for_prompt(),
             "notes_content": notes_str or payload.notes_summary or payload.sub_strand,
             "diagram_id": payload.diagram_info.get("diagram_id", "diag_01") if payload.diagram_info else "diag_01",
@@ -2879,6 +2915,13 @@ class FactoryGenerateSubstrandsRequest(BaseModel):
     inspect: bool = False
 
 
+class DeriveGradeScopeRequest(BaseModel):
+    grade: str
+    subject: str
+    source_material_text: str | None = None
+    inspect: bool = False
+
+
 class FactorySaveSubstrandsRequest(BaseModel):
     grade: str
     subject: str
@@ -3291,7 +3334,6 @@ def factory_generate_substrands(
     # shared prompt's own examples set the register, and a pre-primary sub-strand
     # comes back demanding a flowchart from a child who cannot read.
     from ..services.content_type_classifier import get_profile_from_db
-    from ..services.level_register import register_block
 
     ct_profile = get_profile_from_db(payload.subject, payload.grade)
 
@@ -3306,7 +3348,11 @@ def factory_generate_substrands(
             focus_strand=payload.strand_name,
             template_vars={
                 "master_context": master_context,
-                "level_register": register_block(payload.grade),
+                "level_register": register_block(
+                    payload.grade,
+                    notes=grade_scope_notes(payload.grade, payload.subject),
+                ),
+                "faith_scope": faith_prompt_block(payload.subject),
                 "content_type_directives": (
                     ct_profile.format_for_prompt() if ct_profile else ""
                 ),
@@ -3416,6 +3462,105 @@ def factory_generate_substrands(
         "chunked": False,
         "usage": resp.usage,
         "model": resp.model,
+    }
+
+
+
+@router.post("/factory/derive-scope")
+def factory_derive_grade_scope(
+    payload: DeriveGradeScopeRequest,
+    _: AuthContext = Depends(require_roles("admin", "operator")),
+) -> dict[str, Any]:
+    """Read a grade's design and store the facts that bound what may be asked.
+
+    PP1's scope was written by hand — letter sounds only, nothing beyond 10.
+    Doing the other fourteen grades that way does not scale, and asking a model
+    to summarise a 296-page design in one call is the context-length failure
+    this system already hit. So the design is read in page-aligned chunks and
+    the results reconciled into one summary small enough to sit in every prompt.
+    """
+    from ..infra.db import fetch_one
+    from ..services import grade_scope as scope_service
+    from ..services.langfuse_context import langfuse_context_service
+    from ..services.llm_client import llm_client
+    from ..services.pipeline import pipeline_orchestrator
+
+    source_material = payload.source_material_text or ""
+    design_id = ""
+    if not source_material:
+        row = fetch_one(
+            """
+            SELECT design_id, raw_payload FROM curriculum_designs
+            WHERE (grade = :grade OR grade = :alt_grade) AND LOWER(subject) = LOWER(:subject)
+            ORDER BY updated_at DESC LIMIT 1
+            """,
+            {"grade": payload.grade, "alt_grade": payload.grade.replace("grade-", ""),
+             "subject": payload.subject},
+        )
+        if row:
+            design_id = row.get("design_id") or ""
+            raw = row.get("raw_payload") or {}
+            source_material = raw.get("source_text") or raw.get("raw_text") or ""
+
+    if not source_material.strip():
+        # Deriving a scope from nothing would produce a confident, invented one.
+        raise_api_error(
+            "MISSING_PARENT_CONTEXT",
+            f"No ingested design text for {payload.subject} ({payload.grade}). "
+            "Ingest the curriculum design before deriving its scope.",
+        )
+
+    resolved = pipeline_orchestrator.router.resolve_for_stage("notes_generation")
+    template = langfuse_context_service.get_agent_prompt("grade-scope-extractor")
+
+    def for_chunk(chunk: Any) -> list[dict[str, Any]]:
+        prompt = langfuse_context_service._render_template(template, {
+            "grade": payload.grade,
+            "subject": payload.subject,
+            "level_register": register_block(
+                    payload.grade,
+                    notes=grade_scope_notes(payload.grade, payload.subject),
+                ),
+            "faith_scope": faith_prompt_block(payload.subject),
+            "page_range": chunk.page_range,
+            "chunk_text": chunk.text,
+        })
+        resp = llm_client.generate(resolved, [{"role": "user", "content": prompt}], temperature=0.1)
+        content = resp.content if isinstance(resp.content, dict) else {}
+        return content.get("facts", []) or []
+
+    if payload.inspect:
+        from ..services.document_chunking import chunk_document, describe
+
+        chunks = chunk_document(source_material)
+        return {"inspection": {
+            "grade": payload.grade,
+            "subject": payload.subject,
+            "source_chars": len(source_material),
+            "chunks": describe(chunks),
+            "model": f"{resolved.provider}/{resolved.model}",
+        }}
+
+    scope = scope_service.derive_scope(
+        payload.grade, payload.subject, source_material, for_chunk
+    )
+
+    stored = False
+    if scope.facts:
+        try:
+            scope_service.save_scope(scope, design_id=design_id)
+            stored = True
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Could not store derived scope: %s", exc)
+
+    return {
+        **scope.to_dict(),
+        "stored": stored,
+        "source_chars": len(source_material),
+        "design_id": design_id,
+        # A derivation that found no limits is not a failure to hide: it means
+        # the register keeps saying "read the design", which stays honest.
+        "status": "ok" if scope.facts else "no_bounding_facts_found",
     }
 
 

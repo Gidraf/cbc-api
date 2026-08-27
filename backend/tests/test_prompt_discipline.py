@@ -222,3 +222,39 @@ def test_a_successful_seed_reports_the_versions_it_wrote(monkeypatch) -> None:
     assert result["status"] == "ok"
     assert result["failed_prompts"] == []
     assert any("v42" in p for p in result["seeded_prompts"]), result["seeded_prompts"]
+
+
+@pytest.mark.parametrize(
+    "agent",
+    [a for a in sorted(SEED_AGENT_PROMPTS) if a != "curriculum-extractor"],
+)
+def test_every_prompt_carries_the_faith_scope_slot(agent: str) -> None:
+    """CRE, HRE and IRE must never share a prompt. The slot is empty for every
+    other learning area, so it costs nothing where it does not apply."""
+    assert "{{ faith_scope }}" in SEED_AGENT_PROMPTS[agent]
+
+
+def test_route_modules_can_actually_resolve_the_helpers_they_call() -> None:
+    """A local import inside one function once satisfied the "already imported"
+    check, so the module-level import was skipped and the other eight call
+    sites would have raised NameError at request time."""
+    import app.routes.curriculum as curriculum
+    import app.routes.questions as questions
+
+    for module in (curriculum, questions):
+        assert callable(getattr(module, "register_block", None)), module.__name__
+        assert callable(getattr(module, "faith_prompt_block", None)), module.__name__
+
+
+def test_pre_primary_prompts_say_learning_area_not_subject() -> None:
+    """KICD calls them Activity Areas at this level; "subject" is not how the
+    design speaks, and the console should match the document."""
+    from app.services.level_register import register_block, register_for_grade
+
+    assert register_for_grade("grade-pp1").area_noun == "learning area"
+    assert register_for_grade("grade-2").area_noun == "learning area"
+    assert register_for_grade("grade-5").area_noun == "subject"
+    assert register_for_grade("grade-dte").area_noun == "subject"
+
+    block = register_block("grade-pp1")
+    assert "KICD calls these learning areas, not subjects" in block

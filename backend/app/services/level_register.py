@@ -22,7 +22,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field, replace
 from typing import Any
 
-from .grade_order import grade_label, grade_level, normalize_grade
+from .grade_order import GRADE_SEQUENCE, grade_label, grade_level, normalize_grade
 
 
 @dataclass(slots=True)
@@ -38,9 +38,19 @@ class LevelRegister:
     cannot: list[str] = field(default_factory=list)
     time_unit: str = "lessons"
     lesson_minutes: int = 0
+    # KICD calls these "Activity Areas" / "learning areas" at pre-primary and
+    # lower primary, and "subjects" from upper primary on. Using "subject" for
+    # a four-year-old's Language Activities is not how the design speaks.
+    area_noun: str = "subject"
     practicals: str = ""
     uses_themes: bool = False
     scenario_world: str = ""
+    # A band is not a grade. Grade 1 and Grade 3 are both "Lower Primary", but
+    # content pitched identically at both is wrong for one of them.
+    year_in_level: str = ""
+    builds_on: str = ""
+    prepares_for: str = ""
+    grade_notes: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -53,9 +63,14 @@ class LevelRegister:
             "cannot": list(self.cannot),
             "time_unit": self.time_unit,
             "lesson_minutes": self.lesson_minutes,
+            "area_noun": self.area_noun,
             "practicals": self.practicals,
             "uses_themes": self.uses_themes,
             "scenario_world": self.scenario_world,
+            "year_in_level": self.year_in_level,
+            "builds_on": self.builds_on,
+            "prepares_for": self.prepares_for,
+            "grade_notes": list(self.grade_notes),
         }
 
     def format_for_prompt(self) -> str:
@@ -63,6 +78,8 @@ class LevelRegister:
         lines = [
             f"AUDIENCE: {self.audience} — {self.grade_label} ({self.level}), typically {self.typical_ages}.",
             f"LITERACY: {self.literacy}",
+            f"TERMINOLOGY: at this level KICD calls these {self.area_noun}s, not "
+            f"{'subjects' if self.area_noun != 'subject' else 'learning areas'}. Use that word.",
         ]
         if self.can:
             lines.append("At this level learners CAN:")
@@ -84,6 +101,22 @@ class LevelRegister:
             lines.append(f"PRACTICAL WORK: {self.practicals}")
         if self.scenario_world:
             lines.append(f"CONTEXT FOR EXAMPLES: {self.scenario_world}")
+        if self.year_in_level:
+            lines.append(f"POSITION: {self.grade_label} is the {self.year_in_level}.")
+        if self.builds_on or self.prepares_for:
+            progression = []
+            if self.builds_on:
+                progression.append(
+                    f"Learners arrive having completed {self.builds_on}; do not re-teach it."
+                )
+            if self.prepares_for:
+                progression.append(
+                    f"They go on to {self.prepares_for}; do not pre-empt its content."
+                )
+            lines.append("PROGRESSION: " + " ".join(progression))
+        if self.grade_notes:
+            lines.append(f"WHAT {self.grade_label.upper()} ACTUALLY COVERS, from its own design:")
+            lines.extend(f"  - {n}" for n in self.grade_notes)
         if self.uses_themes:
             lines.append(
                 "STRUCTURE: subject -> STRAND -> SUB-STRAND is the spine. SOME learning areas "
@@ -122,6 +155,7 @@ _PRE_PRIMARY = LevelRegister(
     practicals="Play-based and sensory only: singing games, role-play, modelling, nature walks, water play. There are no experiments at this level.",
     uses_themes=True,
     scenario_world="The child's own world: self, family, home, neighbourhood, school. Not farms, industry, counties or national development.",
+    area_noun="learning area",
 )
 
 _LOWER_PRIMARY = LevelRegister(
@@ -147,6 +181,7 @@ _LOWER_PRIMARY = LevelRegister(
     practicals="Simple guided observation and hands-on making with safe everyday materials.",
     uses_themes=True,
     scenario_world="Home, school and the immediate neighbourhood.",
+    area_noun="learning area",
 )
 
 _UPPER_PRIMARY = LevelRegister(
@@ -250,8 +285,100 @@ _UNKNOWN = LevelRegister(
 )
 
 
-def register_for_grade(grade: str | None) -> LevelRegister:
-    """The authoring register implied by a grade slug."""
+
+# Age is a per-grade fact, not a band one. PP2 inheriting "4-5 years old" from
+# the Pre-Primary band is the same error as Grade 1 and Grade 3 sharing a
+# reader: it makes the register look specific while being wrong.
+_GRADE_AGES: dict[str, str] = {
+    "grade-pp1": "4-5 years old", "grade-pp2": "5-6 years old",
+    "grade-1": "6-7 years old", "grade-2": "7-8 years old", "grade-3": "8-9 years old",
+    "grade-4": "9-10 years old", "grade-5": "10-11 years old", "grade-6": "11-12 years old",
+    "grade-7": "12-13 years old", "grade-8": "13-14 years old", "grade-9": "14-15 years old",
+    "grade-10": "15-16 years old", "grade-11": "16-17 years old", "grade-12": "17-18 years old",
+}
+
+
+# ── Per-grade specifics ──────────────────────────────────────────────────────
+# Only what the grade's own published design actually says. Where a design has
+# not been read, the entry is absent and the register falls back to progression
+# facts alone — which are derivable — rather than inventing a syllabus. An
+# invented "Grade 5 covers fractions to 1/8" reads exactly like a real one.
+_GRADE_NOTES: dict[str, list[str]] = {
+    "grade-pp2": [
+        "The second and final pre-primary year, and the one that completes the "
+        "Pre-Primary level outcomes.",
+        "PP1 covers letter SOUNDS only. The PP1 design's Subject General Learning "
+        "Outcomes state that by the END of Pre-Primary Education the learner "
+        "articulates letter sounds AND syllables, forming three-letter words — so "
+        "syllables and three-letter words belong to PP2, not PP1.",
+        "PP1 stops at 10 in Mathematical Activities (rote count 1-10, symbols 1-9). "
+        "PP2 extends beyond that; read the PP2 design for its actual range rather "
+        "than assuming one.",
+        "Everything else specific to PP2 must be read from the PP2 design document.",
+    ],
+    "grade-pp1": [
+        "25 lessons a week across all learning areas, 30 minutes each.",
+        "Language Activities (150 lessons): letter SOUNDS only, introduced in "
+        "blocks a-e, f-j, k-r, s-z, plus the vowels a/e/i/o/u, letter names and "
+        "upper/lower case recognition. Learners do not read or write words.",
+        "Mathematical Activities (150 lessons): rote counting 1-10; recognising, "
+        "sequencing and writing number symbols 1-9; counting concrete objects "
+        "1-9. Nothing beyond 10.",
+        "Creative Activities (180 lessons): scribbling, printing, colouring, "
+        "joining dots, modelling, musical sounds, crawling and bending, singing "
+        "games, water play.",
+        "Environmental Activities (154 lessons): self-awareness, external body "
+        "parts, handwashing, brushing teeth, family, feeding, utensils, "
+        "furniture, classmates, friends, parts of a plant, care of the class, "
+        "cleanliness and toileting.",
+        "Religious Education (90 lessons): CRE, HRE or IRE, one per learner.",
+    ],
+}
+
+# Grades whose design this system has not read. Saying so in the prompt is the
+# difference between "I do not know" and a confident fabrication.
+_UNREAD_DESIGN_NOTE = (
+    "The specific content for this grade must be read from its own KICD design "
+    "document. Do not carry over another grade's scope."
+)
+
+
+def _progression(slug: str) -> tuple[str, str, str]:
+    """Where a grade sits: year within its level, what precedes it, what follows."""
+    slugs = [s for s, _l, _lv in GRADE_SEQUENCE]
+    if slug not in slugs:
+        return "", "", ""
+    index = slugs.index(slug)
+
+    level = GRADE_SEQUENCE[index][2]
+    peers = [i for i, (_s, _l, lv) in enumerate(GRADE_SEQUENCE) if lv == level]
+    position = peers.index(index) + 1
+    ordinals = {1: "first", 2: "second", 3: "third", 4: "fourth"}
+    if len(peers) == 1:
+        year_in_level = f"the whole of {level}"
+    else:
+        year_in_level = (
+            f"{ordinals.get(position, str(position))} of {len(peers)} years of {level}"
+        )
+
+    # DTE trainees are adults entering a diploma, not children promoted from
+    # Grade 12, so "do not re-teach Grade 12" would be the wrong instruction.
+    builds_on = "" if slug == "grade-dte" else (GRADE_SEQUENCE[index - 1][1] if index > 0 else "")
+    # DTE follows senior school in the listing but is not the next school year.
+    nxt = GRADE_SEQUENCE[index + 1] if index + 1 < len(GRADE_SEQUENCE) else None
+    prepares_for = ""
+    if nxt and not (nxt[0] == "grade-dte" and slug != "grade-12"):
+        prepares_for = nxt[1] if nxt[0] != "grade-dte" else ""
+    return year_in_level, builds_on, prepares_for
+
+
+def register_for_grade(grade: str | None, notes: list[str] | None = None) -> LevelRegister:
+    """The authoring register implied by a grade slug.
+
+    ``notes`` are the grade's own scope, derived from its design and stored by
+    grade_scope. When supplied they replace the hand-written or "unread design"
+    default, so a grade becomes as sharp as PP1 the moment its design is read.
+    """
     slug = normalize_grade(grade)
     if not slug:
         return _UNKNOWN
@@ -259,10 +386,22 @@ def register_for_grade(grade: str | None) -> LevelRegister:
     register = _BY_LEVEL.get(level)
     if register is None:
         return _UNKNOWN
-    # Report the specific grade rather than the band it belongs to.
-    return replace(register, grade_label=grade_label(slug) or register.grade_label)
+    # Report the specific grade rather than the band it belongs to: Grade 1 and
+    # Grade 3 share a band but not a reader.
+    year_in_level, builds_on, prepares_for = _progression(slug)
+    derived = [n for n in (notes or []) if str(n).strip()]
+    resolved_notes = derived or list(_GRADE_NOTES.get(slug, [])) or [_UNREAD_DESIGN_NOTE]
+    return replace(
+        register,
+        grade_label=grade_label(slug) or register.grade_label,
+        typical_ages=_GRADE_AGES.get(slug, register.typical_ages),
+        year_in_level=year_in_level,
+        builds_on=builds_on,
+        prepares_for=prepares_for,
+        grade_notes=resolved_notes,
+    )
 
 
-def register_block(grade: str | None) -> str:
+def register_block(grade: str | None, notes: list[str] | None = None) -> str:
     """The prompt-ready register block for a grade."""
-    return register_for_grade(grade).format_for_prompt()
+    return register_for_grade(grade, notes=notes).format_for_prompt()

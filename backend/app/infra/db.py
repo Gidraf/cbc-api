@@ -478,6 +478,31 @@ MIGRATIONS: list[tuple[str, str]] = [
             ON curriculum_substrands(grade, subject, theme);
         """,
     ),
+    (
+        "016_grade_scope",
+        """
+        -- What a grade's design actually bounds: "letter sounds only", "nothing
+        -- beyond 10", "30-minute lessons". PP1's was written by hand; the other
+        -- fourteen grades are derived from their own designs by reading them in
+        -- page-aligned chunks and reconciling the result.
+        --
+        -- Stored rather than recomputed: it is read on EVERY generation and
+        -- derived once per design.
+
+        CREATE TABLE IF NOT EXISTS grade_scope (
+            id SERIAL PRIMARY KEY,
+            grade TEXT NOT NULL,
+            subject TEXT NOT NULL,
+            design_id TEXT NOT NULL DEFAULT '',
+            facts JSONB NOT NULL DEFAULT '[]'::jsonb,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            CONSTRAINT uq_grade_scope UNIQUE (grade, subject)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_grade_scope_lookup ON grade_scope(grade, subject);
+        """,
+    ),
 ]
 
 

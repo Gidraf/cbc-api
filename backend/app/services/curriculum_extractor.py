@@ -378,16 +378,43 @@ class CurriculumExtractorService:
         # 6. Synchronize with Langfuse dataset item
         langfuse_sync_result = self._sync_to_langfuse(design)
 
-        logger.info(
-            "Successfully ingested curriculum design '%s' (%s - %s) with %d sub-strand blueprints and prompt packages.",
-            design.subject,
-            design.grade,
-            design.level,
-            len(design.substrands),
-        )
+        # The regex extractor cannot read every design. KICD's PDFs render each
+        # sub-strand table as wrapped columns, so a Pre-Primary sub-strand
+        # arrives as "1.1.1", "Greetings", "and Farewell", "(3 lessons)" on four
+        # separate lines and matches nothing. Reporting that as a successful
+        # ingest is how a learning area with zero sub-strands looked identical
+        # in the console to a complete one.
+        from .curriculum_catalogue import expected_structure
+
+        found = len(design.substrands)
+        expected = expected_structure(design.grade, design.subject).get("sub_strand_count", 0)
+        if not expected:
+            extraction_status = "complete" if found else "empty"
+        elif found >= expected:
+            extraction_status = "complete"
+        elif found:
+            extraction_status = "partial"
+        else:
+            extraction_status = "empty"
+
+        if extraction_status != "complete":
+            logger.warning(
+                "Ingested '%s' (%s) with %d sub-strand(s)%s. Structural extraction is "
+                "unreliable on this design; generate the strands and sub-strands with the "
+                "curriculum agents and save them.",
+                design.subject, design.grade, found,
+                f" against {expected} expected" if expected else "",
+            )
+        else:
+            logger.info(
+                "Successfully ingested curriculum design '%s' (%s - %s) with %d sub-strand blueprints.",
+                design.subject, design.grade, design.level, found,
+            )
 
         return {
             "status": "success",
+            "extraction_status": extraction_status,
+            "expected_substrand_count": expected,
             "design_id": design.design_id,
             "subject": design.subject,
             "subject_code": design.subject_code,

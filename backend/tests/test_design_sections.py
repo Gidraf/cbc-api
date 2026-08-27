@@ -190,3 +190,94 @@ def test_an_ordinary_design_still_takes_the_single_ingest_path(monkeypatch) -> N
 
     assert seen == [""], "a single-area design must not be split"
     assert "combined_design" not in result
+
+
+def test_each_learning_area_is_saved_as_its_own_subject_under_the_same_grade() -> None:
+    """The point of the split: seven subjects, one grade, no overwriting."""
+    from app.services.curriculum_extractor import curriculum_extractor as X
+
+    designs = []
+    for section in split_learning_areas(_pp1_document()):
+        designs.append(
+            X._parse_curriculum_text(
+                section.text,
+                {"grade": "grade-pp1", "file_id": "pp1"},
+                "dna_test",
+                learning_area=section.learning_area,
+            )
+        )
+
+    assert [d.subject for d in designs] == [a.title() for a in PP1_AREAS]
+    # All seven sit at the same level, as they should.
+    assert {d.grade for d in designs} == {"grade-pp1"}
+    assert {d.level for d in designs} == {"Pre-Primary"}
+    # The level must never be recorded as the subject.
+    assert not any(d.subject.startswith("Pre-Primary") for d in designs)
+
+    # Distinct ids and codes, or the rows collide on write and overwrite.
+    assert len({d.design_id for d in designs}) == 7
+    assert len({d.subject_code for d in designs}) == 7
+    assert designs[0].subject_code == "LA"
+
+
+def test_an_extraction_that_found_nothing_is_not_reported_as_complete() -> None:
+    """KICD renders sub-strand tables as wrapped columns, so "1.1.1",
+    "Greetings", "and Farewell", "(3 lessons)" arrive on four lines and match
+    nothing. A learning area with zero sub-strands must not look like a
+    finished one."""
+    from app.services.curriculum_catalogue import expected_structure
+
+    assert expected_structure("grade-pp1", "Language Activities")["sub_strand_count"] == 36
+    assert expected_structure("grade-7", "Integrated Science") == {}
+
+
+def test_the_column_wrapped_body_really_does_defeat_the_regex_extractor() -> None:
+    """Pinning the known limitation, so the ingest report keeps being honest
+    about it rather than quietly claiming success."""
+    from app.services.curriculum_extractor import curriculum_extractor as X
+
+    wrapped = (
+        "1.1 Listening\nand Speaking\n1.1.1\nGreetings\nand Farewell\n(3 lessons)\n"
+        "By the end of the Sub\nStrand, the learner\nshould be able to:\n"
+        "a) give reasons why\nwe greet each\nother in our day-\nto-day life,\n"
+    )
+    design = X._parse_curriculum_text(
+        wrapped, {"grade": "grade-pp1"}, "dna", learning_area="Language Activities"
+    )
+
+    assert len(design.substrands) == 0, (
+        "If this now passes, the extractor has improved and the ingest report "
+        "should be re-checked against it."
+    )
+
+
+def test_a_single_subject_design_still_takes_its_name_from_the_pdf_cover() -> None:
+    """Only a combined design is told its learning area. Everywhere else the
+    document's own cover remains the authority, which matters for senior school
+    where the catalogue only knows the pathway a link sat under."""
+    from app.services.curriculum_extractor import curriculum_extractor as X
+
+    doc = "\n".join([
+        _page(1, "KENYA INSTITUTE OF CURRICULUM DEVELOPMENT\nGRADE 8 CURRICULUM DESIGN\nINTEGRATED SCIENCE"),
+        _page(2, "Essence Statement\nIntegrated Science builds scientific literacy."),
+    ])
+
+    design = X._parse_curriculum_text(doc, {"title": "some-download-name.pdf"}, "dna")
+
+    assert design.subject == "Integrated Science", "the cover must win"
+    assert design.grade == "grade-8"
+    assert design.subject_code == "IS"
+
+
+def test_an_explicit_learning_area_beats_the_cover_only_for_a_combined_design() -> None:
+    """The PP1 cover reads "PRE - PRIMARY 1", which is a level. Left to the
+    cover, all seven areas were filed under it and overwrote each other."""
+    from app.services.curriculum_extractor import curriculum_extractor as X
+
+    section = split_learning_areas(_pp1_document())[0]
+    design = X._parse_curriculum_text(
+        section.text, {"grade": "grade-pp1"}, "dna", learning_area=section.learning_area
+    )
+
+    assert design.subject == "Language Activities"
+    assert not design.subject.startswith("Pre-Primary")

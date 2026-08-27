@@ -121,6 +121,7 @@ NEVER produce superficial, brief, or shallow notes. Every section must be compre
 
 === WHO THIS IS FOR ===
 {{ level_register }}
+{{ faith_scope }}
 
 === CONTENT-TYPE PEDAGOGICAL DIRECTIVES ===
 {{ content_type_directives }}
@@ -230,6 +231,7 @@ Concept: {{ concept }}
 
 === WHO THIS IS FOR ===
 {{ level_register }}
+{{ faith_scope }}
 
 === CONTENT-TYPE PEDAGOGICAL DIRECTIVES ===
 {{ content_type_directives }}
@@ -268,6 +270,7 @@ SLO ID: {{ slo_id }}
 
 === WHO THIS IS FOR ===
 {{ level_register }}
+{{ faith_scope }}
 
 === CONTENT-TYPE PEDAGOGICAL DIRECTIVES ===
 {{ content_type_directives }}
@@ -331,6 +334,7 @@ Difficulty Target: {{ difficulty }}
 
 === WHO THIS IS FOR ===
 {{ level_register }}
+{{ faith_scope }}
 
 === CONTENT-TYPE PEDAGOGICAL DIRECTIVES ===
 {{ content_type_directives }}
@@ -472,6 +476,7 @@ Perform an exhaustive quality, content-type alignment, and safety review on the 
 
 === WHO THIS IS FOR ===
 {{ level_register }}
+{{ faith_scope }}
 Judge the content against THIS audience. Content correctly pitched for this level
 must never be marked down for lacking depth, apparatus, or a national-development
 framing that the level does not call for.
@@ -525,6 +530,7 @@ Perform an exhaustive, multi-aspect quality and safety audit on the generated CB
 
 === WHO THIS IS FOR ===
 {{ level_register }}
+{{ faith_scope }}
 Judge the content against THIS audience. Content correctly pitched for this level
 must never be marked down for lacking depth, apparatus, or a national-development
 framing that the level does not call for.
@@ -578,6 +584,7 @@ Review pedagogical depth, constructivist alignment, SVG diagram clarity, visual-
 
 === WHO THIS IS FOR ===
 {{ level_register }}
+{{ faith_scope }}
 Judge the content against THIS audience. Content correctly pitched for this level
 must never be marked down for lacking depth, apparatus, or a national-development
 framing that the level does not call for.
@@ -603,6 +610,7 @@ Check for consensus, risk flags, visual-semantic contradictions, safety verifica
 
 === WHO THIS IS FOR ===
 {{ level_register }}
+{{ faith_scope }}
 Judge the content against THIS audience. Content correctly pitched for this level
 must never be marked down for lacking depth, apparatus, or a national-development
 framing that the level does not call for.
@@ -628,6 +636,7 @@ have had.
 
 === WHO THIS IS FOR ===
 {{ level_register }}
+{{ faith_scope }}
 
 === SUBJECT-SPECIFIC DIRECTIVES ===
 {{ content_type_directives }}
@@ -678,6 +687,65 @@ If the document does not cover {{ subject }} at all, return
 {"subject": "{{ subject }}", "grade": "{{ grade }}", "themes": [], "strands": [], "not_found": true}.
 Return ONLY valid JSON.
 """,
+    "grade-scope-extractor": """
+You are the GradeScopeAgent for the Kenyan Basic Education Curriculum Framework.
+
+You are reading PART of a published KICD curriculum design — pages {{ page_range }}
+of it — and extracting the facts that BOUND what may be asked of a learner at this
+grade in this learning area.
+
+Grade: {{ grade }}
+Learning area / subject: {{ subject }}
+
+=== WHO THIS IS FOR ===
+{{ level_register }}
+{{ faith_scope }}
+
+=== PAGES {{ page_range }} ===
+{{ chunk_text }}
+
+=== WHAT COUNTS AS A SCOPE FACT ===
+A scope fact states a LIMIT that a content generator would otherwise overstep.
+It answers "what may I not ask?" Good facts look like:
+  - "Rote counting goes to 10; number symbols only to 9. Nothing beyond 10."
+  - "Letter SOUNDS only, in blocks a-e, f-j, k-r, s-z. Learners do not read or
+     write whole words."
+  - "150 lessons; one lesson is 30 minutes."
+  - "No laboratory work; all practical activity is play-based."
+  - "Measurement uses arbitrary units only — sticks, hand-spans — never rulers."
+
+These are NOT scope facts, and must not be returned:
+  - "Learners will enjoy the activities."
+  - "The learning area develops critical thinking."
+  - "Assessment is criterion-referenced."
+Anything true of every grade and every subject bounds nothing.
+
+=== RULES ===
+1. Extract ONLY from the pages above. If these pages state no limits, return
+   {"facts": []}. An empty answer is correct and expected for front matter,
+   rubrics and resource lists.
+2. Prefer facts carrying a NUMBER, a RANGE or an explicit "only" / "not" /
+   "up to". Those are the ones that stop a generator overreaching.
+3. Report only what concerns {{ subject }}. If these pages cover a different
+   learning area, return {"facts": []}.
+4. Each statement must stand alone, be at most 260 characters, and be readable
+   by someone who has not seen the document.
+5. Cite the pages you read it from. Every line above is prefixed with its
+   page:line address.
+6. Never infer a limit the document does not state. "The design does not say"
+   is a fact worth nothing; omit it rather than guess a bound.
+
+Output MUST be a valid JSON object:
+{
+  "facts": [
+    {
+      "statement": "<one bounding fact, at most 260 characters>",
+      "source_pages": ["16", "17"]
+    }
+  ]
+}
+Return ONLY valid JSON.
+""",
     "substrand-generator": """
 You are the SubstrandIntelligenceAgent for the Kenyan Basic Education Curriculum Framework (BECF).
 
@@ -688,6 +756,7 @@ syllabus could contain.
 
 === WHO THIS IS FOR ===
 {{ level_register }}
+{{ faith_scope }}
 
 === SUBJECT-SPECIFIC DIRECTIVES ===
 {{ content_type_directives }}
