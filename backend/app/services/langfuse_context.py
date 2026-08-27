@@ -12,6 +12,23 @@ from ..settings import settings
 
 logger = logging.getLogger("cbc-langfuse")
 
+
+# A sub-strand's stored prompt_context carries the full instruction template for
+# every downstream agent — notes, diagram, question, reviewer, both approvers.
+# Those belong to those agents at their own call time; carried here they are
+# ~90% of the subject context by size (19k tokens on a full PP1 design) and no
+# generator reads another agent's prompt as curriculum. Keep the curriculum
+# facts, drop the templates.
+_TEMPLATE_KEYS_SUFFIX = "_prompt"
+
+
+def context_safe_package(package: Any) -> dict:
+    """The curriculum half of a stored prompt package, without the templates."""
+    if not isinstance(package, dict):
+        return {}
+    return {k: v for k, v in package.items() if not k.endswith(_TEMPLATE_KEYS_SUFFIX)}
+
+
 _DEV_FALLBACK_MASTER_CONTEXT = """# CBC Master Context (Development Fallback)
 This is a minimal development fallback. For production, seed Langfuse:
   python -m app.services.langfuse_seed
@@ -329,7 +346,7 @@ class LangfuseContextService:
                     "diagrams_required": r["required_diagrams"] or [],
                     "experiments": r["experiments"] or [],
                     "kiqs": r["key_inquiry_questions"] or [],
-                    "prompt_package": r["prompt_context"] or {},
+                    "prompt_package": context_safe_package(r["prompt_context"]),
                 })
 
         # Also search curriculum_designs for additional strands/substrands

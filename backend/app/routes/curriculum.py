@@ -3278,39 +3278,31 @@ def factory_generate_substrands(
     master_context = langfuse_context_service.get_master_context()
 
     resolved = pipeline_orchestrator.router.resolve_for_stage("notes_generation")
-    context = langfuse_context_service.assemble_agent_context(
-        agent_name="substrand-generator",
-        grade_slug=payload.grade,
-        subject=payload.subject,
-        template_vars={
-            "master_context": master_context,
-            "level": level,
-            "essence_statement": essence_stmt or f"Comprehensive curriculum design for {payload.subject} ({payload.grade}).",
-            "general_learning_outcomes": outcomes_str,
-            "strand": payload.strand_name,
-            "source_material_text": source_material or "(Official curriculum design syllabus document attached below)",
-            "custom_instructions": payload.custom_instructions,
-        },
-    )
 
-    # Ensure explicit BECF framework, design context, and full design material is present in messages
-    context.messages.append({
-        "role": "user",
-        "content": (
-            f"=== KICD BASIC EDUCATION CURRICULUM FRAMEWORK (BECF) GLOBAL MANDATES ===\n"
-            f"{master_context}\n\n"
-            f"=== OFFICIAL CURRICULUM DESIGN SOURCE MATERIALS & DOCUMENT TEXT ===\n"
-            f"{source_material}\n\n"
-            f"=== CURRICULUM BLUEPRINT CONTEXT FOR {payload.subject.upper()} ===\n"
-            f"Level: {level}\n"
-            f"Essence Statement: {essence_stmt}\n"
-            f"General Learning Outcomes:\n{outcomes_str}\n\n"
-            f"=== TARGET STRAND TO GENERATE SUB-STRANDS FOR ===\n"
-            f"{payload.strand_name}\n\n"
-            f"=== ADDITIONAL PRODUCTION DIRECTIVES ===\n"
-            f"{payload.custom_instructions}"
-        ),
-    })
+    def _compile(document: str) -> Any:
+        """Compile the sub-strand prompt around a given slice of the design."""
+        return langfuse_context_service.assemble_agent_context(
+            agent_name="substrand-generator",
+            grade_slug=payload.grade,
+            subject=payload.subject,
+            template_vars={
+                "master_context": master_context,
+                "level": level,
+                "essence_statement": essence_stmt or f"Comprehensive curriculum design for {payload.subject} ({payload.grade}).",
+                "general_learning_outcomes": outcomes_str,
+                "strand": payload.strand_name,
+                "source_material_text": document,
+                "custom_instructions": payload.custom_instructions,
+            },
+        )
+
+    context = _compile(source_material or "(Official curriculum design syllabus document attached below)")
+
+    # The substrand-generator template already interpolates the master context,
+    # the whole design document, the blueprint and the target strand. Appending
+    # them a second time here sent the 296-page design twice in one request —
+    # 170k tokens against a 128k window, so the provider rejected it outright and
+    # nothing was generated at all.
 
     if payload.inspect:
         from ..services.content_type_classifier import get_profile_from_db
@@ -3331,6 +3323,65 @@ def factory_generate_substrands(
             )
         }
 
+    # A full design plus the master context and the blueprint can exceed the
+    # model's window, and the provider rejects the whole request rather than
+    # truncating — so nothing is produced at all. Read the design in page-aligned
+    # pieces instead, then reconcile the sub-strands each piece yielded.
+    from ..services.document_chunking import CHARS_PER_TOKEN, budget_chars
+    from ..services.map_reduce import map_reduce_over_document
+
+    window = getattr(resolved, "context_window_tokens", 0) or 128_000
+    # The document lives inside the compiled prompt, so measure the prompt
+    # without it — that is what every chunk call actually has to carry.
+    skeleton = _compile("")
+    overhead = sum(len(m.get("content", "")) for m in skeleton.messages) // CHARS_PER_TOKEN + 6_000
+
+    if source_material and len(source_material) > budget_chars(window, overhead):
+        def for_chunk(chunk: Any) -> list[dict[str, Any]]:
+            messages = [
+                *skeleton.messages,
+                {
+                    "role": "user",
+                    "content": (
+                        f"You are reading PART of the curriculum design - pages {chunk.page_range} of it.\n"
+                        f"Return ONLY the sub-strands of the strand '{payload.strand_name}' that actually "
+                        f"appear on these pages. Do not carry over sub-strands from elsewhere in the "
+                        f"subject, and do not invent any.\n"
+                        f"Every line below is prefixed with its page:line address; cite those addresses so "
+                        f"a reviewer can find each sub-strand in the design.\n"
+                        f"Return the same JSON schema. If these pages contain no sub-strands of this "
+                        f'strand, return {{"sub_strands": []}}.\n\n'
+                        f"=== PAGES {chunk.page_range} ===\n{chunk.text}"
+                    ),
+                },
+            ]
+            chunk_resp = llm_client.generate(resolved, messages, temperature=0.2)
+            content = chunk_resp.content if isinstance(chunk_resp.content, dict) else {}
+            return content.get("sub_strands", []) or []
+
+        outcome = map_reduce_over_document(
+            source_material, for_chunk,
+            context_window_tokens=window, overhead_tokens=overhead,
+            identity_fields=("sub_strand_name", "sub_strand_id", "name"),
+        ).to_dict()
+        logger.info(
+            "Sub-strands of %s (%s %s) read across %d chunk(s): %d after reconciliation.",
+            payload.strand_name, payload.grade, payload.subject,
+            outcome["trace"]["chunks"]["chunk_count"], len(outcome["items"]),
+        )
+        return {
+            "subject": payload.subject,
+            "grade": payload.grade,
+            "strand_name": payload.strand_name,
+            "sub_strands": outcome["items"],
+            "essence_statement_used": essence_stmt,
+            "source_material_length": len(source_material),
+            "grounded": True,
+            "chunked": True,
+            "trace": outcome["trace"],
+            "model": f"{resolved.provider}/{resolved.model}",
+        }
+
     resp = llm_client.generate(resolved, context.messages, temperature=0.2)
     sub_strands = resp.content.get("sub_strands", []) if isinstance(resp.content, dict) else []
     return {
@@ -3340,6 +3391,8 @@ def factory_generate_substrands(
         "sub_strands": sub_strands,
         "essence_statement_used": essence_stmt,
         "source_material_length": len(source_material),
+        "grounded": bool(source_material),
+        "chunked": False,
         "usage": resp.usage,
         "model": resp.model,
     }
