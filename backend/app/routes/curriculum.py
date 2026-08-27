@@ -3466,6 +3466,23 @@ def factory_generate_substrands(
 
 
 
+
+@router.get("/factory/structure-report")
+def factory_structure_report(
+    grade: str = Query(..., description="Grade slug, e.g. grade-pp1"),
+    _: AuthContext = Depends(require_roles("admin", "operator", "reviewer")),
+) -> dict[str, Any]:
+    """What this grade holds, measured against what its design publishes.
+
+    Read-only. It exists because a learning area holding another learning
+    area's strands looks exactly like a correct one in a list, and the only way
+    to tell them apart was to read the KICD PDF and count by hand.
+    """
+    from ..services.structure_report import build_report
+
+    return build_report(grade)
+
+
 @router.post("/factory/derive-scope")
 def factory_derive_grade_scope(
     payload: DeriveGradeScopeRequest,
