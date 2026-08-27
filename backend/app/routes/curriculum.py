@@ -13,6 +13,7 @@ from ..infra.db import execute, fetch_all, fetch_one
 from ..services.artifact_dna import artifact_dna_service
 from ..services.auth import AuthContext, require_roles
 from ..services.curriculum_extractor import curriculum_extractor
+from ..services import design_source
 from ..services.grade_order import grade_level
 from ..services.faith_scope import prompt_block as faith_prompt_block
 from ..services.grade_scope import notes_for as grade_scope_notes
@@ -3012,33 +3013,16 @@ def _design_source(design_id: str = "", grade: str = "", subject: str = "") -> d
     """The stored design and its captured document text."""
     from ..infra.db import fetch_one as _fetch_one
 
+    found = design_source.require(grade, subject, design_id=design_id)
     row = _fetch_one(
-        """
-        SELECT design_id, grade, subject, raw_payload
-        FROM curriculum_designs
-        WHERE (design_id = :design_id)
-           OR ((grade = :grade OR grade = :alt) AND LOWER(subject) = LOWER(:subject))
-        ORDER BY updated_at DESC LIMIT 1
-        """,
-        {"design_id": design_id or "", "grade": grade, "alt": (grade or "").replace("grade-", ""), "subject": subject},
-    )
-    if not row:
-        raise_api_error("DATASET_ITEM_NOT_FOUND", f"No ingested design for {subject or design_id}.")
-
-    raw_payload = row.get("raw_payload") or {}
-    text = (
-        raw_payload.get("source_text")
-        or raw_payload.get("raw_text")
-        or raw_payload.get("text")
-        or raw_payload.get("output")
-        or ""
-    )
-    if not text:
-        raise_api_error(
-            "DATASET_ITEM_NOT_FOUND",
-            f"'{row.get('subject')}' has no source document stored. Attach it from the prompt inspector first.",
-        )
-    return {"row": row, "text": text}
+        "SELECT design_id, grade, subject, raw_payload FROM curriculum_designs "
+        "WHERE design_id = :design_id",
+        {"design_id": found.design_id},
+    ) or {
+        "design_id": found.design_id, "grade": found.grade,
+        "subject": found.subject, "raw_payload": {},
+    }
+    return {"row": row, "text": found.text}
 
 
 @router.get("/designs/{design_id}/document")
@@ -3154,53 +3138,22 @@ def factory_generate_strands(
     _: AuthContext = Depends(require_roles("admin", "operator", "reviewer")),
 ) -> dict[str, Any]:
     """Generates the top-level strands for a subject using Langfuse prompt management and subject design context."""
-    from ..infra.db import fetch_one
     from ..services.langfuse_context import langfuse_context_service
     from ..services.llm_client import llm_client
     from ..services.pipeline import pipeline_orchestrator
 
-    essence_statement = payload.essence_statement
-    level = payload.level
-    source_material = payload.source_material_text
-
-    # Always look the design up, not only when the essence statement is missing:
-    # the published document is what the strands must be read from.
-    row = fetch_one(
-        """
-        SELECT design_id, essence_statement, level, raw_payload
-        FROM curriculum_designs
-        WHERE (design_id = :design_id)
-           OR ((grade = :grade OR grade = :alt_grade) AND LOWER(subject) = LOWER(:subject))
-        ORDER BY updated_at DESC LIMIT 1
-        """,
-        {
-            "design_id": payload.design_id or "",
-            "grade": payload.grade,
-            "alt_grade": payload.grade.replace("grade-", ""),
-            "subject": payload.subject,
-        },
+    # The design is what the strands must be read from. Resolving it is shared
+    # with every other generation endpoint, and it refuses rather than letting
+    # the agent quietly invent a curriculum that reads plausibly and matches no
+    # published design.
+    found = design_source.require(
+        payload.grade, payload.subject,
+        design_id=payload.design_id or "",
+        supplied=payload.source_material_text,
     )
-    if row:
-        essence_statement = essence_statement or row.get("essence_statement") or ""
-        level = row.get("level") or level
-        if not source_material:
-            raw_payload = row.get("raw_payload") or {}
-            source_material = (
-                raw_payload.get("source_text")
-                or raw_payload.get("raw_text")
-                or raw_payload.get("text")
-                or raw_payload.get("output")
-                or ""
-            )
-
-    if not source_material:
-        # Say so rather than letting the agent quietly invent a curriculum that
-        # reads plausibly and matches no published design.
-        logger.warning(
-            "No source document for %s %s — strands will be generated from the model's "
-            "own knowledge, not from the KICD design. Re-ingest the design to ground them.",
-            payload.grade, payload.subject,
-        )
+    source_material = found.text
+    essence_statement = payload.essence_statement or found.essence_statement
+    level = found.level or payload.level
 
     from ..services.content_type_classifier import get_profile_from_db as _profile_for_strands
 
@@ -3322,42 +3275,23 @@ def factory_generate_substrands(
     _: AuthContext = Depends(require_roles("admin", "operator", "reviewer")),
 ) -> dict[str, Any]:
     """Generates detailed sub-strands with SLOs, hours, diagrams, experiments, and hazard protocols using curriculum design blueprint context."""
-    from ..infra.db import fetch_one
     from ..services.langfuse_context import langfuse_context_service
     from ..services.llm_client import llm_client
     from ..services.pipeline import pipeline_orchestrator
 
-    source_material = payload.source_material_text
-    essence_stmt = payload.essence_statement
-    gen_outcomes = payload.general_learning_outcomes
-    level = payload.level
-
-    # Look up previous curriculum design context from database if not supplied
-    row = fetch_one(
-        """
-        SELECT design_id, subject, level, essence_statement, general_learning_outcomes, raw_payload
-        FROM curriculum_designs
-        WHERE (grade = :grade OR grade = :alt_grade) AND LOWER(subject) = LOWER(:subject)
-        ORDER BY updated_at DESC LIMIT 1
-        """,
-        {"grade": payload.grade, "alt_grade": payload.grade.replace("grade-", ""), "subject": payload.subject},
+    # Sub-strands are read out of the design, never recalled. Ungrounded, this
+    # endpoint returned HTTP 200 with an empty list — indistinguishable, from
+    # the console, from a strand that genuinely has none.
+    found = design_source.require(
+        payload.grade, payload.subject,
+        supplied=payload.source_material_text,
     )
-    if row:
-        if not essence_stmt:
-            essence_stmt = row.get("essence_statement") or ""
-        if not gen_outcomes:
-            gen_outcomes = row.get("general_learning_outcomes") or []
-        if level == "Basic Education" and row.get("level"):
-            level = row.get("level")
-        if not source_material:
-            raw_payload = row.get("raw_payload") or {}
-            source_material = (
-                raw_payload.get("source_text")
-                or raw_payload.get("raw_text")
-                or raw_payload.get("text")
-                or raw_payload.get("output")
-                or ""
-            )
+    source_material = found.text
+    essence_stmt = payload.essence_statement or found.essence_statement
+    gen_outcomes = payload.general_learning_outcomes or found.general_learning_outcomes
+    level = payload.level
+    if level == "Basic Education" and found.level:
+        level = found.level
 
     outcomes_str = "\n".join([f"- {o}" for o in gen_outcomes]) if gen_outcomes else "Standard KICD BECF Outcomes."
     master_context = langfuse_context_service.get_master_context()
@@ -3724,36 +3658,15 @@ def factory_derive_grade_scope(
     this system already hit. So the design is read in page-aligned chunks and
     the results reconciled into one summary small enough to sit in every prompt.
     """
-    from ..infra.db import fetch_one
     from ..services import grade_scope as scope_service
-    from ..services.langfuse_context import langfuse_context_service
-    from ..services.llm_client import llm_client
     from ..services.pipeline import pipeline_orchestrator
 
-    source_material = payload.source_material_text or ""
-    design_id = ""
-    if not source_material:
-        row = fetch_one(
-            """
-            SELECT design_id, raw_payload FROM curriculum_designs
-            WHERE (grade = :grade OR grade = :alt_grade) AND LOWER(subject) = LOWER(:subject)
-            ORDER BY updated_at DESC LIMIT 1
-            """,
-            {"grade": payload.grade, "alt_grade": payload.grade.replace("grade-", ""),
-             "subject": payload.subject},
-        )
-        if row:
-            design_id = row.get("design_id") or ""
-            raw = row.get("raw_payload") or {}
-            source_material = raw.get("source_text") or raw.get("raw_text") or ""
-
-    if not source_material.strip():
-        # Deriving a scope from nothing would produce a confident, invented one.
-        raise_api_error(
-            "MISSING_PARENT_CONTEXT",
-            f"No ingested design text for {payload.subject} ({payload.grade}). "
-            "Ingest the curriculum design before deriving its scope.",
-        )
+    # Deriving a scope from nothing would produce a confident, invented one.
+    found = design_source.require(
+        payload.grade, payload.subject, supplied=payload.source_material_text or "",
+    )
+    source_material = found.text
+    design_id = found.design_id
 
     resolved = pipeline_orchestrator.router.resolve_for_stage("notes_generation")
     # Note the shared reader does NOT feed the previously derived scope back in.
