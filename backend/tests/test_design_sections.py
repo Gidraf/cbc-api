@@ -281,3 +281,85 @@ def test_an_explicit_learning_area_beats_the_cover_only_for_a_combined_design() 
 
     assert design.subject == "Language Activities"
     assert not design.subject.startswith("Pre-Primary")
+
+
+def _pp1_document_with_real_contents_page() -> str:
+    """The PP1 contents page verbatim, including KICD's own spacing quirks."""
+    toc = "\n".join([
+        "TABLE OF CONTENTS",
+        "FOREWORD " + "." * 100 + " iii",
+        "PREFACE" + "." * 100 + " iv",
+        "NATIONAL GOALS OF EDUCATION " + "." * 80 + " vii",
+        "LESSON ALLOCATION FOR PRE-PRIMARY " + "." * 70 + " ix",
+        # The document prints these two WITHOUT a space, while their banner
+        # pages print them with one. That dropped both learning areas.
+        "LANGUAGE ACTIVITIES" + "." * 80 + "1",
+        "MATHEMATICALACTIVITIES " + "." * 70 + "92",
+        "CREATIVEACTIVITIES" + "." * 70 + "135",
+        "ENVIRONMENTAL ACTIVITIES " + "." * 60 + "164",
+        "CHRISTIAN RELIGIOUS EDUCATION " + "." * 55 + "188",
+        "HINDU RELIGIOUS EDUCATION" + "." * 55 + "212",
+        "ISLAMIC RELIGIOUS EDUCATION" + "." * 50 + "241",
+        "CSL AT EARLY YEARS OF EDUCATION (PP1&2 AND GRADE 1-3)" + "." * 30 + "280",
+        "SUGGESTED ASSESSMENT METHODS, RESOURCES AND NON-FORMAL ACTIVITIES" + "." * 20 + "283",
+    ])
+    banners = [
+        (11, "1\nLANGUAGE ACTIVITIES"),
+        (102, "Page\n/\n296\n92\nMATHEMATICAL ACTIVITIES"),
+        (145, "135\nCREATIVE ACTIVITIES"),
+        (174, "Page\n/\n296\n164\nENVIRONMENTAL ACTIVITIES"),
+        # This banner carries a trailing "ACTIVITIES" the catalogue name lacks.
+        (198, "188\nCHRISTIAN RELIGIOUS\nEDUCATION ACTIVITIES"),
+        (222, "Page\n/\n296\n212\nHINDU RELIGIOUS EDUCATION\nPage 222 of 296 Page 225 of 296"),
+        (251, "241\nISLAMIC RELIGIOUS EDUCATION"),
+    ]
+    pages = [
+        _page(1, "KENYA INSTITUTE OF CURRICULUM DEVELOPMENT\nPRE - PRIMARY SCHOOL CURRICULUM DESIGN\nPRE - PRIMARY 1"),
+        _page(6, toc),
+    ]
+    for number, body in banners:
+        pages.append(_page(number, body))
+        pages.append(_page(number + 1, "Essence Statement\nThis learning area builds skills."))
+    pages.append(_page(290, "CSL AT EARLY YEARS OF EDUCATION (PP1&2 AND GRADE 1-3)\nAt this level the goal is linkage."))
+    return "\n".join(pages)
+
+
+def test_a_contents_page_that_omits_a_space_still_finds_the_learning_area() -> None:
+    """KICD prints "MATHEMATICALACTIVITIES" and "CREATIVEACTIVITIES" with no
+    space, while the banner pages print them with one. A space-sensitive match
+    dropped two of the seven, and they showed in the console as "not ingested"
+    with no indication why."""
+    from app.services.curriculum_catalogue import expected_subjects
+
+    sections = split_learning_areas(
+        _pp1_document_with_real_contents_page(), expected_subjects("grade-pp1")
+    )
+    names = [s.learning_area for s in sections]
+
+    assert len(sections) == 7, f"only found {names}"
+    assert "Mathematical Activities" in names
+    assert "Creative Activities" in names
+
+
+def test_section_names_match_the_catalogue_exactly() -> None:
+    """The CRE banner reads "CHRISTIAN RELIGIOUS EDUCATION ACTIVITIES" but every
+    other part of the system says "Christian Religious Education". Filed under
+    the banner's wording, a correctly-split area reads as "not ingested"."""
+    from app.services.curriculum_catalogue import expected_subjects
+
+    published = expected_subjects("grade-pp1")
+    sections = split_learning_areas(_pp1_document_with_real_contents_page(), published)
+
+    assert sorted(s.learning_area for s in sections) == sorted(published)
+    for section in sections:
+        assert section.learning_area in published, section.learning_area
+
+
+def test_canonicalisation_leaves_unknown_names_alone() -> None:
+    """A grade whose subjects come off the PDF cover has no published list to
+    map onto; the detected name must survive rather than be forced."""
+    from app.services.design_sections import canonical_area_name
+
+    assert canonical_area_name("SOMETHING ONLY THE COVER KNOWS", []) == "Something Only The Cover Knows"
+    assert canonical_area_name("INTEGRATED SCIENCE", None) == "Integrated Science"
+    assert canonical_area_name("", ["Language Activities"]) == ""

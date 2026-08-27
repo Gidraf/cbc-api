@@ -281,10 +281,19 @@ class CurriculumExtractorService:
         # areas. Ingested whole, all seven were filed under the cover title and
         # overwrote one another's sub-strands, so a request for Language
         # Activities came back with Christian Religious Education. Split first.
+        from .curriculum_catalogue import expected_subjects
         from .design_sections import split_learning_areas
 
+        # Give the splitter the grade's published names so a banner reading
+        # "CHRISTIAN RELIGIOUS EDUCATION ACTIVITIES" is filed as "Christian
+        # Religious Education" — the name the catalogue, the save guard and the
+        # structure report all use. Filed under the banner's own wording, a
+        # correctly-split learning area reads as "not ingested".
+        probe_grade, _probe_level = _grade_from_text(raw_text, payload_meta)
+        published = expected_subjects(probe_grade) if probe_grade else []
+
         try:
-            sections = split_learning_areas(raw_text)
+            sections = split_learning_areas(raw_text, published)
         except Exception as exc:  # noqa: BLE001
             logger.warning("Could not test for combined learning areas: %s", exc)
             sections = []
@@ -292,7 +301,7 @@ class CurriculumExtractorService:
         if len(sections) < 2:
             return self._ingest_one(raw_text, payload_meta)
 
-        grade, _level = _grade_from_text(raw_text, payload_meta)
+        grade = probe_grade
         logger.info(
             "Design holds %d learning areas; ingesting each separately: %s",
             len(sections), ", ".join(s.learning_area for s in sections),

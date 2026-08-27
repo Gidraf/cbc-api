@@ -198,3 +198,44 @@ def test_language_strands_are_skills_not_themes() -> None:
     assert "1.0 Greetings and Farewell" in themes
     assert "6.0 My School" in themes
     assert not any("Greetings" in s or "School" in s for s in strands)
+
+
+def test_five_timetable_slots_carry_seven_curriculum_designs() -> None:
+    """Both counts are correct and they get confused. The lesson allocation
+    table (PP1 p.9) lists five activity areas; the table of contents (p.6) lists
+    seven designs, because the one "Religious Activities" slot is filled by
+    CRE, HRE or IRE — three designs with entirely different strands.
+
+    Generation must use the seven: there is no set of strands common to the
+    three faiths to generate from, and collapsing them is the faith-mixing this
+    system exists to prevent."""
+    from app.services.curriculum_catalogue import (
+        PRE_PRIMARY_RELIGIOUS_AREAS, PRE_PRIMARY_WEEKLY_LESSONS, expected_subjects,
+    )
+
+    # The timetable, exactly as the design prints it.
+    assert sum(PRE_PRIMARY_WEEKLY_LESSONS.values()) == 25
+    slots = [k for k in PRE_PRIMARY_WEEKLY_LESSONS if k != "Pastoral Instruction Programme"]
+    assert len(slots) == 5
+    assert PRE_PRIMARY_WEEKLY_LESSONS["Creative Activities"] == 6
+    assert PRE_PRIMARY_WEEKLY_LESSONS["Religious Activities"] == 3
+
+    # The designs.
+    subjects = expected_subjects("grade-pp1")
+    assert len(subjects) == 7
+    assert len(PRE_PRIMARY_RELIGIOUS_AREAS) == 3
+    assert all(area in subjects for area in PRE_PRIMARY_RELIGIOUS_AREAS)
+
+    # 5 slots - 1 religious slot + 3 religious designs = 7.
+    assert len(slots) - 1 + len(PRE_PRIMARY_RELIGIOUS_AREAS) == len(subjects)
+
+
+def test_the_creative_area_carries_its_current_kicd_name() -> None:
+    """The 2024 revised design calls it "Creative Activities"; "Psychomotor and
+    Creative Activities" is the earlier name. Its essence statement says it
+    "integrates concepts of psychomotor, music, art, and craft activities"."""
+    from app.services.curriculum_catalogue import expected_subjects
+
+    subjects = expected_subjects("grade-pp1")
+    assert "Creative Activities" in subjects
+    assert not any("Psychomotor" in s for s in subjects)

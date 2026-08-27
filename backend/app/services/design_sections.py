@@ -124,7 +124,49 @@ def _contents_titles(pages: list[Page]) -> list[str]:
     return titles
 
 
-def split_learning_areas(text: str) -> list[DesignSection]:
+
+def _squash(value: str) -> str:
+    return re.sub(r"\s+", "", value)
+
+
+def _matches_any(flat: str, listed: set[str]) -> bool:
+    """Whether a banner title is one of the titles the contents page lists."""
+    squashed = _squash(flat)
+    for entry in listed:
+        if flat == entry or flat in entry or entry in flat:
+            return True
+        other = _squash(entry)
+        if squashed == other or squashed in other or other in squashed:
+            return True
+    return False
+
+
+def canonical_area_name(title: str, published: list[str] | None = None) -> str:
+    """Map a detected section title onto the grade's published learning-area name.
+
+    Banner pages and contents pages disagree: the CRE banner reads "CHRISTIAN
+    RELIGIOUS EDUCATION ACTIVITIES" while the catalogue and every other part of
+    the system say "Christian Religious Education". Filing it under the banner's
+    wording made a correctly-split learning area read as "not ingested", because
+    nothing downstream recognised the name.
+    """
+    cleaned = re.sub(r"\s+", " ", str(title or "")).strip()
+    if not cleaned or not published:
+        return cleaned.title() if cleaned else cleaned
+
+    flat = _squash(_normalise(cleaned))
+    for name in published:
+        if _squash(_normalise(name)) == flat:
+            return name
+    # "…Education Activities" vs "…Education": prefer the published wording.
+    for name in published:
+        other = _squash(_normalise(name))
+        if flat.startswith(other) or other.startswith(flat):
+            return name
+    return cleaned.title()
+
+
+def split_learning_areas(text: str, published: list[str] | None = None) -> list[DesignSection]:
     """The learning areas a combined design contains, in document order.
 
     Returns [] when the document holds a single learning area — the ordinary
@@ -144,7 +186,12 @@ def split_learning_areas(text: str) -> list[DesignSection]:
         flat = _normalise(title)
         # When the document lists its contents, trust that list: it is the
         # document's own statement of what it contains.
-        if listed and not any(flat == t or flat in t or t in flat for t in listed):
+        #
+        # Compare with spaces removed as well. The PP1 contents page prints
+        # "MATHEMATICALACTIVITIES" and "CREATIVEACTIVITIES" with no space, while
+        # the banner pages print them with one — so a space-sensitive match
+        # silently dropped two of the seven learning areas.
+        if listed and not _matches_any(flat, listed):
             continue
         if banners and _normalise(banners[-1][1]) == flat:
             continue  # the same banner repeated on a facing page
@@ -175,7 +222,7 @@ def split_learning_areas(text: str) -> list[DesignSection]:
         )
         sections.append(
             DesignSection(
-                learning_area=title.title(),
+                learning_area=canonical_area_name(title, published),
                 start_page=page_number,
                 end_page=pages[stop - 1].number,
                 text=body,
@@ -189,5 +236,5 @@ def split_learning_areas(text: str) -> list[DesignSection]:
     return sections
 
 
-def is_combined_design(text: str) -> bool:
-    return len(split_learning_areas(text)) >= _MIN_SECTIONS
+def is_combined_design(text: str, published: list[str] | None = None) -> bool:
+    return len(split_learning_areas(text, published)) >= _MIN_SECTIONS

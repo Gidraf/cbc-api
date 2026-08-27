@@ -59,8 +59,21 @@ _DTE = [
     "Social Studies",
 ]
 
-# Pre-Primary is published as a SINGLE PDF containing every learning area — the
-# PP1 design's own table of contents lists these seven. Filing them all under
+# Pre-Primary is counted two different ways, and both are correct.
+#
+# The LESSON ALLOCATION table (PP1 p.9) lists FIVE activity areas per week:
+# Language 5, Mathematical 5, Creative 6, Environmental 5, Religious 3, plus one
+# Pastoral Instruction Programme lesson — 25 in total. That is the timetable.
+#
+# The TABLE OF CONTENTS (p.6) lists SEVEN curriculum designs, because the single
+# "Religious Activities" slot is filled by one of three separate designs with
+# entirely different strands: Christian, Hindu or Islamic RE. A learner takes one.
+#
+# Content generation must use the seven. Collapsing them into one "Religious
+# Activities" bucket is precisely the faith-mixing this system exists to prevent:
+# there is no set of strands common to CRE, HRE and IRE to generate from.
+#
+# The PP1 design's own table of contents lists these seven. Filing them all under
 # one subject called "Pre-Primary 1" (which is a level, not a learning area)
 # made every area overwrite the last, so a request for Language Activities was
 # answered with Christian Religious Education. See design_sections.
@@ -107,6 +120,25 @@ GRADES_WITH_PATHWAY_LABELS = frozenset({"grade-10", "grade-11", "grade-12"})
 # Grades whose single published document holds several learning areas, and so
 # must be split at ingest rather than filed as one design.
 GRADES_WITH_COMBINED_DESIGN = frozenset({"grade-pp1", "grade-pp2"})
+
+# Weekly lessons per timetable slot (PP1 p.9). The religious slot is filled by
+# whichever of CRE/HRE/IRE the learner takes, which is why five slots carry
+# seven designs.
+PRE_PRIMARY_WEEKLY_LESSONS: dict[str, int] = {
+    "Language Activities": 5,
+    "Mathematical Activities": 5,
+    "Creative Activities": 6,
+    "Environmental Activities": 5,
+    "Religious Activities": 3,
+    "Pastoral Instruction Programme": 1,
+}
+
+# One per learner, never more.
+PRE_PRIMARY_RELIGIOUS_AREAS = (
+    "Christian Religious Education",
+    "Hindu Religious Education",
+    "Islamic Religious Education",
+)
 
 
 def has_combined_design(grade_slug: str) -> bool:

@@ -3613,6 +3613,28 @@ def factory_save_substrands(
 ) -> dict[str, Any]:
     """Saves generated sub-strands for a strand to PostgreSQL database."""
     from ..infra.db import execute, to_json
+    from ..services.curriculum_catalogue import expected_subjects, has_combined_design
+
+    # Every learning area of a combined design shares one (grade, subject,
+    # strand, sub_strand) key, so writing all seven under the level name
+    # "Pre-Primary 1" made each save overwrite and prune the last. Four rounds of
+    # generation produced four different partial pictures and no error, because
+    # nothing here objected to a subject that is not a learning area.
+    #
+    # Only enforced where the published set is definitive. Senior-school subjects
+    # come off each PDF's cover, so those are left alone.
+    if has_combined_design(payload.grade):
+        published = expected_subjects(payload.grade)
+        if published and payload.subject not in published:
+            raise_api_error(
+                "MISSING_PARENT_CONTEXT",
+                f"'{payload.subject}' is not a learning area of {payload.grade}. "
+                f"It looks like the level rather than a learning area, and saving "
+                f"under it makes every area overwrite the last. "
+                f"Valid learning areas: {', '.join(published)}. "
+                f"If the console is still offering '{payload.subject}', the design "
+                f"has not been re-ingested since it was split into learning areas.",
+            )
 
     saved_count = 0
     design_id = payload.design_id or f"cd_{payload.grade}_{payload.subject.lower()[:4]}"
