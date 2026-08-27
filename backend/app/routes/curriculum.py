@@ -13,6 +13,7 @@ from ..infra.db import execute, fetch_all, fetch_one
 from ..services.artifact_dna import artifact_dna_service
 from ..services.auth import AuthContext, require_roles
 from ..services.curriculum_extractor import curriculum_extractor
+from ..services.grade_order import grade_level
 from ..services.faith_scope import prompt_block as faith_prompt_block
 from ..services.grade_scope import notes_for as grade_scope_notes
 from ..services.level_register import register_block
@@ -1255,6 +1256,7 @@ def factory_generate_diagram(
         grade_slug=payload.grade,
         subject=payload.subject,
         template_vars={
+            "slo_id": payload.slo_id if getattr(payload, "slo_id", None) else f"{payload.grade}-{payload.subject[:3].upper()}-01",
             "strand": payload.strand,
             "sub_strand": payload.sub_strand,
             "concept": concept_name,
@@ -1376,6 +1378,8 @@ def factory_generate_activity(
         grade_slug=payload.grade,
         subject=payload.subject,
         template_vars={
+            "level": getattr(payload, "level", None) or grade_level(payload.grade),
+            "slo_id": payload.slo_id if getattr(payload, "slo_id", None) else f"{payload.grade}-{payload.subject[:3].upper()}-01",
             "strand": payload.strand,
             "sub_strand": payload.sub_strand,
             "level_register": register_block(
@@ -1493,6 +1497,8 @@ def factory_plan_visuals(
         grade_slug=payload.grade,
         subject=payload.subject,
         template_vars={
+            "slo_id": payload.slo_id if getattr(payload, "slo_id", None) else f"{payload.grade}-{payload.subject[:3].upper()}-01",
+            "concept": getattr(payload, "concept", "") or payload.sub_strand,
             "strand": payload.strand,
             "sub_strand": payload.sub_strand,
             "level_register": register_block(
@@ -1637,6 +1643,7 @@ def factory_generate_single_visual(
         grade_slug=payload.grade,
         subject=payload.subject,
         template_vars={
+            "slo_id": payload.slo_id if getattr(payload, "slo_id", None) else f"{payload.grade}-{payload.subject[:3].upper()}-01",
             "strand": payload.strand,
             "sub_strand": payload.sub_strand,
             "concept": title,
@@ -1948,6 +1955,8 @@ def factory_plan_activities(
         grade_slug=payload.grade,
         subject=payload.subject,
         template_vars={
+            "level": getattr(payload, "level", None) or grade_level(payload.grade),
+            "slo_id": payload.slo_id if getattr(payload, "slo_id", None) else f"{payload.grade}-{payload.subject[:3].upper()}-01",
             "strand": payload.strand,
             "sub_strand": payload.sub_strand,
             "level_register": register_block(
@@ -2087,6 +2096,9 @@ def factory_generate_single_activity(
         grade_slug=payload.grade,
         subject=payload.subject,
         template_vars={
+            "level": getattr(payload, "level", None) or grade_level(payload.grade),
+            "slo_id": payload.slo_id if getattr(payload, "slo_id", None) else f"{payload.grade}-{payload.subject[:3].upper()}-01",
+            "diagram_info": getattr(payload, "diagram_info", "") or "",
             "strand": payload.strand,
             "sub_strand": payload.sub_strand,
             "level_register": register_block(
@@ -2202,6 +2214,8 @@ def factory_generate_questions(
         grade_slug=payload.grade,
         subject=payload.subject,
         template_vars={
+            "level": getattr(payload, "level", None) or grade_level(payload.grade),
+            "notes_title": getattr(payload, "notes_title", "") or payload.sub_strand,
             "subject_code": payload.subject_code,
             "strand": payload.strand,
             "sub_strand": payload.sub_strand,
@@ -3179,6 +3193,9 @@ def factory_generate_strands(
             payload.grade, payload.subject,
         )
 
+    from ..services.content_type_classifier import get_profile_from_db as _profile_for_strands
+
+    strand_profile = _profile_for_strands(payload.subject, payload.grade)
     resolved = pipeline_orchestrator.router.resolve_for_stage("notes_generation")
     context = langfuse_context_service.assemble_agent_context(
         agent_name="strand-generator",
@@ -3188,6 +3205,14 @@ def factory_generate_strands(
             "level": level,
             "grade": payload.grade,
             "subject": payload.subject,
+            "level_register": register_block(
+                payload.grade,
+                notes=grade_scope_notes(payload.grade, payload.subject),
+            ),
+            "faith_scope": faith_prompt_block(payload.subject),
+            "content_type_directives": (
+                strand_profile.format_for_prompt() if strand_profile else ""
+            ),
             "essence_statement": essence_statement,
             "source_material_text": source_material or "(NO SOURCE DOCUMENT AVAILABLE)",
             "custom_instructions": payload.custom_instructions,

@@ -547,6 +547,19 @@ class LangfuseContextService:
             val_str = json.dumps(v, indent=2) if isinstance(v, (dict, list)) else str(v or "")
             rendered = rendered.replace(f"{{{{ {k} }}}}", val_str)
             rendered = rendered.replace(f"{{{{{k}}}}}", val_str)
+
+        # A placeholder the caller forgot to supply used to reach the model as the
+        # literal text "{{ level_register }}" — a prompt that silently told the
+        # agent nothing about its audience while looking complete in the console.
+        # Strip it and say which one, so the gap is visible instead of invisible.
+        missing = sorted(set(re.findall(r"\{\{\s*(\w+)\s*\}\}", rendered)))
+        if missing:
+            logger.warning(
+                "Prompt rendered with %d unsupplied variable(s): %s. They have been "
+                "removed rather than sent to the model as literal text.",
+                len(missing), ", ".join(missing),
+            )
+            rendered = re.sub(r"\{\{\s*\w+\s*\}\}", "", rendered)
         return rendered
 
     def assemble_agent_context(

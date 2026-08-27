@@ -12,7 +12,7 @@ from ..services.auth import AuthContext, require_roles
 from ..services.level_register import register_block
 from ..services.faith_scope import prompt_block as faith_prompt_block
 from ..services.grade_scope import notes_for as grade_scope_notes
-from ..services.grade_order import grade_label, grade_ordinal, normalize_grade
+from ..services.grade_order import grade_label, grade_level, grade_ordinal, normalize_grade
 from ..services.question_dna import question_dna_service
 
 logger = logging.getLogger("cbc-questions-factory")
@@ -433,6 +433,8 @@ def factory_generate_questions_batch(
         grade_slug=payload.grade,
         subject=payload.subject,
         template_vars={
+            "level": getattr(payload, "level", None) or grade_level(payload.grade),
+            "notes_title": getattr(payload, "notes_title", "") or payload.sub_strand,
             "subject_code": payload.subject[:4].upper(),
             "strand": payload.strand,
             "sub_strand": payload.sub_strand,
