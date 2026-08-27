@@ -713,6 +713,49 @@ def get_dataset_progress_report(
         if s_key and ss_key:
             res_index[(s_key, ss_key)] = r
 
+    # Media and approvals live in their own tables, and coverage was scoring
+    # neither — so a sub-strand with a full photo and video plan scored the same
+    # as one with none, and one whose every artifact was an unreviewed draft
+    # scored the same as one signed off. What is not measured does not get made.
+    media_index: dict[tuple[str, str], list[dict]] = {}
+    try:
+        for row in fetch_all(
+            """
+            SELECT subject, sub_strand_name, status FROM substrand_media
+            WHERE (grade = :grade OR grade = :alt_grade)
+            """,
+            {"grade": grade_slug, "alt_grade": alt_grade},
+        ) or []:
+            key = (str(row.get("subject") or "").strip().lower(),
+                   str(row.get("sub_strand_name") or "").strip().lower())
+            media_index.setdefault(key, []).append({"status": row.get("status")})
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("Media not counted in coverage: %s", exc)
+
+    approval_index: dict[tuple[str, str], dict[str, int]] = {}
+    try:
+        for row in fetch_all(
+            """
+            SELECT a.subject, a.sub_strand_name,
+                   COUNT(*) AS total,
+                   COUNT(l.artifact_id) AS approved
+            FROM artifacts a
+            LEFT JOIN artifact_labels l
+                   ON l.artifact_id = a.artifact_id AND l.label = 'approved'
+            WHERE (a.grade = :grade OR a.grade = :alt_grade)
+            GROUP BY a.subject, a.sub_strand_name
+            """,
+            {"grade": grade_slug, "alt_grade": alt_grade},
+        ) or []:
+            key = (str(row.get("subject") or "").strip().lower(),
+                   str(row.get("sub_strand_name") or "").strip().lower())
+            approval_index[key] = {
+                "total": int(row.get("total") or 0),
+                "approved": int(row.get("approved") or 0),
+            }
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("Approvals not counted in coverage: %s", exc)
+
     # 2. Discover all curriculum sub-strands from multiple sources
     discovered_nodes: list[dict[str, Any]] = []
     seen_keys: set[tuple[str, str, str]] = set()
@@ -823,8 +866,14 @@ def get_dataset_progress_report(
 
         subjects_tree.setdefault(s_name, {}).setdefault(st_name, [])
 
-        gen_res = res_index.get((s_name.lower(), ss_name.lower()))
-        report = compute_substrand_coverage(node, gen_res)
+        scope = (s_name.lower(), ss_name.lower())
+        gen_res = res_index.get(scope)
+        # Media and approvals are joined in here rather than inside coverage, so
+        # the scorer stays a pure function of what it is handed.
+        generated = dict(gen_res or {})
+        generated["media"] = media_index.get(scope, [])
+        generated["approved"] = approval_index.get(scope, {"total": 0, "approved": 0})
+        report = compute_substrand_coverage(node, generated)
         dims = report["dimensions"]
 
         is_approved = bool(

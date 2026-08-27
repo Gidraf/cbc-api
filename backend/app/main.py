@@ -24,6 +24,7 @@ from .models import (
 )
 from .routes.admin_langfuse import router as admin_langfuse_router
 from .routes.auth import router as auth_router
+from .routes.artifacts import router as artifacts_router
 from .routes.curriculum import router as curriculum_router
 from .routes.exams import router as exams_router
 from .routes.questions import router as questions_router
@@ -51,6 +52,7 @@ app.add_middleware(
 app.include_router(auth_router)
 app.include_router(admin_langfuse_router)
 app.include_router(curriculum_router)
+app.include_router(artifacts_router)
 app.include_router(questions_router)
 app.include_router(exams_router)
 app.include_router(targets_router)

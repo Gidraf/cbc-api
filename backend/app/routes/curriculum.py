@@ -14,6 +14,7 @@ from ..services.artifact_dna import artifact_dna_service
 from ..services.auth import AuthContext, require_roles
 from ..services.curriculum_extractor import curriculum_extractor
 from ..services import (
+    artifact_registry,
     design_source,
     media_registry,
     substrand_hygiene,
@@ -3837,7 +3838,15 @@ def factory_generate_media_prompts(
                 continue
             if payload.save:
                 media_registry.save(item)
-            planned.append(item.to_dict())
+                item_versioned = _record_artifact(
+                    "photo_prompt" if kind == "photo" else "video_prompt",
+                    payload.grade, payload.subject, item.to_dict(),
+                    strand=payload.strand, sub_strand=payload.sub_strand,
+                    title=item.title, provenance=provenance,
+                )
+            else:
+                item_versioned = {}
+            planned.append({**item.to_dict(), "artifact": item_versioned})
 
     return {
         "grade": payload.grade,
@@ -3963,6 +3972,28 @@ def factory_upload_media_asset(
         "storage_url": url,
         "bytes": len(payload),
     }
+
+
+def _record_artifact(
+    kind: str, grade: str, subject: str, content: dict[str, Any], *,
+    strand: str = "", sub_strand: str = "", title: str = "",
+    provenance: dict[str, Any] | None = None, parent: str = "",
+) -> dict[str, Any]:
+    """File one generation as a version, and never fail the generation for it.
+
+    Recording is bookkeeping: if it breaks, the operator should still get the
+    content they asked for, with a warning rather than a 500.
+    """
+    try:
+        artifact = artifact_registry.create_version(
+            kind, grade, subject, content, strand=strand, sub_strand=sub_strand,
+            title=title, parent_artifact_id=parent, provenance=provenance or {},
+        )
+        return {"artifact_id": artifact.artifact_id, "version": artifact.version,
+                "artifact_key": artifact.artifact_key}
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Could not version %s for %s/%s: %s", kind, grade, subject, exc)
+        return {"error": str(exc)[:200]}
 
 
 @router.post("/factory/repair")
@@ -4165,12 +4196,18 @@ def factory_save_strands(
         "WHERE design_id = :design_id",
         {"metadata": to_json(metadata), "design_id": design_id},
     )
+    versioned = _record_artifact(
+        "strand", payload.grade, payload.subject, {"strands": clean},
+        provenance={"source": "factory_save_strands", "design_id": design_id},
+    )
+
     return {
         "status": "saved",
         "design_id": design_id,
         "saved_count": len(clean),
         "refused": refused,
         "strands": [c["strand_name"] for c in clean],
+        "artifact": versioned,
     }
 
 
@@ -4347,10 +4384,25 @@ def factory_save_substrands(
         )
         saved_count += 1
 
+    # Each sub-strand is versioned separately: review and approval are decisions
+    # about one sub-strand, not about a batch that happened to save together.
+    versioned = [
+        _record_artifact(
+            "sub_strand", payload.grade, payload.subject, ss,
+            strand=strand_name,
+            sub_strand=substrand_hygiene.strip_numbering(
+                str(ss.get("sub_strand_name") or ss.get("name") or "")
+            ),
+            provenance={"source": "factory_save_substrands", "design_id": design_id},
+        )
+        for ss in substrands
+    ]
+
     return {
         "status": "saved",
         "saved_count": saved_count,
         "refused": refused,
         "strand_name": payload.strand_name,
+        "artifacts": versioned,
     }
 

@@ -26,6 +26,10 @@ export const keys = {
   structure: (grade: string, subject: string) => ["structure", grade, subject] as const,
   media: (grade: string, subject: string, subStrand: string) =>
     ["media", grade, subject, subStrand] as const,
+  artifacts: (filters: Record<string, unknown>) => ["artifacts", filters] as const,
+  artifact: (id: string) => ["artifact", id] as const,
+  artifactVersions: (key: string) => ["artifact-versions", key] as const,
+  reviewVendors: (generator: string) => ["review-vendors", generator] as const,
   bundle: (grade: string, subject: string, subStrand: string) =>
     ["bundle", grade, subject, subStrand] as const,
   questions: (filters: Record<string, unknown>) => ["questions", filters] as const,
@@ -277,6 +281,202 @@ export function useUploadMedia(grade: string, subject: string, subStrand: string
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: keys.media(grade, subject, subStrand) });
     },
+  });
+}
+
+/* ── Artifact versions, labels and layered review ───────────────────────── */
+
+export const ARTIFACT_KINDS = [
+  "ingest", "strand", "sub_strand", "notes", "hour_module", "diagram",
+  "photo_prompt", "video_prompt", "experiment", "activity", "question", "answer",
+] as const;
+
+export const ARTIFACT_LABELS = [
+  "approved", "production", "staging", "test", "dev", "rejected",
+] as const;
+
+export type ArtifactLabel = (typeof ARTIFACT_LABELS)[number];
+
+/** One dimension of a review. They fail independently: content can be exactly
+ *  aligned with the design and pitched at the wrong age. */
+export type DimensionScore = {
+  name: string;
+  score: number;
+  evidence: string;
+  issues: string[];
+  not_applicable: boolean;
+};
+
+export type ReviewVerdict = {
+  review_id: string;
+  artifact_id: string;
+  layer: 1 | 2 | 3;
+  layer_name: string;
+  provider: string;
+  model: string;
+  verdict: "pass" | "revise" | "reject";
+  overall_confidence: number;
+  dimensions: Record<string, DimensionScore>;
+  issues: { severity: string; where: string; what: string; fix: string }[];
+  comments: string[];
+  compared_with: string;
+  weakest: string;
+};
+
+export type ApprovalState = {
+  can_approve: boolean;
+  blockers: string[];
+  layers_run: number[];
+  vendors: string[];
+  reviews: { layer: number; verdict: string; confidence: number; provider: string; model: string }[];
+};
+
+export type ArtifactVersion = {
+  artifact_id: string;
+  version: number;
+  status: string;
+  labels: string[];
+  created_by: string;
+  created_at: string;
+  parent_artifact_id: string;
+  reviews: { layer: number; verdict: string; confidence: number; provider: string; model: string }[];
+};
+
+export function useArtifacts(filters: {
+  grade?: string;
+  subject?: string;
+  kind?: string;
+  sub_strand?: string;
+  label?: string;
+}) {
+  const api = useApi();
+  const query = new URLSearchParams(
+    Object.entries(filters).filter(([, v]) => v) as [string, string][]
+  ).toString();
+  return useQuery({
+    queryKey: keys.artifacts(filters),
+    queryFn: () => api<{ artifacts: any[]; count: number }>(`/api/v1/artifacts?${query}`),
+    enabled: Boolean(filters.grade || filters.subject),
+  });
+}
+
+export function useArtifact(artifactId: string) {
+  const api = useApi();
+  return useQuery({
+    queryKey: keys.artifact(artifactId),
+    queryFn: () =>
+      api<{
+        artifact_id: string;
+        kind: string;
+        version: number;
+        content: Record<string, unknown>;
+        labels: string[];
+        parent_artifact_id: string;
+        reviews: ReviewVerdict[];
+        comments: { comment_id: string; body: string; author: string; resolved: boolean }[];
+        approval: ApprovalState;
+      }>(`/api/v1/artifacts/${encodeURIComponent(artifactId)}`),
+    enabled: Boolean(artifactId),
+  });
+}
+
+/** Every attempt at one thing, so a good version survives trying a better one. */
+export function useArtifactVersions(artifactKey: string) {
+  const api = useApi();
+  return useQuery({
+    queryKey: keys.artifactVersions(artifactKey),
+    queryFn: () =>
+      api<{ versions: ArtifactVersion[] }>(
+        `/api/v1/artifacts/versions?artifact_key=${encodeURIComponent(artifactKey)}`
+      ),
+    enabled: Boolean(artifactKey),
+  });
+}
+
+/** Who can review, and which vendor would be a genuine second opinion. */
+export function useReviewVendors(generatorProvider = "") {
+  const api = useApi();
+  return useQuery({
+    queryKey: keys.reviewVendors(generatorProvider),
+    queryFn: () =>
+      api<{
+        vendors: { provider: string; label: string; models: string[]; default: string; notes: string; available: boolean }[];
+        dimensions: Record<string, { weight: number; question: string }>;
+        layers: Record<string, { name: string; can_approve: boolean; brief: string }>;
+        suggested: { provider?: string; model?: string };
+        independent_of: string[];
+      }>(
+        `/api/v1/artifacts/review/vendors?generator_provider=${encodeURIComponent(generatorProvider)}`
+      ),
+  });
+}
+
+export function useArtifactActions(artifactId: string) {
+  const api = useApi();
+  const qc = useQueryClient();
+  const refresh = () => qc.invalidateQueries({ queryKey: keys.artifact(artifactId) });
+
+  return {
+    review: useMutation({
+      mutationFn: (v: { layer: 1 | 2 | 3; provider?: string; model?: string; compare_with?: string }) =>
+        api<ReviewVerdict & { approval: ApprovalState; reviewed_a_diff: boolean }>(
+          "/api/v1/artifacts/review",
+          { method: "POST", body: JSON.stringify({ artifact_id: artifactId, ...v }) }
+        ),
+      onSuccess: refresh,
+    }),
+    label: useMutation({
+      mutationFn: (label: ArtifactLabel) =>
+        api<{ status: string; moved_from: string }>(
+          `/api/v1/artifacts/${encodeURIComponent(artifactId)}/label`,
+          { method: "POST", body: JSON.stringify({ label }) }
+        ),
+      onSuccess: refresh,
+    }),
+    comment: useMutation({
+      mutationFn: (v: { body: string; dimension?: string }) =>
+        api<{ comment_id: string }>(
+          `/api/v1/artifacts/${encodeURIComponent(artifactId)}/comments`,
+          { method: "POST", body: JSON.stringify(v) }
+        ),
+      onSuccess: refresh,
+    }),
+    edit: useMutation({
+      mutationFn: (content: Record<string, unknown>) =>
+        api<{ artifact_id: string; version: number }>(
+          `/api/v1/artifacts/${encodeURIComponent(artifactId)}`,
+          { method: "PUT", body: JSON.stringify({ content }) }
+        ),
+      onSuccess: refresh,
+    }),
+    remove: useMutation({
+      mutationFn: () =>
+        api<{ status: string }>(`/api/v1/artifacts/${encodeURIComponent(artifactId)}`, {
+          method: "DELETE",
+        }),
+      onSuccess: () => qc.invalidateQueries({ queryKey: ["artifacts"] }),
+    }),
+  };
+}
+
+/** What changed between two attempts — what a layer-2 review of a regeneration
+ *  is actually about. */
+export function useArtifactDiff(artifactId: string, against = "") {
+  const api = useApi();
+  return useQuery({
+    queryKey: ["artifact-diff", artifactId, against],
+    queryFn: () =>
+      api<{
+        identical: boolean;
+        counts: { added: number; removed: number; changed: number };
+        added: { path: string; value: string }[];
+        removed: { path: string; value: string }[];
+        changed: { path: string; value: string; was: string }[];
+      }>(
+        `/api/v1/artifacts/${encodeURIComponent(artifactId)}/diff` +
+          (against ? `?against=${encodeURIComponent(against)}` : "")
+      ),
+    enabled: Boolean(artifactId),
   });
 }
 

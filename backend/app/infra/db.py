@@ -598,6 +598,113 @@ MIGRATIONS: list[tuple[str, str]] = [
             ON substrand_media(kind, status);
         """,
     ),
+    (
+        "020_artifact_registry",
+        """
+        -- Every generated thing — a strand, a set of notes, an hour module, a
+        -- diagram, a photo prompt, a question — was overwritten in place by the
+        -- next generation. There was no way to compare two attempts, to say
+        -- which one is live, or to keep a good version while trying a better
+        -- one. Prompts already work this way in Langfuse; content did not.
+        --
+        -- artifact_key is the natural identity (this sub-strand's notes);
+        -- artifact_id is one version of it. A label points at exactly one
+        -- version, so "approved" is unambiguous.
+        CREATE TABLE IF NOT EXISTS artifacts (
+            artifact_id TEXT PRIMARY KEY,
+            artifact_key TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            version INTEGER NOT NULL DEFAULT 1,
+            grade TEXT NOT NULL DEFAULT '',
+            subject TEXT NOT NULL DEFAULT '',
+            strand_name TEXT NOT NULL DEFAULT '',
+            sub_strand_name TEXT NOT NULL DEFAULT '',
+            title TEXT NOT NULL DEFAULT '',
+            content JSONB NOT NULL DEFAULT '{}'::jsonb,
+            content_hash TEXT NOT NULL DEFAULT '',
+            parent_artifact_id TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'draft',
+            provenance JSONB NOT NULL DEFAULT '{}'::jsonb,
+            created_by TEXT NOT NULL DEFAULT '',
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            CONSTRAINT uq_artifact_version UNIQUE (artifact_key, version)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_artifacts_key ON artifacts(artifact_key, version DESC);
+        CREATE INDEX IF NOT EXISTS idx_artifacts_scope
+            ON artifacts(grade, subject, kind);
+        CREATE INDEX IF NOT EXISTS idx_artifacts_parent ON artifacts(parent_artifact_id);
+
+        -- One label, one version. Moving a label is how a version goes live.
+        CREATE TABLE IF NOT EXISTS artifact_labels (
+            artifact_key TEXT NOT NULL,
+            label TEXT NOT NULL,
+            artifact_id TEXT NOT NULL,
+            moved_by TEXT NOT NULL DEFAULT '',
+            moved_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            PRIMARY KEY (artifact_key, label)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_artifact_labels_id ON artifact_labels(artifact_id);
+        """,
+    ),
+    (
+        "021_artifact_reviews",
+        """
+        -- A single 90% told a reviewer nothing about WHAT was 90%. Content can
+        -- be beautifully written and misaligned with the design, or exactly
+        -- aligned and pitched at the wrong age. Each dimension is scored and
+        -- evidenced separately, and the overall figure is derived from them
+        -- rather than asserted.
+        --
+        -- Reviews are layered: the generator's own check, an independent model
+        -- from a DIFFERENT vendor, then an approver. Storing the vendor and
+        -- model on the row is what makes "reviewed by a second opinion"
+        -- verifiable rather than claimed.
+        CREATE TABLE IF NOT EXISTS artifact_reviews (
+            review_id TEXT PRIMARY KEY,
+            artifact_id TEXT NOT NULL,
+            artifact_key TEXT NOT NULL,
+            layer INTEGER NOT NULL,
+            layer_name TEXT NOT NULL DEFAULT '',
+            provider TEXT NOT NULL DEFAULT '',
+            model TEXT NOT NULL DEFAULT '',
+            verdict TEXT NOT NULL DEFAULT 'revise',
+            overall_confidence INTEGER NOT NULL DEFAULT 0,
+            dimensions JSONB NOT NULL DEFAULT '{}'::jsonb,
+            issues JSONB NOT NULL DEFAULT '[]'::jsonb,
+            comments JSONB NOT NULL DEFAULT '[]'::jsonb,
+            compared_with TEXT NOT NULL DEFAULT '',
+            diff_summary JSONB NOT NULL DEFAULT '{}'::jsonb,
+            reviewer TEXT NOT NULL DEFAULT '',
+            usage JSONB NOT NULL DEFAULT '{}'::jsonb,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_artifact_reviews_artifact
+            ON artifact_reviews(artifact_id, layer);
+        CREATE INDEX IF NOT EXISTS idx_artifact_reviews_key
+            ON artifact_reviews(artifact_key, created_at DESC);
+
+        -- Free-text comments a person leaves on a version, independent of a
+        -- model's review. A reviewer disagreeing with a 94% needs somewhere to
+        -- say so that the next approver will actually read.
+        CREATE TABLE IF NOT EXISTS artifact_comments (
+            comment_id TEXT PRIMARY KEY,
+            artifact_id TEXT NOT NULL,
+            artifact_key TEXT NOT NULL,
+            author TEXT NOT NULL DEFAULT '',
+            body TEXT NOT NULL DEFAULT '',
+            dimension TEXT NOT NULL DEFAULT '',
+            resolved BOOLEAN NOT NULL DEFAULT FALSE,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_artifact_comments_artifact
+            ON artifact_comments(artifact_id, created_at DESC);
+        """,
+    ),
 ]
 
 

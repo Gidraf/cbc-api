@@ -99,19 +99,29 @@ class ProviderRouter:
     def __init__(self, state: RuntimeState) -> None:
         self.state = state
 
-    def resolve_for_stage(self, stage: str) -> ResolvedModelConfig:
+    def resolve_for_stage(
+        self, stage: str, provider: str | None = None, model: str | None = None,
+    ) -> ResolvedModelConfig:
+        """The model bound to a stage, or an explicit one the caller chose.
+
+        Review needs the override: layer 2 exists to be a second opinion, and a
+        second opinion from the vendor that wrote the content is one opinion
+        asked twice. The caller picks the vendor; the resolution, credential
+        handling and reachability checks stay exactly the same.
+        """
         binding = self.state.stage_bindings.get(stage)
         if not binding:
             # Fallback to default binding if stage not explicitly bound
-            provider = Provider.OPENAI.value
-            model = "gpt-4o-mini"
+            provider = provider or Provider.OPENAI.value
+            model = model or "gpt-4o-mini"
             resolved_base_url = OFFICIAL_BASE_URLS[Provider.OPENAI]
             binding_base_url = None
+            model = normalize_model_name(provider, model)
         else:
-            provider = binding.provider
-            raw_model = (binding.model or "").strip()
+            provider = provider or binding.provider
+            raw_model = (model or binding.model or "").strip()
             model = normalize_model_name(provider, raw_model)
-            binding_base_url = binding.base_url
+            binding_base_url = binding.base_url if provider == binding.provider else None
 
         provider_config = self.state.provider_credentials.get(provider)
         if not provider_config:

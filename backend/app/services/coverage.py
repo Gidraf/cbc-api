@@ -21,12 +21,23 @@ from typing import Any
 # Weights sum to 1.0. SLO coverage dominates because ten questions all testing
 # the same outcome is not the same as ten questions covering the sub-strand.
 WEIGHTS: dict[str, float] = {
-    "notes": 0.20,
-    "visuals": 0.15,
-    "practicals": 0.15,
-    "questions": 0.20,
-    "slo_coverage": 0.30,
+    "notes": 0.18,
+    "visuals": 0.12,
+    # Photographs and videos were produced by the factory and counted by
+    # nothing, so a sub-strand with a full media plan and a sub-strand with none
+    # scored identically. What is not measured does not get made.
+    "media": 0.08,
+    "practicals": 0.12,
+    "questions": 0.18,
+    "slo_coverage": 0.24,
+    # Produced is not the same as fit to teach. Without this a sub-strand could
+    # read 100% while every artifact in it was still an unreviewed draft.
+    "approved": 0.08,
 }
+
+# Media a sub-strand needs when the design does not say. Deliberately small:
+# two strong assets beat six weak ones, and each costs money to produce.
+FALLBACK_MEDIA = 2
 
 # Used only when the blueprint is silent. Each one flips `estimated` to True.
 FALLBACK_HOURS = 4
@@ -63,6 +74,7 @@ class Requirement:
     practicals: int
     questions: int
     slos: int
+    media: int = FALLBACK_MEDIA
     estimated: dict[str, bool] = field(default_factory=dict)
 
     @property
@@ -82,18 +94,26 @@ def derive_requirement(node: dict[str, Any]) -> Requirement:
     practicals = len(experiments) if experiments else hours * FALLBACK_ACTIVITIES_PER_HOUR
     questions = (len(slos) * ITEMS_PER_SLO) if slos else hours * ITEMS_PER_SLO
 
+    required_media = node.get("required_media") or []
+    media = len(required_media) if required_media else FALLBACK_MEDIA
+
     return Requirement(
         hours=max(1, hours),
         visuals=max(1, visuals),
         practicals=max(1, practicals),
         questions=max(1, questions),
         slos=len(slos),
+        media=max(1, media),
         estimated={
             "hours": hours_estimated,
             "visuals": not bool(required_diagrams),
             "practicals": not bool(experiments),
             "questions": not bool(slos),
             "slo_coverage": not bool(slos),
+            "media": not bool(required_media),
+            # Approval is counted, never estimated: a guessed approval is the
+            # one number that must never be guessed.
+            "approved": False,
         },
     )
 
@@ -160,6 +180,18 @@ def compute_substrand_coverage(
 
     questions_generated = len(questions) if isinstance(questions, list) else 0
 
+    # Planning a photograph is not producing it, so only produced assets count.
+    media_items = (generated or {}).get("media") or []
+    media_generated = sum(
+        1 for m in media_items
+        if isinstance(m, dict) and str(m.get("status") or "") == "produced"
+    ) if isinstance(media_items, list) else 0
+    media_planned = len(media_items) if isinstance(media_items, list) else 0
+
+    approved_items = (generated or {}).get("approved") or {}
+    approved_count = int(approved_items.get("approved", 0)) if isinstance(approved_items, dict) else 0
+    approvable_count = int(approved_items.get("total", 0)) if isinstance(approved_items, dict) else 0
+
     blueprint_slos = _blueprint_slo_ids(node.get("slos") or [])
     if blueprint_slos:
         addressed = _slo_ids_in(questions) & blueprint_slos
@@ -206,6 +238,21 @@ def compute_substrand_coverage(
             "remaining": max(0, slos_total - slos_addressed),
             "percentage": slo_pct,
             "estimated": requirement.estimated["slo_coverage"],
+        },
+        "media": {
+            "generated": media_generated,
+            "planned": media_planned,
+            "required": requirement.media,
+            "remaining": max(0, requirement.media - media_generated),
+            "percentage": _pct(media_generated, requirement.media),
+            "estimated": requirement.estimated["media"],
+        },
+        "approved": {
+            "generated": approved_count,
+            "required": max(1, approvable_count),
+            "remaining": max(0, approvable_count - approved_count),
+            "percentage": _pct(approved_count, approvable_count) if approvable_count else 0,
+            "estimated": False,
         },
     }
 
