@@ -239,3 +239,34 @@ def test_the_creative_area_carries_its_current_kicd_name() -> None:
     subjects = expected_subjects("grade-pp1")
     assert "Creative Activities" in subjects
     assert not any("Psychomotor" in s for s in subjects)
+
+
+def test_every_structure_entry_cites_the_page_it_was_read_from() -> None:
+    """Secondary sources disagree with this table — some describe the pre-2024
+    design, some describe Grade 1's. A citation makes the claim checkable
+    against the document rather than a matter of whose summary you trust."""
+    from app.services.curriculum_catalogue import PRE_PRIMARY_STRUCTURE
+
+    for area, spec in PRE_PRIMARY_STRUCTURE.items():
+        assert spec.get("source_pages"), f"{area} cites no page"
+        assert all(isinstance(p, int) for p in spec["source_pages"]), area
+
+
+def test_creative_activities_uses_its_themes_as_strands() -> None:
+    """The PP1 design prints "Myself / My Family / My Home / My School" under a
+    column headed *Strands* (p.148) and again as *Themes* (p.147). That is
+    KICD's own doing for this learning area, and it is what the document says.
+
+    "Creating / Performing / Appreciating" is a real CBC structure, but it
+    belongs to the Grade 1+ Creative Activities design, not PP1."""
+    from app.services.curriculum_catalogue import PRE_PRIMARY_STRUCTURE
+
+    creative = PRE_PRIMARY_STRUCTURE["Creative Activities"]
+
+    assert creative["strands"] == ["1.0 Myself", "2.0 My Family", "3.0 My Home", "4.0 My School"]
+    assert creative["source_pages"] == [148]
+    assert creative["sub_strand_count"] == 9
+    assert creative["lessons"] == 180
+    # The sub-strands are the psychomotor/art/music activities themselves.
+    assert not any("Creating" in s or "Performing" in s or "Appreciat" in s
+                   for s in creative["strands"])

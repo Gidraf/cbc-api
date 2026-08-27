@@ -152,12 +152,19 @@ def has_combined_design(grade_slug: str) -> bool:
 # way to notice was to read a generated paper and find Hindu RE in a Language
 # question. These counts turn that into a number.
 #
+# Every entry cites the page of the design's own "Summary of Strands and
+# Sub-Strands" table it was read from, so the claim is checkable rather than
+# asserted. Secondary sources disagree with this table — some describe the
+# pre-2024 design, some describe Grade 1's — and the document wins.
+#
 # Note the shapes differ. Language Activities is the only area with a genuine
 # theme axis (6 themes x 3 strands -> 36 sub-strands). Creative and
 # Environmental Activities use their themes AS strands. The three religious
 # education areas have no themes at all.
 PRE_PRIMARY_STRUCTURE: dict[str, dict[str, Any]] = {
     "Language Activities": {
+        # PP1 design, "Summary of Strands and Sub-Strands", page(s) [16, 17].
+        "source_pages": [16, 17],
         "strands": ["Listening and Speaking", "Reading", "Writing"],
         "themes": [
             "1.0 Greetings and Farewell", "2.0 Myself", "3.0 My Family",
@@ -167,18 +174,24 @@ PRE_PRIMARY_STRUCTURE: dict[str, dict[str, Any]] = {
         "lessons": 150,
     },
     "Mathematical Activities": {
+        # PP1 design, "Summary of Strands and Sub-Strands", page(s) [106].
+        "source_pages": [106],
         "strands": ["1.0 Pre-Number Activities", "2.0 Numbers", "3.0 Measurement", "4.0 Geometry"],
         "themes": [],
         "sub_strand_count": 17,
         "lessons": 150,
     },
     "Creative Activities": {
+        # PP1 design, "Summary of Strands and Sub-Strands", page(s) [148].
+        "source_pages": [148],
         "strands": ["1.0 Myself", "2.0 My Family", "3.0 My Home", "4.0 My School"],
         "themes": [],
         "sub_strand_count": 9,
         "lessons": 180,
     },
     "Environmental Activities": {
+        # PP1 design, "Summary of Strands and Sub-Strands", page(s) [176].
+        "source_pages": [176],
         "strands": [
             "1.0 Myself", "2.0 My Family", "3.0 My Home",
             "4.0 My Neighbourhood", "5.0 My School",
@@ -188,6 +201,8 @@ PRE_PRIMARY_STRUCTURE: dict[str, dict[str, Any]] = {
         "lessons": 154,
     },
     "Christian Religious Education": {
+        # PP1 design, "Summary of Strands and Sub-Strands", page(s) [202].
+        "source_pages": [202],
         "strands": [
             "1.0 Creation", "2.0 The Bible", "3.0 The Life of Jesus Christ",
             "4.0 Christian Values", "5.0 The Church",
@@ -197,6 +212,8 @@ PRE_PRIMARY_STRUCTURE: dict[str, dict[str, Any]] = {
         "lessons": 90,
     },
     "Hindu Religious Education": {
+        # PP1 design, "Summary of Strands and Sub-Strands", page(s) [224].
+        "source_pages": [224],
         "strands": [
             "1.0 Creation", "2.0 Manifestations of Paramatma", "3.0 Scriptures",
             "4.0 Worship", "5.0 Sadachaar", "6.0 Yoga",
@@ -206,6 +223,8 @@ PRE_PRIMARY_STRUCTURE: dict[str, dict[str, Any]] = {
         "lessons": 90,
     },
     "Islamic Religious Education": {
+        # PP1 design, "Summary of Strands and Sub-Strands", page(s) [253].
+        "source_pages": [253],
         "strands": [
             "1.0 Qur'an", "2.0 Pillars of Iman", "3.0 Devotional Acts",
             "4.0 Akhlaq (Moral Teachings)", "5.0 Siirah", "6.0 Islamic Festivals",
