@@ -849,6 +849,7 @@ def seed_langfuse() -> dict[str, Any]:
         }
 
     # Create Master Context prompt (BECF & alias cbc-master-context)
+    master_failures: list[dict[str, str]] = []
     for p_name in ["BECF", "cbc-master-context"]:
         try:
             client.create_prompt(
@@ -859,24 +860,33 @@ def seed_langfuse() -> dict[str, Any]:
             )
             seeded_prompts.append(p_name)
             logger.info("Successfully created prompt '%s'.", p_name)
-        except Exception as exc:
-            logger.info("Prompt '%s' may already exist: %s", p_name, exc)
-            seeded_prompts.append(p_name)
+        except Exception as exc:  # noqa: BLE001
+            logger.error("Prompt '%s' was NOT written: %s", p_name, exc)
+            master_failures.append({"prompt": p_name, "error": str(exc)[:300]})
 
-    # Create agent prompts
+    # Create agent prompts.
+    #
+    # The label set must match every label get_prompt() tries, and in particular
+    # "production" and "latest" — the resolver tries those BEFORE "prod", so a
+    # single old version still carrying one of them would outrank every new
+    # version forever, and a rewritten prompt would never reach a single call.
+    failed: list[dict[str, str]] = []
     for name, content in SEED_AGENT_PROMPTS.items():
         try:
-            client.create_prompt(
+            created = client.create_prompt(
                 name=name,
                 prompt=content,
                 type="text",
-                labels=["prod", "staging", "dev"],
+                labels=["production", "latest", "prod", "staging", "dev"],
             )
-            seeded_prompts.append(name)
-            logger.info("Successfully created prompt '%s'.", name)
-        except Exception as exc:
-            logger.info("Prompt '%s' may already exist: %s", name, exc)
-            seeded_prompts.append(name)
+            version = getattr(created, "version", None)
+            seeded_prompts.append(f"{name} v{version}" if version else name)
+            logger.info("Wrote prompt '%s' (version %s).", name, version)
+        except Exception as exc:  # noqa: BLE001
+            # Reporting this as seeded is how a rewritten prompt silently keeps
+            # serving the old text: the caller is told the re-seed succeeded.
+            logger.error("Prompt '%s' was NOT written: %s", name, exc)
+            failed.append({"prompt": name, "error": str(exc)[:300]})
 
     # Create datasets
     grades = ["cbc/datasets", "grade-dte", "grade-pp1", "grade-pp2"] + [f"grade-{i}" for i in range(1, 13)]
@@ -889,11 +899,29 @@ def seed_langfuse() -> dict[str, Any]:
             logger.info("Dataset '%s' may already exist: %s", grade, exc)
             seeded_datasets.append(grade)
 
-    logger.info("Langfuse seed process completed.")
+    failed = master_failures + failed
+    if failed:
+        logger.error(
+            "Langfuse seed finished with %d prompt(s) NOT written: %s",
+            len(failed), ", ".join(f["prompt"] for f in failed),
+        )
+        return {
+            "status": "error",
+            "message": (
+                f"{len(failed)} prompt(s) could not be written. The old text is still "
+                "being served for those, so prompt changes have NOT taken effect."
+            ),
+            "seeded_prompts": seeded_prompts,
+            "failed_prompts": failed,
+            "seeded_datasets": seeded_datasets,
+        }
+
+    logger.info("Langfuse seed process completed: %d prompt(s) written.", len(seeded_prompts))
     return {
         "status": "ok",
-        "message": "Langfuse seed completed successfully.",
+        "message": f"Langfuse seed completed: {len(seeded_prompts)} prompt(s) written.",
         "seeded_prompts": seeded_prompts,
+        "failed_prompts": [],
         "seeded_datasets": seeded_datasets,
     }
 

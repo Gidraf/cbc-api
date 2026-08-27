@@ -86,8 +86,13 @@ class LevelRegister:
             lines.append(f"CONTEXT FOR EXAMPLES: {self.scenario_world}")
         if self.uses_themes:
             lines.append(
-                "STRUCTURE: this level organises the syllabus as THEME x STRAND -> SUB-STRAND. "
-                "Record the theme; do not report a theme as if it were a strand or a sub-strand."
+                "STRUCTURE: subject -> STRAND -> SUB-STRAND is the spine. SOME learning areas "
+                "at this level add a THEME axis on top of it (PP1 Language Activities runs six "
+                "themes across three strands: Listening and Speaking, Reading, Writing). Others "
+                "use their themes AS the strands (Creative and Environmental Activities), and "
+                "the religious education areas have no themes at all. Read what THIS learning "
+                "area does. Where a theme axis exists, record the theme; never report a theme as "
+                "if it were a strand or a sub-strand."
             )
         return "\n".join(lines)
 

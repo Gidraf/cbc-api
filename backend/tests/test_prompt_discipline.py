@@ -154,3 +154,71 @@ def test_a_blueprint_that_matches_nothing_is_emptied_not_substituted() -> None:
     assert focused["strands"] == []
     assert "Read the curriculum design document instead" in focused["note"]
     assert "do not substitute another strand" in focused["note"]
+
+
+class _FakeCreated:
+    def __init__(self, version: int) -> None:
+        self.version = version
+
+
+def _seed_with(monkeypatch, create_prompt) -> dict:
+    """Run seed_langfuse against a stubbed Langfuse client."""
+    from app import settings as settings_mod
+    from app.services import langfuse_seed as seed_mod
+
+    monkeypatch.setattr(settings_mod.settings, "langfuse_public_key", "pk", raising=False)
+    monkeypatch.setattr(settings_mod.settings, "langfuse_secret_key", "sk", raising=False)
+    monkeypatch.setattr(seed_mod.settings, "langfuse_public_key", "pk", raising=False)
+    monkeypatch.setattr(seed_mod.settings, "langfuse_secret_key", "sk", raising=False)
+
+    class FakeClient:
+        def __init__(self, **_kw): ...
+        def create_prompt(self, **kw): return create_prompt(**kw)
+        def create_dataset(self, name): return None
+
+    import sys, types
+    fake = types.ModuleType("langfuse")
+    fake.Langfuse = FakeClient
+    monkeypatch.setitem(sys.modules, "langfuse", fake)
+    return seed_mod.seed_langfuse()
+
+
+def test_prompts_are_labelled_for_every_label_the_resolver_tries(monkeypatch) -> None:
+    """get_prompt tries "production" and "latest" BEFORE "prod". A new version
+    that lacks them is outranked by any old version that has them — so the
+    rewritten prompt would never reach a single call."""
+    seen: list[list[str]] = []
+
+    def create_prompt(**kw):
+        seen.append(kw["labels"])
+        return _FakeCreated(9)
+
+    _seed_with(monkeypatch, create_prompt)
+
+    assert seen, "no prompts were written"
+    for labels in seen:
+        assert "production" in labels and "latest" in labels, labels
+        assert "prod" in labels
+
+
+def test_a_failed_seed_is_reported_as_a_failure(monkeypatch) -> None:
+    """It used to append the name to seeded_prompts from the except branch and
+    return "ok", so a re-seed that wrote nothing looked identical to one that
+    worked — and the old prompt kept serving."""
+    def create_prompt(**kw):
+        raise RuntimeError("langfuse rejected the write")
+
+    result = _seed_with(monkeypatch, create_prompt)
+
+    assert result["status"] == "error"
+    assert result["failed_prompts"], "failures must be named"
+    assert "have NOT taken effect" in result["message"]
+    assert "substrand-generator" in {f["prompt"] for f in result["failed_prompts"]}
+
+
+def test_a_successful_seed_reports_the_versions_it_wrote(monkeypatch) -> None:
+    result = _seed_with(monkeypatch, lambda **kw: _FakeCreated(42))
+
+    assert result["status"] == "ok"
+    assert result["failed_prompts"] == []
+    assert any("v42" in p for p in result["seeded_prompts"]), result["seeded_prompts"]

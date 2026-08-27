@@ -13,6 +13,8 @@ REST API on 2026-08-26. Subject names are exactly as KICD prints them.
 """
 from __future__ import annotations
 
+from typing import Any
+
 from .grade_order import GRADE_SEQUENCE
 
 # Grades 1-3 share one combined Lower Primary design, so the same seven
@@ -110,6 +112,90 @@ GRADES_WITH_COMBINED_DESIGN = frozenset({"grade-pp1", "grade-pp2"})
 def has_combined_design(grade_slug: str) -> bool:
     """True when one published PDF for this grade holds several learning areas."""
     return grade_slug in GRADES_WITH_COMBINED_DESIGN
+
+# ── What each Pre-Primary learning area should contain ───────────────────────
+# Read off the PP1 design's own "Summary of Strands and Sub Strands" tables.
+# Ingest is otherwise unverifiable: a split that produced one learning area with
+# every sub-strand looks the same in the console as a correct one, and the only
+# way to notice was to read a generated paper and find Hindu RE in a Language
+# question. These counts turn that into a number.
+#
+# Note the shapes differ. Language Activities is the only area with a genuine
+# theme axis (6 themes x 3 strands -> 36 sub-strands). Creative and
+# Environmental Activities use their themes AS strands. The three religious
+# education areas have no themes at all.
+PRE_PRIMARY_STRUCTURE: dict[str, dict[str, Any]] = {
+    "Language Activities": {
+        "strands": ["Listening and Speaking", "Reading", "Writing"],
+        "themes": [
+            "1.0 Greetings and Farewell", "2.0 Myself", "3.0 My Family",
+            "4.0 My Home", "5.0 My Neighbourhood", "6.0 My School",
+        ],
+        "sub_strand_count": 36,
+        "lessons": 150,
+    },
+    "Mathematical Activities": {
+        "strands": ["1.0 Pre-Number Activities", "2.0 Numbers", "3.0 Measurement", "4.0 Geometry"],
+        "themes": [],
+        "sub_strand_count": 17,
+        "lessons": 150,
+    },
+    "Creative Activities": {
+        "strands": ["1.0 Myself", "2.0 My Family", "3.0 My Home", "4.0 My School"],
+        "themes": [],
+        "sub_strand_count": 9,
+        "lessons": 180,
+    },
+    "Environmental Activities": {
+        "strands": [
+            "1.0 Myself", "2.0 My Family", "3.0 My Home",
+            "4.0 My Neighbourhood", "5.0 My School",
+        ],
+        "themes": [],
+        "sub_strand_count": 14,
+        "lessons": 154,
+    },
+    "Christian Religious Education": {
+        "strands": [
+            "1.0 Creation", "2.0 The Bible", "3.0 The Life of Jesus Christ",
+            "4.0 Christian Values", "5.0 The Church",
+        ],
+        "themes": [],
+        "sub_strand_count": 12,
+        "lessons": 90,
+    },
+    "Hindu Religious Education": {
+        "strands": [
+            "1.0 Creation", "2.0 Manifestations of Paramatma", "3.0 Scriptures",
+            "4.0 Worship", "5.0 Sadachaar", "6.0 Yoga",
+        ],
+        "themes": [],
+        "sub_strand_count": 16,
+        "lessons": 90,
+    },
+    "Islamic Religious Education": {
+        "strands": [
+            "1.0 Qur'an", "2.0 Pillars of Iman", "3.0 Devotional Acts",
+            "4.0 Akhlaq (Moral Teachings)", "5.0 Siirah", "6.0 Islamic Festivals",
+        ],
+        "themes": [],
+        "sub_strand_count": 14,
+        "lessons": 90,
+    },
+}
+
+
+def expected_structure(grade_slug: str, subject: str) -> dict[str, Any]:
+    """The strands and sub-strand count a learning area should have, if known."""
+    if grade_slug in GRADES_WITH_COMBINED_DESIGN:
+        return dict(PRE_PRIMARY_STRUCTURE.get(subject, {}))
+    return {}
+
+
+def uses_theme_axis(grade_slug: str, subject: str) -> bool:
+    """True only where the design really runs themes across strands."""
+    return bool(expected_structure(grade_slug, subject).get("themes"))
+
 
 
 def expected_subjects(grade_slug: str) -> list[str]:

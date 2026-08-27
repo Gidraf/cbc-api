@@ -141,3 +141,60 @@ def test_the_catalogue_lists_pre_primary_as_seven_learning_areas() -> None:
     # Grades that publish one document per learning area are unaffected.
     assert has_combined_design("grade-7") is False
     assert has_combined_design("grade-4") is False
+
+
+def test_the_pre_primary_structure_matches_the_published_design() -> None:
+    """Ingest is otherwise unverifiable: one learning area holding every
+    sub-strand looks identical in the console to a correct split."""
+    from app.services.curriculum_catalogue import (
+        PRE_PRIMARY_STRUCTURE, expected_subjects, uses_theme_axis,
+    )
+
+    assert sorted(PRE_PRIMARY_STRUCTURE) == sorted(expected_subjects("grade-pp1"))
+
+    # Read off the design's own Summary of Strands and Sub Strands tables.
+    expected = {
+        "Language Activities": (3, 36, 150),
+        "Mathematical Activities": (4, 17, 150),
+        "Creative Activities": (4, 9, 180),
+        "Environmental Activities": (5, 14, 154),
+        "Christian Religious Education": (5, 12, 90),
+        "Hindu Religious Education": (6, 16, 90),
+        "Islamic Religious Education": (6, 14, 90),
+    }
+    for area, (strands, subs, lessons) in expected.items():
+        got = PRE_PRIMARY_STRUCTURE[area]
+        assert len(got["strands"]) == strands, area
+        assert got["sub_strand_count"] == subs, area
+        assert got["lessons"] == lessons, area
+
+
+def test_only_language_activities_runs_a_theme_axis() -> None:
+    """Creative and Environmental use their themes AS strands; the religious
+    education areas have none. Treating all of pre-primary as theme-based is
+    how six Language themes got reported as six strands."""
+    from app.services.curriculum_catalogue import PRE_PRIMARY_STRUCTURE, uses_theme_axis
+
+    assert uses_theme_axis("grade-pp1", "Language Activities")
+    assert len(PRE_PRIMARY_STRUCTURE["Language Activities"]["themes"]) == 6
+
+    for area in PRE_PRIMARY_STRUCTURE:
+        if area != "Language Activities":
+            assert not uses_theme_axis("grade-pp1", area), f"{area} has no theme axis"
+
+    # Grades that publish one document per learning area have no such table.
+    assert uses_theme_axis("grade-7", "Integrated Science") is False
+
+
+def test_language_strands_are_skills_not_themes() -> None:
+    """"1.0 LANGUAGE ACTIVITIES" is the learning area; "1.0 Greetings and
+    Farewell" is a theme. Neither is a strand."""
+    from app.services.curriculum_catalogue import PRE_PRIMARY_STRUCTURE
+
+    strands = PRE_PRIMARY_STRUCTURE["Language Activities"]["strands"]
+    assert strands == ["Listening and Speaking", "Reading", "Writing"]
+
+    themes = PRE_PRIMARY_STRUCTURE["Language Activities"]["themes"]
+    assert "1.0 Greetings and Farewell" in themes
+    assert "6.0 My School" in themes
+    assert not any("Greetings" in s or "School" in s for s in strands)
