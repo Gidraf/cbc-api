@@ -1,4 +1,6 @@
 fastapi==0.116.1
+# Required by the media upload endpoint (multipart form data).
+python-multipart==0.0.32
 uvicorn==0.35.0
 pydantic==2.11.7
 cryptography==45.0.6

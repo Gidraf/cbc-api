@@ -58,6 +58,27 @@ class ObjectStorage:
             logger.warning("MinIO save_svg failed for '%s': %s", object_name, exc)
             return f"local://{settings.minio_bucket}/{object_name}"
 
+    def save_bytes(self, object_name: str, payload: bytes, content_type: str) -> str:
+        """Store an uploaded photograph or video exactly as it arrived.
+
+        Unlike an SVG, a photo or a video is opaque to us: it is not generated
+        as code and cannot be re-derived, so it is stored byte-for-byte and the
+        caller keeps the URL.
+        """
+        try:
+            self.ensure_bucket()
+            self._get_client().put_object(
+                bucket_name=settings.minio_bucket,
+                object_name=object_name,
+                data=BytesIO(payload),
+                length=len(payload),
+                content_type=content_type or "application/octet-stream",
+            )
+            return f"{settings.minio_public_base_url}/{settings.minio_bucket}/{object_name}"
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("MinIO save_bytes failed for '%s': %s", object_name, exc)
+            return f"local://{settings.minio_bucket}/{object_name}"
+
     def save_json(self, object_name: str, data: Any) -> str:
         """Stores structured JSON payload to MinIO bucket."""
         try:

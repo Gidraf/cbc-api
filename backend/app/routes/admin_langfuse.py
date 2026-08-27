@@ -435,6 +435,55 @@ def trigger_langfuse_seed(
     return result
 
 
+@router.post("/sync-prompts")
+def trigger_prompt_sync(
+    force: bool = False,
+    _: AuthContext = Depends(require_roles("admin")),
+) -> dict[str, Any]:
+    """Push prompts whose text has changed since they were last written.
+
+    This runs at startup on its own, keyed on the content hash — the same way
+    schema migrations run. It is here for the case where a deploy could not
+    reach Langfuse and the sync has to be retried without a restart.
+
+    `force=true` rewrites every prompt regardless of hash.
+    """
+    from ..services.prompt_sync import sync_prompts
+
+    return sync_prompts(force=force).to_dict()
+
+
+@router.get("/prompt-status")
+def read_prompt_status(
+    _: AuthContext = Depends(require_roles("admin", "operator", "developer")),
+) -> dict[str, Any]:
+    """Which prompts are current, and which are waiting to be pushed."""
+    from ..infra.db import fetch_all
+    from ..services.prompt_sync import _all_prompts, content_hash
+
+    try:
+        rows = fetch_all("SELECT name, content_hash, remote_version, applied_at "
+                         "FROM prompt_versions") or []
+    except Exception:  # noqa: BLE001
+        rows = []
+    applied = {str(r["name"]): r for r in rows}
+
+    prompts = []
+    for name, text in sorted(_all_prompts().items()):
+        record = applied.get(name)
+        prompts.append({
+            "name": name,
+            "current": bool(record) and record["content_hash"] == content_hash(text),
+            "remote_version": (record or {}).get("remote_version"),
+            "applied_at": (record or {}).get("applied_at"),
+        })
+    return {
+        "prompts": prompts,
+        "pending": [p["name"] for p in prompts if not p["current"]],
+        "all_current": all(p["current"] for p in prompts),
+    }
+
+
 # ── Dataset Clearing & Cascading Children Removal ───────────────────────────
 
 

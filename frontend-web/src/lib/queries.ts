@@ -24,6 +24,8 @@ export const keys = {
   substrands: (grade: string, subject: string) => ["substrands", grade, subject] as const,
   progress: (grade: string, subject?: string) => ["progress", grade, subject ?? "all"] as const,
   structure: (grade: string, subject: string) => ["structure", grade, subject] as const,
+  media: (grade: string, subject: string, subStrand: string) =>
+    ["media", grade, subject, subStrand] as const,
   bundle: (grade: string, subject: string, subStrand: string) =>
     ["bundle", grade, subject, subStrand] as const,
   questions: (filters: Record<string, unknown>) => ["questions", filters] as const,
@@ -190,6 +192,10 @@ export function useProgress(grade: string, subject?: string) {
   });
 }
 
+/** Something the generator produced that was refused before it could save —
+ *  raw page debris, a duplicate, an entry naming its strand instead of itself. */
+export type Refusal = { strand_name?: string; sub_strand_name?: string; reason: string };
+
 export type StoredStructure = {
   grade: string;
   subject: string;
@@ -217,6 +223,60 @@ export function useStoredStructure(grade: string, subject: string) {
           `&subject=${encodeURIComponent(subject)}`
       ),
     enabled: Boolean(grade && subject),
+  });
+}
+
+export type MediaItem = {
+  media_id: string;
+  kind: "photo" | "video";
+  title: string;
+  purpose: string;
+  generation_prompt: string;
+  negative_prompt: string;
+  shot_list: { shot: number; seconds: number; on_screen: string; narration: string }[];
+  spec: Record<string, unknown>;
+  alt_text: string;
+  narration: string;
+  storage_url: string;
+  content_type: string;
+  source_pages: number[];
+  status: "planned" | "produced" | "rejected";
+};
+
+/** Photographs and videos planned for a sub-strand, with what has been produced.
+ *  Unlike a diagram these are not generated as code — the factory authors the
+ *  prompt and the shot list, and the asset is uploaded back against it. */
+export function useSubstrandMedia(grade: string, subject: string, subStrand: string) {
+  const api = useApi();
+  return useQuery({
+    queryKey: keys.media(grade, subject, subStrand),
+    queryFn: () =>
+      api<{ media: MediaItem[]; planned: number; produced: number }>(
+        `/api/v1/curriculum/factory/media?grade=${encodeURIComponent(grade)}` +
+          `&subject=${encodeURIComponent(subject)}&sub_strand=${encodeURIComponent(subStrand)}`
+      ),
+    enabled: Boolean(grade && subject && subStrand),
+  });
+}
+
+/** Upload the produced photograph or video against its plan. The plan is kept:
+ *  what the asset was meant to show is how a reviewer judges what arrived. */
+export function useUploadMedia(grade: string, subject: string, subStrand: string) {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (v: { media_id: string; file: File }) => {
+      const form = new FormData();
+      form.append("media_id", v.media_id);
+      form.append("file", v.file);
+      return api<{ storage_url: string; bytes: number }>(
+        "/api/v1/curriculum/factory/media/upload",
+        { method: "POST", body: form }
+      );
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: keys.media(grade, subject, subStrand) });
+    },
   });
 }
 
@@ -468,7 +528,12 @@ export function useStructureActions(grade: string, subject: string) {
         design_id?: string;
         source_material_text?: string;
       }) =>
-        post<{ strands: GeneratedStrand[]; grounded?: boolean; source_chars?: number }>(
+        post<{
+          strands: GeneratedStrand[];
+          refused?: Refusal[];
+          grounded?: boolean;
+          source_chars?: number;
+        }>(
           "generate-strands",
           { grade, subject, ...v }
         ),
@@ -483,7 +548,11 @@ export function useStructureActions(grade: string, subject: string) {
         source_material_text?: string;
         custom_instructions?: string;
         design_id?: string;
-      }) => post<{ sub_strands: GeneratedSubstrand[] }>("generate-substrands", { grade, subject, ...v }),
+      }) =>
+        post<{ sub_strands: GeneratedSubstrand[]; refused?: Refusal[] }>(
+          "generate-substrands",
+          { grade, subject, ...v }
+        ),
     }),
     saveStrands: useMutation({
       mutationFn: (v: { strands: GeneratedStrand[]; design_id?: string }) =>

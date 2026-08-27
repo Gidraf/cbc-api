@@ -22,6 +22,7 @@ import {
   useStructureActions,
   type GeneratedStrand,
   type GeneratedSubstrand,
+  type Refusal,
 } from "../lib/queries";
 
 /**
@@ -112,6 +113,10 @@ export function CurriculumStructure({
   // Whether the last generation actually read the KICD design, or produced a
   // plausible curriculum from the model's own knowledge.
   const [grounded, setGrounded] = React.useState<{ ok: boolean; chars: number } | null>(null);
+  // What the last generation produced and could not be kept. Dropping these
+  // silently is how a strand of raw page debris got saved and then had to be
+  // spotted by eye.
+  const [refused, setRefused] = React.useState<Refusal[]>([]);
 
   // What a copy should contain: everything under a strand, whether it was saved
   // earlier or drafted just now. Copying `drafts` alone meant that saving —
@@ -150,6 +155,7 @@ export function CurriculumStructure({
     const generated = res.strands || [];
     setStrands(generated);
     setGrounded({ ok: Boolean(res.grounded), chars: res.source_chars ?? 0 });
+    setRefused(res.refused || []);
     // Strands had nowhere to be stored, so the layer every sub-strand hangs
     // off vanished on reload even after its sub-strands were saved.
     if (generated.length) {
@@ -170,6 +176,7 @@ export function CurriculumStructure({
       custom_instructions: instructions,
     });
     setDrafts((d) => ({ ...d, [name]: res.sub_strands || [] }));
+    setRefused(res.refused || []);
   }
 
   async function save(strand: GeneratedStrand) {
@@ -243,6 +250,32 @@ export function CurriculumStructure({
       }
     >
       {actions.generateStrands.error && <ErrorNotice error={actions.generateStrands.error} />}
+      {refused.length > 0 && (
+        <div
+          style={{
+            border: "1px solid var(--warn-border, var(--line))",
+            borderRadius: "var(--radius)",
+            padding: "var(--s3)",
+            marginBottom: "var(--s3)",
+            fontSize: "var(--text-sm)",
+          }}
+        >
+          <strong>
+            {refused.length} entr{refused.length === 1 ? "y was" : "ies were"} refused
+          </strong>
+          <div style={{ color: "var(--ink-3)", marginTop: 4 }}>
+            The generator returned content that is raw source text or a duplicate.
+            It was dropped rather than saved.
+          </div>
+          <ul style={{ margin: "var(--s2) 0 0", paddingLeft: "1.2em" }}>
+            {refused.map((r, i) => (
+              <li key={i}>
+                <code>{r.sub_strand_name || r.strand_name || "?"}</code> — {r.reason}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       {grounded && !grounded.ok && (
         <EmptyState

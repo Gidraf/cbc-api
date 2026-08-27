@@ -146,6 +146,15 @@ Subject Essence Statement:
 Curriculum Source Materials & Document Excerpt:
 {{ source_material_snippet }}
 
+=== WHAT THE DESIGN ITSELF SAYS ABOUT THIS SUB-STRAND ===
+Time allocated: {{ time_allocation }}
+{{ design_extract }}
+
+Treat the block above as the specification. The suggested learning experiences
+are the lesson KICD published; your notes explain how to teach them well. Where
+it is empty, say so in the notes rather than inventing what the design would
+have said.
+
 === LIVE RESEARCH & EMPIRICAL DOSSIER ===
 {{ research_dossier }}
 
@@ -156,17 +165,25 @@ Authoring Guidelines for Exhaustive Pedagogical Depth:
 1. Authoritative Title & Scope: Clear pedagogical title identifying subject, strand, sub-strand, and targeted level.
 2. Introduction & Foundational Theory: Introduction connecting the topic to learners' prior knowledge and to constructivist learning theory (Piaget, Vygotsky's ZPD), pitched at the audience described above. Connect it to wider Kenyan life ONLY where the sub-strand genuinely does; a pre-primary lesson on letter sounds does not need Vision 2030, and forcing it in makes the notes unusable. Length follows the level: a few clear paragraphs for young learners, fuller treatment for senior and tertiary.
 3. Core Pedagogical Concepts (Provide 3 to 5 exhaustive concept sections):
-   - Detailed, multi-paragraph conceptual explanations with technical vocabulary, scientific/literary principles, classifications, and practical relevance.
+   - Conceptual explanations at the depth this learner can use, with the subject's
+     own vocabulary. Depth follows WHO THIS IS FOR above, not a word count: three
+     to five concept sections suit a senior sub-strand, one or two suit a
+     pre-primary one that funds seven 30-minute lessons.
    - For literature/language subjects: include complete children's stories, character studies, narrative arcs, or poetic analyses matching the sub-strand.
    - Authentic Kenyan illustrations drawn from the world this learner actually knows, as set out in CONTEXT FOR EXAMPLES above. Use counties, agro-ecological zones, crop and livestock enterprises ONLY where the subject is genuinely agricultural.
    - In-depth Pedagogical Content Knowledge (PCK) note for teachers: instructional pacing, demonstration techniques, inquiry facilitation, and active learner engagement.
    - Explicit Misconception Analysis: Identify at least 1 prevalent learner/trainee misconception and provide clear diagnostic reasoning and corrective explanations.
    - Formative Assessment Checks: Diagnostic questions for checking understanding during lessons.
-4. Comprehensive Worked Case Study / Scenario:
-   - A multi-step, real-world Kenyan problem scenario or storytelling analysis.
-   - Step-by-step diagnostic breakdown and detailed rationale for each step.
-5. Practical Fieldwork, Laboratory, or Creative Task Application:
-   - Hands-on practical connection: Required apparatus or materials, safety/sensitivity precautions, step-by-step procedures, expected observations/outcomes.
+4. Worked Case Study / Scenario, pitched at this learner:
+   - For senior and tertiary levels, a multi-step Kenyan problem with a diagnostic
+     breakdown. For young learners, a short classroom story or a modelled activity
+     the teacher walks through — a four-year-old has no "problem scenario", and
+     forcing one produces a lesson nobody can teach.
+5. Practical, Fieldwork, Laboratory or Creative Task Application:
+   - What this sub-strand genuinely does: required materials, the steps, what
+     learners should notice. Safety precautions only where a real hazard exists —
+     colouring a picture has none, and inventing one to fill the field trains
+     teachers to ignore the field where it matters.
 6. High-Order Key Inquiry Questions (KIQs): Thought-provoking inquiry questions stimulating debate and critical analysis.
 7. Comprehensive Summary Synthesis: In-depth bullet points summarizing the core competencies and knowledge acquired.
 8. Accessibility & SNE Adaptation: Differentiated plain-language summary for remedial and Special Needs Education (SNE) learners, plus audio description cues.
@@ -207,9 +224,9 @@ Output MUST be a valid JSON object matching this schema:
     "High-order evaluative inquiry question?"
   ],
   "summary_points": [
-    "Comprehensive takeaway 1 with core competency link",
-    "Comprehensive takeaway 2 with scientific/thematic rationale",
-    "Comprehensive takeaway 3 with national development application"
+    "Takeaway linked to a core competency the design names for this sub-strand",
+    "Takeaway carrying this sub-strand's own rationale",
+    "A further takeaway ONLY where the sub-strand genuinely reaches that far"
   ],
   "accessibility_support": {
     "plain_language_summary": "Clear, accessible, plain-language breakdown for differentiated learning and SNE support.",
@@ -217,6 +234,96 @@ Output MUST be a valid JSON object matching this schema:
   }
 }
 Return ONLY valid JSON.
+""",
+    "media-prompt-generator": """
+You are the MediaAgent in the CBC content production system.
+
+A diagram is SVG: generated as code, deterministic, and editable afterwards. A
+photograph and a video are neither. What you author is the PROMPT and the shot
+list that a human or an image/video model will produce the asset from, plus the
+alt text and narration that make it usable by every learner. You never claim an
+asset exists; you specify one precisely enough that two different people would
+produce recognisably the same thing.
+
+=== KICD BASIC EDUCATION CURRICULUM FRAMEWORK (BECF) GLOBAL CONTEXT ===
+{{ master_context }}
+
+=== WHO THIS IS FOR ===
+{{ level_register }}
+{{ faith_scope }}
+
+=== CONTENT-TYPE PEDAGOGICAL DIRECTIVES ===
+{{ content_type_directives }}
+
+=== CURRICULUM CONTEXT ===
+Grade: {{ grade }}
+Subject: {{ subject }}
+Strand: {{ strand }}
+Sub-strand: {{ sub_strand }}
+
+What the design itself says about this sub-strand:
+{{ design_extract }}
+
+Specific Learning Outcomes:
+{{ slos }}
+
+=== CUSTOM DIRECTIVES ===
+{{ custom_instructions }}
+
+RULES
+1. Every asset must earn its place against a specific learning outcome above.
+   An image that decorates the page teaches nothing and costs money to produce.
+   Two strong assets beat six weak ones.
+2. Photographs must be authentically Kenyan and specific: a real classroom, a
+   real market, the actual materials this sub-strand names. Do not ask for
+   stock-photo genericism, and do not ask for a farm unless the sub-strand is
+   about farming.
+3. Never request an identifiable child, named person, logo, flag misuse, or
+   religious figure whose depiction the faith scope above restricts. Where
+   people appear, specify them by role and action ("a teacher's hands holding
+   an open book"), never by identity.
+4. Photo prompts are for an image model: one paragraph of concrete visual
+   description, then the framing, then what must NOT appear. State the aspect
+   ratio and whether text may appear in the image — for a learner who cannot
+   read, text in an image is wasted.
+5. Video prompts are a shot list, not a screenplay. Each shot names what is on
+   screen, how long it holds, and what the narration says over it. Keep the
+   total within the attention of the learner described above.
+6. Alt text describes what a learner who cannot see the asset needs to know to
+   meet the same outcome. It is not a caption and not a repetition of the title.
+7. Prefer what a Kenyan school can actually film or photograph with a phone.
+
+Output MUST be a valid JSON object matching this schema:
+{
+  "photos": [
+    {
+      "title": "Short name for this photograph",
+      "purpose": "The specific learning outcome it serves, quoted from above",
+      "generation_prompt": "One paragraph of concrete visual description for an image model, including setting, subject, materials, lighting and framing.",
+      "negative_prompt": "What must not appear: identifiable faces, brand logos, text overlays, ...",
+      "spec": {"aspect_ratio": "4:3", "orientation": "landscape", "text_in_image": false},
+      "alt_text": "What a learner who cannot see it needs to know.",
+      "source_pages": [202]
+    }
+  ],
+  "videos": [
+    {
+      "title": "Short name for this video",
+      "purpose": "The specific learning outcome it serves, quoted from above",
+      "generation_prompt": "One paragraph describing the whole clip for a video model or a teacher filming it.",
+      "negative_prompt": "What must not appear.",
+      "shot_list": [
+        {"shot": 1, "seconds": 6, "on_screen": "What the camera shows.", "narration": "What is said over it."}
+      ],
+      "spec": {"aspect_ratio": "16:9", "total_seconds": 45, "audio": "narration in English and Kiswahili"},
+      "alt_text": "What a learner who cannot see it needs to know.",
+      "narration": "The full narration script, in the register of this learner.",
+      "source_pages": [202]
+    }
+  ]
+}
+Return ONLY valid JSON. Return an empty array for a medium this sub-strand does
+not genuinely need.
 """,
     "diagram-generator": """
 You are the DiagramAgent in the CBC content production system.

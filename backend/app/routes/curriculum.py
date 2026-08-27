@@ -5,7 +5,7 @@ import logging
 import re
 from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
 from pydantic import BaseModel
 
 from ..errors import raise_api_error
@@ -13,11 +13,16 @@ from ..infra.db import execute, fetch_all, fetch_one
 from ..services.artifact_dna import artifact_dna_service
 from ..services.auth import AuthContext, require_roles
 from ..services.curriculum_extractor import curriculum_extractor
-from ..services import design_source
+from ..services import (
+    design_source,
+    media_registry,
+    substrand_hygiene,
+    time_allocation,
+)
 from ..services.grade_order import grade_level
 from ..services.faith_scope import prompt_block as faith_prompt_block
 from ..services.grade_scope import notes_for as grade_scope_notes
-from ..services.level_register import register_block
+from ..services.level_register import register_block, register_for_grade as level_register_for
 
 logger = logging.getLogger(__name__)
 
@@ -917,24 +922,18 @@ def factory_generate_notes(
     kiqs = substrand_row.get("key_inquiry_questions", []) if substrand_row else []
 
     # 3. Fetch Curriculum Design essence statement and source text if not provided
-    if not essence_stmt or not source_text:
-        design_row = fetch_one(
-            """
-            SELECT essence_statement, level, raw_payload
-            FROM curriculum_designs
-            WHERE (grade = :grade OR grade = :alt_grade) AND LOWER(subject) = LOWER(:subject)
-            ORDER BY updated_at DESC LIMIT 1
-            """,
-            {"grade": payload.grade, "alt_grade": payload.grade.replace("grade-", ""), "subject": payload.subject},
-        )
-        if design_row:
-            if not essence_stmt:
-                essence_stmt = design_row.get("essence_statement") or ""
-            if level == "Basic Education" and design_row.get("level"):
-                level = design_row.get("level")
-            if not source_text:
-                raw_payload = design_row.get("raw_payload") or {}
-                source_text = raw_payload.get("raw_text") or raw_payload.get("text") or raw_payload.get("output") or ""
+    #
+    # This read the design under the keys "raw_text"/"text"/"output". The
+    # extractor writes it under "source_text", so the lookup always missed and
+    # every note ever generated was written without the design in front of it.
+    # One shared resolver now, so a fifth spelling of this query cannot drift.
+    found = design_source.resolve(
+        payload.grade, payload.subject, supplied=source_text,
+    )
+    source_text = found.text
+    essence_stmt = essence_stmt or found.essence_statement
+    if level == "Basic Education" and found.level:
+        level = found.level
 
     # 4. Execute Deep Live Web Research & Academic Paper Retrieval
     dossier = web_research_agent.research_topic(
@@ -952,6 +951,46 @@ def factory_generate_notes(
     slos_formatted = "\n".join([f"- {s if isinstance(s, str) else s.get('text', str(s))}" for s in slos]) if slos else f"- Master the foundational and practical principles of {payload.sub_strand}"
     kiqs_formatted = "\n".join([f"- {k}" for k in kiqs]) if kiqs else f"- How does {payload.sub_strand} apply to real-world Kenyan national development?"
 
+    # The design's own suggested experiences, competencies, values, PCIs, links
+    # and rubric were stored and then not passed. For pre-primary the suggested
+    # learning experiences ARE the lesson, and the rubric is what the notes have
+    # to make achievable — writing notes without them invents a parallel lesson
+    # that the assessment does not match.
+    def _lines(value: Any, prefix: str = "- ") -> str:
+        if isinstance(value, str):
+            return f"{prefix}{value}" if value.strip() else ""
+        if isinstance(value, dict):
+            return "\n".join(f"{prefix}{k}: {v}" for k, v in value.items() if v)
+        if isinstance(value, (list, tuple)):
+            return "\n".join(
+                _lines(v, prefix) if not isinstance(v, str) else f"{prefix}{v}"
+                for v in value if v
+            )
+        return ""
+
+    design_block = ""
+    if substrand_row:
+        sections = [
+            ("Suggested learning experiences (from the design)",
+             _lines(substrand_row.get("learning_experiences"))),
+            ("Core competencies the design develops here",
+             _lines(substrand_row.get("core_competencies"))),
+            ("Values the design nurtures here", _lines(substrand_row.get("values"))),
+            ("Pertinent and contemporary issues",
+             _lines(substrand_row.get("pertinent_contemporary_issues"))),
+            ("Link to other learning areas",
+             _lines(substrand_row.get("link_to_other_learning_areas"))),
+            ("Assessment rubric the notes must make achievable",
+             _lines(substrand_row.get("assessment_rubrics"))),
+        ]
+        design_block = "\n\n".join(
+            f"{title}:\n{body}" for title, body in sections if body.strip()
+        )
+
+    allocation = time_allocation.parse(
+        (substrand_row or {}).get("allocated_hours"), payload.grade
+    )
+
     template_vars = {
         "master_context": master_context,
         "level_register": register_block(
@@ -967,7 +1006,9 @@ def factory_generate_notes(
         "slos": slos_formatted,
         "kiqs": kiqs_formatted,
         "essence_statement": essence_stmt or f"Comprehensive curriculum blueprint for {payload.subject} ({payload.grade}).",
-        "source_material_snippet": source_text[:4000] if source_text else "(Syllabus design context attached)",
+        "source_material_snippet": source_text[:4000] if source_text else "(NO DESIGN DOCUMENT AVAILABLE)",
+        "design_extract": design_block or "(no stored sub-strand detail)",
+        "time_allocation": allocation.phrase(),
         "research_dossier": dossier.formatted_context,
         "custom_instructions": payload.custom_instructions,
     }
@@ -979,153 +1020,55 @@ def factory_generate_notes(
         template_vars=template_vars,
     )
 
-    hours_count = substrand_row.get("allocated_hours", 4) if substrand_row else 4
+    # The directive appended here used to carry a full worked example of a
+    # four-hour TVET agriculture module — soil pH titration, lime tonnage per
+    # hectare, agricultural GDP share — as the model of what to produce. It was
+    # shown to every subject and every grade, and it out-massed the level
+    # register by an order of magnitude, so a Pre-Primary CRE note was steered
+    # toward "Hour 1: Macro-Economic Architecture". The shape is now described
+    # rather than demonstrated, and the schema itself lives in the Langfuse
+    # prompt where it can be edited without a deploy.
+    register = level_register_for(payload.grade)
+    unit = allocation.unit or register.time_unit or "lessons"
+    module_word = unit[:-1] if unit.endswith("s") else unit
 
     context.messages.append({
         "role": "user",
         "content": (
-            f"{ct_profile.format_for_prompt()}\n\n"
-            f"{dossier.formatted_context}\n\n"
-            f"=== {hours_count}-HOUR FULL INSTRUCTIONAL SYLLABUS DIRECTIVE ===\n"
-            f"Subject: {payload.subject} ({payload.grade}, {level}) [Content Type: {ct_profile.content_type.upper()}]\n"
-            f"Strand: {payload.strand} ➔ Sub-strand: {payload.sub_strand}\n"
-            f"Allocated Syllabus Time: {hours_count} CONTACT HOURS (240 instructional minutes)\n"
-            f"SLOs to Cover Completely:\n{slos_formatted}\n"
-            f"Key Inquiry Questions to Address:\n{kiqs_formatted}\n\n"
-            f"ESSENCE STATEMENT & CURRICULUM CONTEXT:\n{essence_stmt}\n\n"
-            f"MANDATORY MULTI-HOUR PRODUCTION RULES:\n"
-            f"1. YOU MUST GENERATE ALL {hours_count} COMPLETE, INDEPENDENT HOUR MODULES in the 'hour_modules' array (Hour 1, Hour 2, Hour 3, Hour 4). DO NOT combine them into one concept.\n"
-            f"2. Each Hour Module must be a comprehensive, uncompressed chapter of 600-900 words containing:\n"
-            f"   - An in-depth 'full_lecture_notes' multi-paragraph exposition with this subject's own technical vocabulary and principles, quantitative data drawn from the Verified Subject Data above, and authentic Kenyan contexts appropriate to THIS subject.\n"
-            f"   - 2 to 3 detailed 'subsections' with exhaustive explanations.\n"
-            f"   - 'quantitative_data_summary': specific cited metrics and statistics.\n"
-            f"   - 'pedagogical_notes': 5E instructional plan (Engage, Explore, Explain, Elaborate, Evaluate) for teacher trainees.\n"
-            f"   - 'common_misconceptions': specific learner misconception, root cause, and clinical cognitive remediation.\n"
-            f"   - 'formative_checks': 3 high-order diagnostic assessment questions with model answers.\n"
-            f"   - 'active_trainee_tasks': specific practical or inquiry task conducted during that 60-minute session.\n"
-            f"3. IN-TEXT RESEARCH CITATIONS: Every statistic or factual claim MUST cite, in brackets in the text, a source from the Permitted Citation Sources list in the directives above. Never cite a source belonging to a different subject.\n"
-            f"4. Total combined text across all {hours_count} hours must be substantial (3,000+ words).\n\n"
-            f"RETURN JSON FORMAT MATCHING:\n"
-            f"{{\n"
-            f'  "title": "Comprehensive {hours_count}-Hour Master Revision & Teaching Guide: {payload.sub_strand}",\n'
-            f'  "allocated_hours": {hours_count},\n'
-            f'  "intro": "In-depth multi-paragraph theoretical, constitutional, and socio-economic introduction (350+ words) citing relevant frameworks...",\n'
-            f'  "hour_modules": [\n'
-            f'    {{\n'
-            f'      "hour_number": 1,\n'
-            f'      "hour_title": "Hour 1: Macro-Economic Architecture, Agricultural GDP Contribution & Employment Dynamics",\n'
-            f'      "duration_minutes": 60,\n'
-            f'      "learning_intent": "Analyze the quantitative and structural contribution of agriculture to Kenya\'s GDP, rural livelihoods, and industrialization...",\n'
-            f'      "full_lecture_notes": "Exhaustive multi-paragraph deep technical text (600-800 words) grounded in the Verified Subject Data above, with permitted citations...",\n'
-            f'      "subsections": [\n'
-            f'        {{"title": "1.1 Direct vs. Indirect GDP Contributions", "content": "Detailed breakdown of the 33% direct and 27% indirect GDP share..."}},\n'
-            f'        {{"title": "1.2 Employment Multipliers & Rural Poverty Alleviation", "content": "Analysis of the 70% rural workforce dependency..."}},\n'
-            f'        {{"title": "1.3 Agro-Industrial Value Chains & Export Foreign Exchange", "content": "Horticulture, tea, and pyrethrum value addition dynamics..."}}\n'
-            f'      ],\n'
-            f'      "quantitative_data_summary": [\n'
-            f'        {{"metric": "<metric name>", "value": "<value>", "source": "<permitted source>"}},\n'
-            f'        {{"metric": "<metric name>", "value": "<value>", "source": "<permitted source>"}}\n'
-            f'      ],\n'
-            f'      "pedagogical_notes": "Teacher Trainee Guidance: Conduct a 5E guided inquiry session appropriate to this subject...",\n'
-            f'      "common_misconceptions": "Misconception: Agriculture is limited to subsistence food farming. Correction: Agriculture encompasses high-tech horticulture, biotechnology, agro-processing, and agro-tourism.",\n'
-            f'      "formative_checks": [\n'
-            f'        "1. Quantify the direct and indirect GDP contribution of Kenya\'s agricultural sector and cite the reporting authority.",\n'
-            f'        "2. Explain how agro-processing industries in Thika and Nakuru create forward and backward economic linkages."\n'
-            f'      ],\n'
-            f'      "active_trainee_tasks": "Trainees map a local agricultural value chain from farm gate to supermarket shelf in their county."\n'
-            f'    }},\n'
-            f'    {{\n'
-            f'      "hour_number": 2,\n'
-            f'      "hour_title": "Hour 2: <the actual title of the second hour>",\n'
-            f'      "duration_minutes": 60,\n'
-            f'      "learning_intent": "Evaluate the biophysical interactions between farming systems and ecological equilibrium...",\n'
-            f'      "full_lecture_notes": "Exhaustive multi-paragraph deep technical text (600-800 words) developing the concepts of this hour in depth, citing only sources permitted for this subject...",\n'
-            f'      "subsections": [\n'
-            f'        {{"title": "2.1 Soil Microbiome & Humus Dynamics", "content": "Detailed analysis of mycorrhizal fungi and soil aggregation..."}},\n'
-            f'        {{"title": "2.2 Hydrological Cycles & Swale Water Infiltration", "content": "Terracing and catchment hydrology in semi-arid zones..."}},\n'
-            f'        {{"title": "2.3 Agroforestry Systems for Carbon Sequestration", "content": "Nitrogen-fixing tree species and microclimate stabilization..."}}\n'
-            f'      ],\n'
-            f'      "pedagogical_notes": "Teacher Trainee Guidance: 5E lesson plan on soil structure demonstration...",\n'
-            f'      "common_misconceptions": "Misconception: Trees always compete with crops for nutrients. Correction: Deep-rooted nitrogen-fixing trees pump deep subsoil nutrients to topsoil.",\n'
-            f'      "formative_checks": ["1. <a formative check question drawn from this hour\'s content>"],\n'
-            f'      "active_trainee_tasks": "Trainees design an agroforestry layout for a 2-acre farm in Embu County."\n'
-            f'    }},\n'
-            f'    {{\n'
-            f'      "hour_number": 3,\n'
-            f'      "hour_title": "Hour 3: Environmental Impacts of Intensive Agronomy & Climate Resilience Mitigation Protocols",\n'
-            f'      "duration_minutes": 60,\n'
-            f'      "learning_intent": "Critically analyze soil degradation, chemical runoff, and climate adaptation strategies...",\n'
-            f'      "full_lecture_notes": "Exhaustive multi-paragraph deep technical text (600-800 words) on agrochemical leaching, soil acidification from synthetic fertilizers, minimum tillage, and IPM [Kenya Climate Action Plan]...",\n'
-            f'      "subsections": [\n'
-            f'        {{"title": "3.1 Fertilizer Leaching & Soil Acidification Mechanisms", "content": "Chemistry of ammonium-based fertilizers and calcium depletion..."}},\n'
-            f'        {{"title": "3.2 Integrated Pest Management (IPM) & Biological Controls", "content": "Push-pull technology with Desmodium and Napier grass..."}},\n'
-            f'        {{"title": "3.3 Conservation Tillage & Soil Moisture Preservation", "content": "Direct drilling and residue retention protocols..."}}\n'
-            f'      ],\n'
-            f'      "pedagogical_notes": "Teacher Trainee Guidance: Facilitate a structured debate on synthetic fertilizers vs. organic amendments...",\n'
-            f'      "common_misconceptions": "Misconception: Chemical fertilizers are the only cause of soil degradation. Correction: Over-tillage, monocrpping, and lack of organic matter are equally damaging.",\n'
-            f'      "formative_checks": ["1. Explain the biochemical process of push-pull technology in stem-borer control."],\n'
-            f'      "active_trainee_tasks": "Trainees calculate soil erosion risk using the Universal Soil Loss Equation (USLE) for sloping land."\n'
-            f'    }},\n'
-            f'    {{\n'
-            f'      "hour_number": 4,\n'
-            f'      "hour_title": "Hour 4: Laboratory Practicum, Soil Acidification Diagnostic & Policy Synthesis",\n'
-            f'      "duration_minutes": 60,\n'
-            f'      "learning_intent": "Conduct standardized soil pH testing, calculate agricultural lime requirement, and synthesize national policy frameworks...",\n'
-            f'      "full_lecture_notes": "Exhaustive multi-paragraph deep technical text (600-800 words) on laboratory soil diagnostics, buffer pH calculations, agricultural lime chemistry (CaCO3), and policy alignment with Vision 2030...",\n'
-            f'      "subsections": [\n'
-            f'        {{"title": "4.1 Standardized Soil Sampling & Colorimetric/Electrometric pH Testing", "content": "1:2.5 soil-water ratio protocol and electrode calibration..."}},\n'
-            f'        {{"title": "4.2 Agricultural Lime Requirement Calculations", "content": "Formulas for calculating CaCO3 tonnage per hectare based on buffering index..."}},\n'
-            f'        {{"title": "4.3 Policy Synthesis & Community Outreach Strategy", "content": "<how the concepts of this hour connect to practice in this subject>"}}\n'
-            f'      ],\n'
-            f'      "pedagogical_notes": "Teacher Trainee Guidance: Lead the 60-minute laboratory investigation and supervise safety PPE...",\n'
-            f'      "common_misconceptions": "Misconception: Adding lime immediately changes soil pH permanently. Correction: Lime requires soil moisture and 4-8 weeks to react with exchangeable aluminum ions.",\n'
-            f'      "formative_checks": ["1. Calculate the lime requirement for a 5-hectare plot with soil pH 4.8."],\n'
-            f'      "active_trainee_tasks": "Trainees perform colorimetric pH testing on 3 distinct soil samples and record findings."\n'
-            f'    }}\n'
-            f'  ],\n'
-            f'  "worked_examples": [\n'
-            f'    {{\n'
-            f'      "scenario": "<an authentic Kenyan scenario appropriate to THIS subject>",\n'
-            f'      "solution_steps": ["Step 1...", "Step 2...", "Step 3..."],\n'
-            f'      "explanation": "Detailed scientific and economic rationale...",\n'
-            f'      "research_source": "<a permitted source for this subject>"\n'
-            f'    }}\n'
-            f'  ],\n'
-            f'  "practical_connections": {{\n'
-            f'    "activity_title": "60-Minute Standardized Soil pH & Lime Buffer Laboratory Practicum",\n'
-            f'    "materials_needed": ["Digital pH meter", "Agricultural lime (CaCO3)", "Distilled water", "Beakers", "Soil sampling auger"],\n'
-            f'    "procedure": ["Step 1: Weigh 20g of air-dried sieved soil...", "Step 2: Add 50ml of distilled water (1:2.5 ratio)...", "Step 3: Calibrate pH meter with buffer solutions 4.0 and 7.0...", "Step 4: Record equilibrium pH and determine lime requirement tonnage..."],\n'
-            f'    "safety_precautions": "Wear latex gloves, splash goggles, and lab coat. Avoid inhaling fine lime dust.",\n'
-            f'    "expected_observations": "Acidic soil suspension reads pH 4.8 - 5.2. Post-lime treatment buffer shifts to pH 6.2 - 6.5."\n'
-            f'  }},\n'
-            f'  "key_inquiry_questions": [\n'
-            f'    "How do Kenya\'s macro-economic GDP targets depend fundamentally on soil ecological health?",\n'
-            f'    "What policy mechanisms can balance smallholder productivity with national watershed protection?"\n'
-            f'  ],\n'
-            f'  "summary_points": [\n'
-            f'    "<a key factual claim for this sub-strand, with a permitted citation>",\n'
-            f'    "Soil health and organic matter conservation are the biophysical foundation of agricultural climate resilience.",\n'
-            f'    "Standardized diagnostics (pH testing, lime application, IPM) provide scientifically verified pathways to sustainable yield growth."\n'
-            f'  ],\n'
-            f'  "accessibility_support": {{\n'
-            f'    "plain_language_summary": "Agriculture gives Kenyans food, jobs, and income. Healthy soil and trees protect our farms from drought so we have food in the future.",\n'
-            f'    "tactile_and_audio_cues": "Provide soil texture samples (clay, loam, sand) for tactile differentiation by visually impaired trainees."\n'
-            f'  }},\n'
-            f'  "research_references": [\n'
-            f'    {{\n'
-            f'      "source_title": "<permitted source title>",\n'
-            f'      "author_organization": "Kenya National Bureau of Statistics",\n'
-            f'      "year": 2024,\n'
-            f'      "key_data_points_cited": "Agriculture 33% direct GDP, 70% rural workforce"\n'
-            f'    }},\n'
-            f'    {{\n'
-            f'      "source_title": "<another permitted source title>",\n'
-            f'      "author_organization": "Kenya Agricultural and Livestock Research Organization",\n'
-            f'      "year": 2023,\n'
-            f'      "key_data_points_cited": "Soil acidity remediation protocols and lime buffer guidelines in Western Kenya"\n'
-            f'    }}\n'
-            f'  ]\n'
-            f"}}\n\n"
+            f"{design_block}\n\n"
+            f"=== WHAT TO AUTHOR ===\n"
+            f"Subject: {payload.subject} ({payload.grade}, {level}) "
+            f"[Content type: {ct_profile.content_type.upper()}]\n"
+            f"Strand: {payload.strand} \u2794 Sub-strand: {payload.sub_strand}\n"
+            f"Time the design allocates: {allocation.phrase()}\n"
+            f"SLOs to cover completely:\n{slos_formatted}\n"
+            f"Key inquiry questions to address:\n{kiqs_formatted}\n\n"
+            f"ESSENCE STATEMENT:\n{essence_stmt}\n\n"
+            f"PRODUCTION RULES\n"
+            f"1. Author exactly {allocation.modules} module(s) in 'hour_modules', one per "
+            f"{module_word} the design allocates. Number them 1 to {allocation.modules}. "
+            f"Do not merge them, and do not invent a {module_word} the design did not fund.\n"
+            f"2. Set each module's 'duration_minutes' to "
+            f"{allocation.minutes_each or 'the length this level actually teaches for'}"
+            f" \u2014 never assume 60.\n"
+            f"3. Every module must build on the design's own suggested learning "
+            f"experiences above. They are the lesson; your notes explain how to teach "
+            f"them, not what to teach instead of them.\n"
+            f"4. Depth follows the learner described in WHO THIS IS FOR, not a fixed "
+            f"word count. A note a teacher cannot deliver to this age group is wrong "
+            f"however thorough it is.\n"
+            f"5. Cite a source only where the claim needs one and the source is "
+            f"permitted for THIS subject. A sub-strand that rests on the design alone "
+            f"needs no external citation, and inventing statistics to fill the field "
+            f"is a defect.\n"
+            f"6. Fill 'practical_connections' with what this sub-strand genuinely "
+            f"does. Where there is no apparatus, name the real materials and leave "
+            f"'safety_precautions' to whatever genuinely applies \u2014 an empty string "
+            f"beats an invented hazard.\n"
+            f"7. Make the design's assessment rubric above achievable from these "
+            f"notes. If the rubric asks for three of something, teach three.\n\n"
+            f"Return the JSON schema given above, with 'allocated_hours' set to the "
+            f"design's own wording: \"{allocation.stated or 'not stated'}\".\n\n"
             f"ADDITIONAL PRODUCTION DIRECTIVES: {payload.custom_instructions}"
         ),
     })
@@ -2946,6 +2889,23 @@ class DeriveGradeScopeRequest(BaseModel):
     inspect: bool = False
 
 
+class GenerateMediaPromptsRequest(BaseModel):
+    grade: str
+    subject: str
+    strand: str = ""
+    sub_strand: str
+    custom_instructions: str = ""
+    kinds: list[str] = ["photo", "video"]
+    save: bool = True
+    inspect: bool = False
+
+
+class AttachMediaAssetRequest(BaseModel):
+    media_id: str
+    storage_url: str
+    content_type: str = ""
+
+
 class FactorySaveStrandsRequest(BaseModel):
     grade: str
     subject: str
@@ -3249,10 +3209,12 @@ def factory_generate_strands(
             payload.grade, payload.subject,
             outcome["trace"]["chunks"]["chunk_count"], len(outcome["items"]),
         )
+        kept, refused = substrand_hygiene.clean_strands(outcome["items"])
         return {
             "subject": payload.subject,
             "grade": payload.grade,
-            "strands": outcome["items"],
+            "strands": kept,
+            "refused": refused,
             "grounded": True,
             "source_chars": len(source_material),
             "chunked": True,
@@ -3261,11 +3223,13 @@ def factory_generate_strands(
         }
 
     resp = llm_client.generate(resolved, context.messages, temperature=0.2)
-    strands = resp.content.get("strands", []) if isinstance(resp.content, dict) else []
+    raw_strands = resp.content.get("strands", []) if isinstance(resp.content, dict) else []
+    strands, refused_strands = substrand_hygiene.clean_strands(raw_strands)
     return {
         "subject": payload.subject,
         "grade": payload.grade,
         "strands": strands,
+        "refused": refused_strands,
         "chunked": False,
         # A reviewer needs to know whether these were read from the design or
         # produced from the model's own knowledge.
@@ -3411,11 +3375,13 @@ def factory_generate_substrands(
             payload.strand_name, payload.grade, payload.subject,
             outcome["trace"]["chunks"]["chunk_count"], len(outcome["items"]),
         )
+        kept, refused = substrand_hygiene.clean(payload.strand_name, outcome["items"])
         return {
             "subject": payload.subject,
             "grade": payload.grade,
             "strand_name": payload.strand_name,
-            "sub_strands": outcome["items"],
+            "sub_strands": kept,
+            "refused": refused,
             "essence_statement_used": essence_stmt,
             "source_material_length": len(source_material),
             "grounded": True,
@@ -3425,12 +3391,17 @@ def factory_generate_substrands(
         }
 
     resp = llm_client.generate(resolved, context.messages, temperature=0.2)
-    sub_strands = resp.content.get("sub_strands", []) if isinstance(resp.content, dict) else []
+    raw = resp.content.get("sub_strands", []) if isinstance(resp.content, dict) else []
+    # A chunk the model could not parse comes back as the chunk itself. Letting
+    # that through is how a strand called "4.0 CHRISTIAN VALUES" was saved with
+    # two hundred lines of page debris in its `values` list.
+    sub_strands, refused = substrand_hygiene.clean(payload.strand_name, raw)
     return {
         "subject": payload.subject,
         "grade": payload.grade,
         "strand_name": payload.strand_name,
         "sub_strands": sub_strands,
+        "refused": refused,
         "essence_statement_used": essence_stmt,
         "source_material_length": len(source_material),
         "grounded": bool(source_material),
@@ -3716,6 +3687,333 @@ def factory_derive_grade_scope(
     }
 
 
+def _substrand_design_block(grade: str, subject: str, sub_strand: str) -> tuple[str, list[Any]]:
+    """What the design says about one sub-strand, and its SLOs.
+
+    Shared by the notes and media stations so a photograph is planned from the
+    same design text the notes are written from, rather than from the title.
+    """
+    from ..infra.db import fetch_one
+
+    row = fetch_one(
+        """
+        SELECT slos, learning_experiences, key_inquiry_questions, core_competencies,
+               values, assessment_rubrics, pertinent_contemporary_issues,
+               link_to_other_learning_areas, allocated_hours, source_pages
+        FROM curriculum_substrands
+        WHERE (grade = :grade OR grade = :alt_grade)
+          AND LOWER(subject) = LOWER(:subject)
+          AND LOWER(sub_strand_name) = LOWER(:sub_strand)
+        LIMIT 1
+        """,
+        {"grade": grade, "alt_grade": grade.replace("grade-", ""),
+         "subject": subject, "sub_strand": sub_strand},
+    )
+    if not row:
+        return "", []
+
+    def lines(value: Any) -> str:
+        if isinstance(value, str):
+            return f"- {value}" if value.strip() else ""
+        if isinstance(value, dict):
+            return "\n".join(f"- {k}: {v}" for k, v in value.items() if v)
+        if isinstance(value, (list, tuple)):
+            return "\n".join(
+                f"- {v}" if isinstance(v, str) else lines(v) for v in value if v
+            )
+        return ""
+
+    sections = [
+        ("Suggested learning experiences", lines(row.get("learning_experiences"))),
+        ("Key inquiry questions", lines(row.get("key_inquiry_questions"))),
+        ("Core competencies", lines(row.get("core_competencies"))),
+        ("Values", lines(row.get("values"))),
+        ("Pertinent and contemporary issues",
+         lines(row.get("pertinent_contemporary_issues"))),
+        ("Time allocated", str(row.get("allocated_hours") or "")),
+    ]
+    block = "\n\n".join(f"{t}:\n{b}" for t, b in sections if b.strip())
+    return block, list(row.get("slos") or [])
+
+
+@router.post("/factory/generate-media-prompts")
+def factory_generate_media_prompts(
+    payload: GenerateMediaPromptsRequest,
+    _: AuthContext = Depends(require_roles("admin", "operator", "reviewer")),
+) -> dict[str, Any]:
+    """Plan the photographs and videos a sub-strand needs.
+
+    A diagram is SVG: generated as code and editable afterwards. A photograph
+    and a video are not programmable, so what this authors is the prompt, the
+    shot list, the alt text and the narration. The asset itself is produced
+    elsewhere — by an image or video model, or by a teacher with a phone — and
+    uploaded back against its plan.
+    """
+    from ..services.content_type_classifier import get_profile_from_db
+    from ..services.langfuse_context import langfuse_context_service
+    from ..services.llm_client import llm_client
+    from ..services.pipeline import pipeline_orchestrator
+
+    kinds = [k for k in payload.kinds if k in media_registry.KINDS]
+    if not kinds:
+        raise_api_error(
+            "VALIDATION_FAILED",
+            f"Nothing to plan: kinds must include one of {media_registry.KINDS}.",
+        )
+
+    # Planned from the design, never from the sub-strand's title alone.
+    design_block, slos = _substrand_design_block(
+        payload.grade, payload.subject, payload.sub_strand
+    )
+    if not design_block:
+        raise_api_error(
+            "MISSING_PARENT_CONTEXT",
+            f"'{payload.sub_strand}' is not stored for {payload.subject} "
+            f"({payload.grade}), so there is nothing to plan media from. "
+            f"Generate and save its sub-strands first.",
+        )
+
+    profile = get_profile_from_db(payload.subject, payload.grade)
+    resolved = pipeline_orchestrator.router.resolve_for_stage("diagram_generation")
+
+    context = langfuse_context_service.assemble_agent_context(
+        agent_name="media-prompt-generator",
+        grade_slug=payload.grade,
+        subject=payload.subject,
+        focus_strand=payload.strand,
+        template_vars={
+            "master_context": langfuse_context_service.get_master_context(),
+            "level_register": register_block(
+                payload.grade,
+                notes=grade_scope_notes(payload.grade, payload.subject),
+            ),
+            "faith_scope": faith_prompt_block(payload.subject),
+            "content_type_directives": profile.format_for_prompt() if profile else "",
+            "grade": payload.grade,
+            "subject": payload.subject,
+            "strand": payload.strand,
+            "sub_strand": payload.sub_strand,
+            "design_extract": design_block,
+            "slos": "\n".join(
+                f"- {s if isinstance(s, str) else s.get('text', str(s))}" for s in slos
+            ) or "- (none stored)",
+            "custom_instructions": payload.custom_instructions
+            + ("" if "video" in kinds else "\nReturn an empty 'videos' array.")
+            + ("" if "photo" in kinds else "\nReturn an empty 'photos' array."),
+        },
+    )
+
+    if payload.inspect:
+        return {
+            "inspection": build_inspection(
+                context, agent="media-prompt-generator", grade=payload.grade,
+                subject=payload.subject, source_material=design_block, profile=profile,
+                extra={"model": f"{resolved.provider}/{resolved.model}",
+                       "sub_strand": payload.sub_strand, "kinds": kinds},
+            )
+        }
+
+    resp = llm_client.generate(resolved, context.messages, temperature=0.3)
+    content = resp.content if isinstance(resp.content, dict) else {}
+    provenance = {
+        "model": f"{resolved.provider}/{resolved.model}",
+        "agent": "media-prompt-generator",
+    }
+
+    planned: list[dict[str, Any]] = []
+    skipped = 0
+    for kind, key in (("photo", "photos"), ("video", "videos")):
+        if kind not in kinds:
+            continue
+        for entry in content.get(key) or []:
+            item = media_registry.from_generated(
+                entry, kind=kind, grade=payload.grade, subject=payload.subject,
+                strand=payload.strand, sub_strand=payload.sub_strand,
+                provenance=provenance,
+            )
+            if item is None:
+                # A title with no prompt is something nobody can produce from.
+                skipped += 1
+                continue
+            if payload.save:
+                media_registry.save(item)
+            planned.append(item.to_dict())
+
+    return {
+        "grade": payload.grade,
+        "subject": payload.subject,
+        "sub_strand": payload.sub_strand,
+        "kinds": kinds,
+        "media": planned,
+        "planned_count": len(planned),
+        "unusable_count": skipped,
+        "saved": payload.save,
+        "usage": resp.usage,
+        "model": f"{resolved.provider}/{resolved.model}",
+    }
+
+
+@router.get("/factory/media")
+def factory_list_media(
+    grade: str = Query(..., description="Grade slug, e.g. grade-pp1"),
+    subject: str = Query(...),
+    sub_strand: str = Query("", description="Optional: one sub-strand only"),
+    _: AuthContext = Depends(require_roles("admin", "operator", "reviewer")),
+) -> dict[str, Any]:
+    """Every planned or produced photograph and video, with its prompt."""
+    rows = media_registry.list_for(grade, subject, sub_strand)
+    return {
+        "grade": grade,
+        "subject": subject,
+        "sub_strand": sub_strand,
+        "media": rows,
+        "planned": sum(1 for r in rows if r.get("status") == "planned"),
+        "produced": sum(1 for r in rows if r.get("status") == "produced"),
+    }
+
+
+@router.post("/factory/media/attach")
+def factory_attach_media_asset(
+    payload: AttachMediaAssetRequest,
+    _: AuthContext = Depends(require_roles("admin", "operator")),
+) -> dict[str, Any]:
+    """Record a produced photograph or video against the plan it came from.
+
+    The plan is kept, not replaced: what the asset was supposed to show is how
+    a reviewer decides whether the thing that arrived is the thing that was
+    asked for.
+    """
+    from ..infra.db import fetch_one
+
+    row = fetch_one(
+        "SELECT media_id, kind, title FROM substrand_media WHERE media_id = :id",
+        {"id": payload.media_id},
+    )
+    if not row:
+        raise_api_error(
+            "DATASET_ITEM_NOT_FOUND",
+            f"No media plan '{payload.media_id}'. Plan it with "
+            "POST /factory/generate-media-prompts before attaching an asset.",
+        )
+
+    kind = str(row.get("kind") or "")
+    allowed = media_registry.ALLOWED_CONTENT_TYPES.get(kind, ())
+    content_type = (payload.content_type or "").split(";")[0].strip().lower()
+    if content_type and allowed and content_type not in allowed:
+        raise_api_error(
+            "VALIDATION_FAILED",
+            f"'{content_type}' is not a {kind}. Accepted: {', '.join(allowed)}.",
+        )
+
+    media_registry.attach_asset(payload.media_id, payload.storage_url, content_type)
+    return {
+        "status": "attached",
+        "media_id": payload.media_id,
+        "kind": kind,
+        "title": row.get("title"),
+        "storage_url": payload.storage_url,
+    }
+
+
+@router.post("/factory/media/upload")
+def factory_upload_media_asset(
+    media_id: str = Form(...),
+    file: UploadFile = File(...),
+    _: AuthContext = Depends(require_roles("admin", "operator")),
+) -> dict[str, Any]:
+    """Upload the produced file itself and attach it to its plan."""
+    from ..infra.db import fetch_one
+    from ..infra.storage import object_storage
+
+    row = fetch_one(
+        "SELECT media_id, kind, title FROM substrand_media WHERE media_id = :id",
+        {"id": media_id},
+    )
+    if not row:
+        raise_api_error(
+            "DATASET_ITEM_NOT_FOUND",
+            f"No media plan '{media_id}'. Plan it before uploading an asset.",
+        )
+
+    kind = str(row.get("kind") or "")
+    allowed = media_registry.ALLOWED_CONTENT_TYPES.get(kind, ())
+    content_type = (file.content_type or "").split(";")[0].strip().lower()
+    if allowed and content_type not in allowed:
+        raise_api_error(
+            "VALIDATION_FAILED",
+            f"'{content_type or 'unknown'}' is not a {kind}. "
+            f"Accepted: {', '.join(allowed)}.",
+        )
+
+    payload = file.file.read()
+    if not payload:
+        raise_api_error("VALIDATION_FAILED", "The uploaded file is empty.")
+
+    suffix = (file.filename or "").rsplit(".", 1)
+    extension = f".{suffix[-1].lower()}" if len(suffix) == 2 else ""
+    url = object_storage.save_bytes(
+        f"media/{kind}/{media_id}{extension}", payload, content_type
+    )
+    media_registry.attach_asset(media_id, url, content_type)
+    return {
+        "status": "uploaded",
+        "media_id": media_id,
+        "kind": kind,
+        "title": row.get("title"),
+        "storage_url": url,
+        "bytes": len(payload),
+    }
+
+
+@router.post("/factory/repair")
+def factory_run_repairs(
+    dry_run: bool = Query(False, description="Report what would change, change nothing"),
+    only: str = Query("", description="Run one repair by id"),
+    _: AuthContext = Depends(require_roles("admin", "operator")),
+) -> dict[str, Any]:
+    """Sweep out content saved before the guards existed.
+
+    These run at startup too. This is for running them on demand — after an
+    ingest, or to see with `dry_run=true` what a sweep would remove before it
+    removes it.
+    """
+    from ..services.data_repairs import run_repairs
+
+    return run_repairs(dry_run=dry_run, only=only)
+
+
+@router.get("/factory/repair-status")
+def factory_repair_status(
+    _: AuthContext = Depends(require_roles("admin", "operator", "reviewer")),
+) -> dict[str, Any]:
+    """How often each sweep has run and what it last found.
+
+    A repair that keeps finding rows means something upstream is still
+    producing them, which is worth seeing rather than quietly fixing forever.
+    """
+    from ..infra.db import fetch_all
+    from ..services.data_repairs import REPAIRS
+
+    try:
+        rows = {str(r["repair_id"]): r for r in (fetch_all(
+            "SELECT * FROM data_repairs ORDER BY repair_id"
+        ) or [])}
+    except Exception:  # noqa: BLE001
+        rows = {}
+
+    repairs = [
+        {"repair_id": repair_id, **{k: v for k, v in (rows.get(repair_id) or {}).items()
+                                    if k != "repair_id"}}
+        for repair_id, _fn in REPAIRS
+    ]
+    still_finding = [r["repair_id"] for r in repairs if (r.get("rows_affected_last") or 0) > 0]
+    return {
+        "repairs": repairs,
+        "still_finding_rows": still_finding,
+        "stable": not still_finding,
+    }
+
+
 @router.get("/factory/structure")
 def factory_read_structure(
     grade: str = Query(..., description="Grade slug, e.g. grade-pp1"),
@@ -3763,9 +4061,11 @@ def factory_read_structure(
 
     strands: dict[str, dict[str, Any]] = {}
     for entry in stored_strands:
-        name = str(entry.get("strand_name") or entry.get("name") or "").strip()
+        name = substrand_hygiene.strip_numbering(
+            str(entry.get("strand_name") or entry.get("name") or "")
+        )
         if name:
-            strands[name.lower()] = {
+            strands[substrand_hygiene.strand_key(name)] = {
                 "strand_id": str(entry.get("strand_id") or entry.get("id") or ""),
                 "strand_name": name,
                 "description": str(entry.get("description") or ""),
@@ -3774,8 +4074,9 @@ def factory_read_structure(
             }
 
     for row in rows:
-        name = str(row.get("strand_name") or "").strip()
-        key = name.lower()
+        name = substrand_hygiene.strip_numbering(str(row.get("strand_name") or ""))
+        # Rows saved before names were de-numbered still merge into one strand.
+        key = substrand_hygiene.strand_key(name)
         if key not in strands:
             strands[key] = {
                 "strand_id": str(row.get("strand_id") or ""),
@@ -3833,9 +4134,12 @@ def factory_save_strands(
             f'{{"grade": "{payload.grade}", "subject": "{payload.subject}"}} first.',
         )
 
+    accepted, refused = substrand_hygiene.clean_strands(payload.strands)
     clean: list[dict[str, Any]] = []
-    for entry in payload.strands:
-        name = str(entry.get("strand_name") or entry.get("name") or "").strip()
+    for entry in accepted:
+        name = substrand_hygiene.strip_numbering(
+            str(entry.get("strand_name") or entry.get("name") or "")
+        )
         if not name:
             continue
         clean.append({
@@ -3865,6 +4169,7 @@ def factory_save_strands(
         "status": "saved",
         "design_id": design_id,
         "saved_count": len(clean),
+        "refused": refused,
         "strands": [c["strand_name"] for c in clean],
     }
 
@@ -3899,6 +4204,19 @@ def factory_save_substrands(
                 f"has not been re-ingested since it was split into learning areas.",
             )
 
+    # Whatever the console sends, nothing that is raw source text reaches the
+    # database. Generation filters too; this is the guarantee, since a payload
+    # can also come from a script, a retry, or an older client.
+    substrands, refused = substrand_hygiene.clean(payload.strand_name, payload.substrands)
+    if not substrands:
+        raise_api_error(
+            "VALIDATION_FAILED",
+            f"None of the {len(payload.substrands)} sub-strand(s) sent for "
+            f"'{payload.strand_name}' could be saved: "
+            + "; ".join(f"{r['sub_strand_name']} — {r['reason']}" for r in refused[:3]),
+            detail={"refused": refused},
+        )
+
     saved_count = 0
     # Attach to the design these sub-strands were actually read from. The old
     # fallback minted "cd_grade-pp1_chri" and upserted a parent row for it — a
@@ -3916,9 +4234,17 @@ def factory_save_substrands(
             f'{{"grade": "{payload.grade}", "subject": "{payload.subject}"}} first.',
         )
 
-    for ss in payload.substrands:
+    # The design numbers some entries and not others ("4.1 Love for God" beside
+    # "A House of God"). Since the row's unique key is the NAME, that split one
+    # strand into two and made the same sub-strand savable twice. The numbering
+    # lives in the id column, which is where it belongs.
+    strand_name = substrand_hygiene.strip_numbering(payload.strand_name)
+
+    for ss in substrands:
         sub_id = str(ss.get("sub_strand_id") or ss.get("id") or "1.1")
-        sub_name = str(ss.get("sub_strand_name") or ss.get("name") or sub_id)
+        sub_name = substrand_hygiene.strip_numbering(
+            str(ss.get("sub_strand_name") or ss.get("name") or sub_id)
+        )
         # The design states its own unit — "3 lessons" for pre-primary, "4 hours"
         # for DTE. Defaulting to "4 hours" wrote a fabricated figure for every
         # sub-strand that arrived without one, and it was indistinguishable
@@ -3943,7 +4269,7 @@ def factory_save_substrands(
         prompt_context = {
             "subject": payload.subject,
             "grade": payload.grade,
-            "strand": payload.strand_name,
+            "strand": strand_name,
             "theme": theme,
             "sub_strand": sub_name,
             "allocated_hours": allocated,
@@ -3999,7 +4325,7 @@ def factory_save_substrands(
                 "grade": payload.grade,
                 "subject": payload.subject,
                 "strand_id": payload.strand_id,
-                "strand_name": payload.strand_name,
+                "strand_name": strand_name,
                 "sub_strand_id": sub_id,
                 "sub_strand_name": sub_name,
                 "theme": theme,
@@ -4021,5 +4347,10 @@ def factory_save_substrands(
         )
         saved_count += 1
 
-    return {"status": "saved", "saved_count": saved_count, "strand_name": payload.strand_name}
+    return {
+        "status": "saved",
+        "saved_count": saved_count,
+        "refused": refused,
+        "strand_name": payload.strand_name,
+    }
 

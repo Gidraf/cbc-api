@@ -10,7 +10,7 @@ import { useInspect, profileFor, useProfiles, gradeOptionLabel, subjectOptionLab
 import { useQueryClient } from "@tanstack/react-query";
 
 /**
- * The four production stations have a real dependency order: notes ground the
+ * The production stations have a real dependency order: notes ground the
  * diagrams and activities, and all three ground the questions. The previous
  * console presented them as four independently clickable panels, so an operator
  * could open the questions station for a sub-strand with no notes and get an
@@ -34,8 +34,19 @@ const STATIONS = [
     requires: "notes",
   },
   {
-    id: "practicals",
+    id: "media",
     n: 3,
+    // A diagram is SVG: generated as code and editable afterwards. A photo and
+    // a video are neither, so what this station produces is the prompt, the
+    // shot list and the alt text. The asset is made elsewhere and uploaded back.
+    label: "Photos & videos",
+    endpoint: "/api/v1/curriculum/factory/generate-media-prompts",
+    blurb: "Prompts and shot lists for photographs and video, to produce and upload back.",
+    requires: "notes",
+  },
+  {
+    id: "practicals",
+    n: 4,
     label: "Activities & experiments",
     endpoint: "/api/v1/curriculum/factory/plan-activities",
     blurb: "Hands-on tasks with the safety guidance their materials require.",
@@ -43,7 +54,7 @@ const STATIONS = [
   },
   {
     id: "questions",
-    n: 4,
+    n: 5,
     label: "Questions",
     endpoint: "/api/v1/questions/factory/generate-batch",
     blurb: "Assessment items derived from the notes, diagrams and practicals above.",
@@ -172,7 +183,7 @@ export function ContentFactory() {
       <PageHeader
         eyebrow="Produce"
         title="Content factory"
-        description="Work one sub-strand at a time through the four stations. Each station is unlocked by the one before it, because its output is what the next station is grounded in."
+        description="Work one sub-strand at a time through the production stations. Each station is unlocked by the one before it, because its output is what the next station is grounded in."
         actions={
           <>
             <Select

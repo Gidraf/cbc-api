@@ -529,6 +529,75 @@ MIGRATIONS: list[tuple[str, str]] = [
               AND design_ids = '[]'::jsonb;
         """,
     ),
+    (
+        "018_prompt_sync_and_repairs",
+        """
+        -- Prompt text is deployed code, and it drifted from the database the
+        -- same way a schema does: a prompt gained {{ design_extract }} and
+        -- {{ time_allocation }}, and every generation ran with those slots
+        -- stripped until somebody remembered to press Seed. Recording the hash
+        -- of what was pushed makes re-seeding a startup step, not a memory.
+        CREATE TABLE IF NOT EXISTS prompt_versions (
+            name TEXT PRIMARY KEY,
+            content_hash TEXT NOT NULL,
+            remote_version INTEGER,
+            applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+
+        -- Schema migrations run once. A data repair is different: content keeps
+        -- arriving, so a sweep that removes raw page debris has to keep running
+        -- until every grade and subject is clean. This records each sweep's
+        -- outcome so a repair that keeps finding rows is visible rather than
+        -- quietly effective forever.
+        CREATE TABLE IF NOT EXISTS data_repairs (
+            repair_id TEXT PRIMARY KEY,
+            runs INTEGER NOT NULL DEFAULT 0,
+            rows_affected_total INTEGER NOT NULL DEFAULT 0,
+            rows_affected_last INTEGER NOT NULL DEFAULT 0,
+            last_detail JSONB NOT NULL DEFAULT '[]'::jsonb,
+            first_run_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            last_run_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        """,
+    ),
+    (
+        "019_substrand_media",
+        """
+        -- Diagrams are SVG: generated as code, deterministic, editable. A photo
+        -- and a video are neither. What the factory can author for them is the
+        -- PROMPT and the shot list; the asset itself is produced elsewhere and
+        -- uploaded back. Both live here so a sub-strand's visual plan is one
+        -- list rather than three.
+        CREATE TABLE IF NOT EXISTS substrand_media (
+            media_id TEXT PRIMARY KEY,
+            grade TEXT NOT NULL,
+            subject TEXT NOT NULL,
+            strand_name TEXT NOT NULL DEFAULT '',
+            sub_strand_name TEXT NOT NULL DEFAULT '',
+            kind TEXT NOT NULL,
+            title TEXT NOT NULL DEFAULT '',
+            purpose TEXT NOT NULL DEFAULT '',
+            generation_prompt TEXT NOT NULL DEFAULT '',
+            negative_prompt TEXT NOT NULL DEFAULT '',
+            shot_list JSONB NOT NULL DEFAULT '[]'::jsonb,
+            spec JSONB NOT NULL DEFAULT '{}'::jsonb,
+            alt_text TEXT NOT NULL DEFAULT '',
+            narration TEXT NOT NULL DEFAULT '',
+            storage_url TEXT NOT NULL DEFAULT '',
+            content_type TEXT NOT NULL DEFAULT '',
+            source_pages JSONB NOT NULL DEFAULT '[]'::jsonb,
+            status TEXT NOT NULL DEFAULT 'planned',
+            provenance JSONB NOT NULL DEFAULT '{}'::jsonb,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_substrand_media_lookup
+            ON substrand_media(grade, subject, sub_strand_name);
+        CREATE INDEX IF NOT EXISTS idx_substrand_media_kind
+            ON substrand_media(kind, status);
+        """,
+    ),
 ]
 
 

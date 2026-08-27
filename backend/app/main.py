@@ -161,6 +161,35 @@ def startup() -> None:
     except Exception as exc:
         logger.warning("Langfuse automatic master context seed warning: %s", exc)
 
+    # Prompt text is deployed code. A prompt that gained a variable served it
+    # stripped until somebody remembered to press Seed, and nothing failed
+    # loudly enough to notice — so this runs like a migration, keyed on the
+    # content hash, and rewrites only what actually changed.
+    try:
+        from .services.prompt_sync import sync_prompts
+
+        report = sync_prompts()
+        if report.failed:
+            logger.error("Prompt sync: %s", report.to_dict()["message"])
+        elif report.pushed:
+            logger.info("Prompt sync: %s", report.to_dict()["message"])
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Prompt sync skipped at startup: %s", exc)
+
+    # Guards stop new bad rows; they do nothing about the ones already stored.
+    # These sweeps are idempotent and no-ops on a clean database, so they keep
+    # running until every grade and subject stops producing debris.
+    try:
+        from .services.data_repairs import run_repairs
+
+        outcome = run_repairs()
+        if not outcome["clean"]:
+            logger.warning(
+                "Data repairs fixed %d row(s) at startup.", outcome["rows_affected"]
+            )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Data repairs skipped at startup: %s", exc)
+
 
 @app.exception_handler(ApiError)
 async def api_error_handler(_, exc: ApiError):

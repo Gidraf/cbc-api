@@ -16,7 +16,11 @@ export function triggerAuthExpired(reason: string = "Session expired. Please sig
 
 export async function fetchJson<T>(path: string, init?: RequestInit, auth?: AuthHeaders): Promise<T> {
   const headers = new Headers(init?.headers || {});
-  if (!headers.has("content-type")) {
+  // A multipart upload must not carry a content-type we invented: only the
+  // browser knows the boundary it generated, and setting the header here makes
+  // the server unable to parse the parts.
+  const isMultipart = typeof FormData !== "undefined" && init?.body instanceof FormData;
+  if (!headers.has("content-type") && !isMultipart) {
     headers.set("content-type", "application/json");
   }
   if (auth?.bearerToken) {
