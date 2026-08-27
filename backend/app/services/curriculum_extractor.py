@@ -302,6 +302,19 @@ class CurriculumExtractorService:
             return self._ingest_one(raw_text, payload_meta)
 
         grade = probe_grade
+        from .design_sections import missing_learning_areas
+
+        absent = missing_learning_areas(sections, published) if published else []
+        if absent:
+            # The catalogue says these exist for this grade and the document did
+            # not yield them. Saying so at ingest is the difference between a
+            # console that reads "(not ingested)" with no explanation and one
+            # that names what is missing and from where.
+            logger.error(
+                "Design for %s yielded %d of %d published learning areas. MISSING: %s. "
+                "Their content will be absent from every downstream generation.",
+                grade, len(sections), len(published), ", ".join(absent),
+            )
         logger.info(
             "Design holds %d learning areas; ingesting each separately: %s",
             len(sections), ", ".join(s.learning_area for s in sections),
@@ -333,15 +346,36 @@ class CurriculumExtractorService:
 
         succeeded = [r for r in results if r.get("status") == "success"]
         primary = succeeded[0] if succeeded else results[0]
+
+        # An area the splitter never produced fails differently from one that
+        # was produced and then failed to parse. Both must be visible, and both
+        # must be named, or the only symptom is a dropdown entry reading
+        # "(not ingested)" with nothing to act on.
+        never_split = [
+            {"subject": name, "status": "not_found_in_document",
+             "detail": "The splitter did not locate this learning area in the design."}
+            for name in absent
+        ]
+        areas = [
+            {"subject": r.get("subject"), "status": r.get("status"),
+             "design_id": r.get("design_id"), "substrand_count": r.get("substrand_count", 0),
+             "extraction_status": r.get("extraction_status", "")}
+            for r in results
+        ] + never_split
+        complete = bool(published) and not absent and not [
+            r for r in results if r.get("status") != "success"
+        ]
+
         return {
             **primary,
             "combined_design": True,
-            "learning_areas": [
-                {"subject": r.get("subject"), "status": r.get("status"),
-                 "design_id": r.get("design_id"), "substrand_count": r.get("substrand_count", 0)}
-                for r in results
-            ],
-            "learning_area_count": len(results),
+            "learning_areas": areas,
+            "learning_area_count": len(areas),
+            "expected_learning_areas": list(published),
+            "learning_areas_ingested": len(succeeded),
+            "learning_areas_missing": absent,
+            "complete": complete,
+            "status": "success" if complete else "partial",
         }
 
     def _ingest_one(

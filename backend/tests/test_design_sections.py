@@ -363,3 +363,121 @@ def test_canonicalisation_leaves_unknown_names_alone() -> None:
     assert canonical_area_name("SOMETHING ONLY THE COVER KNOWS", []) == "Something Only The Cover Knows"
     assert canonical_area_name("INTEGRATED SCIENCE", None) == "Integrated Science"
     assert canonical_area_name("", ["Language Activities"]) == ""
+
+
+def _pp1_with_unrecognisable_banners(broken: tuple[str, ...]) -> str:
+    """A PP1 document where some areas' banner pages carry a running header, so
+    the banner heuristic rejects them — the real failure mode."""
+    toc = "\n".join([
+        "TABLE OF CONTENTS", "FOREWORD " + "." * 60 + " iii",
+        "LANGUAGE ACTIVITIES" + "." * 60 + "1",
+        "MATHEMATICALACTIVITIES " + "." * 50 + "92",
+        "CREATIVEACTIVITIES" + "." * 50 + "135",
+        "ENVIRONMENTAL ACTIVITIES " + "." * 40 + "164",
+        "CHRISTIAN RELIGIOUS EDUCATION " + "." * 35 + "188",
+        "HINDU RELIGIOUS EDUCATION" + "." * 35 + "212",
+        "ISLAMIC RELIGIOUS EDUCATION" + "." * 30 + "241",
+    ])
+    layout = [
+        (11, "LANGUAGE ACTIVITIES"), (102, "MATHEMATICAL ACTIVITIES"),
+        (145, "CREATIVE ACTIVITIES"), (174, "ENVIRONMENTAL ACTIVITIES"),
+        (198, "CHRISTIAN RELIGIOUS EDUCATION"), (222, "HINDU RELIGIOUS EDUCATION"),
+        (251, "ISLAMIC RELIGIOUS EDUCATION"),
+    ]
+    pages = [
+        _page(1, "KENYA INSTITUTE OF CURRICULUM DEVELOPMENT\nPRE - PRIMARY SCHOOL CURRICULUM DESIGN\nPRE - PRIMARY 1"),
+        _page(6, toc),
+    ]
+    for number, title in layout:
+        if title in broken:
+            pages.append(_page(number,
+                "PRE - PRIMARY SCHOOL CURRICULUM DESIGN REVISED 2024 KENYA INSTITUTE OF "
+                "CURRICULUM DEVELOPMENT A skilled and Ethical Society all rights reserved\n"
+                f"{title}\nEssence Statement follows."))
+        else:
+            pages.append(_page(number, f"1\n{title}"))
+        pages.append(_page(number + 1, "Essence Statement\nBuilds skills."))
+    pages.append(_page(290, "CSL AT EARLY YEARS OF EDUCATION (PP1&2 AND GRADE 1-3)\nLinkage."))
+    return "\n".join(pages)
+
+
+def test_an_area_without_a_usable_banner_is_recovered_by_its_heading() -> None:
+    """Maths, CRE and Hindu RE showed as "(not ingested)" while sitting in the
+    document. A banner is how an area usually announces itself, not the only way."""
+    from app.services.curriculum_catalogue import expected_subjects
+    from app.services.design_sections import missing_learning_areas
+
+    published = expected_subjects("grade-pp1")
+    broken = ("MATHEMATICAL ACTIVITIES", "CHRISTIAN RELIGIOUS EDUCATION", "HINDU RELIGIOUS EDUCATION")
+    sections = split_learning_areas(_pp1_with_unrecognisable_banners(broken), published)
+
+    assert missing_learning_areas(sections, published) == []
+    assert len(sections) == 7
+    starts = [s.start_page for s in sections]
+    assert starts == sorted(starts), "recovered sections must stay in document order"
+
+
+def test_a_cross_reference_is_not_mistaken_for_a_heading() -> None:
+    """"...relate to shapes in Mathematical Activities." is a mention, not a
+    section start. Slicing there puts half of one area inside another."""
+    from app.services.design_sections import _heading_like, _normalise, _squash
+
+    target = _squash(_normalise("Mathematical Activities"))
+
+    assert _heading_like("MATHEMATICAL ACTIVITIES", target)
+    assert _heading_like("Mathematical Activities", target)
+    assert not _heading_like(
+        "The learners form patterns of circles and rectangles as they relate to "
+        "shapes in Mathematical Activities.", target)
+    assert not _heading_like("", target)
+
+
+def test_an_area_genuinely_absent_from_the_document_is_reported_not_invented() -> None:
+    from app.services.design_sections import missing_learning_areas
+
+    published = ["Language Activities", "Mathematical Activities", "Astrophysics"]
+    sections = split_learning_areas(_pp1_document(), published)
+
+    assert "Astrophysics" in missing_learning_areas(sections, published)
+
+
+def test_ingest_reports_which_learning_areas_are_missing(monkeypatch) -> None:
+    """A dropdown entry reading "(not ingested)" gives nothing to act on. The
+    ingest result must name what is missing and why."""
+    from app.services import curriculum_extractor as extractor
+    from app.services import design_sections
+
+    # Force one area to be undiscoverable, as if it were absent from the PDF.
+    real_split = design_sections.split_learning_areas
+
+    def split_without_maths(text, published=None):
+        return [s for s in real_split(text, published)
+                if s.learning_area != "Mathematical Activities"]
+
+    monkeypatch.setattr(extractor, "split_learning_areas", split_without_maths, raising=False)
+    import app.services.design_sections as ds
+    monkeypatch.setattr(ds, "split_learning_areas", split_without_maths)
+
+    monkeypatch.setattr(
+        extractor.CurriculumExtractorService, "_ingest_one",
+        lambda self, raw_text, meta, learning_area="": {
+            "status": "success", "subject": learning_area,
+            "design_id": "cd_x", "substrand_count": 2, "extraction_status": "complete",
+        },
+        raising=True,
+    )
+
+    result = extractor.curriculum_extractor.ingest_raw_curriculum(
+        {"output": _pp1_document(), "grade": "grade-pp1"}
+    )
+
+    assert result["status"] == "partial", "a partial ingest must not report success"
+    assert result["complete"] is False
+    assert "Mathematical Activities" in result["learning_areas_missing"]
+    assert result["learning_areas_ingested"] == 6
+    assert len(result["expected_learning_areas"]) == 7
+
+    entry = next(a for a in result["learning_areas"]
+                 if a["subject"] == "Mathematical Activities")
+    assert entry["status"] == "not_found_in_document"
+    assert "did not locate" in entry["detail"]

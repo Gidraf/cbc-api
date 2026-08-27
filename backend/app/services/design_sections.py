@@ -166,6 +166,66 @@ def canonical_area_name(title: str, published: list[str] | None = None) -> str:
     return cleaned.title()
 
 
+
+def _heading_like(line: str, squashed_name: str) -> bool:
+    """Whether a line is this learning area's heading rather than a mention of it.
+
+    "MATHEMATICAL ACTIVITIES" alone on a line is a heading. The same words
+    inside "...relate to shapes in Mathematical Activities." is a cross-reference,
+    and slicing the document there would put half of one area inside another.
+    """
+    stripped = line.strip().strip(".:-")
+    if not stripped or len(stripped) > 60:
+        return False
+    return _squash(_normalise(stripped)) == squashed_name
+
+
+def _recover_missing_areas(
+    pages: list[Page],
+    banners: list[tuple[int, str, int]],
+    published: list[str],
+) -> list[tuple[int, str, int]]:
+    """Locate any published learning area the banner scan did not find."""
+    found = {_squash(_normalise(canonical_area_name(t, published))) for _n, t, _i in banners}
+    claimed = {index for _n, _t, index in banners}
+    recovered: list[tuple[int, str, int]] = []
+
+    for name in published:
+        squashed = _squash(_normalise(name))
+        if squashed in found:
+            continue
+
+        for index, page in enumerate(pages):
+            if index in claimed:
+                continue
+            body = _page_body(page)
+            if not body or _is_front_matter(body[0]):
+                continue
+            if any(_heading_like(line, squashed) for line in body):
+                recovered.append((page.number, name, index))
+                claimed.add(index)
+                logger.info(
+                    "Learning area '%s' had no banner page; recovered from its "
+                    "heading on page %d.", name, page.number,
+                )
+                break
+        else:
+            logger.warning(
+                "Learning area '%s' is published for this grade but appears "
+                "nowhere in the document as a heading. It will be missing.", name,
+            )
+
+    if not recovered:
+        return banners
+    return sorted(banners + recovered, key=lambda entry: entry[2])
+
+
+def missing_learning_areas(sections: list[DesignSection], published: list[str]) -> list[str]:
+    """Published areas the split did not produce. Empty is the correct answer."""
+    got = {_squash(_normalise(s.learning_area)) for s in sections}
+    return [n for n in published if _squash(_normalise(n)) not in got]
+
+
 def split_learning_areas(text: str, published: list[str] | None = None) -> list[DesignSection]:
     """The learning areas a combined design contains, in document order.
 
@@ -196,6 +256,15 @@ def split_learning_areas(text: str, published: list[str] | None = None) -> list[
         if banners and _normalise(banners[-1][1]) == flat:
             continue  # the same banner repeated on a facing page
         banners.append((page.number, title, index))
+
+    # A banner page is how a learning area USUALLY announces itself, but not
+    # always: extraction merges page fragments, so a banner can arrive carrying
+    # a running header, a stray page number, or its title split across lines in
+    # a way the heuristic misses. When the catalogue says seven areas exist and
+    # only four were found, the other three are in the document somewhere — they
+    # simply did not look like banners. Go and find them by name.
+    if published:
+        banners = _recover_missing_areas(pages, banners, published)
 
     if len(banners) < _MIN_SECTIONS:
         return []
