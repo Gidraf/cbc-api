@@ -758,3 +758,43 @@ export function useAttachSource() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["designs"] }),
   });
 }
+
+
+// ── Reading the curriculum design by page and line ──────────────────────────
+// Every line has a stable address, so generated content can cite exactly where
+// it came from and a reviewer can read those lines back.
+
+export type DocLine = { page: number; line: number; ref: string; text: string };
+export type DocPageSummary = { page: number; heading: string; line_count: number };
+
+export type DesignDocument = {
+  design_id: string;
+  grade: string;
+  subject: string;
+  code: string;
+  page_count: number;
+  line_count: number;
+  char_count: number;
+  pages: DocPageSummary[];
+  page_content?: { page: number; heading: string; line_count: number; lines: DocLine[] } | null;
+  search?: { query: string; hits: DocLine[] };
+  reference?: { ref: string; found: boolean; lines: DocLine[] };
+};
+
+export function useDesignDocument(designId: string, page: number, query: string) {
+  const api = useApi();
+  return useQuery({
+    queryKey: ["design-document", designId, page, query],
+    queryFn: () => {
+      const qs = new URLSearchParams();
+      if (query) qs.set("q", query);
+      else if (page) qs.set("page", String(page));
+      const suffix = qs.toString() ? `?${qs}` : "";
+      return api<DesignDocument>(
+        `/api/v1/curriculum/designs/${encodeURIComponent(designId)}/document${suffix}`
+      );
+    },
+    enabled: Boolean(designId),
+    staleTime: 5 * 60_000,
+  });
+}

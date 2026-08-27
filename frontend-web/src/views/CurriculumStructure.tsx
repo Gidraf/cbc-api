@@ -13,8 +13,10 @@ import {
   Th,
 } from "../ui/components";
 import { allStrandsToText, strandToText } from "../lib/serialize";
+import { DesignReader } from "./DesignReader";
 import { PromptInspector, type Inspection } from "./PromptInspector";
 import {
+  useDesigns,
   useInspect,
   useStructureActions,
   type GeneratedStrand,
@@ -56,6 +58,16 @@ export function CurriculumStructure({
   const actions = useStructureActions(grade, subject);
   const inspect = useInspect(grade, subject);
   const [inspection, setInspection] = React.useState<Inspection | null>(null);
+  const [reading, setReading] = React.useState(false);
+
+  // The design this subject and grade was ingested from, so it can be read
+  // alongside what is being generated out of it.
+  const designs = useDesigns();
+  const design = (designs.data || []).find(
+    (d) =>
+      d.subject?.trim().toLowerCase() === subject.trim().toLowerCase() &&
+      (d.grade === grade || d.grade === grade.replace("grade-", ""))
+  );
   const [strands, setStrands] = React.useState<GeneratedStrand[]>([]);
   const [openStrand, setOpenStrand] = React.useState<string | null>(null);
   const [drafts, setDrafts] = React.useState<Record<string, GeneratedSubstrand[]>>({});
@@ -119,6 +131,16 @@ export function CurriculumStructure({
       description={`Generate strands and sub-strands for ${subject || "this subject"} with the curriculum agent. Nothing is written until you save.`}
       actions={
         <Stack direction="row" gap="var(--s2)">
+        {design && (
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => setReading((v) => !v)}
+            title="Read the KICD design this is generated from, by page and line"
+          >
+            {reading ? "Hide the design" : "Read the design"}
+          </Button>
+        )}
         <Button
           size="sm"
           variant="ghost"
@@ -297,6 +319,12 @@ export function CurriculumStructure({
           })}
         </Stack>
       )}
+      {reading && design && (
+        <div style={{ marginBottom: "var(--s4)" }}>
+          <DesignReader designId={design.design_id} />
+        </div>
+      )}
+
       <PromptInspector
         inspection={inspection}
         onClose={() => setInspection(null)}

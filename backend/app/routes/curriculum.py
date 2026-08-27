@@ -2875,6 +2875,124 @@ def build_inspection(
     }
 
 
+def _design_source(design_id: str = "", grade: str = "", subject: str = "") -> dict[str, Any]:
+    """The stored design and its captured document text."""
+    from ..infra.db import fetch_one as _fetch_one
+
+    row = _fetch_one(
+        """
+        SELECT design_id, grade, subject, raw_payload
+        FROM curriculum_designs
+        WHERE (design_id = :design_id)
+           OR ((grade = :grade OR grade = :alt) AND LOWER(subject) = LOWER(:subject))
+        ORDER BY updated_at DESC LIMIT 1
+        """,
+        {"design_id": design_id or "", "grade": grade, "alt": (grade or "").replace("grade-", ""), "subject": subject},
+    )
+    if not row:
+        raise_api_error("DATASET_ITEM_NOT_FOUND", f"No ingested design for {subject or design_id}.")
+
+    raw_payload = row.get("raw_payload") or {}
+    text = (
+        raw_payload.get("source_text")
+        or raw_payload.get("raw_text")
+        or raw_payload.get("text")
+        or raw_payload.get("output")
+        or ""
+    )
+    if not text:
+        raise_api_error(
+            "DATASET_ITEM_NOT_FOUND",
+            f"'{row.get('subject')}' has no source document stored. Attach it from the prompt inspector first.",
+        )
+    return {"row": row, "text": text}
+
+
+@router.get("/designs/{design_id}/document")
+def read_design_document(
+    design_id: str,
+    page: int = 0,
+    q: str = "",
+    ref: str = "",
+    _: AuthContext = Depends(require_roles("admin", "operator", "reviewer", "developer")),
+) -> dict[str, Any]:
+    """Read a curriculum design by page and line.
+
+    Every line carries an address so generated content can cite exactly where
+    it came from, and a reviewer can read those lines back.
+    """
+    from ..services import document_index as dx
+
+    found = _design_source(design_id=design_id)
+    row, text = found["row"], found["text"]
+    pages = dx.parse_pages(text)
+    index = dx.build_index(text, row.get("grade", ""), row.get("subject", ""))
+
+    body: dict[str, Any] = {
+        "design_id": row["design_id"],
+        "grade": row.get("grade", ""),
+        "subject": row.get("subject", ""),
+        **index,
+    }
+
+    if ref:
+        lines = dx.resolve_reference(pages, ref)
+        body["reference"] = {"ref": ref, "found": bool(lines), "lines": [l.to_dict() for l in lines]}
+    elif q:
+        body["search"] = {"query": q, "hits": dx.search(pages, q)}
+    elif page:
+        match = next((p for p in pages if p.number == page), None)
+        body["page_content"] = match.to_dict() if match else None
+    else:
+        # Default to the first page so the viewer opens on something.
+        body["page_content"] = pages[0].to_dict() if pages else None
+
+    return body
+
+
+class CiteRequest(BaseModel):
+    design_id: str = ""
+    grade: str = ""
+    subject: str = ""
+    quotes: list[str] = []
+
+
+@router.post("/designs/cite")
+def cite_against_design(
+    payload: CiteRequest,
+    _: AuthContext = Depends(require_roles("admin", "operator", "reviewer", "developer")),
+) -> dict[str, Any]:
+    """Locate each quote in the design and return its page and line.
+
+    This is what lets a sub-strand or a question record the exact lines it was
+    drawn from — and what exposes a claim that appears nowhere in the design.
+    """
+    from ..services import document_index as dx
+
+    found = _design_source(payload.design_id, payload.grade, payload.subject)
+    row, text = found["row"], found["text"]
+    pages = dx.parse_pages(text)
+    code = dx.document_code(row.get("grade", ""), row.get("subject", ""))
+
+    citations = []
+    for quote in payload.quotes:
+        hit = dx.find_reference(pages, quote)
+        citations.append({
+            "quote": quote,
+            "found": bool(hit),
+            "citation": f"{code} {hit['ref']}" if hit else "",
+            **(hit or {}),
+        })
+
+    return {
+        "design_id": row["design_id"],
+        "code": code,
+        "cited": sum(1 for c in citations if c["found"]),
+        "uncited": sum(1 for c in citations if not c["found"]),
+        "citations": citations,
+    }
+
+
 class AttachSourceRequest(BaseModel):
     design_id: str = ""
     grade: str = ""
