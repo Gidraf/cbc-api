@@ -743,3 +743,18 @@ export function useInspect(grade: string, subject: string) {
     }),
   };
 }
+
+
+/** Put a design's source document back on it, without re-running extraction. */
+export function useAttachSource() {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { design_id?: string; grade?: string; subject?: string }) =>
+      api<{ attached: boolean; chars: number; design_id: string; note?: string }>(
+        "/api/v1/curriculum/designs/attach-source",
+        { method: "POST", body: JSON.stringify(v) }
+      ),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["designs"] }),
+  });
+}

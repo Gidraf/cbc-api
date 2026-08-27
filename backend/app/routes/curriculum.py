@@ -2875,6 +2875,28 @@ def build_inspection(
     }
 
 
+class AttachSourceRequest(BaseModel):
+    design_id: str = ""
+    grade: str = ""
+    subject: str = ""
+
+
+@router.post("/designs/attach-source")
+def attach_design_source(
+    payload: AttachSourceRequest,
+    _: AuthContext = Depends(require_roles("admin", "operator")),
+) -> dict[str, Any]:
+    """Put a design's source document back on it, without re-running extraction."""
+    from ..services.dataset_ingest import attach_source_document
+
+    try:
+        return attach_source_document(
+            design_id=payload.design_id, grade=payload.grade, subject=payload.subject
+        )
+    except LookupError as exc:
+        raise_api_error("DATASET_ITEM_NOT_FOUND", str(exc))
+
+
 @router.post("/factory/generate-strands")
 def factory_generate_strands(
     payload: FactoryGenerateStrandsRequest,

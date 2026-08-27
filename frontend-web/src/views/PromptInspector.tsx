@@ -1,5 +1,6 @@
 import React from "react";
-import { Badge, Button, CopyButton, EmptyState, Modal, Stack } from "../ui/components";
+import { Badge, Button, CopyButton, EmptyState, ErrorNotice, Modal, Stack } from "../ui/components";
+import { useAttachSource } from "../lib/queries";
 
 /**
  * What will be sent to the model, before it is sent.
@@ -82,10 +83,14 @@ const mono: React.CSSProperties = {
 export function PromptInspector({
   inspection,
   onClose,
+  onAttached,
 }: {
   inspection: Inspection | null;
   onClose: () => void;
+  /** Re-run the inspection so the newly attached design shows. */
+  onAttached?: () => void;
 }) {
+  const attach = useAttachSource();
   if (!inspection) return null;
   const i = inspection;
 
@@ -106,11 +111,29 @@ export function PromptInspector({
       </Stack>
 
       {!i.source_document.present && (
-        <EmptyState
-          title="This prompt carries no curriculum design"
-          description="Whatever it returns will come from the model's own knowledge. Ingest the design for this subject before generating."
-          tone="warn"
-        />
+        <>
+          <EmptyState
+            title="This prompt carries no curriculum design"
+            description="Whatever it returns will come from the model's own knowledge. The document may still be in Langfuse — designs ingested before the text was stored kept only a character count, and it can be put back without re-running extraction."
+            tone="warn"
+            action={
+              <Button
+                size="sm"
+                disabled={attach.isPending}
+                onClick={async () => {
+                  const res = await attach.mutateAsync({ grade: i.grade, subject: i.subject });
+                  if (res.attached) onAttached?.();
+                }}
+              >
+                {attach.isPending ? "Looking for it…" : "Find and attach the design"}
+              </Button>
+            }
+          />
+          {attach.error && <ErrorNotice error={attach.error} />}
+          {attach.data && !attach.data.attached && (
+            <div style={{ color: "var(--ink-3)", marginBottom: "var(--s3)" }}>{attach.data.note}</div>
+          )}
+        </>
       )}
 
       <Section title="Source document">

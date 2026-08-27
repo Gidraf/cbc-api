@@ -448,7 +448,19 @@ export function ContentFactory() {
                 KICD allocates hours, the notes return one module per hour, and
                 each diagram, photo prompt, video prompt, experiment and
                 activity is produced against a specific hour. */}
-            <PromptInspector inspection={inspection} onClose={() => setInspection(null)} />
+            <PromptInspector
+              inspection={inspection}
+              onClose={() => setInspection(null)}
+              onAttached={async () => {
+                if (!selected) return;
+                setInspection(
+                  await inspect.notes.mutateAsync({
+                    strand: selected.strand,
+                    sub_strand: selected.report.sub_strand_name,
+                  })
+                );
+              }}
+            />
 
             {notes && selected && (
               <HourWorkbench

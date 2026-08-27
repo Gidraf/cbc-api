@@ -20,7 +20,7 @@ import logging
 import re
 from typing import Any
 
-from ..infra.db import execute, fetch_all, fetch_one
+from ..infra.db import execute, fetch_all, fetch_one, to_json
 from .grade_order import normalize_grade
 from .langfuse_context import langfuse_context_service
 
@@ -571,3 +571,83 @@ def uningest_item(item_id: str, purge_generated: bool = False) -> dict[str, Any]
 
     logger.info("Un-ingested %s (design %s): %s", item_id, design_id or "none", removed)
     return {"item_id": item_id, "design_id": design_id, "removed": removed}
+
+
+def attach_source_document(
+    design_id: str = "", grade: str = "", subject: str = ""
+) -> dict[str, Any]:
+    """Backfill a design's source text from the dataset item it came from.
+
+    Designs ingested before the text was stored carry only a character count, so
+    every agent that asks for the source finds nothing and generates from its own
+    knowledge instead. The document is still in Langfuse — this puts it back on
+    the design without re-running extraction, which would overwrite sub-strands
+    that may already have been reviewed.
+    """
+    if design_id:
+        design = fetch_one(
+            "SELECT design_id, grade, subject, metadata, raw_payload FROM curriculum_designs WHERE design_id = :d",
+            {"d": design_id},
+        )
+    else:
+        design = fetch_one(
+            """
+            SELECT design_id, grade, subject, metadata, raw_payload
+            FROM curriculum_designs
+            WHERE (grade = :grade OR grade = :alt) AND LOWER(subject) = LOWER(:subject)
+            ORDER BY updated_at DESC LIMIT 1
+            """,
+            {"grade": grade, "alt": grade.replace("grade-", ""), "subject": subject},
+        )
+
+    if not design:
+        raise LookupError(
+            f"No ingested design for {subject or design_id} in {grade or 'any grade'}."
+        )
+
+    raw_payload = dict(design.get("raw_payload") or {})
+    if len(_text(raw_payload.get("source_text"))) > MIN_DOCUMENT_CHARS:
+        return {
+            "design_id": design["design_id"], "attached": False,
+            "chars": len(raw_payload["source_text"]),
+            "note": "The design already carries its source text.",
+        }
+
+    design_grade = _text(design.get("grade")) or grade
+    file_id = _text((design.get("metadata") or {}).get("file_id"))
+
+    # Prefer the item this design was actually ingested from.
+    tracked = fetch_one(
+        "SELECT source_item_id, item_id, file_id FROM dataset_ingest_status WHERE design_id = :d LIMIT 1",
+        {"d": design["design_id"]},
+    )
+    wanted_ids = {_text(tracked.get("source_item_id")) if tracked else "",
+                  _text(tracked.get("item_id")) if tracked else ""} - {""}
+    wanted_file = _text(tracked.get("file_id")) if tracked else file_id
+
+    text = ""
+    for item in candidate_items(design_grade):
+        item_id = _text(item.get("id"))
+        item_file = _text((item.get("input") or {}).get("file_id"))
+        if (wanted_ids and item_id in wanted_ids) or (wanted_file and item_file == wanted_file):
+            text = _text(item.get("expected_output") or item.get("expectedOutput"))
+            if text:
+                break
+
+    if not text:
+        raise LookupError(
+            f"Could not find the document for '{design.get('subject')}' in the {design_grade} dataset. "
+            f"Sync the grade on the Datasets screen first."
+        )
+
+    raw_payload["source_text"] = text[:400_000]
+    raw_payload["source_attached_from"] = wanted_file or list(wanted_ids)[0] if (wanted_file or wanted_ids) else ""
+    execute(
+        "UPDATE curriculum_designs SET raw_payload = CAST(:p AS jsonb), updated_at = NOW() WHERE design_id = :d",
+        {"p": to_json(raw_payload), "d": design["design_id"]},
+    )
+    logger.info("Attached %d chars of source text to design %s.", len(text), design["design_id"])
+    return {
+        "design_id": design["design_id"], "attached": True, "chars": len(text),
+        "subject": design.get("subject"), "grade": design_grade,
+    }

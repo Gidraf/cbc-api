@@ -632,3 +632,73 @@ def test_uningest_does_not_delete_a_design_another_grade_still_uses(db, monkeypa
     assert deleted == [], "Grade 2 still points at that design"
     assert db.rows["grade-1__a"]["status"] == "pending"
     assert db.rows["grade-2__a"]["status"] == "ingested"
+
+
+# ── Backfilling a design's source document ──────────────────────────────────
+# Designs ingested before the text was stored carry only a character count, so
+# every agent asking for the source finds nothing and invents from its own
+# knowledge. The document is still in Langfuse.
+
+class AttachDb(FakeDb):
+    def __init__(self, design):
+        super().__init__()
+        self.design = design
+        self.updated = None
+
+    def fetch_one(self, query, params=None):
+        if "FROM curriculum_designs" in query:
+            return self.design
+        return super().fetch_one(query, params)
+
+    def execute(self, query, params=None):
+        if "UPDATE curriculum_designs" in query:
+            self.updated = params
+            return
+        return super().execute(query, params)
+
+
+@pytest.fixture
+def attach(monkeypatch):
+    design = {
+        "design_id": "cd_pp1_lang", "grade": "grade-pp1", "subject": "Pre-Primary 1",
+        "metadata": {"file_id": "doc-1"}, "raw_payload": {"meta": {}, "char_count": 91234},
+    }
+    db = AttachDb(design)
+    monkeypatch.setattr(di, "fetch_all", db.fetch_all)
+    monkeypatch.setattr(di, "fetch_one", db.fetch_one)
+    monkeypatch.setattr(di, "execute", db.execute)
+    monkeypatch.setattr(di, "to_json", lambda v: v)
+    return db
+
+
+def test_source_is_found_by_file_id_and_written_back(attach, monkeypatch):
+    stub_dataset(monkeypatch, [], grade="grade-pp1")
+    monkeypatch.setattr(
+        di.langfuse_context_service, "fetch_raw_datasets_from_langfuse",
+        lambda: [raw_row("CBC_Research_Curriculum_Designs", "doc-1", "PP1 Language.pdf",
+                         level="Pre-Primary 1 (PP1)")],
+    )
+    result = di.attach_source_document(design_id="cd_pp1_lang")
+
+    assert result["attached"] is True
+    assert result["chars"] > di.MIN_DOCUMENT_CHARS
+    assert attach.updated["p"]["source_text"].startswith("CURRICULUM DESIGN")
+
+
+def test_a_design_that_already_has_its_text_is_left_alone(attach, monkeypatch):
+    attach.design["raw_payload"] = {"source_text": DOC_TEXT}
+    stub_dataset(monkeypatch, [], grade="grade-pp1")
+    monkeypatch.setattr(di.langfuse_context_service, "fetch_raw_datasets_from_langfuse", lambda: [])
+
+    result = di.attach_source_document(design_id="cd_pp1_lang")
+    assert result["attached"] is False
+    assert attach.updated is None, "an already-attached design must not be rewritten"
+
+
+def test_a_missing_document_says_so_rather_than_attaching_nothing(attach, monkeypatch):
+    stub_dataset(monkeypatch, [], grade="grade-pp1")
+    monkeypatch.setattr(di.langfuse_context_service, "fetch_raw_datasets_from_langfuse", lambda: [])
+
+    with pytest.raises(LookupError, match="Sync the grade"):
+        di.attach_source_document(design_id="cd_pp1_lang")
+    assert attach.updated is None

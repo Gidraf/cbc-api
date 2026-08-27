@@ -297,7 +297,13 @@ export function CurriculumStructure({
           })}
         </Stack>
       )}
-      <PromptInspector inspection={inspection} onClose={() => setInspection(null)} />
+      <PromptInspector
+        inspection={inspection}
+        onClose={() => setInspection(null)}
+        onAttached={async () =>
+          setInspection(await inspect.strands.mutateAsync({ custom_instructions: instructions }))
+        }
+      />
     </Card>
   );
 }
