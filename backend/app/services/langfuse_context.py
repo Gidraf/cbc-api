@@ -541,7 +541,17 @@ class LangfuseContextService:
         prompt_obj = self.get_prompt(agent_name)
         return getattr(prompt_obj, "prompt", str(prompt_obj))
 
-    def _render_template(self, template: str, variables: dict[str, Any]) -> str:
+    def _render_template(
+        self, template: str, variables: dict[str, Any], partial: bool = False
+    ) -> str:
+        """Fill a prompt template.
+
+        ``partial`` is for building a template that will be filled later — the
+        extractor stores per-sub-strand prompts at ingest time with only the
+        curriculum variables bound, and the rest MUST survive as placeholders.
+        Stripping them there both destroyed the stored template and logged a
+        warning for a case that is working exactly as intended.
+        """
         rendered = template
         for k, v in variables.items():
             val_str = json.dumps(v, indent=2) if isinstance(v, (dict, list)) else str(v or "")
@@ -553,7 +563,12 @@ class LangfuseContextService:
         # agent nothing about its audience while looking complete in the console.
         # Strip it and say which one, so the gap is visible instead of invisible.
         missing = sorted(set(re.findall(r"\{\{\s*(\w+)\s*\}\}", rendered)))
-        if missing:
+        if missing and partial:
+            logger.debug(
+                "Template stored with %d placeholder(s) left for later: %s",
+                len(missing), ", ".join(missing),
+            )
+        elif missing:
             logger.warning(
                 "Prompt rendered with %d unsupplied variable(s): %s. They have been "
                 "removed rather than sent to the model as literal text.",

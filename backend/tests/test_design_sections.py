@@ -598,3 +598,61 @@ def test_strict_can_be_turned_off_for_a_caller_that_wants_the_payload() -> None:
     assert result["status"] == "partial"
     assert result["complete"] is False
     assert result["learning_areas_missing"] == ["Mathematical Activities"]
+
+
+def test_a_sections_prose_does_not_decide_its_grade() -> None:
+    """Every PP1 learning area carries a transition sentence — "...prepare
+    learners to learn similar concepts at PP2", "...foundation for learning CRE
+    at Pre-primary 2". Read as a cover, those filed Mathematical Activities,
+    CRE and HRE under grade-pp2 while the operator was ingesting PP1, so they
+    read as "(not ingested)" for the grade they belong to."""
+    from app.services.curriculum_extractor import curriculum_extractor as extractor
+
+    cases = {
+        "Christian Religious Education":
+            "CHRISTIAN RELIGIOUS EDUCATION ACTIVITIES\nEssence Statement\n"
+            "The competencies acquired at Pre-primary 1, will lay a strong "
+            "foundation for learning CRE at Pre-primary 2.",
+        "Mathematical Activities":
+            "MATHEMATICAL ACTIVITIES\nEssence Statement\nMathematical concepts and "
+            "skills learnt at PP1 prepare learners to learn similar concepts at PP2.",
+        "Hindu Religious Education":
+            "HINDU RELIGIOUS EDUCATION\nEssence Statement\nThe competencies acquired "
+            "at Pre-primary 1 lay a foundation for Pre-Primary 2.",
+    }
+
+    for area, text in cases.items():
+        design = extractor._parse_curriculum_text(
+            text, {"grade": "grade-pp1"}, "dna", learning_area=area
+        )
+        assert design.grade == "grade-pp1", f"{area} was filed under {design.grade}"
+        assert design.level == "Pre-Primary"
+        assert design.subject == area
+
+
+def test_a_whole_document_still_reads_its_own_cover() -> None:
+    """The fix must not stop an ordinary design detecting its grade — that is
+    the only signal senior-school designs have."""
+    from app.services.curriculum_extractor import curriculum_extractor as extractor
+
+    pp2 = ("KENYA INSTITUTE OF CURRICULUM DEVELOPMENT\n"
+           "PRE - PRIMARY SCHOOL CURRICULUM DESIGN\nPRE - PRIMARY 2\nEssence Statement")
+    assert extractor._parse_curriculum_text(pp2, {}, "dna").grade == "grade-pp2"
+
+    g8 = ("KENYA INSTITUTE OF CURRICULUM DEVELOPMENT\n"
+          "GRADE 8 CURRICULUM DESIGN\nINTEGRATED SCIENCE\nEssence Statement")
+    design = extractor._parse_curriculum_text(g8, {}, "dna")
+    assert design.grade == "grade-8"
+    assert design.subject == "Integrated Science"
+
+
+def test_pp2_sections_are_filed_under_pp2() -> None:
+    """The same section text, ingested from the PP2 document, must land on PP2."""
+    from app.services.curriculum_extractor import curriculum_extractor as extractor
+
+    text = ("MATHEMATICAL ACTIVITIES\nEssence Statement\nConcepts learnt at PP1 "
+            "prepare learners for later work.")
+    design = extractor._parse_curriculum_text(
+        text, {"grade": "grade-pp2"}, "dna", learning_area="Mathematical Activities"
+    )
+    assert design.grade == "grade-pp2"

@@ -10,6 +10,7 @@ from typing import Any
 from ..errors import raise_api_error
 from ..infra.db import execute, fetch_all, fetch_one, to_json
 from ..services.artifact_dna import artifact_dna_service
+from .grade_order import grade_level as _grade_level_for, normalize_grade
 from ..services.langfuse_context import langfuse_context_service
 
 logger = logging.getLogger("cbc-curriculum-extractor")
@@ -219,6 +220,12 @@ _COVER_LINES = 60
 
 def _cover_text(text: str) -> str:
     return "\n".join(text.split("\n")[:_COVER_LINES])
+
+
+def _grade_number(grade: str) -> int:
+    """The numeric grade in a slug, or 0 for pre-primary and DTE."""
+    match = re.search(r"grade-(\d{1,2})$", str(grade or ""))
+    return int(match.group(1)) if match else 0
 
 
 def _grade_from_text(text: str, meta: dict[str, Any]) -> tuple[str, str]:
@@ -607,7 +614,21 @@ class CurriculumExtractorService:
             )
         subject = subject.title() if subject else "General Curriculum"
 
-        grade, level = _grade_from_text(text, meta)
+        if learning_area:
+            # A section of a combined design has no cover of its own. Its text
+            # is prose, and that prose says things like "...prepare learners to
+            # learn similar concepts at PP2" — a transition sentence, not a
+            # declaration. Reading a grade out of it filed Mathematical
+            # Activities, CRE and HRE under grade-pp2 while the operator was
+            # ingesting PP1, so they read as "(not ingested)" for the grade
+            # they belong to. The whole document's cover already settled this.
+            grade = normalize_grade(str(meta.get("grade") or ""))
+            level = _grade_level_for(grade) or str(meta.get("level") or "")
+            if not grade:
+                grade, level = _grade_from_text(text, meta)
+        else:
+            grade, level = _grade_from_text(text, meta)
+
         if not grade:
             # Guessing a grade silently files a design under the wrong cohort,
             # which is invisible until questions are generated for it.
@@ -884,7 +905,12 @@ class CurriculumExtractorService:
         def _get_rendered_langfuse_prompt(pname: str, fallback: str) -> str:
             try:
                 tpl = langfuse_context_service.get_agent_prompt(pname)
-                return langfuse_context_service._render_template(tpl, prompt_vars)
+                # Deliberately partial: notes_content, diagram_info and the rest
+                # are bound at generation time, not here. They must survive as
+                # placeholders in the stored template.
+                return langfuse_context_service._render_template(
+                    tpl, prompt_vars, partial=True
+                )
             except Exception:
                 return fallback
 

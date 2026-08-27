@@ -123,3 +123,34 @@ def test_the_strand_prompt_now_knows_who_it_is_writing_for() -> None:
     assert "faith_scope" in keys
     assert "content_type_directives" in keys
     assert "source_material_text" in keys
+
+
+def test_a_stored_template_keeps_the_placeholders_it_is_meant_to_keep() -> None:
+    """The extractor stores per-sub-strand prompts at ingest time with only the
+    curriculum variables bound; notes_content and the rest are filled at
+    generation time. Stripping them there destroyed the stored template and
+    logged a warning for a case working exactly as intended."""
+    from app.services.langfuse_context import langfuse_context_service as service
+
+    template = "Strand: {{ strand }}\nNotes:\n{{ notes_content }}\nWho:\n{{ level_register }}"
+    stored = service._render_template(template, {"strand": "Reading"}, partial=True)
+
+    assert "Reading" in stored
+    assert "{{ notes_content }}" in stored, "the later-bound placeholder must survive"
+    assert "{{ level_register }}" in stored
+
+
+def test_the_extractor_stores_templates_partially(monkeypatch) -> None:
+    """Verifying the flag is actually passed, not merely available."""
+    import inspect
+
+    from app.services import curriculum_extractor as extractor
+
+    source = inspect.getsource(extractor.CurriculumExtractorService)
+    index = source.index("_get_rendered_langfuse_prompt")
+    body = source[index:index + 700]
+
+    assert "partial=True" in body, (
+        "the extractor must render stored templates partially, or every stored "
+        "prompt loses the placeholders generation depends on"
+    )
