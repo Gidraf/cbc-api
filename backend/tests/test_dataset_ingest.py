@@ -1,6 +1,8 @@
 """Dataset item tracking: what is queued, what is running, what is done."""
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from app.services import dataset_ingest as di
@@ -20,10 +22,11 @@ class FakeDb:
         if "WHERE file_id = :file_id" in query:
             return [dict(r) for r in self.rows.values()
                     if r["file_id"] == params.get("file_id")]
-        if "design_id = :design_id AND item_id <> :item_id" in query:
+        if "design_id = :design_id OR design_ids::text LIKE" in query:
+            wanted = params.get("design_id")
             return [
                 {"item_id": r["item_id"]} for r in self.rows.values()
-                if r.get("design_id") == params.get("design_id")
+                if (r.get("design_id") == wanted or wanted in (r.get("design_ids") or []))
                 and r["item_id"] != params.get("item_id")
                 and r["status"] == "ingested"
             ]
@@ -47,16 +50,22 @@ class FakeDb:
                 "grade": params["grade"],
                 "file_id": params.get("file_id", ""), "title": params.get("title", ""),
                 "declared_subject": params.get("declared_subject", ""),
-                "resolved_subject": "", "design_id": None, "status": "pending",
+                "resolved_subject": "", "design_id": None, "design_ids": [],
+                "learning_areas_missing": [], "status": "pending",
                 "char_count": 0, "error": "", "selected_at": None,
                 "started_at": None, "finished_at": None, "updated_at": None,
             })
+            return
+        if query.strip().upper().startswith("DELETE"):
+            # Deletions target other tables (curriculum_designs and friends),
+            # which this double does not model.
             return
         row = self.rows[item_id]
         if "SET status = 'pending'" in query:
             # The un-ingest reset: status is a literal in the SQL, not a param.
             row.update({
-                "status": "pending", "design_id": None, "resolved_subject": "",
+                "status": "pending", "design_id": None, "design_ids": [],
+                "learning_areas_missing": [], "resolved_subject": "",
                 "char_count": 0, "error": "", "selected_at": None,
                 "started_at": None, "finished_at": None,
             })
@@ -65,6 +74,11 @@ class FakeDb:
         for key in ("error", "resolved_subject", "design_id", "char_count"):
             if key in params:
                 row[key] = params[key]
+        # set_status writes these as JSON text via CAST(... AS jsonb).
+        for key in ("design_ids", "learning_areas_missing"):
+            if key in params:
+                value = params[key]
+                row[key] = json.loads(value) if isinstance(value, str) else list(value or [])
         if params["status"] == "pending" and "error" not in params:
             row["error"] = ""
 
@@ -702,3 +716,142 @@ def test_a_missing_document_says_so_rather_than_attaching_nothing(attach, monkey
     with pytest.raises(LookupError, match="Sync the grade"):
         di.attach_source_document(design_id="cd_pp1_lang")
     assert attach.updated is None
+
+
+def _stub_combined_extractor(monkeypatch, areas, missing=()):
+    """An extractor that behaves like a Pre-Primary ingest: many designs, one item."""
+    from app.services import curriculum_extractor as extractor
+
+    def fake(payload):
+        return {
+            "status": "partial" if missing else "success",
+            "subject": areas[0],
+            "design_id": f"cd_{areas[0].lower().replace(' ', '_')}",
+            "combined_design": True,
+            "expected_learning_areas": list(areas) + list(missing),
+            "learning_areas_missing": list(missing),
+            "learning_areas": [
+                {"subject": a, "status": "success",
+                 "design_id": f"cd_{a.lower().replace(' ', '_')}", "substrand_count": 3}
+                for a in areas
+            ],
+        }
+
+    monkeypatch.setattr(extractor.curriculum_extractor, "ingest_raw_curriculum", fake)
+
+
+PP1_AREAS = ["Language Activities", "Mathematical Activities", "Creative Activities",
+             "Environmental Activities", "Christian Religious Education",
+             "Hindu Religious Education", "Islamic Religious Education"]
+
+
+def test_reprocessing_a_combined_design_discards_every_design_it_made(db, monkeypatch):
+    """One Pre-Primary document produces seven designs. Tracking recorded only
+    the first, so force discarded one and orphaned six, then wrote seven more."""
+    stub_dataset(monkeypatch, items(("a", "a", "PP1.pdf", "Pre-Primary 1")), grade="grade-pp1")
+    di.sync_grade("grade-pp1")
+
+    _stub_combined_extractor(monkeypatch, PP1_AREAS)
+    di.process_item("grade-pp1__a")
+
+    row = db.rows["grade-pp1__a"]
+    assert len(row["design_ids"]) == 7, "every design the item produced must be tracked"
+
+    deleted: list[str] = []
+    real_execute = di.execute
+
+    def spy(query, params=None):
+        if "DELETE FROM curriculum_designs" in query:
+            deleted.append((params or {})["design_id"])
+            return
+        return real_execute(query, params)
+
+    monkeypatch.setattr(di, "execute", spy)
+    stub_dataset(monkeypatch, items(("a", "a", "PP1.pdf", "Pre-Primary 1")), grade="grade-pp1")
+    di.process_item("grade-pp1__a", force=True)
+
+    assert len(deleted) == 7, f"only discarded {deleted}"
+    assert "cd_hindu_religious_education" in deleted
+    assert "cd_mathematical_activities" in deleted
+
+
+def test_reprocess_runs_the_same_split_as_a_first_ingest(db, monkeypatch):
+    """Reprocess must not be a lesser path: it calls the same extractor, so the
+    splitting, canonicalisation and completeness check all apply."""
+    stub_dataset(monkeypatch, items(("a", "a", "PP1.pdf", "Pre-Primary 1")), grade="grade-pp1")
+    di.sync_grade("grade-pp1")
+
+    calls: list[str] = []
+    from app.services import curriculum_extractor as extractor
+
+    def fake(payload):
+        calls.append("ingest")
+        return {
+            "status": "success", "subject": "Language Activities",
+            "design_id": "cd_language", "combined_design": True,
+            "expected_learning_areas": PP1_AREAS, "learning_areas_missing": [],
+            "learning_areas": [
+                {"subject": a, "status": "success", "design_id": f"cd_{a[:4].lower()}",
+                 "substrand_count": 1} for a in PP1_AREAS
+            ],
+        }
+
+    monkeypatch.setattr(extractor.curriculum_extractor, "ingest_raw_curriculum", fake)
+
+    di.process_item("grade-pp1__a")
+    stub_dataset(monkeypatch, items(("a", "a", "PP1.pdf", "Pre-Primary 1")), grade="grade-pp1")
+    di.process_item("grade-pp1__a", force=True)
+
+    assert calls == ["ingest", "ingest"], "reprocess must go through the same extractor"
+    assert db.rows["grade-pp1__a"]["status"] == "ingested"
+
+
+def test_a_partial_ingest_is_not_recorded_as_ingested(db, monkeypatch):
+    """Six of seven learning areas is not "ingested". Recording it as such is
+    how a dropdown showed "(not ingested)" with nothing to explain it."""
+    stub_dataset(monkeypatch, items(("a", "a", "PP1.pdf", "Pre-Primary 1")), grade="grade-pp1")
+    di.sync_grade("grade-pp1")
+
+    _stub_combined_extractor(
+        monkeypatch, PP1_AREAS[:4],
+        missing=["Christian Religious Education", "Hindu Religious Education",
+                 "Mathematical Activities"],
+    )
+    di.process_item("grade-pp1__a")
+
+    row = db.rows["grade-pp1__a"]
+    assert row["status"] == "failed", "a partial ingest must not look complete"
+    assert "Missing:" in row["error"]
+    assert "Hindu Religious Education" in row["error"]
+    assert row["learning_areas_missing"] == [
+        "Christian Religious Education", "Hindu Religious Education", "Mathematical Activities"
+    ]
+
+
+def test_uningesting_a_combined_item_removes_every_design(db, monkeypatch):
+    """Un-ingesting only the primary left six learning areas in the database
+    while the console reported the item as pending."""
+    stub_dataset(monkeypatch, items(("a", "a", "PP1.pdf", "Pre-Primary 1")), grade="grade-pp1")
+    di.sync_grade("grade-pp1")
+    _stub_combined_extractor(monkeypatch, PP1_AREAS)
+    di.process_item("grade-pp1__a")
+
+    deleted: list[str] = []
+    real_execute = di.execute
+
+    def spy(query, params=None):
+        if "DELETE FROM curriculum_designs" in query:
+            deleted.append((params or {})["design_id"])
+            return
+        return real_execute(query, params)
+
+    monkeypatch.setattr(di, "execute", spy)
+    monkeypatch.setattr(di, "fetch_all", lambda q, p=None: (
+        [{"n": 3}] if "COUNT(*)" in q else db.fetch_all(q, p)
+    ))
+
+    result = di.uningest_item("grade-pp1__a")
+
+    assert len(deleted) == 7, f"only removed {deleted}"
+    assert result["removed"]["design"] == 7
+    assert db.rows["grade-pp1__a"]["design_ids"] == []

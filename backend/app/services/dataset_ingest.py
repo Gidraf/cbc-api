@@ -16,6 +16,7 @@ Ingestion is manual for now — nothing advances an item except an explicit call
 """
 from __future__ import annotations
 
+import json
 import logging
 import re
 from typing import Any
@@ -275,6 +276,11 @@ def set_status(item_id: str, status: str, **fields: Any) -> None:
             sets.append(f"{key} = :{key}")
             params[key] = fields[key]
 
+    for key in ("design_ids", "learning_areas_missing"):
+        if key in fields:
+            sets.append(f"{key} = CAST(:{key} AS jsonb)")
+            params[key] = to_json(list(fields[key] or []))
+
     # Clearing an error on the way back to pending keeps a retried item from
     # displaying a stale failure reason.
     if status == PENDING and "error" not in fields:
@@ -346,6 +352,45 @@ class AlreadyIngested(RuntimeError):
     """The item has been ingested already and ``force`` was not given."""
 
 
+def _other_claimants(design_id: str, item_id: str) -> list[dict[str, Any]]:
+    """Other ingested items that still point at this design.
+
+    A design claimed by another item must never be deleted — the Lower Primary
+    design is filed under Grades 1-3, and one grade un-ingesting must not wipe
+    the others. Checked against both the primary design_id and the full set an
+    item produced, since a combined design yields several.
+    """
+    return fetch_all(
+        """
+        SELECT item_id FROM dataset_ingest_status
+        WHERE (design_id = :design_id OR design_ids::text LIKE :contains)
+          AND item_id <> :item_id AND status = 'ingested'
+        """,
+        {"design_id": design_id, "contains": f'%"{design_id}"%', "item_id": item_id},
+    )
+
+
+def _previous_design_ids(row: dict[str, Any]) -> list[str]:
+    """Every design a previous run of this item produced.
+
+    One Pre-Primary document yields seven designs, one per learning area, but
+    tracking recorded only the first. Re-processing on that basis deleted one
+    design and left six orphaned, then wrote seven more on top of them.
+    """
+    stored = row.get("design_ids") or []
+    if isinstance(stored, str):
+        try:
+            stored = json.loads(stored)
+        except ValueError:
+            stored = []
+    ids = [_text(d) for d in stored if _text(d)]
+
+    primary = _text(row.get("design_id"))
+    if primary and primary not in ids:
+        ids.append(primary)
+    return ids
+
+
 def _discard_previous_design(design_id: str, item_id: str) -> None:
     """Remove what a previous run of this item produced.
 
@@ -355,13 +400,7 @@ def _discard_previous_design(design_id: str, item_id: str) -> None:
     (the Lower Primary design filed under Grades 1-3) must not delete each
     other's work.
     """
-    others = fetch_all(
-        """
-        SELECT item_id FROM dataset_ingest_status
-        WHERE design_id = :design_id AND item_id <> :item_id AND status = 'ingested'
-        """,
-        {"design_id": design_id, "item_id": item_id},
-    )
+    others = _other_claimants(design_id, item_id)
     if others:
         logger.info(
             "Design %s is also claimed by %d other ingested item(s); rewriting in place "
@@ -371,6 +410,19 @@ def _discard_previous_design(design_id: str, item_id: str) -> None:
 
     execute("DELETE FROM curriculum_designs WHERE design_id = :design_id", {"design_id": design_id})
     logger.info("Discarded design %s before re-ingesting %s.", design_id, item_id)
+
+
+def _discard_previous_designs(row: dict[str, Any], item_id: str) -> int:
+    """Discard all of them, so a forced re-run leaves one clean set."""
+    ids = _previous_design_ids(row)
+    for design_id in ids:
+        _discard_previous_design(design_id, item_id)
+    if len(ids) > 1:
+        logger.info(
+            "Discarded %d design(s) from the previous run of %s before re-ingesting.",
+            len(ids), item_id,
+        )
+    return len(ids)
 
 
 def process_item(item_id: str, force: bool = False) -> dict[str, Any]:
@@ -410,8 +462,8 @@ def process_item(item_id: str, force: bool = False) -> dict[str, Any]:
         set_status(item_id, FAILED, error="Item is no longer in the Langfuse dataset")
         raise LookupError(f"document '{source_id}' is no longer available for '{row['grade']}'")
 
-    if force and row.get("design_id"):
-        _discard_previous_design(str(row["design_id"]), item_id)
+    if force:
+        _discard_previous_designs(row, item_id)
 
     set_status(item_id, PROCESSING)
 
@@ -427,13 +479,37 @@ def process_item(item_id: str, force: bool = False) -> dict[str, Any]:
         logger.warning("Ingest failed for %s: %s", item_id, exc)
         raise
 
+    # A combined design produces one row per learning area. Recording only the
+    # first meant a later forced re-run orphaned the rest, and the console
+    # reported the whole document as ingested under one area's name.
+    areas = result.get("learning_areas") or []
+    design_ids = [
+        _text(a.get("design_id")) for a in areas if _text(a.get("design_id"))
+    ] or [_text(result.get("design_id"))]
+    design_ids = [d for d in design_ids if d]
+
+    missing = list(result.get("learning_areas_missing") or [])
+    subject = _text(result.get("subject"))
+    if len(areas) > 1:
+        ingested = [_text(a.get("subject")) for a in areas if a.get("status") == "success"]
+        subject = ", ".join(s for s in ingested if s) or subject
+
+    # An ingest that produced only some of a grade's learning areas is not the
+    # same as one that produced them all, and reporting it as INGESTED is how
+    # "(not ingested)" appeared in a dropdown with nothing to explain it.
     set_status(
         item_id,
-        INGESTED,
-        resolved_subject=_text(result.get("subject")),
+        FAILED if missing else INGESTED,
+        resolved_subject=subject,
         design_id=_text(result.get("design_id")),
+        design_ids=design_ids,
+        learning_areas_missing=missing,
         char_count=len(payload["output"]),
-        error="",
+        error=(
+            f"Ingested {len(design_ids)} of {len(result.get('expected_learning_areas') or [])} "
+            f"learning areas. Missing: {', '.join(missing)}."
+            if missing else ""
+        ),
     )
     return result
 
@@ -501,18 +577,24 @@ def uningest_item(item_id: str, purge_generated: bool = False) -> dict[str, Any]
     if not row:
         raise LookupError(f"no dataset item tracked with id '{item_id}'")
 
-    design_id = _text(row.get("design_id"))
+    # A combined design produced one row per learning area. Un-ingesting only
+    # the primary left the other six behind, so the console reported the item as
+    # pending while six learning areas' sub-strands were still in the database.
+    design_ids = _previous_design_ids(row)
+    design_id = _text(row.get("design_id")) or (design_ids[0] if design_ids else "")
     grade = _text(row.get("grade"))
     subject = _text(row.get("resolved_subject"))
     removed = {"design": 0, "substrands": 0, "bundles": 0, "questions": 0}
 
-    if design_id:
+
+    if design_ids:
         # Count before deleting so the caller can be told what actually went.
-        rows = fetch_all(
-            "SELECT COUNT(*) AS n FROM curriculum_substrands WHERE design_id = :design_id",
-            {"design_id": design_id},
-        )
-        removed["substrands"] = int((rows[0] if rows else {}).get("n") or 0)
+        for one in design_ids:
+            rows = fetch_all(
+                "SELECT COUNT(*) AS n FROM curriculum_substrands WHERE design_id = :design_id",
+                {"design_id": one},
+            )
+            removed["substrands"] += int((rows[0] if rows else {}).get("n") or 0)
 
         if purge_generated and grade and subject:
             for table, column, key in (
@@ -537,31 +619,30 @@ def uningest_item(item_id: str, purge_generated: bool = False) -> dict[str, Any]
                     {"grade": grade, "subject": subject},
                 )
 
-        # Only if no other ingested grade still points at this design.
-        others = fetch_all(
-            """
-            SELECT item_id FROM dataset_ingest_status
-            WHERE design_id = :design_id AND item_id <> :item_id AND status = 'ingested'
-            """,
-            {"design_id": design_id, "item_id": item_id},
-        )
-        if others:
-            logger.info(
-                "Design %s is still claimed by %d other ingested item(s); left in place.",
-                design_id, len(others),
-            )
-            removed["substrands"] = 0
-        else:
+        # Only designs no other ingested grade still points at.
+        for one in design_ids:
+            others = _other_claimants(one, item_id)
+            if others:
+                logger.info(
+                    "Design %s is still claimed by %d other ingested item(s); left in place.",
+                    one, len(others),
+                )
+                continue
             execute(
                 "DELETE FROM curriculum_designs WHERE design_id = :design_id",
-                {"design_id": design_id},
+                {"design_id": one},
             )
-            removed["design"] = 1
+            removed["design"] += 1
+
+        if removed["design"] == 0:
+            removed["substrands"] = 0
 
     execute(
         """
         UPDATE dataset_ingest_status
-        SET status = 'pending', design_id = NULL, resolved_subject = '',
+        SET status = 'pending', design_id = NULL,
+            design_ids = '[]'::jsonb, learning_areas_missing = '[]'::jsonb,
+            resolved_subject = '',
             char_count = 0, error = '', selected_at = NULL, started_at = NULL,
             finished_at = NULL, updated_at = NOW()
         WHERE item_id = :item_id

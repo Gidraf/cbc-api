@@ -503,6 +503,32 @@ MIGRATIONS: list[tuple[str, str]] = [
         CREATE INDEX IF NOT EXISTS idx_grade_scope_lookup ON grade_scope(grade, subject);
         """,
     ),
+    (
+        "017_dataset_ingest_multi_design",
+        """
+        -- One Pre-Primary document now produces SEVEN designs, one per learning
+        -- area. Tracking recorded a single design_id — the first area that
+        -- succeeded — so re-processing with force discarded that one design and
+        -- left the other six orphaned, then re-ingested all seven on top.
+        --
+        -- design_id is kept as the primary for every existing reader; design_ids
+        -- records the full set the item produced.
+
+        ALTER TABLE dataset_ingest_status
+            ADD COLUMN IF NOT EXISTS design_ids JSONB NOT NULL DEFAULT '[]'::jsonb;
+
+        -- An ingest that produced only some of a grade's learning areas is not
+        -- the same as one that produced them all, and was being recorded as if
+        -- it were.
+        ALTER TABLE dataset_ingest_status
+            ADD COLUMN IF NOT EXISTS learning_areas_missing JSONB NOT NULL DEFAULT '[]'::jsonb;
+
+        UPDATE dataset_ingest_status
+            SET design_ids = to_jsonb(ARRAY[design_id])
+            WHERE design_id IS NOT NULL AND design_id <> ''
+              AND design_ids = '[]'::jsonb;
+        """,
+    ),
 ]
 
 
