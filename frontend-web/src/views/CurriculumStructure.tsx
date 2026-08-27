@@ -18,6 +18,7 @@ import { PromptInspector, type Inspection } from "./PromptInspector";
 import {
   useDesigns,
   useInspect,
+  useStoredStructure,
   useStructureActions,
   type GeneratedStrand,
   type GeneratedSubstrand,
@@ -32,7 +33,11 @@ import {
  * the grade looks empty. This is the path back: generate the structure, review
  * it, then save it.
  *
- * Nothing is written until Save. Generation is a draft you can discard.
+ * Nothing is written until Save. Generation is a draft you can discard —
+ * but what HAS been saved is read back on mount, so a reload shows the stored
+ * structure rather than an empty page. Previously this view rendered only what
+ * the current session had generated: saved sub-strands were in the database
+ * the whole time and simply had no way of being found again.
  */
 
 const strandName = (s: GeneratedStrand) => s.strand_name || s.name || "";
@@ -68,24 +73,92 @@ export function CurriculumStructure({
       d.subject?.trim().toLowerCase() === subject.trim().toLowerCase() &&
       (d.grade === grade || d.grade === grade.replace("grade-", ""))
   );
+  const stored = useStoredStructure(grade, subject);
   const [strands, setStrands] = React.useState<GeneratedStrand[]>([]);
   const [openStrand, setOpenStrand] = React.useState<string | null>(null);
   const [drafts, setDrafts] = React.useState<Record<string, GeneratedSubstrand[]>>({});
   const [saved, setSaved] = React.useState<Record<string, number>>({});
+
+  // Seed from what is stored, and re-seed when the selection changes. A strand
+  // generated in this session but not yet saved is kept: re-seeding must not
+  // throw away work the operator has not had the chance to save.
+  React.useEffect(() => {
+    const data = stored.data;
+    if (!data) return;
+    setStrands((current) => {
+      const byName = new Map<string, GeneratedStrand>();
+      for (const st of data.strands) {
+        byName.set(st.strand_name.toLowerCase(), {
+          strand_id: st.strand_id,
+          strand_name: st.strand_name,
+          description: st.description,
+        } as GeneratedStrand);
+      }
+      for (const st of current) {
+        const key = strandName(st).toLowerCase();
+        if (key && !byName.has(key)) byName.set(key, st);
+      }
+      return [...byName.values()];
+    });
+    setSaved(
+      Object.fromEntries(
+        data.strands
+          .filter((st) => st.sub_strands.length > 0)
+          .map((st) => [st.strand_name, st.sub_strands.length])
+      )
+    );
+  }, [stored.data, grade, subject]);
   const [instructions, setInstructions] = React.useState("");
   // Whether the last generation actually read the KICD design, or produced a
   // plausible curriculum from the model's own knowledge.
   const [grounded, setGrounded] = React.useState<{ ok: boolean; chars: number } | null>(null);
 
+  // What a copy should contain: everything under a strand, whether it was saved
+  // earlier or drafted just now. Copying `drafts` alone meant that saving —
+  // which clears the draft — emptied the copy, so "Copy all" produced a list of
+  // strand headings and nothing underneath, exactly when there was most to
+  // check.
+  const substrandsFor = React.useCallback(
+    (name: string): GeneratedSubstrand[] => {
+      const draft = drafts[name];
+      if (draft && draft.length) return draft;
+      const stored_ = (stored.data?.strands || []).find(
+        (st) => st.strand_name.toLowerCase() === name.toLowerCase()
+      );
+      return stored_?.sub_strands || [];
+    },
+    [drafts, stored.data]
+  );
+
+  const allSubstrands = React.useMemo(() => {
+    const map: Record<string, GeneratedSubstrand[]> = {};
+    for (const st of strands) {
+      const name = strandName(st);
+      if (name) map[name] = substrandsFor(name);
+    }
+    return map;
+  }, [strands, substrandsFor]);
+
   const busy =
     actions.generateStrands.isPending ||
     actions.generateSubstrands.isPending ||
-    actions.saveSubstrands.isPending;
+    actions.saveSubstrands.isPending ||
+    actions.saveStrands.isPending;
 
   async function makeStrands() {
     const res = await actions.generateStrands.mutateAsync({ custom_instructions: instructions });
-    setStrands(res.strands || []);
+    const generated = res.strands || [];
+    setStrands(generated);
     setGrounded({ ok: Boolean(res.grounded), chars: res.source_chars ?? 0 });
+    // Strands had nowhere to be stored, so the layer every sub-strand hangs
+    // off vanished on reload even after its sub-strands were saved.
+    if (generated.length) {
+      try {
+        await actions.saveStrands.mutateAsync({ strands: generated });
+      } catch {
+        // Generation still succeeded; the draft is on screen either way.
+      }
+    }
   }
 
   async function makeSubstrands(strand: GeneratedStrand) {
@@ -153,9 +226,9 @@ export function CurriculumStructure({
         {strands.length > 0 && (
           <CopyButton
             label="Copy all"
-            title="Copy every strand and its drafted sub-strands, to check in another model"
+            title="Copy every strand with its sub-strands, saved and drafted, to check in another model"
             getText={() =>
-              allStrandsToText(strands, drafts, { grade, subject })
+              allStrandsToText(strands, allSubstrands, { grade, subject })
             }
           />
         )}
@@ -212,6 +285,11 @@ export function CurriculumStructure({
           {strands.map((strand) => {
             const name = strandName(strand);
             const draft = drafts[name];
+            // Saved sub-strands are shown too, not only this session's drafts.
+            // Saving cleared the draft and nothing replaced it on screen, so a
+            // successful save looked exactly like losing the work.
+            const rows = substrandsFor(name);
+            const isDraft = Boolean(draft && draft.length);
             const savedCount = saved[name];
             const isOpen = openStrand === name;
 
@@ -247,8 +325,8 @@ export function CurriculumStructure({
                   </Button>
                   <CopyButton
                     label="Copy"
-                    title="Copy this strand and its sub-strands"
-                    getText={() => strandToText(strand, drafts[name], { grade, subject })}
+                    title="Copy this strand and its sub-strands, saved or drafted"
+                    getText={() => strandToText(strand, substrandsFor(name), { grade, subject })}
                   />
                   <Button
                     size="sm"
@@ -270,9 +348,15 @@ export function CurriculumStructure({
                   </div>
                 )}
 
-                {draft && draft.length > 0 && (
+                {rows.length > 0 && (
                   <div style={{ marginTop: "var(--s3)" }}>
-                    <Table caption={`Sub-strands drafted for ${name}`}>
+                    <Table
+                      caption={
+                        isDraft
+                          ? `Sub-strands drafted for ${name} — not saved yet`
+                          : `Sub-strands saved for ${name}`
+                      }
+                    >
                       <thead>
                         <tr>
                           <Th>Sub-strand</Th>
@@ -284,7 +368,7 @@ export function CurriculumStructure({
                         </tr>
                       </thead>
                       <tbody>
-                        {draft.map((sub, i) => (
+                        {rows.map((sub, i) => (
                           <tr key={i}>
                             <Td>{subName(sub)}</Td>
                             <Td numeric>{subHours(sub)}</Td>
@@ -304,14 +388,18 @@ export function CurriculumStructure({
                         ))}
                       </tbody>
                     </Table>
-                    <Stack direction="row" gap="var(--s2)" style={{ marginTop: "var(--s3)" }}>
-                      <Button size="sm" disabled={busy} onClick={() => save(strand)}>
-                        {actions.saveSubstrands.isPending ? "Saving…" : `Save ${draft.length} sub-strands`}
-                      </Button>
-                      <Button size="sm" variant="ghost" disabled={busy} onClick={() => discard(name)}>
-                        Discard
-                      </Button>
-                    </Stack>
+                    {isDraft && (
+                      <Stack direction="row" gap="var(--s2)" style={{ marginTop: "var(--s3)" }}>
+                        <Button size="sm" disabled={busy} onClick={() => save(strand)}>
+                          {actions.saveSubstrands.isPending
+                            ? "Saving…"
+                            : `Save ${draft!.length} sub-strands`}
+                        </Button>
+                        <Button size="sm" variant="ghost" disabled={busy} onClick={() => discard(name)}>
+                          Discard
+                        </Button>
+                      </Stack>
+                    )}
                   </div>
                 )}
               </div>

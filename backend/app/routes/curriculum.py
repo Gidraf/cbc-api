@@ -2946,6 +2946,13 @@ class DeriveGradeScopeRequest(BaseModel):
     inspect: bool = False
 
 
+class FactorySaveStrandsRequest(BaseModel):
+    grade: str
+    subject: str
+    design_id: str = ""
+    strands: list[dict[str, Any]]
+
+
 class FactorySaveSubstrandsRequest(BaseModel):
     grade: str
     subject: str
@@ -3709,6 +3716,159 @@ def factory_derive_grade_scope(
     }
 
 
+@router.get("/factory/structure")
+def factory_read_structure(
+    grade: str = Query(..., description="Grade slug, e.g. grade-pp1"),
+    subject: str = Query(..., description="Learning area or subject name"),
+    _: AuthContext = Depends(require_roles("admin", "operator", "reviewer")),
+) -> dict[str, Any]:
+    """The strands and sub-strands already stored for a learning area.
+
+    The console built its structure view out of whatever the current session
+    had generated, and read nothing back. Saved sub-strands were in the
+    database the whole time; a page reload simply had no way to find them, so
+    the work looked lost and got generated again.
+    """
+    from ..infra.db import fetch_all, fetch_one
+
+    alt_grade = grade.replace("grade-", "") if grade.startswith("grade-") else f"grade-{grade}"
+    params = {"grade": grade, "alt_grade": alt_grade, "subject": subject}
+
+    rows = fetch_all(
+        """
+        SELECT strand_id, strand_name, sub_strand_id, sub_strand_name, theme,
+               allocated_hours, slos, learning_experiences, key_inquiry_questions,
+               core_competencies, values, assessment_rubrics,
+               pertinent_contemporary_issues, link_to_other_learning_areas,
+               source_pages, updated_at
+        FROM curriculum_substrands
+        WHERE (grade = :grade OR grade = :alt_grade) AND LOWER(subject) = LOWER(:subject)
+        ORDER BY strand_id ASC, sub_strand_id ASC
+        """,
+        params,
+    ) or []
+
+    # Strands with no sub-strands yet are held on the design, so a strand list
+    # survives a reload before any sub-strand has been generated under it.
+    design = fetch_one(
+        """
+        SELECT design_id, metadata FROM curriculum_designs
+        WHERE (grade = :grade OR grade = :alt_grade) AND LOWER(subject) = LOWER(:subject)
+          AND metadata ? 'strands'
+        ORDER BY updated_at DESC LIMIT 1
+        """,
+        params,
+    )
+    stored_strands = ((design or {}).get("metadata") or {}).get("strands") or []
+
+    strands: dict[str, dict[str, Any]] = {}
+    for entry in stored_strands:
+        name = str(entry.get("strand_name") or entry.get("name") or "").strip()
+        if name:
+            strands[name.lower()] = {
+                "strand_id": str(entry.get("strand_id") or entry.get("id") or ""),
+                "strand_name": name,
+                "description": str(entry.get("description") or ""),
+                "sub_strands": [],
+                "saved": False,
+            }
+
+    for row in rows:
+        name = str(row.get("strand_name") or "").strip()
+        key = name.lower()
+        if key not in strands:
+            strands[key] = {
+                "strand_id": str(row.get("strand_id") or ""),
+                "strand_name": name,
+                "description": "",
+                "sub_strands": [],
+                "saved": True,
+            }
+        strands[key]["saved"] = True
+        strands[key]["sub_strands"].append({
+            k: row.get(k) for k in (
+                "sub_strand_id", "sub_strand_name", "theme", "allocated_hours",
+                "slos", "learning_experiences", "key_inquiry_questions",
+                "core_competencies", "values", "assessment_rubrics",
+                "pertinent_contemporary_issues", "link_to_other_learning_areas",
+                "source_pages",
+            )
+        })
+
+    ordered = sorted(strands.values(), key=lambda s: (s["strand_id"] or "zz", s["strand_name"]))
+    return {
+        "grade": grade,
+        "subject": subject,
+        "design_id": (design or {}).get("design_id", ""),
+        "strands": ordered,
+        "strand_count": len(ordered),
+        "sub_strand_count": len(rows),
+    }
+
+
+@router.post("/factory/save-strands")
+def factory_save_strands(
+    payload: FactorySaveStrandsRequest,
+    _: AuthContext = Depends(require_roles("admin", "operator", "reviewer")),
+) -> dict[str, Any]:
+    """Persist a generated strand list against its design.
+
+    There was no way to save a strand at all. Sub-strands had a table; strands
+    lived only in the browser tab that generated them, so a reload lost the
+    layer everything else hangs off — including the strand names needed to
+    generate sub-strands under them.
+
+    Stored on the design's metadata, which is the shape the progress report
+    already reads for strands that have no sub-strands yet.
+    """
+    from ..infra.db import execute, fetch_one, to_json
+
+    found = design_source.resolve(payload.grade, payload.subject)
+    design_id = payload.design_id or found.design_id
+    if not design_id:
+        raise_api_error(
+            "MISSING_PARENT_CONTEXT",
+            f"No ingested design for '{payload.subject}' ({payload.grade}) to attach "
+            f"these strands to. Ingest it with POST /factory/ingest-learning-area "
+            f'{{"grade": "{payload.grade}", "subject": "{payload.subject}"}} first.',
+        )
+
+    clean: list[dict[str, Any]] = []
+    for entry in payload.strands:
+        name = str(entry.get("strand_name") or entry.get("name") or "").strip()
+        if not name:
+            continue
+        clean.append({
+            "strand_id": str(entry.get("strand_id") or entry.get("id") or ""),
+            "strand_name": name,
+            "description": str(entry.get("description") or ""),
+            "source_pages": [p for p in (entry.get("source_pages") or []) if isinstance(p, int)],
+            "sub_strands": [],
+        })
+
+    if not clean:
+        raise_api_error("VALIDATION_FAILED", "No named strands to save.")
+
+    row = fetch_one(
+        "SELECT metadata FROM curriculum_designs WHERE design_id = :design_id",
+        {"design_id": design_id},
+    )
+    metadata = dict((row or {}).get("metadata") or {})
+    metadata["strands"] = clean
+
+    execute(
+        "UPDATE curriculum_designs SET metadata = CAST(:metadata AS jsonb), updated_at = NOW() "
+        "WHERE design_id = :design_id",
+        {"metadata": to_json(metadata), "design_id": design_id},
+    )
+    return {
+        "status": "saved",
+        "design_id": design_id,
+        "saved_count": len(clean),
+        "strands": [c["strand_name"] for c in clean],
+    }
+
+
 @router.post("/factory/save-substrands")
 def factory_save_substrands(
     payload: FactorySaveSubstrandsRequest,
@@ -3740,22 +3900,21 @@ def factory_save_substrands(
             )
 
     saved_count = 0
-    design_id = payload.design_id or f"cd_{payload.grade}_{payload.subject.lower()[:4]}"
-
-    # Ensure parent record exists in curriculum_designs (idempotent upsert)
-    try:
-        execute(
-            """
-            INSERT INTO curriculum_designs (
-                design_id, grade, subject, level, review_status, status, created_at, updated_at
-            )
-            VALUES (:design_id, :grade, :subject, 'Basic Education', 'accepted_active', 'accepted_active', NOW(), NOW())
-            ON CONFLICT (design_id) DO NOTHING
-            """,
-            {"design_id": design_id, "grade": payload.grade, "subject": payload.subject},
+    # Attach to the design these sub-strands were actually read from. The old
+    # fallback minted "cd_grade-pp1_chri" and upserted a parent row for it — a
+    # row with no document, newer than the real one, which then won every
+    # "ORDER BY updated_at DESC LIMIT 1" lookup in the codebase. Saving
+    # sub-strands would silently unground the next generation of them.
+    design_id = payload.design_id or design_source.resolve(
+        payload.grade, payload.subject
+    ).design_id
+    if not design_id:
+        raise_api_error(
+            "MISSING_PARENT_CONTEXT",
+            f"No ingested design for '{payload.subject}' ({payload.grade}) to attach "
+            f"these sub-strands to. Ingest it with POST /factory/ingest-learning-area "
+            f'{{"grade": "{payload.grade}", "subject": "{payload.subject}"}} first.',
         )
-    except Exception as exc:
-        logger.warning("Parent curriculum_designs upsert warning: %s", exc)
 
     for ss in payload.substrands:
         sub_id = str(ss.get("sub_strand_id") or ss.get("id") or "1.1")

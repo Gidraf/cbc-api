@@ -23,6 +23,7 @@ export const keys = {
   subjects: (grade: string) => ["subjects", grade] as const,
   substrands: (grade: string, subject: string) => ["substrands", grade, subject] as const,
   progress: (grade: string, subject?: string) => ["progress", grade, subject ?? "all"] as const,
+  structure: (grade: string, subject: string) => ["structure", grade, subject] as const,
   bundle: (grade: string, subject: string, subStrand: string) =>
     ["bundle", grade, subject, subStrand] as const,
   questions: (filters: Record<string, unknown>) => ["questions", filters] as const,
@@ -186,6 +187,36 @@ export function useProgress(grade: string, subject?: string) {
     },
     enabled: Boolean(grade),
     staleTime: 30_000,
+  });
+}
+
+export type StoredStructure = {
+  grade: string;
+  subject: string;
+  design_id: string;
+  strand_count: number;
+  sub_strand_count: number;
+  strands: {
+    strand_id: string;
+    strand_name: string;
+    description: string;
+    saved: boolean;
+    sub_strands: GeneratedSubstrand[];
+  }[];
+};
+
+/** What is actually stored for this learning area, as opposed to what this
+ *  browser tab happens to have generated. */
+export function useStoredStructure(grade: string, subject: string) {
+  const api = useApi();
+  return useQuery({
+    queryKey: keys.structure(grade, subject),
+    queryFn: () =>
+      api<StoredStructure>(
+        `/api/v1/curriculum/factory/structure?grade=${encodeURIComponent(grade)}` +
+          `&subject=${encodeURIComponent(subject)}`
+      ),
+    enabled: Boolean(grade && subject),
   });
 }
 
@@ -454,6 +485,17 @@ export function useStructureActions(grade: string, subject: string) {
         design_id?: string;
       }) => post<{ sub_strands: GeneratedSubstrand[] }>("generate-substrands", { grade, subject, ...v }),
     }),
+    saveStrands: useMutation({
+      mutationFn: (v: { strands: GeneratedStrand[]; design_id?: string }) =>
+        post<{ saved_count: number; design_id: string }>("save-strands", {
+          grade,
+          subject,
+          ...v,
+        }),
+      onSuccess: () => {
+        qc.invalidateQueries({ queryKey: keys.structure(grade, subject) });
+      },
+    }),
     saveSubstrands: useMutation({
       mutationFn: (v: {
         strand_name: string;
@@ -465,6 +507,9 @@ export function useStructureActions(grade: string, subject: string) {
         // Coverage and the station list are both derived from sub-strands.
         qc.invalidateQueries({ queryKey: keys.progress(grade) });
         qc.invalidateQueries({ queryKey: keys.subjects(grade) });
+        // Without this the view still showed only what this session generated,
+        // so a reload looked as though the save had not happened.
+        qc.invalidateQueries({ queryKey: keys.structure(grade, subject) });
       },
     }),
   };
