@@ -576,6 +576,8 @@ class FactoryGenerateSingleActivityRequest(BaseModel):
     sub_strand: str
     activity_item: dict[str, Any]
     notes_content: dict[str, Any] | None = None
+    # An activity belongs to one hour of the sub-strand, the same as a visual.
+    target_hour: int | None = None
     custom_instructions: str = ""
 
 
@@ -857,6 +859,19 @@ def factory_generate_notes(
     payload: FactoryGenerateNotesRequest,
     _: AuthContext = Depends(require_roles("admin", "operator", "reviewer")),
 ) -> dict[str, Any]:
+    # Notes descend from a strand and a sub-strand. Without them there is
+    # nothing for the notes to be *about*, and the model would choose the topic.
+    from ..services.content_lineage import HOUR_NOTE
+    from ..services.stage_guard import require_context
+
+    lineage = require_context(
+        HOUR_NOTE,
+        grade=payload.grade, subject=payload.subject,
+        strand=payload.strand, sub_strand=payload.sub_strand,
+        level=payload.level, essence_statement=payload.essence_statement,
+        general_learning_outcomes=payload.general_learning_outcomes,
+    )
+
     from ..infra.db import fetch_one
     from ..services.content_type_classifier import classify_content_type
     from ..services.langfuse_context import langfuse_context_service
@@ -1396,6 +1411,18 @@ def factory_plan_visuals(
     _: AuthContext = Depends(require_roles("admin", "operator", "reviewer")),
 ) -> dict[str, Any]:
     """Plans and lists all required diagrams, schematics, and realistic visual assets for a sub-strand."""
+    # Visuals are planned across a sub-strand's hours, so the notes must exist:
+    # a plan made without them is a guess at what the lessons will cover.
+    from ..services.content_lineage import ASSET_PLAN
+    from ..services.stage_guard import require_context
+
+    lineage = require_context(
+        ASSET_PLAN,
+        grade=payload.grade, subject=payload.subject,
+        strand=payload.strand, sub_strand=payload.sub_strand,
+        notes_content=payload.notes_content,
+    )
+
     import json as json_lib
     from ..services.content_type_classifier import classify_content_type
     from ..services.langfuse_context import langfuse_context_service
@@ -1524,6 +1551,17 @@ def factory_generate_single_visual(
     _: AuthContext = Depends(require_roles("admin", "operator", "reviewer")),
 ) -> dict[str, Any]:
     """Generates or regenerates a specific visual asset (vector SVG, Photorealistic AI Image Spec, or Video Simulation Storyboard)."""
+    # A rendered visual belongs to one hour, not to the sub-strand at large.
+    from ..services.content_lineage import DIAGRAM
+    from ..services.stage_guard import require_context
+
+    lineage = require_context(
+        DIAGRAM,
+        grade=payload.grade, subject=payload.subject,
+        strand=payload.strand, sub_strand=payload.sub_strand,
+        notes_content=payload.notes_content, target_hour=payload.target_hour,
+    )
+
     import json as json_lib
     from ..infra.storage import object_storage
     from ..services.content_type_classifier import classify_content_type
@@ -1820,6 +1858,16 @@ def factory_plan_activities(
     _: AuthContext = Depends(require_roles("admin", "operator", "reviewer")),
 ) -> dict[str, Any]:
     """Plans and generates a rich array of hands-on activities, laboratory experiments, and video storyboards for a sub-strand."""
+    from ..services.content_lineage import ASSET_PLAN
+    from ..services.stage_guard import require_context
+
+    lineage = require_context(
+        ASSET_PLAN,
+        grade=payload.grade, subject=payload.subject,
+        strand=payload.strand, sub_strand=payload.sub_strand,
+        notes_content=payload.notes_content,
+    )
+
     import json as json_lib
     from ..services.content_type_classifier import classify_content_type
     from ..services.langfuse_context import langfuse_context_service
@@ -1948,6 +1996,17 @@ def factory_generate_single_activity(
     _: AuthContext = Depends(require_roles("admin", "operator", "reviewer")),
 ) -> dict[str, Any]:
     """Generates or refines a single experiential activity / experiment with detailed video storyboard."""
+    # An activity, like a diagram, belongs to one hour of the sub-strand.
+    from ..services.content_lineage import ACTIVITY
+    from ..services.stage_guard import require_context
+
+    lineage = require_context(
+        ACTIVITY,
+        grade=payload.grade, subject=payload.subject,
+        strand=payload.strand, sub_strand=payload.sub_strand,
+        notes_content=payload.notes_content, target_hour=payload.target_hour,
+    )
+
     import json as json_lib
     from ..services.content_type_classifier import classify_content_type
     from ..services.langfuse_context import langfuse_context_service
@@ -3104,12 +3163,65 @@ def factory_generate_strands(
             )
         }
 
+    # A full design plus the master context and the teaching skill can exceed the
+    # model's window, and the provider rejects the whole request rather than
+    # truncating — so nothing is generated at all. Read it page by page instead.
+    from ..services.document_chunking import CHARS_PER_TOKEN, budget_chars
+    from ..services.map_reduce import map_reduce_over_document
+
+    window = getattr(resolved, "context_window_tokens", 0) or 128_000
+    overhead = sum(len(m.get("content", "")) for m in context.messages) // CHARS_PER_TOKEN + 6_000
+
+    if source_material and len(source_material) > budget_chars(window, overhead):
+        def for_chunk(chunk: Any) -> list[dict[str, Any]]:
+            messages = [
+                *[m for m in context.messages if m.get("role") == "system"],
+                {
+                    "role": "user",
+                    "content": (
+                        f"You are reading PART of the curriculum design - pages {chunk.page_range} of it.\n"
+                        f"Extract ONLY the strands that appear on these pages. Do not infer strands from "
+                        f"elsewhere in the subject, and do not invent any.\n"
+                        f"Every line below is prefixed with its page:line address; cite those addresses in "
+                        f"'source_quote' so a reviewer can find each strand.\n"
+                        f"Return the same JSON schema. If these pages contain no strands, return "
+                        f'{{"strands": []}}.\n\n'
+                        f"=== PAGES {chunk.page_range} ===\n{chunk.text}"
+                    ),
+                },
+            ]
+            chunk_resp = llm_client.generate(resolved, messages, temperature=0.2)
+            content = chunk_resp.content if isinstance(chunk_resp.content, dict) else {}
+            return content.get("strands", []) or []
+
+        outcome = map_reduce_over_document(
+            source_material, for_chunk,
+            context_window_tokens=window, overhead_tokens=overhead,
+            identity_fields=("strand_name", "name"),
+        ).to_dict()
+        logger.info(
+            "Strands for %s %s read across %d chunk(s): %d after reconciliation.",
+            payload.grade, payload.subject,
+            outcome["trace"]["chunks"]["chunk_count"], len(outcome["items"]),
+        )
+        return {
+            "subject": payload.subject,
+            "grade": payload.grade,
+            "strands": outcome["items"],
+            "grounded": True,
+            "source_chars": len(source_material),
+            "chunked": True,
+            "trace": outcome["trace"],
+            "model": f"{resolved.provider}/{resolved.model}",
+        }
+
     resp = llm_client.generate(resolved, context.messages, temperature=0.2)
     strands = resp.content.get("strands", []) if isinstance(resp.content, dict) else []
     return {
         "subject": payload.subject,
         "grade": payload.grade,
         "strands": strands,
+        "chunked": False,
         # A reviewer needs to know whether these were read from the design or
         # produced from the model's own knowledge.
         "grounded": bool(source_material),

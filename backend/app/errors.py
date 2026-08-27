@@ -48,6 +48,9 @@ ERRORS = {
     # A diagram with no part safe to blank cannot carry an occlusion question.
     # That is a content problem the operator can fix, not a server fault.
     "UNPROCESSABLE_DIAGRAM": (422, False),
+    # A stage was asked to generate without an ancestor it depends on. The
+    # remedy is to produce the missing parent, so this is the caller's to fix.
+    "MISSING_PARENT_CONTEXT": (422, False),
     # The work is already done. A conflict, not a failure: the caller can retry
     # with force to replace what the previous run produced.
     "ALREADY_INGESTED": (409, False),

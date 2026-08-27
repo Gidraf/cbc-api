@@ -275,6 +275,22 @@ def factory_generate_questions_batch(
     diagrams_obj = row.get("diagrams") or []
     activities_obj = row.get("activities") or {}
 
+    # Questions are the five-layer stage: strand, sub-strand, notes, assets and
+    # the teaching skill. The bundle existing is not the same as the bundle
+    # being complete — questions written without the diagrams they are supposed
+    # to test end up describing visuals nobody produced.
+    from ..services.content_lineage import QUESTION
+    from ..services.stage_guard import require_context
+
+    lineage = require_context(
+        QUESTION,
+        grade=payload.grade, subject=payload.subject,
+        strand=payload.strand, sub_strand=payload.sub_strand,
+        notes_content=notes_obj,
+        assets=[d for d in diagrams_obj if isinstance(d, dict)],
+        target_hour=payload.target_hour,
+    )
+
     # Bound in the target_hour branch below; read unconditionally during
     # normalisation, so it must exist on every path.
     selected_mod: dict[str, Any] | None = None
@@ -516,6 +532,29 @@ def factory_generate_questions_batch(
 
     resp = llm_client.generate(resolved, context.messages, temperature=0.25)
     raw_questions = resp.content.get("questions", []) if isinstance(resp.content, dict) else (resp.content if isinstance(resp.content, list) else [])
+
+    # Questions written from the figures themselves. A diagram question written
+    # from a *description* can only say "study the diagram"; these blank named
+    # parts and take the marking scheme from the diagram, so the paper and its
+    # answers cannot disagree.
+    from ..services.occlusion_questions import author_for_substrand
+
+    def _author(prompt: str) -> dict[str, Any]:
+        return llm_client.generate(
+            resolved, [{"role": "user", "content": prompt}], temperature=0.2
+        ).content or {}
+
+    occlusion = author_for_substrand(
+        diagrams_obj,
+        generate=_author,
+        context={
+            "grade": payload.grade, "subject": payload.subject,
+            "strand": payload.strand, "sub_strand": payload.sub_strand,
+        },
+    )
+    if occlusion["questions"]:
+        raw_questions = list(raw_questions) + occlusion["questions"]
+        logger.info("Added %d occlusion question(s): %s", len(occlusion["questions"]), occlusion["summary"])
     audit_report = web_research_agent.perform_quality_audit(resp.content, "questions", dossier)
 
     # 4. Normalize into the shared QuestionItem contract.
