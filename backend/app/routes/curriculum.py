@@ -507,6 +507,9 @@ class FactoryGenerateNotesRequest(BaseModel):
     general_learning_outcomes: list[str] = []
     source_material_text: str = ""
     custom_instructions: str = ""
+    # Return the compiled prompt instead of generating, so the inputs can be
+    # checked before any tokens are spent.
+    inspect: bool = False
 
 
 class FactoryGenerateDiagramRequest(BaseModel):
@@ -1100,6 +1103,26 @@ def factory_generate_notes(
             f"ADDITIONAL PRODUCTION DIRECTIVES: {payload.custom_instructions}"
         ),
     })
+
+    if payload.inspect:
+        from ..services.content_type_classifier import get_profile_from_db
+
+        return {
+            "inspection": build_inspection(
+                context,
+                agent="notes-generator",
+                grade=payload.grade,
+                subject=payload.subject,
+                source_material=payload.source_material_text,
+                profile=get_profile_from_db(payload.subject, payload.grade),
+                extra={
+                    "model": f"{resolved.provider}/{resolved.model}",
+                    "strand": payload.strand,
+                    "sub_strand": payload.sub_strand,
+                    "research_citations": [c.url for c in (dossier.citations or [])],
+                },
+            )
+        }
 
     resp = llm_client.generate(resolved, context.messages, temperature=0.15)
     audit_report = web_research_agent.perform_quality_audit(resp.content, "notes", dossier)
@@ -2768,6 +2791,9 @@ class FactoryGenerateStrandsRequest(BaseModel):
     # than reading the ones KICD wrote.
     source_material_text: str = ""
     design_id: str = ""
+    # Return the compiled prompt instead of generating, so the inputs can be
+    # checked before any tokens are spent.
+    inspect: bool = False
 
 
 class FactoryGenerateSubstrandsRequest(BaseModel):
@@ -2781,6 +2807,9 @@ class FactoryGenerateSubstrandsRequest(BaseModel):
     source_material_text: str = ""
     custom_instructions: str = ""
     design_id: str = ""
+    # Return the compiled prompt instead of generating, so the inputs can be
+    # checked before any tokens are spent.
+    inspect: bool = False
 
 
 class FactorySaveSubstrandsRequest(BaseModel):
@@ -2790,6 +2819,60 @@ class FactorySaveSubstrandsRequest(BaseModel):
     strand_id: str = "1.0"
     design_id: str = ""
     substrands: list[dict[str, Any]]
+
+
+def build_inspection(
+    context: Any,
+    *,
+    agent: str,
+    grade: str,
+    subject: str,
+    source_material: str = "",
+    profile: Any = None,
+    extra: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Everything that will be sent to the model, before it is sent.
+
+    Judging a generation by its output alone cannot tell you whether the prompt
+    carried the right document, the right teaching skill, or the right prompt
+    version — a plausible answer looks identical either way. This returns the
+    inputs so they can be checked and the prompt improved deliberately.
+    """
+    messages = list(getattr(context, "messages", None) or [])
+    return {
+        "agent": agent,
+        "grade": grade,
+        "subject": subject,
+        "prompt": {
+            "name": getattr(context, "prompt_name", ""),
+            "version": getattr(context, "prompt_version", ""),
+            "label": getattr(context, "prompt_label", ""),
+            "hash": getattr(context, "prompt_hash", ""),
+        },
+        "source_document": {
+            "present": bool(source_material),
+            "chars": len(source_material or ""),
+            # Enough to recognise which document this is without shipping all of it.
+            "head": (source_material or "")[:1200],
+        },
+        "skill": (
+            {
+                "found": True,
+                "subject": getattr(profile, "subject", ""),
+                "grade": getattr(profile, "grade", ""),
+                "persona": (getattr(profile, "persona", "") or "")[:400],
+                "directives": list(getattr(profile, "special_directives", None) or [])[:10],
+            }
+            if profile is not None
+            else {"found": False, "note": "No teaching skill covers this subject and grade; a generic profile was used."}
+        ),
+        "messages": [
+            {"role": m.get("role", "user"), "content": m.get("content", ""), "chars": len(m.get("content", ""))}
+            for m in messages
+        ],
+        "total_prompt_chars": sum(len(m.get("content", "")) for m in messages),
+        **(extra or {}),
+    }
 
 
 @router.post("/factory/generate-strands")
@@ -2865,6 +2948,21 @@ def factory_generate_strands(
             "role": "user",
             "content": f"ADDITIONAL STRAND INSTRUCTIONS: {payload.custom_instructions}",
         })
+
+    if payload.inspect:
+        from ..services.content_type_classifier import get_profile_from_db
+
+        return {
+            "inspection": build_inspection(
+                context,
+                agent="strand-generator",
+                grade=payload.grade,
+                subject=payload.subject,
+                source_material=source_material,
+                profile=get_profile_from_db(payload.subject, payload.grade),
+                extra={"model": f"{resolved.provider}/{resolved.model}", "grounded": bool(source_material)},
+            )
+        }
 
     resp = llm_client.generate(resolved, context.messages, temperature=0.2)
     strands = resp.content.get("strands", []) if isinstance(resp.content, dict) else []
@@ -2961,6 +3059,25 @@ def factory_generate_substrands(
             f"{payload.custom_instructions}"
         ),
     })
+
+    if payload.inspect:
+        from ..services.content_type_classifier import get_profile_from_db
+
+        return {
+            "inspection": build_inspection(
+                context,
+                agent="substrand-generator",
+                grade=payload.grade,
+                subject=payload.subject,
+                source_material=source_material,
+                profile=get_profile_from_db(payload.subject, payload.grade),
+                extra={
+                    "model": f"{resolved.provider}/{resolved.model}",
+                    "strand": payload.strand_name,
+                    "grounded": bool(source_material),
+                },
+            )
+        }
 
     resp = llm_client.generate(resolved, context.messages, temperature=0.2)
     sub_strands = resp.content.get("sub_strands", []) if isinstance(resp.content, dict) else []

@@ -4,8 +4,9 @@ import { Badge, Button, Card, CopyButton, EmptyState, ErrorNotice, Grid, Label, 
 import { Link } from "react-router-dom";
 import { CurriculumStructure } from "./CurriculumStructure";
 import { HourWorkbench } from "./HourWorkbench";
+import { PromptInspector, type Inspection } from "./PromptInspector";
 import { stationToText } from "../lib/serialize";
-import { profileFor, useProfiles, gradeOptionLabel, subjectOptionLabel, useApi, useGrades, useProgress, useSubjects } from "../lib/queries";
+import { useInspect, profileFor, useProfiles, gradeOptionLabel, subjectOptionLabel, useApi, useGrades, useProgress, useSubjects } from "../lib/queries";
 import { useQueryClient } from "@tanstack/react-query";
 
 /**
@@ -162,6 +163,8 @@ export function ContentFactory() {
   // A subject with no skill still generates — with a generic profile. That is
   // invisible in the output, so say it before the tokens are spent.
   const profiles = useProfiles();
+  const inspect = useInspect(effectiveGrade, subject);
+  const [inspection, setInspection] = React.useState<Inspection | null>(null);
   const skill = profileFor(profiles.data, subject, effectiveGrade);
 
   return (
@@ -402,7 +405,25 @@ export function ContentFactory() {
 
                   {lastResult?.station === station.id && (
                     <>
-                      <Stack direction="row" justify="flex-end" style={{ marginTop: "var(--s2)" }}>
+                      <Stack direction="row" justify="flex-end" gap="var(--s2)" style={{ marginTop: "var(--s2)" }}>
+                        {station.id === "notes" && selected && (
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            disabled={inspect.notes.isPending}
+                            title="See the document, skill, research sources and compiled prompt"
+                            onClick={async () =>
+                              setInspection(
+                                await inspect.notes.mutateAsync({
+                                  strand: selected.strand,
+                                  sub_strand: selected.report.sub_strand_name,
+                                })
+                              )
+                            }
+                          >
+                            {inspect.notes.isPending ? "Loading…" : "Inspect prompt"}
+                          </Button>
+                        )}
                         <CopyButton
                           label={`Copy ${station.label.toLowerCase()}`}
                           title="Copy this station's output to check it in another model"
@@ -427,6 +448,8 @@ export function ContentFactory() {
                 KICD allocates hours, the notes return one module per hour, and
                 each diagram, photo prompt, video prompt, experiment and
                 activity is produced against a specific hour. */}
+            <PromptInspector inspection={inspection} onClose={() => setInspection(null)} />
+
             {notes && selected && (
               <HourWorkbench
                 grade={effectiveGrade}

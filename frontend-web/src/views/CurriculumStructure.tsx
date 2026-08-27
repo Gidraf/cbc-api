@@ -13,7 +13,9 @@ import {
   Th,
 } from "../ui/components";
 import { allStrandsToText, strandToText } from "../lib/serialize";
+import { PromptInspector, type Inspection } from "./PromptInspector";
 import {
+  useInspect,
   useStructureActions,
   type GeneratedStrand,
   type GeneratedSubstrand,
@@ -52,6 +54,8 @@ export function CurriculumStructure({
   onSaved?: () => void;
 }) {
   const actions = useStructureActions(grade, subject);
+  const inspect = useInspect(grade, subject);
+  const [inspection, setInspection] = React.useState<Inspection | null>(null);
   const [strands, setStrands] = React.useState<GeneratedStrand[]>([]);
   const [openStrand, setOpenStrand] = React.useState<string | null>(null);
   const [drafts, setDrafts] = React.useState<Record<string, GeneratedSubstrand[]>>({});
@@ -115,6 +119,15 @@ export function CurriculumStructure({
       description={`Generate strands and sub-strands for ${subject || "this subject"} with the curriculum agent. Nothing is written until you save.`}
       actions={
         <Stack direction="row" gap="var(--s2)">
+        <Button
+          size="sm"
+          variant="ghost"
+          disabled={busy || !subject || inspect.strands.isPending}
+          title="See the document, skill and compiled prompt before generating"
+          onClick={async () => setInspection(await inspect.strands.mutateAsync({ custom_instructions: instructions }))}
+        >
+          {inspect.strands.isPending ? "Loading…" : "Inspect prompt"}
+        </Button>
         {strands.length > 0 && (
           <CopyButton
             label="Copy all"
@@ -193,6 +206,23 @@ export function CurriculumStructure({
                   <strong style={{ flex: 1 }}>{name}</strong>
                   {savedCount !== undefined && <Badge tone="ok">{savedCount} saved</Badge>}
                   {draft && <Badge tone="warn">{draft.length} draft</Badge>}
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    disabled={busy}
+                    title="See the prompt that will generate this strand's sub-strands"
+                    onClick={async () =>
+                      setInspection(
+                        await inspect.substrands.mutateAsync({
+                          strand_name: name,
+                          strand_id: strandId(strand),
+                          custom_instructions: instructions,
+                        })
+                      )
+                    }
+                  >
+                    Inspect
+                  </Button>
                   <CopyButton
                     label="Copy"
                     title="Copy this strand and its sub-strands"
@@ -267,6 +297,7 @@ export function CurriculumStructure({
           })}
         </Stack>
       )}
+      <PromptInspector inspection={inspection} onClose={() => setInspection(null)} />
     </Card>
   );
 }

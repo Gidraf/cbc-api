@@ -713,3 +713,33 @@ export function profileFor(profiles: Profile[] | undefined, subject: string, gra
     (p) => p.subject?.trim().toLowerCase() === s && (p.grade || "all").trim().toLowerCase() === "all"
   );
 }
+
+
+// ── Prompt inspection ───────────────────────────────────────────────────────
+// Every generator can return its compiled prompt instead of generating, so the
+// inputs — document, teaching skill, prompt version — can be checked before
+// tokens are spent, and improved on evidence rather than on the output alone.
+
+export function useInspect(grade: string, subject: string) {
+  const api = useApi();
+  const post = (path: string, body: unknown) =>
+    api<{ inspection: any }>(`/api/v1/curriculum/factory/${path}`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }).then((r) => r.inspection);
+
+  return {
+    strands: useMutation({
+      mutationFn: (v: Record<string, any> = {}) =>
+        post("generate-strands", { grade, subject, inspect: true, ...v }),
+    }),
+    substrands: useMutation({
+      mutationFn: (v: { strand_name: string; strand_id?: string } & Record<string, any>) =>
+        post("generate-substrands", { grade, subject, inspect: true, ...v }),
+    }),
+    notes: useMutation({
+      mutationFn: (v: { strand: string; sub_strand: string } & Record<string, any>) =>
+        post("generate-notes", { grade, subject, inspect: true, ...v }),
+    }),
+  };
+}
