@@ -18,6 +18,21 @@ from typing import Any, Iterable
 
 # "📄 PAGE 12 OF 76", "PAGE 12 OF 76", "Page 12 of 76"
 _PAGE_MARKER = re.compile(r"^\W*page\s+(\d{1,4})\s+of\s+(\d{1,4})\W*$", re.IGNORECASE)
+
+# "[PAGE 12]" — what this module's own renderers emit when they write a page
+# back out. A slice of a design (one learning area, one chunk) is re-read by
+# the next stage, so rendering and parsing have to be inverses: without this a
+# 90-page section re-parses as a single page numbered 1, which both destroys
+# its citations and defeats chunking, since one page is never split.
+# Deliberately strict — only the bracketed form, which prose never contains.
+_RENDERED_PAGE = re.compile(r"^\[PAGE\s+(\d{1,4})\]$")
+
+# "12:7  " — the line address those renderers prefix to each line. Stripped on
+# re-parse so a second render does not stack a second address on top. Only when
+# the page it names is the page being read, so a scripture reference at the
+# start of a line ("3:16  For God so loved…") is left alone.
+_RENDERED_ADDRESS = re.compile(r"^(\d{1,4}):\d{1,5}\s\s")
+
 _RULE = re.compile(r"^[=\-_]{8,}$")
 _REFERENCE = re.compile(r"^\s*(?:(?P<doc>[A-Z0-9][A-Z0-9\-]*)\s+)?(?P<page>\d{1,4}):(?P<line>\d{1,4})(?:\s*-\s*(?P<end>\d{1,4}))?\s*$")
 
@@ -90,7 +105,7 @@ def parse_pages(text: str) -> list[Page]:
     for raw in text.split("\n"):
         stripped = raw.strip()
 
-        marker = _PAGE_MARKER.match(stripped)
+        marker = _PAGE_MARKER.match(stripped) or _RENDERED_PAGE.match(stripped)
         if marker:
             page_number = int(marker.group(1))
             if current.lines:
@@ -106,6 +121,12 @@ def parse_pages(text: str) -> list[Page]:
 
         if _RULE.match(stripped) or not stripped:
             continue
+
+        address = _RENDERED_ADDRESS.match(stripped)
+        if address and int(address.group(1)) == current.number:
+            stripped = stripped[address.end():]
+            if not stripped:
+                continue
 
         line_no += 1
         current.lines.append(Line(page=current.number, line=line_no, text=stripped))

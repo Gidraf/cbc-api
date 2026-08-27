@@ -134,3 +134,38 @@ def test_the_index_summarises_without_shipping_the_whole_document(pages):
     assert index["line_count"] > 8
     assert index["code"] == "GRADE-PP1-PRE-PRIMARY-1"
     assert "lines" not in index["pages"][0]
+
+
+def test_a_rendered_page_re_parses_as_the_page_it_came_from() -> None:
+    """Rendering and parsing must be inverses.
+
+    A learning area is split out of a combined design as rendered text, then
+    read again by the next stage. When the re-read did not recognise its own
+    "[PAGE n]" markers, a 90-page section became one page numbered 1: every
+    citation pointed at page 1, and chunking could not split it, because a
+    single page is never split — which is the context-length failure again.
+    """
+    from app.services.document_chunking import _page_text
+    from app.services.document_index import parse_pages
+
+    original = parse_pages(
+        "PAGE 202 OF 296\nSummary of Strands\n1.0 Creation\n\n"
+        "PAGE 203 OF 296\nThe Bible is a Holy Book\n"
+    )
+    rendered = "\n\n".join(_page_text(p) for p in original)
+
+    reparsed = parse_pages(rendered)
+
+    assert [p.number for p in reparsed] == [202, 203]
+    assert [l.text for l in reparsed[0].lines] == [l.text for l in original[0].lines]
+    # Idempotent: a third pass must not stack another address onto each line.
+    assert "\n\n".join(_page_text(p) for p in reparsed) == rendered
+
+
+def test_a_line_starting_with_a_scripture_reference_keeps_it() -> None:
+    """The address strip is not allowed to eat content that merely looks like one."""
+    from app.services.document_index import parse_pages
+
+    pages = parse_pages("PAGE 7 OF 40\n3:16  For God so loved the world\n")
+
+    assert pages[0].lines[0].text == "3:16  For God so loved the world"

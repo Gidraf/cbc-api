@@ -2929,6 +2929,15 @@ class FactoryGenerateSubstrandsRequest(BaseModel):
     inspect: bool = False
 
 
+class IngestLearningAreaRequest(BaseModel):
+    grade: str
+    subject: str
+    # Replace what a previous run produced for this learning area.
+    force: bool = False
+    # Derive the teaching skill from the design section as well.
+    with_skill: bool = True
+
+
 class DeriveGradeScopeRequest(BaseModel):
     grade: str
     subject: str
@@ -3493,6 +3502,144 @@ def factory_generate_substrands(
 
 
 
+
+def _scope_chunk_reader(grade: str, subject: str, resolved: Any) -> Any:
+    """The per-chunk callable that reads bounding facts out of a design slice."""
+    from ..services.langfuse_context import langfuse_context_service
+    from ..services.llm_client import llm_client
+
+    template = langfuse_context_service.get_agent_prompt("grade-scope-extractor")
+
+    def for_chunk(chunk: Any) -> list[dict[str, Any]]:
+        prompt = langfuse_context_service._render_template(template, {
+            "grade": grade,
+            "subject": subject,
+            "level_register": register_block(grade),
+            "faith_scope": faith_prompt_block(subject),
+            "page_range": chunk.page_range,
+            "chunk_text": chunk.text,
+        })
+        response = llm_client.generate(
+            resolved, [{"role": "user", "content": prompt}], temperature=0.1
+        )
+        content = response.content if isinstance(response.content, dict) else {}
+        return content.get("facts", []) or []
+
+    return for_chunk
+
+
+@router.post("/factory/ingest-learning-area")
+def factory_ingest_learning_area(
+    payload: IngestLearningAreaRequest,
+    _: AuthContext = Depends(require_roles("admin", "operator")),
+) -> dict[str, Any]:
+    """Ingest ONE learning area out of a combined design, and derive its skill.
+
+    Re-ingesting a whole Pre-Primary document to recover one missing learning
+    area is slow and replaces six things that were already correct. This does
+    the one, from the same split, with the same grounding.
+
+    Everything the model reads is chunked page-by-page, so a 296-page design
+    cannot exceed the context window, and every fact it keeps is one the design
+    actually states — an ungrounded run produces "Listening and Speaking" as a
+    Christian Religious Education strand, which reads plausibly and is wrong.
+    """
+    from ..services import grade_scope as scope_service
+    from ..services.curriculum_catalogue import expected_subjects
+    from ..services.curriculum_extractor import curriculum_extractor
+    from ..services.dataset_ingest import candidate_items
+    from ..services.design_sections import split_learning_areas
+    from ..services.pipeline import pipeline_orchestrator
+
+    published = expected_subjects(payload.grade)
+    wanted = payload.subject.strip()
+
+    section = None
+    document_title = ""
+    for item in candidate_items(payload.grade):
+        text = str(item.get("expected_output") or "")
+        if len(text) < 2_000:
+            continue
+        for candidate in split_learning_areas(text, published):
+            if candidate.learning_area.lower() == wanted.lower():
+                section = candidate
+                document_title = str((item.get("input") or {}).get("title") or "")
+                break
+        if section:
+            break
+
+    if section is None:
+        found = sorted({
+            c.learning_area
+            for item in candidate_items(payload.grade)
+            if len(str(item.get("expected_output") or "")) >= 2_000
+            for c in split_learning_areas(str(item.get("expected_output") or ""), published)
+        })
+        raise_api_error(
+            "MISSING_PARENT_CONTEXT",
+            f"'{wanted}' was not found in any {payload.grade} design document. "
+            f"The splitter located: {', '.join(found) or 'nothing'}. "
+            f"Run /factory/split-preview?grade={payload.grade} to see which pages "
+            f"were rejected and why.",
+            detail={"requested": wanted, "found": found, "grade": payload.grade},
+        )
+
+    result = curriculum_extractor._ingest_one(
+        section.text,
+        {"grade": payload.grade, "learning_area": section.learning_area,
+         "title": document_title,
+         "section_pages": f"{section.start_page}-{section.end_page}"},
+        learning_area=section.learning_area,
+    )
+
+    scope_result: dict[str, Any] = {"status": "skipped"}
+    skill: dict[str, Any] = {"status": "skipped"}
+
+    if payload.with_skill:
+        resolved = pipeline_orchestrator.router.resolve_for_stage("notes_generation")
+
+        # Read the section in page-aligned chunks and reconcile what it bounds.
+        scope = scope_service.derive_scope(
+            payload.grade, section.learning_area, section.text,
+            _scope_chunk_reader(payload.grade, section.learning_area, resolved),
+        )
+        if scope.facts:
+            try:
+                scope_service.save_scope(scope, design_id=str(result.get("design_id") or ""))
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Could not store derived scope: %s", exc)
+        scope_result = scope.to_dict()
+
+        # The teaching skill, grounded in what the section actually says rather
+        # than in sub-strands that structural extraction did not produce.
+        try:
+            from ..services.content_type_classifier import ai_generate_profile_from_dataset
+
+            profile = ai_generate_profile_from_dataset(
+                subject=section.learning_area,
+                grade=payload.grade,
+                level=str(result.get("level") or ""),
+                essence_statement=str(result.get("essence_statement") or ""),
+                general_learning_outcomes=list(scope.notes),
+                save_to_db=True,
+            )
+            skill = {"status": "created", "profile": profile.to_dict()}
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Skill synthesis failed for %s: %s", section.learning_area, exc)
+            skill = {"status": "failed", "error": str(exc)[:300]}
+
+    return {
+        "grade": payload.grade,
+        "subject": section.learning_area,
+        "source_document": document_title,
+        "section_pages": f"{section.start_page}-{section.end_page}",
+        "section_chars": len(section.text),
+        "ingest": result,
+        "scope": scope_result,
+        "skill": skill,
+    }
+
+
 @router.get("/factory/split-preview")
 def factory_split_preview(
     grade: str = Query(..., description="Grade slug, e.g. grade-pp1"),
@@ -3609,23 +3756,10 @@ def factory_derive_grade_scope(
         )
 
     resolved = pipeline_orchestrator.router.resolve_for_stage("notes_generation")
-    template = langfuse_context_service.get_agent_prompt("grade-scope-extractor")
-
-    def for_chunk(chunk: Any) -> list[dict[str, Any]]:
-        prompt = langfuse_context_service._render_template(template, {
-            "grade": payload.grade,
-            "subject": payload.subject,
-            "level_register": register_block(
-                    payload.grade,
-                    notes=grade_scope_notes(payload.grade, payload.subject),
-                ),
-            "faith_scope": faith_prompt_block(payload.subject),
-            "page_range": chunk.page_range,
-            "chunk_text": chunk.text,
-        })
-        resp = llm_client.generate(resolved, [{"role": "user", "content": prompt}], temperature=0.1)
-        content = resp.content if isinstance(resp.content, dict) else {}
-        return content.get("facts", []) or []
+    # Note the shared reader does NOT feed the previously derived scope back in.
+    # Deriving a scope while showing the model the last scope makes the second
+    # run agree with the first whether or not the first was right.
+    for_chunk = _scope_chunk_reader(payload.grade, payload.subject, resolved)
 
     if payload.inspect:
         from ..services.document_chunking import chunk_document, describe
