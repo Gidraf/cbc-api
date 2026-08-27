@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import re
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -20,6 +21,42 @@ logger = logging.getLogger("cbc-langfuse")
 # generator reads another agent's prompt as curriculum. Keep the curriculum
 # facts, drop the templates.
 _TEMPLATE_KEYS_SUFFIX = "_prompt"
+
+
+
+def focus_subject_context(subject_ctx: dict, strand: str) -> dict:
+    """Narrow the stored blueprint to the strand being worked on.
+
+    A generator asked about Language Activities was handed, as a SYSTEM message,
+    the strands of Christian Religious Education — higher-authority context
+    contradicting the actual request. Worse, it modelled by example what an SLO
+    looks like, and those stored SLOs included fragments like "," and "6".
+
+    Sending nothing is better than sending a contradiction: an absent blueprint
+    makes the agent read the design, which is what it should have been doing.
+    """
+    if not isinstance(subject_ctx, dict) or not strand:
+        return subject_ctx
+
+    wanted = re.sub(r"[^a-z0-9]+", " ", str(strand).lower()).strip()
+    if not wanted:
+        return subject_ctx
+
+    kept = []
+    for entry in subject_ctx.get("strands") or []:
+        name = re.sub(r"[^a-z0-9]+", " ", str(entry.get("name") or "").lower()).strip()
+        if not name:
+            continue
+        if name == wanted or name in wanted or wanted in name:
+            kept.append(entry)
+
+    focused = {**subject_ctx, "strands": kept, "focused_on": strand}
+    if not kept:
+        focused["note"] = (
+            f"No stored blueprint matches the strand '{strand}' for this learning area. "
+            "Read the curriculum design document instead; do not substitute another strand."
+        )
+    return focused
 
 
 def context_safe_package(package: Any) -> dict:
@@ -321,7 +358,9 @@ class LangfuseContextService:
             """
             SELECT strand_name, sub_strand_id, sub_strand_name, allocated_hours, slos,
                    learning_experiences, key_inquiry_questions, required_diagrams,
-                   experiments, pedagogical_guidance, prompt_context
+                   experiments, pedagogical_guidance, prompt_context,
+                   theme, pertinent_contemporary_issues, link_to_other_learning_areas,
+                   source_pages
             FROM curriculum_substrands
             WHERE (grade = :grade OR grade = :alt_grade OR :grade = '' OR :grade IS NULL) AND LOWER(subject) = LOWER(:subject)
             ORDER BY strand_id ASC, sub_strand_id ASC
@@ -341,7 +380,11 @@ class LangfuseContextService:
                 seen_ss.add(ss_name.lower().strip())
                 strands_map[s_name].append({
                     "name": ss_name,
+                    "theme": r.get("theme") or "",
                     "hours": r["allocated_hours"],
+                    "pertinent_contemporary_issues": r.get("pertinent_contemporary_issues") or [],
+                    "link_to_other_learning_areas": r.get("link_to_other_learning_areas") or "",
+                    "source_pages": r.get("source_pages") or [],
                     "slos": [item.get("text", "") if isinstance(item, dict) else str(item) for item in (r["slos"] or [])],
                     "diagrams_required": r["required_diagrams"] or [],
                     "experiments": r["experiments"] or [],
@@ -371,7 +414,7 @@ class LangfuseContextService:
                         seen_ss.add(ss_name.lower().strip())
                         strands_map[st_name].append({
                             "name": ss_name,
-                            "hours": (ss.get("allocated_hours") or ss.get("hours") or "4 hours") if isinstance(ss, dict) else "4 hours",
+                            "hours": (ss.get("allocated_time") or ss.get("allocated_hours") or ss.get("hours") or "") if isinstance(ss, dict) else "",
                             "slos": (ss.get("slos") or []) if isinstance(ss, dict) else [],
                             "diagrams_required": (ss.get("required_diagrams") or []) if isinstance(ss, dict) else [],
                             "experiments": (ss.get("experiments") or []) if isinstance(ss, dict) else [],
@@ -512,12 +555,15 @@ class LangfuseContextService:
         grade_slug: str,
         subject: str,
         template_vars: dict | None = None,
+        focus_strand: str = "",
     ) -> CompiledContextResult:
         # Layer 1: Global BECF Context dynamically loaded from Langfuse
         master_ctx = self.get_master_context()
 
         # Layer 2 & 3: Subject & Sub-strand Blueprint Context
         subject_ctx = self.get_subject_context(grade_slug, subject)
+        if focus_strand:
+            subject_ctx = focus_subject_context(subject_ctx, focus_strand)
 
         vars_dict = {
             "grade": grade_slug,

@@ -9,6 +9,7 @@ from pydantic import BaseModel
 
 from ..errors import raise_api_error
 from ..services.auth import AuthContext, require_roles
+from ..services.level_register import register_block
 from ..services.grade_order import grade_label, grade_ordinal, normalize_grade
 from ..services.question_dna import question_dna_service
 
@@ -435,6 +436,7 @@ def factory_generate_questions_batch(
             "sub_strand": payload.sub_strand,
             "slo_id": payload.slo_id or f"{payload.grade}-{payload.subject[:4].upper()}-01",
             "difficulty": payload.difficulty,
+            "level_register": register_block(payload.grade),
             "content_type_directives": ct_profile.format_for_prompt(),
             "notes_content": notes_text[:3000] or payload.sub_strand,
             "diagram_id": target_diag_obj.get("asset_id", "diag_01") if target_diag_obj else "diag_01",

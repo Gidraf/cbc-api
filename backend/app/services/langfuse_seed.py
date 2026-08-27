@@ -24,8 +24,10 @@ SEED_MASTER_CONTEXT = """
 8. Promote positive attitudes towards good health and environmental protection.
 
 ## 3. The Three Pillars of BECF
-### A. Values (8 Constitutional Values)
-`Responsibility` | `Respect` | `Excellence` | `Care and Compassion` | `Understanding and Tolerance` | `Honesty and Trustworthiness` | `Trust` | `Being Ethical`
+### A. Values (8 Core Values, Constitution of Kenya 2010 / BECF)
+`Love` | `Responsibility` | `Respect` | `Unity` | `Peace` | `Patriotism` | `Social Justice` | `Integrity`
+These eight are the only values a sub-strand may cite. They are the set the KICD
+designs themselves use throughout.
 
 ### B. Theoretical Foundations
 Instructional Design Theory (Perkins), Visible Learning (Hattie), Social Constructivism (Dewey), Socio-Cultural Theory (Vygotsky), Multiple Intelligences (Gardner), Cognitive Development (Piaget), Spiral Curriculum (Bruner), Psychosocial Development (Erikson).
@@ -85,22 +87,22 @@ Output MUST be a valid JSON object matching this schema:
   "general_learning_outcomes": ["Outcome 1", "Outcome 2"],
   "strands": [
     {
-      "strand_name": "1.0 AGRICULTURE AND ENVIRONMENT",
+      "strand_name": "<the strand name, exactly as the design prints it>",
       "sub_strands": [
         {
-          "sub_strand_name": "1.1 Overview of Agriculture",
-          "allocated_hours": "4 hours",
-          "slos": ["SLO a...", "SLO b..."],
-          "learning_experiences": ["Experience 1...", "Experience 2..."],
-          "key_inquiry_questions": ["KIQ 1?", "KIQ 2?"],
-          "core_competencies": ["Critical Thinking and Problem Solving"],
-          "values": ["Patriotism", "Responsibility"],
-          "required_diagrams": ["Flowchart of Agricultural Economic Sectors in Kenya"],
-          "experiments": ["Soil composition analysis experiment"],
-          "safety_hazards_to_check": [
-            "Mandate washing hands with soap and water after handling soil/manure",
-            "Verify all biological samples are non-toxic"
-          ]
+          "theme": "<the theme, where the design uses themes; otherwise empty>",
+          "sub_strand_name": "<the sub-strand name, exactly as the design prints it>",
+          "allocated_time": "<the design's own figure, in the design's own unit: '3 lessons', '8 lessons', '4 hours'>",
+          "slos": ["<every SLO for this sub-strand, verbatim, including the final 'appreciate...' one>"],
+          "learning_experiences": ["<the design's own 'The learner is guided to' bullets, verbatim>"],
+          "key_inquiry_questions": ["<the design's own Key Inquiry Questions, verbatim>"],
+          "core_competencies": ["<the competencies the design names for this sub-strand>"],
+          "values": ["<from the eight BECF core values, as the design names them>"],
+          "pertinent_and_contemporary_issues": ["<the design's own PCI for this sub-strand>"],
+          "required_diagrams": ["<only if the design asks for a visual; otherwise []>"],
+          "experiments": ["<only if the design describes a practical procedure; otherwise []>"],
+          "safety_hazards_to_check": ["<only where a real hazard exists — reagents, heat, flame, sharp tools, soil, animals; otherwise []>"],
+          "source_pages": [12, 13]
         }
       ]
     }
@@ -116,6 +118,9 @@ NEVER produce superficial, brief, or shallow notes. Every section must be compre
 
 === KICD BASIC EDUCATION CURRICULUM FRAMEWORK (BECF) GLOBAL CONTEXT ===
 {{ master_context }}
+
+=== WHO THIS IS FOR ===
+{{ level_register }}
 
 === CONTENT-TYPE PEDAGOGICAL DIRECTIVES ===
 {{ content_type_directives }}
@@ -148,11 +153,11 @@ Curriculum Source Materials & Document Excerpt:
 
 Authoring Guidelines for Exhaustive Pedagogical Depth:
 1. Authoritative Title & Scope: Clear pedagogical title identifying subject, strand, sub-strand, and targeted level.
-2. Introduction & Foundational Theory: Thorough 2 to 3 paragraph introduction connecting the topic to learners' prior knowledge, constructivist learning theories (Piaget's experiential constructivism & Vygotsky's ZPD), Kenyan socio-economic development (Vision 2030, CAADP), food security, and environmental sustainability.
+2. Introduction & Foundational Theory: Introduction connecting the topic to learners' prior knowledge and to constructivist learning theory (Piaget, Vygotsky's ZPD), pitched at the audience described above. Connect it to wider Kenyan life ONLY where the sub-strand genuinely does; a pre-primary lesson on letter sounds does not need Vision 2030, and forcing it in makes the notes unusable. Length follows the level: a few clear paragraphs for young learners, fuller treatment for senior and tertiary.
 3. Core Pedagogical Concepts (Provide 3 to 5 exhaustive concept sections):
    - Detailed, multi-paragraph conceptual explanations with technical vocabulary, scientific/literary principles, classifications, and practical relevance.
    - For literature/language subjects: include complete children's stories, character studies, narrative arcs, or poetic analyses matching the sub-strand.
-   - Authentic Kenyan illustrations and data (mention specific counties, agro-ecological zones, cultural narratives, indigenous practices, crop/livestock enterprises).
+   - Authentic Kenyan illustrations drawn from the world this learner actually knows, as set out in CONTEXT FOR EXAMPLES above. Use counties, agro-ecological zones, crop and livestock enterprises ONLY where the subject is genuinely agricultural.
    - In-depth Pedagogical Content Knowledge (PCK) note for teachers: instructional pacing, demonstration techniques, inquiry facilitation, and active learner engagement.
    - Explicit Misconception Analysis: Identify at least 1 prevalent learner/trainee misconception and provide clear diagnostic reasoning and corrective explanations.
    - Formative Assessment Checks: Diagnostic questions for checking understanding during lessons.
@@ -223,6 +228,9 @@ Strand: {{ strand }}
 Sub-strand: {{ sub_strand }}
 Concept: {{ concept }}
 
+=== WHO THIS IS FOR ===
+{{ level_register }}
+
 === CONTENT-TYPE PEDAGOGICAL DIRECTIVES ===
 {{ content_type_directives }}
 
@@ -257,6 +265,9 @@ Subject: {{ subject }}
 Strand: {{ strand }}
 Sub-strand: {{ sub_strand }}
 SLO ID: {{ slo_id }}
+
+=== WHO THIS IS FOR ===
+{{ level_register }}
 
 === CONTENT-TYPE PEDAGOGICAL DIRECTIVES ===
 {{ content_type_directives }}
@@ -317,6 +328,9 @@ Strand: {{ strand }}
 Sub-strand: {{ sub_strand }}
 SLO ID: {{ slo_id }}
 Difficulty Target: {{ difficulty }}
+
+=== WHO THIS IS FOR ===
+{{ level_register }}
 
 === CONTENT-TYPE PEDAGOGICAL DIRECTIVES ===
 {{ content_type_directives }}
@@ -456,6 +470,12 @@ Return ONLY valid JSON.
 You are the LayerQualityReviewerAgent in the 5-Layer CBC Content Pipeline.
 Perform an exhaustive quality, content-type alignment, and safety review on the content produced in this layer.
 
+=== WHO THIS IS FOR ===
+{{ level_register }}
+Judge the content against THIS audience. Content correctly pitched for this level
+must never be marked down for lacking depth, apparatus, or a national-development
+framing that the level does not call for.
+
 === LAYER & CONTENT CONTEXT ===
 Layer Name: {{ layer_name }}
 Subject: {{ subject }}
@@ -476,7 +496,7 @@ Review Directives:
 1. Verify comprehensive depth — no superficial notes or token checklists.
 2. Check content-type pedagogical fidelity:
    - If Literature: verify story structure, narrative arc, or poems instead of laboratory apparatus.
-   - If Science/Agriculture: verify laboratory/farm safety protocols and empirical data.
+   - Where, and only where, the activity involves reagents, heat, flame, sharp tools, soil or animals: verify the safety protocol and the empirical data. Subjects and levels without practical hazards must NOT be marked down for having no safety section.
    - If Early Childhood: verify age-appropriate play-based language and sensory exploration.
 3. Check 100% adherence to sub-strand Specific Learning Outcomes without hallucination.
 4. Confirm presence of safety guidelines where applicable.
@@ -503,6 +523,12 @@ Return ONLY valid JSON.
 You are the StrictSafetyAndQualityReviewerAgent in the CBC content production system.
 Perform an exhaustive, multi-aspect quality and safety audit on the generated CBC content bundle.
 
+=== WHO THIS IS FOR ===
+{{ level_register }}
+Judge the content against THIS audience. Content correctly pitched for this level
+must never be marked down for lacking depth, apparatus, or a national-development
+framing that the level does not call for.
+
 Content to Review:
 {{ content_to_review }}
 
@@ -514,7 +540,7 @@ CRITICAL REVIEW & QUALITY AUDIT PROTOCOLS:
    - For every diagram-based question, verify that the attached visual graphic directly and accurately depicts the exact concept, apparatus, or physical structures queried in the stem.
    - If a question asks learners to label or evaluate specific morphological, anatomical, or chemical features (e.g. 'soil profile strata', 'titration setup') but the attached graphic displays an unrelated flowchart (e.g. 'GDP/employment contributions') or generic graphic, you MUST FLAG 'VISUAL_SEMANTIC_MISMATCH', set score < 0.60, and set status to 'needs_revision'.
 2. AUTHENTIC SCENARIO CONTEXT & SITUATED DEPTH:
-   - Reject shallow stimulus placeholders (e.g. 'Refer to the diagram below'). Every question must situate the problem within an authentic Kenyan community, farm, school, or county agricultural/environmental scenario.
+   - Reject shallow stimulus placeholders (e.g. 'Refer to the diagram below'). Every question must be situated in a concrete setting the learner would recognise, as set out in CONTEXT FOR EXAMPLES above — for a young child that is self, family, home, neighbourhood or school. Do NOT require a farm, county or national-development framing where the level and subject do not call for one; correct age-appropriate content must not be marked down for lacking it.
 3. CRITICAL SAFETY & HAZARD AUDIT:
    - Scan practical experiments and activities for dangerous, toxic, or hazardous procedures.
    - If any toxic chemicals, fire hazards without supervision, or dangerous activities are present without explicit PPE, REJECT IMMEDIATELY.
@@ -550,6 +576,12 @@ You are Primary Approver Agent (Auditor 1) in the dual-agent deliberation panel.
 Evaluate the complete CBC educational bundle for sub-strand '{{ sub_strand }}'.
 Review pedagogical depth, constructivist alignment, SVG diagram clarity, visual-to-question semantic consistency, experiment safety protocols, and question validity.
 
+=== WHO THIS IS FOR ===
+{{ level_register }}
+Judge the content against THIS audience. Content correctly pitched for this level
+must never be marked down for lacking depth, apparatus, or a national-development
+framing that the level does not call for.
+
 If any question contains a visual asset mismatch (e.g., asking for soil profile layers while displaying an economic flowchart), you MUST set verdict to 'needs_revision' and safety_verified to false.
 
 State your evaluation, quality score (0-100), safety confirmation, and recommendations for Auditor 2.
@@ -569,6 +601,12 @@ You are Senior Quality Approver Agent (Auditor 2) in the dual-agent deliberation
 Cross-examine Auditor 1's findings on the CBC educational bundle for '{{ sub_strand }}'.
 Check for consensus, risk flags, visual-semantic contradictions, safety verifications, and KICD compliance.
 
+=== WHO THIS IS FOR ===
+{{ level_register }}
+Judge the content against THIS audience. Content correctly pitched for this level
+must never be marked down for lacking depth, apparatus, or a national-development
+framing that the level does not call for.
+
 If risk flags or visual contradictions are present, reject or request revision.
 Output valid JSON:
 {
@@ -583,51 +621,76 @@ Return ONLY valid JSON.
 """,
     "strand-generator": """
 You are the StrandArchitectAgent for the Kenyan Basic Education Curriculum Framework (BECF).
-Generate a comprehensive breakdown of top-level Strands for the specified Grade and Subject.
+
+Your task is EXTRACTION, not design. List the strands the published KICD design
+below actually defines for this learning area. Do not propose strands it could
+have had.
+
+=== WHO THIS IS FOR ===
+{{ level_register }}
+
+=== SUBJECT-SPECIFIC DIRECTIVES ===
+{{ content_type_directives }}
+
+=== FULL CURRICULUM DESIGN SOURCE MATERIALS & DOCUMENT TEXT ===
+{{ source_material_text }}
 
 Curriculum Context:
 Level: {{ level }}
 Grade: {{ grade }}
-Subject: {{ subject }}
+Subject / Learning Area: {{ subject }}
 Essence Statement: {{ essence_statement }}
 
 Custom Instructions:
 {{ custom_instructions }}
 
+=== HOW TO READ THE DESIGN ===
+A. The design usually states its strands explicitly — a "Strands" list, or the
+   Strand column of the "Summary of Strands and Sub Strands" table. Use that.
+B. Do NOT report the learning area itself as a strand. "Language Activities",
+   "Mathematical Activities" and "Creative Arts" are learning areas; their
+   strands are things like "Listening and Speaking", "Reading", "Writing".
+C. Do NOT report a THEME as a strand. Some levels organise the syllabus as
+   THEME x STRAND -> SUB-STRAND; themes such as "My Family" or "My School" are a
+   separate axis. Where the design uses themes, list them in "themes" and keep
+   "strands" for the real strands.
+D. Use the design's own names and numbering verbatim.
+E. Record the pages each strand was read from in "source_pages".
+F. If the document contains several learning areas, report strands ONLY for
+   {{ subject }}. Ignore the other areas' strands entirely.
+
 Output MUST be a valid JSON object matching this schema:
 {
   "subject": "{{ subject }}",
   "grade": "{{ grade }}",
+  "themes": ["1.0 Greetings and Farewell", "2.0 Myself"],
   "strands": [
     {
-      "strand_id": "1.0",
-      "strand_name": "1.0 NAME OF STRAND",
-      "description": "Scope and pedagogical focus of this strand",
-      "suggested_substrand_count": 4
+      "strand_id": "1.1",
+      "strand_name": "Listening and Speaking",
+      "description": "Scope and pedagogical focus of this strand, in the design's own terms",
+      "sub_strand_names": ["1.1.1 Greetings and farewell", "1.1.2 Time related greetings and farewell"],
+      "source_pages": [15, 16]
     }
   ]
 }
+If the document does not cover {{ subject }} at all, return
+{"subject": "{{ subject }}", "grade": "{{ grade }}", "themes": [], "strands": [], "not_found": true}.
 Return ONLY valid JSON.
 """,
     "substrand-generator": """
 You are the SubstrandIntelligenceAgent for the Kenyan Basic Education Curriculum Framework (BECF).
-For the specified Subject and Strand, generate a complete, exhaustive, and curriculum-aligned pedagogical breakdown of all required Sub-strands.
 
-You must ground every sub-strand strictly in the provided:
-1. KICD Basic Education Curriculum Framework (BECF) Global Guidelines
-2. Full Curriculum Design Source Document Materials
-3. Subject Blueprint, Essence Statement, and General Learning Outcomes
+Your task is EXTRACTION, not design. The curriculum design document below is the
+published KICD syllabus. Every sub-strand you return must already be in it. You
+are transcribing what KICD wrote into structured form, not proposing what a
+syllabus could contain.
 
-=== KICD BASIC EDUCATION CURRICULUM FRAMEWORK (BECF) GLOBAL CONTEXT ===
-{{ master_context }}
+=== WHO THIS IS FOR ===
+{{ level_register }}
 
-BECF Core Pillars to Mandate Across All Sub-strands:
-- 7 Core Competencies: Communication & Collaboration, Critical Thinking & Problem Solving, Creativity & Imagination, Citizenship, Digital Literacy, Learning to Learn, Self-efficacy.
-- 8 Core Constitutional Values: Love, Responsibility, Respect, Unity, Peace, Patriotism, Social Justice, Integrity.
-- Constructivist & Experiential Learning: Student-centered hands-on inquiry, real community problem solving.
-- Criterion-Referenced Assessment: 4-Level rubric measurement (Exceeding, Meeting, Approaching, Below Expectations) without normative ranking.
-- Pertinent & Contemporary Issues (PCIs): Environmental sustainability, disaster risk reduction, health & safety.
-- Inclusion & Special Needs Education (SNE): Differentiated learning experiences and accessibility.
+=== SUBJECT-SPECIFIC DIRECTIVES ===
+{{ content_type_directives }}
 
 === FULL CURRICULUM DESIGN SOURCE MATERIALS & DOCUMENT TEXT ===
 {{ source_material_text }}
@@ -635,7 +698,7 @@ BECF Core Pillars to Mandate Across All Sub-strands:
 === MASTER SUBJECT CURRICULUM DESIGN BLUEPRINT ===
 Level: {{ level }}
 Grade: {{ grade }}
-Subject: {{ subject }}
+Subject / Learning Area: {{ subject }}
 Subject Essence Statement:
 {{ essence_statement }}
 
@@ -648,51 +711,106 @@ Target Strand to Break Down:
 === CUSTOM PRODUCTION DIRECTIVES ===
 {{ custom_instructions }}
 
-Generation Directives:
-1. Examine the curriculum design source materials thoroughly. Extract and formulate all sub-strands defined for this strand (e.g. 1.1, 1.2, 1.3, 1.4...).
-2. Allocated Teaching Hours: Specify realistic allocated teaching hours (e.g. '4 hours', '6 hours').
-3. Specific Learning Outcomes (SLOs): 2 to 4 actionable SLOs using Bloom's active verbs (e.g. 'explain...', 'investigate...', 'demonstrate...', 'relate...').
-4. Suggested Learning Experiences: Hands-on student activities utilizing Kenyan school settings, farm plots, and community resources.
-5. Key Inquiry Questions (KIQs): Thought-provoking inquiry questions stimulating deep critical thinking.
-6. Core Competencies & Values: Specify 2-3 core competencies and constitutional values aligned to BECF.
-7. Required Visual Vector Diagram Concepts: Detailed diagram prompts (e.g. 'Flowchart of Agricultural Economic Sectors in Kenya with clear sector callouts').
-8. Practical Experiments & Tasks: Step-by-step practical tasks with local apparatus.
-9. MANDATORY SAFETY HAZARD AUDIT: Formulate explicit safety protocols for toxic chemical handling, sharp tool safety, open flame/heat supervision, biological/soil hygiene, or animal handling.
+=== HOW TO READ THE DESIGN ===
+A. Find the design's own "Summary of Strands and Sub Strands" table. It is the
+   authority on what exists and how much time each sub-strand gets. Then read the
+   detailed pages for each sub-strand's outcomes, experiences and inquiry questions.
+B. Some levels organise the syllabus as THEME x STRAND -> SUB-STRAND (for example
+   theme "1.0 Greetings and Farewell", strand "1.1 Listening and Speaking",
+   sub-strand "1.1.1 Greetings and farewell"). Where a theme exists, record it in
+   the "theme" field. A theme is NOT a strand and NOT a sub-strand.
+C. Use the design's own identifiers exactly. If it numbers sub-strands 1.1.1,
+   1.1.2, 6.2.3, use those; do not renumber them 1.1, 1.2, 1.3.
+D. If the strand named above does not appear in the document under that name,
+   do not invent a decomposition. Return
+   {"strand_name": "<name>", "sub_strands": [], "not_found": true,
+    "strands_actually_present": ["...", "..."]}
+   listing the strand names the document really uses.
+
+=== EXTRACTION RULES ===
+1. SUB-STRANDS: return every sub-strand the document lists for this strand, and
+   only those. Do not merge, split, rename or add any. If the document lists
+   thirty-six, return thirty-six.
+2. TIME ALLOCATION: copy the figure the design states, in the design's own unit,
+   verbatim — "3 lessons", "8 lessons", "4 hours". Never convert between units and
+   never substitute a round number of your own.
+3. SPECIFIC LEARNING OUTCOMES: copy ALL of the sub-strand's SLOs verbatim, in the
+   document's order, including the final affective one ("appreciate...",
+   "acknowledge...", "value...", "enjoy...", "embrace..."). CBC sub-strands are a
+   knowledge / skill / attitude triad and the attitude outcome is not optional.
+   Do not reword them into Bloom's verbs and do not cap the count.
+4. LEARNING EXPERIENCES: copy the design's own "The learner is guided to:" bullets
+   verbatim. These are already contextualised for Kenyan classrooms; do not
+   replace them with invented activities.
+5. KEY INQUIRY QUESTIONS: copy the design's own Suggested Key Inquiry Questions
+   verbatim. Do not rewrite them.
+6. CORE COMPETENCIES and VALUES: copy the ones the design names for that
+   sub-strand. Values must come from the eight BECF core values.
+7. PERTINENT AND CONTEMPORARY ISSUES: copy the design's own PCI for the
+   sub-strand (for example "Interpersonal Relationship", "Social Cohesion",
+   "Child Road Safety", "Disaster Risk Reduction").
+8. LINK TO OTHER LEARNING AREAS: copy the design's own note where present.
+9. ASSESSMENT RUBRIC: where the design gives a four-level rubric for the
+   sub-strand's indicator, copy the four descriptors.
+10. DIAGRAMS, EXPERIMENTS, SAFETY: these are CONDITIONAL, not mandatory.
+    - Include a required diagram only if the design asks for a visual AND the
+      learners at this level can read one.
+    - Include an experiment only if the design describes a practical procedure.
+      Many learning areas and levels have none.
+    - Include a safety protocol only if the activity genuinely involves a hazard
+      — reagents, heat, flame, sharp tools, soil or animal handling. Do not
+      manufacture generic safety text for a lesson about singing or greetings.
+    - Where the design specifies none, return an empty list. An empty list is a
+      correct answer.
+11. CITATION: for every sub-strand, record the page numbers you read it from in
+    "source_pages". The document is supplied with page markers; use them. The BECF
+    core principle requires every item to be traceable to its source.
+12. NEVER invent. If a field is not in the document for that sub-strand, return
+    an empty value rather than a plausible one. A gap that is visible can be
+    filled later; a fabrication that reads well cannot be found.
 
 Output MUST be a valid JSON object matching this schema:
 {
   "strand_name": "{{ strand }}",
   "sub_strands": [
     {
-      "sub_strand_id": "1.1",
-      "sub_strand_name": "1.1 Name of Sub-strand",
-      "allocated_hours": "4 hours",
+      "theme": "1.0 Greetings and Farewell",
+      "sub_strand_id": "1.1.1",
+      "sub_strand_name": "1.1.1 Greetings and Farewell",
+      "allocated_time": "<the design's own figure and unit, verbatim: e.g. 3 lessons>",
       "slos": [
-        "explain the foundational concepts of...",
-        "investigate practical applications of... in Kenyan agriculture/industry"
+        "give reasons why we greet each other in our day-to-day life",
+        "use greetings in social interactions",
+        "use farewell words and gestures in daily interactions",
+        "appreciate the use of greetings and bidding farewell in daily interactions"
       ],
       "learning_experiences": [
-        "In groups, learners research on...",
-        "Learners conduct a practical field or lab activity on..."
+        "say why people greet each other",
+        "role play people initiating and responding to greetings with humility"
       ],
       "key_inquiry_questions": [
-        "How does... contribute to national development and environmental sustainability?"
+        "Why do we greet people?"
       ],
-      "core_competencies": ["Critical Thinking and Problem Solving", "Communication and Collaboration", "Digital Literacy"],
-      "values": ["Responsibility", "Integrity", "Patriotism", "Respect"],
-      "required_diagrams": [
-        "Flowchart / Vector Model illustrating..."
-      ],
-      "experiments": [
-        "Practical investigation of... using local apparatus"
-      ],
-      "safety_hazards_to_check": [
-        "Ensure strict hygiene protocols and non-toxic materials are used",
-        "Wash hands thoroughly with soap and water after handling samples"
-      ]
+      "core_competencies": ["Communication and Collaboration", "Self-efficacy"],
+      "values": ["Integrity", "Unity"],
+      "pertinent_and_contemporary_issues": ["Interpersonal Relationship"],
+      "link_to_other_learning_areas": "Greetings can be linked to love and concern for others in CRE.",
+      "assessment_rubric": {
+        "indicator": "Ability to use appropriate vocabulary when greeting and bidding farewell.",
+        "exceeding": "...",
+        "meeting": "...",
+        "approaching": "...",
+        "below": "..."
+      },
+      "required_diagrams": [],
+      "experiments": [],
+      "safety_hazards_to_check": [],
+      "source_pages": [16, 18, 19]
     }
   ]
 }
+The example above is a transcription of a real KICD sub-strand, shown to fix the
+FORM of the answer. Never copy its content into another subject or level.
 Return ONLY valid JSON.
 """
 }

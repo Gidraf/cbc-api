@@ -4,7 +4,7 @@ import hashlib
 import json
 import logging
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from ..errors import raise_api_error
@@ -36,6 +36,12 @@ class ParsedSubstrand:
     raw_snippet: str
     substrand_dna_id: str = ""
     strand_dna_id: str = ""
+    # Pre-Primary and Lower Primary run THEME x STRAND -> SUB-STRAND. A theme is
+    # a third axis, not a strand and not a sub-strand.
+    theme: str = ""
+    pertinent_contemporary_issues: list[str] = field(default_factory=list)
+    link_to_other_learning_areas: str = ""
+    source_pages: list[int] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -271,8 +277,72 @@ class CurriculumExtractorService:
         if not raw_text.strip():
             raise_api_error("DATASET_ITEM_NOT_FOUND", "Raw curriculum text payload is empty.")
 
+        # KICD publishes Pre-Primary as one document holding seven learning
+        # areas. Ingested whole, all seven were filed under the cover title and
+        # overwrote one another's sub-strands, so a request for Language
+        # Activities came back with Christian Religious Education. Split first.
+        from .design_sections import split_learning_areas
+
+        try:
+            sections = split_learning_areas(raw_text)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Could not test for combined learning areas: %s", exc)
+            sections = []
+
+        if len(sections) < 2:
+            return self._ingest_one(raw_text, payload_meta)
+
+        grade, _level = _grade_from_text(raw_text, payload_meta)
+        logger.info(
+            "Design holds %d learning areas; ingesting each separately: %s",
+            len(sections), ", ".join(s.learning_area for s in sections),
+        )
+
+        results: list[dict[str, Any]] = []
+        for section in sections:
+            section_meta = {
+                **payload_meta,
+                "grade": grade or payload_meta.get("grade", ""),
+                "learning_area": section.learning_area,
+                "section_pages": f"{section.start_page}-{section.end_page}",
+            }
+            try:
+                results.append(
+                    self._ingest_one(
+                        section.text, section_meta,
+                        learning_area=section.learning_area,
+                    )
+                )
+            except Exception as exc:  # noqa: BLE001
+                # One unreadable learning area must not cost the other six.
+                logger.warning("Learning area '%s' failed to ingest: %s", section.learning_area, exc)
+                results.append({
+                    "status": "failed",
+                    "subject": section.learning_area,
+                    "error": str(exc)[:300],
+                })
+
+        succeeded = [r for r in results if r.get("status") == "success"]
+        primary = succeeded[0] if succeeded else results[0]
+        return {
+            **primary,
+            "combined_design": True,
+            "learning_areas": [
+                {"subject": r.get("subject"), "status": r.get("status"),
+                 "design_id": r.get("design_id"), "substrand_count": r.get("substrand_count", 0)}
+                for r in results
+            ],
+            "learning_area_count": len(results),
+        }
+
+    def _ingest_one(
+        self, raw_text: str, payload_meta: dict[str, Any], learning_area: str = "",
+    ) -> dict[str, Any]:
+        """Ingest one learning area — the whole document when it holds only one."""
         # 1. Generate Root Dataset DNA
         dataset_id = payload_meta.get("file_id") or f"ds_{hashlib.sha256(raw_text[:200].encode()).hexdigest()[:10]}"
+        if learning_area:
+            dataset_id = f"{dataset_id}::{re.sub(r'[^a-z0-9]+', '-', learning_area.lower()).strip('-')}"
         dataset_dna = artifact_dna_service.generate_dataset_dna(
             dataset_id=dataset_id,
             raw_text=raw_text,
@@ -280,7 +350,9 @@ class CurriculumExtractorService:
         )
 
         # 2. Parse curriculum metadata & structural sections
-        design = self._parse_curriculum_text(raw_text, payload_meta, dataset_dna.dna_id)
+        design = self._parse_curriculum_text(
+            raw_text, payload_meta, dataset_dna.dna_id, learning_area=learning_area
+        )
 
         # 3. Synthesize Dynamic Pedagogical ContentTypeProfile from Curriculum Design Dataset
         try:
@@ -393,14 +465,21 @@ class CurriculumExtractorService:
             s.prompt_package["subject_dna_id"] = subject_dna.dna_id
 
     def _parse_curriculum_text(
-        self, text: str, meta: dict[str, Any], dataset_dna_id: str
+        self, text: str, meta: dict[str, Any], dataset_dna_id: str,
+        learning_area: str = "",
     ) -> ParsedCurriculumDesign:
+        # A section of a combined design has no cover of its own — the document's
+        # banner page already said which learning area this is, and that beats
+        # every other signal.
+        subject = learning_area.strip()
+
         # The document's own cover is the authority on what it teaches. The
         # ingesting catalogue only knows the pathway a link sat under, which for
         # senior school is a group ("Pure Sciences") rather than a learning area.
-        subject = _subject_from_cover(text)
+        if not subject:
+            subject = _subject_from_cover(text)
 
-        if not subject and meta.get("title"):
+        if not subject and meta.get("title") and not learning_area:
             from_name = subject_from_filename(str(meta["title"]))
             subject = _match_known_subject(from_name) or (
                 from_name if _looks_like_subject(from_name) else ""
@@ -510,7 +589,9 @@ class CurriculumExtractorService:
                     strand_name=strand_name,
                     sub_id=f"{strand_id}.1",
                     sub_name=strand_name,
-                    hours="4 hours",
+                    # No lesson count was stated for this section; record the
+                    # gap rather than inventing one that reads as published.
+                    hours="",
                     body=strand_section,
                     subject=subject,
                     grade=grade,
@@ -523,7 +604,8 @@ class CurriculumExtractorService:
             for j, sbm in enumerate(sub_matches):
                 sub_id = sbm.group(1).strip()
                 sub_name = sbm.group(2).strip()
-                hours = sbm.group(3).strip() if sbm.group(3) else "4 hours"
+                # The design's own figure, in the design's own unit, or nothing.
+                hours = sbm.group(3).strip() if sbm.group(3) else ""
 
                 sub_start = sbm.end()
                 sub_end = sub_matches[j + 1].start() if j + 1 < len(sub_matches) else len(strand_section)
@@ -797,15 +879,17 @@ class CurriculumExtractorService:
                 """
                 INSERT INTO curriculum_substrands (
                     design_id, grade, subject, strand_id, strand_name, sub_strand_id, sub_strand_name,
-                    allocated_hours, slos, learning_experiences, key_inquiry_questions,
+                    theme, allocated_hours, slos, learning_experiences, key_inquiry_questions,
                     core_competencies, values, assessment_rubrics, required_diagrams,
-                    experiments, pedagogical_guidance, prompt_context, updated_at
+                    experiments, pertinent_contemporary_issues, link_to_other_learning_areas,
+                    source_pages, pedagogical_guidance, prompt_context, updated_at
                 )
                 VALUES (
                     :design_id, :grade, :subject, :strand_id, :strand_name, :sub_strand_id, :sub_strand_name,
-                    :allocated_hours, CAST(:slos AS jsonb), CAST(:learning_exp AS jsonb),
+                    :theme, :allocated_hours, CAST(:slos AS jsonb), CAST(:learning_exp AS jsonb),
                     CAST(:kiqs AS jsonb), CAST(:competencies AS jsonb), CAST(:values AS jsonb),
                     CAST(:rubrics AS jsonb), CAST(:diagrams AS jsonb), CAST(:experiments AS jsonb),
+                    CAST(:pcis AS jsonb), :link_other, CAST(:source_pages AS jsonb),
                     CAST(:pedagogical AS jsonb), CAST(:prompt_context AS jsonb), NOW()
                 )
                 ON CONFLICT (grade, subject, strand_name, sub_strand_name) DO UPDATE SET
@@ -821,6 +905,10 @@ class CurriculumExtractorService:
                     assessment_rubrics = EXCLUDED.assessment_rubrics,
                     required_diagrams = EXCLUDED.required_diagrams,
                     experiments = EXCLUDED.experiments,
+                    theme = EXCLUDED.theme,
+                    pertinent_contemporary_issues = EXCLUDED.pertinent_contemporary_issues,
+                    link_to_other_learning_areas = EXCLUDED.link_to_other_learning_areas,
+                    source_pages = EXCLUDED.source_pages,
                     pedagogical_guidance = EXCLUDED.pedagogical_guidance,
                     prompt_context = EXCLUDED.prompt_context,
                     updated_at = NOW()
@@ -833,6 +921,10 @@ class CurriculumExtractorService:
                     "strand_name": s.strand_name,
                     "sub_strand_id": s.sub_strand_id,
                     "sub_strand_name": s.sub_strand_name,
+                    "theme": s.theme,
+                    "pcis": to_json(s.pertinent_contemporary_issues),
+                    "link_other": s.link_to_other_learning_areas,
+                    "source_pages": to_json(s.source_pages),
                     "allocated_hours": s.allocated_hours,
                     "slos": to_json(s.slos),
                     "learning_exp": to_json(s.learning_experiences),

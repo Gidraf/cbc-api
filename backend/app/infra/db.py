@@ -448,6 +448,36 @@ MIGRATIONS: list[tuple[str, str]] = [
             ON dataset_ingest_status(source_item_id);
         """,
     ),
+    (
+        "015_substrand_theme_and_provenance",
+        """
+        -- Pre-Primary and Lower Primary organise the syllabus as
+        -- THEME x STRAND -> SUB-STRAND: "1.1.1 Greetings and farewell" sits
+        -- under strand "1.1 Listening and Speaking" AND theme "1.0 Greetings
+        -- and Farewell". With only two levels to store, the generator collapsed
+        -- themes into the sub-strand slot and reported six themes as four
+        -- sub-strands, losing thirty-two of the thirty-six real ones.
+
+        ALTER TABLE curriculum_substrands
+            ADD COLUMN IF NOT EXISTS theme TEXT NOT NULL DEFAULT '';
+
+        -- The design states these per sub-strand and they were being discarded,
+        -- so every later stage had to re-read the PDF to recover them.
+        ALTER TABLE curriculum_substrands
+            ADD COLUMN IF NOT EXISTS pertinent_contemporary_issues JSONB NOT NULL DEFAULT '[]'::jsonb;
+
+        ALTER TABLE curriculum_substrands
+            ADD COLUMN IF NOT EXISTS link_to_other_learning_areas TEXT NOT NULL DEFAULT '';
+
+        -- The BECF core principle requires every item to be traceable to its
+        -- source. The pages a sub-strand was read from are that trace.
+        ALTER TABLE curriculum_substrands
+            ADD COLUMN IF NOT EXISTS source_pages JSONB NOT NULL DEFAULT '[]'::jsonb;
+
+        CREATE INDEX IF NOT EXISTS idx_curriculum_substrands_theme
+            ON curriculum_substrands(grade, subject, theme);
+        """,
+    ),
 ]
 
 

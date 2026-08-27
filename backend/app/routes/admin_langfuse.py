@@ -668,7 +668,7 @@ def get_dataset_progress_report(
     discovered_nodes: list[dict[str, Any]] = []
     seen_keys: set[tuple[str, str, str]] = set()
 
-    def add_node(subj: str, st: str, ss: str, hours: str = "4 hours", slos: list = None, diagrams: list = None, exps: list = None):
+    def add_node(subj: str, st: str, ss: str, hours: str = "", slos: list = None, diagrams: list = None, exps: list = None):
         subj_clean = (subj or "General Subject").strip()
         st_clean = (st or "General Strand").strip()
         ss_clean = (ss or "General Sub-strand").strip()
@@ -679,7 +679,7 @@ def get_dataset_progress_report(
                 "subject": subj_clean,
                 "strand_name": st_clean,
                 "sub_strand_name": ss_clean,
-                "allocated_hours": hours or "4 hours",
+                "allocated_hours": hours or "",
                 "slos": slos or [],
                 "required_diagrams": diagrams or [],
                 "experiments": exps or [],
@@ -701,7 +701,7 @@ def get_dataset_progress_report(
             r.get("subject", ""),
             r.get("strand_name", ""),
             r.get("sub_strand_name", ""),
-            r.get("allocated_hours", "4 hours"),
+            r.get("allocated_hours", ""),
             r.get("slos", []),
             r.get("required_diagrams", []),
             r.get("experiments", []),
@@ -727,7 +727,7 @@ def get_dataset_progress_report(
             st_name = st.get("name") or st.get("strand_name") or "Strand"
             for ss in st.get("sub_strands") or []:
                 ss_name = ss if isinstance(ss, str) else (ss.get("sub_strand_name") or ss.get("name") or ss.get("title"))
-                ss_hours = (ss.get("allocated_hours") or ss.get("hours") or "4 hours") if isinstance(ss, dict) else "4 hours"
+                ss_hours = (ss.get("allocated_time") or ss.get("allocated_hours") or ss.get("hours") or "") if isinstance(ss, dict) else ""
                 ss_slos = (ss.get("slos") or []) if isinstance(ss, dict) else []
                 ss_diagrams = (ss.get("required_diagrams") or []) if isinstance(ss, dict) else []
                 ss_exps = (ss.get("experiments") or []) if isinstance(ss, dict) else []

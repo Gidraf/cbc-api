@@ -317,7 +317,7 @@ def list_curriculum_substrands(
                         "strand_name": st_name,
                         "sub_strand_id": ss.get("sub_strand_id", f"1.{len(rows)+1}") if isinstance(ss, dict) else f"1.{len(rows)+1}",
                         "sub_strand_name": ss_name,
-                        "allocated_hours": (ss.get("allocated_hours") or ss.get("hours") or "4 hours") if isinstance(ss, dict) else "4 hours",
+                        "allocated_hours": (ss.get("allocated_time") or ss.get("allocated_hours") or ss.get("hours") or "") if isinstance(ss, dict) else "",
                         "slos": (ss.get("slos") or []) if isinstance(ss, dict) else [],
                         "learning_experiences": (ss.get("learning_experiences") or []) if isinstance(ss, dict) else [],
                         "key_inquiry_questions": (ss.get("key_inquiry_questions") or ss.get("kiqs") or []) if isinstance(ss, dict) else [],
@@ -948,6 +948,7 @@ def factory_generate_notes(
 
     template_vars = {
         "master_context": master_context,
+        "level_register": register_block(payload.grade),
         "content_type_directives": ct_profile.format_for_prompt(),
         "level": level,
         "strand": payload.strand,
@@ -1249,6 +1250,7 @@ def factory_generate_diagram(
             "strand": payload.strand,
             "sub_strand": payload.sub_strand,
             "concept": concept_name,
+            "level_register": register_block(payload.grade),
             "content_type_directives": ct_profile.format_for_prompt(),
             "notes_content": notes_summary_str or payload.notes_title or payload.sub_strand,
         },
@@ -1364,6 +1366,7 @@ def factory_generate_activity(
         template_vars={
             "strand": payload.strand,
             "sub_strand": payload.sub_strand,
+            "level_register": register_block(payload.grade),
             "content_type_directives": ct_profile.format_for_prompt(),
             "notes_content": notes_str or payload.notes_title or payload.sub_strand,
             "diagram_info": diagram_str or "Visual model integrated with sub-strand.",
@@ -1476,6 +1479,7 @@ def factory_plan_visuals(
         template_vars={
             "strand": payload.strand,
             "sub_strand": payload.sub_strand,
+            "level_register": register_block(payload.grade),
             "content_type_directives": ct_profile.format_for_prompt(),
             "notes_content": notes_str or payload.notes_title or payload.sub_strand,
         },
@@ -1616,6 +1620,7 @@ def factory_generate_single_visual(
             "strand": payload.strand,
             "sub_strand": payload.sub_strand,
             "concept": title,
+            "level_register": register_block(payload.grade),
             "content_type_directives": ct_profile.format_for_prompt(),
             "notes_content": notes_str or payload.sub_strand,
         },
@@ -1921,6 +1926,7 @@ def factory_plan_activities(
         template_vars={
             "strand": payload.strand,
             "sub_strand": payload.sub_strand,
+            "level_register": register_block(payload.grade),
             "content_type_directives": ct_profile.format_for_prompt(),
             "notes_content": notes_str or payload.notes_title or payload.sub_strand,
             "diagram_info": json_lib.dumps(payload.diagram_info, ensure_ascii=False) if payload.diagram_info else "Visual diagram context",
@@ -2055,6 +2061,7 @@ def factory_generate_single_activity(
         template_vars={
             "strand": payload.strand,
             "sub_strand": payload.sub_strand,
+            "level_register": register_block(payload.grade),
             "content_type_directives": ct_profile.format_for_prompt(),
             "notes_content": notes_str or payload.sub_strand,
         },
@@ -2168,6 +2175,7 @@ def factory_generate_questions(
             "sub_strand": payload.sub_strand,
             "slo_id": payload.slo_id or f"{payload.grade}-{payload.subject_code}-01",
             "difficulty": payload.difficulty,
+            "level_register": register_block(payload.grade),
             "content_type_directives": ct_profile.format_for_prompt(),
             "notes_content": notes_str or payload.notes_summary or payload.sub_strand,
             "diagram_id": payload.diagram_info.get("diagram_id", "diag_01") if payload.diagram_info else "diag_01",
@@ -3279,14 +3287,29 @@ def factory_generate_substrands(
 
     resolved = pipeline_orchestrator.router.resolve_for_stage("notes_generation")
 
+    # Who the learner is decides what may be asked of them. Without this the
+    # shared prompt's own examples set the register, and a pre-primary sub-strand
+    # comes back demanding a flowchart from a child who cannot read.
+    from ..services.content_type_classifier import get_profile_from_db
+    from ..services.level_register import register_block
+
+    ct_profile = get_profile_from_db(payload.subject, payload.grade)
+
     def _compile(document: str) -> Any:
         """Compile the sub-strand prompt around a given slice of the design."""
         return langfuse_context_service.assemble_agent_context(
             agent_name="substrand-generator",
             grade_slug=payload.grade,
             subject=payload.subject,
+            # Without this the system message carried every strand stored for the
+            # learning area, contradicting the strand actually being asked about.
+            focus_strand=payload.strand_name,
             template_vars={
                 "master_context": master_context,
+                "level_register": register_block(payload.grade),
+                "content_type_directives": (
+                    ct_profile.format_for_prompt() if ct_profile else ""
+                ),
                 "level": level,
                 "essence_statement": essence_stmt or f"Comprehensive curriculum design for {payload.subject} ({payload.grade}).",
                 "general_learning_outcomes": outcomes_str,
@@ -3305,8 +3328,6 @@ def factory_generate_substrands(
     # nothing was generated at all.
 
     if payload.inspect:
-        from ..services.content_type_classifier import get_profile_from_db
-
         return {
             "inspection": build_inspection(
                 context,
@@ -3314,7 +3335,7 @@ def factory_generate_substrands(
                 grade=payload.grade,
                 subject=payload.subject,
                 source_material=source_material,
-                profile=get_profile_from_db(payload.subject, payload.grade),
+                profile=ct_profile,
                 extra={
                     "model": f"{resolved.provider}/{resolved.model}",
                     "strand": payload.strand_name,
@@ -3427,43 +3448,58 @@ def factory_save_substrands(
     for ss in payload.substrands:
         sub_id = str(ss.get("sub_strand_id") or ss.get("id") or "1.1")
         sub_name = str(ss.get("sub_strand_name") or ss.get("name") or sub_id)
-        hours = str(ss.get("allocated_hours") or ss.get("hours") or "4 hours")
+        # The design states its own unit — "3 lessons" for pre-primary, "4 hours"
+        # for DTE. Defaulting to "4 hours" wrote a fabricated figure for every
+        # sub-strand that arrived without one, and it was indistinguishable
+        # afterwards from one KICD actually published. Store the gap instead.
+        allocated = str(
+            ss.get("allocated_time") or ss.get("allocated_hours") or ss.get("hours") or ""
+        ).strip()
+        theme = str(ss.get("theme") or "").strip()
         slos = ss.get("slos", [])
         learning_exp = ss.get("learning_experiences", [])
         kiqs = ss.get("key_inquiry_questions", [])
         competencies = ss.get("core_competencies", [])
         vals = ss.get("values", [])
-        rubrics = ss.get("assessment_rubrics", {})
+        rubrics = ss.get("assessment_rubric") or ss.get("assessment_rubrics") or {}
         diagrams = ss.get("required_diagrams", [])
         experiments = ss.get("experiments", [])
         safety_hazards = ss.get("safety_hazards_to_check", [])
+        pcis = ss.get("pertinent_and_contemporary_issues") or ss.get("pertinent_contemporary_issues") or []
+        link_other = str(ss.get("link_to_other_learning_areas") or "").strip()
+        source_pages = [p for p in (ss.get("source_pages") or []) if isinstance(p, int)]
 
         prompt_context = {
             "subject": payload.subject,
             "grade": payload.grade,
             "strand": payload.strand_name,
+            "theme": theme,
             "sub_strand": sub_name,
-            "allocated_hours": hours,
+            "allocated_hours": allocated,
             "slos": slos,
             "kiqs": kiqs,
             "diagram_guidance": diagrams,
             "experiment_guidance": experiments,
             "safety_hazard_criteria": safety_hazards,
+            "pertinent_contemporary_issues": pcis,
+            "source_pages": source_pages,
         }
 
         execute(
             """
             INSERT INTO curriculum_substrands (
                 design_id, grade, subject, strand_id, strand_name, sub_strand_id, sub_strand_name,
-                allocated_hours, slos, learning_experiences, key_inquiry_questions,
+                theme, allocated_hours, slos, learning_experiences, key_inquiry_questions,
                 core_competencies, values, assessment_rubrics, required_diagrams,
-                experiments, pedagogical_guidance, prompt_context, updated_at
+                experiments, pertinent_contemporary_issues, link_to_other_learning_areas,
+                source_pages, pedagogical_guidance, prompt_context, updated_at
             )
             VALUES (
                 :design_id, :grade, :subject, :strand_id, :strand_name, :sub_strand_id, :sub_strand_name,
-                :allocated_hours, CAST(:slos AS jsonb), CAST(:learning_exp AS jsonb),
+                :theme, :allocated_hours, CAST(:slos AS jsonb), CAST(:learning_exp AS jsonb),
                 CAST(:kiqs AS jsonb), CAST(:competencies AS jsonb), CAST(:values AS jsonb),
                 CAST(:rubrics AS jsonb), CAST(:diagrams AS jsonb), CAST(:experiments AS jsonb),
+                CAST(:pcis AS jsonb), :link_other, CAST(:source_pages AS jsonb),
                 CAST(:pedagogical AS jsonb), CAST(:prompt_context AS jsonb), NOW()
             )
             ON CONFLICT (grade, subject, strand_name, sub_strand_name) DO UPDATE SET
@@ -3479,6 +3515,10 @@ def factory_save_substrands(
                 assessment_rubrics = EXCLUDED.assessment_rubrics,
                 required_diagrams = EXCLUDED.required_diagrams,
                 experiments = EXCLUDED.experiments,
+                theme = EXCLUDED.theme,
+                pertinent_contemporary_issues = EXCLUDED.pertinent_contemporary_issues,
+                link_to_other_learning_areas = EXCLUDED.link_to_other_learning_areas,
+                source_pages = EXCLUDED.source_pages,
                 pedagogical_guidance = EXCLUDED.pedagogical_guidance,
                 prompt_context = EXCLUDED.prompt_context,
                 updated_at = NOW()
@@ -3491,7 +3531,11 @@ def factory_save_substrands(
                 "strand_name": payload.strand_name,
                 "sub_strand_id": sub_id,
                 "sub_strand_name": sub_name,
-                "allocated_hours": hours,
+                "theme": theme,
+                "pcis": to_json(pcis),
+                "link_other": link_other,
+                "source_pages": to_json(source_pages),
+                "allocated_hours": allocated,
                 "slos": to_json([{"id": f"{payload.grade}-{payload.subject[:3]}-{sub_id}-{idx+1}", "text": s} if isinstance(s, str) else s for idx, s in enumerate(slos)]),
                 "learning_exp": to_json(learning_exp),
                 "kiqs": to_json(kiqs),

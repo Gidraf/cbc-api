@@ -57,9 +57,21 @@ _DTE = [
     "Social Studies",
 ]
 
+# Pre-Primary is published as a SINGLE PDF containing every learning area — the
+# PP1 design's own table of contents lists these seven. Filing them all under
+# one subject called "Pre-Primary 1" (which is a level, not a learning area)
+# made every area overwrite the last, so a request for Language Activities was
+# answered with Christian Religious Education. See design_sections.
+_PRE_PRIMARY = [
+    "Christian Religious Education", "Creative Activities",
+    "Environmental Activities", "Hindu Religious Education",
+    "Islamic Religious Education", "Language Activities",
+    "Mathematical Activities",
+]
+
 EXPECTED_SUBJECTS: dict[str, list[str]] = {
-    "grade-pp1": ["Pre-Primary 1"],
-    "grade-pp2": ["Pre-Primary 2"],
+    "grade-pp1": list(_PRE_PRIMARY),
+    "grade-pp2": list(_PRE_PRIMARY),
     "grade-1": list(_LOWER_PRIMARY),
     "grade-2": list(_LOWER_PRIMARY),
     "grade-3": list(_LOWER_PRIMARY),
@@ -75,8 +87,9 @@ EXPECTED_SUBJECTS: dict[str, list[str]] = {
     "grade-dte": list(_DTE),
 }
 
-# Published design count. For senior school this exceeds the number of pathway
-# headings, because each pathway holds several designs.
+# Published design count — the number of PDFs KICD publishes, which is not the
+# number of learning areas. Pre-Primary publishes one document holding seven
+# areas; senior school publishes more documents than it has pathway headings.
 EXPECTED_DESIGN_COUNT: dict[str, int] = {
     "grade-pp1": 1, "grade-pp2": 1,
     "grade-1": 7, "grade-2": 7, "grade-3": 7,
@@ -88,6 +101,15 @@ EXPECTED_DESIGN_COUNT: dict[str, int] = {
 
 # Senior-school subject names are not published; they come off each PDF's cover.
 GRADES_WITH_PATHWAY_LABELS = frozenset({"grade-10", "grade-11", "grade-12"})
+
+# Grades whose single published document holds several learning areas, and so
+# must be split at ingest rather than filed as one design.
+GRADES_WITH_COMBINED_DESIGN = frozenset({"grade-pp1", "grade-pp2"})
+
+
+def has_combined_design(grade_slug: str) -> bool:
+    """True when one published PDF for this grade holds several learning areas."""
+    return grade_slug in GRADES_WITH_COMBINED_DESIGN
 
 
 def expected_subjects(grade_slug: str) -> list[str]:
