@@ -307,3 +307,74 @@ def split_learning_areas(text: str, published: list[str] | None = None) -> list[
 
 def is_combined_design(text: str, published: list[str] | None = None) -> bool:
     return len(split_learning_areas(text, published)) >= _MIN_SECTIONS
+
+def diagnose(text: str, published: list[str] | None = None) -> dict[str, Any]:
+    """Explain what the splitter saw, and why it rejected what it rejected.
+
+    Built because three learning areas kept coming back "(not ingested)" with
+    no way to tell whether the splitter never saw them, saw them and rejected
+    them, or found them and the ingest failed afterwards. Guessing at that from
+    a dropdown took several rounds; this answers it in one call.
+    """
+    pages = parse_pages(text)
+    listed = _contents_titles(pages)
+    listed_norm = {_normalise(t) for t in listed}
+
+    rejected: list[dict[str, Any]] = []
+    accepted: list[dict[str, Any]] = []
+
+    for index, page in enumerate(pages):
+        body = _page_body(page)
+        if not body:
+            continue
+        joined = " ".join(body)
+        title = _banner_title(page)
+
+        if title:
+            flat = _normalise(title)
+            if listed_norm and not _matches_any(flat, listed_norm):
+                rejected.append({
+                    "page": page.number, "text": joined[:100],
+                    "reason": "title is not in the document's table of contents",
+                })
+            else:
+                accepted.append({"page": page.number, "title": title})
+            continue
+
+        # Why was this page not a banner? Only report pages that look like they
+        # were trying to be one, or the list is every page in the document.
+        upper_runs = [b for b in body if b.upper() == b and len(b) >= _MIN_TITLE_CHARS]
+        if not upper_runs:
+            continue
+        candidate = " ".join(upper_runs)
+        if _is_front_matter(candidate):
+            reason = "recognised as front or back matter"
+        elif len(joined) > _MAX_BANNER_CHARS:
+            reason = f"page carries {len(joined)} characters; a banner page must be under {_MAX_BANNER_CHARS}"
+        else:
+            reason = "no upper-case title of sufficient length"
+        rejected.append({"page": page.number, "text": joined[:100], "reason": reason})
+
+    sections = split_learning_areas(text, published)
+    absent = missing_learning_areas(sections, published) if published else []
+
+    # For anything still missing, say where its name does appear.
+    traces: dict[str, list[int]] = {}
+    for name in absent:
+        squashed = _squash(_normalise(name))
+        hits = [
+            page.number for page in pages
+            if any(_heading_like(line, squashed) for line in _page_body(page))
+        ]
+        traces[name] = hits[:5]
+
+    return {
+        "page_count": len(pages),
+        "contents_page_titles": listed,
+        "banner_pages_accepted": accepted,
+        "banner_pages_rejected": rejected[:40],
+        "sections": [s.to_dict() for s in sections],
+        "expected": list(published or []),
+        "missing": absent,
+        "missing_appears_as_heading_on_pages": traces,
+    }

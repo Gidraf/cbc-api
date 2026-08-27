@@ -3492,6 +3492,62 @@ def factory_generate_substrands(
 
 
 
+
+@router.get("/factory/split-preview")
+def factory_split_preview(
+    grade: str = Query(..., description="Grade slug, e.g. grade-pp1"),
+    _: AuthContext = Depends(require_roles("admin", "operator", "reviewer")),
+) -> dict[str, Any]:
+    """Show what the splitter sees in this grade's design, and what it rejects.
+
+    Read-only: it writes nothing and ingests nothing.
+
+    A learning area that keeps reading "(not ingested)" can have failed in three
+    different places — never located in the document, located and rejected as
+    not-a-banner, or split out and then failed to parse. From a dropdown those
+    look identical, and telling them apart by guesswork took several rounds.
+    This says which, per learning area, with the page numbers.
+    """
+    from ..services.curriculum_catalogue import expected_subjects
+    from ..services.dataset_ingest import candidate_items
+    from ..services.design_sections import diagnose
+
+    published = expected_subjects(grade)
+    documents: list[dict[str, Any]] = []
+
+    for item in candidate_items(grade):
+        text = str(item.get("expected_output") or "")
+        source = item.get("input") or {}
+        title = str(source.get("title") or item.get("id") or "")
+        if len(text) < 2_000:
+            documents.append({
+                "title": title, "chars": len(text),
+                "skipped": "too short to be a curriculum design",
+            })
+            continue
+
+        report = diagnose(text, published)
+        documents.append({
+            "title": title,
+            "item_id": item.get("id"),
+            "chars": len(text),
+            **report,
+        })
+
+    return {
+        "grade": grade,
+        "expected_learning_areas": published,
+        "documents": documents,
+        # The whole point: one line that says whether this will work.
+        "verdict": [
+            f"{d.get('title', '?')}: found {len(d.get('sections', []))} of "
+            f"{len(published)}"
+            + (f", MISSING {', '.join(d['missing'])}" if d.get("missing") else "")
+            for d in documents if "sections" in d
+        ],
+    }
+
+
 @router.get("/factory/structure-report")
 def factory_structure_report(
     grade: str = Query(..., description="Grade slug, e.g. grade-pp1"),

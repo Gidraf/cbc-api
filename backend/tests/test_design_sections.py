@@ -481,3 +481,44 @@ def test_ingest_reports_which_learning_areas_are_missing(monkeypatch) -> None:
                  if a["subject"] == "Mathematical Activities")
     assert entry["status"] == "not_found_in_document"
     assert "did not locate" in entry["detail"]
+
+
+def test_diagnose_says_why_a_page_was_rejected() -> None:
+    """A learning area reading "(not ingested)" can have failed in three
+    different places. From a dropdown they look identical."""
+    from app.services.curriculum_catalogue import expected_subjects
+    from app.services.design_sections import diagnose
+
+    broken = ("MATHEMATICAL ACTIVITIES", "CHRISTIAN RELIGIOUS EDUCATION")
+    report = diagnose(_pp1_with_unrecognisable_banners(broken), expected_subjects("grade-pp1"))
+
+    assert report["page_count"] > 0
+    assert report["contents_page_titles"], "the contents page must be read"
+
+    reasons = {r["page"]: r["reason"] for r in report["banner_pages_rejected"]}
+    # The polluted banner pages are named, with the actual cause.
+    assert 102 in reasons and "characters" in reasons[102]
+    assert 198 in reasons and "characters" in reasons[198]
+    # Front matter is identified as such, not as a failure.
+    assert any("front or back matter" in r for r in reasons.values())
+
+
+def test_diagnose_reports_where_a_missing_area_does_appear() -> None:
+    """If an area is missing, the next question is always "is it in the
+    document at all?". Answer it in the same call."""
+    from app.services.design_sections import diagnose
+
+    published = ["Language Activities", "Astrophysics"]
+    report = diagnose(_pp1_document(), published)
+
+    assert "Astrophysics" in report["missing"]
+    assert report["missing_appears_as_heading_on_pages"]["Astrophysics"] == []
+
+
+def test_diagnose_writes_nothing() -> None:
+    """It exists to be safe to run against a live grade at any time."""
+    import app.services.design_sections as ds
+
+    source = __import__("inspect").getsource(ds.diagnose)
+    for forbidden in ("execute(", "INSERT", "UPDATE", "DELETE", "save_"):
+        assert forbidden not in source, f"diagnose must not write: found {forbidden}"
