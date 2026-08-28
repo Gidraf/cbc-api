@@ -14,8 +14,10 @@ import {
 } from "../ui/components";
 import { allStrandsToText, strandToText } from "../lib/serialize";
 import { DesignReader } from "./DesignReader";
+import { VersionReview } from "./VersionReview";
 import { PromptInspector, type Inspection } from "./PromptInspector";
 import {
+  useArtifacts,
   useDesigns,
   useInspect,
   useStoredStructure,
@@ -51,6 +53,64 @@ const subCount = (s: GeneratedSubstrand, key: string) => {
   const v = s[key];
   return Array.isArray(v) ? v.length : 0;
 };
+
+/**
+ * The saved sub-strands of one strand, each with its versions and review.
+ *
+ * Saving files a version per sub-strand; without a way through to it here, the
+ * review layers exist and nobody arrives at them.
+ */
+function SubStrandVersions({
+  grade,
+  subject,
+  names,
+}: {
+  grade: string;
+  subject: string;
+  names: string[];
+}) {
+  const [open, setOpen] = React.useState("");
+  const artifacts = useArtifacts({ grade, subject, kind: "sub_strand", sub_strand: open });
+  const found = artifacts.data?.artifacts?.[0];
+
+  return (
+    <div style={{ marginTop: "var(--s3)" }}>
+      <Stack direction="row" gap="var(--s2)" style={{ flexWrap: "wrap" }}>
+        {names.map((name) => (
+          <Button
+            key={name}
+            size="sm"
+            variant={open === name ? "primary" : "ghost"}
+            onClick={() => setOpen(open === name ? "" : name)}
+            title={`Versions, review and approval for "${name}"`}
+          >
+            {open === name ? `▾ ${name}` : `▸ ${name}`}
+          </Button>
+        ))}
+      </Stack>
+      {open && (
+        <div
+          style={{
+            marginTop: "var(--s3)",
+            padding: "var(--s3)",
+            border: "1px solid var(--line)",
+            borderRadius: "var(--radius)",
+          }}
+        >
+          {found ? (
+            <VersionReview artifactId={found.artifact_id} />
+          ) : (
+            <p style={{ color: "var(--ink-3)", fontSize: "var(--text-sm)", margin: 0 }}>
+              {artifacts.isLoading
+                ? "Loading versions…"
+                : `No version filed for "${open}" yet. Sub-strands saved before versioning was added are in the database but were never filed as versions — regenerate and save to file one.`}
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
 
 export function CurriculumStructure({
   grade,
@@ -443,6 +503,13 @@ export function CurriculumStructure({
                         ))}
                       </tbody>
                     </Table>
+                    {!isDraft && rows.length > 0 && (
+                      <SubStrandVersions
+                        grade={grade}
+                        subject={subject}
+                        names={rows.map((r) => subName(r))}
+                      />
+                    )}
                     {isDraft && (
                       <Stack direction="row" gap="var(--s2)" style={{ marginTop: "var(--s3)" }}>
                         <Button size="sm" disabled={busy} onClick={() => save(strand)}>

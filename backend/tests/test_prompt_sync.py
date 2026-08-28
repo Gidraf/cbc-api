@@ -36,8 +36,19 @@ def wired(monkeypatch):
     monkeypatch.setattr(prompt_sync, "_applied", lambda: dict(state["applied"]))
     monkeypatch.setattr(prompt_sync, "_record",
                         lambda name, digest, version: state["recorded"].append((name, digest)))
+    # Prompt text that passes validation, because validation now gates
+    # promotion: a prompt that fails is written to staging and production keeps
+    # serving the previous version.
+    valid = (
+        "You are authoring KICD curriculum content.\n"
+        "=== WHO THIS IS FOR ===\n{{ level_register }}\n{{ faith_scope }}\n"
+        "Grade: {{ grade }}\nSubject: {{ subject }}\n"
+        + "Write what the design supports and nothing it does not. " * 8
+        + "\nReturn ONLY valid JSON."
+    )
     monkeypatch.setattr(prompt_sync, "_all_prompts",
-                        lambda: {"note-generator": "NOTES v1", "strand-generator": "STRANDS v1"})
+                        lambda: {"note-generator": valid, "strand-generator": valid})
+    state["valid_text"] = valid
 
     settings = type("S", (), {"langfuse_public_key": "pk", "langfuse_secret_key": "sk",
                               "langfuse_host": "http://langfuse"})()
@@ -62,8 +73,8 @@ def test_an_unchanged_prompt_is_not_rewritten(wired) -> None:
     """Pushing all fifteen every boot would add fifteen versions a day and make
     the version history useless."""
     wired["applied"] = {
-        "note-generator": prompt_sync.content_hash("NOTES v1"),
-        "strand-generator": prompt_sync.content_hash("STRANDS v1"),
+        "note-generator": prompt_sync.content_hash(wired["valid_text"]),
+        "strand-generator": prompt_sync.content_hash(wired["valid_text"]),
     }
 
     report = prompt_sync.sync_prompts()
@@ -74,7 +85,7 @@ def test_an_unchanged_prompt_is_not_rewritten(wired) -> None:
 
 
 def test_only_the_prompt_that_changed_is_pushed(wired) -> None:
-    wired["applied"] = {"strand-generator": prompt_sync.content_hash("STRANDS v1")}
+    wired["applied"] = {"strand-generator": prompt_sync.content_hash(wired["valid_text"])}
 
     report = prompt_sync.sync_prompts()
 
@@ -88,7 +99,8 @@ def test_every_label_the_resolver_tries_is_written(wired) -> None:
     prompt_sync.sync_prompts()
 
     _, labels = wired["client"].written[0]
-    assert labels[:2] == ["production", "latest"]
+    for label in ("production", "latest", "prod", "staging", "dev"):
+        assert label in labels, f"{label} is a label the resolver tries"
     assert set(labels) >= {"production", "latest", "prod", "staging", "dev"}
 
 
@@ -130,3 +142,62 @@ def test_every_seeded_prompt_is_covered() -> None:
     covered = prompt_sync._all_prompts()
     assert set(SEED_AGENT_PROMPTS) <= set(covered)
     assert {"BECF", "cbc-master-context"} <= set(covered)
+
+
+def test_a_prompt_that_fails_validation_is_staged_not_promoted(wired, monkeypatch) -> None:
+    """Every prompt used to carry all five labels, so `production` and `dev`
+    always pointed at the same version and a bad edit was live the instant it
+    was written. There was no moment at which it could have been caught."""
+    monkeypatch.setattr(
+        prompt_sync, "_all_prompts",
+        lambda: {"note-generator": "Write some notes about the topic. Return JSON."},
+    )
+
+    report = prompt_sync.sync_prompts()
+
+    assert report.status == "staged"
+    assert report.pushed == []
+    assert len(report.staged) == 1
+
+    _, labels = wired["client"].written[0]
+    assert "staging" in labels and "dev" in labels
+    assert "production" not in labels, "a prompt that failed validation went live"
+    assert "prod" not in labels
+
+
+def test_a_staged_prompt_says_production_is_still_the_old_text(wired, monkeypatch) -> None:
+    """Reporting "ok" for a prompt that did not go live is how a rewritten
+    prompt silently keeps serving the old text."""
+    monkeypatch.setattr(
+        prompt_sync, "_all_prompts",
+        lambda: {"note-generator": "Too short to be an agent prompt."},
+    )
+
+    message = prompt_sync.sync_prompts().to_dict()["message"]
+
+    assert "NOT promoted" in message
+    assert "previous version" in message
+
+
+def test_the_validation_report_travels_with_the_sync(wired, monkeypatch) -> None:
+    """An operator who is told a prompt was staged needs to know why."""
+    monkeypatch.setattr(
+        prompt_sync, "_all_prompts", lambda: {"note-generator": "Short."},
+    )
+
+    detail = prompt_sync.sync_prompts().to_dict()["validation"]["note-generator"]
+
+    assert detail["promotable"] is False
+    assert any("level_register" in e["message"] for e in detail["errors"])
+
+
+def test_seeding_no_longer_writes_a_version_per_press() -> None:
+    """note-generator reached version 78 because every press of Seed rewrote all
+    fifteen prompts whether or not a character had changed."""
+    seed = open("app/services/langfuse_seed.py").read()
+
+    body = seed[seed.index("def seed_langfuse"):]
+    assert "client.create_prompt(" not in body, (
+        "seeding must go through the hash-gated sync, not write directly"
+    )
+    assert "sync_prompts()" in body

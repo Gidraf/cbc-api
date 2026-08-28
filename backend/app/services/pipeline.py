@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import time
 from datetime import datetime, timedelta, timezone
@@ -12,6 +13,8 @@ from ..models import GenerateRequest, PipelineResult, Provenance, StageRunResult
 from ..services.artifact_dna import artifact_dna_service
 from ..services.cost_tracker import CostResult, calculate_cost, format_cost_summary, persist_stage_cost
 from ..services.diagram_dedup import diagram_deduplicator
+from ..services.faith_scope import prompt_block as faith_prompt_block
+from ..services.level_register import register_block
 from ..services.langfuse_context import langfuse_context_service
 from ..services.llm_client import LlmResponse, llm_client
 from ..services.metrics import metrics_service
@@ -589,6 +592,23 @@ class PipelineService:
             grade_slug=grade_slug,
             subject=subject,
             template_vars={
+                # The prompt asks for {{ content_to_review }} and was never given
+                # it, so the panel judged a title, two counts and a safety list —
+                # never the content — and reported a verdict on the package.
+                "content_to_review": json.dumps(
+                    {
+                        "notes": notes_output,
+                        "diagrams": diagrams_output,
+                        "activities": activities_output,
+                        "questions": questions_output,
+                    },
+                    ensure_ascii=False, default=str,
+                )[:60_000],
+                # Likewise these two: a reviewer with no register cannot tell a
+                # pre-primary defect from a senior-secondary one, and one with no
+                # faith scope cannot tell CRE content from IRE content.
+                "level_register": register_block(grade_slug),
+                "faith_scope": faith_prompt_block(subject),
                 "notes_title": notes_output.get("title", ""),
                 "experiments": activities_output.get("experiments", []),
                 "safety_guidelines": activities_output.get("safety_guidelines", []),
@@ -621,6 +641,11 @@ class PipelineService:
             "questions_count": len(questions_output.get("questions", [])),
             "reviewer_status": reviewer_output.get("status", "unknown"),
             "has_hazards": reviewer_output.get("has_hazardous_procedures", False),
+            # Both approver prompts ask for these and neither was given them, so
+            # the slots rendered empty and the deliberation ran without knowing
+            # the learner's age or the learning area's faith.
+            "level_register": register_block(grade_slug),
+            "faith_scope": faith_prompt_block(subject),
         }
 
         # Dynamically fetch and compile prompts from Langfuse

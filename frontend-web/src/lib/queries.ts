@@ -367,8 +367,10 @@ export function useArtifact(artifactId: string) {
     queryFn: () =>
       api<{
         artifact_id: string;
+        artifact_key: string;
         kind: string;
         version: number;
+        provenance: Record<string, unknown>;
         content: Record<string, unknown>;
         labels: string[];
         parent_artifact_id: string;

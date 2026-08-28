@@ -1153,6 +1153,13 @@ def factory_generate_notes(
         custom_instructions=payload.custom_instructions,
     )
 
+    versioned = _record_artifact(
+        "notes", payload.grade, payload.subject, notes_content,
+        strand=payload.strand, sub_strand=payload.sub_strand,
+        provenance={"source": "factory_generate_notes",
+                    "provider": resolved.provider, "model": resolved.model},
+    )
+
     return {
         "notes": notes_content,
         "usage": resp.usage,
@@ -1161,6 +1168,7 @@ def factory_generate_notes(
         "research_dossier": dossier.to_dict(),
         "quality_audit": audit_report.to_dict(),
         "quality_gate": gate_result.to_dict(),
+        "artifact": versioned,
     }
 
 
@@ -1510,6 +1518,13 @@ def factory_plan_visuals(
     resp = llm_client.generate(resolved, context.messages, temperature=0.2)
     visuals_list = resp.content.get("visuals", []) if isinstance(resp.content, dict) else []
 
+    versioned = _record_artifact(
+        "diagram", payload.grade, payload.subject, {"visuals": visuals_list},
+        strand=payload.strand, sub_strand=payload.sub_strand,
+        provenance={"source": "factory_plan_visuals",
+                    "provider": resolved.provider, "model": resolved.model},
+    )
+
     return {
         "sub_strand": payload.sub_strand,
         "visuals": visuals_list,
@@ -1517,6 +1532,7 @@ def factory_plan_visuals(
         "model": resp.model,
         "content_type": ct_profile.to_dict(),
         "research_dossier": dossier.to_dict(),
+        "artifact": versioned,
     }
 
 
@@ -1968,6 +1984,13 @@ def factory_plan_activities(
     resp = llm_client.generate(resolved, context.messages, temperature=0.25)
     activities_list = resp.content.get("activities", []) if isinstance(resp.content, dict) else []
 
+    versioned = _record_artifact(
+        "activity", payload.grade, payload.subject, {"activities": activities_list},
+        strand=payload.strand, sub_strand=payload.sub_strand,
+        provenance={"source": "factory_plan_activities",
+                    "provider": resolved.provider, "model": resolved.model},
+    )
+
     return {
         "sub_strand": payload.sub_strand,
         "activities": activities_list,
@@ -1975,6 +1998,7 @@ def factory_plan_activities(
         "model": resp.model,
         "content_type": ct_profile.to_dict(),
         "research_dossier": dossier.to_dict(),
+        "artifact": versioned,
     }
 
 

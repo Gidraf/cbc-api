@@ -110,6 +110,141 @@ Output MUST be a valid JSON object matching this schema:
 }
 Return ONLY valid JSON.
 """,
+    "rubric-generator": """
+You are a KICD assessment specialist writing the suggested assessment rubric for one sub-strand.
+
+=== WHO THIS IS FOR ===
+{{ level_register }}
+{{ faith_scope }}
+
+=== THE SUB-STRAND ===
+Grade: {{ grade }}
+Subject: {{ subject }}
+Strand: {{ strand }}
+Sub-strand: {{ sub_strand }}
+Time allocated: {{ time_allocation }}
+
+Specific Learning Outcomes:
+{{ slos }}
+
+What the design itself says:
+{{ design_extract }}
+
+=== WHY THIS EXISTS ===
+Three of twelve sub-strands in a completed learning area came back with no
+rubric at all. A sub-strand without one can be taught and cannot be assessed,
+so the learning outcome has no observable meaning and a teacher has nothing to
+mark against.
+
+=== RULES ===
+1. One indicator per SLO that is OBSERVABLE. "Appreciates God's love" cannot be
+   marked; "tells three ways God shows love" can. Where an SLO is an attitude,
+   write the indicator against the behaviour that shows it.
+2. Four levels, KICD's own ladder and its own wording: Exceeding Expectations,
+   Meeting Expectations, Approaching Expectations, Below Expectations.
+3. The MEETING level must state exactly what the SLO states. If the SLO says
+   three, Meeting says three — not "some", not "several". Exceeding is more
+   than that number, Approaching is one fewer, Below is the least credit-worthy
+   response that still shows engagement.
+4. Never invent a number the SLO does not carry. If the SLO says "tell ways"
+   with no count, the rubric describes quality, not quantity.
+5. Achievable within the time allocated, using what a Kenyan classroom at this
+   level actually has.
+
+Return ONLY valid JSON:
+{
+  "rubric": [
+    {
+      "indicator": "Ability to <observable behaviour from the SLO>",
+      "slo": "<the SLO this assesses, verbatim>",
+      "exceeding": "...",
+      "meeting": "...",
+      "approaching": "...",
+      "below": "..."
+    }
+  ],
+  "not_assessable": ["<any SLO that cannot be observed, and why>"]
+}
+""",
+    "content-repair": """
+You are repairing generated curriculum content that failed validation. You are NOT regenerating it.
+
+=== WHO THIS IS FOR ===
+{{ level_register }}
+{{ faith_scope }}
+
+=== WHAT FAILED ===
+{{ validation_failures }}
+
+=== THE CONTENT AS IT STANDS ===
+{{ content_to_repair }}
+
+=== WHAT THE DESIGN SAYS ===
+{{ design_extract }}
+
+=== RULES ===
+1. Fix ONLY what the failures name. Regenerating from scratch loses the parts
+   that were right and produces a different answer to the same question, which
+   makes it impossible to tell whether the repair worked.
+2. Keep every field that did not fail exactly as it is, byte for byte.
+3. Where a failure cannot be fixed from the design in front of you, leave the
+   field as it is and list it under "unrepairable" with the reason. Inventing a
+   value to clear a check is worse than the check failing: it is the same
+   defect, now invisible.
+4. Never add a citation, a page number, a lesson count or a statistic that the
+   design does not carry.
+
+Return ONLY valid JSON:
+{
+  "repaired": { ...the full content object, with the named failures fixed... },
+  "changes": [{"field": "...", "was": "...", "now": "...", "why": "..."}],
+  "unrepairable": [{"failure": "...", "why": "..."}]
+}
+""",
+    "slo-aligner": """
+You are mapping generated content back to the Specific Learning Outcomes it is supposed to serve.
+
+=== WHO THIS IS FOR ===
+{{ level_register }}
+{{ faith_scope }}
+
+=== THE OUTCOMES ===
+Grade: {{ grade }}
+Subject: {{ subject }}
+Strand: {{ strand }}
+Sub-strand: {{ sub_strand }}
+
+{{ slos }}
+
+=== THE CONTENT ===
+{{ content_to_align }}
+
+=== WHY THIS EXISTS ===
+Artifact counts say how much was produced; only outcome coverage says whether
+the curriculum was actually taught. Ten questions all testing one outcome look
+identical to ten questions covering the sub-strand until someone checks.
+
+=== RULES ===
+1. For each SLO, name the parts of the content that actually serve it, quoting
+   enough to be checkable.
+2. An SLO with nothing serving it is UNCOVERED. Say so plainly. Do not stretch a
+   loosely related item to fill the gap — a false cover is worse than a known
+   hole, because nobody goes back for it.
+3. Content serving no SLO is not automatically wrong, but say what it is for.
+4. Judge coverage by what the learner does, not by topic overlap. Content about
+   the right topic that never asks the learner to perform the outcome does not
+   cover it.
+
+Return ONLY valid JSON:
+{
+  "coverage": [
+    {"slo": "...", "covered": true, "by": ["<quoted content>"], "strength": "full|partial"}
+  ],
+  "uncovered": ["<SLO with nothing serving it>"],
+  "unattached": ["<content serving no SLO, and what it is for>"],
+  "coverage_percentage": 0
+}
+""",
     "note-generator": """
 You are an elite Senior Curriculum Specialist and Master Pedagogy Author for the Kenya Institute of Curriculum Development (KICD).
 Your mission is to author exhaustive, deeply comprehensive, academically rigorous, and pedagogically rich lesson notes, teaching guides, and pedagogical content knowledge (PCK) guides for the specified Sub-strand.
@@ -1024,45 +1159,16 @@ def seed_langfuse() -> dict[str, Any]:
             "seeded_datasets": [],
         }
 
-    # Create Master Context prompt (BECF & alias cbc-master-context)
-    master_failures: list[dict[str, str]] = []
-    for p_name in ["BECF", "cbc-master-context"]:
-        try:
-            client.create_prompt(
-                name=p_name,
-                prompt=SEED_MASTER_CONTEXT,
-                type="text",
-                labels=["production", "latest", "prod", "staging", "dev"],
-            )
-            seeded_prompts.append(p_name)
-            logger.info("Successfully created prompt '%s'.", p_name)
-        except Exception as exc:  # noqa: BLE001
-            logger.error("Prompt '%s' was NOT written: %s", p_name, exc)
-            master_failures.append({"prompt": p_name, "error": str(exc)[:300]})
+    # Prompts go through the same hash-gated, validated, staged path the startup
+    # sync uses. Writing them unconditionally here is what put note-generator at
+    # version 78: every press of Seed added a version to all of them whether or
+    # not a character had changed, and the history stopped being readable.
+    from .prompt_sync import sync_prompts
 
-    # Create agent prompts.
-    #
-    # The label set must match every label get_prompt() tries, and in particular
-    # "production" and "latest" — the resolver tries those BEFORE "prod", so a
-    # single old version still carrying one of them would outrank every new
-    # version forever, and a rewritten prompt would never reach a single call.
-    failed: list[dict[str, str]] = []
-    for name, content in SEED_AGENT_PROMPTS.items():
-        try:
-            created = client.create_prompt(
-                name=name,
-                prompt=content,
-                type="text",
-                labels=["production", "latest", "prod", "staging", "dev"],
-            )
-            version = getattr(created, "version", None)
-            seeded_prompts.append(f"{name} v{version}" if version else name)
-            logger.info("Wrote prompt '%s' (version %s).", name, version)
-        except Exception as exc:  # noqa: BLE001
-            # Reporting this as seeded is how a rewritten prompt silently keeps
-            # serving the old text: the caller is told the re-seed succeeded.
-            logger.error("Prompt '%s' was NOT written: %s", name, exc)
-            failed.append({"prompt": name, "error": str(exc)[:300]})
+    sync = sync_prompts()
+    seeded_prompts.extend(sync.pushed)
+    master_failures: list[dict[str, str]] = []
+    failed: list[dict[str, str]] = list(sync.failed)
 
     # Create datasets
     grades = ["cbc/datasets", "grade-dte", "grade-pp1", "grade-pp2"] + [f"grade-{i}" for i in range(1, 13)]

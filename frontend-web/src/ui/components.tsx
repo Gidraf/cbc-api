@@ -250,6 +250,71 @@ export function Button({
   );
 }
 
+export type Tab = { id: string; label: string; badge?: React.ReactNode; hint?: string };
+
+/**
+ * A tab strip that keeps its panels mounted decisions apart.
+ *
+ * Reviewing a version means moving between what it says, what changed, and what
+ * the reviewers scored. Putting those on separate screens made the operator
+ * hold the previous screen in their head; keeping them a click apart in one
+ * place is the difference between reviewing and guessing.
+ */
+export function Tabs({
+  tabs,
+  active,
+  onChange,
+}: {
+  tabs: Tab[];
+  active: string;
+  onChange: (id: string) => void;
+}) {
+  return (
+    <div
+      role="tablist"
+      aria-label="Sections"
+      style={{
+        display: "flex",
+        gap: "var(--s1, 4px)",
+        borderBottom: "1px solid var(--line)",
+        marginBottom: "var(--s3)",
+        overflowX: "auto",
+      }}
+    >
+      {tabs.map((tab) => {
+        const selected = tab.id === active;
+        return (
+          <button
+            key={tab.id}
+            type="button"
+            role="tab"
+            aria-selected={selected}
+            title={tab.hint}
+            onClick={() => onChange(tab.id)}
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "var(--s2)",
+              background: "transparent",
+              border: "none",
+              borderBottom: `2px solid ${selected ? "var(--accent)" : "transparent"}`,
+              color: selected ? "var(--ink)" : "var(--ink-3)",
+              fontSize: "var(--text-sm)",
+              fontWeight: selected ? 600 : 500,
+              padding: "8px 12px",
+              cursor: "pointer",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {tab.label}
+            {tab.badge}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 export function Spinner({ size = 14 }: { size?: number }) {
   return (
     <span

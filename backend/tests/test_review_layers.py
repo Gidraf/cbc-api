@@ -250,7 +250,7 @@ def test_the_approval_screen_is_routed_and_navigable() -> None:
 
 
 def test_the_screen_shows_dimensions_rather_than_one_number() -> None:
-    view = open("../frontend-web/src/views/Approvals.tsx").read()
+    view = open("../frontend-web/src/views/VersionReview.tsx").read()
 
     assert "Confidence by dimension" in view
     assert "Evidence" in view
@@ -259,11 +259,34 @@ def test_the_screen_shows_dimensions_rather_than_one_number() -> None:
 
 def test_approve_is_disabled_with_its_blockers_shown() -> None:
     """A disabled button with no reason is indistinguishable from a broken one."""
-    view = open("../frontend-web/src/views/Approvals.tsx").read()
+    view = open("../frontend-web/src/views/VersionReview.tsx").read()
 
-    assert "!approval.can_approve" in view
-    assert "approval.blockers.join" in view
+    assert "canApprove" in view
+    assert "blockers.join" in view
     assert "Not approvable yet" in view
+
+
+def test_the_review_panel_is_shared_rather_than_duplicated() -> None:
+    """The standalone screen and the factory must show the same thing. Two
+    copies drift, and the one you are not looking at is the one that rots."""
+    approvals = open("../frontend-web/src/views/Approvals.tsx").read()
+    factory = open("../frontend-web/src/views/ContentFactory.tsx").read()
+
+    assert "VersionReview" in approvals
+    assert "VersionReview" in factory
+    # The scores themselves are defined once.
+    assert "Confidence by dimension" not in approvals
+
+
+def test_the_panel_is_tabbed() -> None:
+    """Versions, the diff, the reviews and the labels are a click apart, not a
+    navigation apart: moving between screens made the operator hold the
+    previous screen in their head."""
+    view = open("../frontend-web/src/views/VersionReview.tsx").read()
+
+    assert "Tabs" in view
+    for tab in ("Current version", "Versions", "Review", "Changes", "Comments"):
+        assert f'label: "{tab}"' in view, f"the {tab} tab is missing"
 
 
 def test_the_factory_links_through_to_the_versions_it_filed() -> None:
@@ -304,3 +327,44 @@ def test_the_api_proxy_survives_the_switch_to_a_built_bundle() -> None:
 
     assert "preview:" in config
     assert config.count("proxy") >= 3, "the same proxy must serve dev and preview"
+
+
+def test_the_review_panel_is_reachable_from_the_factory_itself() -> None:
+    """The decisions belong where the work is. Sending an operator to another
+    screen to see what changed and back to decide made them hold the previous
+    screen in their head."""
+    factory = open("../frontend-web/src/views/ContentFactory.tsx").read()
+    structure = open("../frontend-web/src/views/CurriculumStructure.tsx").read()
+
+    assert "StationVersions" in factory
+    assert "Versions, review and approval" in factory
+    assert "SubStrandVersions" in structure
+
+
+def test_the_panel_does_not_rebuild_the_servers_identity_rule() -> None:
+    """A client-side copy of artifact_key reports "no versions yet" for content
+    that exists the moment the two drift."""
+    factory = open("../frontend-web/src/views/ContentFactory.tsx").read()
+    panel = open("../frontend-web/src/views/VersionReview.tsx").read()
+
+    assert "artifactKeyFor" not in factory, "the key rule was rebuilt on the client"
+    assert "useArtifacts(" in factory, "artifacts must be found by asking the server"
+    assert "artifact.data?.artifact_key" in panel, (
+        "the panel must take the key from the artifact the server returned"
+    )
+
+
+def test_every_station_that_offers_review_actually_files_versions() -> None:
+    """A station mapped to a kind it never files shows an empty panel forever."""
+    import re
+
+    factory = open("../frontend-web/src/views/ContentFactory.tsx").read()
+    routes = open("app/routes/curriculum.py").read()
+
+    block = factory[factory.index("STATION_ARTIFACT_KIND"):]
+    block = block[: block.index("};")]
+    offered = set(re.findall(r'^\s*(\w+):\s*"(\w+)"', block, re.M))
+
+    filed = set(re.findall(r'_record_artifact\(\s*"(\w+)"', routes))
+    for _station, kind in offered:
+        assert kind in filed, f"the console offers review of '{kind}', which nothing files"

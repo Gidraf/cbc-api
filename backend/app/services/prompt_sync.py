@@ -23,20 +23,37 @@ logger = logging.getLogger("cbc-prompt-sync")
 # "prod", so a version missing them stays invisible however new it is.
 LABELS = ["production", "latest", "prod", "staging", "dev"]
 
+# A push lands here first. Every prompt used to carry all five labels, so
+# `production` and `dev` always pointed at the same version and there was no
+# moment at which a bad edit could be caught — it was live the instant it was
+# written.
+STAGING_LABELS = ["latest", "staging", "dev"]
+
+# And is promoted to these only once the validators pass. A prompt that fails
+# stays readable in staging while the previous version keeps serving, which is
+# the behaviour a failed deploy should have.
+PRODUCTION_LABELS = ["production", "prod"]
+
 
 @dataclass(slots=True)
 class SyncReport:
     checked: int = 0
     pushed: list[str] = field(default_factory=list)
     unchanged: list[str] = field(default_factory=list)
+    staged: list[str] = field(default_factory=list)
     failed: list[dict[str, str]] = field(default_factory=list)
+    validation: dict[str, Any] = field(default_factory=dict)
     skipped: str = ""
 
     @property
     def status(self) -> str:
         if self.skipped:
             return "skipped"
-        return "error" if self.failed else "ok"
+        if self.failed:
+            return "error"
+        # A staged prompt is not a failure — it was written — but production is
+        # still serving the old text, so "ok" would be a lie.
+        return "staged" if self.staged else "ok"
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -44,6 +61,8 @@ class SyncReport:
             "checked": self.checked,
             "pushed": self.pushed,
             "unchanged": self.unchanged,
+            "staged": self.staged,
+            "validation": self.validation,
             "failed": self.failed,
             "skipped": self.skipped,
             "message": self._message(),
@@ -57,9 +76,18 @@ class SyncReport:
                 f"{len(self.failed)} prompt(s) could not be written. The old text is "
                 "still being served for those, so the changes have NOT taken effect."
             )
-        if not self.pushed:
+        parts = []
+        if self.pushed:
+            parts.append(f"{len(self.pushed)} promoted: {', '.join(self.pushed)}")
+        if self.staged:
+            parts.append(
+                f"{len(self.staged)} written to staging but NOT promoted "
+                f"(production still serves the previous version): "
+                f"{', '.join(self.staged)}"
+            )
+        if not parts:
             return f"All {self.checked} prompt(s) already current."
-        return f"{len(self.pushed)} prompt(s) updated: {', '.join(self.pushed)}."
+        return ". ".join(parts) + "."
 
 
 def content_hash(text: str) -> str:
@@ -143,16 +171,40 @@ def sync_prompts(force: bool = False) -> SyncReport:
         logger.warning("%s", report.skipped)
         return report
 
+    from .prompt_validators import validate
+
     report.unchanged = sorted(set(prompts) - set(pending))
     for name, text in pending.items():
+        check = validate(name, text)
+        report.validation[name] = check.to_dict()
+
+        # Staging first, always: even a prompt that passes should exist as a
+        # version before it serves, so a rollback has something to roll back to.
+        labels = list(STAGING_LABELS)
+        if check.promotable:
+            labels += PRODUCTION_LABELS
+        else:
+            logger.error(
+                "Prompt '%s' FAILED validation and will not be promoted: %s",
+                name, "; ".join(f.message for f in check.errors),
+            )
+
         try:
             created = client.create_prompt(
-                name=name, prompt=text, type="text", labels=list(LABELS),
+                name=name, prompt=text, type="text", labels=labels,
             )
             version = getattr(created, "version", None)
             _record(name, content_hash(text), version)
-            report.pushed.append(f"{name} v{version}" if version else name)
-            logger.info("Prompt '%s' updated (version %s).", name, version)
+            entry = f"{name} v{version}" if version else name
+            if check.promotable:
+                report.pushed.append(entry)
+                logger.info("Prompt '%s' updated and promoted (version %s).", name, version)
+            else:
+                report.staged.append(entry)
+                logger.warning(
+                    "Prompt '%s' is in staging at version %s; production still serves "
+                    "the previous version.", name, version,
+                )
         except Exception as exc:  # noqa: BLE001
             # Recording this as pushed is how a rewritten prompt silently keeps
             # serving the old text.
@@ -160,3 +212,42 @@ def sync_prompts(force: bool = False) -> SyncReport:
             report.failed.append({"prompt": name, "error": str(exc)[:300]})
 
     return report
+
+
+def promote(name: str) -> dict[str, Any]:
+    """Move `production` and `prod` onto a prompt's latest version.
+
+    Used after a staged prompt's failures are fixed, or deliberately by an
+    operator who has read the staged version and accepts it.
+    """
+    from ..errors import raise_api_error
+    from ..settings import settings
+    from .prompt_validators import validate
+
+    prompts = _all_prompts()
+    if name not in prompts:
+        raise_api_error("DATASET_ITEM_NOT_FOUND", f"No seeded prompt named '{name}'.")
+
+    check = validate(name, prompts[name])
+    if not check.promotable:
+        raise_api_error(
+            "VALIDATION_FAILED",
+            f"'{name}' still fails validation: "
+            + "; ".join(f.message for f in check.errors),
+            detail=check.to_dict(),
+        )
+
+    from langfuse import Langfuse
+
+    client = Langfuse(
+        public_key=settings.langfuse_public_key,
+        secret_key=settings.langfuse_secret_key,
+        host=settings.langfuse_host,
+    )
+    created = client.create_prompt(
+        name=name, prompt=prompts[name], type="text",
+        labels=list(STAGING_LABELS) + list(PRODUCTION_LABELS),
+    )
+    version = getattr(created, "version", None)
+    _record(name, content_hash(prompts[name]), version)
+    return {"status": "promoted", "prompt": name, "version": version}

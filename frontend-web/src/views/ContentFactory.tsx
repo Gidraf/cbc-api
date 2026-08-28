@@ -5,8 +5,9 @@ import { Link } from "react-router-dom";
 import { CurriculumStructure } from "./CurriculumStructure";
 import { HourWorkbench } from "./HourWorkbench";
 import { PromptInspector, type Inspection } from "./PromptInspector";
+import { VersionReview } from "./VersionReview";
 import { stationToText } from "../lib/serialize";
-import { useInspect, profileFor, useProfiles, gradeOptionLabel, subjectOptionLabel, useApi, useGrades, useProgress, useSubjects } from "../lib/queries";
+import { useArtifacts, useInspect, profileFor, useProfiles, gradeOptionLabel, subjectOptionLabel, useApi, useGrades, useProgress, useSubjects } from "../lib/queries";
 import { useQueryClient } from "@tanstack/react-query";
 
 /**
@@ -61,6 +62,69 @@ const STATIONS = [
     requires: "visuals",
   },
 ] as const;
+
+/** Which artifact kind each station files. A station that does not version its
+ *  output yet is absent rather than mapped to a guess. */
+const STATION_ARTIFACT_KIND: Record<string, string | undefined> = {
+  notes: "notes",
+  visuals: "diagram",
+  practicals: "activity",
+};
+
+/**
+ * The versions this station filed for this sub-strand, and their review.
+ *
+ * The artifacts are found by asking the server, not by rebuilding its identity
+ * rule here: a client-side copy of that rule reports "no versions yet" for
+ * content that exists the moment the two drift.
+ */
+function StationVersions({
+  kind,
+  grade,
+  subject,
+  subStrand,
+}: {
+  kind: string;
+  grade: string;
+  subject: string;
+  subStrand: string;
+}) {
+  const artifacts = useArtifacts({ grade, subject, kind, sub_strand: subStrand });
+  const rows = artifacts.data?.artifacts || [];
+  const [chosen, setChosen] = React.useState("");
+
+  const active = chosen || rows[0]?.artifact_id || "";
+
+  if (artifacts.isLoading) return <LoadingBlock rows={3} label="Loading versions" />;
+  if (!rows.length) {
+    return (
+      <EmptyState
+        title="Nothing filed yet"
+        description="A version is filed each time this station generates. Generate once, then review and approve it here."
+      />
+    );
+  }
+
+  return (
+    <Stack gap="var(--s3)">
+      {rows.length > 1 && (
+        <Stack direction="row" gap="var(--s2)" wrap>
+          {rows.map((a: any) => (
+            <Button
+              key={a.artifact_id}
+              size="sm"
+              variant={a.artifact_id === active ? "primary" : "ghost"}
+              onClick={() => setChosen(a.artifact_id)}
+            >
+              {a.title || a.sub_strand_name || `v${a.version}`}
+            </Button>
+          ))}
+        </Stack>
+      )}
+      <VersionReview artifactId={active} />
+    </Stack>
+  );
+}
 
 export function ContentFactory() {
   const [params, setParams] = useSearchParams();
@@ -450,6 +514,34 @@ export function ContentFactory() {
                       </Stack>
                       <StationResult result={lastResult.res} />
                     </>
+                  )}
+
+                  {/* Sending the operator to another screen to see what changed
+                      and then back to decide made them hold the previous screen
+                      in their head. The versions, their diffs, the layered
+                      review and the labels all live here, beside the station
+                      that produced them. */}
+                  {selected && STATION_ARTIFACT_KIND[station.id] && (
+                    <details style={{ marginTop: "var(--s3)" }}>
+                      <summary
+                        style={{
+                          cursor: "pointer",
+                          fontSize: "var(--text-sm)",
+                          color: "var(--ink-2)",
+                          fontWeight: 550,
+                        }}
+                      >
+                        Versions, review and approval
+                      </summary>
+                      <div style={{ marginTop: "var(--s3)" }}>
+                        <StationVersions
+                          kind={STATION_ARTIFACT_KIND[station.id]!}
+                          grade={effectiveGrade}
+                          subject={selected.subject}
+                          subStrand={selected.report.sub_strand_name}
+                        />
+                      </div>
+                    </details>
                   )}
                 </Card>
               );
