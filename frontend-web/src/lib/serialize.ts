@@ -78,7 +78,18 @@ export function strandToText(
 ): string {
   const name = strand.strand_name || strand.name || "Strand";
   let out = contextHeader(context) + heading(name);
+  // The generator returns the design's own numbering, the pages it read the
+  // strand from, and the sub-strand names listed in the design's summary table.
+  // Printing only the name and the description threw all three away, so a copy
+  // made for verification could not be verified against anything.
+  if (strand.strand_id) out += `Strand ID: ${strand.strand_id}\n`;
+  if (strand.source_pages?.length) out += `Source pages: ${strand.source_pages.join(", ")}\n`;
   if (strand.description) out += `${strand.description}\n`;
+  const named: string[] = strand.sub_strand_names || [];
+  if (named.length) {
+    out += `\nSub-strands the design names (${named.length}):\n`;
+    out += named.map((n: string) => `  - ${n}`).join("\n") + "\n";
+  }
   out += "\n";
 
   (substrands || []).forEach((s, i) => {

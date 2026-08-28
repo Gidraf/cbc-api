@@ -549,24 +549,64 @@ def ai_generate_profile_from_dataset(
             )
     skills_context_str = "\n\n".join(skills_context_parts) if skills_context_parts else "(Standard syllabus scope)"
 
+    # The profile is injected into every authoring prompt for this subject and
+    # grade, alongside the level register. Written without the register it
+    # contradicted it in the same prompt: flowcharts and "practical laboratory
+    # experiences" prescribed for four-year-olds the register says cannot read a
+    # flowchart. Whichever the model followed, one of the two was wrong.
+    from .level_register import register_block
+
+    register = register_block(grade) if grade and grade != "all" else ""
+
     system_prompt = (
         "You are an elite Chief KICD Curriculum Specialist and Master Pedagogical Profile Architect. "
         "Your task is to analyze the provided Kenyan Curriculum Design dataset (Essence Statement, Learning Outcomes, "
         "all Strands, Sub-strands, SLOs, Suggested Learning Experiences, Core Competencies, and Values) and synthesize "
-        "an EXHAUSTIVE, DEEPLY AUTHORITATIVE Pedagogical ContentTypeProfile JSON.\n\n"
-        "REQUIREMENTS FOR THE PROFILE:\n"
-        "1. persona: An eminent professor and master teacher educator with deep pedagogical authority in this subject, "
-        "specializing in all core skills and concepts present in the curriculum.\n"
-        "2. note_style: Deep Pedagogical Content Knowledge (PCK) guidance covering exact lesson structure, conceptual scaffolding, "
-        "concrete examples, common learner misconceptions to address, and real-world Kenyan contextual applications.\n"
-        "3. diagram_type: Precise visual models, vector SVG schematics, flowcharts, structural apparatus, and notation staves required across all strands.\n"
-        "4. activity_type: Constructivist hands-on investigations, practical laboratory/field experiments, group inquiry tasks, and Community Service Learning (CSL) projects.\n"
-        "5. question_type: Criterion-referenced Bloom's taxonomy assessment items (lower, intermediate, higher-order) with 4-level KICD rubrics (Exceeding, Meeting, Approaching, Below Expectation).\n"
-        "6. safety_focus: Comprehensive laboratory, workshop, agricultural, physical, or vocal safety and hygiene precautions tailored to the subject's practicals.\n"
-        "7. grade_appropriate_tone: Specific instructional tone and language register appropriate for the cognitive stage of the learners.\n"
-        "8. special_directives: 6-8 mandatory pedagogical mandates ensuring integration of the 7 BECF Core Competencies, 8 Core Values, and Special Needs Education (SNE) inclusivity.\n"
-        "9. empirical_insights: 4-6 authentic Kenyan empirical datasets, statistics, and scientific benchmarks from official sources (KNBS, KALRO, KICD, NEMA, etc.).\n"
-        "10. case_studies: 3-5 authentic Kenyan geographical case studies across diverse counties and ecological zones.\n\n"
+        "a Pedagogical ContentTypeProfile JSON.\n\n"
+        + (
+            "=== WHO THIS PROFILE IS FOR ===\n" + register + "\n\n"
+            "Every field below must be possible for THAT learner. This profile is "
+            "injected into the same prompt as the register above, so a profile "
+            "that contradicts it puts two opposite instructions in front of the "
+            "author and one of them will be followed. Prescribe nothing the "
+            "register rules out.\n\n"
+            if register else ""
+        )
+        + "REQUIREMENTS FOR THE PROFILE:\n"
+        "1. persona: A master teacher educator with real pedagogical authority in this subject "
+        "AT THIS LEVEL — teaching pre-primary is its own expertise, not a simplified version of "
+        "teaching secondary.\n"
+        "2. note_style: Pedagogical Content Knowledge (PCK) guidance covering lesson structure, "
+        "conceptual scaffolding, concrete examples, common learner misconceptions, and Kenyan "
+        "contexts drawn from the world this learner actually knows.\n"
+        "3. diagram_type: The visuals this subject needs AT THIS LEVEL. A flowchart, a table, a "
+        "graph and a labelled schematic all require reading; where the register says the learner "
+        "cannot read, say pictures, picture cards, charts of photographs and real objects "
+        "instead, and say so plainly.\n"
+        "4. activity_type: What this learner can actually do. Where the register rules out "
+        "laboratory procedures, chemicals, heat or sharp tools, do not prescribe them — "
+        "play-based and sensory work is the practical work at that level, not a lesser "
+        "substitute for it.\n"
+        "5. question_type: Criterion-referenced assessment items with 4-level KICD rubrics "
+        "(Exceeding, Meeting, Approaching, Below Expectation), asked in a form this learner can "
+        "answer — orally and by doing, where they cannot read a written question.\n"
+        "6. safety_focus: Only the hazards this subject's own practicals actually carry at this "
+        "level. An invented hazard trains teachers to ignore the field where it matters, so "
+        "where there is none, say so.\n"
+        "7. grade_appropriate_tone: Instructional tone and language register for this cognitive "
+        "stage.\n"
+        "8. special_directives: 6-8 mandates integrating the 7 BECF Core Competencies, the 8 Core "
+        "Values, and Special Needs Education (SNE) inclusivity.\n"
+        "9. empirical_insights: ONLY figures you can state exactly and attribute correctly from "
+        "your own knowledge of published Kenyan sources. Return an EMPTY LIST if you cannot. "
+        "This field previously demanded four to six statistics with official sources, which the "
+        "model had no way to obtain and therefore invented — '85% of children who demonstrate "
+        "understanding of Christian values [KICD Annual Report 2022]' is not a real figure, and "
+        "a fabricated statistic with a fabricated citation reaches a classroom looking exactly "
+        "like a real one. An empty list is the correct answer here far more often than not.\n"
+        "10. case_studies: 3-5 Kenyan teaching scenarios, drawn from settings a learner at this "
+        "level would recognise. These are illustrative contexts, not documented events; do not "
+        "present them as reported cases.\n\n"
         "Return ONLY a valid JSON object matching this schema:\n"
         "{\n"
         f'  "subject": "{subject}",\n'

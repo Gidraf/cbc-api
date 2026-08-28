@@ -4438,6 +4438,11 @@ def factory_read_structure(
                 "strand_id": str(entry.get("strand_id") or entry.get("id") or ""),
                 "strand_name": name,
                 "description": str(entry.get("description") or ""),
+                "source_pages": entry.get("source_pages") or [],
+                # What the design's summary table names, as opposed to what has
+                # actually been generated. The gap between the two is the work
+                # remaining, and it was invisible.
+                "sub_strand_names": entry.get("sub_strand_names") or [],
                 "sub_strands": [],
                 "saved": False,
             }
@@ -4516,6 +4521,13 @@ def factory_save_strands(
             "strand_name": name,
             "description": str(entry.get("description") or ""),
             "source_pages": [p for p in (entry.get("source_pages") or []) if isinstance(p, int)],
+            # The design's own summary table lists every sub-strand by name —
+            # CRE's is page 202, all twelve of them. The generator reads them and
+            # this dropped them on the floor, so the sub-strand generator then
+            # had to rediscover from scratch what had already been extracted.
+            "sub_strand_names": [
+                str(n).strip() for n in (entry.get("sub_strand_names") or []) if str(n).strip()
+            ],
             "sub_strands": [],
         })
 
