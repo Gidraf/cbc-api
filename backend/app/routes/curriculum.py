@@ -1046,7 +1046,7 @@ def factory_generate_notes(
             f"Key inquiry questions to address:\n{kiqs_formatted}\n\n"
             f"ESSENCE STATEMENT:\n{essence_stmt}\n\n"
             f"PRODUCTION RULES\n"
-            f"1. Author exactly {allocation.modules} module(s) in 'hour_modules', one per "
+            f"1. Author exactly {allocation.modules} module(s) in 'modules', one per "
             f"{module_word} the design allocates. Number them 1 to {allocation.modules}. "
             f"Do not merge them, and do not invent a {module_word} the design did not fund.\n"
             f"2. Set each module's 'duration_minutes' to "
@@ -1068,8 +1068,19 @@ def factory_generate_notes(
             f"beats an invented hazard.\n"
             f"7. Make the design's assessment rubric above achievable from these "
             f"notes. If the rubric asks for three of something, teach three.\n\n"
-            f"Return the JSON schema given above, with 'allocated_hours' set to the "
-            f"design's own wording: \"{allocation.stated or 'not stated'}\".\n\n"
+            f"=== ONE MODULE PER ALLOCATED LESSON ===\n"
+            f"This sub-strand is funded for {allocation.phrase()}. Produce EXACTLY "
+            f"{allocation.modules} module(s) in 'modules', numbered 1 to "
+            f"{allocation.modules}, with no gaps and none merged.\n"
+            f"A teacher builds a scheme of work from this and a head of department "
+            f"checks the scheme against it. Fewer modules than lessons cannot be "
+            f"scheduled: the missing lessons have no plan and nobody can see which "
+            f"ones they are.\n"
+            f"Set 'module_count' to {allocation.modules} and every "
+            f"'duration_minutes' to "
+            f"{allocation.minutes_each or 'the length this level teaches for'}.\n"
+            f"Set 'allocated_time' to the design's own wording, verbatim: "
+            f"\"{allocation.stated or 'not stated'}\".\n\n"
             f"ADDITIONAL PRODUCTION DIRECTIVES: {payload.custom_instructions}"
         ),
     })
@@ -1096,6 +1107,13 @@ def factory_generate_notes(
 
     resp = llm_client.generate(resolved, context.messages, temperature=0.15)
     audit_report = web_research_agent.perform_quality_audit(resp.content, "notes", dossier)
+
+    # Downstream readers — coverage, the DNA scorer, the stage guard, the visual
+    # planner — were written against hour_modules and key_concepts. Mirroring
+    # keeps them working without renaming the same list in six places, each of
+    # which would silently read zero until it was found.
+    if isinstance(notes_content, dict) and notes_content.get("modules"):
+        notes_content.setdefault("hour_modules", notes_content["modules"])
 
     # Normalize notes output so both hour_modules and key_concepts are rich arrays
     notes_content = resp.content
@@ -1153,6 +1171,18 @@ def factory_generate_notes(
         custom_instructions=payload.custom_instructions,
     )
 
+    # The design funds a fixed number of lessons and the guide must plan every
+    # one of them. A short guide used to pass silently: the fallback below built
+    # hour modules out of whatever concepts came back, so four modules for a
+    # seven-lesson sub-strand looked complete and three lessons had no plan.
+    lesson_plan = notes_coverage.check(notes_content, allocation, slos)
+    if not lesson_plan.complete:
+        logger.warning(
+            "Notes for %s (%s) cover %d of %d allocated %s.",
+            payload.sub_strand, payload.grade, lesson_plan.modules_found,
+            lesson_plan.modules_required, allocation.unit or "lessons",
+        )
+
     versioned = _record_artifact(
         "notes", payload.grade, payload.subject, notes_content,
         strand=payload.strand, sub_strand=payload.sub_strand,
@@ -1168,6 +1198,7 @@ def factory_generate_notes(
         "research_dossier": dossier.to_dict(),
         "quality_audit": audit_report.to_dict(),
         "quality_gate": gate_result.to_dict(),
+        "lesson_coverage": lesson_plan.to_dict(),
         "artifact": versioned,
     }
 
@@ -3840,6 +3871,17 @@ def factory_generate_media_prompts(
 
     resp = llm_client.generate(resolved, context.messages, temperature=0.3)
     content = resp.content if isinstance(resp.content, dict) else {}
+
+    # The prompt states the depth and the depiction rules; this checks them. An
+    # image model invents everything a short brief leaves out, and a depiction
+    # the faith forbids reaching a Kenyan classroom is not a quality defect at
+    # all — so both are measured rather than assumed.
+    media_check = media_validators.check(content, payload.subject)
+    if not media_check.sound:
+        logger.warning(
+            "Media plan for %s (%s) has %d blocking issue(s).",
+            payload.sub_strand, payload.subject, len(media_check.errors),
+        )
     provenance = {
         "model": f"{resolved.provider}/{resolved.model}",
         "agent": "media-prompt-generator",
@@ -3880,6 +3922,7 @@ def factory_generate_media_prompts(
         "media": planned,
         "planned_count": len(planned),
         "unusable_count": skipped,
+        "brief_quality": media_check.to_dict(),
         "saved": payload.save,
         "usage": resp.usage,
         "model": f"{resolved.provider}/{resolved.model}",

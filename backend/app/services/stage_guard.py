@@ -52,7 +52,7 @@ def _hours_from(notes_content: Any) -> list[Artifact]:
 
     mods = []
     if isinstance(notes_content, dict):
-        mods = notes_content.get("hour_modules") or []
+        mods = notes_content.get("modules") or notes_content.get("hour_modules") or []
     if not isinstance(mods, list):
         return []
 

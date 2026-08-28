@@ -33,6 +33,12 @@ class FaithScope:
     scriptures: list[str]
     reverent_terms: list[str]
     markers: list[str] = field(default_factory=list)
+    # What may and may not be pictured. Images are now generated for every
+    # learning area, and the rules differ sharply between faiths: a scene a CRE
+    # design explicitly asks for — "observe pictures of Adam and Eve" — would be
+    # impermissible in IRE material. Getting this wrong in a Kenyan classroom is
+    # not a quality defect, it is an offence against the community it serves.
+    depiction: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -55,6 +61,18 @@ _SCOPES: dict[str, FaithScope] = {
             "adam and eve", "david and goliath", "matthew", "luke", "mark",
             "exodus", "hebrews", "proverbs", "samuel", "commandment",
         ],
+        depiction=(
+            "Biblical scenes and figures MAY be pictured, and the KICD designs ask "
+            "for them by name — 'observe pictures of Adam and Eve', 'colour drawn "
+            "pictures of Jesus blessing little children'. Follow the design's own "
+            "lead on what to picture.\n"
+            "Depict reverently: modest dress, no caricature, no comic or cartoon "
+            "irreverence toward Jesus Christ. Keep the setting biblical rather than "
+            "modern-Kenyan when the scene is scriptural, and Kenyan when the scene "
+            "is about the learner's own life or church.\n"
+            "Do not depict God the Father as a human figure; where the lesson is "
+            "about God, picture creation, or people at worship, instead."
+        ),
     ),
     "hindu religious education": FaithScope(
         subject="Hindu Religious Education",
@@ -75,6 +93,21 @@ _SCOPES: dict[str, FaithScope] = {
             "sadachaar", "sewa", "yoga", "asana", "namaste", "hindu", "jain",
             "buddhist", "sikh", "krishna", "mahavir", "buddha", "waheguru",
         ],
+        depiction=(
+            "This design covers four faiths, and their conventions differ. Follow "
+            "the tradition the sub-strand is actually about, and where the design "
+            "names a picture, follow the design.\n"
+            "Hindu/Sanatan: murtis and deities may be pictured, with correct "
+            "iconography — the right attributes, vahana and posture for that deity. "
+            "Never casual, commercial or ornamental use of a deity's image.\n"
+            "Jain and Buddhist: Tirthankaras and Lord Buddha may be pictured in the "
+            "traditional seated or standing forms, serene and symmetrical.\n"
+            "Sikh: picture the Gurdwara, the Nishan Sahib, sewa and langar rather "
+            "than the Gurus. Sri Guru Granth Sahib Ji must never be shown open, on "
+            "the floor, or handled without respect — it is treated as a living Guru.\n"
+            "Feet must never point at a scripture, a shrine or a deity, and shoes "
+            "are never worn in a place of worship."
+        ),
     ),
     "islamic religious education": FaithScope(
         subject="Islamic Religious Education",
@@ -90,6 +123,27 @@ _SCOPES: dict[str, FaithScope] = {
             "eid", "bismillah", "alhamdulillah", "shukran", "ma shaa allah",
             "dua", "anashid", "qasida", "iman",
         ],
+        depiction=(
+            "ABSOLUTE PROHIBITION. Never depict Allah (S.W.T.) — in any form, "
+            "figurative, symbolic or abstract. Never depict Prophet Muhammad "
+            "(S.A.W.), and never depict any other prophet: not Adam, Ibrahim, Musa "
+            "or Isa (A.S.). Never depict the Sahaba. This holds even where another "
+            "religious learning area pictures the same figure — a CRE lesson may "
+            "show Adam and Eve; an IRE lesson may not.\n"
+            "Do not show a face, a silhouette, a haloed figure, a covered figure, a "
+            "back view, or 'a figure in the distance' standing in for any of them. "
+            "A workaround is still a depiction.\n"
+            "Picture instead: the Holy Qur'an on its stand, Arabic calligraphy, the "
+            "Masjid and its minaret and mihrab, geometric and arabesque pattern, "
+            "the Kaaba and pilgrims at Hajj, a child performing wudhu or reading "
+            "the Qur'an, dates and Iftar at Eid, Kenyan Muslim family life.\n"
+            "Where people appear they are ordinary Kenyan Muslims, modestly "
+            "dressed — hijab for women and girls where age-appropriate, kanzu and "
+            "kofia — never a prophet and never a named companion.\n"
+            "If a sub-strand's story cannot be pictured without depicting a "
+            "prophet, picture its setting, its objects or its lesson instead, and "
+            "say in the alt text what the story is. Do not force it."
+        ),
     ),
 }
 
@@ -179,7 +233,42 @@ def prompt_block(subject: str | None) -> str:
             f"  Note: KICD scopes this single learning area across {faiths}."
             " All of them are in scope here; that is the design's own intent."
         )
+    if scope.depiction:
+        lines += ["", "  WHAT MAY BE PICTURED:"]
+        lines += [f"  {line}" for line in scope.depiction.split("\n")]
     return "\n".join(lines)
+
+
+def depiction_rules(subject: str | None) -> str:
+    """Just the imagery rules, for the media prompts that need them in full."""
+    scope = scope_for(subject)
+    return scope.depiction if scope else ""
+
+
+# Words that mean a prophet has been drawn. Checked after generation, because a
+# prompt instruction is a request and this is a check — and a depiction that
+# reaches a Kenyan IRE classroom is not a quality defect but an offence against
+# the community the lesson serves.
+_IRE_DEPICTION_SIGNS = (
+    "prophet muhammad", "muhammad (s.a.w", "prophet adam", "prophet ibrahim",
+    "prophet musa", "prophet isa", "the prophet's face", "depicting the prophet",
+    "image of the prophet", "picture of the prophet", "allah appears",
+    "figure of allah", "face of allah",
+)
+
+
+def forbidden_depictions(text: str, subject: str | None) -> list[str]:
+    """Depictions this learning area must not contain, found in generated text.
+
+    Only IRE carries an absolute prohibition, and only IRE is checked for one.
+    A CRE design that asks for pictures of Adam and Eve is following KICD.
+    """
+    scope = scope_for(subject)
+    if scope is None or "Islam" not in scope.faiths:
+        return []
+
+    lowered = (text or "").lower()
+    return sorted({sign for sign in _IRE_DEPICTION_SIGNS if sign in lowered})
 
 
 def cross_faith_terms(text: str, subject: str | None) -> list[str]:

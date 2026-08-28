@@ -135,6 +135,10 @@ export type SubstrandReport = {
 };
 
 export type ProgressReport = {
+  /** Where sub-strands DO live, when none were found under the grade asked for.
+   *  "Nothing ingested" and "filed under another grade" look identical from the
+   *  coverage screen, and they are not the same problem. */
+  found_under_other_grades?: { grade: string; subject: string; sub_strands: number }[];
   grade: string;
   // Everything below is optional because the API does not always send it, and
   // typing it as required is what put the literal text "undefined" on screen.

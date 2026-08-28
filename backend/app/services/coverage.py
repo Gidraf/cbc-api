@@ -163,7 +163,13 @@ def compute_substrand_coverage(
     activities_raw = (generated or {}).get("activities") or []
     questions = (generated or {}).get("questions") or []
 
-    modules = notes.get("hour_modules") or notes.get("key_concepts") or [] if isinstance(notes, dict) else []
+    # The teacher's guide files one module per allocated lesson under "modules".
+    # Reading only the older keys reported a complete guide as zero notes, which
+    # is what "no generations of notes" looked like from the coverage screen.
+    modules = (
+        notes.get("modules") or notes.get("hour_modules") or notes.get("key_concepts") or []
+        if isinstance(notes, dict) else []
+    )
     hours_generated = (
         len(modules) if isinstance(modules, list) and modules
         else (requirement.hours if isinstance(notes, dict) and notes.get("full_lecture_notes") else 0)

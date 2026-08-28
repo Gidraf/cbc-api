@@ -241,7 +241,7 @@ def score_notes(
     else:
         out.add("slo_coverage", Score(None, "pending_no_blueprint_slos", "blueprint carried no SLOs"))
 
-    modules = notes.get("hour_modules") or notes.get("key_concepts") or notes.get("sections") or []
+    modules = notes.get("modules") or notes.get("hour_modules") or notes.get("key_concepts") or notes.get("sections") or []
     module_count = len(modules) if isinstance(modules, list) else 0
     structural = [
         bool(notes.get("title")),

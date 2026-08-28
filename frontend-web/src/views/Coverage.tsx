@@ -64,6 +64,11 @@ export function Coverage() {
   const totalSubstrands = report?.total_substrands ?? 0;
   const hasCurriculum = totalSubstrands > 0;
   const overallPct = report?.overall_grade_percentage;
+  // Content filed under a different grade reads exactly like no content at all.
+  // PP1 sections landing under grade-pp2 was a real bug and this screen
+  // reported it as an empty grade for days.
+  const elsewhere = report?.found_under_other_grades ?? [];
+  const approvedPct = (report as any)?.approved_grade_percentage;
   const gradeLabel =
     report?.grade_label ||
     (grades.data || []).find((g) => (g.slug || g.name) === grade)?.label ||
@@ -118,13 +123,27 @@ export function Coverage() {
         <>
           <Grid min="190px">
             <Stat
-              label={`${gradeLabel} overall`}
+              label={`${gradeLabel} produced`}
               value={overallPct === undefined ? "—" : `${overallPct}%`}
               progress={overallPct ?? 0}
               sub={
                 hasCurriculum
                   ? `${report.completed_substrands ?? 0} of ${totalSubstrands} sub-strands complete`
+                  : elsewhere.length
+                  ? `Nothing under ${gradeLabel} — ${elsewhere.reduce(
+                      (n, e) => n + e.sub_strands, 0
+                    )} sub-strands are filed elsewhere`
                   : "No curriculum ingested for this grade"
+              }
+            />
+            <Stat
+              label={`${gradeLabel} approved`}
+              value={approvedPct === undefined ? "—" : `${approvedPct}%`}
+              progress={approvedPct ?? 0}
+              sub={
+                hasCurriculum
+                  ? "Signed off by a person, weighted by teaching time"
+                  : "Nothing to approve yet"
               }
             />
             {DIMENSIONS.map((d) => {
@@ -152,11 +171,26 @@ export function Coverage() {
               hasCurriculum ? (
                 <EmptyState title="Nothing outstanding" description="Every sub-strand in this grade is complete." />
               ) : (
-                <EmptyState
-                  title="No curriculum ingested"
-                  description="Ingest this grade's KICD curriculum designs before coverage can be measured."
-                  tone="warn"
-                />
+                elsewhere.length ? (
+                  <EmptyState
+                    title={`Nothing is filed under ${gradeLabel}`}
+                    description={
+                      "Sub-strands exist, but under a different grade or subject. " +
+                      "Switch the grade above, or re-ingest so they are filed here: " +
+                      elsewhere
+                        .slice(0, 6)
+                        .map((e) => `${e.grade} / ${e.subject} (${e.sub_strands})`)
+                        .join(" · ")
+                    }
+                    tone="warn"
+                  />
+                ) : (
+                  <EmptyState
+                    title="No curriculum ingested"
+                    description="Ingest this grade's KICD curriculum designs before coverage can be measured."
+                    tone="warn"
+                  />
+                )
               )
             ) : (
               <Stack gap="var(--s2)">

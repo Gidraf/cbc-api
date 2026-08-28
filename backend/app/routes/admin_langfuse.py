@@ -552,7 +552,8 @@ def inspect_dataset_deletion(
 
     for r in res_rows:
         notes_data = r.get("notes") or {}
-        h_mods = notes_data.get("hour_modules") or notes_data.get("key_concepts") or []
+        h_mods = (notes_data.get("modules") or notes_data.get("hour_modules")
+                  or notes_data.get("key_concepts") or [])
         hours_count = len(h_mods) if isinstance(h_mods, list) and len(h_mods) > 0 else (4 if notes_data.get("full_lecture_notes") else 0)
         total_notes_hours += hours_count
 
@@ -910,7 +911,8 @@ def get_dataset_progress_report(
 
         h_mods = []
         if gen_res and isinstance(gen_res.get("notes"), dict):
-            h_mods = gen_res["notes"].get("hour_modules") or gen_res["notes"].get("key_concepts") or []
+            h_mods = (gen_res["notes"].get("modules") or gen_res["notes"].get("hour_modules")
+                      or gen_res["notes"].get("key_concepts") or [])
         diagrams_list = (gen_res.get("diagrams") or []) if gen_res else []
         activities_raw = (gen_res.get("activities") or []) if gen_res else []
         activities_list = (
@@ -1075,10 +1077,45 @@ def get_dataset_progress_report(
 
     estimated_count = sum(1 for i in all_substrands if i["estimated"])
 
+    # "No curriculum ingested" and "your curriculum is filed under a different
+    # grade" look identical from this screen, and they are not the same problem.
+    # PP1 sections landing under grade-pp2 was a real bug, and the console
+    # reported it as an empty grade for days.
+    elsewhere: list[dict[str, Any]] = []
+    if not all_substrands:
+        try:
+            elsewhere = [
+                {"grade": str(r.get("grade") or ""), "subject": str(r.get("subject") or ""),
+                 "sub_strands": int(r.get("n") or 0)}
+                for r in (fetch_all(
+                    """
+                    SELECT grade, subject, COUNT(*) AS n
+                    FROM curriculum_substrands
+                    GROUP BY grade, subject
+                    ORDER BY COUNT(*) DESC
+                    LIMIT 25
+                    """
+                ) or [])
+            ]
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Could not check for sub-strands under other grades: %s", exc)
+
+        if elsewhere:
+            logger.warning(
+                "No sub-strands for %s, but %d row(s) exist elsewhere: %s",
+                grade_slug, sum(e["sub_strands"] for e in elsewhere),
+                ", ".join(f"{e['grade']}/{e['subject']}" for e in elsewhere[:5]),
+            )
+
     return {
         "grade": grade_slug,
         "grade_label": grade_label(grade_slug),
         "grade_ordinal": grade_ordinal(grade_slug),
+        "requested_grade": grade,
+        # Where content DOES live, when none was found here. Empty when this
+        # grade has its own, and absent as a concept when nothing is stored at
+        # all — which is the genuinely empty case.
+        "found_under_other_grades": elsewhere,
         "overall_grade_percentage": grade_pct,
         "approved_grade_percentage": grade_approved_pct,
         "rollup_method": "weighted_by_allocated_hours",

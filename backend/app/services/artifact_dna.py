@@ -304,7 +304,7 @@ class UniversalArtifactDnaService:
             raw_source,
         )
 
-        modules = notes_content.get("hour_modules") or notes_content.get("key_concepts") or notes_content.get("sections") or []
+        modules = notes_content.get("modules") or notes_content.get("hour_modules") or notes_content.get("key_concepts") or notes_content.get("sections") or []
         dna_payload = {
             "title": notes_content.get("title", ""),
             "module_count": len(modules) if isinstance(modules, list) else 0,
