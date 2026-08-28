@@ -20,6 +20,7 @@ import {
   Th,
 } from "../ui/components";
 import { gradeOptionLabel, type SubstrandReport, useGrades, useProgress } from "../lib/queries";
+import { ResetPanel } from "./ResetPanel";
 
 const DIMENSIONS = [
   { key: "notes", label: "Lesson hours", noun: "hours" },
@@ -89,6 +90,11 @@ export function Coverage() {
         }
         actions={
           <>
+            <ResetPanel
+              grade={effectiveGrade}
+              subject={subject || undefined}
+              onDone={() => progress.refetch()}
+            />
             <Select
               aria-label="Grade"
               value={effectiveGrade}

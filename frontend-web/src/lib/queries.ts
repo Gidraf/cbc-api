@@ -577,6 +577,40 @@ export function useSavedSubstrands(grade: string, subject?: string) {
   });
 }
 
+export type ResetReport = {
+  scope: { grade?: string; subject?: string };
+  dry_run: boolean;
+  total_rows: number;
+  tables: { table: string; what: string; rows: number; deleted?: boolean }[];
+  skipped: { table: string; why: string }[];
+  failed: { table: string; error: string }[];
+  protected: string[];
+  confirmation_required: string;
+  message: string;
+};
+
+/** Clear generated content so the pipeline can be run again from the dataset.
+ *
+ *  A dry run unless `confirm` carries the exact phrase, so the counts can be
+ *  read before anything goes. The Langfuse dataset is never touched: everything
+ *  cleared here is derived from it and can be produced again. */
+export function useFactoryReset() {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { grade?: string; subject?: string; confirm?: string }) =>
+      api<ResetReport>("/api/v1/curriculum/factory/reset", {
+        method: "POST",
+        body: JSON.stringify(v),
+      }),
+    onSuccess: (report) => {
+      if (report.dry_run) return;
+      // Everything on screen was derived from what just went.
+      qc.invalidateQueries();
+    },
+  });
+}
+
 export function useBundle(grade: string, subject: string, subStrand: string) {
   const api = useApi();
   return useQuery({

@@ -151,3 +151,40 @@ def test_the_route_is_admin_only_and_dry_run_by_default() -> None:
     assert 'require_roles("admin")' in signature, "a full wipe must not be operator-callable"
     assert 'confirm: str = ""' in route
     assert "FACTORY RESET by %s" in block, "a destructive run must name who ran it"
+
+
+# ── The console ─────────────────────────────────────────────────────────────
+
+def test_the_reset_is_reachable_where_the_content_is() -> None:
+    """A reset that only exists as a curl is a reset nobody runs until the data
+    is already unusable."""
+    factory = open("../frontend-web/src/views/ContentFactory.tsx").read()
+    coverage = open("../frontend-web/src/views/Coverage.tsx").read()
+
+    assert "ResetPanel" in factory
+    assert "ResetPanel" in coverage
+
+
+def test_the_console_shows_the_counts_before_deleting() -> None:
+    panel = open("../frontend-web/src/views/ResetPanel.tsx").read()
+
+    assert "reset.mutate({ grade, subject })" in panel, "it must dry-run on open"
+    assert "What would be cleared" in panel
+    assert "confirm: phrase" in panel
+
+
+def test_the_console_requires_the_phrase_to_be_typed() -> None:
+    """A click is too easy to make by accident on a screen you opened to look at
+    something else."""
+    panel = open("../frontend-web/src/views/ResetPanel.tsx").read()
+
+    assert "const armed = typed.trim() === phrase" in panel
+    assert "disabled={!armed" in panel
+    assert "This cannot be undone" in panel
+
+
+def test_the_console_says_the_dataset_survives() -> None:
+    panel = open("../frontend-web/src/views/ResetPanel.tsx").read()
+
+    assert "Langfuse dataset are not touched" in panel
+    assert "can be produced\n                again by re-ingesting" in panel.replace("\r", "")
