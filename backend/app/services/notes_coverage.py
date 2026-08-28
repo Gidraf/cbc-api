@@ -27,7 +27,14 @@ _MODULE_LISTS = ("modules", "hour_modules", "key_concepts")
 
 # Below this a module is a heading, not a lesson plan. A teacher cannot teach
 # from two sentences, and a guide of them reads complete to every count.
-MIN_BODY_CHARS = 400
+#
+# 1,500 characters is roughly half a printed page per lesson, so a seven-lesson
+# sub-strand lands near three pages — which is what a guide has to be to be
+# taught from without further preparation. The floor was 400 while the prompt
+# asked for 800, so a guide averaging 662 characters a module passed the
+# validator, failed the instruction, and reported "complete, 100%". One number,
+# stated once, in both places.
+MIN_BODY_CHARS = 1_500
 
 
 @dataclass(slots=True)

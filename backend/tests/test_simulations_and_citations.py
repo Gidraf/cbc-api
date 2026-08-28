@@ -233,3 +233,59 @@ def test_questions_say_how_they_serve_the_kicd_goal() -> None:
     assert "kicd_alignment" in flat
     assert "which competency and value it develops" in flat
     assert "assessing something KICD did not ask for" in flat
+
+
+# ── A wrapped entry cited on any of its lines ───────────────────────────────
+
+_WRAPPED_DESIGN = (
+    "=" * 80 + "\nPAGE 203 OF 296\n" + "=" * 80 + "\n\n"
+    "a) identify three\n"
+    "qualities of\n"
+    "God,\n"
+    "b) practice saying\n"
+    "short prayers,\n"
+    "c) appreciate God\n"
+    "as a loving\n"
+    "heavenly father.\n"
+    "• sing songs about God in groups,\n"
+)
+
+
+@pytest.mark.parametrize("ref,quote,span", [
+    ("203:1", "identify three qualities of God", "203:1"),
+    ("203:2", "identify three qualities of God", "203:1-3"),
+    ("203:5", "practice saying short prayers", "203:4-5"),
+    ("203:8", "appreciate God as a loving heavenly father", "203:6-8"),
+])
+def test_an_outcome_cited_on_any_of_its_wrapped_lines_verifies(ref, quote, span) -> None:
+    """KICD prints in narrow columns, so one outcome spans three printed lines:
+    "a) identify three" / "qualities of" / "God,". A model quoting the outcome
+    may anchor on any of them, and is correct about the claim either way.
+
+    Looking only forward failed two of three correct citations in one run and
+    told the operator the claims were unsupported."""
+    report = verify({"citations": [{"ref": ref, "quote": quote}]}, _WRAPPED_DESIGN)
+
+    assert report.verified == 1, report.citations[0].reason
+    assert report.citations[0].found_at == span
+
+
+def test_the_entry_span_does_not_swallow_the_next_entry() -> None:
+    """A run that reached into the neighbouring bullet would verify a quote
+    against text it did not come from — which is the failure the whole check
+    exists to catch."""
+    report = verify(
+        {"citations": [{"ref": "203:8", "quote": "sing songs about God in groups"}]},
+        _WRAPPED_DESIGN,
+    )
+
+    assert report.verified == 0
+
+
+def test_the_entry_span_does_not_reach_back_past_its_own_marker() -> None:
+    report = verify(
+        {"citations": [{"ref": "203:4", "quote": "identify three qualities of God"}]},
+        _WRAPPED_DESIGN,
+    )
+
+    assert report.verified == 0, "it reached back into the previous outcome"

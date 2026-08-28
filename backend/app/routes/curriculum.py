@@ -20,6 +20,7 @@ from ..services import (
     media_registry,
     media_validators,
     notes_coverage,
+    rubric_filler,
     simulation_validators,
     substrand_integrity,
     substrand_hygiene,
@@ -31,6 +32,13 @@ from ..services.grade_scope import notes_for as grade_scope_notes
 from ..services.level_register import register_block, register_for_grade as level_register_for
 
 logger = logging.getLogger(__name__)
+
+# How much of the curriculum design the notes prompt carries. A design runs to
+# about 32,000 characters — 8,000 tokens against a 128,000-token window — so the
+# whole of it fits, and a guide written from a twentieth of its source scores
+# 0.20 on grounding because that is what it deserves.
+MAX_DESIGN_CHARS = 120_000
+
 
 router = APIRouter(prefix="/api/v1/curriculum", tags=["Curriculum Intelligence & DNA"])
 
@@ -1024,7 +1032,15 @@ def factory_generate_notes(
         "slos": slos_formatted,
         "kiqs": kiqs_formatted,
         "essence_statement": essence_stmt or f"Comprehensive curriculum blueprint for {payload.subject} ({payload.grade}).",
-        "source_material_snippet": source_text[:4000] if source_text else "(NO DESIGN DOCUMENT AVAILABLE)",
+        # Was 4,000 characters — pages 198 to 203, cut mid-table at "The learner
+        # is guided to:". The model never saw the rest of the design and was
+        # then scored on how well it matched it. The whole design fits: at
+        # roughly four characters per token, 32,000 characters is 8,000 tokens
+        # against a 128,000-token window.
+        "source_material_snippet": (
+            source_text[:MAX_DESIGN_CHARS] if source_text
+            else "(NO DESIGN DOCUMENT AVAILABLE)"
+        ),
         "design_extract": design_block or "(no stored sub-strand detail)",
         "time_allocation": allocation.phrase(),
         "research_dossier": dossier.formatted_context,
@@ -1035,6 +1051,12 @@ def factory_generate_notes(
         agent_name="note-generator",
         grade_slug=payload.grade,
         subject=payload.subject,
+        # One sub-strand's guide does not need the other eleven in full. That
+        # block was 20,606 characters, ~18,000 of them about sub-strands this
+        # guide is not writing, while the design itself was cut to a 4,000-char
+        # excerpt — and the gate then scored grounding against all 31,689.
+        focus_strand=payload.strand,
+        focus_sub_strand=payload.sub_strand,
         template_vars=template_vars,
     )
 
@@ -1072,9 +1094,10 @@ def factory_generate_notes(
             f"3. Every module must build on the design's own suggested learning "
             f"experiences above. They are the lesson; your notes explain how to teach "
             f"them, not what to teach instead of them.\n"
-            f"4. Depth follows the learner described in WHO THIS IS FOR, not a fixed "
-            f"word count. A note a teacher cannot deliver to this age group is wrong "
-            f"however thorough it is.\n"
+            f"4. What is TAUGHT follows the learner described in WHO THIS IS FOR: a "
+            f"note a teacher cannot deliver to this age group is wrong however "
+            f"thorough it is. How much GUIDANCE the teacher gets does not follow the "
+            f"learner, and the floor below is a floor.\n"
             f"5. Cite a source only where the claim needs one and the source is "
             f"permitted for THIS subject. A sub-strand that rests on the design alone "
             f"needs no external citation, and inventing statistics to fill the field "
@@ -1099,10 +1122,10 @@ def factory_generate_notes(
             f"Set 'allocated_time' to the design's own wording, verbatim: "
             f"\"{allocation.stated or 'not stated'}\".\n\n"
             f"=== EACH MODULE MUST BE TEACHABLE ON ITS OWN ===\n"
-            f"Every module needs AT LEAST {notes_coverage.MIN_BODY_CHARS * 2:,} "
-            f"characters across its exposition and its lesson flow — a module of "
-            f"three sentences is a heading, and a teacher handed it still has to "
-            f"prepare the lesson.\n"
+            f"Every module needs AT LEAST {notes_coverage.MIN_BODY_CHARS:,} "
+            f"characters across its exposition and its lesson flow — about half a "
+            f"printed page per lesson. A module of three sentences is a heading, "
+            f"and a teacher handed it still has to prepare the lesson.\n"
             f"That depth is CONCRETE, not longer sentences: the actual words to "
             f"say, the actual song or story, the questions in the order to ask "
             f"them, what a child who has not understood will do and what to do "
@@ -3009,6 +3032,19 @@ class GenerateMediaPromptsRequest(BaseModel):
     inspect: bool = False
 
 
+class QueueWorkRequest(BaseModel):
+    """Queue the long work instead of holding a request open for it."""
+
+    grade: str
+    subject: str
+    # Which stations to run, in order. Each runs for every sub-strand in scope.
+    kinds: list[str] = ["notes"]
+    strand: str = ""
+    # Empty means every sub-strand stored for this subject.
+    sub_strands: list[str] = []
+    custom_instructions: str = ""
+
+
 class FactoryResetRequest(BaseModel):
     """Clear generated content so the pipeline can be re-run from the dataset."""
 
@@ -3370,6 +3406,45 @@ def factory_generate_strands(
     }
 
 
+def _rubric_writer(payload: Any, resolved: Any, design_block: str) -> Any:
+    """The per-sub-strand callable that writes a rubric from its own outcomes.
+
+    Used only where the design's rubric table could not be read. KICD prints
+    those as four-column tables and the extracted text is the worst-mangled
+    part of every design — one run produced a rubric row from a different
+    strand entirely.
+    """
+    from ..services.langfuse_context import langfuse_context_service
+    from ..services.llm_client import llm_client
+
+    def for_sub_strand(sub_strand: dict[str, Any]) -> list[dict[str, Any]]:
+        slos = sub_strand.get("slos") or []
+        context = langfuse_context_service.assemble_agent_context(
+            agent_name="rubric-generator",
+            grade_slug=payload.grade,
+            subject=payload.subject,
+            template_vars={
+                "level_register": register_block(
+                    payload.grade,
+                    notes=grade_scope_notes(payload.grade, payload.subject),
+                ),
+                "faith_scope": faith_prompt_block(payload.subject),
+                "strand": payload.strand_name,
+                "sub_strand": str(sub_strand.get("sub_strand_name") or ""),
+                "time_allocation": str(sub_strand.get("allocated_time") or "not stated"),
+                "slos": "\n".join(
+                    f"- {s.get('text', s) if isinstance(s, dict) else s}" for s in slos
+                ) or "(none stated)",
+                "design_extract": design_block,
+            },
+        )
+        response = llm_client.generate(resolved, context.messages, temperature=0.1)
+        content = response.content if isinstance(response.content, dict) else {}
+        return [r for r in (content.get("rubric") or []) if isinstance(r, dict)]
+
+    return for_sub_strand
+
+
 @router.post("/factory/generate-substrands")
 def factory_generate_substrands(
     payload: FactoryGenerateSubstrandsRequest,
@@ -3506,12 +3581,16 @@ def factory_generate_substrands(
             outcome["trace"]["chunks"]["chunk_count"], len(outcome["items"]),
         )
         kept, refused = substrand_hygiene.clean(payload.strand_name, outcome["items"])
+        rubrics = rubric_filler.fill(
+            kept, _rubric_writer(payload, resolved, source_material[:12_000])
+        )
         return {
             "subject": payload.subject,
             "grade": payload.grade,
             "strand_name": payload.strand_name,
             "sub_strands": kept,
             "refused": refused,
+            "rubrics": rubrics.to_dict(),
             "essence_statement_used": essence_stmt,
             "source_material_length": len(source_material),
             "grounded": True,
@@ -3526,12 +3605,22 @@ def factory_generate_substrands(
     # that through is how a strand called "4.0 CHRISTIAN VALUES" was saved with
     # two hundred lines of page debris in its `values` list.
     sub_strands, refused = substrand_hygiene.clean(payload.strand_name, raw)
+
+    # Where the design's rubric table could not be read, write one from the
+    # sub-strand's own outcomes and say so. A rubric read from KICD and a rubric
+    # derived from its outcomes are different things, and a reviewer must be
+    # able to tell them apart.
+    rubrics = rubric_filler.fill(
+        sub_strands, _rubric_writer(payload, resolved, source_material[:12_000])
+    )
+
     return {
         "subject": payload.subject,
         "grade": payload.grade,
         "strand_name": payload.strand_name,
         "sub_strands": sub_strands,
         "refused": refused,
+        "rubrics": rubrics.to_dict(),
         "essence_statement_used": essence_stmt,
         "source_material_length": len(source_material),
         "grounded": bool(source_material),
@@ -3720,6 +3809,175 @@ def factory_page_reconciliation(
         "reconciling": sum(1 for r in reports if r["reconciles"]),
         "total": len(reports),
     }
+
+
+# Which station each queued kind runs, and the payload shape it needs. Kept
+# beside the routes so a station and its queued form cannot drift apart.
+_QUEUEABLE: dict[str, str] = {
+    "notes": "factory_generate_notes",
+    "diagram": "factory_plan_visuals",
+    "media": "factory_generate_media_prompts",
+    "simulation": "factory_generate_simulations",
+    "activity": "factory_plan_activities",
+}
+
+
+def _run_queued(job: dict[str, Any]) -> dict[str, Any]:
+    """Run one queued station for one sub-strand.
+
+    The handler is the route function itself, so queued work and clicked work
+    take exactly the same path — a queue that reimplements the station is a
+    second implementation to keep correct.
+    """
+    kind = str(job.get("kind") or "")
+    endpoint = _QUEUEABLE.get(kind)
+    if not endpoint:
+        raise ValueError(f"'{kind}' has no station to run.")
+
+    handler = globals()[endpoint]
+    model_cls = handler.__annotations__.get("payload")
+    payload = dict(job.get("payload") or {})
+    fields = {
+        "grade": job.get("grade") or "",
+        "subject": job.get("subject") or "",
+        "strand": job.get("strand") or "",
+        "sub_strand": job.get("sub_strand") or "",
+        "custom_instructions": payload.get("custom_instructions") or "",
+    }
+    allowed = set(model_cls.model_fields)
+    result = handler(model_cls(**{k: v for k, v in fields.items() if k in allowed}), None)
+
+    # The whole result would be megabytes across a grade; keep what a progress
+    # view actually reads.
+    return {
+        "artifact_id": (result.get("artifact") or {}).get("artifact_id", "")
+        if isinstance(result, dict) else "",
+        "lesson_coverage": (result or {}).get("lesson_coverage", {}),
+        "brief_quality": (result or {}).get("brief_quality", {}),
+        "citations": {
+            k: v for k, v in ((result or {}).get("citations") or {}).items()
+            if k in ("total", "verified", "percentage")
+        },
+    }
+
+
+def _register_queue_handlers() -> None:
+    from ..services import job_queue
+
+    for kind in _QUEUEABLE:
+        job_queue.register(kind, _run_queued)
+
+
+_register_queue_handlers()
+
+
+@router.post("/factory/queue")
+def factory_queue_work(
+    payload: QueueWorkRequest,
+    auth: AuthContext = Depends(require_roles("admin", "operator")),
+) -> dict[str, Any]:
+    """Queue stations across many sub-strands and return immediately.
+
+    One sub-strand's notes take about a minute; a grade's worth take an
+    afternoon. Held open on a request, that blocks a tab, times out at the
+    proxy, and loses everything on a refresh.
+
+    The queue runs SEQUENTIALLY on purpose: these calls cost money and hit
+    provider rate limits, and ten at once fails halfway with no way to tell
+    which half.
+    """
+    import hashlib as _hashlib
+    from ..infra.db import fetch_all
+    from ..services import job_queue
+
+    unknown = [k for k in payload.kinds if k not in _QUEUEABLE]
+    if unknown:
+        raise_api_error(
+            "VALIDATION_FAILED",
+            f"Cannot queue {', '.join(unknown)}. Known: {', '.join(sorted(_QUEUEABLE))}.",
+        )
+
+    rows = fetch_all(
+        """
+        SELECT strand_name, sub_strand_name FROM curriculum_substrands
+        WHERE (grade = :grade OR grade = :alt_grade)
+          AND LOWER(subject) = LOWER(:subject)
+          AND (:strand = '' OR LOWER(strand_name) = LOWER(:strand))
+        ORDER BY strand_id, sub_strand_id
+        """,
+        {"grade": payload.grade, "alt_grade": payload.grade.replace("grade-", ""),
+         "subject": payload.subject, "strand": payload.strand},
+    ) or []
+
+    wanted = {s.strip().lower() for s in payload.sub_strands if s.strip()}
+    targets = [
+        r for r in rows
+        if not wanted or str(r.get("sub_strand_name") or "").strip().lower() in wanted
+    ]
+    if not targets:
+        raise_api_error(
+            "MISSING_PARENT_CONTEXT",
+            f"No stored sub-strands for {payload.subject} ({payload.grade})"
+            + (f" under '{payload.strand}'" if payload.strand else "")
+            + ". Generate and save the sub-strands before queuing work against them.",
+        )
+
+    batch_id = "batch_" + _hashlib.sha256(
+        f"{payload.grade}{payload.subject}{payload.strand}{payload.kinds}".encode()
+    ).hexdigest()[:16]
+
+    queued: list[dict[str, Any]] = []
+    # Kind-major, so every sub-strand gets its notes before any gets diagrams —
+    # the later stations are grounded in the earlier ones.
+    for kind in payload.kinds:
+        for row in targets:
+            job = job_queue.enqueue(
+                kind, payload.grade, payload.subject,
+                {"custom_instructions": payload.custom_instructions},
+                strand=str(row.get("strand_name") or ""),
+                sub_strand=str(row.get("sub_strand_name") or ""),
+                batch_id=batch_id, queued_by=getattr(auth, "subject", ""),
+            )
+            queued.append(job.to_dict())
+
+    job_queue.start_worker()
+
+    return {
+        "status": "queued",
+        "batch_id": batch_id,
+        "queued": len(queued),
+        "sub_strands": len(targets),
+        "kinds": payload.kinds,
+        "jobs": queued,
+        "note": "Running one at a time. Poll /factory/queue/status for progress.",
+    }
+
+
+@router.get("/factory/queue/status")
+def factory_queue_status(
+    batch_id: str = Query(""),
+    grade: str = Query(""),
+    subject: str = Query(""),
+    _: AuthContext = Depends(require_roles("admin", "operator", "reviewer")),
+) -> dict[str, Any]:
+    """What the queue is doing, for the console to poll."""
+    from ..services import job_queue
+
+    return job_queue.status(batch_id=batch_id, grade=grade, subject=subject)
+
+
+@router.post("/factory/queue/cancel")
+def factory_queue_cancel(
+    batch_id: str = Query(""),
+    job_id: str = Query(""),
+    _: AuthContext = Depends(require_roles("admin", "operator")),
+) -> dict[str, Any]:
+    """Stop work that has not started. A running job is left to finish —
+    killing it mid-flight leaves the artifact half-written with no record of
+    which half, and the tokens are spent either way."""
+    from ..services import job_queue
+
+    return {"status": "cancelled", "cancelled": job_queue.cancel(job_id, batch_id)}
 
 
 @router.post("/factory/reset")

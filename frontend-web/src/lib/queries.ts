@@ -611,6 +611,76 @@ export function useFactoryReset() {
   });
 }
 
+export type QueueStatus = {
+  worker_running: boolean;
+  counts: Record<string, number>;
+  total: number;
+  finished: number;
+  percentage: number;
+  now_running: { kind: string; subject: string; sub_strand: string } | null;
+  jobs: {
+    job_id: string; batch_id: string; kind: string; subject: string;
+    strand: string; sub_strand: string; status: string; attempts: number; error: string;
+  }[];
+};
+
+export const QUEUEABLE_KINDS = ["notes", "diagram", "media", "simulation", "activity"] as const;
+
+/** Queue stations across many sub-strands. The request returns immediately;
+ *  progress is read from the queue. */
+export function useQueueWork(grade: string, subject: string) {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { kinds: string[]; strand?: string; sub_strands?: string[];
+                      custom_instructions?: string }) =>
+      api<{ batch_id: string; queued: number; sub_strands: number }>(
+        "/api/v1/curriculum/factory/queue",
+        { method: "POST", body: JSON.stringify({ grade, subject, ...v }) }
+      ),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["queue"] }),
+  });
+}
+
+/** Poll while work is outstanding, and stop when it is not — a screen that
+ *  polls an idle queue forever is a request every few seconds, all day. */
+export function useQueueStatus(grade: string, subject?: string, batchId?: string) {
+  const api = useApi();
+  return useQuery({
+    queryKey: ["queue", grade, subject ?? "all", batchId ?? ""],
+    queryFn: () => {
+      const qs = new URLSearchParams();
+      if (batchId) qs.set("batch_id", batchId);
+      if (grade) qs.set("grade", grade);
+      if (subject) qs.set("subject", subject);
+      return api<QueueStatus>(`/api/v1/curriculum/factory/queue/status?${qs}`);
+    },
+    enabled: Boolean(grade),
+    refetchInterval: (query) => {
+      const data = query.state.data as QueueStatus | undefined;
+      if (!data) return 4000;
+      const outstanding = (data.counts.queued ?? 0) + (data.counts.running ?? 0);
+      return outstanding > 0 ? 4000 : false;
+    },
+  });
+}
+
+export function useCancelQueue() {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { batch_id?: string; job_id?: string }) => {
+      const qs = new URLSearchParams(
+        Object.entries(v).filter(([, x]) => x) as [string, string][]
+      );
+      return api<{ cancelled: number }>(
+        `/api/v1/curriculum/factory/queue/cancel?${qs}`, { method: "POST" }
+      );
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["queue"] }),
+  });
+}
+
 export function useBundle(grade: string, subject: string, subStrand: string) {
   const api = useApi();
   return useQuery({
@@ -910,6 +980,11 @@ export function useStructureActions(grade: string, subject: string) {
         // Without this the view still showed only what this session generated,
         // so a reload looked as though the save had not happened.
         qc.invalidateQueries({ queryKey: keys.structure(grade, subject) });
+        // And without THIS the sub-strand picker never saw the sub-strands that
+        // had just been saved, so the production stations stayed unreachable
+        // until a hard reload — the stations are keyed on a selected sub-strand,
+        // and there was nothing to select.
+        qc.invalidateQueries({ queryKey: ["saved-substrands"] });
       },
     }),
   };

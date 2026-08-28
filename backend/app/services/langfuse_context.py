@@ -59,6 +59,59 @@ def focus_subject_context(subject_ctx: dict, strand: str) -> dict:
     return focused
 
 
+def focus_sub_strand_context(subject_ctx: dict, strand: str, sub_strand: str) -> dict:
+    """Narrow the blueprint to ONE sub-strand, keeping its siblings by name only.
+
+    Writing the guide for "Our God" was handed the full blueprint of all twelve
+    CRE sub-strands — every outcome, every learning experience, and a
+    `prompt_package` duplicating each field inside itself. 20,606 characters, of
+    which about 18,000 described sub-strands the guide is not about.
+
+    That budget is not free. The same prompt gave the model a 4,000-character
+    EXCERPT of the design, cut mid-table, and then the quality gate scored its
+    source grounding against all 31,689 characters. It scored 0.20, correctly:
+    the model was shown a twentieth of the source and eighteen thousand
+    characters about other sub-strands.
+
+    Siblings are kept as bare names because a guide should know what comes
+    before and after it — "do not pre-empt 1.2" needs 1.2 to have a name — and
+    for nothing else.
+    """
+    focused = focus_subject_context(subject_ctx, strand)
+    if not isinstance(focused, dict) or not sub_strand:
+        return focused
+
+    wanted = re.sub(r"[^a-z0-9]+", " ", str(sub_strand).lower()).strip()
+    if not wanted:
+        return focused
+
+    narrowed = []
+    siblings: list[str] = []
+    for entry in focused.get("strands") or []:
+        kept_subs = []
+        for sub in entry.get("sub_strands") or []:
+            name = re.sub(r"[^a-z0-9]+", " ", str(sub.get("name") or "").lower()).strip()
+            if name and (name == wanted or name in wanted or wanted in name):
+                # The stored package duplicates every field of the sub-strand
+                # inside itself; one copy is a blueprint, two is padding.
+                kept_subs.append({k: v for k, v in sub.items() if k != "prompt_package"})
+            elif sub.get("name"):
+                siblings.append(str(sub["name"]))
+        narrowed.append({**entry, "sub_strands": kept_subs})
+
+    return {
+        **focused,
+        "strands": narrowed,
+        "focused_on_sub_strand": sub_strand,
+        "other_sub_strands_in_this_strand": siblings,
+        "note": (
+            "Only the sub-strand being written is given in full. The others are "
+            "named so this guide knows what precedes and follows it, and for "
+            "nothing else — do not teach their content here."
+        ),
+    }
+
+
 def context_safe_package(package: Any) -> dict:
     """The curriculum half of a stored prompt package, without the templates."""
     if not isinstance(package, dict):
@@ -584,13 +637,20 @@ class LangfuseContextService:
         subject: str,
         template_vars: dict | None = None,
         focus_strand: str = "",
+        focus_sub_strand: str = "",
     ) -> CompiledContextResult:
         # Layer 1: Global BECF Context dynamically loaded from Langfuse
         master_ctx = self.get_master_context()
 
         # Layer 2 & 3: Subject & Sub-strand Blueprint Context
         subject_ctx = self.get_subject_context(grade_slug, subject)
-        if focus_strand:
+        if focus_strand and focus_sub_strand:
+            # Writing ONE sub-strand's guide does not need the other eleven in
+            # full; that budget belongs to the design itself.
+            subject_ctx = focus_sub_strand_context(
+                subject_ctx, focus_strand, focus_sub_strand
+            )
+        elif focus_strand:
             subject_ctx = focus_subject_context(subject_ctx, focus_strand)
 
         vars_dict = {

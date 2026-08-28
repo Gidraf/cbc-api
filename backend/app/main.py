@@ -149,6 +149,15 @@ def startup() -> None:
         logger.warning("MinIO bootstrap skipped at startup: %s", exc)
 
     try:
+        # Anything queued before the last restart is still queued, and without
+        # a worker the queue looks exactly like an empty one.
+        from .services import job_queue
+
+        job_queue.start_worker()
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Job worker did not start; queued work will not run: %s", exc)
+
+    try:
         _bootstrap_default_stage_bindings()
         for provider in runtime_state.provider_credentials:
             runtime_state.persist_provider(provider)

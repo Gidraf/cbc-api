@@ -323,7 +323,19 @@ which. Every SLO must be taught in at least one module and assessed by the end.
 Each module must be substantial enough to teach from without further preparation:
 its own exposition, the exact teacher moves, what learners do, what goes wrong and
 the remedy, and how the teacher knows it worked. A module a teacher must still
-research is not finished.
+research is not finished. Expect about half a printed page per lesson.
+
+USE WHAT THE DESIGN GIVES YOU. Where it hands you an actual phrase to say, an
+actual song, an actual scripture reference, that phrase goes in the guide
+verbatim — it is the most concrete thing in the whole specification and the
+commonest thing to skip. Every suggested learning experience must appear in at
+least one module; if one genuinely does not fit, say which in `gaps`.
+
+STAY INSIDE THIS SUB-STRAND. When you run out of material before you run out of
+lessons, go deeper into what this sub-strand teaches — more of the teacher's own
+words, more of what a confused child does — never sideways into the next
+sub-strand's content. A lesson that teaches 1.2 inside 1.1's guide is taught
+twice and scheduled once.
 
 For pre-primary and lower primary this means MORE concrete detail, not less: the
 actual words to say, the actual song, the actual questions in the order to ask
@@ -422,8 +434,8 @@ Output MUST be a valid JSON object matching this schema:
     "plain_language_summary": "...",
     "audio_description_notes": "..."
   },
-  "gaps": ["Anything the design did not supply that a teacher will need, named rather than invented."],
-  "uncited_content": ["Anything taught here that rests on general subject knowledge rather than on the KICD design, named honestly."]
+  "gaps": ["Anything the design did not supply that a teacher will need, named rather than invented. An empty list means you checked and found none — not that you did not look."],
+  "uncited_content": ["Anything taught here that rests on general subject knowledge rather than on the KICD design, named honestly. A guide that adds ANY explanation beyond the design's own words has something to put here; an empty list is nearly always a failure to look."]
 }
 Return ONLY valid JSON.
 """,

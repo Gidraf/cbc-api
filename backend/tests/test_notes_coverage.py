@@ -14,7 +14,12 @@ import pytest
 from app.services.notes_coverage import MIN_BODY_CHARS, check
 from app.services.time_allocation import parse
 
-_BODY = "The teacher holds up the picture and asks the class. " * 20
+# Scaled to the floor rather than hardcoded, so raising the floor does not
+# silently turn these fixtures into the thin modules they exist to distinguish
+# a complete guide from.
+_BODY = "The teacher holds up the picture and asks the class. " * (
+    MIN_BODY_CHARS // 40
+)
 
 
 def _module(number, body=_BODY, minutes=30, **extra):
@@ -85,8 +90,8 @@ def test_substance_in_the_lesson_flow_counts_as_substance() -> None:
     exposition is short — which is exactly the shape a pre-primary guide takes."""
     notes = {"modules": [
         _module(i, body="Short intro.", lesson_flow=[
-            {"phase": "Development", "what_the_teacher_does": "x" * 300,
-             "what_learners_do": "y" * 300},
+            {"phase": "Development", "what_the_teacher_does": "x" * MIN_BODY_CHARS,
+             "what_learners_do": "y" * MIN_BODY_CHARS},
         ])
         for i in range(1, 8)
     ]}

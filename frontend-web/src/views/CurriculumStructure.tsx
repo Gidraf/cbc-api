@@ -180,6 +180,9 @@ export function CurriculumStructure({
   // Saving files each sub-strand as a version. Without a way through to it the
   // review layers exist but nobody arrives at them.
   const [filed, setFiled] = React.useState<number>(0);
+  // Which strand's sub-strands were just saved, so the next step can be named
+  // rather than left for the operator to find.
+  const [justSaved, setJustSaved] = React.useState<string>("");
 
   // What a copy should contain: everything under a strand, whether it was saved
   // earlier or drafted just now. Copying `drafts` alone meant that saving —
@@ -253,6 +256,7 @@ export function CurriculumStructure({
     });
     setFiled((saved?.artifacts || []).filter((a: any) => a?.artifact_id).length);
     setSaved((s) => ({ ...s, [name]: substrands.length }));
+    setJustSaved(name);
     setDrafts((d) => {
       const next = { ...d };
       delete next[name];
@@ -314,6 +318,31 @@ export function CurriculumStructure({
       }
     >
       {actions.generateStrands.error && <ErrorNotice error={actions.generateStrands.error} />}
+      {justSaved && (
+        <div
+          style={{
+            border: "1px solid var(--ok, var(--line))",
+            borderRadius: "var(--radius)",
+            padding: "var(--s3)",
+            marginBottom: "var(--s3)",
+            fontSize: "var(--text-sm)",
+          }}
+        >
+          <strong>"{justSaved}" is saved.</strong>{" "}
+          Its sub-strands are now selectable, and the production stations —
+          notes, diagrams, photos and videos, simulations, activities,
+          questions — open once you pick one.
+          <div style={{ marginTop: "var(--s2)" }}>
+            <a
+              href={`/factory?grade=${encodeURIComponent(grade)}&subject=${encodeURIComponent(
+                subject
+              )}`}
+            >
+              Choose a sub-strand and start producing →
+            </a>
+          </div>
+        </div>
+      )}
       {filed > 0 && (
         <div
           style={{

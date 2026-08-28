@@ -13,6 +13,7 @@ reviewer needs to know which claim that is.
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -22,6 +23,10 @@ logger = logging.getLogger("cbc-citations")
 # drops whitespace, and a design's own text wraps mid-phrase across columns, so
 # an exact match would fail on citations that are perfectly good.
 MIN_OVERLAP = 0.6
+
+# What starts a new entry in a KICD table cell: a bullet, or a lettered or
+# numbered outcome. The lines between two of these are one wrapped entry.
+_ENTRY_START = re.compile(r"^\s*(?:[•\-*●]|\(?[a-h]\)|\d{1,2}[.)])\s")
 
 # How far past the cited line to look for the rest of a wrapped quote.
 #
@@ -78,8 +83,6 @@ class CitationReport:
 
 
 def _terms(text: str) -> set[str]:
-    import re
-
     return {w for w in re.findall(r"[a-z0-9]+", (text or "").lower()) if len(w) > 3}
 
 
@@ -120,37 +123,58 @@ def collect(content: Any, path: str = "") -> list[Citation]:
     return found
 
 
-def _with_wrapped_continuation(pages: Any, ref: str) -> tuple[list[str], int]:
-    """The cited line plus the lines it wraps onto, and where it stopped.
+def _with_wrapped_continuation(pages: Any, ref: str) -> tuple[list[str], str]:
+    """The whole wrapped ENTRY the cited line belongs to.
 
-    KICD prints in narrow columns, so a single bullet is routinely split across
-    two or three printed lines. A continuation is a line that does not start a
-    new bullet — the design marks each with "•" — so the run ends at the next
-    bullet, which is exactly where the quoted phrase ends too.
+    KICD prints in narrow columns, so one outcome is routinely split across
+    three printed lines: "a) identify three" / "qualities of" / "God,". A model
+    quoting the outcome may anchor on any of them — the run that cites
+    "practice saying short prayers" at the line holding "short prayers," is
+    correct about the claim and merely pointing at the second half of it.
+
+    Looking only forward failed those: two of three correct citations in one run
+    were reported as unsupported. So the entry is resolved in BOTH directions —
+    back to the bullet or lettered marker that starts it, forward to the next
+    one — because that span is exactly the text the quote was taken from.
     """
     from .document_index import parse_reference, resolve_reference
 
     parsed = parse_reference(ref)
     if not parsed:
-        return [], 0
+        return [], ""
 
     _doc, page_number, start, end = parsed
     page = next((p for p in pages if p.number == page_number), None)
     if page is None:
-        return [], 0
+        return [], ""
 
-    collected = [line.text for line in resolve_reference(pages, ref)]
-    last = end
-    for line in page.lines:
-        if line.line <= end or line.line > end + WRAP_LOOKAHEAD:
-            continue
-        text = line.text.strip()
-        if not text or text.startswith(("•", "-", "*")) or text[:2].strip().isdigit():
+    by_number = {line.line: line for line in page.lines}
+
+    # Back to the line that starts this entry.
+    first = start
+    for candidate in range(start, max(0, start - WRAP_LOOKAHEAD) - 1, -1):
+        line = by_number.get(candidate)
+        if line is None:
             break
-        collected.append(line.text)
-        last = line.line
+        first = candidate
+        if _ENTRY_START.match(line.text):
+            break
 
-    return collected, (last if last != end else 0)
+    # Forward to the line before the next entry starts.
+    last = end
+    for candidate in range(end + 1, end + WRAP_LOOKAHEAD + 1):
+        line = by_number.get(candidate)
+        if line is None or not line.text.strip():
+            break
+        if _ENTRY_START.match(line.text):
+            break
+        last = candidate
+
+    if first == start and last == end:
+        return [line.text for line in resolve_reference(pages, ref)], ""
+
+    span = f"{page_number}:{first}-{last}"
+    return [by_number[n].text for n in range(first, last + 1) if n in by_number], span
 
 
 def _deduplicate(citations: list[Citation]) -> list[Citation]:
@@ -219,13 +243,13 @@ def verify(content: Any, design_text: str) -> CitationReport:
         # The quote may continue onto the next line or two. Reading only the
         # cited line reports a wrapped bullet as unsupported.
         if overlap < MIN_OVERLAP:
-            wrapped, extra = _with_wrapped_continuation(pages, citation.ref)
-            if extra:
+            wrapped, span = _with_wrapped_continuation(pages, citation.ref)
+            if span:
                 combined = len(quoted & _terms(" ".join(wrapped))) / len(quoted)
                 if combined > overlap:
                     overlap = combined
                     citation.lines = wrapped
-                    citation.found_at = f"{citation.ref}-{extra}"
+                    citation.found_at = span
 
         if overlap >= MIN_OVERLAP:
             citation.verified = True

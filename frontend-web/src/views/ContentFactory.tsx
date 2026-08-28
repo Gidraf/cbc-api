@@ -5,6 +5,7 @@ import { Link } from "react-router-dom";
 import { CurriculumStructure } from "./CurriculumStructure";
 import { HourWorkbench } from "./HourWorkbench";
 import { PromptInspector, type Inspection } from "./PromptInspector";
+import { QueuePanel } from "./QueuePanel";
 import { ResetPanel } from "./ResetPanel";
 import { VersionReview } from "./VersionReview";
 import { stationToText } from "../lib/serialize";
@@ -378,6 +379,10 @@ export function ContentFactory() {
           subject={subject}
           onSaved={() => progress.refetch()}
         />
+      )}
+
+      {!substrand && subject && allSubstrands.length > 0 && (
+        <QueuePanel grade={effectiveGrade} subject={subject} />
       )}
 
       {!substrand && (

@@ -710,6 +710,43 @@ MIGRATIONS: list[tuple[str, str]] = [
             ON artifact_comments(artifact_id, created_at DESC);
         """,
     ),
+    (
+        "022_job_queue",
+        """
+        -- Generating a sub-strand's notes takes a minute; a grade's worth takes
+        -- an afternoon. Held open on an HTTP request, each one blocks a browser
+        -- tab, times out at the proxy, and loses everything on a refresh — so
+        -- the work was done one item at a time with somebody watching.
+        --
+        -- Queued instead: the request records what to do and returns, a worker
+        -- runs the jobs one at a time, and the console reads progress from this
+        -- table. Sequential by design — these calls cost money and hit provider
+        -- rate limits, and ten at once is how a run fails halfway with no way to
+        -- tell which half.
+        CREATE TABLE IF NOT EXISTS jobs (
+            job_id TEXT PRIMARY KEY,
+            batch_id TEXT NOT NULL DEFAULT '',
+            kind TEXT NOT NULL,
+            grade TEXT NOT NULL DEFAULT '',
+            subject TEXT NOT NULL DEFAULT '',
+            strand TEXT NOT NULL DEFAULT '',
+            sub_strand TEXT NOT NULL DEFAULT '',
+            payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+            status TEXT NOT NULL DEFAULT 'queued',
+            attempts INTEGER NOT NULL DEFAULT 0,
+            result JSONB NOT NULL DEFAULT '{}'::jsonb,
+            error TEXT NOT NULL DEFAULT '',
+            queued_by TEXT NOT NULL DEFAULT '',
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            started_at TIMESTAMPTZ,
+            finished_at TIMESTAMPTZ
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status, created_at);
+        CREATE INDEX IF NOT EXISTS idx_jobs_batch ON jobs(batch_id, created_at);
+        CREATE INDEX IF NOT EXISTS idx_jobs_scope ON jobs(grade, subject, status);
+        """,
+    ),
 ]
 
 
