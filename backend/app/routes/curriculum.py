@@ -2996,6 +2996,17 @@ class GenerateMediaPromptsRequest(BaseModel):
     inspect: bool = False
 
 
+class FactoryResetRequest(BaseModel):
+    """Clear generated content so the pipeline can be re-run from the dataset."""
+
+    grade: str = ""
+    subject: str = ""
+    # A boolean is too easy to send by accident from a form or a retried
+    # request. The exact phrase has to be typed.
+    confirm: str = ""
+    include: list[str] = []
+
+
 class GenerateSimulationsRequest(BaseModel):
     grade: str
     subject: str
@@ -3696,6 +3707,40 @@ def factory_page_reconciliation(
         "reconciling": sum(1 for r in reports if r["reconciles"]),
         "total": len(reports),
     }
+
+
+@router.post("/factory/reset")
+def factory_reset(
+    payload: FactoryResetRequest,
+    auth: AuthContext = Depends(require_roles("admin")),
+) -> dict[str, Any]:
+    """Clear generated content and start again from the dataset.
+
+    The Langfuse dataset holds the KICD design documents and is the source of
+    truth; nothing here touches it. Everything in Postgres downstream is derived
+    and reproducible, which is what makes discarding it safe when the pipeline
+    that produced it has changed enough that reconciling the old output costs
+    more than regenerating it.
+
+    A DRY RUN by default: it returns the row counts and deletes nothing. Send
+    the exact confirmation phrase to proceed. Admin only, and every run is
+    logged with who asked for it.
+    """
+    from ..services import factory_reset as reset
+
+    report = reset.run(
+        grade=payload.grade, subject=payload.subject,
+        confirm=payload.confirm, include=payload.include or None,
+    )
+
+    if not report.dry_run:
+        logger.warning(
+            "FACTORY RESET by %s: %d row(s) across %d table(s), scope=%s",
+            getattr(auth, "subject", "unknown"), report.total,
+            len(report.tables), report.scope or "everything",
+        )
+
+    return report.to_dict()
 
 
 @router.get("/factory/split-preview")

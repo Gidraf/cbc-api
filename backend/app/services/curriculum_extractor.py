@@ -264,6 +264,57 @@ def _grade_from_text(text: str, meta: dict[str, Any]) -> tuple[str, str]:
     return "", ""
 
 
+# An essence statement is a paragraph. These are the headings that follow one in
+# the KICD designs, and the point at which it must stop.
+_AFTER_ESSENCE = re.compile(
+    r"^\s*(?:\d{1,4}:\d{1,5}\s\s)?\s*"
+    r"(?:subject\s+general\s+learning\s+outcomes"
+    r"|general\s+learning\s+outcomes"
+    r"|summary\s+of\s+strands"
+    r"|strand\s+\d"
+    r"|lesson\s+allocation"
+    r"|suggested\s+assessment"
+    r"|level\s+learning\s+outcomes"
+    r"|table\s+of\s+contents)",
+    re.IGNORECASE,
+)
+
+# A hard ceiling, because a heading this does not know still must not swallow
+# the document.
+MAX_ESSENCE_CHARS = 2_500
+
+
+def _extract_essence_statement(text: str) -> str:
+    """The essence paragraph, not the rest of the design.
+
+    The old pattern ended at a line of four or more capitals. Every line of a
+    rendered design is prefixed with its "200:12  " address, so no line ever
+    matched that lookahead and the capture ran to the end of the document —
+    which is how a 31,689-character design was stored as its own essence
+    statement, and then injected into every prompt TWICE on top of the copy
+    already there. That is the context-duplication defect this codebase was
+    built to prevent, arriving through a field nobody suspected.
+    """
+    match = re.search(r"ESSENCE STATEMENT\s*\n+", text, re.IGNORECASE)
+    if not match:
+        return ""
+
+    collected: list[str] = []
+    for line in text[match.end():].split("\n"):
+        if _AFTER_ESSENCE.match(line):
+            break
+        stripped = line.strip()
+        if stripped.startswith("[PAGE ") and collected:
+            # A page break inside the paragraph is fine; one before any prose
+            # means the statement was empty.
+            continue
+        collected.append(line)
+        if sum(len(c) for c in collected) > MAX_ESSENCE_CHARS:
+            break
+
+    return "\n".join(collected).strip()[:MAX_ESSENCE_CHARS]
+
+
 class CurriculumExtractorService:
     """Extracts curriculum specifications/blueprints from raw datasets.
     Generates tailored guidance, safety hazard criteria, and dynamic agent prompts
@@ -640,14 +691,7 @@ class CurriculumExtractorService:
 
         subject_code = "".join([w[0] for w in subject.split() if w]).upper()[:4]
 
-        essence_statement = ""
-        essence_match = re.search(
-            r"ESSENCE STATEMENT\s*\n+(.*?)(?=\n+[A-Z\s]{4,}\n|\Z)",
-            text,
-            re.DOTALL | re.IGNORECASE,
-        )
-        if essence_match:
-            essence_statement = essence_match.group(1).strip()
+        essence_statement = _extract_essence_statement(text)
 
         general_outcomes: list[str] = []
         glo_match = re.search(
@@ -688,6 +732,8 @@ class CurriculumExtractorService:
             metadata={"source": meta.get("source", "raw_ingest"), "file_id": meta.get("file_id", "")},
             dataset_dna_id=dataset_dna_id,
         )
+
+
 
     def _extract_substrands(
         self, text: str, subject: str, grade: str, level: str

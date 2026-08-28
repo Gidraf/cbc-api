@@ -118,29 +118,52 @@ class ContentTypeProfile:
             lines.append("Mandatory Subject Directives:")
             lines.extend(f"  - {d}" for d in self.special_directives)
 
+        # These figures were written by a model when the profile was generated.
+        # Heading them "Verified Subject Data (use these, do not invent
+        # statistics)" and stamping each with a source told the generator to
+        # state fabricated numbers as fact and attribute them — and the research
+        # dossier in the same prompt now calls the very same figures unverified
+        # and forbids using them. Two blocks giving opposite instructions about
+        # one set of numbers is worse than either alone.
         if self.empirical_insights:
-            lines.append("Verified Subject Data (use these, do not invent statistics):")
+            lines.append(
+                "Illustrative figures from this profile — NOT VERIFIED, and NOT "
+                "for use in the content. They came from a generated profile, not "
+                "from any source. Never state them, never attribute them, never "
+                "cite them:"
+            )
             for insight in self.empirical_insights[:6]:
                 if isinstance(insight, dict):
                     metric = insight.get("metric") or insight.get("name") or ""
                     value = insight.get("value", "")
                     source = insight.get("source", "")
-                    lines.append(f"  - {metric}: {value}" + (f" [{source}]" if source else ""))
+                    lines.append(
+                        f"  - {metric}: {value}"
+                        + (f" [unverified, claimed: {source}]" if source else "")
+                    )
 
         if self.case_studies:
-            lines.append("Authentic Contexts For Scenarios (draw situated examples from these):")
+            lines.append(
+                "Illustrative scenarios (generated, not documented events — use as "
+                "teaching context, never as fact):"
+            )
             for case in self.case_studies[:4]:
                 if isinstance(case, dict):
                     where = case.get("county") or case.get("context") or case.get("location") or ""
                     scenario = case.get("scenario", "")
                     lines.append(f"  - {where}: {scenario}" if where else f"  - {scenario}")
 
-        allowed = self.citation_sources()
-        if allowed:
-            lines.append(
-                "Permitted Citation Sources: " + ", ".join(allowed)
-                + ". Do not cite sources outside this list for this subject."
-            )
+        # The permitted list used to be DERIVED from the figures above, so a
+        # source a model invented became a source the generator was told it
+        # could cite. That laundered the fabrication: the number was unverified,
+        # but its attribution arrived stamped "permitted".
+        lines.append(
+            "CITATIONS: cite the KICD curriculum design, by page and line. An "
+            "external source may be cited only if it appears under RETRIEVED "
+            "SOURCES in the research context — never one named above, and never "
+            "one you recall. Most sub-strands rest on the design alone and need "
+            "no external citation at all."
+        )
 
         return "\n".join(lines)
 
