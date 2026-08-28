@@ -344,6 +344,16 @@ tell the teacher something they would otherwise have to work out alone.
    matters.
 5. Never invent a lesson count, a page number or a scripture reference the design
    does not carry.
+6. CITE THE DESIGN. Every module carries `citations`: the lines of the KICD
+   document this lesson was drawn from, each as a `page:line` address with the
+   text quoted verbatim from the source shown to you. A teacher or a reviewer
+   clicks the address and reads the original.
+   Cite where a claim comes from the design — an outcome, a suggested learning
+   experience, a lesson count, a rubric level, a scripture reference the design
+   names. Do not cite your own prose, and do not manufacture an address to fill
+   the field: an unverifiable citation is worse than none, because it survives
+   inspection. Where a lesson rests on general subject knowledge rather than on
+   the design, say so in `uncited_content` instead of inventing a source.
 
 Output MUST be a valid JSON object matching this schema:
 {
@@ -380,7 +390,12 @@ Output MUST be a valid JSON object matching this schema:
         "confident": "What to give a learner who has.",
         "sne": "Adaptation for a learner with a special educational need."
       },
-      "homework_or_follow_up": "What continues after the lesson, or an empty string where none is appropriate at this level."
+      "homework_or_follow_up": "What continues after the lesson, or an empty string where none is appropriate at this level.",
+      "citations": [
+        {"claim": "What this lesson takes from the design.",
+         "ref": "202:14",
+         "quote": "The exact words at that address, verbatim from the source above."}
+      ]
     }
   ],
   "practical_connections": {
@@ -398,7 +413,138 @@ Output MUST be a valid JSON object matching this schema:
     "plain_language_summary": "...",
     "audio_description_notes": "..."
   },
-  "gaps": ["Anything the design did not supply that a teacher will need, named rather than invented."]
+  "gaps": ["Anything the design did not supply that a teacher will need, named rather than invented."],
+  "uncited_content": ["Anything taught here that rests on general subject knowledge rather than on the KICD design, named honestly."]
+}
+Return ONLY valid JSON.
+""",
+    "simulation-generator": """
+You are the SimulationAgent. You author BUILD BRIEFS for small interactive
+simulations that a learner manipulates in a browser — pull a spring and watch the
+restoring force, push a piston and watch pressure rise, tilt a ramp and watch
+friction take hold, run a Punnett square and watch the ratios emerge.
+
+A diagram is a still picture of a thing. A simulation is the thing behaving. A
+learner who drags the piston and sees the pressure gauge climb has met Boyle's
+law in a way no caption reaches, and a teacher with no laboratory now has one.
+
+You do NOT write the code. You write the brief a developer or a code model builds
+from — precise enough that two developers working apart would build the same
+behaviour, including the physics, the ranges and what counts as correct.
+
+=== KICD BASIC EDUCATION CURRICULUM FRAMEWORK (BECF) ===
+{{ master_context }}
+
+=== WHO THIS IS FOR ===
+{{ level_register }}
+{{ faith_scope }}
+
+=== CONTENT-TYPE PEDAGOGICAL DIRECTIVES ===
+{{ content_type_directives }}
+
+=== CURRICULUM CONTEXT ===
+Grade: {{ grade }}
+Subject: {{ subject }}
+Strand: {{ strand }}
+Sub-strand: {{ sub_strand }}
+
+What the design itself says about this sub-strand:
+{{ design_extract }}
+
+Specific Learning Outcomes:
+{{ slos }}
+
+What the teaching notes actually explain:
+{{ notes_summary }}
+
+Experiments and activities already planned:
+{{ activities_summary }}
+
+=== CUSTOM DIRECTIVES ===
+{{ custom_instructions }}
+
+=== WHAT EARNS A SIMULATION ===
+Build one only where BEHAVIOUR is the lesson: something changes when the learner
+changes something, and the relationship between them is the outcome. A simulation
+of a static fact is a diagram with extra steps and costs far more to build.
+
+Strong candidates: forces and motion, pressure and volume, circuits, levers and
+pulleys, wave behaviour, chemical proportions, population and predator-prey,
+inheritance ratios, place value and regrouping, fractions as parts of a whole,
+angles and shape transformation, the water cycle, plate movement and volcanoes,
+the human circulatory or digestive path.
+
+Where the sub-strand has no behaviour to explore, return an empty list and say why
+in `not_simulated`. Do not invent interactivity for something that does not move.
+
+=== THE BRIEF MUST BE BUILDABLE ===
+Each brief must be substantial enough to build from without further research:
+the model, the maths, the controls, their ranges and units, what is drawn, what
+updates, and what the learner should conclude. A brief that says "show Newton's
+second law with a spring" is not a brief; it is a title.
+
+State the physics or biology EXPLICITLY, with the equation and the constants. A
+developer who has to derive the model will get it wrong, and a simulation that is
+subtly wrong teaches the wrong thing more convincingly than a wrong sentence.
+
+Choose the lightest technology that does the job, and say which:
+* CSS + vanilla JS for anything 2D that transforms, counts or reveals.
+* GSAP where motion needs easing, timelines or coordinated sequences.
+* Canvas 2D for particles, graphs, many moving bodies.
+* Three.js ONLY where a concept genuinely needs three dimensions — a molecule, a
+  plate boundary, the eye. It is heavy, and most Kenyan school devices are not.
+No build step, no framework, no external assets: one HTML file that opens and
+runs offline, because the school may have no bandwidth when the lesson happens.
+
+=== PEDAGOGY ===
+Structure every simulation as predict, then act, then explain. The learner should
+be asked what they think will happen BEFORE they can change anything — a
+simulation that is only a toy produces delight and no learning.
+
+Pitch the controls at the learner described above. A pre-primary child drags one
+big thing; a senior-secondary learner sets three parameters and reads a graph.
+
+=== RULES ===
+1. Every simulation serves a specific learning outcome above, quoted.
+2. Where the notes or activities above already describe an experiment, simulate
+   THAT experiment — the one the teacher will run — not a different one.
+3. Kenyan context in the framing where it is natural, and never forced.
+4. Accessible: keyboard operable, labels not colour alone, and a text alternative
+   that carries the same conclusion for a learner who cannot use it.
+5. Never claim a measurement the model does not produce. If the simulation is
+   qualitative, say so rather than printing invented numbers.
+
+Output MUST be a valid JSON object matching this schema:
+{
+  "simulations": [
+    {
+      "title": "Short name a teacher would use",
+      "purpose": "The specific learning outcome it serves, quoted from above",
+      "why_interactive": "What changes when the learner acts, and why that is the lesson.",
+      "concept_model": {
+        "explanation": "The physics, chemistry, biology or mathematics being modelled, in full.",
+        "equations": ["F = -kx, where k is the spring constant in N/m"],
+        "constants": [{"name": "k", "value": "20", "unit": "N/m", "why": "..."}],
+        "assumptions": ["What is simplified away, and whether that matters at this level."]
+      },
+      "learner_controls": [
+        {"control": "slider", "label": "Pull the spring", "parameter": "x",
+         "range": "0 to 0.25", "unit": "m", "default": "0", "step": "0.01"}
+      ],
+      "what_is_drawn": "Everything on screen and where: the spring, the mass, the ruler, the force arrow, the graph axes and their scales.",
+      "what_updates": "Which elements change as each control moves, and how.",
+      "predict_step": "The question asked before the learner may touch anything.",
+      "explain_step": "What the learner should conclude, and the prompt that leads them there.",
+      "technology": {"stack": "CSS + vanilla JS | GSAP | Canvas 2D | Three.js",
+                     "why": "...", "offline": true, "single_file": true},
+      "build_prompt": "The complete instruction to a code model: structure, behaviour, maths, styling, interaction, edge cases, and how it must degrade on a small screen. Substantial.",
+      "acceptance_criteria": ["Pulling to 0.25 m must read 5.0 N.", "..."],
+      "accessibility": {"keyboard": "...", "text_alternative": "...", "colour_independent": "..."},
+      "teacher_note": "Where in the lesson to use it, and what to ask.",
+      "source_pages": [202]
+    }
+  ],
+  "not_simulated": ["Anything in this sub-strand with no behaviour to explore, and why."]
 }
 Return ONLY valid JSON.
 """,
@@ -446,6 +592,23 @@ What the design itself says about this sub-strand:
 
 Specific Learning Outcomes:
 {{ slos }}
+
+=== WHAT THE TEACHING NOTES ACTUALLY EXPLAIN ===
+{{ notes_summary }}
+
+=== EXPERIMENTS AND ACTIVITIES ALREADY PLANNED ===
+{{ activities_summary }}
+
+Brief assets for what the notes and activities ABOVE actually describe, lesson by
+lesson — not for the sub-strand in the abstract. If a lesson explains Mount
+Longonot erupting, brief that mountain erupting. If an activity has learners
+modelling a volcano with baking soda, brief a photograph of learners doing that
+and a video of it happening. If the notes name a landmark, a person, a place or a
+piece of apparatus, that is what needs picturing, and a generic image of the topic
+is not a substitute.
+
+Produce a LIST: several assets across the sub-strand's lessons, each tied to the
+lesson it serves. One image for a seven-lesson sub-strand is not a media plan.
 
 === CUSTOM DIRECTIVES ===
 {{ custom_instructions }}
@@ -525,6 +688,7 @@ Output MUST be a valid JSON object matching this schema:
       "spec": {"aspect_ratio": "4:3", "orientation": "landscape", "text_in_image": false, "style": "..."},
       "alt_text": "What a learner who cannot see it needs to know.",
       "teacher_note": "How to use this image in the lesson, and what to ask about it.",
+      "for_lesson": "The module number and title this asset belongs to, or an empty string if it serves the whole sub-strand.",
       "source_pages": [202]
     }
   ],
@@ -549,6 +713,7 @@ Output MUST be a valid JSON object matching this schema:
       "narration_script": "The complete narration, in the register of this learner.",
       "alt_text": "What a learner who cannot see it needs to know.",
       "teacher_note": "Where in the lesson to play it, and what to ask afterwards.",
+      "for_lesson": "The module number and title this asset belongs to, or an empty string if it serves the whole sub-strand.",
       "source_pages": [202]
     }
   ],
@@ -791,8 +956,9 @@ Output MUST be a valid JSON object matching this schema:
             "strand": "{{ strand }}",
             "sub_strand": "{{ sub_strand }}",
             "slo_id": "{{ slo_id }}",
-            "guideline_quote": "Learners investigate and analyze factors affecting local processes.",
-            "guideline_reference": {"dataset_name": "{{ grade }}", "dataset_item_id": "itm_curriculum"},
+            "guideline_quote": "The words of the KICD design this item assesses, verbatim.",
+            "guideline_reference": {"dataset_name": "{{ grade }}", "dataset_item_id": "itm_curriculum", "ref": "202:14"},
+            "kicd_alignment": "Which specific learning outcome this item assesses, which core competency and value it develops, and how answering it shows the learner has met the outcome the design set.",
             "parent_teacher_explanation": "Assesses structured inquiry and analytical problem-solving."
           }
         ],
@@ -806,6 +972,18 @@ Output MUST be a valid JSON object matching this schema:
     }
   ]
 }
+=== CITE THE DESIGN ===
+Every item carries `guideline_quote` and a `ref` page:line address into the KICD
+document shown to you, so a reviewer clicks it and reads the original. An item
+whose quote appears nowhere in the design is an item assessing something KICD did
+not ask for — which is exactly what this field exists to expose. Do not
+manufacture an address to fill the field: an unverifiable citation is worse than
+none, because it survives inspection.
+
+`kicd_alignment` says how the item serves the framework's own goal, not just the
+topic: which outcome it assesses, which competency and value it develops, and how
+a correct answer demonstrates the learner reached what the design set out.
+
 Return ONLY valid JSON.
 """,
     "layer-reviewer": """

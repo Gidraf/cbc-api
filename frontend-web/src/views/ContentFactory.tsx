@@ -46,8 +46,19 @@ const STATIONS = [
     requires: "notes",
   },
   {
-    id: "practicals",
+    id: "simulations",
     n: 4,
+    // A diagram is a still picture of a thing; a simulation is the thing
+    // behaving. What this station produces is the build brief — the model, the
+    // controls, the acceptance criteria — not the code.
+    label: "Interactive simulations",
+    endpoint: "/api/v1/curriculum/factory/generate-simulations",
+    blurb: "Build briefs for simulations a learner manipulates: pull a spring, push a piston, run a cross.",
+    requires: "notes",
+  },
+  {
+    id: "practicals",
+    n: 5,
     label: "Activities & experiments",
     endpoint: "/api/v1/curriculum/factory/plan-activities",
     blurb: "Hands-on tasks with the safety guidance their materials require.",
@@ -55,7 +66,7 @@ const STATIONS = [
   },
   {
     id: "questions",
-    n: 5,
+    n: 6,
     label: "Questions",
     endpoint: "/api/v1/questions/factory/generate-batch",
     blurb: "Assessment items derived from the notes, diagrams and practicals above.",
@@ -68,6 +79,7 @@ const STATIONS = [
 const STATION_ARTIFACT_KIND: Record<string, string | undefined> = {
   notes: "notes",
   visuals: "diagram",
+  simulations: "simulation",
   practicals: "activity",
 };
 

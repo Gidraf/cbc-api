@@ -1175,6 +1175,16 @@ def factory_generate_notes(
     # one of them. A short guide used to pass silently: the fallback below built
     # hour modules out of whatever concepts came back, so four modules for a
     # seven-lesson sub-strand looked complete and three lessons had no plan.
+    # Citations are resolved, not trusted. A manufactured "202:14" survives
+    # every inspection short of opening page 202 — and nobody opens page 202
+    # when the field is already filled in.
+    citations = citation_check.verify(notes_content, source_text)
+    if citations.citations and citations.verified < len(citations.citations):
+        logger.warning(
+            "Notes for %s cite %d line(s) that do not resolve.",
+            payload.sub_strand, len(citations.citations) - citations.verified,
+        )
+
     lesson_plan = notes_coverage.check(notes_content, allocation, slos)
     if not lesson_plan.complete:
         logger.warning(
@@ -1199,6 +1209,7 @@ def factory_generate_notes(
         "quality_audit": audit_report.to_dict(),
         "quality_gate": gate_result.to_dict(),
         "lesson_coverage": lesson_plan.to_dict(),
+        "citations": citations.to_dict(),
         "artifact": versioned,
     }
 
@@ -2956,6 +2967,16 @@ class GenerateMediaPromptsRequest(BaseModel):
     inspect: bool = False
 
 
+class GenerateSimulationsRequest(BaseModel):
+    grade: str
+    subject: str
+    strand: str = ""
+    sub_strand: str
+    custom_instructions: str = ""
+    save: bool = True
+    inspect: bool = False
+
+
 class AttachMediaAssetRequest(BaseModel):
     media_id: str
     storage_url: str
@@ -3818,9 +3839,12 @@ def factory_generate_media_prompts(
         )
 
     # Planned from the design, never from the sub-strand's title alone.
+    from ..services import lesson_content as lesson
+
     design_block, slos = _substrand_design_block(
         payload.grade, payload.subject, payload.sub_strand
     )
+    taught = lesson.for_sub_strand(payload.grade, payload.subject, payload.sub_strand)
     if not design_block:
         raise_api_error(
             "MISSING_PARENT_CONTEXT",
@@ -3853,6 +3877,12 @@ def factory_generate_media_prompts(
             "slos": "\n".join(
                 f"- {s if isinstance(s, str) else s.get('text', str(s))}" for s in slos
             ) or "- (none stored)",
+            # The interesting assets are the ones the teaching content already
+            # names — the volcano the notes describe, the experiment the
+            # activity plan sets out. Planning from the outcomes alone cannot
+            # brief those, because the outcomes do not mention them.
+            "notes_summary": taught.notes_summary or "(no notes generated yet)",
+            "activities_summary": taught.activities_summary or "(no activities planned yet)",
             "custom_instructions": payload.custom_instructions
             + ("" if "video" in kinds else "\nReturn an empty 'videos' array.")
             + ("" if "photo" in kinds else "\nReturn an empty 'photos' array."),
@@ -3923,7 +3953,121 @@ def factory_generate_media_prompts(
         "planned_count": len(planned),
         "unusable_count": skipped,
         "brief_quality": media_check.to_dict(),
+        "grounding": taught.to_dict(),
         "saved": payload.save,
+        "usage": resp.usage,
+        "model": f"{resolved.provider}/{resolved.model}",
+    }
+
+
+@router.post("/factory/generate-simulations")
+def factory_generate_simulations(
+    payload: GenerateSimulationsRequest,
+    _: AuthContext = Depends(require_roles("admin", "operator", "reviewer")),
+) -> dict[str, Any]:
+    """Plan the interactive simulations a sub-strand needs.
+
+    A diagram is a still picture of a thing; a simulation is the thing behaving.
+    A learner who drags a piston and watches the pressure gauge climb has met
+    Boyle's law in a way no caption reaches, and a teacher with no laboratory
+    now has one.
+
+    What this authors is the BUILD BRIEF, not the code: the model with its
+    equations, the controls with their ranges, what is drawn, what updates, and
+    the acceptance criteria a built version must meet. A brief that says "show
+    Newton's second law with a spring" is a title, not a brief.
+    """
+    from ..services import lesson_content as lesson
+    from ..services.content_type_classifier import get_profile_from_db
+    from ..services.langfuse_context import langfuse_context_service
+    from ..services.llm_client import llm_client
+    from ..services.pipeline import pipeline_orchestrator
+
+    design_block, slos = _substrand_design_block(
+        payload.grade, payload.subject, payload.sub_strand
+    )
+    if not design_block:
+        raise_api_error(
+            "MISSING_PARENT_CONTEXT",
+            f"'{payload.sub_strand}' is not stored for {payload.subject} "
+            f"({payload.grade}), so there is nothing to build a simulation from. "
+            f"Ingest the learning area and save its sub-strands first.",
+        )
+
+    # Simulate the experiment the teacher will actually run, not a different
+    # one. Planning from the outcomes alone cannot do that: the outcomes do not
+    # name the apparatus, and the notes do.
+    taught = lesson.for_sub_strand(payload.grade, payload.subject, payload.sub_strand)
+
+    profile = get_profile_from_db(payload.subject, payload.grade)
+    context = langfuse_context_service.assemble_agent_context(
+        agent_name="simulation-generator",
+        grade_slug=payload.grade,
+        subject=payload.subject,
+        template_vars={
+            "master_context": langfuse_context_service.get_master_context(),
+            "level_register": register_block(
+                payload.grade, notes=grade_scope_notes(payload.grade, payload.subject)
+            ),
+            "faith_scope": faith_prompt_block(payload.subject),
+            "content_type_directives": profile.format_for_prompt() if profile else "",
+            "strand": payload.strand,
+            "sub_strand": payload.sub_strand,
+            "design_extract": design_block,
+            "slos": "\n".join(
+                f"- {s.get('text', s) if isinstance(s, dict) else s}" for s in slos
+            ) or "(none stored)",
+            "notes_summary": taught.notes_summary or "(no notes generated yet)",
+            "activities_summary": taught.activities_summary or "(no activities planned yet)",
+            "custom_instructions": payload.custom_instructions,
+        },
+    )
+
+    resolved = pipeline_orchestrator.router.resolve_for_stage("activity_generation")
+
+    if payload.inspect:
+        return {
+            "inspection": build_inspection(
+                context, agent="simulation-generator", grade=payload.grade,
+                subject=payload.subject, source_material=design_block, profile=profile,
+                extra={"model": f"{resolved.provider}/{resolved.model}",
+                       "sub_strand": payload.sub_strand,
+                       "grounded_in_notes": taught.found_notes},
+            )
+        }
+
+    resp = llm_client.generate(resolved, context.messages, temperature=0.3)
+    content = resp.content if isinstance(resp.content, dict) else {}
+    simulations = [s for s in (content.get("simulations") or []) if isinstance(s, dict)]
+
+    quality = simulation_validators.check(simulations)
+    if not quality.sound:
+        logger.warning(
+            "Simulation briefs for %s have %d blocking issue(s).",
+            payload.sub_strand, len(quality.errors),
+        )
+
+    filed: list[dict[str, Any]] = []
+    for simulation in simulations:
+        versioned = _record_artifact(
+            "simulation", payload.grade, payload.subject, simulation,
+            strand=payload.strand, sub_strand=payload.sub_strand,
+            title=str(simulation.get("title") or ""),
+            provenance={"source": "factory_generate_simulations",
+                        "provider": resolved.provider, "model": resolved.model,
+                        "grounded_in_notes": taught.found_notes},
+        ) if payload.save else {}
+        filed.append({**simulation, "artifact": versioned})
+
+    return {
+        "grade": payload.grade,
+        "subject": payload.subject,
+        "sub_strand": payload.sub_strand,
+        "simulations": filed,
+        "planned_count": len(filed),
+        "not_simulated": content.get("not_simulated") or [],
+        "brief_quality": quality.to_dict(),
+        "grounding": taught.to_dict(),
         "usage": resp.usage,
         "model": f"{resolved.provider}/{resolved.model}",
     }

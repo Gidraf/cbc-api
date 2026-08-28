@@ -133,6 +133,17 @@ KIND_SCOPE: dict[str, dict[str, str]] = {
                  "and what a learner should take from it.",
         "elsewhere": "the video file itself.",
     },
+    "simulation": {
+        "is": "the build brief for one interactive simulation — not the code.",
+        "holds": "the concept model with its equations and constants, the controls "
+                 "with their ranges and units, what is drawn, what updates, the "
+                 "predict and explain steps, the build instruction and the "
+                 "acceptance criteria a built version must meet.",
+        "elsewhere": "the running simulation itself. Judge whether this brief is "
+                     "buildable and whether the model it states is CORRECT — a "
+                     "simulation that is subtly wrong teaches the wrong thing more "
+                     "convincingly than a wrong sentence.",
+    },
     "experiment": {
         "is": "one practical investigation for a sub-strand.",
         "holds": "the materials a Kenyan classroom at this level actually has, the "

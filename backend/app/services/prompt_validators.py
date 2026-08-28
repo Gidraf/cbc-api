@@ -36,7 +36,7 @@ _MALFORMED = re.compile(r"(?<!\{)\{[a-zA-Z_][a-zA-Z0-9_ ]*\}\}|\{\{\s*[a-zA-Z_][
 _AUTHORING_AGENTS = frozenset({
     "note-generator", "strand-generator", "substrand-generator",
     "diagram-generator", "media-prompt-generator", "activity-generator",
-    "question-generator", "rubric-generator",
+    "question-generator", "rubric-generator", "simulation-generator",
 })
 
 # Agents that read a document rather than authoring from one. They need the

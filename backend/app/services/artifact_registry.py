@@ -35,6 +35,7 @@ KINDS: tuple[str, ...] = (
     "diagram",
     "photo_prompt",
     "video_prompt",
+    "simulation",
     "experiment",
     "activity",
     "question",
