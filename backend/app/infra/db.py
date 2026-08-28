@@ -1,8 +1,13 @@
 from __future__ import annotations
 
+import dataclasses
+import datetime
+import decimal
 import json
 import logging
+import uuid
 from functools import lru_cache
+from typing import Any
 
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
@@ -798,5 +803,42 @@ def execute(query: str, params: dict | None = None) -> None:
         conn.execute(text(query), params or {})
 
 
-def to_json(value: dict | list | str | int | float | bool | None) -> str:
-    return json.dumps(value)
+def _jsonable(value: Any) -> Any:
+    """Convert one value json.dumps could not encode into something it can.
+
+    Every JSONB write goes through to_json, and a plain json.dumps raises on
+    anything that is not a primitive — so a single stray object aborts the
+    request AFTER the expensive work is done. A three-layer review failed
+    exactly this way: the model was called, the tokens were spent, the verdict
+    was computed, and it was lost at the INSERT because `usage` held a
+    TokenUsage dataclass rather than a dict.
+
+    Known shapes are converted structurally; only a genuinely unknown type
+    falls back to its string form, so nothing is silently flattened that could
+    have been kept.
+    """
+    for attr in ("model_dump", "to_dict", "dict"):
+        method = getattr(value, attr, None)
+        if callable(method):
+            try:
+                return method()
+            except Exception:  # noqa: BLE001, S112
+                continue
+    if dataclasses.is_dataclass(value) and not isinstance(value, type):
+        return dataclasses.asdict(value)
+    if isinstance(value, (set, frozenset, tuple)):
+        return list(value)
+    if isinstance(value, (datetime.datetime, datetime.date, datetime.time)):
+        return value.isoformat()
+    if isinstance(value, decimal.Decimal):
+        return float(value)
+    if isinstance(value, uuid.UUID):
+        return str(value)
+    if isinstance(value, (bytes, bytearray)):
+        return value.decode("utf-8", "replace")
+    logger.debug("to_json fell back to str() for %s", type(value).__name__)
+    return str(value)
+
+
+def to_json(value: Any) -> str:
+    return json.dumps(value, default=_jsonable)

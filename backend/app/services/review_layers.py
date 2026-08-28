@@ -326,6 +326,34 @@ def from_response(
     )
 
 
+def normalise_usage(usage: Any) -> dict[str, Any]:
+    """Token counts as a plain dict, whatever the provider client returned.
+
+    Different providers return different shapes here — a dataclass, a pydantic
+    model, a bare dict — and the review is worth keeping regardless of which.
+    """
+    if isinstance(usage, dict):
+        return usage
+    if usage is None:
+        return {}
+    for attr in ("model_dump", "to_dict"):
+        method = getattr(usage, attr, None)
+        if callable(method):
+            try:
+                return dict(method())
+            except Exception:  # noqa: BLE001, S112
+                continue
+    from dataclasses import asdict, is_dataclass
+
+    if is_dataclass(usage) and not isinstance(usage, type):
+        return asdict(usage)
+    return {
+        field: getattr(usage, field)
+        for field in ("prompt_tokens", "completion_tokens", "total_tokens")
+        if isinstance(getattr(usage, field, None), int)
+    }
+
+
 def save(verdict: ReviewVerdict) -> None:
     from ..infra.db import execute, to_json
 
@@ -360,7 +388,7 @@ def save(verdict: ReviewVerdict) -> None:
             "issues": to_json(verdict.issues), "comments": to_json(verdict.comments),
             "compared_with": verdict.compared_with,
             "diff_summary": to_json(verdict.diff_summary),
-            "usage": to_json(verdict.usage),
+            "usage": to_json(normalise_usage(verdict.usage)),
         },
     )
 

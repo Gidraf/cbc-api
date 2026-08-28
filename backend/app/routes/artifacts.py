@@ -335,7 +335,7 @@ def review_artifact(
     )
     verdict.compared_with = compared_with
     verdict.diff_summary = {"counts": diff_summary.get("counts", {})} if diff_summary else {}
-    verdict.usage = response.usage or {}
+    verdict.usage = review_layers.normalise_usage(response.usage)
     review_layers.save(verdict)
 
     if artifact.status == "draft":
