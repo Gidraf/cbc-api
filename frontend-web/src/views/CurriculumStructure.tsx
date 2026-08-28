@@ -117,6 +117,9 @@ export function CurriculumStructure({
   // silently is how a strand of raw page debris got saved and then had to be
   // spotted by eye.
   const [refused, setRefused] = React.useState<Refusal[]>([]);
+  // Saving files each sub-strand as a version. Without a way through to it the
+  // review layers exist but nobody arrives at them.
+  const [filed, setFiled] = React.useState<number>(0);
 
   // What a copy should contain: everything under a strand, whether it was saved
   // earlier or drafted just now. Copying `drafts` alone meant that saving —
@@ -183,11 +186,12 @@ export function CurriculumStructure({
     const name = strandName(strand);
     const substrands = drafts[name] || [];
     if (!substrands.length) return;
-    await actions.saveSubstrands.mutateAsync({
+    const saved = await actions.saveSubstrands.mutateAsync({
       strand_name: name,
       strand_id: strandId(strand),
       substrands,
     });
+    setFiled((saved?.artifacts || []).filter((a: any) => a?.artifact_id).length);
     setSaved((s) => ({ ...s, [name]: substrands.length }));
     setDrafts((d) => {
       const next = { ...d };
@@ -250,6 +254,24 @@ export function CurriculumStructure({
       }
     >
       {actions.generateStrands.error && <ErrorNotice error={actions.generateStrands.error} />}
+      {filed > 0 && (
+        <div
+          style={{
+            border: "1px solid var(--line)",
+            borderRadius: "var(--radius)",
+            padding: "var(--s3)",
+            marginBottom: "var(--s3)",
+            fontSize: "var(--text-sm)",
+          }}
+        >
+          {filed} version{filed === 1 ? "" : "s"} filed for review.{" "}
+          <a href={`/approvals?grade=${encodeURIComponent(grade)}&subject=${encodeURIComponent(subject)}&kind=sub_strand`}>
+            Review and approve them
+          </a>{" "}
+          — nothing is approved until an independent vendor and an approver have
+          both passed it.
+        </div>
+      )}
       {refused.length > 0 && (
         <div
           style={{

@@ -31,6 +31,13 @@ const NAV: { group: string; items: NavItem[] }[] = [
       { to: "/datasets", label: "Datasets", icon: "▤", right: "generate", hint: "Curriculum designs waiting to be ingested" },
       { to: "/skills", label: "Teaching skills", icon: "◎", right: "generate", hint: "Per-subject expertise injected into every prompt" },
       { to: "/review", label: "Review queue", icon: "✓", right: "review", hint: "Bundles awaiting a human decision" },
+      {
+        to: "/approvals",
+        label: "Versions & approval",
+        icon: "⌥",
+        right: "review",
+        hint: "Every version, its layered review scores, and the approved label",
+      },
       { to: "/legacy", label: "Advanced console", icon: "⚙", hint: "Prompts, providers, pipelines, profiles" },
     ],
   },

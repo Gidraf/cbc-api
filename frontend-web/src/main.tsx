@@ -8,6 +8,7 @@ import { RouteBoundary } from "./app/RouteBoundary";
 import { AuthProvider, useAuth } from "./lib/auth";
 import { LoadingBlock, ToastProvider } from "./ui/components";
 
+import { Approvals } from "./views/Approvals";
 import { Coverage } from "./views/Coverage";
 import { ContentFactory } from "./views/ContentFactory";
 import { Datasets } from "./views/Datasets";
@@ -71,6 +72,10 @@ function Router() {
         <Route path="exams" element={<Screen name="Exam builder"><ExamBuilder /></Screen>} />
         <Route path="diagrams" element={<Screen name="Diagram library"><DiagramLibrary /></Screen>} />
         <Route path="review" element={<Screen name="Review queue"><Review /></Screen>} />
+        <Route
+          path="approvals"
+          element={<Screen name="Versions and approval"><Approvals /></Screen>}
+        />
         <Route path="datasets" element={<Screen name="Datasets"><Datasets /></Screen>} />
         <Route path="skills" element={<Screen name="Teaching skills"><Profiles /></Screen>} />
         <Route

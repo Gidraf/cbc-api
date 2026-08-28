@@ -235,3 +235,72 @@ def test_a_vendor_is_never_suggested_to_review_itself() -> None:
 
 def test_an_unknown_vendor_is_not_accepted() -> None:
     assert not vendors.is_known("some-startup")
+
+
+# ── The screen ──────────────────────────────────────────────────────────────
+
+def test_the_approval_screen_is_routed_and_navigable() -> None:
+    """The layers existed and nothing in the console reached them."""
+    main = open("../frontend-web/src/main.tsx").read()
+    shell = open("../frontend-web/src/app/AppShell.tsx").read()
+
+    assert 'path="approvals"' in main
+    assert "Approvals" in main
+    assert 'to: "/approvals"' in shell
+
+
+def test_the_screen_shows_dimensions_rather_than_one_number() -> None:
+    view = open("../frontend-web/src/views/Approvals.tsx").read()
+
+    assert "Confidence by dimension" in view
+    assert "Evidence" in view
+    assert "weakest" in view
+
+
+def test_approve_is_disabled_with_its_blockers_shown() -> None:
+    """A disabled button with no reason is indistinguishable from a broken one."""
+    view = open("../frontend-web/src/views/Approvals.tsx").read()
+
+    assert "!approval.can_approve" in view
+    assert "approval.blockers.join" in view
+    assert "Not approvable yet" in view
+
+
+def test_the_factory_links_through_to_the_versions_it_filed() -> None:
+    view = open("../frontend-web/src/views/CurriculumStructure.tsx").read()
+
+    assert "/approvals?grade=" in view
+    assert "Review and approve them" in view
+
+
+def test_the_console_is_served_built_not_from_a_dev_server() -> None:
+    """A dev server transforms every module on request, so a file the module
+    graph asks for and cannot find becomes a full-screen error overlay on top of
+    the running console. An operator saw an ENOENT for a path that does not
+    exist in this repo, covering their curriculum."""
+    dockerfile = open("../frontend-web/Dockerfile").read()
+    # The comment explains what it replaced, so read the instructions only.
+    instructions = "\n".join(
+        line for line in dockerfile.split("\n") if not line.strip().startswith("#")
+    )
+
+    assert "npm run dev" not in instructions
+    assert "npm run build" in instructions
+    assert "vite" in instructions and "preview" in instructions
+    assert "npm ci" in instructions, "the lockfile pins what was tested"
+
+
+def test_the_dev_server_cannot_read_outside_the_project() -> None:
+    config = open("../frontend-web/vite.config.ts").read()
+
+    assert "strict: true" in config
+    assert "allow: [root]" in config
+
+
+def test_the_api_proxy_survives_the_switch_to_a_built_bundle() -> None:
+    """An API that is only reachable in dev works on a laptop and 502s in
+    production."""
+    config = open("../frontend-web/vite.config.ts").read()
+
+    assert "preview:" in config
+    assert config.count("proxy") >= 3, "the same proxy must serve dev and preview"

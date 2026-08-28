@@ -65,9 +65,14 @@ services:
     build:
       context: ./frontend-web
       dockerfile: Dockerfile
+      args:
+        # Vite inlines this into the bundle, so it is a build argument rather
+        # than a runtime variable. Setting it only in `environment` had no
+        # effect on the served console.
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-/api}
     environment:
-      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
-      VITE_API_BASE_URL: ${VITE_API_BASE_URL:-/api}
+      # Read by vite.config.ts when the preview server starts, so the API can be
+      # repointed without rebuilding the image.
       API_PROXY_TARGET: ${API_PROXY_TARGET:-http://api:8000}
     ports:
       - "5173:5173"
