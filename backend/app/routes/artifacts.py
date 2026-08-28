@@ -6,6 +6,7 @@ is reviewed as a diff against the version it came from.
 """
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any
 
@@ -14,7 +15,7 @@ from pydantic import BaseModel
 
 from ..errors import raise_api_error
 from ..services import artifact_registry as registry
-from ..services import review_layers, review_vendors
+from ..services import review_context, review_layers, review_vendors
 from ..services.auth import AuthContext, require_roles
 from ..services.faith_scope import prompt_block as faith_prompt_block
 from ..services.level_register import register_block
@@ -43,11 +44,21 @@ class UpdateArtifactRequest(BaseModel):
 
 class LabelRequest(BaseModel):
     label: str
+    # Approval is a person's decision and is recorded as one. Coverage counts
+    # approved work, so this is the signature under a claim that a grade is
+    # taught-ready.
+    reviewed_by_me: bool = False
+    note: str = ""
 
 
 class CommentRequest(BaseModel):
     body: str
     dimension: str = ""
+
+
+class RegenerateRequest(BaseModel):
+    artifact_id: str
+    extra_instructions: str = ""
 
 
 class ReviewRequest(BaseModel):
@@ -162,6 +173,21 @@ def apply_label(
                 + "; ".join(state["blockers"]) + ".",
                 detail=state,
             )
+        if not payload.reviewed_by_me:
+            raise_api_error(
+                "VALIDATION_FAILED",
+                "Approval needs a person to say they have read this version. The "
+                "review layers narrow what reaches you; they do not replace you, and "
+                "coverage counts approved work as taught-ready. Send "
+                '"reviewed_by_me": true to sign for it.',
+                detail=state,
+            )
+        if payload.note:
+            registry.add_comment(
+                artifact_id, payload.note,
+                author=getattr(auth, "subject", ""), dimension="approval",
+            )
+
     return registry.set_label(artifact_id, payload.label,
                               moved_by=getattr(auth, "subject", ""))
 
@@ -298,15 +324,17 @@ def review_artifact(
             logger.warning("Could not diff against %s: %s", compared_with, exc)
             compared_with = ""
 
-    design_extract = ""
-    try:
-        from .curriculum import _substrand_design_block
-
-        design_extract, _slos = _substrand_design_block(
-            artifact.grade, artifact.subject, artifact.sub_strand_name
+    # This used the sub-strand lookup for every kind. A strand artifact has no
+    # sub_strand_name, so the query matched nothing, returned "", and the miss
+    # was logged at DEBUG and swallowed — strand reviews have been scoring
+    # curriculum_alignment against an empty comparison and reporting a number
+    # for it. Each kind now gets the comparison it can actually be judged by.
+    grounding = review_context.for_artifact(artifact)
+    if not grounding.found:
+        logger.warning(
+            "Review of %s (%s) has no design to judge against: %s",
+            artifact.artifact_id, artifact.kind, grounding.missing_reason,
         )
-    except Exception as exc:  # noqa: BLE001
-        logger.debug("No design extract for review: %s", exc)
 
     prior = [r for r in review_layers.reviews_for(artifact.artifact_id)
              if int(r["layer"]) < payload.layer]
@@ -315,7 +343,9 @@ def review_artifact(
 
     messages = review_layers.build_messages(
         artifact, payload.layer,
-        design_extract=design_extract,
+        design_extract=grounding.text,
+        missing_design=grounding.missing_reason,
+        descendants=grounding.descendants,
         register=register_block(artifact.grade),
         faith=faith_prompt_block(artifact.subject),
         prior_reviews=prior, human_comments=human,
@@ -351,4 +381,162 @@ def review_artifact(
         **verdict.to_dict(),
         "approval": review_layers.approval_state(artifact.artifact_id),
         "reviewed_a_diff": bool(diff_summary),
+        # What the reviewer was actually shown, so a verdict can be checked
+        # against its inputs rather than taken on trust.
+        "inputs": {
+            "grounding": grounding.to_dict(),
+            "artifact_chars": len(json.dumps(artifact.content, default=str)),
+            "truncated": len(json.dumps(artifact.content, default=str))
+                         > review_layers.MAX_ARTIFACT_CHARS,
+            "prior_reviews": len(prior),
+            "human_comments": len(human),
+            "prompt_chars": sum(len(m.get("content", "")) for m in messages),
+            "messages": messages,
+        },
+    }
+
+
+# ── Regenerate with the review's own findings ───────────────────────────────
+
+# Which generator produces each kind, and how its payload is shaped. A kind
+# absent here cannot be regenerated from a review yet, and says so rather than
+# silently doing nothing.
+_REGENERATORS: dict[str, dict[str, Any]] = {
+    "strand": {"endpoint": "factory_generate_strands", "scope": "strand_list"},
+    "sub_strand": {"endpoint": "factory_generate_substrands", "scope": "strand"},
+    "notes": {"endpoint": "factory_generate_notes", "scope": "sub_strand"},
+    "diagram": {"endpoint": "factory_plan_visuals", "scope": "sub_strand"},
+    "activity": {"endpoint": "factory_plan_activities", "scope": "sub_strand"},
+    "photo_prompt": {"endpoint": "factory_generate_media_prompts", "scope": "sub_strand"},
+    "video_prompt": {"endpoint": "factory_generate_media_prompts", "scope": "sub_strand"},
+}
+
+
+@router.post("/regenerate")
+def regenerate_artifact(
+    payload: RegenerateRequest,
+    auth: AuthContext = Depends(require_roles("admin", "operator")),
+) -> dict[str, Any]:
+    """Generate the next version, carrying the reviewers' findings into it.
+
+    A review that says what is wrong and then leaves a person to retype it into
+    a custom-instructions box is a review most of whose value is lost in
+    transit. The findings are already structured, so they are handed to the
+    generator directly — and the new version records this one as its parent, so
+    the next review reads the diff rather than the whole thing again.
+    """
+    from . import curriculum as curriculum_routes
+    from ..services.revision_directives import build as build_directives
+
+    artifact = registry.get(payload.artifact_id)
+    plan = _REGENERATORS.get(artifact.kind)
+    if not plan:
+        raise_api_error(
+            "VALIDATION_FAILED",
+            f"'{artifact.kind}' has no regeneration path yet. Regenerate it from its "
+            f"own station in the factory. Kinds that can: "
+            f"{', '.join(sorted(_REGENERATORS))}.",
+        )
+
+    reviews = review_layers.reviews_for(artifact.artifact_id)
+    if not reviews:
+        raise_api_error(
+            "VALIDATION_FAILED",
+            "This version has not been reviewed, so there are no findings to "
+            "regenerate from. Run a review first, or regenerate from the station "
+            "to start fresh.",
+        )
+
+    revision = build_directives(reviews, registry.comments_for(artifact.artifact_id))
+    if not revision["directives"]:
+        raise_api_error(
+            "VALIDATION_FAILED",
+            "Every reviewer passed this version with no issues raised, so a "
+            "regeneration would be told to change nothing. Approve it instead.",
+        )
+
+    instructions = revision["directives"]
+    if payload.extra_instructions:
+        instructions += f"\n\nALSO: {payload.extra_instructions}"
+
+    common = {
+        "grade": artifact.grade,
+        "subject": artifact.subject,
+        "custom_instructions": instructions,
+    }
+    scope = plan["scope"]
+    if scope == "strand":
+        common["strand_name"] = artifact.strand_name
+    elif scope == "sub_strand":
+        common["strand"] = artifact.strand_name
+        common["sub_strand"] = artifact.sub_strand_name
+
+    handler = getattr(curriculum_routes, plan["endpoint"])
+    model_cls = handler.__annotations__.get("payload")
+    if model_cls is None:
+        raise_api_error("VALIDATION_FAILED",
+                        f"'{plan['endpoint']}' does not take a request body.")
+
+    # Fields the generator needs that this artifact does not carry are left to
+    # the model's own defaults rather than guessed at here.
+    allowed = set(model_cls.model_fields)
+    result = handler(model_cls(**{k: v for k, v in common.items() if k in allowed}), auth)
+
+    # The generator files its own version; attribute it to this one so the diff
+    # review has a parent to compare against.
+    filed = result.get("artifact") if isinstance(result, dict) else None
+    if isinstance(filed, dict) and filed.get("artifact_id"):
+        from ..infra.db import execute, to_json
+
+        execute(
+            "UPDATE artifacts SET parent_artifact_id = :parent, "
+            "provenance = provenance || CAST(:extra AS jsonb), updated_at = NOW() "
+            "WHERE artifact_id = :id AND parent_artifact_id = ''",
+            {
+                "parent": artifact.artifact_id,
+                "id": filed["artifact_id"],
+                "extra": to_json({
+                    "regenerated_from": artifact.artifact_id,
+                    "addressed_issues": len(revision["issues"]),
+                    "requested_by": getattr(auth, "subject", ""),
+                }),
+            },
+        )
+
+    return {
+        "status": "regenerated",
+        "from_artifact_id": artifact.artifact_id,
+        "from_version": artifact.version,
+        "new_artifact": filed,
+        "addressed": {
+            "issues": revision["issues"],
+            "weak_dimensions": revision["weak_dimensions"],
+            "human_comments": revision["human_comments"],
+        },
+        "directives": instructions,
+        "result": result,
+    }
+
+
+@router.get("/{artifact_id}/revision-directives")
+def read_revision_directives(
+    artifact_id: str,
+    _: AuthContext = Depends(require_roles("admin", "operator", "reviewer")),
+) -> dict[str, Any]:
+    """What a regeneration would be told, without running one.
+
+    Copyable, so the same instruction can be pasted into another model or into
+    a station's own custom-instructions box by hand.
+    """
+    from ..services.revision_directives import build as build_directives
+
+    artifact = registry.get(artifact_id)
+    revision = build_directives(
+        review_layers.reviews_for(artifact_id), registry.comments_for(artifact_id)
+    )
+    return {
+        "artifact_id": artifact_id,
+        "kind": artifact.kind,
+        "regeneratable": artifact.kind in _REGENERATORS,
+        **revision,
     }

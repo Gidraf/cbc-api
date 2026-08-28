@@ -360,6 +360,26 @@ export function useArtifacts(filters: {
   });
 }
 
+export type RevisionDirectives = {
+  artifact_id: string;
+  kind: string;
+  regeneratable: boolean;
+  directives: string;
+  issues: { severity: string; where: string; what: string; fix: string; layer: number }[];
+  weak_dimensions: { dimension: string; score: number; evidence: string }[];
+  human_comments: string[];
+};
+
+/** What a regeneration would carry, without running one. */
+export function useRevisionDirectives(artifactId: string) {
+  const api = useApi();
+  return useQuery({
+    queryKey: ["revision-directives", artifactId],
+    queryFn: () => api<RevisionDirectives>(`/api/v1/artifacts/${artifactId}/revision-directives`),
+    enabled: Boolean(artifactId),
+  });
+}
+
 export function useArtifact(artifactId: string) {
   const api = useApi();
   return useQuery({
@@ -370,6 +390,10 @@ export function useArtifact(artifactId: string) {
         artifact_key: string;
         kind: string;
         version: number;
+        grade: string;
+        subject: string;
+        strand_name: string;
+        sub_strand_name: string;
         provenance: Record<string, unknown>;
         content: Record<string, unknown>;
         labels: string[];
@@ -428,12 +452,36 @@ export function useArtifactActions(artifactId: string) {
       onSuccess: refresh,
     }),
     label: useMutation({
-      mutationFn: (label: ArtifactLabel) =>
+      // `reviewed_by_me` is a person signing for the version. Coverage counts
+      // approved work as taught-ready, so approval cannot be a side effect of
+      // the model layers passing.
+      mutationFn: (v: { label: ArtifactLabel; reviewed_by_me?: boolean; note?: string }) =>
         api<{ status: string; moved_from: string }>(
           `/api/v1/artifacts/${encodeURIComponent(artifactId)}/label`,
-          { method: "POST", body: JSON.stringify({ label }) }
+          { method: "POST", body: JSON.stringify(v) }
         ),
-      onSuccess: refresh,
+      onSuccess: () => {
+        refresh();
+        qc.invalidateQueries({ queryKey: ["progress"] });
+      },
+    }),
+    regenerate: useMutation({
+      mutationFn: (v: { extra_instructions?: string } = {}) =>
+        api<{
+          status: string;
+          from_version: number;
+          new_artifact: { artifact_id: string; version: number } | null;
+          addressed: { issues: any[]; weak_dimensions: any[]; human_comments: string[] };
+          directives: string;
+        }>("/api/v1/artifacts/regenerate", {
+          method: "POST",
+          body: JSON.stringify({ artifact_id: artifactId, ...v }),
+        }),
+      onSuccess: () => {
+        refresh();
+        qc.invalidateQueries({ queryKey: ["artifacts"] });
+        qc.invalidateQueries({ queryKey: ["progress"] });
+      },
     }),
     comment: useMutation({
       mutationFn: (v: { body: string; dimension?: string }) =>

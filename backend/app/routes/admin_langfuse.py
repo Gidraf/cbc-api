@@ -689,7 +689,9 @@ def get_dataset_progress_report(
 ) -> dict[str, Any]:
     """Computes comprehensive multi-level progress percentage (Grade -> Subject -> Strand -> Sub-strand -> 4-Hour Notes -> Diagrams -> Practicals -> Questions) with actionable focus recommendations."""
     from ..infra.db import fetch_all
-    from ..services.coverage import WEIGHTS, compute_substrand_coverage, next_action, weighted_rollup
+    from ..services.coverage import (
+        WEIGHTS, approved_rollup, compute_substrand_coverage, next_action, weighted_rollup,
+    )
     from ..services.grade_order import grade_label, grade_ordinal
     from ..services.validation import validate_grade_dataset
 
@@ -974,6 +976,11 @@ def get_dataset_progress_report(
                 "estimated": dims["slo_coverage"]["estimated"],
             },
             "overall_percentage": report["overall_percentage"],
+            # Produced and approved are reported side by side. Folding approval
+            # into one number would make an operator reading 92% unable to tell
+            # whether that is content a person has signed for or content nobody
+            # has opened.
+            "approved_percentage": report["dimensions"]["approved"]["percentage"],
             "production_ready": report["production_ready"],
             "approved": is_approved,
             "bundle_id": gen_res.get("bundle_id") if gen_res else None,
@@ -1019,6 +1026,7 @@ def get_dataset_progress_report(
                 "remaining_substrands": sum(1 for i in ss_list if not i["production_ready"]),
                 "production_ready_substrands": sum(1 for i in ss_list if i["production_ready"]),
                 "strand_percentage": weighted_rollup(ss_list),
+                "strand_approved_percentage": approved_rollup(ss_list),
                 "estimated": any(i["estimated"] for i in ss_list),
                 "notes_summary": strand_totals["notes"],
                 "visuals_summary": strand_totals["visuals"],
@@ -1040,6 +1048,7 @@ def get_dataset_progress_report(
             "remaining_substrands": sum(1 for i in subject_substrands if not i["production_ready"]),
             "production_ready_substrands": sum(1 for i in subject_substrands if i["production_ready"]),
             "subject_percentage": weighted_rollup(subject_substrands),
+            "subject_approved_percentage": approved_rollup(subject_substrands),
             "estimated": any(i["estimated"] for i in subject_substrands),
             "notes_summary": subject_totals["notes"],
             "visuals_summary": subject_totals["visuals"],
@@ -1056,6 +1065,7 @@ def get_dataset_progress_report(
         dim: {"generated": 0, "required": 0, "remaining": 0, "percentage": 0} for dim in DIMENSION_KEYS
     }
     grade_pct = weighted_rollup(all_substrands)
+    grade_approved_pct = approved_rollup(all_substrands)
     production_ready_count = sum(1 for i in all_substrands if i["production_ready"])
 
     priority_order = {"high": 0, "medium": 1, "low": 2, "ready": 3}
@@ -1070,6 +1080,7 @@ def get_dataset_progress_report(
         "grade_label": grade_label(grade_slug),
         "grade_ordinal": grade_ordinal(grade_slug),
         "overall_grade_percentage": grade_pct,
+        "approved_grade_percentage": grade_approved_pct,
         "rollup_method": "weighted_by_allocated_hours",
         "weights": WEIGHTS,
         "total_substrands": len(all_substrands),

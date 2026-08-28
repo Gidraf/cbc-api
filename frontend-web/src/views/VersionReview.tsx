@@ -3,6 +3,7 @@ import React from "react";
 import {
   Badge,
   Button,
+  CopyButton,
   EmptyState,
   ErrorNotice,
   Field,
@@ -16,12 +17,20 @@ import {
   Th,
 } from "../ui/components";
 import {
+  allReviewsToText,
+  artifactToText,
+  reviewPromptToText,
+  reviewToText,
+  revisionDirectivesToText,
+} from "../lib/serialize";
+import {
   ARTIFACT_LABELS,
   useArtifact,
   useArtifactActions,
   useArtifactDiff,
   useArtifactVersions,
   useReviewVendors,
+  useRevisionDirectives,
   type ArtifactLabel,
   type DimensionScore,
   type ReviewVerdict,
@@ -128,6 +137,13 @@ export function ReviewCard({ review }: { review: ReviewVerdict }) {
             reviewed the diff
           </Badge>
         )}
+        <span style={{ marginLeft: "auto" }}>
+          <CopyButton
+            label="Copy"
+            title="Copy this verdict with the evidence behind every score, to verify it elsewhere"
+            getText={() => reviewToText(review as any, {})}
+          />
+        </span>
       </Stack>
 
       <Table caption={`Confidence by dimension, layer ${review.layer}`}>
@@ -241,6 +257,9 @@ function LabelBar({
   blockers: string[];
 }) {
   const actions = useArtifactActions(artifactId);
+  const [signing, setSigning] = React.useState(false);
+  const [note, setNote] = React.useState("");
+
   return (
     <>
       <Stack direction="row" gap="var(--s2)" style={{ flexWrap: "wrap" }}>
@@ -260,13 +279,60 @@ function LabelBar({
                   ? `This version holds "${label}"`
                   : `Point "${label}" at this version`
               }
-              onClick={() => actions.label.mutate(label as ArtifactLabel)}
+              onClick={() =>
+                label === "approved"
+                  ? setSigning(true)
+                  : actions.label.mutate({ label: label as ArtifactLabel })
+              }
             >
               {held ? `✓ ${label}` : label}
             </Button>
           );
         })}
       </Stack>
+
+      {signing && (
+        <div
+          style={{
+            marginTop: "var(--s3)",
+            padding: "var(--s3)",
+            border: "1px solid var(--accent)",
+            borderRadius: "var(--radius)",
+          }}
+        >
+          <strong style={{ fontSize: "var(--text-sm)" }}>
+            You are signing for this version
+          </strong>
+          <p style={{ color: "var(--ink-3)", fontSize: "var(--text-sm)", margin: "6px 0" }}>
+            The review layers narrow what reaches you; they do not replace you.
+            Approved work counts toward this grade's progress as taught-ready, so
+            this is your signature under that claim.
+          </p>
+          <Textarea
+            rows={2}
+            value={note}
+            placeholder="Optional: what you checked, or what you accepted despite."
+            onChange={(e) => setNote(e.target.value)}
+          />
+          <Stack direction="row" gap="var(--s2)" style={{ marginTop: "var(--s2)" }}>
+            <Button
+              size="sm"
+              disabled={actions.label.isPending}
+              onClick={() =>
+                actions.label.mutate(
+                  { label: "approved", reviewed_by_me: true, note },
+                  { onSuccess: () => { setSigning(false); setNote(""); } }
+                )
+              }
+            >
+              {actions.label.isPending ? "Approving…" : "I have read this — approve"}
+            </Button>
+            <Button size="sm" variant="ghost" onClick={() => setSigning(false)}>
+              Cancel
+            </Button>
+          </Stack>
+        </div>
+      )}
       {actions.label.error && <ErrorNotice error={actions.label.error} />}
       {!canApprove && (
         <div
@@ -288,7 +354,15 @@ function LabelBar({
   );
 }
 
-function RunReview({ artifactId, generatorProvider }: { artifactId: string; generatorProvider: string }) {
+function RunReview({
+  artifactId,
+  generatorProvider,
+  onReviewed,
+}: {
+  artifactId: string;
+  generatorProvider: string;
+  onReviewed?: (inputs: any) => void;
+}) {
   const actions = useArtifactActions(artifactId);
   const vendors = useReviewVendors(generatorProvider);
   const [layer, setLayer] = React.useState<1 | 2 | 3>(2);
@@ -359,7 +433,12 @@ function RunReview({ artifactId, generatorProvider }: { artifactId: string; gene
         </Field>
         <Button
           disabled={actions.review.isPending}
-          onClick={() => actions.review.mutate({ layer, provider, model })}
+          onClick={() =>
+            actions.review.mutate(
+              { layer, provider, model },
+              { onSuccess: (res: any) => onReviewed?.(res?.inputs) }
+            )
+          }
         >
           {actions.review.isPending ? "Reviewing…" : `Run layer ${layer}`}
         </Button>
@@ -410,6 +489,105 @@ function Comments({ artifactId, comments }: { artifactId: string; comments: any[
   );
 }
 
+/** Regenerate carrying the reviewers' findings, rather than retyping them.
+ *
+ * A review that says what is wrong and then leaves a person to copy it into a
+ * custom-instructions box is a review most of whose value is lost in transit. */
+function Revise({ artifactId, onDone }: { artifactId: string; onDone: (id: string) => void }) {
+  const directives = useRevisionDirectives(artifactId);
+  const actions = useArtifactActions(artifactId);
+  const [extra, setExtra] = React.useState("");
+
+  if (directives.isLoading) return <LoadingBlock rows={3} label="Reading the findings" />;
+  if (directives.isError) return <ErrorNotice error={directives.error} />;
+
+  const found = directives.data!;
+  const nothing = !found.directives;
+
+  return (
+    <Stack gap="var(--s3)">
+      {nothing ? (
+        <EmptyState
+          title="Every reviewer passed this with no issues"
+          description="There is nothing to revise. Approve it instead, or regenerate from the station to start fresh."
+        />
+      ) : (
+        <>
+          <Stack direction="row" gap="var(--s2)" style={{ flexWrap: "wrap" }}>
+            <Badge tone="danger">{found.issues.length} defect(s)</Badge>
+            <Badge tone="warn">{found.weak_dimensions.length} weak dimension(s)</Badge>
+            {found.human_comments.length > 0 && (
+              <Badge tone="info">{found.human_comments.length} human comment(s)</Badge>
+            )}
+            <CopyButton
+              label="Copy the instructions"
+              title="Paste this into another model, or into a station's custom instructions by hand"
+              getText={() => revisionDirectivesToText(found as any)}
+            />
+          </Stack>
+
+          <pre
+            style={{
+              margin: 0,
+              maxHeight: 320,
+              overflow: "auto",
+              fontSize: "var(--text-sm)",
+              background: "var(--surface-2)",
+              padding: "var(--s3)",
+              borderRadius: "var(--radius-sm)",
+              whiteSpace: "pre-wrap",
+            }}
+          >
+            {found.directives}
+          </pre>
+
+          <Textarea
+            rows={2}
+            value={extra}
+            placeholder="Optional: anything else the generator should know."
+            onChange={(e) => setExtra(e.target.value)}
+          />
+
+          {!found.regeneratable ? (
+            <EmptyState
+              title={`A ${readable(found.kind).toLowerCase()} cannot be regenerated from here yet`}
+              description="Copy the instructions above and regenerate it from its own station."
+            />
+          ) : (
+            <Stack direction="row" gap="var(--s2)">
+              <Button
+                disabled={actions.regenerate.isPending}
+                onClick={() =>
+                  actions.regenerate.mutate(
+                    { extra_instructions: extra },
+                    {
+                      onSuccess: (res: any) => {
+                        if (res?.new_artifact?.artifact_id) onDone(res.new_artifact.artifact_id);
+                      },
+                    }
+                  )
+                }
+              >
+                {actions.regenerate.isPending
+                  ? "Regenerating…"
+                  : `Regenerate addressing ${found.issues.length} defect(s)`}
+              </Button>
+            </Stack>
+          )}
+          {actions.regenerate.error && <ErrorNotice error={actions.regenerate.error} />}
+          {actions.regenerate.data && (
+            <p style={{ color: "var(--ink-3)", fontSize: "var(--text-sm)" }}>
+              Version {actions.regenerate.data.new_artifact?.version} filed from version{" "}
+              {actions.regenerate.data.from_version}. Its review will read the diff
+              rather than the whole thing again.
+            </p>
+          )}
+        </>
+      )}
+    </Stack>
+  );
+}
+
 /**
  * The whole review surface for one artifact, in tabs.
  *
@@ -426,6 +604,10 @@ export function VersionReview({
 }) {
   const [picked, setPicked] = React.useState(artifactId || "");
   const [tab, setTab] = React.useState("content");
+  // What the last review was actually shown. A 94% from a reviewer that was
+  // never given the design is not a 94% about the curriculum, and the only way
+  // to tell the two apart is to keep the inputs beside the score.
+  const [lastInputs, setLastInputs] = React.useState<any>(null);
 
   React.useEffect(() => {
     if (artifactId) setPicked(artifactId);
@@ -474,6 +656,13 @@ export function VersionReview({
       ) : undefined,
       hint: "Three layers, scored per dimension",
     },
+    ...(data.reviews.length
+      ? [{
+          id: "revise",
+          label: "Regenerate",
+          hint: "Generate the next version carrying the reviewers' findings",
+        }]
+      : []),
     ...(data.parent_artifact_id
       ? [{ id: "changes", label: "Changes", hint: "What changed since the previous version" }]
       : []),
@@ -511,6 +700,19 @@ export function VersionReview({
         <Tabs tabs={tabs} active={tab} onChange={setTab} />
 
         {tab === "content" && (
+          <Stack gap="var(--s2)">
+            <Stack direction="row" gap="var(--s2)" style={{ flexWrap: "wrap" }}>
+              <CopyButton
+                label={`Copy the ${readable(data.kind).toLowerCase()}`}
+                title="Copy this version's content as an outline, to check it in another model"
+                getText={() => artifactToText(data as any)}
+              />
+              <CopyButton
+                label="Copy as JSON"
+                title="The exact stored content, for a script or a diff"
+                getText={() => JSON.stringify(data.content, null, 2)}
+              />
+            </Stack>
           <pre
             style={{
               margin: 0,
@@ -525,6 +727,7 @@ export function VersionReview({
           >
             {JSON.stringify(data.content, null, 2)}
           </pre>
+          </Stack>
         )}
 
         {tab === "versions" && (
@@ -576,7 +779,68 @@ export function VersionReview({
             <RunReview
               artifactId={picked}
               generatorProvider={String((data as any).provenance?.provider || "")}
+              onReviewed={setLastInputs}
             />
+
+            {(data.reviews.length > 0 || lastInputs) && (
+              <Stack direction="row" gap="var(--s2)" style={{ flexWrap: "wrap" }}>
+                <CopyButton
+                  label="Copy the review record"
+                  title="Every verdict, its evidence, and what the reviewer was actually shown"
+                  getText={() =>
+                    allReviewsToText(data.reviews as any[], lastInputs, {
+                      grade: data.grade,
+                      subject: data.subject,
+                      "sub strand": data.sub_strand_name,
+                      version: String(data.version),
+                    })
+                  }
+                />
+                {lastInputs?.messages && (
+                  <CopyButton
+                    label="Copy the reviewer's prompt"
+                    title="The exact messages the reviewer was sent, to reproduce this verdict in another model"
+                    getText={() => reviewPromptToText(lastInputs.messages)}
+                  />
+                )}
+              </Stack>
+            )}
+
+            {lastInputs && !lastInputs.grounding?.grounded && (
+              <div
+                style={{
+                  border: "1px solid var(--warn, var(--line))",
+                  borderRadius: "var(--radius)",
+                  padding: "var(--s3)",
+                  fontSize: "var(--text-sm)",
+                }}
+              >
+                <strong>The reviewer had no design to judge against.</strong>
+                <div style={{ color: "var(--ink-3)", marginTop: 4 }}>
+                  {lastInputs.grounding?.missing_reason}
+                </div>
+                <div style={{ color: "var(--ink-3)", marginTop: 4 }}>
+                  Curriculum alignment cannot be scored from this run.
+                </div>
+              </div>
+            )}
+
+            {lastInputs?.truncated && (
+              <div
+                style={{
+                  border: "1px solid var(--warn, var(--line))",
+                  borderRadius: "var(--radius)",
+                  padding: "var(--s3)",
+                  fontSize: "var(--text-sm)",
+                }}
+              >
+                <strong>The artifact was too long to send whole.</strong>
+                <div style={{ color: "var(--ink-3)", marginTop: 4 }}>
+                  {lastInputs.artifact_chars.toLocaleString()} characters; the reviewer
+                  saw the first 60,000 and was told so. Completeness was not scored.
+                </div>
+              </div>
+            )}
             {data.reviews.length === 0 ? (
               <EmptyState
                 title="No reviews yet"
@@ -587,6 +851,8 @@ export function VersionReview({
             )}
           </Stack>
         )}
+
+        {tab === "revise" && <Revise artifactId={picked} onDone={select} />}
 
         {tab === "changes" && <DiffTable artifactId={picked} />}
 

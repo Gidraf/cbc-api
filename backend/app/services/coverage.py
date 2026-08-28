@@ -272,7 +272,7 @@ def compute_substrand_coverage(
     }
 
 
-def weighted_rollup(children: list[dict[str, Any]]) -> int:
+def weighted_rollup(children: list[dict[str, Any]], key: str = "overall_percentage") -> int:
     """Roll up child percentages weighted by teaching hours.
 
     A 10-hour sub-strand represents five times the curriculum of a 2-hour one, so
@@ -284,9 +284,21 @@ def weighted_rollup(children: list[dict[str, Any]]) -> int:
     if total_weight <= 0:
         return 0
     return round(
-        sum(c.get("overall_percentage", 0) * max(1, c.get("weight_hours", 1)) for c in children)
+        sum(c.get(key, 0) * max(1, c.get("weight_hours", 1)) for c in children)
         / total_weight
     )
+
+
+def approved_rollup(children: list[dict[str, Any]]) -> int:
+    """How much of this is signed off, as opposed to merely produced.
+
+    Reported beside the produced figure rather than folded into it. A single
+    number that quietly meant "produced" for a year and "approved" afterwards
+    would make every historical figure a lie, and an operator reading 92% has
+    to know which 92% it is: content nobody has read is not curriculum, but it
+    is also not nothing.
+    """
+    return weighted_rollup(children, key="approved_percentage")
 
 
 def next_action(node_report: dict[str, Any]) -> dict[str, Any] | None:
