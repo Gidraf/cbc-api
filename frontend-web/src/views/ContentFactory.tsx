@@ -9,7 +9,7 @@ import { QueuePanel } from "./QueuePanel";
 import { ResetPanel } from "./ResetPanel";
 import { VersionReview } from "./VersionReview";
 import { stationToText } from "../lib/serialize";
-import { useArtifacts, useInspect, profileFor, useProfiles, gradeOptionLabel, subjectOptionLabel, useApi, useGrades, useProgress, useSavedSubstrands, useSubjects } from "../lib/queries";
+import { useArtifacts, useInspect, profileFor, useProfiles, gradeOptionLabel, subjectOptionLabel, useApi, useGrades, useProgress, useSavedSubstrands, useStoredStructure, useSubjects } from "../lib/queries";
 import { useQueryClient } from "@tanstack/react-query";
 
 /**
@@ -253,6 +253,15 @@ export function ContentFactory() {
     }));
   }, [fromProgress, saved.data]);
 
+  // Which strands still have nothing under them. Without this the operator has
+  // to remember which of five they have done, and the builder that would tell
+  // them was the thing that disappeared.
+  const structure = useStoredStructure(effectiveGrade, subject);
+  const strandsRemaining = React.useMemo(() => {
+    const strands = structure.data?.strands || [];
+    return strands.filter((s) => (s.sub_strands || []).length === 0).length;
+  }, [structure.data]);
+
   const selected = React.useMemo(() => {
     if (!substrand) return null;
     const hit = allSubstrands.find((s) => s.name === substrand);
@@ -373,12 +382,58 @@ export function ContentFactory() {
         />
       )}
 
-      {!substrand && !saved.isLoading && allSubstrands.length === 0 && (
-        <CurriculumStructure
-          grade={effectiveGrade}
-          subject={subject}
-          onSaved={() => progress.refetch()}
-        />
+      {/* Gated on "no sub-strands yet", this vanished the moment the first
+          strand was saved — and with it the only way to generate the other
+          four. Building a learning area is strand by strand, so the builder
+          has to survive the first success. It collapses once there is work to
+          show, so it does not crowd the picker. */}
+      {!substrand && subject && !saved.isLoading && (
+        allSubstrands.length === 0 ? (
+          <CurriculumStructure
+            grade={effectiveGrade}
+            subject={subject}
+            onSaved={() => {
+              saved.refetch();
+              progress.refetch();
+            }}
+          />
+        ) : (
+          <details open={strandsRemaining > 0} style={{ marginBottom: "var(--s4)" }}>
+            <summary
+              style={{
+                cursor: "pointer",
+                fontSize: "var(--text-md)",
+                fontWeight: 600,
+                padding: "var(--s3)",
+                border: "1px solid var(--line)",
+                borderRadius: "var(--radius)",
+              }}
+            >
+              Build more of the structure
+              {strandsRemaining > 0 ? (
+                <>
+                  {" "}
+                  <Badge tone="warn">
+                    {strandsRemaining} strand{strandsRemaining === 1 ? "" : "s"} with
+                    no sub-strands yet
+                  </Badge>
+                </>
+              ) : (
+                <> <Badge tone="ok">every strand has sub-strands</Badge></>
+              )}
+            </summary>
+            <div style={{ marginTop: "var(--s3)" }}>
+              <CurriculumStructure
+                grade={effectiveGrade}
+                subject={subject}
+                onSaved={() => {
+                  saved.refetch();
+                  progress.refetch();
+                }}
+              />
+            </div>
+          </details>
+        )
       )}
 
       {!substrand && subject && allSubstrands.length > 0 && (

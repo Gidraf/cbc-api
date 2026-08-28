@@ -440,3 +440,41 @@ def test_a_station_coverage_does_not_measure_cannot_crash_the_screen() -> None:
         "the summary grid still indexes the report directly"
     )
     assert "unmeasured" in view, "an unmeasured station must say so, not read 0%"
+
+
+def test_the_structure_builder_survives_the_first_save() -> None:
+    """It was gated on "no sub-strands yet", so saving the first strand's
+    sub-strands made it vanish — and with it the only way to generate the other
+    four. A learning area is built strand by strand, so the builder has to
+    survive its own first success."""
+    view = open("../frontend-web/src/views/ContentFactory.tsx").read()
+
+    # Comments wrap, so compare on normalised whitespace.
+    flat = " ".join(view.split())
+
+    assert "{!substrand && !saved.isLoading && allSubstrands.length === 0 && (" not in view
+    assert "the builder has to survive the first success" in flat
+    # Still rendered when there IS work, just collapsed.
+    assert "Build more of the structure" in view
+
+
+def test_the_operator_is_told_how_many_strands_are_left() -> None:
+    """Otherwise they have to remember which of five they have done, and the
+    thing that would have told them was what disappeared."""
+    view = open("../frontend-web/src/views/ContentFactory.tsx").read()
+
+    flat = " ".join(view.split())
+
+    assert "strandsRemaining" in flat
+    assert "no sub-strands yet" in flat
+    assert "every strand has sub-strands" in flat
+
+
+def test_saving_sub_strands_refreshes_the_remaining_count() -> None:
+    queries = open("../frontend-web/src/lib/queries.ts").read()
+    start = queries.index("saveSubstrands: useMutation")
+    # To the end of this mutation's onSuccess, not the first "})," which closes
+    # the mutationFn's own argument.
+    block = queries[start: queries.index('["saved-substrands"]', start) + 40]
+
+    assert "keys.structure(grade, subject)" in block
