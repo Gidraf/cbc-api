@@ -21,6 +21,7 @@ from ..services import (
     media_validators,
     notes_coverage,
     simulation_validators,
+    substrand_integrity,
     substrand_hygiene,
     time_allocation,
 )
@@ -954,7 +955,19 @@ def factory_generate_notes(
     resolved = pipeline_orchestrator.router.resolve_for_stage("notes_generation")
 
     slos_formatted = "\n".join([f"- {s if isinstance(s, str) else s.get('text', str(s))}" for s in slos]) if slos else f"- Master the foundational and practical principles of {payload.sub_strand}"
-    kiqs_formatted = "\n".join([f"- {k}" for k in kiqs]) if kiqs else f"- How does {payload.sub_strand} apply to real-world Kenyan national development?"
+    kiqs_formatted = (
+        "\n".join([f"- {k}" for k in kiqs]) if kiqs
+        else "- (The design records no key inquiry question for this sub-strand. "
+             "Say so in `gaps`; do not invent one.)"
+    )
+
+    # A record that was never parsed cannot produce anything true, and every
+    # measure downstream will agree that it did: the HRE run reported "lesson
+    # coverage complete, 100%" because one module was asked for and one arrived.
+    substrand_integrity.require(
+        payload.grade, payload.subject, payload.strand, payload.sub_strand,
+        slos=slos, allocated=str((substrand_row or {}).get("allocated_hours") or ""),
+    )
 
     # The design's own suggested experiences, competencies, values, PCIs, links
     # and rubric were stored and then not passed. For pre-primary the suggested

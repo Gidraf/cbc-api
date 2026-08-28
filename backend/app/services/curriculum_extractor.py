@@ -315,6 +315,39 @@ def _extract_essence_statement(text: str) -> str:
     return "\n".join(collected).strip()[:MAX_ESSENCE_CHARS]
 
 
+
+
+# Each criterion, and the words in a sub-strand's own text that make it apply.
+_HAZARD_CRITERIA: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("Verify all chemical or biological materials are non-toxic and age-appropriate",
+     ("chemical", "reagent", "acid", "solution", "specimen", "culture", "fertilizer",
+      "pesticide", "paint", "glue", "dye")),
+    ("Ensure procedures with heat, fire, or smoke specify adult supervision and fire safety",
+     ("heat", "flame", "fire", "burner", "boil", "candle", "smoke", "cook", "stove")),
+    ("Ensure tools/equipment (cutters, hoes, knives) include explicit handling precautions",
+     ("knife", "cutter", "scissors", "blade", "hoe", "panga", "saw", "needle", "nail")),
+    ("Check that soil/manure activities mandate washing hands with soap and water afterwards",
+     ("soil", "manure", "compost", "digging", "planting", "garden", "seedling")),
+    ("Verify animal handling steps include hygiene, gentle restraint, and bite precautions",
+     ("animal", "livestock", "poultry", "goat", "cattle", "rabbit", "pet", "insect")),
+    ("Ensure any walk outside the classroom is supervised and the route is checked first",
+     ("nature walk", "field trip", "excursion", "visit", "outdoor", "neighbourhood")),
+    ("Ensure physical movement has space, a non-slip surface and no forced posture",
+     ("yoga", "asana", "posture", "stretch", "exercise", "dance", "athletic")),
+)
+
+
+def _hazard_criteria(text: str, experiments: list[str]) -> list[str]:
+    """The hazard checks this sub-strand's own content actually warrants."""
+    haystack = (text + " " + " ".join(experiments)).lower()
+    return [
+        criterion for criterion, signals in _HAZARD_CRITERIA
+        if any(signal in haystack for signal in signals)
+    ]
+
+
+
+
 class CurriculumExtractorService:
     """Extracts curriculum specifications/blueprints from raw datasets.
     Generates tailored guidance, safety hazard criteria, and dynamic agent prompts
@@ -911,14 +944,13 @@ class CurriculumExtractorService:
                 if len(experiments) >= 4:
                     break
 
-        # 8. Discover Safety Hazards to Check (Hazard audit criteria)
-        safety_hazards = [
-            "Verify all chemical or biological materials are non-toxic and age-appropriate",
-            "Ensure procedures with heat, fire, or smoke specify adult supervision and fire safety",
-            "Ensure tools/equipment (cutters, hoes, knives) include explicit handling precautions",
-            "Check that soil/manure activities mandate washing hands with soap and water afterwards",
-            "Verify animal handling steps include hygiene, gentle restraint, and rabies/bite precautions",
-        ]
+        # 8. Hazard audit criteria — only the ones this sub-strand can incur.
+        #
+        # All five were attached to every sub-strand of every subject, so a
+        # Pre-Primary lesson about greetings and yoga carried rabies precautions
+        # and hoe-handling criteria. A hazard list that does not apply teaches
+        # the reader to skip the field where it does.
+        safety_hazards = _hazard_criteria(body, experiments)
 
         # 9. Build Comprehensive Dynamic Prompt Package for all downstream agents (fetched from Langfuse)
         slo_texts = [s.get("text", str(s)) if isinstance(s, dict) else str(s) for s in slos]
