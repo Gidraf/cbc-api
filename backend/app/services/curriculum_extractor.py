@@ -10,6 +10,7 @@ from typing import Any
 from ..errors import raise_api_error
 from ..infra.db import execute, fetch_all, fetch_one, to_json
 from ..services.artifact_dna import artifact_dna_service
+from . import substrand_integrity
 from .grade_order import grade_level as _grade_level_for, normalize_grade
 from ..services.langfuse_context import langfuse_context_service
 
@@ -583,10 +584,24 @@ class CurriculumExtractorService:
                 design.subject, design.grade, design.level, found,
             )
 
+        # Sections the parser could not read. Previously each of these became a
+        # fabricated sub-strand named after its strand, so an unreadable design
+        # and a readable one produced the same count and nothing said which was
+        # which. Naming them is what tells the operator where to point the
+        # generators.
+        unparsed = list(getattr(self, "_last_unparsed", []) or [])
+
         return {
             "status": "success",
             "extraction_status": extraction_status,
             "expected_substrand_count": expected,
+            "unparsed_sections": unparsed,
+            "next_step": (
+                f"{len(unparsed)} section(s) could not be parsed into sub-strands "
+                f"({', '.join(unparsed[:6])}). Generate them with "
+                f"/factory/generate-substrands, which reads the design with a model "
+                f"rather than a regex."
+            ) if unparsed else "",
             "design_id": design.design_id,
             "subject": design.subject,
             "subject_code": design.subject_code,
@@ -772,8 +787,16 @@ class CurriculumExtractorService:
         self, text: str, subject: str, grade: str, level: str
     ) -> list[ParsedSubstrand]:
         substrands: list[ParsedSubstrand] = []
+        unparsed: list[str] = []
+        # Cleared here, not appended to, so one design's failures are never
+        # reported against the next one ingested in the same process.
+        self._last_unparsed = []
 
-        strand_pattern = r"(STRAND\s+(\d+\.\d+)\s+([^\n]+))"
+        # "Sub Strand 1.1 Our God" contains "Strand 1.1 Our God", so this used to
+        # match every SUB-strand heading as a strand — splitting the design at
+        # each one and leaving the real sub-strands unreachable inside sections
+        # that were themselves sub-strands. A strand heading starts a line.
+        strand_pattern = r"(?:^|\n)[ \t]*(STRAND\s+(\d+\.\d+)\s+([^\n]+))"
         strand_matches = list(re.finditer(strand_pattern, text, re.IGNORECASE))
 
         if not strand_matches:
@@ -792,21 +815,26 @@ class CurriculumExtractorService:
             sub_matches = list(re.finditer(substrand_pattern, strand_section, re.IGNORECASE))
 
             if not sub_matches:
-                parsed_sub = self._parse_single_substrand(
-                    strand_id=strand_id,
-                    strand_name=strand_name,
-                    sub_id=f"{strand_id}.1",
-                    sub_name=strand_name,
-                    # No lesson count was stated for this section; record the
-                    # gap rather than inventing one that reads as published.
-                    hours="",
-                    body=strand_section,
-                    subject=subject,
-                    grade=grade,
-                    level=level,
+                # This used to fabricate ONE sub-strand named after the strand,
+                # carrying the strand's whole body — every outcome of every
+                # real sub-strand shredded into one list. That is where
+                # "1.0 CREATION / 1.0 CREATION" with 54 fragments came from,
+                # and Language Activities' six themes read as six strands each
+                # holding itself.
+                #
+                # A strand whose sub-strands cannot be read has NO sub-strands
+                # as far as this parser is concerned. Storing a placeholder puts
+                # something in the database that looks like content and is not,
+                # and everything downstream then measures it as if it were. The
+                # LLM strand and sub-strand generators exist precisely for these
+                # layouts; leaving the strand empty is what routes the operator
+                # to them.
+                unparsed.append(strand_name)
+                logger.warning(
+                    "No sub-strand could be read under '%s' (%s, %s). Recording "
+                    "none — generate them with /factory/generate-substrands.",
+                    strand_name, subject, grade,
                 )
-                if parsed_sub:
-                    substrands.append(parsed_sub)
                 continue
 
             for j, sbm in enumerate(sub_matches):
@@ -833,7 +861,34 @@ class CurriculumExtractorService:
                 if parsed_sub:
                     substrands.append(parsed_sub)
 
-        return substrands
+        # A record that parsed but came out shredded is no better than one that
+        # was fabricated: its outcomes are column fragments, and everything
+        # downstream will measure them as if they were outcomes. Drop it and
+        # leave the strand to the generators.
+        kept: list[ParsedSubstrand] = []
+        for candidate in substrands:
+            report = substrand_integrity.check(
+                grade, subject, candidate.strand_name, candidate.sub_strand_name,
+                slos=candidate.slos, allocated=candidate.allocated_hours,
+            )
+            if report.usable:
+                kept.append(candidate)
+                continue
+            unparsed.append(candidate.sub_strand_name)
+            logger.warning(
+                "Dropped '%s' (%s, %s): %s",
+                candidate.sub_strand_name, subject, grade,
+                "; ".join(p["check"] for p in report.problems),
+            )
+
+        if unparsed:
+            logger.warning(
+                "%s (%s): %d section(s) could not be parsed into sub-strands — %s. "
+                "Generate them with /factory/generate-substrands.",
+                subject, grade, len(unparsed), ", ".join(unparsed[:6]),
+            )
+        self._last_unparsed = unparsed
+        return kept
 
     def _parse_single_substrand(
         self,
@@ -1247,6 +1302,7 @@ class CurriculumExtractorService:
 
         try:
             from .langfuse_context import langfuse_context_service
+
             return langfuse_context_service.upload_dataset_item(
                 grade_slug=design.grade,
                 subject_data=langfuse_payload,
