@@ -423,3 +423,20 @@ def test_the_media_library_is_routed_and_navigable() -> None:
 
     assert 'path="media"' in main
     assert 'to: "/media"' in shell
+
+
+def test_a_station_coverage_does_not_measure_cannot_crash_the_screen() -> None:
+    """Stations and coverage dimensions are not the same list and never will be:
+    a station is added the moment its generator exists, and weighting it in
+    coverage is a separate decision. Reading the dimension directly meant adding
+    the simulations station took the whole screen down with "Cannot read
+    properties of undefined (reading 'percentage')"."""
+    view = open("../frontend-web/src/views/ContentFactory.tsx").read()
+
+    assert "function dimensionFor" in view
+    assert "(selected.report as any)[station.id]" not in view
+    assert "(selected.report as any)[station.requires]" not in view
+    assert "(selected.report as any)[k]" not in view, (
+        "the summary grid still indexes the report directly"
+    )
+    assert "unmeasured" in view, "an unmeasured station must say so, not read 0%"

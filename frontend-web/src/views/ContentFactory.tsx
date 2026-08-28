@@ -138,6 +138,26 @@ function StationVersions({
   );
 }
 
+/** One station's coverage, or a zeroed stand-in when coverage does not measure it.
+ *
+ *  Stations and coverage dimensions are not the same list and never will be:
+ *  a station is added the moment its generator exists, and weighting it in
+ *  coverage is a separate decision with its own consequences. Reading the
+ *  dimension directly meant adding the simulations station crashed the whole
+ *  screen with "Cannot read properties of undefined". */
+function dimensionFor(report: Record<string, any>, id: string) {
+  const found = report?.[id];
+  if (found && typeof found === "object") return found;
+  return {
+    generated_count: 0,
+    required_count: 0,
+    remaining_count: 0,
+    percentage: 0,
+    estimated: true,
+    unmeasured: true,
+  };
+}
+
 /** A coverage report for a sub-strand nothing has been produced for yet.
  *
  *  Shaped exactly like a measured one so every station renders and reads zero,
@@ -155,6 +175,7 @@ function emptyReport(row: Record<string, any>) {
     notes: { ...dimension, generated_hours: 0, required_hours: 0 },
     visuals: { ...dimension },
     media: { ...dimension },
+    simulations: { ...dimension },
     practicals: { ...dimension },
     questions: { ...dimension },
     slo_coverage: { ...dimension },
@@ -428,10 +449,14 @@ export function ContentFactory() {
             }
           >
             <Stack gap="var(--s3)">
-              <ProgressBar value={selected.report.overall_percentage} height={10} label="Sub-strand completion" />
+              <ProgressBar
+                value={selected.report.overall_percentage ?? 0}
+                height={10}
+                label="Sub-strand completion"
+              />
               <Grid min="150px" gap="var(--s3)">
-                {(["notes", "visuals", "practicals", "questions", "slo_coverage"] as const).map((k) => {
-                  const d: any = (selected.report as any)[k];
+                {(["notes", "visuals", "media", "practicals", "questions", "slo_coverage"] as const).map((k) => {
+                  const d: any = dimensionFor(selected.report, k);
                   const gen = d.generated_count ?? d.generated_hours ?? 0;
                   const req = d.required_count ?? d.required_hours ?? 0;
                   return (
@@ -450,9 +475,11 @@ export function ContentFactory() {
 
           <Stack gap="var(--s3)">
             {STATIONS.map((station) => {
-              const dim: any = (selected.report as any)[station.id];
+              const dim: any = dimensionFor(selected.report, station.id);
               const done = dim.percentage >= 100;
-              const gate = station.requires ? (selected.report as any)[station.requires] : null;
+              const gate = station.requires
+                ? dimensionFor(selected.report, station.requires)
+                : null;
               const locked = Boolean(gate && gate.percentage <= 0);
               const gateLabel = STATIONS.find((s) => s.id === station.requires)?.label;
 
@@ -506,9 +533,15 @@ export function ContentFactory() {
                       <ProgressBar value={dim.percentage} label={station.label} />
                     </div>
                     <span style={{ fontSize: "var(--text-sm)", color: "var(--ink-2)", whiteSpace: "nowrap" }}>
-                      {dim.generated_count ?? dim.generated_hours ?? 0} of{" "}
-                      {dim.required_count ?? dim.required_hours ?? 0} produced
-                      {dim.estimated ? " (requirement estimated)" : ""}
+                      {dim.unmeasured ? (
+                        "not counted in coverage yet"
+                      ) : (
+                        <>
+                          {dim.generated_count ?? dim.generated_hours ?? 0} of{" "}
+                          {dim.required_count ?? dim.required_hours ?? 0} produced
+                          {dim.estimated ? " (requirement estimated)" : ""}
+                        </>
+                      )}
                     </span>
                   </Stack>
 
