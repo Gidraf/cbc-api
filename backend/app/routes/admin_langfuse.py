@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from fastapi import APIRouter, Depends
@@ -9,6 +10,8 @@ from ..errors import raise_api_error
 from ..services.auth import AuthContext, require_roles
 from ..services.langfuse_context import langfuse_context_service
 from ..services.validation import validate_grade_dataset
+
+logger = logging.getLogger("cbc-admin-langfuse")
 
 router = APIRouter(prefix="/api/v1/admin/langfuse", tags=["Admin Langfuse Datasets"])
 

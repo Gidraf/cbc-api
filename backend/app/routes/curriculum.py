@@ -15,8 +15,12 @@ from ..services.auth import AuthContext, require_roles
 from ..services.curriculum_extractor import curriculum_extractor
 from ..services import (
     artifact_registry,
+    citation_check,
     design_source,
     media_registry,
+    media_validators,
+    notes_coverage,
+    simulation_validators,
     substrand_hygiene,
     time_allocation,
 )
@@ -1108,15 +1112,18 @@ def factory_generate_notes(
     resp = llm_client.generate(resolved, context.messages, temperature=0.15)
     audit_report = web_research_agent.perform_quality_audit(resp.content, "notes", dossier)
 
+    notes_content = resp.content
+
     # Downstream readers — coverage, the DNA scorer, the stage guard, the visual
     # planner — were written against hour_modules and key_concepts. Mirroring
     # keeps them working without renaming the same list in six places, each of
-    # which would silently read zero until it was found.
+    # which would silently read zero until it was found. It must happen before
+    # the normaliser below, which reads hour_modules and would otherwise see
+    # none of the guide's own modules.
     if isinstance(notes_content, dict) and notes_content.get("modules"):
         notes_content.setdefault("hour_modules", notes_content["modules"])
 
     # Normalize notes output so both hour_modules and key_concepts are rich arrays
-    notes_content = resp.content
     if isinstance(notes_content, dict):
         hour_mods = notes_content.get("hour_modules") or []
         key_cncpts = notes_content.get("key_concepts") or []
