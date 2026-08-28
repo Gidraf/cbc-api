@@ -368,3 +368,58 @@ def test_every_station_that_offers_review_actually_files_versions() -> None:
     filed = set(re.findall(r'_record_artifact\(\s*"(\w+)"', routes))
     for _station, kind in offered:
         assert kind in filed, f"the console offers review of '{kind}', which nothing files"
+
+
+# ── The console has to be able to reach the stations ────────────────────────
+
+def test_the_factory_does_not_depend_on_coverage_to_offer_a_substrand() -> None:
+    """Coverage measures what has been PRODUCED. Using it as the list of what
+    exists meant a grade whose coverage came back empty had no selectable
+    sub-strand — so no stations rendered, and notes and media were unreachable
+    while the sub-strands sat in the database."""
+    view = open("../frontend-web/src/views/ContentFactory.tsx").read()
+
+    assert "useSavedSubstrands" in view
+    assert "emptyReport" in view, "a zeroed report must let the stations render"
+    assert "{progress.data && !substrand && (" not in view, (
+        "the sub-strand picker is still gated on the coverage report"
+    )
+
+
+def test_every_station_is_reachable_including_media_and_simulations() -> None:
+    view = open("../frontend-web/src/views/ContentFactory.tsx").read()
+
+    for station in ("notes", "visuals", "media", "simulations", "practicals", "questions"):
+        assert f'id: "{station}"' in view, f"the {station} station is missing"
+
+
+def test_a_label_can_be_taken_off_a_version() -> None:
+    """A label pinned to the wrong version is worse than no label: `approved`
+    means a person signed for THAT version."""
+    queries = open("../frontend-web/src/lib/queries.ts").read()
+    panel = open("../frontend-web/src/views/VersionReview.tsx").read()
+
+    assert "unlabel: useMutation" in queries
+    assert 'method: "DELETE"' in queries
+    assert "actions.unlabel.mutate" in panel
+    assert "Click to take" in panel
+
+
+def test_planned_media_is_shown_as_a_picture_not_a_row() -> None:
+    """A media brief is a wall of text describing an image, and reading it as
+    text is the one way you cannot tell whether it will produce the right
+    picture."""
+    view = open("../frontend-web/src/views/MediaLibrary.tsx").read()
+
+    assert "function Placeholder" in view
+    assert "aspectRatio" in view, "a planned asset must occupy the shape it will have"
+    assert 'role="img"' in view
+    assert "<img" in view and "<video" in view
+
+
+def test_the_media_library_is_routed_and_navigable() -> None:
+    main = open("../frontend-web/src/main.tsx").read()
+    shell = open("../frontend-web/src/app/AppShell.tsx").read()
+
+    assert 'path="media"' in main
+    assert 'to: "/media"' in shell

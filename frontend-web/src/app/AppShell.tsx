@@ -20,6 +20,12 @@ const NAV: { group: string; items: NavItem[] }[] = [
       { to: "/questions", label: "Question bank", icon: "?", hint: "Every approved item, in curriculum order" },
       { to: "/exams", label: "Exam builder", icon: "▦", hint: "Compose and print papers" },
       { to: "/diagrams", label: "Diagram library", icon: "◈", hint: "Reusable visuals and their parts" },
+      {
+        to: "/media",
+        label: "Photos & videos",
+        icon: "▨",
+        hint: "Every planned image and video, shown as pictures",
+      },
     ],
   },
   {

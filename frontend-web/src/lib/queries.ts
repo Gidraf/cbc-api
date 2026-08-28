@@ -249,21 +249,29 @@ export type MediaItem = {
   content_type: string;
   source_pages: number[];
   status: "planned" | "produced" | "rejected";
+  sub_strand_name?: string;
+  narration_script?: string;
+  /** The lesson this asset belongs to, so an image can be placed in the guide. */
+  for_lesson?: string;
 };
 
 /** Photographs and videos planned for a sub-strand, with what has been produced.
  *  Unlike a diagram these are not generated as code — the factory authors the
  *  prompt and the shot list, and the asset is uploaded back against it. */
-export function useSubstrandMedia(grade: string, subject: string, subStrand: string) {
+export function useSubstrandMedia(grade: string, subject: string, subStrand = "") {
   const api = useApi();
   return useQuery({
-    queryKey: keys.media(grade, subject, subStrand),
-    queryFn: () =>
-      api<{ media: MediaItem[]; planned: number; produced: number }>(
-        `/api/v1/curriculum/factory/media?grade=${encodeURIComponent(grade)}` +
-          `&subject=${encodeURIComponent(subject)}&sub_strand=${encodeURIComponent(subStrand)}`
-      ),
-    enabled: Boolean(grade && subject && subStrand),
+    queryKey: keys.media(grade, subject, subStrand || "all"),
+    queryFn: () => {
+      // Without a sub-strand this is the whole subject's library, which is how
+      // the media screen shows a learning area's images at once.
+      const qs = new URLSearchParams({ grade, subject });
+      if (subStrand) qs.set("sub_strand", subStrand);
+      return api<{ media: MediaItem[]; planned: number; produced: number }>(
+        `/api/v1/curriculum/factory/media?${qs}`
+      );
+    },
+    enabled: Boolean(grade && subject),
   });
 }
 
@@ -469,6 +477,19 @@ export function useArtifactActions(artifactId: string) {
         qc.invalidateQueries({ queryKey: ["progress"] });
       },
     }),
+    unlabel: useMutation({
+      // A label pinned to the wrong version is worse than no label: `approved`
+      // means a person signed for THAT version, and nothing else could move it.
+      mutationFn: (label: ArtifactLabel) =>
+        api<{ status: string }>(
+          `/api/v1/artifacts/${encodeURIComponent(artifactId)}/label/${encodeURIComponent(label)}`,
+          { method: "DELETE" }
+        ),
+      onSuccess: () => {
+        refresh();
+        qc.invalidateQueries({ queryKey: ["progress"] });
+      },
+    }),
     regenerate: useMutation({
       mutationFn: (v: { extra_instructions?: string } = {}) =>
         api<{
@@ -531,6 +552,28 @@ export function useArtifactDiff(artifactId: string, against = "") {
           (against ? `?against=${encodeURIComponent(against)}` : "")
       ),
     enabled: Boolean(artifactId),
+  });
+}
+
+/** Sub-strands as they are actually stored, independent of the coverage report.
+ *
+ *  The factory picked its sub-strand out of the coverage report, so a grade
+ *  whose coverage came back empty had no selectable sub-strand — and therefore
+ *  no stations at all. Notes and media were unreachable even though the
+ *  sub-strands were sitting in the database. */
+export function useSavedSubstrands(grade: string, subject?: string) {
+  const api = useApi();
+  return useQuery({
+    queryKey: ["saved-substrands", grade, subject ?? "all"],
+    queryFn: () => {
+      const qs = new URLSearchParams({ grade });
+      if (subject) qs.set("subject", subject);
+      return api<{ substrands: any[] }>(`/api/v1/curriculum/substrands?${qs}`).then(
+        (r) => r.substrands || []
+      );
+    },
+    enabled: Boolean(grade),
+    staleTime: 30_000,
   });
 }
 

@@ -7,7 +7,7 @@ import { HourWorkbench } from "./HourWorkbench";
 import { PromptInspector, type Inspection } from "./PromptInspector";
 import { VersionReview } from "./VersionReview";
 import { stationToText } from "../lib/serialize";
-import { useArtifacts, useInspect, profileFor, useProfiles, gradeOptionLabel, subjectOptionLabel, useApi, useGrades, useProgress, useSubjects } from "../lib/queries";
+import { useArtifacts, useInspect, profileFor, useProfiles, gradeOptionLabel, subjectOptionLabel, useApi, useGrades, useProgress, useSavedSubstrands, useSubjects } from "../lib/queries";
 import { useQueryClient } from "@tanstack/react-query";
 
 /**
@@ -138,6 +138,30 @@ function StationVersions({
   );
 }
 
+/** A coverage report for a sub-strand nothing has been produced for yet.
+ *
+ *  Shaped exactly like a measured one so every station renders and reads zero,
+ *  rather than the whole factory disappearing because coverage has not run. */
+function emptyReport(row: Record<string, any>) {
+  const dimension = { generated_count: 0, required_count: 0, remaining_count: 0,
+                      percentage: 0, estimated: true };
+  return {
+    sub_strand_name: String(row.sub_strand_name || ""),
+    allocated_hours: String(row.allocated_hours || "not stated"),
+    overall_percentage: 0,
+    approved_percentage: 0,
+    production_ready: false,
+    approved: false,
+    notes: { ...dimension, generated_hours: 0, required_hours: 0 },
+    visuals: { ...dimension },
+    media: { ...dimension },
+    practicals: { ...dimension },
+    questions: { ...dimension },
+    slo_coverage: { ...dimension },
+    unmeasured: true,
+  };
+}
+
 export function ContentFactory() {
   const [params, setParams] = useSearchParams();
   const toast = useToast();
@@ -168,34 +192,49 @@ export function ContentFactory() {
     setLastResult(null);
   }, [substrand, subject, effectiveGrade]);
 
-  const selected = React.useMemo(() => {
-    if (!progress.data || !substrand) return null;
-    for (const subj of progress.data.subjects ?? []) {
-      if (subject && subj.subject !== subject) continue;
-      for (const st of subj.strands) {
-        for (const ss of st.substrands) {
-          if (ss.sub_strand_name === substrand) {
-            return { subject: subj.subject, strand: st.strand_name, report: ss };
-          }
-        }
-      }
-    }
-    return null;
-  }, [progress.data, subject, substrand]);
+  // Coverage measures what has been produced. It is not the list of what
+  // EXISTS to produce for, and using it as one meant a grade whose coverage
+  // came back empty had no selectable sub-strand — so no stations rendered, and
+  // notes and media were unreachable while the sub-strands sat in the database.
+  const saved = useSavedSubstrands(effectiveGrade, subject || undefined);
 
-  const allSubstrands = React.useMemo(() => {
-    if (!progress.data) return [];
-    const out: { subject: string; strand: string; name: string; pct: number }[] = [];
-    for (const subj of progress.data.subjects ?? []) {
+  const fromProgress = React.useMemo(() => {
+    const out: { subject: string; strand: string; name: string; pct: number; report: any }[] = [];
+    for (const subj of progress.data?.subjects ?? []) {
       if (subject && subj.subject !== subject) continue;
       for (const st of subj.strands) {
         for (const ss of st.substrands) {
-          out.push({ subject: subj.subject, strand: st.strand_name, name: ss.sub_strand_name, pct: ss.overall_percentage });
+          out.push({
+            subject: subj.subject,
+            strand: st.strand_name,
+            name: ss.sub_strand_name,
+            pct: ss.overall_percentage,
+            report: ss,
+          });
         }
       }
     }
     return out;
   }, [progress.data, subject]);
+
+  const allSubstrands = React.useMemo(() => {
+    if (fromProgress.length) return fromProgress;
+    // Nothing measured yet: offer what is stored, with a zeroed report so the
+    // stations render and say honestly that nothing has been produced.
+    return (saved.data || []).map((row: any) => ({
+      subject: String(row.subject || ""),
+      strand: String(row.strand_name || ""),
+      name: String(row.sub_strand_name || ""),
+      pct: 0,
+      report: emptyReport(row),
+    }));
+  }, [fromProgress, saved.data]);
+
+  const selected = React.useMemo(() => {
+    if (!substrand) return null;
+    const hit = allSubstrands.find((s) => s.name === substrand);
+    return hit ? { subject: hit.subject, strand: hit.strand, report: hit.report } : null;
+  }, [allSubstrands, substrand]);
 
   async function runStation(station: (typeof STATIONS)[number]) {
     if (!selected) return;
@@ -292,7 +331,7 @@ export function ContentFactory() {
       />
 
       <QueryState query={grades} label="Loading grades" rows={2} />
-      <QueryState query={progress} label="Loading sub-strands" rows={4} />
+      <QueryState query={saved} label="Loading sub-strands" rows={4} />
 
       {/* A design can ingest cleanly and still yield no sub-strands when its
           layout defeats the text parser — Pre-Primary is organised by activity
@@ -311,7 +350,7 @@ export function ContentFactory() {
         />
       )}
 
-      {progress.data && !substrand && allSubstrands.length === 0 && (
+      {!substrand && !saved.isLoading && allSubstrands.length === 0 && (
         <CurriculumStructure
           grade={effectiveGrade}
           subject={subject}
@@ -319,7 +358,7 @@ export function ContentFactory() {
         />
       )}
 
-      {progress.data && !substrand && (
+      {!substrand && (
         <Card title="Choose a sub-strand" description={`${allSubstrands.length} available in this selection`}>
           {allSubstrands.length === 0 ? (
             <EmptyState
@@ -363,7 +402,7 @@ export function ContentFactory() {
         </Card>
       )}
 
-      {substrand && !selected && progress.data && (
+      {substrand && !selected && !saved.isLoading && (
         <EmptyState
           title={`"${substrand}" is not in this grade`}
           description="It may belong to a different grade or subject, or the curriculum design may have changed."

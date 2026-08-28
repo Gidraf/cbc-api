@@ -15,6 +15,7 @@ import { Datasets } from "./views/Datasets";
 import { Profiles } from "./views/Profiles";
 import { DiagramLibrary } from "./views/DiagramLibrary";
 import { ExamBuilder } from "./views/ExamBuilder";
+import { MediaLibrary } from "./views/MediaLibrary";
 import { Overview } from "./views/Overview";
 import { QuestionBank } from "./views/QuestionBank";
 import { Review } from "./views/Review";
@@ -71,6 +72,7 @@ function Router() {
         <Route path="questions" element={<Screen name="Question bank"><QuestionBank /></Screen>} />
         <Route path="exams" element={<Screen name="Exam builder"><ExamBuilder /></Screen>} />
         <Route path="diagrams" element={<Screen name="Diagram library"><DiagramLibrary /></Screen>} />
+        <Route path="media" element={<Screen name="Photo and video library"><MediaLibrary /></Screen>} />
         <Route path="review" element={<Screen name="Review queue"><Review /></Screen>} />
         <Route
           path="approvals"

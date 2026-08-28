@@ -271,16 +271,18 @@ function LabelBar({
               key={label}
               size="sm"
               variant={held ? "primary" : "secondary"}
-              disabled={actions.label.isPending || blocked}
+              disabled={actions.label.isPending || actions.unlabel.isPending || blocked}
               title={
                 blocked
                   ? blockers.join("; ")
                   : held
-                  ? `This version holds "${label}"`
+                  ? `Click to take "${label}" off this version`
                   : `Point "${label}" at this version`
               }
               onClick={() =>
-                label === "approved"
+                held
+                  ? actions.unlabel.mutate(label as ArtifactLabel)
+                  : label === "approved"
                   ? setSigning(true)
                   : actions.label.mutate({ label: label as ArtifactLabel })
               }
@@ -334,6 +336,10 @@ function LabelBar({
         </div>
       )}
       {actions.label.error && <ErrorNotice error={actions.label.error} />}
+      {actions.unlabel.error && <ErrorNotice error={actions.unlabel.error} />}
+      <p style={{ color: "var(--ink-3)", fontSize: "var(--text-xs)", marginTop: "var(--s2)" }}>
+        A label points at exactly one version. Click a held label to take it off.
+      </p>
       {!canApprove && (
         <div
           style={{
