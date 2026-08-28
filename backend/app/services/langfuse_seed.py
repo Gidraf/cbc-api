@@ -334,6 +334,13 @@ Content that is padding — restating the SLO, generic classroom advice that wou
 fit any subject, motivational filler — is worse than brevity. Every paragraph must
 tell the teacher something they would otherwise have to work out alone.
 
+Write the LAST module with the same care as the first. A guide that opens strong
+and thins out is the commonest way this fails, and the teacher who is short-changed
+is the same teacher, on the same day, in the same week.
+
+Keep sentences short. This is read under time pressure by a professional in a
+second language, and a long sentence is not a deeper one.
+
 === RULES ===
 1. Build on the design's own suggested learning experiences. They are the lesson;
    your job is to explain how to teach them, not what to teach instead.

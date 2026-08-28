@@ -84,18 +84,48 @@ export function PromptInspector({
   inspection,
   onClose,
   onAttached,
+  onGenerate,
+  generating = false,
+  generateLabel = "Generate now",
 }: {
   inspection: Inspection | null;
   onClose: () => void;
   /** Re-run the inspection so the newly attached design shows. */
   onAttached?: () => void;
+  /** Run the station this prompt belongs to, without closing and hunting for
+   *  the button. Inspecting is the step before generating, and making the
+   *  operator navigate back to act on what they just read loses the reason
+   *  they inspected. */
+  onGenerate?: () => void;
+  generating?: boolean;
+  generateLabel?: string;
 }) {
   const attach = useAttachSource();
   if (!inspection) return null;
   const i = inspection;
 
   return (
-    <Modal open title={`Prompt for ${i.agent}`} onClose={onClose} width="min(1000px, 94vw)">
+    <Modal
+      open
+      title={`Prompt for ${i.agent}`}
+      onClose={onClose}
+      width="min(1000px, 94vw)"
+      footer={
+        onGenerate ? (
+          <Stack direction="row" gap="var(--s2)" justify="flex-end">
+            <Button variant="ghost" onClick={onClose}>Close</Button>
+            <Button
+              variant="primary"
+              loading={generating}
+              disabled={generating}
+              onClick={onGenerate}
+            >
+              {generating ? "Generating…" : generateLabel}
+            </Button>
+          </Stack>
+        ) : undefined
+      }
+    >
       <Stack direction="row" gap="var(--s2)" wrap style={{ marginBottom: "var(--s4)" }}>
         <Badge tone={i.source_document.present ? "ok" : "danger"}>
           {i.source_document.present

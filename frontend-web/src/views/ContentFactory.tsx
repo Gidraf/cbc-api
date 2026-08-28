@@ -638,6 +638,17 @@ export function ContentFactory() {
             <PromptInspector
               inspection={inspection}
               onClose={() => setInspection(null)}
+              // Inspecting is the step before generating. Closing the panel and
+              // hunting for the station's own button loses the reason the
+              // operator inspected in the first place.
+              generating={running === "notes"}
+              generateLabel="Generate the notes"
+              onGenerate={async () => {
+                const station = STATIONS.find((st) => st.id === "notes");
+                if (!station) return;
+                setInspection(null);
+                await runStation(station);
+              }}
               onAttached={async () => {
                 if (!selected) return;
                 setInspection(

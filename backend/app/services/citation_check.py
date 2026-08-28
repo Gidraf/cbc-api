@@ -23,6 +23,15 @@ logger = logging.getLogger("cbc-citations")
 # an exact match would fail on citations that are perfectly good.
 MIN_OVERLAP = 0.6
 
+# How far past the cited line to look for the rest of a wrapped quote.
+#
+# KICD prints in narrow columns, so one bullet routinely spans two or three
+# lines: 203:26 holds "say the name of God in their mother tongue or" and
+# 203:27 holds "language of catchment area". Checking only the cited line
+# failed six of fourteen otherwise-correct citations and told the operator the
+# claims were unsupported — which was wrong, and worse than saying nothing.
+WRAP_LOOKAHEAD = 3
+
 
 @dataclass(slots=True)
 class Citation:
@@ -111,11 +120,63 @@ def collect(content: Any, path: str = "") -> list[Citation]:
     return found
 
 
+def _with_wrapped_continuation(pages: Any, ref: str) -> tuple[list[str], int]:
+    """The cited line plus the lines it wraps onto, and where it stopped.
+
+    KICD prints in narrow columns, so a single bullet is routinely split across
+    two or three printed lines. A continuation is a line that does not start a
+    new bullet — the design marks each with "•" — so the run ends at the next
+    bullet, which is exactly where the quoted phrase ends too.
+    """
+    from .document_index import parse_reference, resolve_reference
+
+    parsed = parse_reference(ref)
+    if not parsed:
+        return [], 0
+
+    _doc, page_number, start, end = parsed
+    page = next((p for p in pages if p.number == page_number), None)
+    if page is None:
+        return [], 0
+
+    collected = [line.text for line in resolve_reference(pages, ref)]
+    last = end
+    for line in page.lines:
+        if line.line <= end or line.line > end + WRAP_LOOKAHEAD:
+            continue
+        text = line.text.strip()
+        if not text or text.startswith(("•", "-", "*")) or text[:2].strip().isdigit():
+            break
+        collected.append(line.text)
+        last = line.line
+
+    return collected, (last if last != end else 0)
+
+
+def _deduplicate(citations: list[Citation]) -> list[Citation]:
+    """One entry per distinct claim.
+
+    Notes carry `modules` and a mirrored `hour_modules` for the older readers,
+    so the walk found every citation twice and reported fourteen where there
+    are seven — which makes the verified fraction look like a measurement of
+    something other than what it is.
+    """
+    seen: set[tuple[str, str]] = set()
+    unique: list[Citation] = []
+    for citation in citations:
+        key = (citation.ref, citation.quote.strip().lower())
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(citation)
+    return unique
+
+
 def verify(content: Any, design_text: str) -> CitationReport:
     """Resolve each citation against the design, and say which ones fail."""
     from .document_index import parse_pages, parse_reference, resolve_reference
 
-    report = CitationReport(citations=collect(content))
+    report = CitationReport(citations=_deduplicate(collect(content)))
     if not design_text or not design_text.strip():
         report.document_available = False
         for citation in report.citations:
@@ -148,20 +209,36 @@ def verify(content: Any, design_text: str) -> CitationReport:
             citation.reason = "Address resolves; no quote was given to check."
             continue
 
-        source = _terms(" ".join(citation.lines))
         quoted = _terms(citation.quote)
         if not quoted:
             citation.verified = True
             continue
 
-        overlap = len(quoted & source) / len(quoted)
+        overlap = len(quoted & _terms(" ".join(citation.lines))) / len(quoted)
+
+        # The quote may continue onto the next line or two. Reading only the
+        # cited line reports a wrapped bullet as unsupported.
+        if overlap < MIN_OVERLAP:
+            wrapped, extra = _with_wrapped_continuation(pages, citation.ref)
+            if extra:
+                combined = len(quoted & _terms(" ".join(wrapped))) / len(quoted)
+                if combined > overlap:
+                    overlap = combined
+                    citation.lines = wrapped
+                    citation.found_at = f"{citation.ref}-{extra}"
+
         if overlap >= MIN_OVERLAP:
             citation.verified = True
-            citation.reason = f"{round(overlap * 100)}% of the quote is at those lines."
+            citation.reason = (
+                f"{round(overlap * 100)}% of the quote is at "
+                f"{citation.found_at}"
+                + (" (the line wraps)." if citation.found_at != citation.ref else ".")
+            )
         else:
             citation.reason = (
                 f"The quote is not at {citation.ref} — only {round(overlap * 100)}% "
-                "of it appears there. The claim it supports is unsupported."
+                "of it appears there, or on the lines it wraps onto. The claim it "
+                "supports is unsupported."
             )
 
     if report.citations and report.verified < len(report.citations):
@@ -170,3 +247,118 @@ def verify(content: Any, design_text: str) -> CitationReport:
             len(report.citations) - report.verified, len(report.citations),
         )
     return report
+
+
+
+# ── Page reconciliation ─────────────────────────────────────────────────────
+
+@dataclass(slots=True)
+class PageReconciliation:
+    """Whether a strand's pages and its sub-strands' pages agree.
+
+    A strand occupies a span of the design — say pages 202 to 211 — and its
+    sub-strands divide that span between them: three pages for the first, four
+    for the second, and so on. When a sub-strand cites a page outside its
+    strand's span, or two sub-strands claim the same page, or a page in the
+    span is claimed by nobody, the citations are pointing somewhere other than
+    where the content came from. Each of those is checkable arithmetic, and
+    each is invisible one citation at a time.
+    """
+
+    strand: str = ""
+    strand_pages: list[int] = field(default_factory=list)
+    covered: list[int] = field(default_factory=list)
+    uncovered: list[int] = field(default_factory=list)
+    outside: list[dict[str, Any]] = field(default_factory=list)
+    overlapping: list[dict[str, Any]] = field(default_factory=list)
+    per_sub_strand: dict[str, list[int]] = field(default_factory=dict)
+
+    @property
+    def reconciles(self) -> bool:
+        return not (self.uncovered or self.outside or self.overlapping)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "strand": self.strand,
+            "reconciles": self.reconciles,
+            "strand_pages": self.strand_pages,
+            "covered": self.covered,
+            "uncovered": self.uncovered,
+            "outside": self.outside,
+            "overlapping": self.overlapping,
+            "per_sub_strand": self.per_sub_strand,
+        }
+
+
+def _page_span(pages: list[int]) -> list[int]:
+    if not pages:
+        return []
+    return list(range(min(pages), max(pages) + 1))
+
+
+def reconcile_pages(
+    strand: str,
+    strand_pages: list[int],
+    sub_strand_pages: dict[str, list[int]],
+) -> PageReconciliation:
+    """Check a strand's page span against how its sub-strands divide it."""
+    report = PageReconciliation(
+        strand=strand,
+        strand_pages=sorted(set(int(p) for p in strand_pages if isinstance(p, int))),
+        per_sub_strand={
+            name: sorted(set(int(p) for p in pages if isinstance(p, int)))
+            for name, pages in sub_strand_pages.items()
+        },
+    )
+
+    span = set(_page_span(report.strand_pages))
+    claimed: dict[int, list[str]] = {}
+    for name, pages in report.per_sub_strand.items():
+        for page in pages:
+            claimed.setdefault(page, []).append(name)
+
+    report.covered = sorted(claimed)
+
+    for page, owners in sorted(claimed.items()):
+        if span and page not in span:
+            report.outside.append({
+                "page": page, "sub_strands": owners,
+                "why": f"outside the strand's span "
+                       f"{min(span)}–{max(span)}" if span else "no strand span known",
+            })
+        if len(owners) > 1:
+            report.overlapping.append({"page": page, "sub_strands": owners})
+
+    # A page inside the strand that no sub-strand claims is content nothing
+    # cites — either a sub-strand is missing, or one is citing the wrong pages.
+    report.uncovered = sorted(span - set(claimed)) if span else []
+    return report
+
+
+def reconcile_from_db(grade: str, subject: str, strand: str) -> PageReconciliation:
+    """Reconcile one strand's stored sub-strands against its own page span."""
+    from ..infra.db import fetch_all
+
+    rows = fetch_all(
+        """
+        SELECT sub_strand_name, source_pages FROM curriculum_substrands
+        WHERE (grade = :grade OR grade = :alt_grade)
+          AND LOWER(subject) = LOWER(:subject)
+          AND LOWER(strand_name) = LOWER(:strand)
+        ORDER BY sub_strand_id
+        """,
+        {"grade": grade, "alt_grade": grade.replace("grade-", ""),
+         "subject": subject, "strand": strand},
+    ) or []
+
+    per_sub: dict[str, list[int]] = {}
+    everything: list[int] = []
+    for row in rows:
+        pages = [p for p in (row.get("source_pages") or []) if isinstance(p, int)]
+        per_sub[str(row.get("sub_strand_name") or "")] = pages
+        everything += pages
+
+    # Without a stored strand span, the sub-strands' own range is the best
+    # available statement of where the strand sits — which still catches a
+    # sub-strand citing a page far outside its siblings.
+    return reconcile_pages(strand, everything, per_sub)

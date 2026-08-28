@@ -1085,6 +1085,20 @@ def factory_generate_notes(
             f"{allocation.minutes_each or 'the length this level teaches for'}.\n"
             f"Set 'allocated_time' to the design's own wording, verbatim: "
             f"\"{allocation.stated or 'not stated'}\".\n\n"
+            f"=== EACH MODULE MUST BE TEACHABLE ON ITS OWN ===\n"
+            f"Every module needs AT LEAST {notes_coverage.MIN_BODY_CHARS * 2:,} "
+            f"characters across its exposition and its lesson flow — a module of "
+            f"three sentences is a heading, and a teacher handed it still has to "
+            f"prepare the lesson.\n"
+            f"That depth is CONCRETE, not longer sentences: the actual words to "
+            f"say, the actual song or story, the questions in the order to ask "
+            f"them, what a child who has not understood will do and what to do "
+            f"when they do it, what to hold up and when. Restating the outcome in "
+            f"other words is padding and counts for nothing.\n"
+            f"Later modules must be as full as the first. A guide that starts "
+            f"strong and thins out is the failure this instruction exists to "
+            f"prevent — lessons 4 to 7 are taught by the same teacher on the same "
+            f"day as lesson 1.\n\n"
             f"ADDITIONAL PRODUCTION DIRECTIVES: {payload.custom_instructions}"
         ),
     })
@@ -1098,7 +1112,11 @@ def factory_generate_notes(
                 agent="notes-generator",
                 grade=payload.grade,
                 subject=payload.subject,
-                source_material=payload.source_material_text,
+                # Not payload.source_material_text: that is what the CALLER
+                # supplied, which is empty on every normal request. The
+                # inspector must show what the prompt actually carries, or it
+                # reports "No design attached" for a fully grounded run.
+                source_material=source_text,
                 profile=get_profile_from_db(payload.subject, payload.grade),
                 extra={
                     "model": f"{resolved.provider}/{resolved.model}",
@@ -1173,7 +1191,11 @@ def factory_generate_notes(
     gate_result = quality_gate_service.run_layer_gate(
         layer_name="notes",
         content=notes_content,
-        blueprint=substrand_row or {},
+        # The gate scores source_grounding against blueprint["raw_source"], and
+        # the sub-strand row does not carry the design. Without this the measure
+        # reported "not measurable — no curriculum source text supplied" while
+        # the design was sitting in the prompt.
+        blueprint={**(substrand_row or {}), "raw_source": source_text},
         content_type_profile=ct_profile,
         custom_instructions=payload.custom_instructions,
     )
@@ -3633,6 +3655,46 @@ def factory_ingest_learning_area(
         "ingest": result,
         "scope": scope_result,
         "skill": skill,
+    }
+
+
+@router.get("/factory/page-reconciliation")
+def factory_page_reconciliation(
+    grade: str = Query(..., description="Grade slug, e.g. grade-pp1"),
+    subject: str = Query(...),
+    strand: str = Query("", description="Optional: one strand only"),
+    _: AuthContext = Depends(require_roles("admin", "operator", "reviewer", "developer")),
+) -> dict[str, Any]:
+    """Do a strand's pages and its sub-strands' pages add up?
+
+    A strand occupies a span of the design and its sub-strands divide that span
+    between them. A sub-strand citing a page outside the span, two sub-strands
+    claiming the same page, or a page in the span nobody claims each mean the
+    citations point somewhere other than where the content came from — and each
+    is invisible one citation at a time.
+    """
+    from ..infra.db import fetch_all
+
+    strands = [strand] if strand else [
+        str(r["strand_name"]) for r in (fetch_all(
+            """
+            SELECT DISTINCT strand_name FROM curriculum_substrands
+            WHERE (grade = :grade OR grade = :alt_grade)
+              AND LOWER(subject) = LOWER(:subject)
+            ORDER BY strand_name
+            """,
+            {"grade": grade, "alt_grade": grade.replace("grade-", ""), "subject": subject},
+        ) or []) if r.get("strand_name")
+    ]
+
+    reports = [citation_check.reconcile_from_db(grade, subject, name).to_dict()
+               for name in strands]
+    return {
+        "grade": grade,
+        "subject": subject,
+        "strands": reports,
+        "reconciling": sum(1 for r in reports if r["reconciles"]),
+        "total": len(reports),
     }
 
 

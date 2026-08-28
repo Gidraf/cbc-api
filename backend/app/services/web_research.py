@@ -89,6 +89,22 @@ class ResearchDossier:
         }
 
 
+# Which extra research angles a sub-strand actually warrants. Asking all of
+# them of every subject is how a CRE lesson acquired an agriculture dossier.
+_AGRICULTURAL = (
+    "agricultur", "farm", "crop", "livestock", "soil", "irrigation", "horticultur",
+    "pastoral", "fisher", "forestry",
+)
+_PRACTICAL = (
+    "science", "physics", "chemistry", "biology", "integrated science", "laborator",
+    "experiment", "apparatus", "technolog", "engineering", "home science", "health",
+)
+_DEVELOPMENT = (
+    "social studies", "geography", "history", "business", "economic", "citizenship",
+    "government", "agricultur", "environment",
+)
+
+
 class WebResearchAgent:
     """Agent that performs live web research, academic paper discovery, and pedagogical deliberation."""
 
@@ -187,15 +203,28 @@ class WebResearchAgent:
     ) -> list[str]:
         """Builds high-precision search queries for KICD, KALRO, KNEC, and academic research."""
         clean_sub = sub_strand.split(" ", 1)[-1] if sub_strand[:3].replace(".", "").isdigit() else sub_strand
+        lowered = f"{subject} {strand} {clean_sub}".lower()
+
         base_queries = [
             f"KICD Kenya curriculum {subject} {clean_sub} notes pedagogical guide",
-            f"KALRO Kenya {clean_sub} agricultural scientific principles data",
-            f"Kenya {subject} {clean_sub} real world case study Vision 2030",
-            f"{subject} {clean_sub} laboratory experiment apparatus safety protocols",
+            f"Kenya {subject} {clean_sub} teaching resources classroom",
         ]
+
+        # These were asked of every subject, so a Pre-Primary CRE sub-strand
+        # searched KALRO for "Our God agricultural scientific principles data"
+        # and a laboratory apparatus protocol for singing songs about God. A
+        # query that cannot match returns nothing useful and shapes the dossier
+        # around a subject this lesson is not about.
+        if any(word in lowered for word in _AGRICULTURAL):
+            base_queries.append(f"KALRO Kenya {clean_sub} agricultural scientific principles data")
+        if any(word in lowered for word in _PRACTICAL):
+            base_queries.append(f"{subject} {clean_sub} laboratory experiment apparatus safety protocols")
+        if any(word in lowered for word in _DEVELOPMENT):
+            base_queries.append(f"Kenya {subject} {clean_sub} real world case study Vision 2030")
+
         if extra_query:
             base_queries.insert(0, f"Kenya {subject} {clean_sub} {extra_query}")
-        return base_queries
+        return base_queries[:4]
 
     def _execute_search(self, query: str) -> list[dict[str, Any]]:
         """Executes search using httpx if available, otherwise urllib.request."""
@@ -321,32 +350,77 @@ class WebResearchAgent:
         kenyan_case_studies: list[dict[str, str]],
         safety_guidelines: list[str],
     ) -> str:
-        """Formats all research findings into an authoritative context block."""
+        """Format the research findings, labelled by what they actually are.
+
+        This block used to head model-generated figures with "VERIFIED EMPIRICAL
+        DATA & KENYAN STATISTICS" and stamp each with a source — "85% of children
+        who demonstrate understanding of Christian values [KICD Annual Report
+        2022]" — when zero sources had been retrieved and the numbers came from
+        a teaching-skill profile an LLM wrote. Handed to the note generator under
+        that heading, a fabricated statistic with a fabricated citation is what
+        reaches a Kenyan classroom, and nothing downstream can tell it from a
+        real one.
+
+        Nothing is called verified unless a retrieval actually verified it.
+        """
+        verified = bool(citations)
         parts = [
-            f"=== LIVE WEB RESEARCH & EMPIRICAL SCIENTIFIC DOSSIER for {subject}: {sub_strand} ===",
-            "\n1. AUTHORITATIVE SOURCES & CITATIONS:",
+            f"=== RESEARCH CONTEXT for {subject}: {sub_strand} ===",
+            "",
+            "1. RETRIEVED SOURCES:",
         ]
         if citations:
             for c in citations[:5]:
                 parts.append(f"- [{c.source_domain}] {c.title}: \"{c.snippet}\" (URL: {c.url})")
         else:
-            parts.append("- Authoritative KICD Curriculum Standards & KALRO Scientific Publications")
+            parts.append(
+                "- NONE. No source was retrieved for this sub-strand. Do not cite "
+                "anything as though one had been."
+            )
 
-        parts.append("\n2. VERIFIED EMPIRICAL DATA & KENYAN STATISTICS:")
-        for ed in empirical_data:
-            parts.append(f"- {ed["metric"]}: {ed["value"]} [Source: {ed["source"]}]")
+        if empirical_data:
+            parts.append("")
+            if verified:
+                parts.append("2. FIGURES FROM THE RETRIEVED SOURCES:")
+            else:
+                parts.append(
+                    "2. UNVERIFIED ILLUSTRATIVE FIGURES — DO NOT USE IN THE CONTENT:"
+                )
+                parts.append(
+                    "   These came from a generated teaching profile, not from any "
+                    "source. They are shown only for orientation. Never state them "
+                    "as fact, never attribute them, and never cite them. A "
+                    "fabricated statistic with a fabricated source is worse than "
+                    "no statistic, because nothing downstream can tell it from a "
+                    "real one."
+                )
+            for ed in empirical_data:
+                source = ed.get("source", "unattributed")
+                label = source if verified else f"UNVERIFIED, claimed: {source}"
+                parts.append(f"- {ed.get('metric', '')}: {ed.get('value', '')} [{label}]")
 
-        parts.append("\n3. PEDAGOGICAL CONTENT KNOWLEDGE (PCK) & ACADEMIC INSIGHTS:")
+        parts.append("")
+        parts.append("3. PEDAGOGICAL CONTENT KNOWLEDGE (PCK) & ACADEMIC INSIGHTS:")
         for ai in academic_insights:
             parts.append(f"- {ai}")
 
-        parts.append("\n4. AUTHENTIC KENYAN COUNTY CASE STUDIES & FIELD SCENARIOS:")
-        for cs in kenyan_case_studies:
-            parts.append(f"- County: {cs["county"]} | Scenario: {cs["scenario"]} | Solution: {cs["intervention"]}")
+        if kenyan_case_studies:
+            parts.append("")
+            parts.append(
+                "4. ILLUSTRATIVE KENYAN SCENARIOS (generated, not reported cases — "
+                "use them as teaching context, never as documented events):"
+            )
+            for cs in kenyan_case_studies:
+                parts.append(
+                    f"- County: {cs.get('county', '')} | Scenario: {cs.get('scenario', '')} "
+                    f"| Approach: {cs.get('intervention', '')}"
+                )
 
-        parts.append("\n5. MANDATORY LABORATORY & PRACTICAL FIELD SAFETY PROTOCOLS:")
-        for sg in safety_guidelines:
-            parts.append(f"- 🚨 {sg}")
+        if safety_guidelines:
+            parts.append("")
+            parts.append("5. SAFETY PROTOCOLS, where this sub-strand has a real hazard:")
+            for sg in safety_guidelines:
+                parts.append(f"- {sg}")
 
         return "\n".join(parts)
 
