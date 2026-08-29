@@ -115,6 +115,13 @@ def enqueue(
           AND strand = :strand AND sub_strand = :sub_strand
           AND COALESCE(payload->>'artifact_id', '') = :artifact_id
           AND COALESCE(payload->>'layer', '') = :layer
+          -- And the pipeline STEP. A pipeline advances by queueing the next
+          -- step for the same sub-strand while the current one is still
+          -- 'running' — it is the running job that queues it — so without the
+          -- index every stage after the first was silently swallowed as a
+          -- duplicate of the job that had just asked for it, and the run
+          -- stopped dead one stage in looking like it had finished.
+          AND COALESCE(payload->>'index', '') = :step_index
           AND status IN ('queued', 'running')
         LIMIT 1
         -- Only work still in flight. A finished draft waiting to be accepted is
@@ -123,7 +130,9 @@ def enqueue(
         {"kind": kind, "grade": grade, "subject": subject,
          "strand": strand, "sub_strand": sub_strand,
          "artifact_id": artifact_id,
-         "layer": str((payload or {}).get("layer") or "")},
+         "layer": str((payload or {}).get("layer") or ""),
+         "step_index": str((payload or {}).get("index"))
+         if (payload or {}).get("index") is not None else ""},
     )
     if duplicate:
         logger.info("Already queued: %s for %s.", kind, sub_strand or subject)
@@ -480,7 +489,11 @@ def status(
     jobs = fetch_all(
         f"""
         SELECT job_id, batch_id, kind, grade, subject, strand, sub_strand,
-               status, attempts, error, created_at, started_at, finished_at
+               status, attempts, error, created_at, started_at, finished_at,
+               -- Which step of the chain a pipeline job is on. Without it every
+               -- stage of a full run reads as "pipeline" and the operator
+               -- cannot tell reading the design from writing the questions.
+               (payload->'steps'->>COALESCE((payload->>'index')::int, 0)) AS step
         FROM jobs WHERE {clause}
         ORDER BY created_at DESC LIMIT :limit
         """,

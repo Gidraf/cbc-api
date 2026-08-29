@@ -631,8 +631,68 @@ export type QueueStatus = {
      *  "stuck", and an operator who queued a grade wants to know whether
      *  theirs is next or fortieth. */
     position?: number;
+    /** Which step of the chain, for a pipeline job. */
+    step?: string;
   }[];
 };
+
+/** The chain, in the order the work depends on itself. */
+export const PIPELINE_STEPS = [
+  "ingest", "strands", "substrands", "notes",
+  "diagram", "media", "simulation", "activity", "questions",
+] as const;
+
+export const STEP_LABEL: Record<string, string> = {
+  ingest: "Read the design",
+  strands: "Strands",
+  substrands: "Sub-strands",
+  notes: "Lesson notes",
+  diagram: "Diagrams",
+  media: "Photos & videos",
+  simulation: "Simulations",
+  activity: "Activities & experiments",
+  questions: "Questions",
+};
+
+/** Queue a learning area end to end: design in, questions out.
+ *
+ *  The chain used to be a person — ingest, wait, click strands, wait, click
+ *  each strand's sub-strands, wait — an afternoon per learning area, which is
+ *  the only reason the work was ever done one item at a time. */
+export function useQueuePipeline(grade: string, subject: string) {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: {
+      steps?: string[];
+      strand?: string;
+      custom_instructions?: string;
+      force_ingest?: boolean;
+    }) =>
+      api<{ batch_id: string; queued: number; steps: string[]; starting_step: string }>(
+        "/api/v1/curriculum/factory/queue-pipeline",
+        { method: "POST", body: JSON.stringify({ grade, subject, ...v }) }
+      ),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["queue"] }),
+  });
+}
+
+/** Regenerate reviewed versions from their findings, in the background. */
+export function useQueueRegenerate(grade: string, subject: string) {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { artifact_ids?: string[]; extra_instructions?: string }) =>
+      api<{ batch_id: string; queued: number; artifacts: number }>(
+        "/api/v1/curriculum/factory/queue-regenerate",
+        { method: "POST", body: JSON.stringify({ grade, subject, ...v }) }
+      ),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["queue"] });
+      qc.invalidateQueries({ queryKey: ["artifacts"] });
+    },
+  });
+}
 
 /** Send artifacts for review or for the approver's work, in the background.
  *

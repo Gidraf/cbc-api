@@ -3115,6 +3115,30 @@ class QueueReviewRequest(BaseModel):
     model: str = ""
 
 
+class QueuePipelineRequest(BaseModel):
+    """Run the whole chain for a learning area, unattended."""
+
+    grade: str
+    subject: str
+    # Where to start and stop. Defaults to everything from reading the design
+    # to writing the questions.
+    steps: list[str] = []
+    # Narrow to one strand, for a re-run that should not touch the rest.
+    strand: str = ""
+    custom_instructions: str = ""
+    # Re-ingest even where a design is already stored.
+    force_ingest: bool = False
+
+
+class QueueRegenerateRequest(BaseModel):
+    """Regenerate versions from their reviewers' findings, in the background."""
+
+    grade: str = ""
+    subject: str = ""
+    artifact_ids: list[str] = []
+    extra_instructions: str = ""
+
+
 class DiscardDraftRequest(BaseModel):
     job_id: str
 
@@ -4057,6 +4081,111 @@ def _run_queued_substrands(job: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _run_queued_ingest(job: dict[str, Any]) -> dict[str, Any]:
+    """Read one learning area out of the design, in the worker.
+
+    Ingest is the longest single call in the pipeline — a 296-page design is
+    chunked page by page and every chunk is a model call — and it was the one
+    still held open on an HTTP request. A proxy timeout at minute four threw
+    away four minutes of paid work and left the grade looking un-ingested.
+    """
+    payload = dict(job.get("payload") or {})
+    result = factory_ingest_learning_area(
+        IngestLearningAreaRequest(
+            grade=str(job.get("grade") or ""),
+            subject=str(job.get("subject") or ""),
+            force=bool(payload.get("force")),
+            with_skill=bool(payload.get("with_skill", True)),
+        ),
+        None,
+    )
+    if not isinstance(result, dict):
+        return {}
+    # Ingest writes the design and the sub-strands itself; what a progress view
+    # needs is what it found, not the document it found it in.
+    return {
+        "grade": result.get("grade", ""),
+        "subject": result.get("subject", ""),
+        "design_id": result.get("design_id", ""),
+        "strands": result.get("strands", 0) or len(result.get("strand_names") or []),
+        "sub_strands": result.get("sub_strands", 0),
+        "unparsed_sections": result.get("unparsed_sections") or [],
+        "next_step": result.get("next_step", ""),
+        "skill": bool(result.get("skill")),
+    }
+
+
+def _run_queued_strands(job: dict[str, Any]) -> dict[str, Any]:
+    """Generate a subject's strands AND save them.
+
+    Saving is not a separate decision here the way it is for sub-strands.
+    Strands are the layer everything else hangs off, they come straight out of
+    the design's own summary table, and a strand list nobody saved is a run
+    whose entire output is a screenful of text that dies with the tab.
+    """
+    payload = dict(job.get("payload") or {})
+    grade = str(job.get("grade") or "")
+    subject = str(job.get("subject") or "")
+
+    result = factory_generate_strands(
+        FactoryGenerateStrandsRequest(
+            grade=grade, subject=subject,
+            custom_instructions=str(payload.get("custom_instructions") or ""),
+        ),
+        None,
+    )
+    strands = (result or {}).get("strands") or []
+    saved = 0
+    if strands:
+        stored = factory_save_strands(
+            FactorySaveStrandsRequest(grade=grade, subject=subject, strands=strands),
+            None,
+        )
+        saved = int((stored or {}).get("saved_count") or 0)
+
+    return {
+        "grade": grade,
+        "subject": subject,
+        "strands": strands,
+        "saved_count": saved,
+        "refused": (result or {}).get("refused") or [],
+        "grounded": bool((result or {}).get("grounded")),
+        "source_chars": int((result or {}).get("source_material_length") or 0),
+    }
+
+
+def _run_queued_regeneration(job: dict[str, Any]) -> dict[str, Any]:
+    """Regenerate one version from its reviewers' findings, in the worker.
+
+    Regeneration is a generation, so it costs a generation's time. Run from a
+    button it held the console open exactly as the first generation did, which
+    made re-running a whole grade after a review pass an afternoon of clicking
+    and waiting.
+    """
+    from .artifacts import RegenerateRequest, regenerate_artifact
+
+    payload = dict(job.get("payload") or {})
+    artifact_id = str(payload.get("artifact_id") or "")
+    if not artifact_id:
+        raise ValueError("A regeneration job needs an artifact_id.")
+
+    result = regenerate_artifact(
+        RegenerateRequest(
+            artifact_id=artifact_id,
+            extra_instructions=str(payload.get("extra_instructions") or ""),
+        ),
+        None,
+    )
+    artifact = (result or {}).get("artifact") or {}
+    return {
+        "from_artifact_id": artifact_id,
+        "artifact_id": artifact.get("artifact_id", ""),
+        "version": artifact.get("version", 0),
+        "directives_applied": (result or {}).get("directives_applied")
+        or (result or {}).get("directives") or [],
+    }
+
+
 def _run_queued_review(job: dict[str, Any]) -> dict[str, Any]:
     """Run one review layer over one artifact version, in the worker.
 
@@ -4135,6 +4264,176 @@ def _run_queued_approval(job: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+# The pipeline, in the order the work actually depends on itself. Ingest reads
+# the design; strands come out of it; sub-strands hang off strands; notes are
+# written per sub-strand; everything visual and every question is grounded in
+# the notes.
+PIPELINE_STEPS = (
+    "ingest", "strands", "substrands", "notes",
+    "diagram", "media", "simulation", "activity", "questions",
+)
+
+# What each step is expanded ACROSS. A step queued once for the learning area
+# is not the same shape as one queued per sub-strand, and getting this wrong
+# either runs the notes once for a grade or ingests the design ninety times.
+_STEP_SCOPE = {
+    "ingest": "subject",
+    "strands": "subject",
+    "substrands": "strand",
+    "notes": "sub_strand",
+    "diagram": "sub_strand",
+    "media": "sub_strand",
+    "simulation": "sub_strand",
+    "activity": "sub_strand",
+    "questions": "sub_strand",
+}
+
+
+def _stored_strands(grade: str, subject: str) -> list[dict[str, str]]:
+    from ..infra.db import fetch_all
+
+    rows = fetch_all(
+        """
+        SELECT strand_id, strand_name FROM curriculum_strands
+        WHERE (grade = :grade OR grade = :alt_grade)
+          AND LOWER(subject) = LOWER(:subject)
+        ORDER BY strand_id
+        """,
+        {"grade": grade, "alt_grade": grade.replace("grade-", ""), "subject": subject},
+    ) or []
+    return [{"strand_name": str(r.get("strand_name") or ""),
+             "strand_id": str(r.get("strand_id") or "1.0")} for r in rows]
+
+
+def _stored_substrands(grade: str, subject: str, strand: str = "") -> list[dict[str, str]]:
+    from ..infra.db import fetch_all
+
+    rows = fetch_all(
+        """
+        SELECT strand_name, sub_strand_name FROM curriculum_substrands
+        WHERE (grade = :grade OR grade = :alt_grade)
+          AND LOWER(subject) = LOWER(:subject)
+          AND (:strand = '' OR LOWER(strand_name) = LOWER(:strand))
+        ORDER BY strand_id, sub_strand_id
+        """,
+        {"grade": grade, "alt_grade": grade.replace("grade-", ""),
+         "subject": subject, "strand": strand},
+    ) or []
+    return [{"strand": str(r.get("strand_name") or ""),
+             "sub_strand": str(r.get("sub_strand_name") or "")} for r in rows]
+
+
+def _expand_step(step: str, grade: str, subject: str, strand: str) -> list[dict[str, str]]:
+    """The jobs one step becomes, read from what the previous step SAVED.
+
+    Expanded at queue time, a station step would have to guess the sub-strands
+    that the sub-strand step has not produced yet. Expanded here — after the
+    stage before it has finished and written its output — there is nothing to
+    guess.
+    """
+    scope = _STEP_SCOPE.get(step, "sub_strand")
+    if scope == "subject":
+        return [{"strand": "", "sub_strand": ""}]
+    if scope == "strand":
+        return [{"strand": s["strand_name"], "sub_strand": ""}
+                for s in _stored_strands(grade, subject)
+                if not strand or s["strand_name"].lower() == strand.lower()]
+    return _stored_substrands(grade, subject, strand)
+
+
+def _run_queued_pipeline(job: dict[str, Any]) -> dict[str, Any]:
+    """Run one step of a pipeline, then let the stage advance when it is done.
+
+    The whole chain used to be a person: ingest, wait, read the result, click
+    strands, wait, click each strand's sub-strands, wait, click notes for each
+    sub-strand, wait. An afternoon of pressing buttons and watching, per
+    learning area, which is the thing that made generating at any scale
+    impossible.
+
+    Each job here runs ONE step for ONE unit of work, saves it, and then checks
+    whether it was the last of its stage still running. Only the last one
+    advances, so a stage that fanned out into twelve sub-strands moves on once,
+    not twelve times.
+    """
+    payload = dict(job.get("payload") or {})
+    steps = [str(x) for x in (payload.get("steps") or [])]
+    index = int(payload.get("index") or 0)
+    if index >= len(steps):
+        return {"note": "nothing left to run"}
+
+    step = steps[index]
+    handler = _PIPELINE_HANDLERS.get(step)
+    if handler is None:
+        raise ValueError(f"'{step}' is not a pipeline step.")
+
+    # Run the step exactly as it runs when queued on its own — one
+    # implementation, so the pipeline cannot drift from the buttons.
+    result = handler({**job, "kind": step})
+
+    advanced = _advance_pipeline(job, steps, index)
+    return {"step": step, "step_index": index, "advanced_to": advanced, **result}
+
+
+def _advance_pipeline(job: dict[str, Any], steps: list[str], index: int) -> str:
+    """Queue the next stage, but only once the whole current stage is finished.
+
+    Without the barrier, each of twelve sub-strand jobs would queue the next
+    stage as it landed — twelve times over, and the stage after that a hundred
+    and forty-four.
+    """
+    from ..infra.db import fetch_one
+    from ..services import job_queue
+
+    batch_id = str(job.get("batch_id") or "")
+    if not batch_id:
+        return ""
+
+    siblings = fetch_one(
+        """
+        SELECT COUNT(*) AS n FROM jobs
+        WHERE batch_id = :batch_id AND kind = 'pipeline'
+          AND COALESCE(payload->>'index', '0') = :index
+          AND status IN ('queued', 'running')
+          AND job_id <> :job_id
+        """,
+        {"batch_id": batch_id, "index": str(index), "job_id": str(job.get("job_id") or "")},
+    )
+    if int((siblings or {}).get("n") or 0) > 0:
+        return ""
+
+    if index + 1 >= len(steps):
+        return ""
+
+    payload = dict(job.get("payload") or {})
+    next_step = steps[index + 1]
+    grade = str(job.get("grade") or "")
+    subject = str(job.get("subject") or "")
+    scope_strand = str(payload.get("scope_strand") or "")
+
+    units = _expand_step(next_step, grade, subject, scope_strand)
+    if not units:
+        # Nothing to run it against. Skipping forward silently would leave the
+        # batch looking finished when the stage that mattered never ran.
+        logger.warning(
+            "Pipeline %s: step '%s' expanded to nothing for %s (%s).",
+            batch_id, next_step, subject, grade,
+        )
+        return ""
+
+    for unit in units:
+        job_queue.enqueue(
+            "pipeline", grade, subject,
+            {**payload, "index": index + 1},
+            strand=unit.get("strand", ""),
+            sub_strand=unit.get("sub_strand", ""),
+            batch_id=batch_id,
+            queued_by=str(job.get("queued_by") or ""),
+        )
+    logger.info("Pipeline %s advanced to '%s' across %d unit(s).",
+                batch_id, next_step, len(units))
+    return next_step
+
+
 def _register_queue_handlers() -> None:
     from ..services import job_queue
 
@@ -4144,6 +4443,25 @@ def _register_queue_handlers() -> None:
     job_queue.register("questions", _run_queued_questions)
     job_queue.register("review", _run_queued_review)
     job_queue.register("approval", _run_queued_approval)
+    job_queue.register("ingest", _run_queued_ingest)
+    job_queue.register("strands", _run_queued_strands)
+    job_queue.register("regenerate", _run_queued_regeneration)
+    job_queue.register("pipeline", _run_queued_pipeline)
+
+
+# One step, one implementation. The pipeline delegates to the same handlers the
+# individual buttons queue, so a fix to one is a fix to both.
+_PIPELINE_HANDLERS: dict[str, Any] = {
+    "ingest": _run_queued_ingest,
+    "strands": _run_queued_strands,
+    "substrands": _run_queued_substrands,
+    "notes": _run_queued,
+    "diagram": _run_queued,
+    "media": _run_queued,
+    "simulation": _run_queued,
+    "activity": _run_queued,
+    "questions": _run_queued_questions,
+}
 
 
 _register_queue_handlers()
@@ -4351,6 +4669,153 @@ def factory_queue_drafts(
             for r in rows
         ],
     }
+
+
+@router.post("/factory/queue-pipeline")
+def factory_queue_pipeline(
+    payload: QueuePipelineRequest,
+    auth: AuthContext = Depends(require_roles("admin", "operator")),
+) -> dict[str, Any]:
+    """Queue a learning area end to end: design in, questions out.
+
+    The chain used to be a person. Ingest, wait, read the result, click
+    strands, wait, click each strand's sub-strands, wait, click notes for each
+    sub-strand, wait — an afternoon of pressing buttons and watching, per
+    learning area. That is what made producing at any scale impossible, and it
+    is the only reason the work was ever done one item at a time.
+
+    Each stage fans out from what the stage before it SAVED, so nothing has to
+    be guessed at queue time, and a stage advances only when all of it is
+    finished.
+    """
+    import hashlib as _hashlib
+    from ..services import job_queue
+
+    steps = [str(x).strip() for x in payload.steps if str(x).strip()] or list(PIPELINE_STEPS)
+    unknown = [s for s in steps if s not in PIPELINE_STEPS]
+    if unknown:
+        raise_api_error(
+            "VALIDATION_FAILED",
+            f"Not pipeline steps: {', '.join(unknown)}. "
+            f"Known, in order: {', '.join(PIPELINE_STEPS)}.",
+        )
+
+    # Kept in the published order however they were listed. A run that did
+    # notes before sub-strands would generate nothing and report success.
+    steps = [s for s in PIPELINE_STEPS if s in set(steps)]
+
+    units = _expand_step(steps[0], payload.grade, payload.subject, payload.strand)
+    if not units:
+        raise_api_error(
+            "MISSING_PARENT_CONTEXT",
+            f"'{steps[0]}' has nothing to run against for {payload.subject} "
+            f"({payload.grade}). Start the run at an earlier step — the design "
+            f"has to be ingested before there are strands, and strands before "
+            f"there are sub-strands.",
+        )
+
+    batch_id = "batch_" + _hashlib.sha256(
+        f"pipeline{payload.grade}{payload.subject}{payload.strand}{steps}".encode()
+    ).hexdigest()[:16]
+
+    queued = []
+    for unit in units:
+        job = job_queue.enqueue(
+            "pipeline", payload.grade, payload.subject,
+            {"steps": steps, "index": 0,
+             "custom_instructions": payload.custom_instructions,
+             "scope_strand": payload.strand,
+             "force": payload.force_ingest},
+            strand=unit.get("strand", ""),
+            sub_strand=unit.get("sub_strand", ""),
+            batch_id=batch_id, queued_by=getattr(auth, "subject", ""),
+        )
+        queued.append(job.to_dict())
+
+    job_queue.start_worker()
+
+    return {
+        "status": "queued",
+        "batch_id": batch_id,
+        "steps": steps,
+        "starting_step": steps[0],
+        "queued": len(queued),
+        "jobs": queued,
+        "note": ("Each stage fans out as the one before it finishes, so the job "
+                 "count grows as the run proceeds. Every step saves what it "
+                 "made, and every generation is reviewed and revised in the "
+                 "worker before it is filed."),
+    }
+
+
+@router.post("/factory/queue-regenerate")
+def factory_queue_regenerate(
+    payload: QueueRegenerateRequest,
+    auth: AuthContext = Depends(require_roles("admin", "operator")),
+) -> dict[str, Any]:
+    """Regenerate reviewed versions from their findings, in the background.
+
+    Regeneration is a generation and costs a generation's time. Run from a
+    button it held the console open exactly as the first generation did, which
+    made acting on a review pass across a grade another afternoon of waiting.
+    """
+    import hashlib as _hashlib
+    from ..infra.db import fetch_all
+    from ..services import job_queue
+
+    ids = [a.strip() for a in payload.artifact_ids if a.strip()]
+    if ids:
+        rows = fetch_all(
+            "SELECT artifact_id, grade, subject, strand_name, sub_strand_name "
+            "FROM artifacts WHERE artifact_id = ANY(:ids)",
+            {"ids": ids},
+        ) or []
+    else:
+        # Everything in scope that a reviewer has actually looked at. There is
+        # nothing to regenerate FROM without findings, and regenerating without
+        # them is just another roll of the same dice at the same price.
+        rows = fetch_all(
+            """
+            SELECT DISTINCT a.artifact_id, a.grade, a.subject,
+                   a.strand_name, a.sub_strand_name
+            FROM artifacts a
+            JOIN artifact_reviews r ON r.artifact_id = a.artifact_id
+            WHERE (a.grade = :grade OR a.grade = :alt_grade)
+              AND (:subject = '' OR LOWER(a.subject) = LOWER(:subject))
+              AND r.verdict IN ('revise', 'reject')
+            LIMIT 500
+            """,
+            {"grade": payload.grade, "alt_grade": payload.grade.replace("grade-", ""),
+             "subject": payload.subject},
+        ) or []
+
+    if not rows:
+        raise_api_error(
+            "VALIDATION_FAILED",
+            "Nothing to regenerate. A version needs a review with findings "
+            "before there is anything to regenerate from — queue a review first.",
+        )
+
+    batch_id = "batch_" + _hashlib.sha256(
+        f"regen{payload.grade}{payload.subject}{len(rows)}".encode()
+    ).hexdigest()[:16]
+
+    queued = []
+    for row in rows:
+        job = job_queue.enqueue(
+            "regenerate", str(row.get("grade") or payload.grade),
+            str(row.get("subject") or payload.subject),
+            {"artifact_id": str(row.get("artifact_id") or ""),
+             "extra_instructions": payload.extra_instructions},
+            strand=str(row.get("strand_name") or ""),
+            sub_strand=str(row.get("sub_strand_name") or ""),
+            batch_id=batch_id, queued_by=getattr(auth, "subject", ""),
+        )
+        queued.append(job.to_dict())
+
+    job_queue.start_worker()
+    return {"status": "queued", "batch_id": batch_id, "queued": len(queued),
+            "artifacts": len(rows), "jobs": queued}
 
 
 @router.post("/factory/queue-review")

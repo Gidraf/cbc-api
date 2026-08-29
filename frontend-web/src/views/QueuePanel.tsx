@@ -13,8 +13,12 @@ import {
   Th,
 } from "../ui/components";
 import {
+  PIPELINE_STEPS,
   QUEUEABLE_KINDS,
+  STEP_LABEL,
   useCancelQueue,
+  useQueuePipeline,
+  useQueueRegenerate,
   useQueueReview,
   useQueueStatus,
   useQueueWork,
@@ -51,6 +55,10 @@ const KIND_LABEL: Record<string, string> = {
   substrands: "Sub-strands",
   review: "Review",
   approval: "Approver",
+  ingest: "Read the design",
+  strands: "Strands",
+  regenerate: "Regeneration",
+  pipeline: "Full run",
 };
 
 export function QueuePanel({
@@ -69,6 +77,9 @@ export function QueuePanel({
 }) {
   const queue = useQueueWork(grade, subject);
   const reviewQueue = useQueueReview(grade, subject);
+  const pipeline = useQueuePipeline(grade, subject);
+  const regenerate = useQueueRegenerate(grade, subject);
+  const [from, setFrom] = React.useState<string>("substrands");
   const cancel = useCancelQueue();
   const status = useQueueStatus(grade, subject, queue.data?.batch_id);
   const [kinds, setKinds] = React.useState<string[]>(defaultKinds);
@@ -117,6 +128,63 @@ export function QueuePanel({
       }
     >
       <Stack gap="var(--s3)">
+        <div
+          style={{
+            border: "1px solid var(--line)",
+            borderRadius: "var(--radius)",
+            padding: "var(--s3)",
+          }}
+        >
+          <strong>Run the whole thing</strong>
+          <p style={{ color: "var(--ink-3)", fontSize: "var(--text-sm)", margin: "4px 0 var(--s2)" }}>
+            Design in, questions out. Each stage fans out from what the stage
+            before it saved, so the job count grows as the run proceeds — and
+            every generation is reviewed and revised in the worker before it is
+            filed. Start it and close the tab.
+          </p>
+          <Stack direction="row" gap="var(--s2)" align="center" wrap>
+            <label style={{ fontSize: "var(--text-sm)", color: "var(--ink-2)" }}>
+              Start at
+            </label>
+            <select
+              aria-label="First step of the run"
+              value={from}
+              onChange={(e) => setFrom(e.target.value)}
+              style={{ padding: "6px 8px", borderRadius: "var(--radius-sm)" }}
+            >
+              {PIPELINE_STEPS.map((step) => (
+                <option key={step} value={step}>
+                  {STEP_LABEL[step] || step}
+                </option>
+              ))}
+            </select>
+            <Button
+              disabled={!subject || pipeline.isPending}
+              loading={pipeline.isPending}
+              onClick={() =>
+                pipeline.mutate({
+                  steps: PIPELINE_STEPS.slice(PIPELINE_STEPS.indexOf(from as any)),
+                  strand,
+                })
+              }
+            >
+              {pipeline.isPending ? "Queuing…" : "Queue the full run"}
+            </Button>
+          </Stack>
+          {pipeline.error && <ErrorNotice error={pipeline.error} />}
+          {pipeline.data && (
+            <p style={{ fontSize: "var(--text-sm)", margin: "var(--s2) 0 0" }}>
+              Started at <strong>{STEP_LABEL[pipeline.data.starting_step]}</strong> with{" "}
+              {pipeline.data.queued} job(s). The remaining{" "}
+              {pipeline.data.steps.length - 1} stage(s) queue themselves as each one
+              finishes.
+            </p>
+          )}
+        </div>
+
+        <div style={{ fontSize: "var(--text-sm)", color: "var(--ink-2)" }}>
+          Or queue single stations:
+        </div>
         <Stack direction="row" gap="var(--s2)" style={{ flexWrap: "wrap" }}>
           {QUEUEABLE_KINDS.map((kind) => (
             <Button
@@ -194,7 +262,24 @@ export function QueuePanel({
             >
               Queue the approver's work
             </Button>
+            <Button
+              size="sm"
+              variant="secondary"
+              disabled={!subject || regenerate.isPending}
+              loading={regenerate.isPending}
+              title="Regenerates every reviewed version whose verdict was revise or reject, carrying the findings into the next version"
+              onClick={() => regenerate.mutate({})}
+            >
+              Queue regeneration from findings
+            </Button>
           </Stack>
+          {regenerate.error && <ErrorNotice error={regenerate.error} />}
+          {regenerate.data && (
+            <p style={{ margin: "var(--s2) 0 0" }}>
+              {regenerate.data.queued} regeneration(s) queued across{" "}
+              {regenerate.data.artifacts} artifact(s).
+            </p>
+          )}
           {reviewQueue.error && <ErrorNotice error={reviewQueue.error} />}
           {reviewQueue.data && (
             <p style={{ margin: "var(--s2) 0 0" }}>
@@ -307,7 +392,10 @@ export function QueuePanel({
                 <tbody>
                   {data.jobs.map((job) => (
                     <tr key={job.job_id}>
-                      <Td>{KIND_LABEL[job.kind] || job.kind}</Td>
+                      <Td>
+                        {KIND_LABEL[job.kind] || job.kind}
+                        {job.step ? ` · ${STEP_LABEL[job.step] || job.step}` : ""}
+                      </Td>
                       <Td>{job.sub_strand || job.strand || "—"}</Td>
                       <Td numeric>{job.position ? `#${job.position}` : "—"}</Td>
                       <Td>
