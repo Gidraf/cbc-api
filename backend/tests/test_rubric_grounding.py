@@ -475,3 +475,47 @@ def test_a_cell_kicd_cut_off_is_named_rather_than_hidden():
     assert row.to_dict()["truncated_levels"] == ["meeting", "approaching"]
     # Still usable: a partial rubric from the design beats a generated one.
     assert row.complete
+
+
+def test_a_span_stops_where_another_strand_begins():
+    """This resolver runs on one strand at a time, so the last sub-strand had
+    no sibling after it and ran on into the following strand: "God our Loving
+    Father" claimed page 208, which is where The Holy Bible starts."""
+    design = (
+        "[PAGE 202]\n202:5  Summary of Strands and Sub-Strands\n"
+        "[PAGE 206]\n206:9  1.3\n206:10  God our\n206:11  Loving\n206:12  Father\n"
+        "[PAGE 207]\n207:2  Suggested Assessment Rubric s\n"
+        "207:8  Ability to tell three ways God shows His love.\n"
+        "[PAGE 208]\n208:5  STRAND 2.0: THE HOLY BIBLE\n208:13  2.1 A Holy\n208:14  Book\n"
+    )
+    subs = [{"sub_strand_name": "God our Loving Father", "sub_strand_id": "1.3",
+             "source_pages": []}]
+    source_pages.apply(design, subs)
+
+    assert subs[0]["source_pages"] == [202, 206, 207]
+    assert 208 not in subs[0]["source_pages"]
+
+
+def test_a_meets_cell_the_pdf_stripped_of_its_verb_fails_the_row():
+    """Page 210's Meets cell for David and Goliath is literally "David and
+    Goliath." — the verb was lost in extraction. A generated rubric that says
+    so beats a level a teacher cannot act on."""
+    design = (
+        "[PAGE 209]\n209:9  2.2 Bible\n209:10  Story:\n209:11  David and\n209:12  Goliath\n"
+        "[PAGE 210]\n210:2  Suggested Assessment Rubric\n"
+        "210:31  Ability to narrate the\n210:32  story of David and\n210:33  Goliath.\n"
+        "210:34  Narrates the story of\n210:35  David and Goliath\n210:36  with actions.\n"
+        "210:37  David and Goliath.\n"
+        "210:38  Partly narrates the story of\n"
+        "210:39  Narrates the story\n210:40  of David and Goliath\n210:41  with prompts.\n"
+    )
+    harvest = rubric_tables.harvest(
+        design,
+        [{"sub_strand_name": "Bible Story: David and Goliath", "sub_strand_id": "2.2",
+          "slos": ["retell the story of David and Goliath"]}],
+    )
+    row = harvest.rows[0]
+
+    assert row.meeting == "David and Goliath."
+    assert not row.complete
+    assert harvest.for_sub_strand("Bible Story: David and Goliath") == []

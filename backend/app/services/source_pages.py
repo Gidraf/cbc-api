@@ -49,6 +49,30 @@ def _heading_pattern(sub_id: str, name: str) -> re.Pattern[str]:
     return re.compile(r"|".join(parts), re.IGNORECASE)
 
 
+# "1.1", "2.2", "4.3" opening a page, or "STRAND 3.0:" — either ends the
+# previous sub-strand's block.
+_ANY_OPENING = re.compile(r"(?:^|\s)(?:STRAND\s+)?(\d{1,2}\.\d{1,2})(?:\s|$|:)")
+
+
+def _all_boundaries(pages: list[document_index.Page]) -> set[int]:
+    """Every page that opens SOME sub-strand, not only the ones asked about.
+
+    This resolver is called with one strand's sub-strands at a time, so the
+    last of them has no next opening among its siblings and its span ran on
+    into the following strand: "God our Loving Father" claimed page 208, which
+    is where The Holy Bible starts.
+
+    The document knows where every block begins, whether or not this call was
+    asked about it.
+    """
+    boundaries: set[int] = set()
+    for page in pages:
+        head = "\n".join(l.text for l in page.lines[:20])
+        if _ANY_OPENING.search(head):
+            boundaries.add(page.number)
+    return boundaries
+
+
 def _summary_page(pages: list[document_index.Page]) -> int:
     """The 'Summary of Strands and Sub-Strands' table, which lists them all.
 
@@ -84,6 +108,7 @@ def resolve(
 
     summary = _summary_page(pages)
     rubric_page_numbers = [p.number for p in rubric_pages(pages)]
+    boundaries = _all_boundaries(pages)
 
     # Where each sub-strand opens. A heading match in the FIRST few lines of a
     # page is an opening; the same words later on the page are a cross
@@ -120,11 +145,17 @@ def resolve(
         # the last of them has no next opening. Left unbounded it claimed every
         # remaining page in the document: "God our Loving Father" came back
         # with thirteen source pages running to the end of the section.
-        next_opening = (
+        sibling_next = (
             ordered[index + 1][1] if index + 1 < len(ordered)
             else opening + MAX_SPAN_PAGES
         )
-        next_opening = min(next_opening, opening + MAX_SPAN_PAGES)
+        # The next page that opens ANY sub-strand also ends this one, even when
+        # that sub-strand belongs to a strand this call was not asked about.
+        foreign_next = next(
+            (n for n in sorted(boundaries) if n > opening),
+            opening + MAX_SPAN_PAGES,
+        )
+        next_opening = min(sibling_next, foreign_next, opening + MAX_SPAN_PAGES)
         span = [
             p.number for p in pages
             if opening <= p.number < next_opening

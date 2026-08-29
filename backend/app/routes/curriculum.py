@@ -4036,6 +4036,31 @@ _QUEUEABLE: dict[str, str] = {
 }
 
 
+def _payload_model(handler: Any, kind: str) -> Any:
+    """The request class a station's route takes.
+
+    This module opens with `from __future__ import annotations`, so EVERY
+    annotation in it is a string. Reading `handler.__annotations__["payload"]`
+    returned the name of the class rather than the class, and the queue then
+    failed every station with
+
+        'str' object has no attribute 'model_fields'
+
+    after two paid attempts — a message that says nothing about where it came
+    from. Resolve the name against this module, and say so plainly when it
+    cannot be resolved.
+    """
+    model_cls = handler.__annotations__.get("payload")
+    if isinstance(model_cls, str):
+        model_cls = globals().get(model_cls)
+    if model_cls is None or not hasattr(model_cls, "model_fields"):
+        raise ValueError(
+            f"Cannot queue '{kind}': the route {getattr(handler, '__name__', handler)} "
+            f"does not annotate its payload with a resolvable request model."
+        )
+    return model_cls
+
+
 def _run_queued(job: dict[str, Any]) -> dict[str, Any]:
     """Run one queued station for one sub-strand.
 
@@ -4049,7 +4074,7 @@ def _run_queued(job: dict[str, Any]) -> dict[str, Any]:
         raise ValueError(f"'{kind}' has no station to run.")
 
     handler = globals()[endpoint]
-    model_cls = handler.__annotations__.get("payload")
+    model_cls = _payload_model(handler, kind)
     payload = dict(job.get("payload") or {})
     fields = {
         "grade": job.get("grade") or "",

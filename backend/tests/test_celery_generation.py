@@ -403,3 +403,52 @@ def test_the_worker_actually_registers_the_task_it_will_be_handed():
 
     assert 'include=["app.tasks"]' in source
     assert "celery_app.autodiscover_tasks(" not in source
+
+
+# ── the annotation bug that failed every queued station ─────────────────────
+
+
+def test_every_queueable_station_resolves_its_request_model():
+    """curriculum.py opens with `from __future__ import annotations`, so every
+    annotation in it is a STRING. Reading handler.__annotations__["payload"]
+    returned the name of the class rather than the class, and the queue failed
+    every station with "'str' object has no attribute 'model_fields'" — after
+    two paid attempts, with nothing in the message saying where it came from.
+    """
+    import app.routes.curriculum as routes
+
+    for kind, endpoint in routes._QUEUEABLE.items():
+        handler = getattr(routes, endpoint)
+        model = routes._payload_model(handler, kind)
+        assert hasattr(model, "model_fields"), kind
+        assert model.model_fields, f"{kind} resolved to an empty model"
+
+
+def test_the_annotation_really_is_a_string_so_the_guard_is_load_bearing():
+    """If this ever stops being true the resolution is harmless, but the test
+    above would stop testing anything — so assert the premise."""
+    import app.routes.curriculum as routes
+
+    raw = routes.factory_generate_notes.__annotations__.get("payload")
+    assert isinstance(raw, str), (
+        "annotations are no longer strings here; _payload_model's string branch "
+        "is now dead code and this test no longer proves anything"
+    )
+
+
+def test_an_unresolvable_payload_says_which_station_and_why():
+    """"'str' object has no attribute 'model_fields'" told the operator nothing
+    about which station broke or what to do."""
+    import pytest
+
+    import app.routes.curriculum as routes
+
+    def handler_without_a_model(payload: "NotARealModel"):  # noqa: F821
+        return {}
+
+    with pytest.raises(ValueError) as caught:
+        routes._payload_model(handler_without_a_model, "notes")
+
+    message = str(caught.value)
+    assert "notes" in message
+    assert "handler_without_a_model" in message
