@@ -153,7 +153,26 @@ def startup() -> None:
         # a worker the queue looks exactly like an empty one.
         from .services import job_queue
 
-        job_queue.start_worker()
+        # Work abandoned by a killed worker says "running" for ever otherwise:
+        # the console shows a job in progress that died with the process that
+        # owned it, and nothing ever picks it up.
+        job_queue.recover_stalled()
+
+        # Celery runs the work in its own container, so a refresh, a
+        # navigation or this very restart cannot touch a generation in flight.
+        # The in-process thread is the fallback for a machine with no broker —
+        # it dies with this process and multiplies if the API is scaled, so it
+        # starts only when Celery cannot be reached.
+        from .celery_app import broker_available
+
+        if broker_available():
+            logger.info("Generation runs on Celery; no in-process worker started.")
+        else:
+            job_queue.start_worker()
+            logger.warning(
+                "No Celery broker reachable — running jobs in-process. Queued work "
+                "will stop if this API restarts."
+            )
     except Exception as exc:  # noqa: BLE001
         logger.error("Job worker did not start; queued work will not run: %s", exc)
 

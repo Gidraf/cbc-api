@@ -10,6 +10,11 @@ x-backend-env: &backend-env
   DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
   CBC_MASTER_KEY: ${CBC_MASTER_KEY:-u8iP_EgFrh50kABm2MvxAfv5mN53uV8SQEgrMwJwztw=}
   REDIS_URL: redis://redis:6379/0
+  # Database 1, so the generation broker cannot be confused with — or flushed
+  # alongside — the older pipeline queue on database 0.
+  CELERY_BROKER_URL: ${CELERY_BROKER_URL:-redis://redis:6379/1}
+  CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND:-redis://redis:6379/1}
+  CELERY_TASK_QUEUE: ${CELERY_TASK_QUEUE:-cbc_generation}
 
   # Provider API keys/config
   OPENAI_API_KEY: ${OPENAI_API_KEY:-}
@@ -98,6 +103,30 @@ services:
     build: *backend-build
     command: python -m app.worker
     environment: *backend-env
+    depends_on: *backend-depends
+    extra_hosts: *extra-hosts
+    restart: unless-stopped
+
+  # Content generation — notes, strands, sub-strands, diagrams, media,
+  # simulations, activities. Its own process, so a browser refresh, a
+  # navigation, a proxy timeout or an API restart cannot lose a run in flight.
+  #
+  # CONCURRENCY IS 1 ON PURPOSE. These calls cost money and hit provider rate
+  # limits, and ten at once is how a run fails halfway with no way to tell
+  # which half. Raise it only with a rate limiter in front of the providers.
+  generation-worker:
+    build: *backend-build
+    command: >
+      celery -A app.celery_app worker
+      --loglevel=info
+      --concurrency=${CELERY_CONCURRENCY:-1}
+      --queues=${CELERY_TASK_QUEUE:-cbc_generation}
+      --hostname=generation@%h
+    environment:
+      <<: *backend-env
+      CELERY_BROKER_URL: ${CELERY_BROKER_URL:-redis://redis:6379/1}
+      CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND:-redis://redis:6379/1}
+      CELERY_TASK_QUEUE: ${CELERY_TASK_QUEUE:-cbc_generation}
     depends_on: *backend-depends
     extra_hosts: *extra-hosts
     restart: unless-stopped

@@ -613,18 +613,104 @@ export function useFactoryReset() {
 
 export type QueueStatus = {
   worker_running: boolean;
+  /** Where the work actually runs: "celery", "in_process", or "nothing". */
+  runs_on?: string;
   counts: Record<string, number>;
+  /** "notes:done", "review:queued" — so each kind can report its own progress. */
+  counts_by_kind?: Record<string, number>;
+  /** How many jobs are waiting across the whole queue, not only this scope. */
+  queue_depth?: number;
   total: number;
   finished: number;
   percentage: number;
-  now_running: { kind: string; subject: string; sub_strand: string } | null;
+  now_running: { kind: string; subject: string; strand: string; sub_strand: string } | null;
   jobs: {
     job_id: string; batch_id: string; kind: string; subject: string;
     strand: string; sub_strand: string; status: string; attempts: number; error: string;
+    /** Place in the line. "Queued" with no number is indistinguishable from
+     *  "stuck", and an operator who queued a grade wants to know whether
+     *  theirs is next or fortieth. */
+    position?: number;
   }[];
 };
 
-export const QUEUEABLE_KINDS = ["notes", "diagram", "media", "simulation", "activity"] as const;
+/** Send artifacts for review or for the approver's work, in the background.
+ *
+ *  The reviewers and the approver are model calls like the generators, and were
+ *  the half of the pipeline still run by hand one artifact at a time. This
+ *  queues the approver's WORK — the approval itself stays a person's decision. */
+export function useQueueReview(grade: string, subject: string) {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: {
+      work: "review" | "approval";
+      strand?: string;
+      artifact_ids?: string[];
+      kinds?: string[];
+      layer?: number;
+    }) =>
+      api<{ batch_id: string; queued: number; artifacts: number; work: string }>(
+        "/api/v1/curriculum/factory/queue-review",
+        { method: "POST", body: JSON.stringify({ grade, subject, ...v }) }
+      ),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["queue"] });
+      qc.invalidateQueries({ queryKey: ["artifacts"] });
+    },
+  });
+}
+
+export const QUEUEABLE_KINDS = [
+  "notes", "diagram", "media", "simulation", "activity", "questions",
+] as const;
+
+/** Which queue kind each production station runs as.
+ *
+ *  The stations used to generate on the HTTP request that asked for them, so a
+ *  refresh, a navigation or a proxy timeout lost a run that was minutes in and
+ *  had already been paid for. */
+export const STATION_KIND: Record<string, string> = {
+  notes: "notes",
+  visuals: "diagram",
+  media: "media",
+  simulations: "simulation",
+  practicals: "activity",
+  questions: "questions",
+};
+
+export type QueuedJob = {
+  job_id: string;
+  kind: string;
+  grade: string;
+  subject: string;
+  strand: string;
+  sub_strand: string;
+  status: string;
+  attempts: number;
+  error: string;
+  result: any;
+  finished_at?: string;
+};
+
+/** One job and what it produced. Polled while it runs, read once when it lands.
+ *
+ *  The result is stored, so reopening the console after a refresh shows the
+ *  finished output rather than a green tick and no way back to it. */
+export function useQueuedJob(jobId: string | null) {
+  const api = useApi();
+  return useQuery({
+    queryKey: ["queued-job", jobId ?? ""],
+    queryFn: () =>
+      api<QueuedJob>(`/api/v1/curriculum/factory/queue/job/${jobId}`),
+    enabled: Boolean(jobId),
+    refetchInterval: (query) => {
+      const data = query.state.data as QueuedJob | undefined;
+      if (!data) return 3000;
+      return data.status === "queued" || data.status === "running" ? 3000 : false;
+    },
+  });
+}
 
 /** Queue stations across many sub-strands. The request returns immediately;
  *  progress is read from the queue. */
@@ -662,6 +748,75 @@ export function useQueueStatus(grade: string, subject?: string, batchId?: string
       const outstanding = (data.counts.queued ?? 0) + (data.counts.running ?? 0);
       return outstanding > 0 ? 4000 : false;
     },
+  });
+}
+
+/** A strand's sub-strands, generated and waiting for somebody to accept them.
+ *
+ *  Drafts live server-side on purpose. Held in the console they were lost to
+ *  every re-render: generate all five strands, save one, and the other four
+ *  went with the component that was holding them. */
+export type SubstrandDraft = {
+  job_id: string;
+  batch_id: string;
+  strand_name: string;
+  strand_id: string;
+  sub_strands: GeneratedSubstrand[];
+  refused?: Refusal[];
+  grounded?: boolean;
+  source_chars?: number;
+  model?: string;
+  finished_at?: string;
+};
+
+/** Queue sub-strand generation for several strands at once, one at a time. */
+export function useQueueSubstrands(grade: string, subject: string) {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: {
+      strands?: { strand_name: string; strand_id?: string }[];
+      custom_instructions?: string;
+    }) =>
+      api<{ batch_id: string; queued: number; strands: string[] }>(
+        "/api/v1/curriculum/factory/queue-substrands",
+        { method: "POST", body: JSON.stringify({ grade, subject, ...v }) }
+      ),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["queue"] });
+      qc.invalidateQueries({ queryKey: ["substrand-drafts"] });
+    },
+  });
+}
+
+/** Poll for finished drafts while anything is still outstanding. */
+export function useSubstrandDrafts(grade: string, subject: string, active: boolean) {
+  const api = useApi();
+  return useQuery({
+    queryKey: ["substrand-drafts", grade, subject],
+    queryFn: () => {
+      const qs = new URLSearchParams({ grade, subject, kind: "substrands" });
+      return api<{ count: number; drafts: SubstrandDraft[] }>(
+        `/api/v1/curriculum/factory/queue/drafts?${qs}`
+      );
+    },
+    enabled: Boolean(grade && subject),
+    // Only while the queue has work in flight. Polling an idle queue is a
+    // request every few seconds, all day, for nothing.
+    refetchInterval: active ? 4000 : false,
+  });
+}
+
+export function useDiscardDraft() {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { job_id: string }) =>
+      api<{ discarded: number }>(
+        "/api/v1/curriculum/factory/queue/discard-draft",
+        { method: "POST", body: JSON.stringify(v) }
+      ),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["substrand-drafts"] }),
   });
 }
 
@@ -985,6 +1140,9 @@ export function useStructureActions(grade: string, subject: string) {
         // until a hard reload — the stations are keyed on a selected sub-strand,
         // and there was nothing to select.
         qc.invalidateQueries({ queryKey: ["saved-substrands"] });
+        // The save marked the queued draft consumed server-side. Without this
+        // the strand keeps offering the draft it was just used to write.
+        qc.invalidateQueries({ queryKey: ["substrand-drafts"] });
       },
     }),
   };

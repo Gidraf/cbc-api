@@ -9,7 +9,7 @@ import { QueuePanel } from "./QueuePanel";
 import { ResetPanel } from "./ResetPanel";
 import { VersionReview } from "./VersionReview";
 import { stationToText } from "../lib/serialize";
-import { useArtifacts, useInspect, profileFor, useProfiles, gradeOptionLabel, subjectOptionLabel, useApi, useGrades, useProgress, useSavedSubstrands, useStoredStructure, useSubjects } from "../lib/queries";
+import { useArtifacts, useInspect, profileFor, useProfiles, gradeOptionLabel, subjectOptionLabel, useApi, useGrades, useProgress, useQueuedJob, useSavedSubstrands, useStoredStructure, useSubjects, STATION_KIND } from "../lib/queries";
 import { useQueryClient } from "@tanstack/react-query";
 
 /**
@@ -185,6 +185,72 @@ function emptyReport(row: Record<string, any>) {
   };
 }
 
+/** What the worker's review loop did: generate, save, review, revise, save.
+ *
+ *  Worth showing rather than burying. A station that scored 76 and then 89 is a
+ *  different thing from one that scored 89 first time, and an operator deciding
+ *  whether to trust the output needs to see which it was. */
+function ReviewCycles({ report }: { report: any }) {
+  const cycles: any[] = report?.cycles || [];
+  if (!cycles.length) return null;
+
+  const why: Record<string, string> = {
+    approved: "the gate passed",
+    no_improvement: "the next pass did not improve on the last",
+    max_cycles: "it ran out of cycles",
+    no_actionable_findings: "the gate failed but named nothing to fix",
+    generation_failed: "a generation failed",
+  };
+
+  return (
+    <div
+      style={{
+        marginTop: "var(--s3)",
+        padding: "var(--s3)",
+        background: "var(--surface-2)",
+        borderRadius: "var(--radius-sm)",
+        fontSize: "var(--text-sm)",
+      }}
+    >
+      <Stack direction="row" gap="var(--s2)" align="center" wrap>
+        <strong>
+          {cycles.length} review cycle{cycles.length === 1 ? "" : "s"}
+        </strong>
+        {report.final_passed ? (
+          <Badge tone="ok">passed at {report.best_score}/100</Badge>
+        ) : (
+          <Badge tone="warn">best {report.best_score}/100, not passed</Badge>
+        )}
+        <span style={{ color: "var(--ink-3)" }}>
+          Stopped because {why[report.stopped_because] || report.stopped_because}.
+        </span>
+      </Stack>
+
+      <ul style={{ margin: "var(--s2) 0 0", paddingLeft: "1.2em" }}>
+        {cycles.map((c) => (
+          <li key={c.cycle}>
+            Cycle {c.cycle}: <strong>{c.score}/100</strong>
+            {c.version ? ` — filed as version ${c.version}` : ""}
+            {c.weakest ? `, weakest ${String(c.weakest).replace(/_/g, " ")}` : ""}
+            {c.error ? ` — failed: ${c.error}` : ""}
+            {c.directives_sent?.length ? (
+              <div style={{ color: "var(--ink-3)" }}>
+                Sent back to the generator: {c.directives_sent.join("; ")}
+              </div>
+            ) : null}
+          </li>
+        ))}
+      </ul>
+
+      {report.note && (
+        <p style={{ marginTop: "var(--s2)", marginBottom: 0 }}>
+          <strong>{report.note}</strong>
+        </p>
+      )}
+    </div>
+  );
+}
+
 export function ContentFactory() {
   const [params, setParams] = useSearchParams();
   const toast = useToast();
@@ -214,6 +280,7 @@ export function ContentFactory() {
     setNotes(null);
     setLastResult(null);
   }, [substrand, subject, effectiveGrade]);
+
 
   // Coverage measures what has been produced. It is not the list of what
   // EXISTS to produce for, and using it as one meant a grade whose coverage
@@ -268,51 +335,81 @@ export function ContentFactory() {
     return hit ? { subject: hit.subject, strand: hit.strand, report: hit.report } : null;
   }, [allSubstrands, substrand]);
 
+  /** Queue a station and follow it, rather than holding the browser open on it.
+   *
+   *  A station used to generate on the HTTP request that asked for it. Notes
+   *  take about a minute, media longer — so a refresh, a navigation, a proxy
+   *  timeout or a deploy threw away a run that was already paid for, and left
+   *  nothing behind saying what had been running.
+   *
+   *  Now the request records the work and returns. Celery runs it in another
+   *  process, the job id is kept in the URL, and reopening this page picks the
+   *  same job back up — finished, mid-flight, or failed with its reason. */
   async function runStation(station: (typeof STATIONS)[number]) {
     if (!selected) return;
+    const kind = STATION_KIND[station.id];
+    if (!kind) return;
+
     setRunning(station.id);
     try {
-      const body =
-        station.id === "questions"
-          ? {
-              grade: effectiveGrade,
-              subject: selected.subject,
-              strand: selected.strand,
-              sub_strand: substrand,
-              batch_count: 5,
-            }
-          : {
-              grade: effectiveGrade,
-              subject: selected.subject,
-              strand: selected.strand,
-              sub_strand: substrand,
-            };
+      const res = await api<{ jobs?: { job_id: string }[]; queued: number }>(
+        "/api/v1/curriculum/factory/queue",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            grade: effectiveGrade,
+            subject: selected.subject,
+            strand: selected.strand,
+            sub_strands: [substrand],
+            kinds: [kind],
+          }),
+        }
+      );
 
-      const res = await api<any>(station.endpoint, { method: "POST", body: JSON.stringify(body) });
-
-      const rejected = res?.rejected_count ?? 0;
-      const gate = res?.quality_gate;
-      if (rejected > 0) {
-        toast(
-          `${station.label}: ${res.batch_count ?? 0} accepted, ${rejected} rejected by validation.`,
-          "danger"
-        );
-      } else if (gate && gate.passed === false) {
-        toast(`${station.label} generated but the quality gate flagged it. See the panel below.`, "danger");
-      } else {
-        toast(`${station.label} generated.`, "ok");
+      const jobId = res.jobs?.[0]?.job_id || "";
+      if (!jobId) {
+        toast(`${station.label} could not be queued.`, "danger");
+        return;
       }
-
-      qc.invalidateQueries({ queryKey: ["progress"] });
-      qc.invalidateQueries({ queryKey: ["bundle"] });
-      setLastResult({ station: station.id, res });
-      if (station.id === "notes") setNotes(res?.notes ?? res);
+      // In the URL, not in component state: that is what makes it survive the
+      // refresh, and what lets the operator send somebody the link.
+      setParam({ job: jobId, station: station.id });
+      toast(`${station.label} queued. You can leave this page.`, "ok");
+      qc.invalidateQueries({ queryKey: ["queue"] });
     } catch (err) {
       toast(err instanceof Error ? err.message : `${station.label} failed.`, "danger");
     } finally {
       setRunning(null);
     }
   }
+
+  // The job this page is watching, and the station that queued it. Both live
+  // in the URL so a refresh, a navigation away and back, or a link pasted to a
+  // colleague all land on the same running or finished work.
+  const watchedJob = params.get("job") || "";
+  const watchedStation = params.get("station") || "";
+  const job = useQueuedJob(watchedJob || null);
+  const jobRunning = job.data?.status === "queued" || job.data?.status === "running";
+
+  // A finished job's result is read back into the station panel, so the output
+  // appears exactly where a synchronous run used to put it.
+  React.useEffect(() => {
+    const data = job.data;
+    if (!data || data.status !== "done" || !watchedStation) return;
+    setLastResult({ station: watchedStation, res: data.result });
+    if (watchedStation === "notes") setNotes(data.result?.notes ?? data.result);
+    qc.invalidateQueries({ queryKey: ["progress"] });
+    qc.invalidateQueries({ queryKey: ["bundle"] });
+  }, [job.data, watchedStation, qc]);
+
+  // Changing sub-strand abandons the job that belonged to the old one, rather
+  // than leaving the console showing another sub-strand's output under this
+  // one's heading.
+  React.useEffect(() => {
+    if (watchedJob && job.data && job.data.sub_strand !== substrand) {
+      setParam({ job: "", station: "" });
+    }
+  }, [substrand, job.data, watchedJob]);
 
   const [lastResult, setLastResult] = React.useState<{ station: string; res: any } | null>(null);
   // The notes are the source for every per-hour asset, so they are held for the
@@ -382,58 +479,59 @@ export function ContentFactory() {
         />
       )}
 
-      {/* Gated on "no sub-strands yet", this vanished the moment the first
-          strand was saved — and with it the only way to generate the other
-          four. Building a learning area is strand by strand, so the builder
-          has to survive the first success. It collapses once there is work to
-          show, so it does not crowd the picker. */}
+      {/* ONE element, always in the same position in the tree.
+
+          Rendering the builder from a ternary — bare when nothing was saved,
+          wrapped in <details> once something was — put it at two different
+          positions, so the first save UNMOUNTED it and mounted a fresh one.
+          Every draft it was holding for the other strands went with it:
+          generate all five, save one, and the other four disappeared, with no
+          error and no record they had existed.
+
+          The wrapper is now constant and only its summary and open state
+          change, so the builder keeps its identity — and its drafts — across
+          the save that used to destroy them. */}
       {!substrand && subject && !saved.isLoading && (
-        allSubstrands.length === 0 ? (
-          <CurriculumStructure
-            grade={effectiveGrade}
-            subject={subject}
-            onSaved={() => {
-              saved.refetch();
-              progress.refetch();
+        <details
+          open={allSubstrands.length === 0 || strandsRemaining > 0}
+          style={{ marginBottom: "var(--s4)" }}
+        >
+          <summary
+            style={{
+              cursor: "pointer",
+              fontSize: "var(--text-md)",
+              fontWeight: 600,
+              padding: "var(--s3)",
+              border: "1px solid var(--line)",
+              borderRadius: "var(--radius)",
             }}
-          />
-        ) : (
-          <details open={strandsRemaining > 0} style={{ marginBottom: "var(--s4)" }}>
-            <summary
-              style={{
-                cursor: "pointer",
-                fontSize: "var(--text-md)",
-                fontWeight: 600,
-                padding: "var(--s3)",
-                border: "1px solid var(--line)",
-                borderRadius: "var(--radius)",
+          >
+            {allSubstrands.length === 0
+              ? "Build the curriculum structure"
+              : "Build more of the structure"}
+            {allSubstrands.length === 0 ? null : strandsRemaining > 0 ? (
+              <>
+                {" "}
+                <Badge tone="warn">
+                  {strandsRemaining} strand{strandsRemaining === 1 ? "" : "s"} with
+                  no sub-strands yet
+                </Badge>
+              </>
+            ) : (
+              <> <Badge tone="ok">every strand has sub-strands</Badge></>
+            )}
+          </summary>
+          <div style={{ marginTop: "var(--s3)" }}>
+            <CurriculumStructure
+              grade={effectiveGrade}
+              subject={subject}
+              onSaved={() => {
+                saved.refetch();
+                progress.refetch();
               }}
-            >
-              Build more of the structure
-              {strandsRemaining > 0 ? (
-                <>
-                  {" "}
-                  <Badge tone="warn">
-                    {strandsRemaining} strand{strandsRemaining === 1 ? "" : "s"} with
-                    no sub-strands yet
-                  </Badge>
-                </>
-              ) : (
-                <> <Badge tone="ok">every strand has sub-strands</Badge></>
-              )}
-            </summary>
-            <div style={{ marginTop: "var(--s3)" }}>
-              <CurriculumStructure
-                grade={effectiveGrade}
-                subject={subject}
-                onSaved={() => {
-                  saved.refetch();
-                  progress.refetch();
-                }}
-              />
-            </div>
-          </details>
-        )
+            />
+          </div>
+        </details>
       )}
 
       {!substrand && subject && allSubstrands.length > 0 && (
@@ -592,16 +690,22 @@ export function ContentFactory() {
                     <Button
                       variant={done ? "secondary" : "primary"}
                       size="sm"
-                      disabled={locked}
-                      loading={running === station.id}
+                      disabled={locked || (jobRunning && watchedStation === station.id)}
+                      loading={running === station.id || (jobRunning && watchedStation === station.id)}
                       onClick={() => runStation(station)}
                       title={
                         locked
                           ? `Generate ${gateLabel?.toLowerCase()} first — this station is grounded in it.`
-                          : undefined
+                          : "Runs in the background. You can refresh or navigate away."
                       }
                     >
-                      {done ? "Generate more" : "Generate"}
+                      {jobRunning && watchedStation === station.id
+                        ? job.data?.status === "running"
+                          ? "Generating…"
+                          : "Queued"
+                        : done
+                        ? "Generate more"
+                        : "Generate"}
                     </Button>
                   }
                 >
@@ -638,6 +742,49 @@ export function ContentFactory() {
                       against.
                     </p>
                   )}
+
+                  {watchedStation === station.id && jobRunning && (
+                    <p
+                      style={{
+                        marginTop: "var(--s3)",
+                        fontSize: "var(--text-sm)",
+                        color: "var(--ink-2)",
+                        background: "var(--surface-2)",
+                        padding: "var(--s3)",
+                        borderRadius: "var(--radius-sm)",
+                      }}
+                    >
+                      {job.data?.status === "running"
+                        ? `Generating ${station.label.toLowerCase()} in the background.`
+                        : `Queued behind other work.`}{" "}
+                      This runs in its own worker — refresh, navigate away or close
+                      the tab and it carries on. The result appears here when it
+                      lands, and this page reopens onto it.
+                    </p>
+                  )}
+
+                  {watchedStation === station.id && job.data?.status === "failed" && (
+                    <p
+                      style={{
+                        marginTop: "var(--s3)",
+                        fontSize: "var(--text-sm)",
+                        color: "var(--ink-2)",
+                        background: "var(--surface-2)",
+                        padding: "var(--s3)",
+                        borderRadius: "var(--radius-sm)",
+                        border: "1px solid var(--warn-border, var(--line))",
+                      }}
+                    >
+                      <strong>{station.label} failed</strong> after {job.data.attempts}{" "}
+                      attempt{job.data.attempts === 1 ? "" : "s"}: {job.data.error}
+                    </p>
+                  )}
+
+                  {watchedStation === station.id &&
+                    job.data?.status === "done" &&
+                    job.data.result?.review_cycles && (
+                      <ReviewCycles report={job.data.result.review_cycles} />
+                    )}
 
                   {lastResult?.station === station.id && (
                     <>
@@ -718,7 +865,7 @@ export function ContentFactory() {
               // Inspecting is the step before generating. Closing the panel and
               // hunting for the station's own button loses the reason the
               // operator inspected in the first place.
-              generating={running === "notes"}
+              generating={running === "notes" || (jobRunning && watchedStation === "notes")}
               generateLabel="Generate the notes"
               onGenerate={async () => {
                 const station = STATIONS.find((st) => st.id === "notes");

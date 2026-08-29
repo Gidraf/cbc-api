@@ -19,6 +19,7 @@ import {
   useToast,
 } from "../ui/components";
 import { gradeOptionLabel, subjectOptionLabel, useGrades, useQuestionActions, useQuestions, useSubjects } from "../lib/queries";
+import { QueuePanel } from "./QueuePanel";
 import { useComposeExam } from "../lib/queries";
 
 const PAGE_SIZE = 25;
@@ -127,6 +128,31 @@ export function QuestionBank() {
         }
       />
 
+      {/* The same queue the content factory runs on. Question generation is a
+          model call like every other one and used to be held open on the
+          request that asked for it, so a refresh in the middle threw away a
+          batch that had already been paid for. Generated here, it runs in the
+          worker, reviews itself, and is still going when you come back. */}
+      {grade && subject && (
+        <details style={{ marginBottom: "var(--s4)" }}>
+          <summary
+            style={{
+              cursor: "pointer",
+              fontSize: "var(--text-md)",
+              fontWeight: 600,
+              padding: "var(--s3)",
+              border: "1px solid var(--line)",
+              borderRadius: "var(--radius)",
+            }}
+          >
+            Generate and review in the background
+          </summary>
+          <div style={{ marginTop: "var(--s3)" }}>
+            <QueuePanel grade={grade} subject={subject} defaultKinds={["questions"]} />
+          </div>
+        </details>
+      )}
+
       {selected.size > 0 && (
         <Card accent="accent">
           <Stack direction="row" align="center" justify="space-between" wrap gap="var(--s3)">
@@ -148,7 +174,7 @@ export function QuestionBank() {
       {questions.data && items.length === 0 && (
         <EmptyState
           title="No questions match these filters"
-          description="Generate a batch from the content factory, or widen the filters above."
+          description="Queue a batch above — it runs in the background and reviews itself — or widen the filters."
         />
       )}
 

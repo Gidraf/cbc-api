@@ -8,6 +8,9 @@ PyJWT==2.9.0
 SQLAlchemy==2.0.34
 psycopg2-binary==2.9.9
 redis==5.2.0
+# Generation runs in its own worker process so a refresh, a navigation or an
+# API restart cannot lose a run in flight. Redis above is the broker.
+celery==5.4.0
 minio==7.2.15
 playwright==1.55.0
 langfuse>=2.50.0,<3.0.0

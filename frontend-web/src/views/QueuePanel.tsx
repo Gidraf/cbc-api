@@ -15,6 +15,7 @@ import {
 import {
   QUEUEABLE_KINDS,
   useCancelQueue,
+  useQueueReview,
   useQueueStatus,
   useQueueWork,
 } from "../lib/queries";
@@ -45,22 +46,32 @@ const KIND_LABEL: Record<string, string> = {
   diagram: "Diagrams",
   media: "Photos & videos",
   simulation: "Simulations",
-  activity: "Activities",
+  activity: "Activities & experiments",
+  questions: "Questions",
+  substrands: "Sub-strands",
+  review: "Review",
+  approval: "Approver",
 };
 
 export function QueuePanel({
   grade,
   subject,
   strand,
+  defaultKinds = ["notes"],
 }: {
   grade: string;
   subject: string;
   strand?: string;
+  /** What to preselect. The question bank opens this panel to queue questions,
+   *  and preselecting notes there would have the operator regenerate the notes
+   *  they came to make questions from. */
+  defaultKinds?: string[];
 }) {
   const queue = useQueueWork(grade, subject);
+  const reviewQueue = useQueueReview(grade, subject);
   const cancel = useCancelQueue();
   const status = useQueueStatus(grade, subject, queue.data?.batch_id);
-  const [kinds, setKinds] = React.useState<string[]>(["notes"]);
+  const [kinds, setKinds] = React.useState<string[]>(defaultKinds);
 
   const data = status.data;
   const outstanding = data ? (data.counts.queued ?? 0) + (data.counts.running ?? 0) : 0;
@@ -81,11 +92,28 @@ export function QueuePanel({
           : "Runs the chosen stations for every stored sub-strand in this learning area, one at a time."
       }
       actions={
-        data?.worker_running === false && (
-          <Badge tone="danger" title="Queued work will not run until the API restarts">
-            worker stopped
-          </Badge>
-        )
+        <Stack direction="row" gap="var(--s2)" align="center">
+          {data?.queue_depth ? (
+            <Badge tone="neutral" title="Jobs waiting across the whole queue, not only this learning area">
+              {data.queue_depth} waiting
+            </Badge>
+          ) : null}
+          {data?.runs_on === "celery" && (
+            <Badge tone="ok" title="Work runs in its own container. A refresh, a navigation or an API restart cannot touch it.">
+              background worker
+            </Badge>
+          )}
+          {data?.runs_on === "in_process" && (
+            <Badge tone="warn" title="No Celery broker reachable, so jobs run inside the API process and stop if it restarts.">
+              in-process fallback
+            </Badge>
+          )}
+          {data?.runs_on === "nothing" && (
+            <Badge tone="danger" title="Nothing is running queued work">
+              no worker
+            </Badge>
+          )}
+        </Stack>
       }
     >
       <Stack gap="var(--s3)">
@@ -130,6 +158,52 @@ export function QueuePanel({
           )}
         </Stack>
 
+        <div
+          style={{
+            borderTop: "1px solid var(--line)",
+            paddingTop: "var(--s3)",
+            fontSize: "var(--text-sm)",
+          }}
+        >
+          <strong>Then send it for review.</strong>
+          <p style={{ color: "var(--ink-3)", margin: "4px 0 var(--s2)" }}>
+            The reviewers and the approver are model calls like the generators, and
+            take as long. Queued, a grade can be generated and reviewed in one
+            sitting and read the next morning. Approval itself stays yours —
+            this gets each artifact to the point where that is a decision rather
+            than an afternoon.
+          </p>
+          <Stack direction="row" gap="var(--s2)" style={{ flexWrap: "wrap" }}>
+            <Button
+              size="sm"
+              variant="secondary"
+              disabled={!subject || reviewQueue.isPending}
+              loading={reviewQueue.isPending}
+              title="Runs an independent second-opinion review over every artifact in this selection"
+              onClick={() => reviewQueue.mutate({ work: "review", strand, layer: 2 })}
+            >
+              Queue independent review
+            </Button>
+            <Button
+              size="sm"
+              variant="secondary"
+              disabled={!subject || reviewQueue.isPending}
+              loading={reviewQueue.isPending}
+              title="Runs whatever review layers are missing, then reports what still blocks your sign-off"
+              onClick={() => reviewQueue.mutate({ work: "approval", strand })}
+            >
+              Queue the approver's work
+            </Button>
+          </Stack>
+          {reviewQueue.error && <ErrorNotice error={reviewQueue.error} />}
+          {reviewQueue.data && (
+            <p style={{ margin: "var(--s2) 0 0" }}>
+              {reviewQueue.data.queued} {reviewQueue.data.work} job(s) queued across{" "}
+              {reviewQueue.data.artifacts} artifact(s).
+            </p>
+          )}
+        </div>
+
         {queue.error && <ErrorNotice error={queue.error} />}
         {queue.data && (
           <p style={{ fontSize: "var(--text-sm)", margin: 0 }}>
@@ -152,10 +226,43 @@ export function QueuePanel({
               ))}
             </Stack>
 
+            {data.counts_by_kind && Object.keys(data.counts_by_kind).length > 0 && (
+              <Table caption="Progress by kind of work">
+                <thead>
+                  <tr>
+                    <Th>Work</Th>
+                    <Th numeric>Queued</Th>
+                    <Th numeric>Running</Th>
+                    <Th numeric>Done</Th>
+                    <Th numeric>Failed</Th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {Array.from(
+                    new Set(
+                      Object.keys(data.counts_by_kind).map((k) => k.split(":")[0])
+                    )
+                  ).map((kind) => {
+                    const n = (state: string) =>
+                      data.counts_by_kind?.[`${kind}:${state}`] ?? 0;
+                    return (
+                      <tr key={kind}>
+                        <Td>{KIND_LABEL[kind] || kind}</Td>
+                        <Td numeric>{n("queued")}</Td>
+                        <Td numeric>{n("running")}</Td>
+                        <Td numeric>{n("done")}</Td>
+                        <Td numeric>{n("failed")}</Td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </Table>
+            )}
+
             {data.now_running && (
               <p style={{ fontSize: "var(--text-sm)", color: "var(--ink-2)", margin: 0 }}>
                 Running now: {KIND_LABEL[data.now_running.kind] || data.now_running.kind} for{" "}
-                <strong>{data.now_running.sub_strand}</strong>
+                <strong>{data.now_running.sub_strand || data.now_running.strand}</strong>
               </p>
             )}
 
@@ -191,8 +298,9 @@ export function QueuePanel({
               <Table caption="Queued work">
                 <thead>
                   <tr>
-                    <Th>Station</Th>
+                    <Th>Work</Th>
                     <Th>Sub-strand</Th>
+                    <Th numeric>In line</Th>
                     <Th>Status</Th>
                   </tr>
                 </thead>
@@ -201,6 +309,7 @@ export function QueuePanel({
                     <tr key={job.job_id}>
                       <Td>{KIND_LABEL[job.kind] || job.kind}</Td>
                       <Td>{job.sub_strand || job.strand || "—"}</Td>
+                      <Td numeric>{job.position ? `#${job.position}` : "—"}</Td>
                       <Td>
                         <Badge tone={STATUS_TONE[job.status] || "neutral"}>{job.status}</Badge>
                         {job.attempts > 1 && <> <Badge tone="warn">retried</Badge></>}

@@ -12,6 +12,14 @@ Deliberately SEQUENTIAL. These calls cost money and hit provider rate limits,
 and ten at once is how a run fails halfway with no way to tell which half — the
 failures interleave, the retries double-charge, and the partial output looks
 like a complete one. One at a time is slower and knowable.
+
+WHERE IT RUNS. Redis carries the fact that there is work; Postgres holds what
+the work is and what came of it. Celery runs it, in its own container, so a
+refresh, a navigation, a proxy timeout or an API restart cannot touch a
+generation in flight. The in-process thread below is a FALLBACK for a machine
+with no broker — it dies with the API process and multiplies if the API is
+scaled, so it is what you get when Celery cannot be reached, not what you get
+by default.
 """
 from __future__ import annotations
 
@@ -41,6 +49,8 @@ _HANDLERS: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {}
 
 _worker: threading.Thread | None = None
 _stop = threading.Event()
+_celery_checked_at: float = 0.0
+_celery_ok: bool = False
 
 
 def register(kind: str, handler: Callable[[dict[str, Any]], dict[str, Any]]) -> None:
@@ -94,16 +104,26 @@ def enqueue(
 
     # Queuing the same sub-strand's notes twice runs the model twice and files
     # two versions that differ only by sampling noise.
+    # Reviews and approvals are keyed on an ARTIFACT, not on a sub-strand: two
+    # reviews of two versions of the same sub-strand are different work, and
+    # collapsing them means the second version is never looked at.
+    artifact_id = str((payload or {}).get("artifact_id") or "")
     duplicate = fetch_one(
         """
         SELECT job_id FROM jobs
         WHERE kind = :kind AND grade = :grade AND LOWER(subject) = LOWER(:subject)
           AND strand = :strand AND sub_strand = :sub_strand
+          AND COALESCE(payload->>'artifact_id', '') = :artifact_id
+          AND COALESCE(payload->>'layer', '') = :layer
           AND status IN ('queued', 'running')
         LIMIT 1
+        -- Only work still in flight. A finished draft waiting to be accepted is
+        -- not a duplicate: asking for it again is asking for a regeneration.
         """,
         {"kind": kind, "grade": grade, "subject": subject,
-         "strand": strand, "sub_strand": sub_strand},
+         "strand": strand, "sub_strand": sub_strand,
+         "artifact_id": artifact_id,
+         "layer": str((payload or {}).get("layer") or "")},
     )
     if duplicate:
         logger.info("Already queued: %s for %s.", kind, sub_strand or subject)
@@ -122,8 +142,86 @@ def enqueue(
          "subject": subject, "strand": strand, "sub_strand": sub_strand,
          "payload": to_json(payload), "queued_by": queued_by},
     )
+    dispatch(job_id)
     return Job(job_id=job_id, batch_id=batch_id, kind=kind, grade=grade,
                subject=subject, strand=strand, sub_strand=sub_strand)
+
+
+def dispatch(job_id: str) -> str:
+    """Hand one job to Celery, or fall back to the in-process worker.
+
+    Returns which route it took, so the caller can say so rather than guess.
+    Dispatch failure is never fatal: the row is already in the table, and the
+    fallback worker claims the oldest queued job regardless of who queued it.
+    """
+    try:
+        from ..celery_app import broker_available
+
+        if broker_available():
+            from ..tasks import run_job
+
+            run_job.apply_async((job_id,))
+            return "celery"
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Could not dispatch %s to Celery: %s", job_id, exc)
+
+    # No broker, or Celery is not installed. The work still has to run.
+    start_worker()
+    return "in_process"
+
+
+def consume(job_id: str = "", *, kind: str = "", grade: str = "", subject: str = "",
+            strand: str = "") -> int:
+    """Mark finished work as accepted or discarded, so it stops being a draft.
+
+    A queued generation whose result is a draft stays on the console until
+    somebody decides about it. Without this it would reappear after every save,
+    offering to overwrite the thing it had just been used to write.
+    """
+    from ..infra.db import execute, fetch_one
+
+    if not (job_id or (kind and grade and subject and strand)):
+        return 0
+    params = {"job_id": job_id, "kind": kind, "grade": grade,
+              "alt_grade": grade.replace("grade-", ""), "subject": subject,
+              "strand": strand}
+    clause = (
+        "consumed_at IS NULL AND (job_id = :job_id OR (:job_id = '' "
+        "AND kind = :kind AND (grade = :grade OR grade = :alt_grade) "
+        "AND LOWER(subject) = LOWER(:subject) AND LOWER(strand) = LOWER(:strand)))"
+    )
+    row = fetch_one(f"SELECT COUNT(*) AS n FROM jobs WHERE {clause}", params)
+    execute(f"UPDATE jobs SET consumed_at = NOW() WHERE {clause}", params)
+    return int((row or {}).get("n") or 0)
+
+
+def drafts(kind: str, grade: str = "", subject: str = "", limit: int = 100) -> list[dict[str, Any]]:
+    """Finished queued work nobody has accepted or discarded yet, with results.
+
+    `status()` deliberately omits results — across a grade they are megabytes.
+    A draft is the one case where the result IS the point.
+    """
+    from ..infra.db import fetch_all
+
+    where = ["kind = :kind", "status = 'done'", "consumed_at IS NULL"]
+    params: dict[str, Any] = {"kind": kind, "limit": max(1, min(limit, 200))}
+    if grade:
+        where.append("(grade = :grade OR grade = :alt_grade)")
+        params["grade"] = grade
+        params["alt_grade"] = grade.replace("grade-", "")
+    if subject:
+        where.append("LOWER(subject) = LOWER(:subject)")
+        params["subject"] = subject
+
+    return fetch_all(
+        f"""
+        SELECT job_id, batch_id, kind, grade, subject, strand, status,
+               result, created_at, finished_at
+        FROM jobs WHERE {' AND '.join(where)}
+        ORDER BY created_at ASC LIMIT :limit
+        """,
+        params,
+    ) or []
 
 
 def cancel(job_id: str = "", batch_id: str = "") -> int:
@@ -166,13 +264,51 @@ def _claim() -> dict[str, Any] | None:
     )
 
 
+def _claim_by_id(job_id: str) -> dict[str, Any] | None:
+    """Take one specific job, atomically.
+
+    A broker can redeliver a message — a worker lost mid-job, a visibility
+    timeout, an operator requeuing by hand. Without this the same generation
+    runs twice and files two versions that differ only by sampling noise.
+    """
+    from ..infra.db import fetch_one
+
+    return fetch_one(
+        """
+        UPDATE jobs SET status = 'running', attempts = attempts + 1, started_at = NOW()
+        WHERE job_id = :job_id AND status = 'queued'
+        RETURNING *
+        """,
+        {"job_id": job_id},
+    )
+
+
+def run_job_by_id(job_id: str) -> dict[str, Any]:
+    """Run the job Celery was handed. Returns what happened."""
+    job = _claim_by_id(job_id)
+    if not job:
+        # Already running, already finished, or cancelled while it waited.
+        # None of those is an error, and none of them should run it again.
+        logger.info("Job %s was not claimable; leaving it alone.", job_id)
+        return {"job_id": job_id, "status": "skipped"}
+    return _execute(job)
+
+
 def run_one() -> dict[str, Any] | None:
     """Run the next queued job. Returns what it did, or None if idle."""
-    from ..infra.db import execute, to_json
-
     job = _claim()
     if not job:
         return None
+    return _execute(job)
+
+
+def _execute(job: dict[str, Any]) -> dict[str, Any]:
+    """Run one already-claimed job and record the outcome.
+
+    Shared by the Celery task and the fallback worker on purpose: two copies of
+    this would drift, and the one that drifted would be the one nobody watches.
+    """
+    from ..infra.db import execute, to_json
 
     job_id = str(job["job_id"])
     kind = str(job["kind"])
@@ -210,6 +346,61 @@ def run_one() -> dict[str, Any] | None:
     return {"job_id": job_id, "status": DONE}
 
 
+# A job whose worker was killed mid-generation leaves a row saying "running"
+# that nothing will ever finish. Long enough that a slow generation is never
+# mistaken for a dead one — the task time limit is an hour.
+STALLED_MINUTES = int(__import__("os").getenv("JOB_STALLED_MINUTES", "75"))
+
+
+def recover_stalled() -> int:
+    """Return abandoned work to the queue and dispatch it again.
+
+    Deploys, crashes and OOM kills all leave the same trace: status 'running',
+    started_at in the past, nothing running it. Under the in-process worker
+    that row was invisible for ever; the console showed a job in progress that
+    had died with the process that owned it.
+
+    Only jobs with attempts left are recovered. One that has already burned its
+    attempts is marked failed with a reason, because retrying it a third time
+    spends money to learn what two crashes already established.
+    """
+    from ..infra.db import execute, fetch_all
+
+    stalled = fetch_all(
+        """
+        SELECT job_id, kind, attempts FROM jobs
+        WHERE status = 'running'
+          AND started_at < NOW() - (:minutes * INTERVAL '1 minute')
+        """,
+        {"minutes": STALLED_MINUTES},
+    ) or []
+    if not stalled:
+        return 0
+
+    requeued = 0
+    for job in stalled:
+        job_id = str(job["job_id"])
+        if int(job.get("attempts") or 0) >= MAX_ATTEMPTS:
+            execute(
+                "UPDATE jobs SET status = 'failed', finished_at = NOW(), "
+                "error = :error WHERE job_id = :job_id AND status = 'running'",
+                {"job_id": job_id,
+                 "error": "Abandoned mid-run and out of attempts — the worker "
+                          "that owned it did not come back."},
+            )
+            continue
+        execute(
+            "UPDATE jobs SET status = 'queued', started_at = NULL "
+            "WHERE job_id = :job_id AND status = 'running'",
+            {"job_id": job_id},
+        )
+        dispatch(job_id)
+        requeued += 1
+
+    logger.info("Recovered %d stalled job(s) of %d abandoned.", requeued, len(stalled))
+    return requeued
+
+
 def _loop() -> None:
     while not _stop.is_set():
         try:
@@ -241,6 +432,27 @@ def stop_worker() -> None:
 
 def worker_running() -> bool:
     return _worker is not None and _worker.is_alive()
+
+
+def _celery_reachable() -> bool:
+    """Whether the broker is up, cached briefly.
+
+    Called on every status poll, and a TCP probe per poll per open console is
+    not free.
+    """
+    global _celery_checked_at, _celery_ok
+
+    now = time.time()
+    if now - _celery_checked_at < 15.0:
+        return _celery_ok
+    try:
+        from ..celery_app import broker_available
+
+        _celery_ok = broker_available()
+    except Exception:  # noqa: BLE001
+        _celery_ok = False
+    _celery_checked_at = now
+    return _celery_ok
 
 
 # ── Reading progress ────────────────────────────────────────────────────────
@@ -275,6 +487,29 @@ def status(
         params,
     ) or []
 
+    # Where each waiting job sits. "Queued" with no number is indistinguishable
+    # from "stuck", and an operator who queued a grade wants to know whether
+    # theirs is next or fortieth.
+    positions = {
+        str(row["job_id"]): int(row["position"])
+        for row in (fetch_all(
+            """
+            SELECT job_id, ROW_NUMBER() OVER (ORDER BY created_at ASC) AS position
+            FROM jobs WHERE status = 'queued'
+            """
+        ) or [])
+    }
+    by_kind = {
+        f"{row['kind']}:{row['status']}": int(row["n"])
+        for row in (fetch_all(
+            f"SELECT kind, status, COUNT(*) AS n FROM jobs WHERE {clause} "
+            f"GROUP BY kind, status",
+            {k: v for k, v in params.items() if k != "limit"},
+        ) or [])
+    }
+    for job in jobs:
+        job["position"] = positions.get(str(job.get("job_id")), 0)
+
     counts = {row["status"]: int(row["n"]) for row in (fetch_all(
         f"SELECT status, COUNT(*) AS n FROM jobs WHERE {clause} GROUP BY status",
         {k: v for k, v in params.items() if k != "limit"},
@@ -283,13 +518,21 @@ def status(
     total = sum(counts.values())
     finished = sum(counts.get(s, 0) for s in TERMINAL)
     running = fetch_one(
-        "SELECT kind, subject, sub_strand FROM jobs WHERE status = 'running' "
+        # `strand` too: a sub-strand generation job has no sub_strand — the
+        # strand IS the unit of work — so without it the banner said only
+        # "running" with nothing named.
+        "SELECT kind, subject, strand, sub_strand FROM jobs WHERE status = 'running' "
         "ORDER BY started_at ASC LIMIT 1"
     )
 
     return {
-        "worker_running": worker_running(),
+        "worker_running": worker_running() or _celery_reachable(),
+        "runs_on": "celery" if _celery_reachable() else (
+            "in_process" if worker_running() else "nothing"
+        ),
         "counts": counts,
+        "counts_by_kind": by_kind,
+        "queue_depth": len(positions),
         "total": total,
         "finished": finished,
         "percentage": round(finished / total * 100) if total else 0,

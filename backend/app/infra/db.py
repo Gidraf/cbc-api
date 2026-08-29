@@ -747,6 +747,25 @@ MIGRATIONS: list[tuple[str, str]] = [
         CREATE INDEX IF NOT EXISTS idx_jobs_scope ON jobs(grade, subject, status);
         """,
     ),
+    (
+        "023_job_drafts",
+        """
+        -- Sub-strand generation is queued like everything else, but its result
+        -- is a DRAFT: the operator reads it, then saves it, and saving one
+        -- strand must not disturb the others. So the queue has to hold the
+        -- generated sub-strands until somebody accepts or discards them.
+        --
+        -- Held in browser state instead, they were lost the moment the console
+        -- re-rendered: generate all five strands, save the first, and the other
+        -- four disappeared with no record they had ever existed.
+        ALTER TABLE jobs ADD COLUMN IF NOT EXISTS consumed_at TIMESTAMPTZ;
+
+        -- The drafts view reads exactly this: finished work nobody has accepted.
+        CREATE INDEX IF NOT EXISTS idx_jobs_unconsumed
+            ON jobs(grade, subject, kind, status)
+            WHERE consumed_at IS NULL;
+        """,
+    ),
 ]
 
 

@@ -21,6 +21,7 @@ from ..services import (
     media_validators,
     notes_coverage,
     notes_repair,
+    review_cycle,
     rubric_filler,
     simulation_validators,
     substrand_integrity,
@@ -3077,6 +3078,47 @@ class QueueWorkRequest(BaseModel):
     custom_instructions: str = ""
 
 
+class QueueSubstrandsRequest(BaseModel):
+    """Queue sub-strand generation for several strands at once.
+
+    Separate from QueueWorkRequest because that one runs stations AGAINST
+    stored sub-strands; this one produces them, and its output is a draft
+    nobody has accepted yet.
+    """
+
+    grade: str
+    subject: str
+    # Empty means every strand stored for this subject that has no sub-strands.
+    strands: list[dict[str, str]] = []
+    custom_instructions: str = ""
+
+
+class QueueReviewRequest(BaseModel):
+    """Send artifacts for review or approval in the background.
+
+    Review is a model call and takes as long as one, so doing a grade's worth
+    by hand is the same afternoon the generation used to be.
+    """
+
+    grade: str
+    subject: str = ""
+    strand: str = ""
+    # Named artifacts, or empty for every artifact in scope that is not yet
+    # approved.
+    artifact_ids: list[str] = []
+    kinds: list[str] = []
+    # "review" runs one layer; "approval" runs whatever layers are missing and
+    # then reports what still blocks a human sign-off.
+    work: str = "approval"
+    layer: int = 2
+    provider: str = ""
+    model: str = ""
+
+
+class DiscardDraftRequest(BaseModel):
+    job_id: str
+
+
 class FactoryResetRequest(BaseModel):
     """Clear generated content so the pipeline can be re-run from the dataset."""
 
@@ -3874,22 +3916,222 @@ def _run_queued(job: dict[str, Any]) -> dict[str, Any]:
         "subject": job.get("subject") or "",
         "strand": job.get("strand") or "",
         "sub_strand": job.get("sub_strand") or "",
-        "custom_instructions": payload.get("custom_instructions") or "",
     }
     allowed = set(model_cls.model_fields)
-    result = handler(model_cls(**{k: v for k, v in fields.items() if k in allowed}), None)
 
-    # The whole result would be megabytes across a grade; keep what a progress
-    # view actually reads.
-    return {
-        "artifact_id": (result.get("artifact") or {}).get("artifact_id", "")
-        if isinstance(result, dict) else "",
-        "lesson_coverage": (result or {}).get("lesson_coverage", {}),
-        "brief_quality": (result or {}).get("brief_quality", {}),
+    def produce(instructions: str) -> dict[str, Any]:
+        """One generation. The station saves and versions its own output, so
+        every cycle is on the record rather than only the one that passed."""
+        values = {k: v for k, v in fields.items() if k in allowed}
+        if "custom_instructions" in allowed:
+            values["custom_instructions"] = instructions
+        return handler(model_cls(**values), None)
+
+    # Generate, save, review, revise, save again — inside the worker, where
+    # there is time for it. The gate's verdict used to travel back to the
+    # console and stop there: an operator read "needs revision at 76/100",
+    # retyped the findings into the instructions box, and clicked Generate
+    # again, by hand, per sub-strand, across a grade.
+    result, cycles = review_cycle.run(
+        produce,
+        label=f"{kind} for {job.get('sub_strand') or job.get('subject')}",
+        base_instructions=str(payload.get("custom_instructions") or ""),
+    )
+    out = _queued_result(result)
+    out["review_cycles"] = cycles.to_dict()
+    return out
+
+
+# A station's output has to survive the refresh that used to lose it, so the
+# whole thing is kept — the operator comes back to finished notes on screen
+# rather than to a green tick and a fetch they have to work out themselves.
+# Above this, only the summary: a grade's worth of media briefs in one table is
+# not what this column is for.
+MAX_QUEUED_RESULT_BYTES = 512 * 1024
+
+
+def _queued_result(result: Any) -> dict[str, Any]:
+    """What to store for a finished station job."""
+    import json as json_lib
+
+    if not isinstance(result, dict):
+        return {}
+
+    summary = {
+        "artifact_id": (result.get("artifact") or {}).get("artifact_id", ""),
+        "lesson_coverage": result.get("lesson_coverage", {}),
+        "brief_quality": result.get("brief_quality", {}),
         "citations": {
-            k: v for k, v in ((result or {}).get("citations") or {}).items()
+            k: v for k, v in (result.get("citations") or {}).items()
             if k in ("total", "verified", "percentage")
         },
+    }
+
+    try:
+        size = len(json_lib.dumps(result, default=str))
+    except Exception:  # noqa: BLE001
+        return {**summary, "truncated": True,
+                "note": "The result could not be serialised for storage."}
+
+    if size > MAX_QUEUED_RESULT_BYTES:
+        return {**summary, "truncated": True,
+                "note": f"Result was {size:,} bytes — too large to hold here. "
+                        f"It is saved in full; open the sub-strand to read it."}
+    return {**result, **summary}
+
+
+def _run_queued_questions(job: dict[str, Any]) -> dict[str, Any]:
+    """Questions are a station like any other, and were the one that was not.
+
+    Its route lives in another module, so the globals() lookup the other
+    stations use cannot reach it — which is why it was the one station a
+    refresh could still lose.
+    """
+    from .questions import (
+        QuestionBatchGenerateRequest,
+        factory_generate_questions_batch,
+    )
+
+    payload = dict(job.get("payload") or {})
+    fields = {
+        "grade": job.get("grade") or "",
+        "subject": job.get("subject") or "",
+        "strand": job.get("strand") or "",
+        "sub_strand": job.get("sub_strand") or "",
+        "custom_instructions": payload.get("custom_instructions") or "",
+        "batch_count": int(payload.get("batch_count") or 5),
+    }
+    allowed = set(QuestionBatchGenerateRequest.model_fields)
+
+    def produce(instructions: str) -> dict[str, Any]:
+        values = {k: v for k, v in fields.items() if k in allowed}
+        if "custom_instructions" in allowed:
+            values["custom_instructions"] = instructions
+        return factory_generate_questions_batch(
+            QuestionBatchGenerateRequest(**values), None
+        )
+
+    result, cycles = review_cycle.run(
+        produce,
+        label=f"questions for {job.get('sub_strand') or job.get('subject')}",
+        base_instructions=str(payload.get("custom_instructions") or ""),
+    )
+    out = _queued_result(result)
+    out["review_cycles"] = cycles.to_dict()
+    return out
+
+
+def _run_queued_substrands(job: dict[str, Any]) -> dict[str, Any]:
+    """Generate one strand's sub-strands and keep the result as a DRAFT.
+
+    Every other queued kind writes as it goes: notes file an artifact, diagrams
+    file a plan. Sub-strands are different — they are the spine everything else
+    hangs off, and saving one strand's must not touch another's. So this stores
+    what it produced and stops, and the operator accepts or discards each strand
+    on its own.
+    """
+    payload = dict(job.get("payload") or {})
+    result = factory_generate_substrands(
+        FactoryGenerateSubstrandsRequest(
+            grade=str(job.get("grade") or ""),
+            subject=str(job.get("subject") or ""),
+            strand_name=str(job.get("strand") or ""),
+            strand_id=str(payload.get("strand_id") or "1.0"),
+            custom_instructions=str(payload.get("custom_instructions") or ""),
+        ),
+        None,
+    )
+    if not isinstance(result, dict):
+        raise ValueError("The sub-strand generator returned nothing usable.")
+
+    # The whole result carries the rubric writer's trace and token usage; a
+    # draft needs what the operator reads and then saves.
+    return {
+        "strand_name": result.get("strand_name") or job.get("strand") or "",
+        "strand_id": str(payload.get("strand_id") or "1.0"),
+        "sub_strands": result.get("sub_strands") or [],
+        "refused": result.get("refused") or [],
+        "grounded": bool(result.get("grounded")),
+        "source_chars": int(result.get("source_material_length") or 0),
+        "model": result.get("model") or "",
+    }
+
+
+def _run_queued_review(job: dict[str, Any]) -> dict[str, Any]:
+    """Run one review layer over one artifact version, in the worker.
+
+    Review is a model call like any other and takes as long as one, so it was
+    the other half of the work that a refresh could throw away. Queued, a whole
+    grade can be sent for review and left to run.
+    """
+    from .artifacts import ReviewRequest, review_artifact
+
+    payload = dict(job.get("payload") or {})
+    artifact_id = str(payload.get("artifact_id") or "")
+    if not artifact_id:
+        raise ValueError("A review job needs an artifact_id.")
+
+    result = review_artifact(
+        ReviewRequest(
+            artifact_id=artifact_id,
+            layer=int(payload.get("layer") or 2),
+            provider=str(payload.get("provider") or ""),
+            model=str(payload.get("model") or ""),
+            custom_instructions=str(payload.get("custom_instructions") or ""),
+        ),
+        None,
+    )
+    review = (result or {}).get("review") or {}
+    return {
+        "artifact_id": artifact_id,
+        "layer": int(payload.get("layer") or 2),
+        "verdict": review.get("verdict", ""),
+        "overall_confidence": review.get("overall_confidence", 0),
+        "weakest": review.get("weakest", ""),
+        "provider": review.get("provider", ""),
+        "model": review.get("model", ""),
+        "review": review,
+    }
+
+
+def _run_queued_approval(job: dict[str, Any]) -> dict[str, Any]:
+    """Run the approving layer, then report what still stands in the way.
+
+    It does NOT approve. Approval is a person's decision and is recorded as
+    one — coverage counts approved work, so a pipeline that could approve its
+    own output would let a grade report itself taught-ready with nobody having
+    read a line of it. What this does is get the artifact to the point where
+    the decision is a decision rather than an afternoon of clicking.
+    """
+    from ..services import review_layers
+    from .artifacts import ReviewRequest, review_artifact
+
+    payload = dict(job.get("payload") or {})
+    artifact_id = str(payload.get("artifact_id") or "")
+    if not artifact_id:
+        raise ValueError("An approval job needs an artifact_id.")
+
+    state = review_layers.approval_state(artifact_id)
+    ran: list[int] = []
+
+    # Layer 3 cannot judge what layer 2 has not seen, and layer 2 must come
+    # from a different vendor than the generator or it is one opinion asked
+    # twice. Run whatever is missing, in order.
+    for layer in (2, 3):
+        if any(f"layer {layer} " in b for b in state.get("blockers") or []):
+            review_artifact(
+                ReviewRequest(artifact_id=artifact_id, layer=layer), None
+            )
+            ran.append(layer)
+            state = review_layers.approval_state(artifact_id)
+
+    return {
+        "artifact_id": artifact_id,
+        "layers_run": ran,
+        "can_approve": bool(state.get("can_approve")),
+        "requires_human": True,
+        "blockers": state.get("blockers") or [],
+        "approval_state": state,
     }
 
 
@@ -3898,6 +4140,10 @@ def _register_queue_handlers() -> None:
 
     for kind in _QUEUEABLE:
         job_queue.register(kind, _run_queued)
+    job_queue.register("substrands", _run_queued_substrands)
+    job_queue.register("questions", _run_queued_questions)
+    job_queue.register("review", _run_queued_review)
+    job_queue.register("approval", _run_queued_approval)
 
 
 _register_queue_handlers()
@@ -3922,11 +4168,12 @@ def factory_queue_work(
     from ..infra.db import fetch_all
     from ..services import job_queue
 
-    unknown = [k for k in payload.kinds if k not in _QUEUEABLE]
+    stations = set(_QUEUEABLE) | {"questions"}
+    unknown = [k for k in payload.kinds if k not in stations]
     if unknown:
         raise_api_error(
             "VALIDATION_FAILED",
-            f"Cannot queue {', '.join(unknown)}. Known: {', '.join(sorted(_QUEUEABLE))}.",
+            f"Cannot queue {', '.join(unknown)}. Known: {', '.join(sorted(stations))}.",
         )
 
     rows = fetch_all(
@@ -3983,6 +4230,260 @@ def factory_queue_work(
         "jobs": queued,
         "note": "Running one at a time. Poll /factory/queue/status for progress.",
     }
+
+
+@router.post("/factory/queue-substrands")
+def factory_queue_substrands(
+    payload: QueueSubstrandsRequest,
+    auth: AuthContext = Depends(require_roles("admin", "operator")),
+) -> dict[str, Any]:
+    """Queue sub-strand generation for several strands, one at a time.
+
+    Generating a strand's sub-strands takes the better part of a minute, and a
+    learning area has five or six strands. Clicked one at a time, the operator
+    has to sit and watch; generated all at once into browser state, the drafts
+    were lost the moment the console re-rendered — save the first strand and the
+    other four vanished with no record they had existed.
+
+    Queued, each result is held in the jobs table until somebody accepts or
+    discards it, so saving one strand cannot disturb another.
+    """
+    import hashlib as _hashlib
+    from ..infra.db import fetch_all
+    from ..services import job_queue
+
+    targets = [
+        {"strand_name": str(s.get("strand_name") or s.get("name") or "").strip(),
+         "strand_id": str(s.get("strand_id") or "1.0").strip()}
+        for s in payload.strands
+    ]
+    targets = [t for t in targets if t["strand_name"]]
+
+    if not targets:
+        # Nothing named: queue every stored strand that has no sub-strands yet,
+        # which is what "queue the rest of them" means.
+        rows = fetch_all(
+            """
+            SELECT s.strand_id, s.strand_name
+            FROM curriculum_strands s
+            WHERE (s.grade = :grade OR s.grade = :alt_grade)
+              AND LOWER(s.subject) = LOWER(:subject)
+              AND NOT EXISTS (
+                  SELECT 1 FROM curriculum_substrands ss
+                  WHERE (ss.grade = s.grade) AND LOWER(ss.subject) = LOWER(s.subject)
+                    AND LOWER(ss.strand_name) = LOWER(s.strand_name)
+              )
+            ORDER BY s.strand_id
+            """,
+            {"grade": payload.grade, "alt_grade": payload.grade.replace("grade-", ""),
+             "subject": payload.subject},
+        ) or []
+        targets = [
+            {"strand_name": str(r.get("strand_name") or ""),
+             "strand_id": str(r.get("strand_id") or "1.0")}
+            for r in rows
+        ]
+
+    if not targets:
+        raise_api_error(
+            "MISSING_PARENT_CONTEXT",
+            f"No strands to generate sub-strands for in {payload.subject} "
+            f"({payload.grade}). Generate the strands first, or every strand "
+            f"already has sub-strands saved.",
+        )
+
+    batch_id = "batch_" + _hashlib.sha256(
+        f"substrands{payload.grade}{payload.subject}{len(targets)}".encode()
+    ).hexdigest()[:16]
+
+    queued: list[dict[str, Any]] = []
+    for target in targets:
+        job = job_queue.enqueue(
+            "substrands", payload.grade, payload.subject,
+            {"custom_instructions": payload.custom_instructions,
+             "strand_id": target["strand_id"]},
+            strand=target["strand_name"],
+            batch_id=batch_id, queued_by=getattr(auth, "subject", ""),
+        )
+        queued.append(job.to_dict())
+
+    job_queue.start_worker()
+
+    return {
+        "status": "queued",
+        "batch_id": batch_id,
+        "queued": len(queued),
+        "strands": [t["strand_name"] for t in targets],
+        "jobs": queued,
+        "note": ("Running one strand at a time. Each result waits as a draft "
+                 "until you save or discard it."),
+    }
+
+
+@router.get("/factory/queue/drafts")
+def factory_queue_drafts(
+    grade: str = Query(""),
+    subject: str = Query(""),
+    kind: str = Query("substrands"),
+    _: AuthContext = Depends(require_roles("admin", "operator", "reviewer")),
+) -> dict[str, Any]:
+    """Generated sub-strands nobody has accepted or discarded yet.
+
+    This is what makes the drafts survive a reload, a re-render and a save of
+    some other strand: they live in the jobs table, not in the console.
+    """
+    from ..services import job_queue
+
+    rows = job_queue.drafts(kind, grade=grade, subject=subject)
+    return {
+        "kind": kind,
+        "grade": grade,
+        "subject": subject,
+        "count": len(rows),
+        "drafts": [
+            {
+                "job_id": r.get("job_id"),
+                "batch_id": r.get("batch_id"),
+                "strand_name": r.get("strand") or "",
+                "finished_at": r.get("finished_at"),
+                **(r.get("result") if isinstance(r.get("result"), dict) else {}),
+            }
+            for r in rows
+        ],
+    }
+
+
+@router.post("/factory/queue-review")
+def factory_queue_review(
+    payload: QueueReviewRequest,
+    auth: AuthContext = Depends(require_roles("admin", "operator", "reviewer")),
+) -> dict[str, Any]:
+    """Queue review or approval across many artifacts, one at a time.
+
+    The reviewers and the approver are model calls like the generators, and
+    they were the half of the pipeline still being run by hand, one artifact at
+    a time, with somebody watching. Queued, a grade can be generated and sent
+    for review in one sitting and read the next morning.
+
+    It queues the approver's WORK, not the approval. Approval stays a person's
+    decision, because coverage counts approved work and a pipeline that
+    approved its own output would let a grade report itself taught-ready with
+    nobody having read a line of it.
+    """
+    import hashlib as _hashlib
+    from ..infra.db import fetch_all
+    from ..services import job_queue
+
+    if payload.work not in ("review", "approval"):
+        raise_api_error(
+            "VALIDATION_FAILED",
+            f"'{payload.work}' is not review work. Use 'review' or 'approval'.",
+        )
+
+    ids = [a.strip() for a in payload.artifact_ids if a.strip()]
+    rows: list[dict[str, Any]] = []
+    if ids:
+        rows = fetch_all(
+            """
+            SELECT artifact_id, grade, subject, strand_name, sub_strand_name, kind
+            FROM artifacts WHERE artifact_id = ANY(:ids)
+            """,
+            {"ids": ids},
+        ) or []
+    else:
+        rows = fetch_all(
+            """
+            SELECT a.artifact_id, a.grade, a.subject, a.strand_name,
+                   a.sub_strand_name, a.kind
+            FROM artifacts a
+            WHERE (a.grade = :grade OR a.grade = :alt_grade)
+              AND (:subject = '' OR LOWER(a.subject) = LOWER(:subject))
+              AND (:strand = '' OR LOWER(a.strand_name) = LOWER(:strand))
+              AND (:kinds = '' OR a.kind = ANY(STRING_TO_ARRAY(:kinds, ',')))
+            ORDER BY a.created_at DESC
+            LIMIT 500
+            """,
+            {"grade": payload.grade, "alt_grade": payload.grade.replace("grade-", ""),
+             "subject": payload.subject, "strand": payload.strand,
+             "kinds": ",".join(payload.kinds)},
+        ) or []
+
+    if not rows:
+        raise_api_error(
+            "MISSING_PARENT_CONTEXT",
+            "No artifacts to review in this selection. Generate something first.",
+        )
+
+    batch_id = "batch_" + _hashlib.sha256(
+        f"{payload.work}{payload.grade}{payload.subject}{len(rows)}".encode()
+    ).hexdigest()[:16]
+
+    queued: list[dict[str, Any]] = []
+    for row in rows:
+        job = job_queue.enqueue(
+            payload.work,
+            str(row.get("grade") or payload.grade),
+            str(row.get("subject") or payload.subject),
+            {"artifact_id": str(row.get("artifact_id") or ""),
+             "layer": payload.layer, "provider": payload.provider,
+             "model": payload.model},
+            strand=str(row.get("strand_name") or ""),
+            sub_strand=str(row.get("sub_strand_name") or ""),
+            batch_id=batch_id, queued_by=getattr(auth, "subject", ""),
+        )
+        queued.append(job.to_dict())
+
+    job_queue.start_worker()
+
+    return {
+        "status": "queued",
+        "work": payload.work,
+        "batch_id": batch_id,
+        "queued": len(queued),
+        "artifacts": len(rows),
+        "jobs": queued,
+        "note": ("Running one at a time. Approval still needs a person — this "
+                 "gets each artifact to the point where that is a decision "
+                 "rather than an afternoon."),
+    }
+
+
+@router.get("/factory/queue/job/{job_id}")
+def factory_queue_job(
+    job_id: str,
+    _: AuthContext = Depends(require_roles("admin", "operator", "reviewer")),
+) -> dict[str, Any]:
+    """One job and what it produced.
+
+    This is what makes a refresh harmless rather than merely survivable: the
+    console reopens, reads the job it was watching, and shows the finished
+    output — instead of a green tick and no way back to the result.
+    """
+    from ..infra.db import fetch_one
+
+    row = fetch_one(
+        """
+        SELECT job_id, batch_id, kind, grade, subject, strand, sub_strand,
+               status, attempts, error, result, created_at, started_at, finished_at
+        FROM jobs WHERE job_id = :job_id
+        """,
+        {"job_id": job_id},
+    )
+    if not row:
+        raise_api_error("NOT_FOUND", f"No job {job_id}.")
+    return dict(row)
+
+
+@router.post("/factory/queue/discard-draft")
+def factory_queue_discard_draft(
+    payload: DiscardDraftRequest,
+    _: AuthContext = Depends(require_roles("admin", "operator")),
+) -> dict[str, Any]:
+    """Throw away one generated draft without saving it."""
+    from ..services import job_queue
+
+    discarded = job_queue.consume(payload.job_id)
+    return {"status": "discarded", "job_id": payload.job_id, "discarded": discarded}
 
 
 @router.get("/factory/queue/status")
@@ -5038,11 +5539,22 @@ def factory_save_substrands(
         for ss in substrands
     ]
 
+    # A queued draft that has now been saved must stop being offered. Left
+    # unconsumed it reappears on every poll, inviting the operator to save the
+    # same sub-strands a second time over the ones they just wrote.
+    from ..services import job_queue
+
+    consumed = job_queue.consume(
+        kind="substrands", grade=payload.grade, subject=payload.subject,
+        strand=payload.strand_name,
+    )
+
     return {
         "status": "saved",
         "saved_count": saved_count,
         "refused": refused,
         "strand_name": payload.strand_name,
         "artifacts": versioned,
+        "draft_consumed": consumed,
     }
 
