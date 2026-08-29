@@ -14,6 +14,43 @@ export function triggerAuthExpired(reason: string = "Session expired. Please sig
   }
 }
 
+/** A binary download, with the same base-URL and auth handling as fetchJson.
+ *
+ *  fetchJson reads the response as text and parses it, which turns a zip into
+ *  mojibake. And a plain <a href> cannot be used instead: it carries no
+ *  Authorization header, so the browser would download the sign-in page. */
+export async function fetchBlob(
+  path: string,
+  auth?: AuthHeaders
+): Promise<{ blob: Blob; filename: string }> {
+  const headers = new Headers();
+  if (auth?.bearerToken) headers.set("Authorization", `Bearer ${auth.bearerToken}`);
+  if (auth?.apiKey) headers.set("x-api-key", auth.apiKey);
+
+  let cleanPath = path.startsWith("/") ? path : `/${path}`;
+  let baseUrl = API_BASE_URL;
+  if (baseUrl.endsWith("/api") && cleanPath.startsWith("/api")) {
+    cleanPath = cleanPath.slice(4);
+  }
+
+  const response = await fetch(baseUrl ? `${baseUrl}${cleanPath}` : cleanPath, { headers });
+  if (!response.ok) {
+    // The error body is JSON even when the success body is not.
+    let detail = `${response.status} ${response.statusText}`;
+    try {
+      const body = await response.json();
+      detail = body?.error?.message || body?.detail || detail;
+    } catch {
+      /* a non-JSON error body is still an error */
+    }
+    throw new Error(detail);
+  }
+
+  const disposition = response.headers.get("content-disposition") || "";
+  const match = /filename="?([^";]+)"?/.exec(disposition);
+  return { blob: await response.blob(), filename: match?.[1] || "download" };
+}
+
 export async function fetchJson<T>(path: string, init?: RequestInit, auth?: AuthHeaders): Promise<T> {
   const headers = new Headers(init?.headers || {});
   // A multipart upload must not carry a content-type we invented: only the

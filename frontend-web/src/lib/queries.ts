@@ -7,7 +7,7 @@
  */
 import React from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { fetchJson } from "../api";
+import { fetchBlob, fetchJson } from "../api";
 import { useAuth } from "./auth";
 
 export function useApi() {
@@ -934,6 +934,32 @@ export function useRegenerateScope(grade: string, subject: string) {
 }
 
 /** Throw away every draft an older generator produced. */
+/** Download everything generated for a grade or learning area, as a zip of
+ *  JSON. Fetched with the auth header rather than linked, because a plain
+ *  <a href> carries no token and would download the sign-in page. */
+export function useExportBundle(grade: string, subject?: string) {
+  const { token } = useAuth();
+  return useMutation({
+    mutationFn: async () => {
+      const qs = new URLSearchParams({ grade, fmt: "zip" });
+      if (subject) qs.set("subject", subject);
+      const { blob, filename } = await fetchBlob(
+        `/api/v1/curriculum/factory/export?${qs}`,
+        { bearerToken: token }
+      );
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      return filename;
+    },
+  });
+}
+
 export function useDiscardStaleDrafts(grade: string, subject: string) {
   const api = useApi();
   const qc = useQueryClient();

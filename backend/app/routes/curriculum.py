@@ -17,6 +17,7 @@ from ..services import (
     artifact_registry,
     citation_check,
     design_source,
+    export_bundle,
     generation_version,
     media_registry,
     media_validators,
@@ -5139,6 +5140,62 @@ def factory_queue_review(
                  "gets each artifact to the point where that is a decision "
                  "rather than an afternoon."),
     }
+
+
+@router.get("/factory/export")
+def factory_export(
+    grade: str = Query(..., description="Grade slug, e.g. grade-pp1"),
+    subject: str = Query("", description="One learning area, or empty for all"),
+    fmt: str = Query("zip", pattern="^(zip|json)$"),
+    _: AuthContext = Depends(require_roles("admin", "operator", "reviewer")),
+) -> Any:
+    """Download everything generated for a grade or learning area.
+
+    Content that only exists inside a console is content nobody can review
+    properly. A curriculum is a body of work, and reviewing it means opening it
+    in an editor, searching across it, and diffing this week's against last
+    week's.
+
+    `zip` gives a folder tree, one JSON file per thing. `json` gives the same
+    content as a single object, for a script that would rather not unzip.
+    """
+    from fastapi import Response
+
+    if fmt == "json":
+        files = export_bundle.collect(grade, subject)
+        return {
+            "grade": grade,
+            "subject": subject,
+            "generator": generation_version.VERSION,
+            # Parsed back out so the caller gets objects rather than strings of
+            # JSON inside JSON.
+            "files": {
+                path: (json.loads(text) if path.endswith(".json") else text)
+                for path, text in sorted(files.items())
+            },
+        }
+
+    payload, report = export_bundle.to_zip(grade, subject)
+    if not report.files:
+        raise_api_error(
+            "MISSING_PARENT_CONTEXT",
+            f"Nothing generated yet for {subject or grade}.",
+        )
+
+    name = f"cbc-{export_bundle.slug(grade)}"
+    if subject:
+        name += f"-{export_bundle.slug(subject)}"
+
+    return Response(
+        content=payload,
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": f'attachment; filename="{name}.zip"',
+            # So a script can check what it got without unzipping.
+            "X-CBC-File-Count": str(len(report.files)),
+            "X-CBC-Generator": generation_version.VERSION,
+        },
+    )
 
 
 @router.get("/factory/queue/job/{job_id}")
