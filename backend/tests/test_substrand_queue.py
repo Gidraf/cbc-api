@@ -167,3 +167,56 @@ def test_queueing_the_rest_skips_strands_already_done_or_drafted():
 
     assert "saved[t.strand_name] === undefined" in body
     assert "!serverDrafts[t.strand_name]" in body
+
+
+# ── a draft outlives the code that made it ──────────────────────────────────
+
+
+def test_a_draft_records_which_generator_wrote_it():
+    """Queued drafts persist across deploys, so after the generator is fixed
+    the console still shows drafts from the old one — identical in shape, with
+    nothing saying they are not current. That cost four rounds of "how accurate
+    is this" on output already diagnosed."""
+    source = _read("app/routes/curriculum.py")
+    handler = source[source.index("def _run_queued_substrands"):]
+    handler = handler[: handler.index("\ndef _run_queued_review")]
+
+    assert '"generator": generation_version.VERSION' in handler
+
+
+def test_the_drafts_endpoint_marks_stale_ones():
+    source = _read("app/routes/curriculum.py")
+    route = source[source.index("def factory_queue_drafts"):]
+    route = route[: route.index("\n@router.post")]
+
+    assert '"stale":' in route
+    assert '"missing":' in route
+    assert "generation_version.is_current" in route
+
+
+def test_stale_drafts_can_be_discarded_in_one_go():
+    source = _read("app/routes/curriculum.py")
+    assert "def factory_discard_stale_drafts" in source
+    route = source[source.index("def factory_discard_stale_drafts"):]
+    route = route[: route.index("\n@router.post")]
+    # Only the stale ones. Discarding a current draft would throw away work
+    # that is waiting to be saved.
+    assert "if generation_version.is_current(result.get(\"generator\")):" in route
+    assert "continue" in route
+
+
+def test_the_version_is_described_rather_than_only_compared():
+    """"Old" is not actionable. "Missing the rubric page scoping" is."""
+    from app.services import generation_version as gv
+
+    assert gv.describe(gv.VERSION) == "current"
+    assert "rubric" in gv.describe("2026-08-28.rubric-tables").lower()
+    assert "before generator versions" in gv.describe("something-unknown")
+
+
+def test_the_console_refuses_to_present_a_stale_draft_as_current():
+    view = _front("src/views/CurriculumStructure.tsx")
+
+    assert "produced by an older generator" in view
+    assert "older generator)" in view, "the strand row says so too"
+    assert "Discard {staleDrafts.length} stale draft(s)" in view

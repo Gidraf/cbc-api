@@ -17,6 +17,7 @@ from ..services import (
     artifact_registry,
     citation_check,
     design_source,
+    generation_version,
     media_registry,
     media_validators,
     notes_coverage,
@@ -3599,6 +3600,22 @@ def _ground_substrands(
     """
     report: dict[str, Any] = {}
 
+    # The generator returns its OWN rubric under the singular key, alongside the
+    # one read from the design under the plural. A sub-strand then carries two
+    # rubric sets with nothing saying which a teacher follows — and the model's
+    # is the worse of the two: for "A Holy Book" it put "Identifies the Holy
+    # Bible from other books" at Meeting and "Demonstrates one way of handling
+    # the holy Bible" at Below, welding two different indicators into one scale.
+    #
+    # The design's table is authoritative where it can be read, and
+    # `rubric_filler` writes an honest labelled replacement where it cannot. The
+    # model's guess is neither.
+    dropped_model_rubrics = 0
+    for sub in sub_strands:
+        if isinstance(sub, dict) and sub.pop("assessment_rubric", None) is not None:
+            dropped_model_rubrics += 1
+    report["model_rubrics_dropped"] = dropped_model_rubrics
+
     # Pages FIRST. Each sub-strand's own rubric page is the strongest evidence
     # there is about which rubric measures it, and word overlap alone cannot
     # settle it: "identify three ways loving God" fits both "Love for God" and
@@ -4176,6 +4193,12 @@ def _run_queued_substrands(job: dict[str, Any]) -> dict[str, Any]:
         "grounded": bool(result.get("grounded")),
         "source_chars": int(result.get("source_material_length") or 0),
         "model": result.get("model") or "",
+        # Which generator wrote this. A draft outlives the code that made it,
+        # so without the stamp a draft from the old extractor is indistinguishable
+        # from fresh output — and gets read as current for as long as it sits.
+        "generator": generation_version.VERSION,
+        "rubric_tables": result.get("rubric_tables") or {},
+        "rubric_integrity": result.get("rubric_integrity") or {},
     }
 
 
@@ -4764,6 +4787,14 @@ def factory_queue_drafts(
         "grade": grade,
         "subject": subject,
         "count": len(rows),
+        "generator": generation_version.VERSION,
+        "stale": sum(
+            0 if generation_version.is_current(
+                ((r.get("result") or {}) if isinstance(r.get("result"), dict) else {})
+                .get("generator")
+            ) else 1
+            for r in rows
+        ),
         "drafts": [
             {
                 "job_id": r.get("job_id"),
@@ -4771,6 +4802,16 @@ def factory_queue_drafts(
                 "strand_name": r.get("strand") or "",
                 "finished_at": r.get("finished_at"),
                 **(r.get("result") if isinstance(r.get("result"), dict) else {}),
+                # Resolved here rather than in the console, so one definition of
+                # "stale" serves every reader.
+                "stale": not generation_version.is_current(
+                    ((r.get("result") or {}) if isinstance(r.get("result"), dict) else {})
+                    .get("generator")
+                ),
+                "missing": generation_version.describe(
+                    ((r.get("result") or {}) if isinstance(r.get("result"), dict) else {})
+                    .get("generator") or ""
+                ),
             }
             for r in rows
         ],
@@ -5124,6 +5165,38 @@ def factory_queue_job(
     if not row:
         raise_api_error("NOT_FOUND", f"No job {job_id}.")
     return dict(row)
+
+
+@router.post("/factory/queue/discard-stale-drafts")
+def factory_discard_stale_drafts(
+    grade: str = Query(""),
+    subject: str = Query(""),
+    _: AuthContext = Depends(require_roles("admin", "operator")),
+) -> dict[str, Any]:
+    """Throw away drafts an older generator produced.
+
+    They are indistinguishable from fresh output in the console — same shape,
+    same fields, no timestamp that means anything to a reader — so they get
+    read as current for as long as they sit there.
+    """
+    from ..services import job_queue
+
+    discarded: list[str] = []
+    for row in job_queue.drafts("substrands", grade=grade, subject=subject):
+        result = row.get("result") if isinstance(row.get("result"), dict) else {}
+        if generation_version.is_current(result.get("generator")):
+            continue
+        job_queue.consume(str(row.get("job_id") or ""))
+        discarded.append(str(row.get("strand") or ""))
+
+    return {
+        "status": "discarded",
+        "discarded": len(discarded),
+        "strands": discarded,
+        "generator": generation_version.VERSION,
+        "note": ("Queue these strands again to regenerate them with the current "
+                 "generator."),
+    }
 
 
 @router.post("/factory/queue/discard-draft")

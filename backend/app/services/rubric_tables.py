@@ -122,6 +122,20 @@ class RubricRow:
             level[:1].isupper() and _CELL_START.match(level) for level in levels
         )
 
+    @property
+    def truncated_levels(self) -> list[str]:
+        """Levels the PDF cut off mid-phrase.
+
+        "Identifies three", "Names one thing", "Tells three" — the words are
+        KICD's and the sentence is not finished. Keeping them beats replacing a
+        real rubric with a generated one, but a teacher reading "Meeting:
+        Identifies three" should know the design is what stopped there, not us.
+        """
+        return [
+            level for level in _LEVEL_ORDER
+            if getattr(self, level) and not _TERMINAL.search(getattr(self, level))
+        ]
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "indicator": self.indicator,
@@ -131,6 +145,7 @@ class RubricRow:
             "below": self.below,
             "source_page": self.page,
             "rubric_source": "design",
+            "truncated_levels": self.truncated_levels,
         }
 
 

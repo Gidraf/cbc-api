@@ -440,3 +440,38 @@ def test_a_sub_strand_does_not_span_the_rest_of_the_document():
 
     assert len(subs[0]["source_pages"]) <= 4, subs[0]["source_pages"]
     assert 221 not in subs[0]["source_pages"]
+
+
+def test_the_models_own_rubric_is_dropped_in_favour_of_the_designs():
+    """The generator returns its own rubric under the singular key, so a
+    sub-strand carried two sets with nothing saying which to follow — and the
+    model's was the worse: for "A Holy Book" it put "Identifies the Holy Bible
+    from other books" at Meeting and "Demonstrates one way of handling the holy
+    Bible" at Below, welding two indicators into one scale."""
+    import app.routes.curriculum as routes
+
+    subs = [{
+        "sub_strand_name": "A Holy Book", "sub_strand_id": "2.1",
+        "slos": ["identify the Holy Bible from other books"],
+        "assessment_rubric": {"indicator": "the model's own guess"},
+    }]
+    report = routes._ground_substrands(subs, "")
+
+    assert "assessment_rubric" not in subs[0]
+    assert report["model_rubrics_dropped"] == 1
+
+
+def test_a_cell_kicd_cut_off_is_named_rather_than_hidden():
+    """"Identifies three", "Names one thing", "Tells three" — the words are
+    KICD's and the sentence is not finished."""
+    row = rubric_tables.RubricRow(
+        indicator="Ability to identify three qualities of God.",
+        exceeding="Identifies more than three qualities of God.",
+        meeting="Identifies three",
+        approaching="Identifies two qualities of",
+        below="Identifies one quality of God.",
+    )
+    assert row.truncated_levels == ["meeting", "approaching"]
+    assert row.to_dict()["truncated_levels"] == ["meeting", "approaching"]
+    # Still usable: a partial rubric from the design beats a generated one.
+    assert row.complete

@@ -827,6 +827,11 @@ export type SubstrandDraft = {
   source_chars?: number;
   model?: string;
   finished_at?: string;
+  /** Produced by an older generator than the one running now. */
+  stale?: boolean;
+  /** What that older generator was missing, in one sentence. */
+  missing?: string;
+  generator?: string;
 };
 
 /** Queue sub-strand generation for several strands at once, one at a time. */
@@ -856,9 +861,12 @@ export function useSubstrandDrafts(grade: string, subject: string, active: boole
     queryKey: ["substrand-drafts", grade, subject],
     queryFn: () => {
       const qs = new URLSearchParams({ grade, subject, kind: "substrands" });
-      return api<{ count: number; drafts: SubstrandDraft[] }>(
-        `/api/v1/curriculum/factory/queue/drafts?${qs}`
-      );
+      return api<{
+        count: number;
+        stale: number;
+        generator: string;
+        drafts: SubstrandDraft[];
+      }>(`/api/v1/curriculum/factory/queue/drafts?${qs}`);
     },
     enabled: Boolean(grade && subject),
     // Only while the queue has work in flight. Polling an idle queue is a
@@ -922,6 +930,22 @@ export function useRegenerateScope(grade: string, subject: string) {
       qc.invalidateQueries({ queryKey: ["queue"] });
       qc.invalidateQueries({ queryKey: ["substrand-drafts"] });
     },
+  });
+}
+
+/** Throw away every draft an older generator produced. */
+export function useDiscardStaleDrafts(grade: string, subject: string) {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => {
+      const qs = new URLSearchParams({ grade, subject });
+      return api<{ discarded: number; strands: string[] }>(
+        `/api/v1/curriculum/factory/queue/discard-stale-drafts?${qs}`,
+        { method: "POST" }
+      );
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["substrand-drafts"] }),
   });
 }
 
