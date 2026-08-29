@@ -120,7 +120,10 @@ def test_the_queue_endpoint_refuses_a_subject_with_no_strands():
     assert "MISSING_PARENT_CONTEXT" in route
     # Naming nothing means "the ones still outstanding", not "all of them
     # again" — requeuing a saved strand spends money to overwrite good work.
-    assert "NOT EXISTS" in route
+    # Strands live in the design's metadata rather than a table, so the
+    # exclusion is a set difference against the sub-strands already stored.
+    assert "DISTINCT strand_name FROM curriculum_substrands" in route
+    assert "not in covered" in route
 
 
 # ── the console cannot lose a draft by re-rendering ─────────────────────────

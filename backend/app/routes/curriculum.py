@@ -25,6 +25,7 @@ from ..services import (
     rubric_filler,
     rubric_integrity,
     rubric_tables,
+    scoped_delete,
     source_pages as source_pages_service,
     simulation_validators,
     substrand_integrity,
@@ -3142,6 +3143,29 @@ class QueueRegenerateRequest(BaseModel):
     extra_instructions: str = ""
 
 
+class DeleteScopeRequest(BaseModel):
+    """Remove one strand or one sub-strand, with what was generated from it."""
+
+    grade: str
+    subject: str
+    strand: str = ""
+    sub_strand: str = ""
+    # A dry run unless this says DELETE. The counts come back either way.
+    confirm: str = ""
+
+
+class RegenerateScopeRequest(BaseModel):
+    """Throw one strand's sub-strands away and generate them again."""
+
+    grade: str
+    subject: str
+    strand: str
+    strand_id: str = "1.0"
+    sub_strand: str = ""
+    custom_instructions: str = ""
+    confirm: str = ""
+
+
 class DiscardDraftRequest(BaseModel):
     job_id: str
 
@@ -4340,19 +4364,31 @@ _STEP_SCOPE = {
 
 
 def _stored_strands(grade: str, subject: str) -> list[dict[str, str]]:
-    from ..infra.db import fetch_all
+    """The saved strands for a learning area.
 
-    rows = fetch_all(
+    They live in the design's metadata, not in a table of their own — strands
+    were only ever a JSONB list hanging off `curriculum_designs`. Two queries
+    written against a `curriculum_strands` table would have raised
+    UndefinedTable the first time a pipeline reached its second step.
+    """
+    from ..infra.db import fetch_one
+
+    row = fetch_one(
         """
-        SELECT strand_id, strand_name FROM curriculum_strands
+        SELECT metadata FROM curriculum_designs
         WHERE (grade = :grade OR grade = :alt_grade)
           AND LOWER(subject) = LOWER(:subject)
-        ORDER BY strand_id
+        ORDER BY updated_at DESC LIMIT 1
         """,
         {"grade": grade, "alt_grade": grade.replace("grade-", ""), "subject": subject},
-    ) or []
-    return [{"strand_name": str(r.get("strand_name") or ""),
-             "strand_id": str(r.get("strand_id") or "1.0")} for r in rows]
+    )
+    strands = ((row or {}).get("metadata") or {}).get("strands") or []
+    return [
+        {"strand_name": str(s.get("strand_name") or s.get("name") or ""),
+         "strand_id": str(s.get("strand_id") or "1.0")}
+        for s in strands
+        if isinstance(s, dict) and (s.get("strand_name") or s.get("name"))
+    ]
 
 
 def _stored_substrands(grade: str, subject: str, strand: str = "") -> list[dict[str, str]]:
@@ -4630,26 +4666,22 @@ def factory_queue_substrands(
     if not targets:
         # Nothing named: queue every stored strand that has no sub-strands yet,
         # which is what "queue the rest of them" means.
-        rows = fetch_all(
-            """
-            SELECT s.strand_id, s.strand_name
-            FROM curriculum_strands s
-            WHERE (s.grade = :grade OR s.grade = :alt_grade)
-              AND LOWER(s.subject) = LOWER(:subject)
-              AND NOT EXISTS (
-                  SELECT 1 FROM curriculum_substrands ss
-                  WHERE (ss.grade = s.grade) AND LOWER(ss.subject) = LOWER(s.subject)
-                    AND LOWER(ss.strand_name) = LOWER(s.strand_name)
-              )
-            ORDER BY s.strand_id
-            """,
-            {"grade": payload.grade, "alt_grade": payload.grade.replace("grade-", ""),
-             "subject": payload.subject},
-        ) or []
+        covered = {
+            str(r.get("strand_name") or "").strip().lower()
+            for r in (fetch_all(
+                """
+                SELECT DISTINCT strand_name FROM curriculum_substrands
+                WHERE (grade = :grade OR grade = :alt_grade)
+                  AND LOWER(subject) = LOWER(:subject)
+                """,
+                {"grade": payload.grade,
+                 "alt_grade": payload.grade.replace("grade-", ""),
+                 "subject": payload.subject},
+            ) or [])
+        }
         targets = [
-            {"strand_name": str(r.get("strand_name") or ""),
-             "strand_id": str(r.get("strand_id") or "1.0")}
-            for r in rows
+            s for s in _stored_strands(payload.grade, payload.subject)
+            if s["strand_name"].strip().lower() not in covered
         ]
 
     if not targets:
@@ -4718,6 +4750,87 @@ def factory_queue_drafts(
             }
             for r in rows
         ],
+    }
+
+
+@router.post("/factory/delete-scope")
+def factory_delete_scope(
+    payload: DeleteScopeRequest,
+    _: AuthContext = Depends(require_roles("admin", "operator")),
+) -> dict[str, Any]:
+    """Remove ONE strand or ONE sub-strand, with everything derived from it.
+
+    The only way to get rid of generated curriculum was the factory reset,
+    which clears a whole learning area. That is right for "the pipeline has
+    changed, start again" and wrong for "this sub-strand came out badly" — and
+    with only the second, an operator either keeps a bad sub-strand or throws
+    away eleven good ones with it.
+
+    A dry run unless `confirm` says DELETE, so the counts are visible before
+    anything is irreversible.
+    """
+    report = scoped_delete.delete(
+        payload.grade, payload.subject,
+        strand=payload.strand, sub_strand=payload.sub_strand,
+        confirm=payload.confirm,
+    )
+    return report.to_dict()
+
+
+@router.post("/factory/regenerate-scope")
+def factory_regenerate_scope(
+    payload: RegenerateScopeRequest,
+    auth: AuthContext = Depends(require_roles("admin", "operator")),
+) -> dict[str, Any]:
+    """Delete a strand's sub-strands (or one sub-strand) and generate again.
+
+    Regenerating without deleting first leaves the old rows in place: the
+    generator writes what it finds now, the previous sub-strands stay stored
+    under names it did not produce this time, and the strand ends up holding
+    both. So the removal is part of the regeneration rather than a step the
+    operator has to remember.
+
+    The strand itself is kept — it is what the new sub-strands are generated
+    against.
+    """
+    from ..services import job_queue
+
+    if payload.confirm.strip().upper() != scoped_delete.CONFIRMATION:
+        # Show what would go, and do nothing. Regeneration is destructive
+        # before it is productive.
+        preview = scoped_delete.delete(
+            payload.grade, payload.subject,
+            strand=payload.strand, sub_strand=payload.sub_strand,
+            keep_strand=True,
+        )
+        return {**preview.to_dict(), "queued": 0,
+                "message": preview.to_dict()["message"].replace(
+                    "removed", "removed and regenerated")}
+
+    removed = scoped_delete.delete(
+        payload.grade, payload.subject,
+        strand=payload.strand, sub_strand=payload.sub_strand,
+        confirm=payload.confirm, keep_strand=True,
+    )
+
+    job = job_queue.enqueue(
+        "substrands", payload.grade, payload.subject,
+        {"custom_instructions": payload.custom_instructions,
+         "strand_id": payload.strand_id},
+        strand=payload.strand,
+        batch_id="regen_" + payload.strand.lower().replace(" ", "-")[:24],
+        queued_by=getattr(auth, "subject", ""),
+    )
+    job_queue.start_worker()
+
+    return {
+        **removed.to_dict(),
+        "queued": 1,
+        "job": job.to_dict(),
+        "message": (
+            f"Removed {removed.total} row(s) for '{payload.strand}' and queued it "
+            f"for regeneration. The result waits as a draft until you save it."
+        ),
     }
 
 

@@ -867,6 +867,64 @@ export function useSubstrandDrafts(grade: string, subject: string, active: boole
   });
 }
 
+export type DeleteReport = {
+  scope: Record<string, string>;
+  dry_run: boolean;
+  total_rows: number;
+  tables: { table: string; what: string; rows: number }[];
+  strand_removed_from_design: boolean;
+  confirmation_required: string;
+  message: string;
+  queued?: number;
+};
+
+/** Remove ONE strand or ONE sub-strand, with everything generated from it.
+ *
+ *  The factory reset clears a whole learning area — right for "the pipeline
+ *  changed, start again", wrong for "this one came out badly". With only the
+ *  reset, you either keep a bad sub-strand or lose eleven good ones with it. */
+export function useDeleteScope(grade: string, subject: string) {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { strand?: string; sub_strand?: string; confirm?: string }) =>
+      api<DeleteReport>("/api/v1/curriculum/factory/delete-scope", {
+        method: "POST",
+        body: JSON.stringify({ grade, subject, ...v }),
+      }),
+    onSuccess: (report) => {
+      if (report.dry_run) return;
+      qc.invalidateQueries({ queryKey: keys.structure(grade, subject) });
+      qc.invalidateQueries({ queryKey: ["saved-substrands"] });
+      qc.invalidateQueries({ queryKey: ["progress"] });
+      qc.invalidateQueries({ queryKey: ["artifacts"] });
+    },
+  });
+}
+
+/** Delete a strand's sub-strands and queue them to be generated again. */
+export function useRegenerateScope(grade: string, subject: string) {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: {
+      strand: string; strand_id?: string; sub_strand?: string;
+      custom_instructions?: string; confirm?: string;
+    }) =>
+      api<DeleteReport>("/api/v1/curriculum/factory/regenerate-scope", {
+        method: "POST",
+        body: JSON.stringify({ grade, subject, ...v }),
+      }),
+    onSuccess: (report) => {
+      if (report.dry_run) return;
+      qc.invalidateQueries({ queryKey: keys.structure(grade, subject) });
+      qc.invalidateQueries({ queryKey: ["saved-substrands"] });
+      qc.invalidateQueries({ queryKey: ["queue"] });
+      qc.invalidateQueries({ queryKey: ["substrand-drafts"] });
+    },
+  });
+}
+
 export function useDiscardDraft() {
   const api = useApi();
   const qc = useQueryClient();

@@ -18,11 +18,13 @@ import { VersionReview } from "./VersionReview";
 import { PromptInspector, type Inspection } from "./PromptInspector";
 import {
   useArtifacts,
+  useDeleteScope,
   useDesigns,
   useDiscardDraft,
   useInspect,
   useQueueStatus,
   useQueueSubstrands,
+  useRegenerateScope,
   useStoredStructure,
   useStructureActions,
   useSubstrandDrafts,
@@ -150,6 +152,48 @@ export function CurriculumStructure({
   // re-rendered around it.
   const queueSubstrands = useQueueSubstrands(grade, subject);
   const discardDraft = useDiscardDraft();
+  // Removing and regenerating ONE strand or sub-strand. Until now the only way
+  // to get rid of anything saved was the factory reset, which takes the whole
+  // learning area with it.
+  const deleteScope = useDeleteScope(grade, subject);
+  const regenerateScope = useRegenerateScope(grade, subject);
+  // What a delete WOULD take, shown before it is irreversible.
+  const [pendingDelete, setPendingDelete] = React.useState<
+    { strand: string; subStrand: string; regenerate: boolean; report: any } | null
+  >(null);
+
+  /** Ask what would go, and show it. Nothing is deleted by this call. */
+  async function previewRemoval(
+    target: string,
+    subStrand: string,
+    regenerate: boolean
+  ) {
+    const report = regenerate
+      ? await regenerateScope.mutateAsync({ strand: target, sub_strand: subStrand })
+      : await deleteScope.mutateAsync({ strand: target, sub_strand: subStrand });
+    setPendingDelete({ strand: target, subStrand, regenerate, report });
+  }
+
+  async function confirmRemoval() {
+    if (!pendingDelete) return;
+    const { strand: target, subStrand, regenerate } = pendingDelete;
+    if (regenerate) {
+      const owner = strands.find((x) => strandName(x) === target);
+      await regenerateScope.mutateAsync({
+        strand: target,
+        strand_id: owner ? strandId(owner) : "1.0",
+        sub_strand: subStrand,
+        custom_instructions: instructions,
+        confirm: "DELETE",
+      });
+    } else {
+      await deleteScope.mutateAsync({
+        strand: target, sub_strand: subStrand, confirm: "DELETE",
+      });
+    }
+    setPendingDelete(null);
+    onSaved?.();
+  }
   const queue = useQueueStatus(grade, subject);
   const outstanding =
     (queue.data?.counts?.queued ?? 0) + (queue.data?.counts?.running ?? 0);
@@ -496,6 +540,61 @@ export function CurriculumStructure({
         </div>
       )}
 
+      {pendingDelete && (
+        <div
+          style={{
+            border: "1px solid var(--danger, var(--line))",
+            borderRadius: "var(--radius)",
+            padding: "var(--s3)",
+            marginBottom: "var(--s3)",
+            fontSize: "var(--text-sm)",
+          }}
+        >
+          <strong>
+            {pendingDelete.regenerate ? "Regenerate" : "Remove"}{" "}
+            {pendingDelete.subStrand
+              ? `"${pendingDelete.subStrand}"`
+              : `everything under "${pendingDelete.strand}"`}
+            ?
+          </strong>
+          <p style={{ color: "var(--ink-3)", margin: "4px 0 var(--s2)" }}>
+            {pendingDelete.report?.total_rows
+              ? `${pendingDelete.report.total_rows} row(s) will go, including everything generated from it — notes, diagrams, media briefs, questions, every version and its reviews. Leaving them behind would leave orphans that still count toward coverage and still appear in the question bank.`
+              : "Nothing is stored for this yet."}
+            {pendingDelete.regenerate
+              ? " The strand itself is kept — it is what the new sub-strands are generated against — and the result waits as a draft until you save it."
+              : ""}
+          </p>
+          {pendingDelete.report?.tables?.length > 0 && (
+            <ul style={{ margin: "0 0 var(--s2)", paddingLeft: "1.2em", color: "var(--ink-3)" }}>
+              {pendingDelete.report.tables.map((t: any) => (
+                <li key={t.table}>
+                  {t.rows} × {t.what}
+                </li>
+              ))}
+            </ul>
+          )}
+          <Stack direction="row" gap="var(--s2)">
+            <Button
+              size="sm"
+              variant="danger"
+              disabled={deleteScope.isPending || regenerateScope.isPending}
+              loading={deleteScope.isPending || regenerateScope.isPending}
+              onClick={confirmRemoval}
+            >
+              {pendingDelete.regenerate
+                ? "Remove and regenerate"
+                : `Remove ${pendingDelete.report?.total_rows ?? 0} row(s)`}
+            </Button>
+            <Button size="sm" variant="ghost" onClick={() => setPendingDelete(null)}>
+              Keep it
+            </Button>
+          </Stack>
+        </div>
+      )}
+      {deleteScope.error && <ErrorNotice error={deleteScope.error} />}
+      {regenerateScope.error && <ErrorNotice error={regenerateScope.error} />}
+
       {grounding?.tables && (
         <div
           style={{
@@ -698,6 +797,26 @@ export function CurriculumStructure({
                       ? "Regenerate sub-strands"
                       : "Generate sub-strands"}
                   </Button>
+                  {savedCount !== undefined && (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      disabled={busy}
+                      title="Delete this strand's saved sub-strands and everything generated from them, then generate them again"
+                      onClick={() => previewRemoval(name, "", true)}
+                    >
+                      Redo
+                    </Button>
+                  )}
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    disabled={busy}
+                    title="Remove this strand and everything under it"
+                    onClick={() => previewRemoval(name, "", false)}
+                  >
+                    Remove
+                  </Button>
                 </div>
 
                 {strand.description && (
@@ -737,13 +856,28 @@ export function CurriculumStructure({
                             <Td numeric>{subCount(sub, "required_diagrams")}</Td>
                             <Td numeric>{subCount(sub, "experiments")}</Td>
                             <Td>
-                              <CopyButton
-                                label="Copy"
-                                title="Copy just this sub-strand"
-                                getText={() =>
-                                  strandToText(strand, [sub], { grade, subject })
-                                }
-                              />
+                              <Stack direction="row" gap="var(--s2)">
+                                <CopyButton
+                                  label="Copy"
+                                  title="Copy just this sub-strand"
+                                  getText={() =>
+                                    strandToText(strand, [sub], { grade, subject })
+                                  }
+                                />
+                                {!isDraft && (
+                                  <Button
+                                    size="sm"
+                                    variant="ghost"
+                                    disabled={busy}
+                                    title="Remove this sub-strand and everything generated from it"
+                                    onClick={() =>
+                                      previewRemoval(name, subName(sub), false)
+                                    }
+                                  >
+                                    Remove
+                                  </Button>
+                                )}
+                              </Stack>
                             </Td>
                           </tr>
                         ))}
