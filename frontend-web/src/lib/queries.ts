@@ -1165,7 +1165,18 @@ export function useStructureActions(grade: string, subject: string) {
         custom_instructions?: string;
         design_id?: string;
       }) =>
-        post<{ sub_strands: GeneratedSubstrand[]; refused?: Refusal[] }>(
+        post<{
+          sub_strands: GeneratedSubstrand[];
+          refused?: Refusal[];
+          rubric_tables?: { rows: number; complete_rows: number; pages_read: number[];
+                            attached: number; unmatched_indicators: string[] };
+          rubric_integrity?: {
+            checked: number; sound: boolean;
+            errors: { check: string; sub_strand: string; level: string; message: string }[];
+            design_defects: { check: string; sub_strand: string; message: string }[];
+          };
+          source_pages_resolved?: number;
+        }>(
           "generate-substrands",
           { grade, subject, ...v }
         ),

@@ -23,6 +23,9 @@ from ..services import (
     notes_repair,
     review_cycle,
     rubric_filler,
+    rubric_integrity,
+    rubric_tables,
+    source_pages as source_pages_service,
     simulation_validators,
     substrand_integrity,
     substrand_hygiene,
@@ -3543,6 +3546,49 @@ def _rubric_writer(payload: Any, resolved: Any, design_block: str) -> Any:
     return for_sub_strand
 
 
+def _ground_substrands(
+    sub_strands: list[dict[str, Any]], source_material: str
+) -> dict[str, Any]:
+    """Put KICD's own rubrics and page numbers on the record, then check them.
+
+    In order, because each step depends on the one before it:
+
+    1. Read the rubric tables. They live on their own pages between sub-strand
+       sections, so no per-sub-strand extractor was ever going to find them —
+       and five of twelve sub-strands in one PP1 CRE run fell back to generated
+       rubrics that KICD had actually published two pages away.
+    2. Throw away any rubric that would mismark a child. A wrong rubric is
+       worse than an absent one: the filler writes an honest labelled
+       replacement for an absent one and cannot tell that a present one is
+       wrong.
+    3. Resolve the page numbers. The model was guessing them at "this page plus
+       the next", which put three of twelve on a neighbouring sub-strand's page
+       — and page addresses are what every citation in this system resolves
+       against.
+    """
+    report: dict[str, Any] = {}
+
+    harvest = rubric_tables.harvest(source_material, sub_strands)
+    attached = 0
+    for sub in sub_strands:
+        if not isinstance(sub, dict):
+            continue
+        name = str(sub.get("sub_strand_name") or sub.get("name") or "")
+        rows = harvest.for_sub_strand(name)
+        if rows:
+            sub["assessment_rubrics"] = rows
+            attached += len(rows)
+    report["rubric_tables"] = {**harvest.to_dict(), "attached": attached}
+
+    integrity = rubric_integrity.drop_unsound(sub_strands)
+    report["rubric_integrity"] = integrity.to_dict()
+
+    report["source_pages_resolved"] = source_pages_service.apply(
+        source_material, sub_strands
+    )
+    return report
+
+
 @router.post("/factory/generate-substrands")
 def factory_generate_substrands(
     payload: FactoryGenerateSubstrandsRequest,
@@ -3679,10 +3725,12 @@ def factory_generate_substrands(
             outcome["trace"]["chunks"]["chunk_count"], len(outcome["items"]),
         )
         kept, refused = substrand_hygiene.clean(payload.strand_name, outcome["items"])
+        grounding = _ground_substrands(kept, source_material)
         rubrics = rubric_filler.fill(
             kept, _rubric_writer(payload, resolved, source_material[:12_000])
         )
         return {
+            **grounding,
             "subject": payload.subject,
             "grade": payload.grade,
             "strand_name": payload.strand_name,
@@ -3708,11 +3756,13 @@ def factory_generate_substrands(
     # sub-strand's own outcomes and say so. A rubric read from KICD and a rubric
     # derived from its outcomes are different things, and a reviewer must be
     # able to tell them apart.
+    grounding = _ground_substrands(sub_strands, source_material)
     rubrics = rubric_filler.fill(
         sub_strands, _rubric_writer(payload, resolved, source_material[:12_000])
     )
 
     return {
+        **grounding,
         "subject": payload.subject,
         "grade": payload.grade,
         "strand_name": payload.strand_name,

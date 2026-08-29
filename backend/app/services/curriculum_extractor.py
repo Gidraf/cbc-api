@@ -964,8 +964,12 @@ class CurriculumExtractorService:
 
         # 5. Extract Assessment Rubrics
         rubrics = []
+        # "Suggested Assessment Rubric", "Rubrics", and "Rubric s" — the stray
+        # space is the PDF's letter spacing. The word "Formative" appears in no
+        # KICD design; searching for it matched nothing, in every subject, and
+        # every rubric was silently generated instead of read.
         rubric_match = re.search(
-            r"Suggested Formative Assessment Rubrics?\s*\n*(.*?)(?=STRAND|\Z)",
+            r"Suggested\s+(?:Formative\s+)?Assessment\s+Rubric\s*s?\s*\n*(.*?)(?=STRAND|\Z)",
             body,
             re.DOTALL | re.IGNORECASE,
         )
@@ -973,17 +977,34 @@ class CurriculumExtractorService:
             rubrics.append({"raw_rubric": rubric_match.group(1)[:1200]})
 
         # 6. Discover Required Diagrams & Visual Models
+        # What the design ITSELF asks to be looked at, not a list of things one
+        # subject happens to need. The keywords were "drip irrigation", "zai
+        # pit", "scarecrow", "compost", "nursery bed", "soil profile" — an
+        # agriculture syllabus, scanned for in every learning area, so diagram
+        # discovery was agriculture-shaped for Religious Education, Language
+        # Activities and everything else.
+        #
+        # Every design states its own visual requirements in the learning
+        # experiences: "observe pictures of Adam and Eve", "identify the
+        # parents of Jesus from a chart", "observe charts of children
+        # participating in church activities". Those are the diagrams, and they
+        # are already in the document.
         required_diagrams = []
-        diagram_keywords = [
-            "structure", "model", "diagram", "chart", "map", "illustration", "setup",
-            "drip irrigation", "compost", "zai pit", "scarecrow", "soil profile", "herbarium",
-            "nursery bed", "container garden", "vertical garden", "seedbed", "water pan",
-            "animal house", "plant morphology"
-        ]
-        for kw in diagram_keywords:
-            if kw in body.lower():
-                required_diagrams.append(f"{sub_name} - {kw.title()} visual model")
-        required_diagrams = list(dict.fromkeys(required_diagrams))[:4]
+        _VISUAL = re.compile(
+            r"\b(picture|pictures|chart|charts|diagram|diagrams|drawing|drawings|"
+            r"illustration|illustrations|map|maps|photograph|photographs|poster|"
+            r"posters|model|models|flashcard|flashcards|graph|graphs|table|"
+            r"wallchart|wallcharts)\b",
+            re.IGNORECASE,
+        )
+        for line in body.split("\n"):
+            cleaned = re.sub(r"^\s*[\u2022\-\*\u25cf]\s*", "", line).strip()
+            if len(cleaned) < 12 or not _VISUAL.search(cleaned):
+                continue
+            # The experience as the design words it, so the brief that follows
+            # is grounded in an instruction KICD actually gave.
+            required_diagrams.append(cleaned[:180])
+        required_diagrams = list(dict.fromkeys(required_diagrams))[:6]
 
         # 7. Discover Experiments & Practical Activities
         experiments = []

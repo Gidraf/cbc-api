@@ -217,6 +217,10 @@ export function CurriculumStructure({
   // silently is how a strand of raw page debris got saved and then had to be
   // spotted by eye.
   const [refused, setRefused] = React.useState<Refusal[]>([]);
+  // What reading the design's own rubric tables found, and what checking them
+  // rejected. Left in the payload nobody reads it, and a rubric level lifted
+  // from another strand's table reaches a classroom.
+  const [grounding, setGrounding] = React.useState<any>(null);
   // Saving files each sub-strand as a version. Without a way through to it the
   // review layers exist but nobody arrives at them.
   const [filed, setFiled] = React.useState<number>(0);
@@ -287,6 +291,11 @@ export function CurriculumStructure({
     });
     setDrafts((d) => ({ ...d, [name]: res.sub_strands || [] }));
     setRefused(res.refused || []);
+    setGrounding({
+      tables: res.rubric_tables,
+      integrity: res.rubric_integrity,
+      pages: res.source_pages_resolved,
+    });
   }
 
   async function save(strand: GeneratedStrand) {
@@ -484,6 +493,84 @@ export function CurriculumStructure({
               </li>
             ))}
           </ul>
+        </div>
+      )}
+
+      {grounding?.tables && (
+        <div
+          style={{
+            border: "1px solid var(--line)",
+            borderRadius: "var(--radius)",
+            padding: "var(--s3)",
+            marginBottom: "var(--s3)",
+            fontSize: "var(--text-sm)",
+          }}
+        >
+          <Stack direction="row" gap="var(--s2)" align="center" wrap>
+            <strong>Assessment rubrics</strong>
+            {grounding.tables.attached > 0 ? (
+              <Badge tone="ok">
+                {grounding.tables.attached} read from the design
+                {grounding.tables.pages_read?.length
+                  ? ` (page${grounding.tables.pages_read.length === 1 ? "" : "s"} ${grounding.tables.pages_read.join(", ")})`
+                  : ""}
+              </Badge>
+            ) : (
+              <Badge tone="warn">none readable in the design</Badge>
+            )}
+            {grounding.pages > 0 && (
+              <Badge tone="ok">{grounding.pages} page reference(s) resolved</Badge>
+            )}
+          </Stack>
+
+          {grounding.integrity?.errors?.length > 0 && (
+            <div style={{ marginTop: "var(--s2)" }}>
+              <strong>
+                {grounding.integrity.errors.length} rubric(s) dropped as unusable
+              </strong>
+              <div style={{ color: "var(--ink-3)" }}>
+                A wrong rubric is worse than a missing one — these were replaced
+                with rubrics written from the outcomes and labelled as such.
+              </div>
+              <ul style={{ margin: "6px 0 0", paddingLeft: "1.2em" }}>
+                {grounding.integrity.errors.slice(0, 6).map((e: any, i: number) => (
+                  <li key={i}>
+                    <code>{e.sub_strand}</code>
+                    {e.level ? ` · ${e.level}` : ""} — {e.message}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {grounding.integrity?.design_defects?.length > 0 && (
+            <div style={{ marginTop: "var(--s2)" }}>
+              <strong>
+                {grounding.integrity.design_defects.length} contradiction(s) in the
+                KICD design itself
+              </strong>
+              <div style={{ color: "var(--ink-3)" }}>
+                Reported, not repaired. Choosing a side would be doing it on
+                KICD's behalf, and a teacher meets the contradiction either way.
+              </div>
+              <ul style={{ margin: "6px 0 0", paddingLeft: "1.2em" }}>
+                {grounding.integrity.design_defects.map((d: any, i: number) => (
+                  <li key={i}>
+                    <code>{d.sub_strand}</code> — {d.message}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {grounding.tables.unmatched_indicators?.length > 0 && (
+            <div style={{ marginTop: "var(--s2)", color: "var(--ink-3)" }}>
+              {grounding.tables.unmatched_indicators.length} rubric row(s) in the
+              design matched no sub-strand and were left out rather than filed
+              against a guess:{" "}
+              {grounding.tables.unmatched_indicators.slice(0, 3).join("; ")}
+            </div>
+          )}
         </div>
       )}
 
