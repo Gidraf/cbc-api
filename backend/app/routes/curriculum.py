@@ -20,6 +20,7 @@ from ..services import (
     media_registry,
     media_validators,
     notes_coverage,
+    notes_repair,
     rubric_filler,
     simulation_validators,
     substrand_integrity,
@@ -1164,9 +1165,38 @@ def factory_generate_notes(
         }
 
     resp = llm_client.generate(resolved, context.messages, temperature=0.15)
-    audit_report = web_research_agent.perform_quality_audit(resp.content, "notes", dossier)
-
     notes_content = resp.content
+
+    # The depth floor is checked BEFORE anything else reads the guide, because
+    # everything downstream is downstream of it: the audit counts its words, the
+    # gate scores its grounding, the artifact stores it, and the operator is
+    # shown a green tick. On the run this was written for, all seven modules of
+    # a seven-lesson sub-strand came back between 498 and 798 characters against
+    # a 1,500 floor — and the only consequence was a line in the log.
+    #
+    # A validator whose finding changes nothing is a comment. This one now sends
+    # the modules it named back to be written properly.
+    design_experiences = (substrand_row or {}).get("learning_experiences") or []
+    lesson_plan = notes_coverage.check(
+        notes_content, allocation, slos, experiences=design_experiences
+    )
+    repair_report = notes_repair.RepairReport()
+    if isinstance(notes_content, dict) and lesson_plan.thin_modules:
+        notes_content, repair_report = notes_repair.repair(
+            notes_content,
+            lesson_plan,
+            generate=llm_client.generate,
+            model_config=resolved,
+            base_messages=context.messages,
+            design_block=design_block,
+            allocation_phrase=allocation.phrase(),
+            sub_strand=payload.sub_strand,
+        )
+        lesson_plan = notes_coverage.check(
+            notes_content, allocation, slos, experiences=design_experiences
+        )
+
+    audit_report = web_research_agent.perform_quality_audit(notes_content, "notes", dossier)
 
     # Downstream readers — coverage, the DNA scorer, the stage guard, the visual
     # planner — were written against hour_modules and key_concepts. Mirroring
@@ -1250,12 +1280,13 @@ def factory_generate_notes(
             payload.sub_strand, len(citations.citations) - citations.verified,
         )
 
-    lesson_plan = notes_coverage.check(notes_content, allocation, slos)
     if not lesson_plan.complete:
         logger.warning(
-            "Notes for %s (%s) cover %d of %d allocated %s.",
+            "Notes for %s (%s) cover %d of %d allocated %s; %d module(s) still thin "
+            "after repair.",
             payload.sub_strand, payload.grade, lesson_plan.modules_found,
             lesson_plan.modules_required, allocation.unit or "lessons",
+            len(lesson_plan.thin_modules),
         )
 
     versioned = _record_artifact(
@@ -1274,6 +1305,7 @@ def factory_generate_notes(
         "quality_audit": audit_report.to_dict(),
         "quality_gate": gate_result.to_dict(),
         "lesson_coverage": lesson_plan.to_dict(),
+        "notes_repair": repair_report.to_dict(),
         "citations": citations.to_dict(),
         "artifact": versioned,
     }

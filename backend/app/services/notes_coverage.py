@@ -45,6 +45,7 @@ class LessonCoverage:
     missing_numbers: list[int] = field(default_factory=list)
     duplicate_numbers: list[int] = field(default_factory=list)
     thin_modules: list[dict[str, Any]] = field(default_factory=list)
+    experiences_unused: list[str] = field(default_factory=list)
     total_body_chars: int = 0
     minutes_planned: int = 0
     minutes_allocated: int = 0
@@ -58,6 +59,7 @@ class LessonCoverage:
             and not self.missing_numbers
             and not self.duplicate_numbers
             and not self.thin_modules
+            and not self.experiences_unused
         )
 
     @property
@@ -77,6 +79,7 @@ class LessonCoverage:
             "missing_numbers": self.missing_numbers,
             "duplicate_numbers": self.duplicate_numbers,
             "thin_modules": self.thin_modules,
+            "experiences_unused": self.experiences_unused,
             "total_body_chars": self.total_body_chars,
             "estimated_printed_pages": round(self.total_body_chars / 3_000, 1),
             "minutes_planned": self.minutes_planned,
@@ -112,6 +115,24 @@ def _body_of(module: dict[str, Any]) -> str:
     return "\n".join(p for p in parts if p)
 
 
+def teaching_body(notes: dict[str, Any]) -> str:
+    """The guide's actual teaching text, counted once.
+
+    The notes route mirrors `modules` into `hour_modules` and derives
+    `key_concepts` from it, so the stored payload carries the same guide twice
+    over. Anything measuring depth by flattening the whole payload reads that
+    duplication as substance: a guide of 4,299 real characters reported 3,840
+    words and scored full marks for depth on the very run this module called
+    all seven of its modules too thin.
+
+    One definition of body, read from one place, so the two numbers cannot
+    disagree again.
+    """
+    if not isinstance(notes, dict):
+        return ""
+    return "\n".join(_body_of(m) for m in _modules_of(notes))
+
+
 def _number_of(module: dict[str, Any], fallback: int) -> int:
     for key in ("module_number", "hour_number", "lesson", "number"):
         value = module.get(key)
@@ -122,7 +143,60 @@ def _number_of(module: dict[str, Any], fallback: int) -> int:
     return fallback
 
 
-def check(notes: dict[str, Any], allocation: Any, slos: list[Any] | None = None) -> LessonCoverage:
+def _text_of(value: Any) -> str:
+    if isinstance(value, str):
+        return value
+    if isinstance(value, dict):
+        for key in ("text", "experience", "name", "description"):
+            if isinstance(value.get(key), str):
+                return value[key]
+        return " ".join(str(v) for v in value.values() if isinstance(v, str))
+    return str(value or "")
+
+
+def _unused_experiences(
+    modules: list[dict[str, Any]], experiences: list[Any]
+) -> list[str]:
+    """Which of the design's own lesson steps the guide never picked up.
+
+    The design IS the lesson; the guide explains how to teach it. So a
+    suggested learning experience that appears in no module is a step KICD
+    funded and nobody planned — and the prompt tells the model to name it in
+    `gaps` if it genuinely does not fit.
+
+    On the run this was written for, "listen to a recorded clip of a short
+    prayer" was demoted to an optional resource, left out of every module's
+    `learning_experiences_used`, and `gaps` came back empty. Nothing noticed.
+    """
+    from .dna_scoring import containment
+
+    haystack = "\n".join(
+        _body_of(m) + "\n" + "\n".join(
+            _text_of(e) for e in (m.get("learning_experiences_used") or [])
+        )
+        for m in modules
+    )
+    if not haystack.strip():
+        return []
+
+    unused: list[str] = []
+    for experience in experiences:
+        text = _text_of(experience).strip()
+        if len(text) < 8:
+            continue
+        # Half the experience's own meaningful terms is a generous bar: it
+        # catches a step that was dropped, not one that was reworded.
+        if containment(text, haystack) < 0.5:
+            unused.append(text[:200])
+    return unused
+
+
+def check(
+    notes: dict[str, Any],
+    allocation: Any,
+    slos: list[Any] | None = None,
+    experiences: list[Any] | None = None,
+) -> LessonCoverage:
     """Measure a guide against the lessons its sub-strand is funded for."""
     required = int(getattr(allocation, "modules", 0) or 0)
     coverage = LessonCoverage(
@@ -158,6 +232,9 @@ def check(notes: dict[str, Any], allocation: Any, slos: list[Any] | None = None)
     coverage.duplicate_numbers = sorted(n for n, count in seen.items() if count > 1)
     if required:
         coverage.missing_numbers = [n for n in range(1, required + 1) if n not in seen]
+
+    if experiences:
+        coverage.experiences_unused = _unused_experiences(modules, experiences)
 
     # An SLO that no module claims is an outcome the guide does not teach.
     if slos:

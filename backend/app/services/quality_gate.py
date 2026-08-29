@@ -392,6 +392,14 @@ class QualityGateService:
             "slo_congruence", "slo_coverage", "slo_depth", "reading_level_fit",
             "scenario_authenticity", "structural_completeness", "typology_balance",
             "concept_alignment", "procedure_completeness",
+            # Depth was in neither approver's set, so a guide too thin to teach
+            # from reached "approved, 91/100" from the pedagogical lead on a run
+            # where every one of its seven modules failed the floor. Whether a
+            # teacher can teach the lesson from what they were handed is the
+            # pedagogical question, not a footnote to it.
+            "content_depth",
+            # And whether what is said TO the child lands at the child's level.
+            "learner_language_fit",
         }
         relevant = [f for f in reviewer.feedback if f.aspect in pedagogical_aspects and f.status != "pending"]
 

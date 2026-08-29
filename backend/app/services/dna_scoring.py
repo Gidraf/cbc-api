@@ -178,26 +178,41 @@ def _reading_target(grade_ordinal: int) -> float:
     return 25.0
 
 
-def reading_level_fit(text: str, grade_ordinal: int) -> Score:
-    """How close the prose sits to the expected complexity for the grade.
+# A teacher's guide is read by an adult professional, usually in a second
+# language and under time pressure. Sixteen words a sentence is the register
+# that fits: plain, but not a four-year-old's.
+_TEACHER_TARGET = 16.0
+
+
+def reading_level_fit(text: str, grade_ordinal: int, audience: str = "learner") -> Score:
+    """How close the prose sits to the expected complexity for its READER.
 
     Penalises both directions — text too dense for Grade 2 and text too thin for
     Grade 11 are both misaligned.
+
+    Who the reader is has to be stated, because it is not always the learner.
+    This measure marked a PP1 teacher's guide down to 0.65 for averaging 10.4
+    words a sentence against a target of 8 — the target for a four-year-old, who
+    is not going to read the guide. That is the same reader/learner confusion
+    that once had pre-primary notes prescribing flowcharts, surviving in the
+    validator after it was fixed in the prompt.
     """
     sents = _sentences(text)
     if len(sents) < 3:
         return Score(None, "pending_insufficient_text", "fewer than 3 sentences", len(sents))
 
     words_per_sentence = sum(len(_WORD.findall(s)) for s in sents) / len(sents)
-    target = _reading_target(grade_ordinal)
+    target = _TEACHER_TARGET if audience == "teacher" else _reading_target(grade_ordinal)
     # Gaussian falloff: within ~35% of target scores near 1.0.
     deviation = abs(words_per_sentence - target) / target
     value = round(math.exp(-((deviation / 0.45) ** 2)), 4)
 
     return Score(
         value,
-        "sentence_length_vs_grade_band",
-        f"{words_per_sentence:.1f} words/sentence against a target of {target:.0f}",
+        "sentence_length_vs_teacher_band" if audience == "teacher"
+        else "sentence_length_vs_grade_band",
+        f"{words_per_sentence:.1f} words/sentence against a target of {target:.0f} "
+        f"for {'the teacher reading this' if audience == 'teacher' else 'this grade'}",
         len(sents),
     )
 
@@ -258,24 +273,90 @@ def score_notes(
         len(structural),
     ))
 
-    out.add("reading_level_fit", reading_level_fit(body, grade_ordinal))
+    # The guide is written TO the teacher. What is spoken to the learner is a
+    # small, separate part of it, and the two are scored against the two
+    # different people who have to understand them.
+    out.add("reading_level_fit", reading_level_fit(body, grade_ordinal, audience="teacher"))
+
+    learner_facing = _learner_facing_text(notes)
+    if learner_facing.strip():
+        out.add("learner_language_fit", reading_level_fit(learner_facing, grade_ordinal))
+    else:
+        out.add("learner_language_fit", Score(
+            None, "pending_no_learner_text",
+            "the guide names nothing said directly to the learner",
+        ))
 
     if raw_source.strip():
-        grounding, method = similarity(body[:8000], raw_source[:8000])
+        # Containment, not similarity. Symmetric Jaccard asks "how alike are
+        # these two texts", and the design section holds five strands, twelve
+        # sub-strands, four rubric tables and every page header — so a guide
+        # correctly confined to ONE sub-strand is punished for every word of the
+        # other eleven it properly left out. It scored 0.20 and the compliance
+        # approver rejected the run on it, while the real defect (seven modules
+        # under the depth floor) never reached the gate at all.
+        #
+        # The question worth asking is asymmetric: of what this guide asserts,
+        # how much is in the design? That is what grounding means.
         out.add("source_grounding", Score(
-            grounding, method, f"notes compared against {len(raw_source)} chars of curriculum source"
+            containment(body, raw_source),
+            "notes_term_containment_in_design",
+            f"fraction of the guide's key terms found in {len(raw_source)} chars "
+            f"of curriculum design",
         ))
     else:
         out.add("source_grounding", Score(None, "pending_no_raw_source", "no curriculum source text supplied"))
 
-    out.add("content_depth", Score(
-        round(min(1.0, word_count / 1200), 4),
-        "word_count_vs_target",
-        f"{word_count} words against a 1200-word target for a full sub-strand",
-        word_count,
-    ))
+    # Depth is measured over the teaching body, not the flattened payload. The
+    # route mirrors `modules` into `hour_modules` and derives `key_concepts`
+    # from it, so flattening counts the same guide twice and change: 4,299 real
+    # characters were reported as 3,840 words and scored a full 1.0 for depth on
+    # the same run that called all seven modules too thin to teach from.
+    from .notes_coverage import MIN_BODY_CHARS, teaching_body
+
+    body_chars = len(teaching_body(notes))
+    if module_count:
+        target_chars = module_count * MIN_BODY_CHARS
+        out.add("content_depth", Score(
+            round(min(1.0, body_chars / target_chars), 4),
+            "body_chars_vs_module_floor",
+            f"{body_chars:,} characters of teaching body against {target_chars:,} "
+            f"({module_count} modules x {MIN_BODY_CHARS:,})",
+            body_chars,
+        ))
+    else:
+        out.add("content_depth", Score(
+            round(min(1.0, word_count / 1200), 4),
+            "word_count_vs_target",
+            f"{word_count} words against a 1200-word target, no modules to measure",
+            word_count,
+        ))
 
     return out
+
+
+# Fields a guide addresses to the child rather than to the teacher. These are
+# the ones that have to land at the learner's own level.
+_LEARNER_FACING = ("key_questions", "learning_intent")
+
+
+def _learner_facing_text(notes: dict[str, Any]) -> str:
+    parts: list[str] = []
+    accessibility = notes.get("accessibility_support")
+    if isinstance(accessibility, dict):
+        parts.append(str(accessibility.get("plain_language_summary") or ""))
+    modules = notes.get("modules") or notes.get("hour_modules") or []
+    if isinstance(modules, list):
+        for module in modules:
+            if not isinstance(module, dict):
+                continue
+            for key in _LEARNER_FACING:
+                value = module.get(key)
+                if isinstance(value, str):
+                    parts.append(value)
+                elif isinstance(value, list):
+                    parts += [str(v) for v in value if isinstance(v, str)]
+    return " ".join(p for p in parts if p)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

@@ -170,7 +170,14 @@ class WebResearchAgent:
         )
 
         deliberation_trace.append(f"📊 Synthesized {len(empirical_data)} empirical data points and {len(kenyan_case_studies)} authentic Kenyan case studies.")
-        deliberation_trace.append(f"🛡️ Extracted {len(safety_guidelines)} mandatory laboratory and field safety protocols.")
+        # Not "laboratory and field": a pre-primary singing lesson has neither,
+        # and a trace that says it does is the same register bleed that had
+        # four-year-olds doing practicals.
+        deliberation_trace.append(
+            f"🛡️ Extracted {len(safety_guidelines)} safety protocol(s) for this sub-strand."
+            if safety_guidelines else
+            "🛡️ No hazard identified for this sub-strand; no safety protocol extracted."
+        )
         deliberation_trace.append("🧠 Completed pedagogical deliberation: Context ready for Professor synthesis.")
 
         # 4. Format Research Context for LLM prompt injection
@@ -442,7 +449,15 @@ class WebResearchAgent:
         suggestions: list[str] = []
         score = 100
 
-        raw_text = str(content)
+        # str(content) is the JSON repr: every key name, every bracket, every
+        # quote, and both copies of a guide the route mirrors into hour_modules.
+        # Counted that way a 4,299-character guide reported 2,340 words and
+        # passed for depth on the run where the coverage check called all seven
+        # of its modules too short to teach from. Substring tests over the same
+        # string matched schema KEY NAMES rather than content — "safety" matched
+        # `"safety_precautions": ""`, so the safety check passed on the presence
+        # of an empty field.
+        raw_text = _human_text(content)
         word_count = len(raw_text.split())
         if word_count < 250:
             checks.append({"name": "Content Depth & Substance", "status": "FAIL", "reason": f"Content is too brief ({word_count} words). Minimum 300 words required."})
@@ -498,15 +513,26 @@ class WebResearchAgent:
                            "reason": "Claims were not checked against sources in this run."})
             scientific_acc = False
 
-        if "safety" in raw_text.lower() or "hazard" in raw_text.lower() or "precaution" in raw_text.lower() or "hygiene" in raw_text.lower():
-            checks.append({"name": "Safety & Hazard Protocols", "status": "PASS", "detail": "Contains explicit safety precautions and hazard mitigations."})
+        stated, declared_none = _safety_statements(content)
+        if stated:
+            checks.append({"name": "Safety & Hazard Protocols", "status": "PASS",
+                           "detail": f"States {len(stated)} precaution(s): {stated[0][:120]}"})
+            safety_comp = True
+        elif declared_none:
+            # The field is there and deliberately empty. Singing a song and
+            # colouring a picture have no hazard, and docking marks for saying
+            # so is how a validator teaches a model to invent one — which is the
+            # defect that trains teachers to ignore the field where it matters.
+            checks.append({"name": "Safety & Hazard Protocols", "status": "NOT APPLICABLE",
+                           "detail": "No hazard is claimed, and none of these activities carries one."})
             safety_comp = True
         else:
             checks.append({"name": "Safety & Hazard Protocols", "status": "WARN",
-                           "reason": "No safety precautions or hazards are mentioned anywhere in this content."})
-            suggestions.append("Add the safety precautions this activity requires before it reaches a classroom.")
-            score -= 15
-            safety_comp = True
+                           "reason": "The content carries no safety field at all — not an empty "
+                                     "one, an absent one, so nobody decided either way."})
+            suggestions.append("State the precautions this activity needs, or state that it needs none.")
+            score -= 5
+            safety_comp = False
 
         if "misconception" in raw_text.lower() or "pedagogical" in raw_text.lower() or "formative" in raw_text.lower() or "worked_example" in raw_text.lower():
             checks.append({"name": "Pedagogical Content Knowledge (PCK)", "status": "PASS", "detail": "Includes teacher notes, misconception remediation, and formative cues."})
@@ -537,6 +563,70 @@ class WebResearchAgent:
             audit_checks=checks,
             feedback_suggestions=suggestions,
         )
+
+
+# Keys whose value, where it has one, is a safety statement.
+_SAFETY_KEYS = ("safety_precautions", "safety", "hazards", "precautions",
+                "safety_notes", "risk_assessment")
+
+
+def _human_text(value: Any, depth: int = 0) -> str:
+    """The readable prose inside a generation payload — values only, no keys.
+
+    Auditing str(payload) counts punctuation and matches on field names. Both
+    made this audit report things that were not there.
+    """
+    if depth > 8 or value is None or isinstance(value, bool):
+        return ""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, (int, float)):
+        return ""
+    if isinstance(value, dict):
+        return " ".join(_human_text(v, depth + 1) for v in value.values())
+    if isinstance(value, (list, tuple)):
+        return " ".join(_human_text(v, depth + 1) for v in value)
+    return ""
+
+
+def _safety_statements(value: Any, depth: int = 0) -> tuple[list[str], bool]:
+    """Precautions actually stated, and whether a safety field was left empty.
+
+    Distinguishing "no hazard here" from "nobody looked" is the whole point: one
+    is the correct answer for a singing lesson and the other is an omission.
+    """
+    stated: list[str] = []
+    declared_none = False
+    if depth > 8:
+        return stated, declared_none
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if any(k in str(key).lower() for k in _SAFETY_KEYS):
+                text = _human_text(item).strip()
+                if text:
+                    stated.append(text)
+                else:
+                    declared_none = True
+                continue
+            sub_stated, sub_none = _safety_statements(item, depth + 1)
+            stated += sub_stated
+            declared_none = declared_none or sub_none
+    elif isinstance(value, (list, tuple)):
+        for item in value:
+            sub_stated, sub_none = _safety_statements(item, depth + 1)
+            stated += sub_stated
+            declared_none = declared_none or sub_none
+
+    if depth == 0 and not stated:
+        # A precaution written into ordinary prose — inside a procedure step or
+        # a lesson flow — counts. What does not count is the field NAME: this
+        # search runs over values only, which is the whole difference between
+        # "supervise learners near the road" and `"safety_precautions": ""`.
+        for sentence in re.split(r"(?<=[.!?])\s+", _human_text(value)):
+            lowered = sentence.lower()
+            if any(w in lowered for w in ("safety", "hazard", "precaution", "supervis")):
+                stated.append(sentence.strip())
+    return stated, declared_none
 
 
 def clean_q_list(queries: list[str]) -> str:
