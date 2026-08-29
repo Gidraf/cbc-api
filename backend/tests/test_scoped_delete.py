@@ -166,3 +166,38 @@ def test_the_console_offers_removal_per_strand_and_per_sub_strand():
     # And it shows what would go before it is irreversible.
     assert "pendingDelete" in view
     assert 'confirm: "DELETE"' in view
+
+
+# ── the console must not go blank when it has data ──────────────────────────
+
+
+def test_the_builder_renders_before_a_subject_is_chosen():
+    """Gating it on `subject` meant that with "All subjects" selected the whole
+    card vanished — no picker, no builder, no way forward — on a grade with
+    seven ingested designs."""
+    view = " ".join((FRONTEND / "src/views/ContentFactory.tsx").read_text().split())
+    assert "{!substrand && !saved.isLoading && ( <details" in view
+    assert "{!substrand && subject && !saved.isLoading &&" not in view
+
+
+def test_the_empty_state_does_not_diagnose_by_guessing():
+    """It said "Ingest a curriculum design for this grade" whatever the reason
+    was — sending the operator to re-ingest seven designs that were already
+    there."""
+    view = (FRONTEND / "src/views/ContentFactory.tsx").read_text()
+
+    assert "designsForGrade > 0" in view
+    assert "there is nothing to re-ingest" in view
+    assert "Choose a subject" in view
+
+
+def test_grade_matching_is_case_insensitive():
+    """Rows are written "grade-pp1". A caller sending "PP1" derives
+    "grade-PP1", which Postgres does not consider equal — and the console then
+    reports a fully ingested grade as empty."""
+    source = (BACKEND / "app/routes/curriculum.py").read_text()
+    listing = source[source.index('@router.get("/substrands")'):]
+    listing = listing[: listing.index("    query = f")]
+
+    assert "LOWER(grade) = LOWER(:grade)" in listing
+    assert "LOWER(grade) = LOWER(:alt_grade)" in listing

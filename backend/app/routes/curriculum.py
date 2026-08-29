@@ -289,7 +289,14 @@ def list_curriculum_substrands(
 
     if grade:
         alt_grade = grade.replace("grade-", "") if grade.startswith("grade-") else f"grade-{grade}"
-        conditions.append("(grade = :grade OR grade = :alt_grade OR :grade = '' OR :grade IS NULL)")
+        # LOWER on both sides. The rows are written as "grade-pp1"; a caller
+        # sending "PP1" derives "grade-PP1", which is not equal to it in
+        # Postgres — and the console then reports a grade with seven ingested
+        # designs as having no sub-strands at all.
+        conditions.append(
+            "(LOWER(grade) = LOWER(:grade) OR LOWER(grade) = LOWER(:alt_grade) "
+            "OR :grade = '' OR :grade IS NULL)"
+        )
         params["grade"] = grade
         params["alt_grade"] = alt_grade
     if subject:

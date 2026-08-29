@@ -453,8 +453,9 @@ def test_the_structure_builder_survives_the_first_save() -> None:
     flat = " ".join(view.split())
 
     assert "{!substrand && !saved.isLoading && allSubstrands.length === 0 && (" not in view
-    # Rendered whenever a subject is chosen, not only when nothing is saved.
-    assert "{!substrand && subject && !saved.isLoading && (" in flat
+    # Rendered whenever the picker is showing — not only when nothing is
+    # saved, and not only once a subject is chosen.
+    assert "{!substrand && !saved.isLoading && ( <details" in flat
     # Still rendered when there IS work, just collapsed.
     assert "Build more of the structure" in view
 

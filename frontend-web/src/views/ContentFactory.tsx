@@ -9,7 +9,7 @@ import { QueuePanel } from "./QueuePanel";
 import { ResetPanel } from "./ResetPanel";
 import { VersionReview } from "./VersionReview";
 import { stationToText } from "../lib/serialize";
-import { useArtifacts, useInspect, profileFor, useProfiles, gradeOptionLabel, subjectOptionLabel, useApi, useGrades, useProgress, useQueuedJob, useSavedSubstrands, useStoredStructure, useSubjects, STATION_KIND } from "../lib/queries";
+import { useArtifacts, useDesigns, useInspect, profileFor, useProfiles, gradeOptionLabel, subjectOptionLabel, useApi, useGrades, useProgress, useQueuedJob, useSavedSubstrands, useStoredStructure, useSubjects, STATION_KIND } from "../lib/queries";
 import { useQueryClient } from "@tanstack/react-query";
 
 /**
@@ -323,6 +323,16 @@ export function ContentFactory() {
   // Which strands still have nothing under them. Without this the operator has
   // to remember which of five they have done, and the builder that would tell
   // them was the thing that disappeared.
+  // What is actually ingested, so the empty state can say which of the three
+  // situations the operator is in rather than assuming the worst one.
+  const designs = useDesigns();
+  const designsForGrade = React.useMemo(() => {
+    const want = effectiveGrade.replace("grade-", "").toLowerCase();
+    return (designs.data || []).filter(
+      (d) => String(d.grade || "").replace("grade-", "").toLowerCase() === want
+    ).length;
+  }, [designs.data, effectiveGrade]);
+
   const structure = useStoredStructure(effectiveGrade, subject);
   const strandsRemaining = React.useMemo(() => {
     const strands = structure.data?.strands || [];
@@ -491,7 +501,7 @@ export function ContentFactory() {
           The wrapper is now constant and only its summary and open state
           change, so the builder keeps its identity — and its drafts — across
           the save that used to destroy them. */}
-      {!substrand && subject && !saved.isLoading && (
+      {!substrand && !saved.isLoading && (
         <details
           open={allSubstrands.length === 0 || strandsRemaining > 0}
           style={{ marginBottom: "var(--s4)" }}
@@ -557,10 +567,28 @@ export function ContentFactory() {
           }
         >
           {allSubstrands.length === 0 ? (
-            <EmptyState
-              title="No sub-strands here yet"
-              description="Ingest a curriculum design for this grade before producing content."
-            />
+            /* This used to say "Ingest a curriculum design for this grade"
+               whatever the reason was. With seven designs already ingested for
+               the grade — the picker above literally reads 7/1 — that is a
+               guess presented as a diagnosis, and it sends the operator to
+               re-ingest something that is already there. Say which of the three
+               things is actually true. */
+            !subject ? (
+              <EmptyState
+                title="Choose a subject"
+                description={`${designsForGrade} design(s) are ingested for this grade. Pick a learning area above to see its sub-strands, or build them below.`}
+              />
+            ) : designsForGrade > 0 ? (
+              <EmptyState
+                title={`No sub-strands stored for ${subject}`}
+                description="The design is ingested, so there is nothing to re-ingest. Generate this subject's strands and sub-strands in the builder above, then save them."
+              />
+            ) : (
+              <EmptyState
+                title="No sub-strands here yet"
+                description="No curriculum design has been ingested for this grade. Ingest one before producing content."
+              />
+            )
           ) : (
             <Table caption="Sub-strands">
               <thead>
