@@ -104,8 +104,23 @@ class RubricRow:
 
     @property
     def complete(self) -> bool:
-        return bool(self.indicator and self.exceeding and self.meeting
-                    and self.approaching and self.below)
+        """All four levels present AND each of them a whole cell.
+
+        The PDF drops cells and wraps others across three lines, so a level can
+        come back as a continuation fragment — "shows His love to them.",
+        "David and Goliath." — which reads as a rubric level and measures
+        nothing. Better an honest generated rubric than a level a teacher
+        cannot act on.
+        """
+        levels = (self.exceeding, self.meeting, self.approaching, self.below)
+        if not self.indicator or not all(levels):
+            return False
+        # A cell opens with a capitalised assessment verb. A continuation line
+        # opens lower-case — "shows His love to them.", "birth of Jesus Christ."
+        # — which is exactly how a fragment came through as a rubric level.
+        return all(
+            level[:1].isupper() and _CELL_START.match(level) for level in levels
+        )
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -250,36 +265,80 @@ def _strip_level(cell: str, pattern: re.Pattern[str]) -> str:
     return re.sub(r"^\s*(expectations?)?\s*[:\-]?\s*", "", without, flags=re.IGNORECASE).strip()
 
 
+# Words every rubric indicator in every subject contains. Matching on these
+# matches everything: "Ability to identify three qualities of God" scored 0.5
+# against "A Holy Book" purely on "identify" and "three", which is how one
+# strand's rubric reached four other sub-strands at once.
+_GENERIC = {
+    "ability", "identify", "identifies", "name", "names", "tell", "tells",
+    "mention", "mentions", "demonstrate", "demonstrates", "state", "states",
+    "list", "lists", "describe", "describes", "explain", "explains", "show",
+    "shows", "narrate", "narrates", "observe", "observes", "practice",
+    "practise", "express", "expresses", "appreciate", "appreciates", "desire",
+    "respect", "retell", "retells", "dramatize", "dramatise",
+    "one", "two", "three", "four", "five", "more", "than", "ways", "way",
+    "thing", "things", "learner", "learners", "them", "their", "his", "her",
+    "the", "and", "for", "from", "with", "about", "they", "that", "this",
+}
+
+# How much of the indicator's DISTINCTIVE vocabulary must be present, and how
+# many distinctive words there must be at all. One shared word is a coincidence
+# — "God" appears in nine of twelve CRE sub-strands.
+_MATCH_FLOOR = 0.6
+_MIN_DISTINCTIVE = 2
+
+
+def _distinctive(text: str) -> set[str]:
+    from .dna_scoring import tokens
+
+    return {t for t in tokens(text) if t not in _GENERIC and len(t) > 2}
+
+
 def _match_to_sub_strand(
     row: RubricRow, sub_strands: list[dict[str, Any]]
 ) -> tuple[str, float]:
     """Which sub-strand's outcome this row measures.
 
-    By outcome text, never by position. The tables are ragged and rows are
-    dropped in extraction, so walking rows and sub-strands in step is exactly
-    how a rubric for the Holy Bible was filed under the birth of Jesus.
+    By the topic words the indicator and the outcome share, never by position
+    and never by the assessment verbs they all share. The tables are ragged and
+    rows are dropped in extraction, so walking rows and sub-strands in step is
+    exactly how a rubric for the Holy Bible was filed under the birth of Jesus.
     """
-    from .dna_scoring import containment
-
     indicator = re.sub(r"^\s*ability to\s+", "", row.indicator, flags=re.IGNORECASE)
-    best, best_score = "", 0.0
+    wanted = _distinctive(indicator)
+    if len(wanted) < _MIN_DISTINCTIVE:
+        # Nothing topical to match on. "Ability to name three things" belongs
+        # to whichever sub-strand the page says, and this cannot tell.
+        return "", 0.0
 
+    scored: list[tuple[float, str]] = []
     for sub in sub_strands:
         name = str(sub.get("sub_strand_name") or sub.get("name") or "")
-        outcomes = [str(s) for s in (sub.get("slos") or []) if str(s).strip()]
         if not name:
             continue
-        # The indicator restates an outcome, so ask how much of the indicator
-        # is present in this sub-strand's outcomes — plus its own name, which
-        # carries the topic when the outcome wording diverges.
-        haystack = " ".join(outcomes + [name])
-        score = containment(indicator, haystack)
-        if score > best_score:
-            best, best_score = name, score
+        outcomes = [str(s) for s in (sub.get("slos") or []) if str(s).strip()]
+        have = _distinctive(" ".join(outcomes + [name]))
+        shared = wanted & have
+        scored.append((len(shared) / len(wanted), name))
 
-    # Below this the row is about something else on the page. Filing it anyway
-    # is the contamination this function exists to prevent.
-    return (best, best_score) if best_score >= 0.5 else ("", best_score)
+    if not scored:
+        return "", 0.0
+    scored.sort(reverse=True)
+    best_score, best = scored[0]
+
+    if best_score < _MATCH_FLOOR:
+        return "", best_score
+
+    # An indicator that fits two sub-strands equally well fits neither well
+    # enough to file against one of them.
+    if len(scored) > 1 and scored[1][0] >= best_score:
+        logger.info(
+            "Rubric row %r matches %r and %r equally; leaving it unfiled.",
+            row.indicator[:60], best, scored[1][1],
+        )
+        return "", best_score
+
+    return best, best_score
 
 
 def harvest(design_text: str, sub_strands: list[dict[str, Any]]) -> RubricHarvest:

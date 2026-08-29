@@ -3599,24 +3599,41 @@ def _ground_substrands(
     """
     report: dict[str, Any] = {}
 
+    # Pages FIRST. Each sub-strand's own rubric page is the strongest evidence
+    # there is about which rubric measures it, and word overlap alone cannot
+    # settle it: "identify three ways loving God" fits both "Love for God" and
+    # "God our Loving Father" perfectly, and this resolver runs on one strand
+    # at a time, so the wrong one has no competitor to lose to.
+    report["source_pages_resolved"] = source_pages_service.apply(
+        source_material, sub_strands
+    )
+
     harvest = rubric_tables.harvest(source_material, sub_strands)
     attached = 0
+    off_page = 0
     for sub in sub_strands:
         if not isinstance(sub, dict):
             continue
         name = str(sub.get("sub_strand_name") or sub.get("name") or "")
+        claimed = {p for p in (sub.get("source_pages") or []) if isinstance(p, int)}
         rows = harvest.for_sub_strand(name)
+        if claimed:
+            kept = [r for r in rows if r.get("source_page") in claimed]
+            off_page += len(rows) - len(kept)
+            rows = kept
         if rows:
             sub["assessment_rubrics"] = rows
             attached += len(rows)
-    report["rubric_tables"] = {**harvest.to_dict(), "attached": attached}
+    report["rubric_tables"] = {
+        **harvest.to_dict(), "attached": attached,
+        # Rows whose words matched but whose page belongs to another strand's
+        # table. Named rather than filed: KICD prints one rubric table per
+        # strand, so a row eight pages away measures something else.
+        "rejected_off_page": off_page,
+    }
 
     integrity = rubric_integrity.drop_unsound(sub_strands)
     report["rubric_integrity"] = integrity.to_dict()
-
-    report["source_pages_resolved"] = source_pages_service.apply(
-        source_material, sub_strands
-    )
     return report
 
 
@@ -5927,7 +5944,7 @@ def factory_save_strands(
     Stored on the design's metadata, which is the shape the progress report
     already reads for strands that have no sub-strands yet.
     """
-    from ..infra.db import execute, fetch_one, to_json
+    from ..infra.db import execute, fetch_all, fetch_one, to_json
 
     found = design_source.resolve(payload.grade, payload.subject)
     design_id = payload.design_id or found.design_id
@@ -5970,6 +5987,45 @@ def factory_save_strands(
         {"design_id": design_id},
     )
     metadata = dict((row or {}).get("metadata") or {})
+
+    # Merge, do not replace. Regenerating strands overwrote the stored list
+    # wholesale, so a run that happened not to return descriptions erased the
+    # ones already there — which is what silently emptied every strand
+    # description on the last regeneration.
+    previous = {
+        substrand_hygiene.strand_key(str(e.get("strand_name") or e.get("name") or "")): e
+        for e in (metadata.get("strands") or [])
+        if isinstance(e, dict)
+    }
+    for entry in clean:
+        old_entry = previous.get(substrand_hygiene.strand_key(entry["strand_name"]))
+        if not old_entry:
+            continue
+        # A field the new run did not produce keeps whatever the last one knew.
+        for field in ("description", "source_pages", "sub_strand_names"):
+            if not entry.get(field) and old_entry.get(field):
+                entry[field] = old_entry[field]
+
+    # A rename orphans work. Sub-strands are stored against the strand NAME, so
+    # a regeneration that calls it "The Holy Bible" where the saved rows say
+    # "The Bible" leaves twelve sub-strands hanging off a strand the structure
+    # view no longer lists, and reports the new one as empty.
+    stored_strand_names = {
+        substrand_hygiene.strand_key(str(r.get("strand_name") or ""))
+        for r in (fetch_all(
+            """
+            SELECT DISTINCT strand_name FROM curriculum_substrands
+            WHERE (grade = :grade OR grade = :alt_grade)
+              AND LOWER(subject) = LOWER(:subject)
+            """,
+            {"grade": payload.grade,
+             "alt_grade": payload.grade.replace("grade-", ""),
+             "subject": payload.subject},
+        ) or [])
+    }
+    new_keys = {substrand_hygiene.strand_key(c["strand_name"]) for c in clean}
+    orphaned = sorted(stored_strand_names - new_keys)
+
     metadata["strands"] = clean
 
     execute(
@@ -5988,6 +6044,9 @@ def factory_save_strands(
         "saved_count": len(clean),
         "refused": refused,
         "strands": [c["strand_name"] for c in clean],
+        # Named, not silently tolerated: these strands have sub-strands stored
+        # against a name this run no longer produces.
+        "orphaned_strands": orphaned,
         "artifact": versioned,
     }
 

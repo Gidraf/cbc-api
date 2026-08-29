@@ -335,3 +335,108 @@ def test_the_pipeline_grounds_rubrics_before_the_filler_decides():
     # Order matters: read, then check, then the filler replaces what was
     # dropped.
     assert fn.index("harvest") < fn.index("drop_unsound")
+
+
+# ── the defects the first real regeneration exposed ─────────────────────────
+
+
+def _row(indicator: str, page: int = 0) -> rubric_tables.RubricRow:
+    return rubric_tables.RubricRow(indicator=indicator, page=page)
+
+
+def test_assessment_verbs_alone_cannot_match_a_rubric_to_a_sub_strand():
+    """"Ability to identify three qualities of God" scored 0.5 against "A Holy
+    Book" purely on "identify" and "three" — which is how one strand's rubric
+    reached four other sub-strands at once."""
+    name, score = rubric_tables._match_to_sub_strand(
+        _row("Ability to identify three qualities of God."),
+        [{"sub_strand_name": "A Holy Book",
+          "slos": ["identify the Holy Bible from other books",
+                   "demonstrate three ways of handling the Bible"]}],
+    )
+    assert name == ""
+    assert score < rubric_tables._MATCH_FLOOR
+
+
+def test_an_indicator_with_no_topic_words_is_not_filed_anywhere():
+    """"Ability to name three things" belongs to whichever sub-strand the page
+    says, and word matching cannot tell."""
+    name, _ = rubric_tables._match_to_sub_strand(
+        _row("Ability to name three things."),
+        [{"sub_strand_name": "God our Creator",
+          "slos": ["mention three things created by God"]}],
+    )
+    assert name == ""
+
+
+def test_a_row_that_fits_two_sub_strands_equally_is_filed_against_neither():
+    rows = rubric_tables._match_to_sub_strand(
+        _row("Ability to identify three ways loving God."),
+        [{"sub_strand_name": "Love for God",
+          "slos": ["identify three ways of loving God"]},
+         {"sub_strand_name": "God our Loving Father",
+          "slos": ["tell three ways God shows His love to us"]}],
+    )
+    assert rows[0] == ""
+
+
+def test_a_rubric_from_another_strands_page_is_rejected():
+    """KICD prints one rubric table per strand. Word overlap cannot separate
+    "identify three ways loving God" (page 217) from "God our Loving Father",
+    and this resolver runs one strand at a time so the wrong one has no
+    competitor to lose to. The page settles it."""
+    import app.routes.curriculum as routes
+
+    design = (
+        "[PAGE 202]\n202:5  Summary of Strands and Sub-Strands\n"
+        "[PAGE 206]\n206:9  1.3\n206:10  God our\n206:11  Loving\n206:12  Father\n"
+        "[PAGE 207]\n207:2  Suggested Assessment Rubric s\n"
+        "207:8  Ability to identify three\n207:9  qualities of God.\n"
+        "207:10  Identifies more than three qualities of God.\n"
+        "207:11  Identifies three qualities of God.\n"
+        "207:12  Identifies two qualities of God.\n"
+        "207:13  Identifies one quality of God.\n"
+        "[PAGE 217]\n217:2  Suggested Assessment Rubric\n"
+        "217:10  Ability to identify\n217:11  three ways loving God.\n"
+        "217:12  Identifies more than three ways of loving God.\n"
+        "217:13  Identifies three ways of loving God.\n"
+        "217:14  Identifies two ways of loving God.\n"
+        "217:15  Identifies one way of loving God.\n"
+    )
+    subs = [{"sub_strand_name": "God our Loving Father", "sub_strand_id": "1.3",
+             "slos": ["tell three ways God shows His love to us"]}]
+
+    report = routes._ground_substrands(subs, design)
+
+    assert report["rubric_tables"]["rejected_off_page"] >= 1
+    assert not subs[0].get("assessment_rubrics")
+
+
+def test_a_level_that_is_only_a_wrapped_fragment_fails_the_row():
+    """"shows His love to them." and "David and Goliath." both arrived as
+    rubric levels. They read as levels and measure nothing."""
+    row = rubric_tables.RubricRow(
+        indicator="Ability to tell three ways God shows His love to them.",
+        exceeding="Tells more than three ways God shows His love to them.",
+        meeting="shows His love to them.",
+        approaching="Tells two ways God shows His love to them.",
+        below="Tells one way God shows His love to them.",
+    )
+    assert not row.complete
+
+
+def test_a_sub_strand_does_not_span_the_rest_of_the_document():
+    """Called with one strand's sub-strands, the last of them had no next
+    opening and claimed every remaining page: "God our Loving Father" came back
+    with thirteen source pages."""
+    design = "".join(
+        f"[PAGE {n}]\n{n}:1  1.3\n{n}:2  God our\n{n}:3  Loving\n{n}:4  Father\n"
+        if n == 206 else f"[PAGE {n}]\n{n}:1  filler text for page {n}\n"
+        for n in range(202, 222)
+    )
+    subs = [{"sub_strand_name": "God our Loving Father", "sub_strand_id": "1.3",
+             "source_pages": []}]
+    source_pages.apply(design, subs)
+
+    assert len(subs[0]["source_pages"]) <= 4, subs[0]["source_pages"]
+    assert 221 not in subs[0]["source_pages"]

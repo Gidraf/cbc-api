@@ -119,7 +119,12 @@ def fill(
             })
             continue
 
-        sub_strand["assessment_rubric"] = rows
+        # `assessment_rubrics`, plural — the name of the database column and
+        # the key every reader uses. Writing the singular left a sub-strand
+        # carrying two different rubric sets at once, one read from the design
+        # and one generated, with nothing saying which a teacher should use.
+        sub_strand["assessment_rubrics"] = rows
+        sub_strand.pop("assessment_rubric", None)
         sub_strand["rubric_source"] = "generated_from_outcomes"
         report.generated.append(name)
 

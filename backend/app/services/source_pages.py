@@ -24,6 +24,15 @@ from . import document_index
 
 logger = logging.getLogger("cbc-source-pages")
 
+# A sub-strand's table occupies one page and occasionally spills onto a second.
+# Three is generous; beyond that the span is a resolver failure, not a long
+# sub-strand.
+MAX_SPAN_PAGES = 3
+
+# How far after a sub-strand its own rubric table can be. A strand runs to at
+# most three sub-strands, each one to three pages, then the rubric.
+MAX_RUBRIC_DISTANCE = 10
+
 # "1.1 Our God", "2.2 Bible Story: David and Goliath", "4.3 Sharing with Others"
 def _heading_pattern(sub_id: str, name: str) -> re.Pattern[str]:
     parts = []
@@ -105,15 +114,31 @@ def resolve(
 
     for index, (name, opening) in enumerate(ordered):
         # Runs until the next sub-strand opens, so a sub-strand whose block
-        # spills onto a continuation page keeps that page.
-        next_opening = ordered[index + 1][1] if index + 1 < len(ordered) else 10_000
+        # spills onto a continuation page keeps that page — but no further.
+        #
+        # This resolver is called with ONE strand's sub-strands at a time, so
+        # the last of them has no next opening. Left unbounded it claimed every
+        # remaining page in the document: "God our Loving Father" came back
+        # with thirteen source pages running to the end of the section.
+        next_opening = (
+            ordered[index + 1][1] if index + 1 < len(ordered)
+            else opening + MAX_SPAN_PAGES
+        )
+        next_opening = min(next_opening, opening + MAX_SPAN_PAGES)
         span = [
             p.number for p in pages
             if opening <= p.number < next_opening
             and p.number not in rubric_page_numbers
         ]
-        # The rubric that measures it: the first rubric table printed after it.
-        rubric = next((n for n in rubric_page_numbers if n >= opening), 0)
+        # The rubric that measures it: the first rubric table printed after it,
+        # and only if it is close enough to be this strand's. KICD prints one
+        # rubric table per strand, so a table eight pages later belongs to a
+        # strand in between.
+        rubric = next(
+            (n for n in rubric_page_numbers
+             if opening <= n <= opening + MAX_RUBRIC_DISTANCE),
+            0,
+        )
 
         found = sorted({*span, *( [rubric] if rubric else [] ), *([summary] if summary else [])})
         resolved[name] = found

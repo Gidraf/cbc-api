@@ -215,3 +215,45 @@ def test_stored_structure_says_when_it_was_written():
     serialize = (FRONTEND / "src/lib/serialize.ts").read_text()
     assert "Stored: ${String(s.updated_at)}" in serialize
     assert "not yet saved (this is a draft)" in serialize
+
+
+# ── regenerating strands must not quietly destroy what was saved ────────────
+
+
+def test_saving_strands_merges_rather_than_replacing():
+    """Regenerating overwrote the stored list wholesale, so a run that happened
+    not to return descriptions erased the ones already there — which is what
+    silently emptied every strand description."""
+    source = (BACKEND / "app/routes/curriculum.py").read_text()
+    fn = source[source.index("def factory_save_strands"):]
+    fn = fn[: fn.index('@router.post("/factory/save-substrands")')]
+
+    assert "previous = {" in fn
+    assert 'for field in ("description", "source_pages", "sub_strand_names")' in fn
+
+
+def test_a_rename_that_orphans_sub_strands_is_reported():
+    """Sub-strands are stored against the strand NAME. Calling it "The Holy
+    Bible" where the rows say "The Bible" leaves twelve sub-strands hanging off
+    a strand the structure view no longer lists."""
+    source = (BACKEND / "app/routes/curriculum.py").read_text()
+    fn = source[source.index("def factory_save_strands"):]
+    fn = fn[: fn.index('@router.post("/factory/save-substrands")')]
+
+    assert "orphaned = sorted(stored_strand_names - new_keys)" in fn
+    assert '"orphaned_strands": orphaned' in fn
+
+    view = (FRONTEND / "src/views/CurriculumStructure.tsx").read_text()
+    assert "orphanedStrands" in view
+    assert "no longer match their stored" in view
+
+
+def test_the_console_says_stored_sub_strands_were_not_just_generated():
+    """They appear the instant strands are generated, which reads as though the
+    run produced them."""
+    view = (FRONTEND / "src/views/CurriculumStructure.tsx").read_text()
+
+    assert "read from the database, not generated just now" in view
+    assert "generating strands does not regenerate them" in view
+    # And each row shows its own age.
+    assert "<Th>Stored</Th>" in view

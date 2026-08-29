@@ -1241,7 +1241,13 @@ export function useStructureActions(grade: string, subject: string) {
     }),
     saveStrands: useMutation({
       mutationFn: (v: { strands: GeneratedStrand[]; design_id?: string }) =>
-        post<{ saved_count: number; design_id: string }>("save-strands", {
+        post<{
+          saved_count: number;
+          design_id: string;
+          /** Strands whose stored sub-strands no longer match any name this
+           *  run produced — a rename orphans the work under the old name. */
+          orphaned_strands?: string[];
+        }>("save-strands", {
           grade,
           subject,
           ...v,

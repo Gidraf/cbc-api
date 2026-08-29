@@ -271,6 +271,9 @@ export function CurriculumStructure({
   // Which strand's sub-strands were just saved, so the next step can be named
   // rather than left for the operator to find.
   const [justSaved, setJustSaved] = React.useState<string>("");
+  // Strand names this run produced that no longer match the names its
+  // sub-strands are stored against.
+  const [orphanedStrands, setOrphanedStrands] = React.useState<string[]>([]);
 
   // What a copy should contain: everything under a strand, whether it was saved
   // earlier or drafted just now. Copying `drafts` alone meant that saving —
@@ -318,7 +321,8 @@ export function CurriculumStructure({
     // off vanished on reload even after its sub-strands were saved.
     if (generated.length) {
       try {
-        await actions.saveStrands.mutateAsync({ strands: generated });
+        const stored = await actions.saveStrands.mutateAsync({ strands: generated });
+        setOrphanedStrands((stored as any)?.orphaned_strands || []);
       } catch {
         // Generation still succeeded; the draft is on screen either way.
       }
@@ -683,8 +687,36 @@ export function CurriculumStructure({
       {grounded && grounded.ok && (
         <div style={{ marginBottom: "var(--s3)" }}>
           <Badge tone="ok">
-            Read from the KICD design ({(grounded.chars / 1000).toFixed(0)}k characters)
-          </Badge>
+            Strands generated just now from the KICD design (
+            {(grounded.chars / 1000).toFixed(0)}k characters)
+          </Badge>{" "}
+          <span style={{ color: "var(--ink-3)", fontSize: "var(--text-sm)" }}>
+            Sub-strands shown below each strand are whatever is already stored —
+            generating strands does not regenerate them.
+          </span>
+        </div>
+      )}
+      {orphanedStrands.length > 0 && (
+        <div
+          style={{
+            border: "1px solid var(--warn-border, var(--line))",
+            borderRadius: "var(--radius)",
+            padding: "var(--s3)",
+            marginBottom: "var(--s3)",
+            fontSize: "var(--text-sm)",
+          }}
+        >
+          <strong>
+            {orphanedStrands.length} strand name(s) no longer match their stored
+            sub-strands
+          </strong>
+          <div style={{ color: "var(--ink-3)", marginTop: 4 }}>
+            Sub-strands are stored against the strand NAME. This run named the
+            strands differently, so the sub-strands under{" "}
+            {orphanedStrands.map((o) => `"${o}"`).join(", ")} are now hanging off
+            a name nothing lists. Either regenerate those strands' sub-strands,
+            or remove them.
+          </div>
         </div>
       )}
       {actions.generateSubstrands.error && <ErrorNotice error={actions.generateSubstrands.error} />}
@@ -834,7 +866,11 @@ export function CurriculumStructure({
                             (queuedDraft && !draft
                               ? ", held in the queue until you save or discard them"
                               : "")
-                          : `Sub-strands saved for ${name}`
+                          : // Read from the database, NOT produced by the
+                            // generation that may have just run. Generating
+                            // strands makes these appear instantly, which
+                            // reads as though the run produced them.
+                            `Sub-strands already stored for ${name} — read from the database, not generated just now`
                       }
                     >
                       <thead>
@@ -844,6 +880,7 @@ export function CurriculumStructure({
                           <Th numeric>Outcomes</Th>
                           <Th numeric>Diagrams</Th>
                           <Th numeric>Experiments</Th>
+                          <Th>Stored</Th>
                           <Th />
                         </tr>
                       </thead>
@@ -855,6 +892,18 @@ export function CurriculumStructure({
                             <Td numeric>{subCount(sub, "slos")}</Td>
                             <Td numeric>{subCount(sub, "required_diagrams")}</Td>
                             <Td numeric>{subCount(sub, "experiments")}</Td>
+                            <Td>
+                              {(sub as any).updated_at ? (
+                                <span
+                                  style={{ color: "var(--ink-3)", whiteSpace: "nowrap" }}
+                                  title={String((sub as any).updated_at)}
+                                >
+                                  {new Date(String((sub as any).updated_at)).toLocaleDateString()}
+                                </span>
+                              ) : (
+                                <Badge tone="warn">draft</Badge>
+                              )}
+                            </Td>
                             <Td>
                               <Stack direction="row" gap="var(--s2)">
                                 <CopyButton

@@ -51,7 +51,12 @@ def test_a_generated_rubric_says_it_was_generated() -> None:
     fill(subs, lambda s: _COMPLETE)
 
     assert subs[0]["rubric_source"] == "generated_from_outcomes"
-    assert subs[0]["assessment_rubric"] == _COMPLETE
+    # Plural — the database column's name and the key every reader uses.
+    # Writing the singular left a sub-strand carrying two rubric sets at once,
+    # one read from the design and one generated, with nothing saying which a
+    # teacher should follow.
+    assert subs[0]["assessment_rubrics"] == _COMPLETE
+    assert "assessment_rubric" not in subs[0]
 
 
 def test_an_incomplete_generation_is_refused_rather_than_stored() -> None:
