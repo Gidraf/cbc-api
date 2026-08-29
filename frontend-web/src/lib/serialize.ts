@@ -95,7 +95,17 @@ export function strandToText(
   (substrands || []).forEach((s, i) => {
     const title = s.sub_strand_name || s.name || `Sub-strand ${i + 1}`;
     out += heading(`${i + 1}. ${title}`, "-");
-    out += toReadable(s);
+    // When this was written, before anything else about it. A copy made for
+    // verification that cannot say how old it is gets verified against the
+    // wrong pipeline — repeatedly, and without either party noticing.
+    if (s.updated_at) {
+      out += `Stored: ${String(s.updated_at)}\n`;
+    } else {
+      out += `Stored: not yet saved (this is a draft)\n`;
+    }
+    // Printed above rather than buried in the alphabetical dump below.
+    const { updated_at: _stamp, ...rest } = s;
+    out += toReadable(rest);
     out += "\n";
   });
 

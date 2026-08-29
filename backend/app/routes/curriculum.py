@@ -5893,6 +5893,11 @@ def factory_read_structure(
                 "core_competencies", "values", "assessment_rubrics",
                 "pertinent_contemporary_issues", "link_to_other_learning_areas",
                 "source_pages",
+                # When this row was written. Four rounds of "how accurate is
+                # this" were spent on output that looked freshly generated and
+                # was months of pipeline changes old, because nothing in it
+                # said when it was made.
+                "updated_at",
             )
         })
 

@@ -201,3 +201,17 @@ def test_grade_matching_is_case_insensitive():
 
     assert "LOWER(grade) = LOWER(:grade)" in listing
     assert "LOWER(grade) = LOWER(:alt_grade)" in listing
+
+
+def test_stored_structure_says_when_it_was_written():
+    """Four rounds of "how accurate is this" were spent on output that looked
+    freshly generated and was several pipeline changes old, because nothing in
+    it said when it was made."""
+    routes = (BACKEND / "app/routes/curriculum.py").read_text()
+    block = routes[routes.index('strands[key]["sub_strands"].append('):]
+    block = block[: block.index("ordered = sorted")]
+    assert '"updated_at"' in block
+
+    serialize = (FRONTEND / "src/lib/serialize.ts").read_text()
+    assert "Stored: ${String(s.updated_at)}" in serialize
+    assert "not yet saved (this is a draft)" in serialize
