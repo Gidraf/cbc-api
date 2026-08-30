@@ -53,6 +53,13 @@ class LlmClient:
         else:
             raw_text, usage = self._call_openai_compatible(config, messages, temperature, top_p)
 
+        # Metered here, once, rather than threaded through fourteen route
+        # handlers — the one that gets missed is always the one that spends
+        # the most.
+        from .run_meter import add as _meter
+
+        _meter(usage, config.model, config.provider)
+
         content = self._extract_and_parse_json(raw_text)
         return LlmResponse(
             content=content,

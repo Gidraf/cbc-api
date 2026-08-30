@@ -368,9 +368,12 @@ def _execute(job: dict[str, Any]) -> dict[str, Any]:
     """
     from ..infra.db import execute, to_json
 
+    from . import run_meter
+
     job_id = str(job["job_id"])
     kind = str(job["kind"])
     handler = _HANDLERS.get(kind)
+    meter = run_meter.start(job_id)
 
     if handler is None:
         execute(
@@ -388,20 +391,31 @@ def _execute(job: dict[str, Any]) -> dict[str, Any]:
         # third time, and retrying spends money to learn nothing.
         status = QUEUED if attempts < MAX_ATTEMPTS else FAILED
         logger.error("Job %s (%s) failed on attempt %d: %s", job_id, kind, attempts, exc)
+        run_meter.stop()
+        # A job that failed halfway still spent whatever it spent. Recording
+        # only successes makes the bill look smaller than the statement.
         execute(
             "UPDATE jobs SET status = :status, error = :error, "
+            "llm_calls = llm_calls + :calls, total_tokens = total_tokens + :tokens, "
+            "cost_usd = cost_usd + :cost, "
             "finished_at = CASE WHEN :status = 'failed' THEN NOW() ELSE NULL END "
             "WHERE job_id = :job_id",
-            {"job_id": job_id, "status": status, "error": str(exc)[:1000]},
+            {"job_id": job_id, "status": status, "error": str(exc)[:1000],
+             "calls": meter.calls, "tokens": meter.total_tokens,
+             "cost": round(meter.cost_usd, 6)},
         )
         return {"job_id": job_id, "status": status, "error": str(exc)[:300]}
 
+    run_meter.stop()
     execute(
         "UPDATE jobs SET status = 'done', result = CAST(:result AS jsonb), "
-        "finished_at = NOW() WHERE job_id = :job_id",
-        {"job_id": job_id, "result": to_json(result if isinstance(result, dict) else {})},
+        "finished_at = NOW(), llm_calls = :calls, total_tokens = :tokens, "
+        "cost_usd = :cost WHERE job_id = :job_id",
+        {"job_id": job_id, "result": to_json(result if isinstance(result, dict) else {}),
+         "calls": meter.calls, "tokens": meter.total_tokens,
+         "cost": round(meter.cost_usd, 6)},
     )
-    return {"job_id": job_id, "status": DONE}
+    return {"job_id": job_id, "status": DONE, "cost_usd": round(meter.cost_usd, 6)}
 
 
 # A job whose worker was killed mid-generation leaves a row saying "running"

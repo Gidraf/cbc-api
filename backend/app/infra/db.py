@@ -802,6 +802,18 @@ MIGRATIONS: list[tuple[str, str]] = [
         CREATE INDEX IF NOT EXISTS idx_auto_runs_status ON auto_runs(status, started_at DESC);
         """,
     ),
+    (
+        "025_job_cost",
+        """
+        -- What each job actually spent. Every model call already returned its
+        -- token usage and the pricing table already existed; nothing was
+        -- joining them to the job that made the call, so the only way to see
+        -- the bill was to wait for it.
+        ALTER TABLE jobs ADD COLUMN IF NOT EXISTS llm_calls INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE jobs ADD COLUMN IF NOT EXISTS total_tokens INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE jobs ADD COLUMN IF NOT EXISTS cost_usd NUMERIC(12,6) NOT NULL DEFAULT 0;
+        """,
+    ),
 ]
 
 
