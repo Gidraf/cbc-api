@@ -36,6 +36,23 @@ _MODULE_LISTS = ("modules", "hour_modules", "key_concepts")
 # stated once, in both places.
 MIN_BODY_CHARS = 1_500
 
+# A module is written as a handful of small topics rather than one long block.
+#
+# Asked for 1,500 characters in one go, the model produces about a thousand and
+# stops — that held across a repair pass and three review cycles, so it is not
+# a matter of wording. Asked for four topics of four hundred, it writes four
+# topics of four hundred. Small, named, bounded pieces are what it is good at,
+# and the sum clears a floor that the single instruction never did.
+MIN_SEGMENTS = 3
+MAX_SEGMENTS = 6
+
+# What each topic aims at. Four hundred is a paragraph a teacher can read at a
+# glance, and four of them clear the module floor with room to spare.
+SEGMENT_TARGET_CHARS = 450
+
+# Below this a topic is a heading with a sentence under it.
+MIN_SEGMENT_CHARS = 250
+
 
 @dataclass(slots=True)
 class LessonCoverage:
@@ -46,6 +63,9 @@ class LessonCoverage:
     duplicate_numbers: list[int] = field(default_factory=list)
     thin_modules: list[dict[str, Any]] = field(default_factory=list)
     experiences_unused: list[str] = field(default_factory=list)
+    modules_without_topics: list[int] = field(default_factory=list)
+    thin_topics: list[dict[str, Any]] = field(default_factory=list)
+    broken_handovers: list[dict[str, Any]] = field(default_factory=list)
     total_body_chars: int = 0
     minutes_planned: int = 0
     minutes_allocated: int = 0
@@ -80,6 +100,11 @@ class LessonCoverage:
             "duplicate_numbers": self.duplicate_numbers,
             "thin_modules": self.thin_modules,
             "experiences_unused": self.experiences_unused,
+            "modules_without_topics": self.modules_without_topics,
+            "thin_topics": self.thin_topics,
+            # A topic with no bridge is a paragraph that stops. The teacher
+            # reads them in order and the children live through them in order.
+            "broken_handovers": self.broken_handovers,
             "total_body_chars": self.total_body_chars,
             "estimated_printed_pages": round(self.total_body_chars / 3_000, 1),
             "minutes_planned": self.minutes_planned,
@@ -96,12 +121,39 @@ def _modules_of(notes: dict[str, Any]) -> list[dict[str, Any]]:
     return []
 
 
+def segments_of(module: dict[str, Any]) -> list[dict[str, Any]]:
+    """The named topics a module is built from, if it was written that way."""
+    value = module.get("exposition_segments")
+    if isinstance(value, list):
+        return [s for s in value if isinstance(s, dict)]
+    return []
+
+
+def thin_segments(module: dict[str, Any]) -> list[dict[str, Any]]:
+    """Topics too short to be a topic — a heading with a sentence under it."""
+    out: list[dict[str, Any]] = []
+    for index, segment in enumerate(segments_of(module), start=1):
+        body = str(segment.get("body") or "")
+        if len(body) < MIN_SEGMENT_CHARS:
+            out.append({
+                "index": index,
+                "topic": str(segment.get("topic") or "")[:120],
+                "chars": len(body),
+                "target": SEGMENT_TARGET_CHARS,
+            })
+    return out
+
+
 def _body_of(module: dict[str, Any]) -> str:
     parts: list[str] = []
     for field_name in _BODY_FIELDS:
         value = module.get(field_name)
         if isinstance(value, str):
             parts.append(value)
+
+    # The topics carry the substance where a module was written in pieces.
+    for segment in segments_of(module):
+        parts += [str(segment.get(k) or "") for k in ("topic", "body", "bridge")]
 
     # The lesson flow is teaching content too, and a guide that puts its
     # substance there is not thin just because the exposition is short.
@@ -224,6 +276,22 @@ def check(
                 "chars": len(body),
                 "why": "too short to teach from without further preparation",
             })
+
+        # Written as topics, or as one block? A module with no topics is not a
+        # failure on its own — it is only how the old shape looked — but it is
+        # the shape that kept coming back at a third of the required depth.
+        module_segments = segments_of(module)
+        if not module_segments:
+            coverage.modules_without_topics.append(number)
+        else:
+            for short in thin_segments(module):
+                coverage.thin_topics.append({"module": number, **short})
+            for index, segment in enumerate(module_segments, start=1):
+                if not str(segment.get("bridge") or "").strip():
+                    coverage.broken_handovers.append({
+                        "module": number, "index": index,
+                        "topic": str(segment.get("topic") or "")[:120],
+                    })
 
         minutes = module.get("duration_minutes")
         if isinstance(minutes, int) and minutes > 0:

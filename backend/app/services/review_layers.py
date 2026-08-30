@@ -354,6 +354,26 @@ def build_messages(
         "Every score needs evidence from the artifact itself. A score without "
         "evidence is an opinion, and an opinion cannot be checked.",
         "Do not report an overall figure — it is computed from your dimensions.",
+        "",
+        "CHECK EVERY CLAIM AGAINST THE DESIGN. An analogy is a teaching device "
+        "and invents nothing — \"God cares for you the way your mother does\" is "
+        "good teaching of a four-year-old and is not a claim. A CLAIM asserts "
+        "something is true, and each one has to be traceable to the design in "
+        "front of you.",
+        "Look specifically for these, and report each one you find under "
+        "factual_correctness with the exact text:",
+        "  - a scripture reference the design does not name. The design names "
+        "its own; anything else was invented, and a teacher will read it aloud "
+        "to a class.",
+        "  - a statistic, percentage or survey figure. Nothing external was "
+        "retrieved for this sub-strand, so any number with a source attached "
+        "came from nowhere.",
+        "  - an authority named as a source — KNBS, KALRO, NEMA, a ministry, a "
+        "report — that does not appear in the design.",
+        "  - a page:line address that is not in the excerpt.",
+        "A fabricated citation is worse than a missing one: it survives "
+        "inspection. Score factual_correctness low when you find one, and say "
+        "which.",
         "Where a dimension does not apply, set not_applicable and say why in "
         "evidence. Do not give it a passing score to move on.",
         "Be specific and be hard. Approving weak content costs a Kenyan child a "

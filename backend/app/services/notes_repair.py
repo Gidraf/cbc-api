@@ -35,7 +35,7 @@ MAX_ATTEMPTS = 1
 # produced — citations, SLO mapping, module numbering — is left alone, because
 # the defect being fixed is depth and nothing else.
 _EXPANDABLE = (
-    "teacher_exposition", "lesson_flow", "key_questions",
+    "teacher_exposition", "exposition_segments", "lesson_flow", "key_questions",
     "common_misconceptions", "resources_needed", "differentiation",
     "formative_check", "learning_experiences_used",
 )
@@ -99,13 +99,25 @@ def _instruction(
     """
     import json as json_lib
 
-    listing = "\n".join(
-        f"  - Module {m['number']} \"{m['title']}\": {m['chars']:,} characters"
-        + (f", short of the {notes_coverage.MIN_BODY_CHARS:,} a teachable module needs."
-           if m["chars"] < notes_coverage.MIN_BODY_CHARS
-           else ", which has room for the material below.")
-        for m in thin
-    )
+    lines = []
+    for m in thin:
+        lines.append(
+            f"  - Module {m['number']} \"{m['title']}\": {m['chars']:,} characters"
+            + (f", short of the {notes_coverage.MIN_BODY_CHARS:,} a teachable "
+               f"module needs."
+               if m["chars"] < notes_coverage.MIN_BODY_CHARS
+               else ", which has room for the material below.")
+        )
+        # Naming the exact topic that is short is the difference between "write
+        # more" and "this paragraph is 120 characters and needs 450". The model
+        # can act on the second.
+        for short in notes_coverage.thin_segments(m["module"]):
+            lines.append(
+                f"      · topic {short['index']} \"{short['topic']}\" is only "
+                f"{short['chars']} characters and should be about "
+                f"{short['target']}."
+            )
+    listing = "\n".join(lines)
     payload = json_lib.dumps([m["module"] for m in thin], ensure_ascii=False, indent=1)
 
     dropped = ""
@@ -132,6 +144,14 @@ def _instruction(
         f"{listing}\n\n"
         f"A teacher handed a module this length still has to prepare the lesson, "
         f"which is the one thing this guide exists to prevent.\n\n"
+        f"=== HOW TO EXPAND THEM ===\n"
+        f"Work topic by topic in `exposition_segments`, not on the module as a "
+        f"whole. Where a module has no topics yet, break its exposition into "
+        f"{notes_coverage.MIN_SEGMENTS}-{notes_coverage.MAX_SEGMENTS} named "
+        f"topics of about {notes_coverage.SEGMENT_TARGET_CHARS} characters each, "
+        f"every one with a `bridge` sentence handing over to the next.\n"
+        f"A short topic is a small, bounded thing to fix. A short module is not, "
+        f"which is why asking for the module to be longer has not worked.\n\n"
         f"=== WHAT IS MISSING, CONCRETELY ===\n"
         f"The gap is detail, not length. Do NOT lengthen the sentences you have. "
         f"Add the things a teacher cannot supply from the outcome alone:\n"

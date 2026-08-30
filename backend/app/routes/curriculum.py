@@ -19,6 +19,7 @@ from ..services import (
     auto_run,
     design_source,
     export_bundle,
+    fabrication_check,
     generation_version,
     quality_score,
     media_registry,
@@ -1138,16 +1139,71 @@ def factory_generate_notes(
             f"{allocation.minutes_each or 'the length this level teaches for'}.\n"
             f"Set 'allocated_time' to the design's own wording, verbatim: "
             f"\"{allocation.stated or 'not stated'}\".\n\n"
-            f"=== EACH MODULE MUST BE TEACHABLE ON ITS OWN ===\n"
-            f"Every module needs AT LEAST {notes_coverage.MIN_BODY_CHARS:,} "
-            f"characters across its exposition and its lesson flow — about half a "
-            f"printed page per lesson. A module of three sentences is a heading, "
-            f"and a teacher handed it still has to prepare the lesson.\n"
-            f"That depth is CONCRETE, not longer sentences: the actual words to "
-            f"say, the actual song or story, the questions in the order to ask "
-            f"them, what a child who has not understood will do and what to do "
-            f"when they do it, what to hold up and when. Restating the outcome in "
-            f"other words is padding and counts for nothing.\n"
+            f"=== WRITE EACH LESSON AS TOPICS, NOT AS ONE BLOCK ===\n"
+            f"Do NOT write the exposition as a single long passage. Break it into "
+            f"named TOPICS and add them to each module as "
+            f"`exposition_segments`, an array of objects:\n\n"
+            f'  "exposition_segments": [\n'
+            f'    {{"topic": "<what this part of the lesson covers>",\n'
+            f'     "minutes": <how long this part takes>,\n'
+            f'     "body": "<the teaching content for THIS topic only>",\n'
+            f'     "bridge": "<one sentence handing over to the next topic>"}}\n'
+            f'  ]\n\n'
+            f"HOW MANY TOPICS: as many as the lesson genuinely has, at least "
+            f"{notes_coverage.MIN_SEGMENTS}. Let the material decide — a lesson "
+            f"with five real things to teach gets five topics, and one with "
+            f"three gets three. Do not pad to reach a number and do not "
+            f"compress two real topics into one to stay under one.\n"
+            f"Each topic's `body` should be about "
+            f"{notes_coverage.SEGMENT_TARGET_CHARS} characters, and never below "
+            f"{notes_coverage.MIN_SEGMENT_CHARS}. Written this way the topics add "
+            f"up past the {notes_coverage.MIN_BODY_CHARS:,} characters a whole "
+            f"lesson needs, and each one is small enough to write properly.\n"
+            f"Keep `teacher_exposition` itself SHORT — two or three sentences "
+            f"framing the lesson. The substance belongs in the topics.\n\n"
+            f"THE TOPICS MUST JOIN UP. Each `bridge` says in one sentence how this "
+            f"topic hands over to the next: what the children now know, and what "
+            f"that sets up. The last topic's bridge points to the next lesson. A "
+            f"lesson that is four disconnected paragraphs is not a lesson — a "
+            f"teacher reads them in order and the children live through them in "
+            f"order.\n\n"
+            f"WHY IT IS BROKEN UP. One long passage comes out shallow: general "
+            f"where it should be specific, and short. A named topic of "
+            f"{notes_coverage.SEGMENT_TARGET_CHARS} characters can be written "
+            f"properly — the actual words to say, the actual song or story, the "
+            f"questions in the order to ask them, what a child who has not "
+            f"understood will do and what to do when they do it, what to hold up "
+            f"and when.\n"
+            f"Restating the outcome in other words is padding and counts for "
+            f"nothing.\n\n"
+            f"=== ANALOGIES YES, INVENTION NO ===\n"
+            f"Reach for real-life analogies and everyday examples. A "
+            f"four-year-old understands God as provider through the food on "
+            f"their own table, not through a definition. \"God cares for you "
+            f"the way your mother does when she gives you food\" is exactly "
+            f"the right kind of teaching, and this guide should be full of it.\n"
+            f"Draw those analogies from the child's own world as the register "
+            f"above describes it: self, family, home, neighbourhood, school. "
+            f"Not farms, industry, counties or national development.\n\n"
+            f"An analogy is a TEACHING DEVICE and makes no claim about the "
+            f"world. A CLAIM asserts something is true, and every claim here "
+            f"must be checkable against the KICD design shown to you. The "
+            f"difference is not stylistic — it is the whole of it:\n"
+            f"  - NEVER cite a scripture reference the design does not name. "
+            f"The design names its own; use those and no others. An invented "
+            f"chapter and verse is indistinguishable from a real one and a "
+            f"teacher will read it aloud to a class.\n"
+            f"  - NEVER state a statistic, a percentage or a survey figure. "
+            f"Nothing was retrieved for this sub-strand. A number with a source "
+            f"attached is worse than no number, because nothing downstream can "
+            f"tell it from a real one.\n"
+            f"  - NEVER attribute anything to KNBS, KALRO, NEMA, UNESCO, a "
+            f"ministry or a named report. If it is not in the design in front "
+            f"of you, it is not available to you.\n"
+            f"  - NEVER invent a page or line number. Cite only addresses you "
+            f"can see in the excerpt above.\n"
+            f"Every one of these is checked after you write, mechanically, and "
+            f"anything invented is reported against this guide.\n"
             f"Later modules must be as full as the first. A guide that starts "
             f"strong and thins out is the failure this instruction exists to "
             f"prevent — lessons 4 to 7 are taught by the same teacher on the same "
@@ -1289,6 +1345,19 @@ def factory_generate_notes(
     # Citations are resolved, not trusted. A manufactured "202:14" survives
     # every inspection short of opening page 202 — and nobody opens page 202
     # when the field is already filled in.
+    # Analogies are a teaching device and are meant to be invented. A statistic,
+    # a scripture reference or a named authority is a claim, and a model that
+    # invents one produces something indistinguishable from a real one.
+    fabrication = fabrication_check.check(
+        notes_content, source_text,
+        has_sources=bool(getattr(dossier, "citations", None)),
+    )
+    if not fabrication.clean:
+        logger.warning(
+            "Notes for %s carry %d invented claim(s).",
+            payload.sub_strand, len(fabrication.findings),
+        )
+
     citations = citation_check.verify(notes_content, source_text)
     if citations.citations and citations.verified < len(citations.citations):
         logger.warning(
@@ -1321,6 +1390,7 @@ def factory_generate_notes(
         "quality_audit": audit_report.to_dict(),
         "quality_gate": gate_result.to_dict(),
         "lesson_coverage": lesson_plan.to_dict(),
+        "fabrication": fabrication.to_dict(),
         "notes_repair": repair_report.to_dict(),
         "citations": citations.to_dict(),
         "artifact": versioned,

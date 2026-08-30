@@ -356,3 +356,228 @@ def test_a_revision_directive_is_not_a_search_query():
 
     assert all("===" not in q for q in queries)
     assert all(len(q) < 200 for q in queries)
+
+
+# ── a lesson written as topics, not as one block ────────────────────────────
+
+
+def _topic_module(number: int, segments: list[tuple[str, int, str]]):
+    return {
+        "module_number": number,
+        "title": f"Lesson {number}",
+        "duration_minutes": 30,
+        "teacher_exposition": "Two sentences framing the lesson.",
+        "lesson_flow": [],
+        "exposition_segments": [
+            {"topic": topic, "body": "x" * chars, "bridge": bridge}
+            for topic, chars, bridge in segments
+        ],
+    }
+
+
+def test_topics_of_450_clear_a_floor_the_single_instruction_never_did():
+    """Asked for 1,500 characters in one go the model produced about a
+    thousand and stopped — across a repair pass and three review cycles. Asked
+    for four topics of four hundred, it writes four topics of four hundred."""
+    guide = {"modules": [_topic_module(1, [
+        ("Saying God's name", 470, "Now they can name Him."),
+        ("The Kiswahili phrase", 460, "Next, the gestures."),
+        ("Gestures for greatness", 480, "Now they can show it."),
+        ("Putting it together", 300, "This leads into lesson 2."),
+    ])]}
+
+    body = notes_coverage._body_of(guide["modules"][0])
+    assert len(body) > notes_coverage.MIN_BODY_CHARS
+
+    coverage = notes_coverage.check(guide, _allocation(1))
+    assert coverage.thin_modules == []
+
+
+def test_a_module_written_as_one_block_is_still_reported():
+    guide = {"modules": [{"module_number": 1, "teacher_exposition": "x" * 900,
+                          "lesson_flow": []}]}
+    coverage = notes_coverage.check(guide, _allocation(1))
+
+    assert coverage.modules_without_topics == [1]
+    assert len(coverage.thin_modules) == 1
+
+
+def test_a_topic_that_is_a_heading_with_a_sentence_is_named():
+    """"Write more" is not actionable. "Topic 2 is 120 characters and should be
+    450" is."""
+    guide = {"modules": [_topic_module(1, [
+        ("Saying God's name", 470, "Now they can name Him."),
+        ("The Kiswahili phrase", 120, "Next, gestures."),
+        ("Gestures", 90, "This leads to lesson 2."),
+    ])]}
+    coverage = notes_coverage.check(guide, _allocation(1))
+
+    named = {t["topic"] for t in coverage.thin_topics}
+    assert named == {"The Kiswahili phrase", "Gestures"}
+    assert all(t["target"] == notes_coverage.SEGMENT_TARGET_CHARS
+               for t in coverage.thin_topics)
+
+
+def test_a_topic_with_no_handover_is_reported():
+    """A lesson that is four disconnected paragraphs is not a lesson — the
+    teacher reads them in order and the children live through them in order."""
+    guide = {"modules": [_topic_module(1, [
+        ("First", 460, "hands over"),
+        ("Second", 460, ""),
+        ("Third", 460, "leads to lesson 2"),
+    ])]}
+    coverage = notes_coverage.check(guide, _allocation(1))
+
+    assert [b["topic"] for b in coverage.broken_handovers] == ["Second"]
+
+
+def test_the_repair_names_the_short_topic_rather_than_the_module():
+    """A short topic is a small, bounded thing to fix. A short module is not,
+    which is why asking for the module to be longer had not worked."""
+    guide = {"modules": [_topic_module(1, [
+        ("Saying God's name", 430, "Now they can name Him."),
+        ("The Kiswahili phrase", 120, "Next, gestures."),
+    ])]}
+    coverage = notes_coverage.check(guide, _allocation(1))
+    seen: list[str] = []
+
+    def generate(config, messages, temperature=0.2):
+        seen.append(messages[-1]["content"])
+        return SimpleNamespace(content={"modules": []})
+
+    notes_repair.repair(
+        guide, coverage, generate=generate, model_config=None, base_messages=[],
+        design_block="", allocation_phrase="7 lessons", sub_strand="Our God",
+    )
+
+    assert 'topic 2 "The Kiswahili phrase" is only 120 characters' in seen[0]
+    assert "Work topic by topic" in seen[0]
+
+
+def test_the_prompt_asks_for_topics_with_handovers():
+    import inspect
+
+    import app.routes.curriculum as routes
+
+    source = inspect.getsource(routes.factory_generate_notes)
+    assert "WRITE EACH LESSON AS TOPICS, NOT AS ONE BLOCK" in source
+    assert "exposition_segments" in source
+    assert "THE TOPICS MUST JOIN UP" in source
+    # And it explains why, because a rule without a reason gets optimised away.
+    assert "One long passage comes out shallow" in source
+
+
+# ── analogies are a teaching device; claims are not ─────────────────────────
+
+
+_DESIGN_WITH_SCRIPTURE = (
+    "206:37 watch or listen to the Bible story in; Mark 10:13-16. "
+    "200:13 Proverbs 22:6 which states"
+)
+
+
+def _claim_guide(text: str) -> dict:
+    return {"modules": [{"module_number": 1, "teacher_exposition": text}]}
+
+
+def test_an_analogy_is_never_treated_as_a_claim():
+    """"God cares for you the way your mother does" is exactly the right
+    teaching of a four-year-old, and it asserts nothing about the world."""
+    from app.services.fabrication_check import check
+
+    report = check(_claim_guide(
+        "Say: 'God loves you just like your mother loves you when she gives "
+        "you food.' Imagine a time you felt safe. Think of the way rain helps "
+        "plants grow. Just like when you share 2 out of 3 sweets with a friend."
+    ), _DESIGN_WITH_SCRIPTURE)
+
+    assert report.clean, [f.to_dict() for f in report.findings]
+    assert report.score == 100
+
+
+def test_a_scripture_the_design_never_names_is_caught():
+    """A teacher will read an invented chapter and verse aloud to a class."""
+    from app.services.fabrication_check import check
+
+    report = check(_claim_guide("Read John 3:16 to the children."), _DESIGN_WITH_SCRIPTURE)
+
+    assert not report.clean
+    kinds = {f.kind for f in report.findings}
+    assert kinds == {"invented_scripture"}
+    # And it says what the design DOES carry, so the fix is obvious.
+    assert "Mark 10:13" in report.findings[0].text
+
+
+def test_the_designs_own_scripture_passes():
+    from app.services.fabrication_check import check
+
+    report = check(
+        _claim_guide("Watch or listen to the Bible story in Mark 10:13-16."),
+        _DESIGN_WITH_SCRIPTURE,
+    )
+    assert report.clean
+
+
+def test_a_leaked_statistic_is_caught():
+    """Every statistic this pipeline has produced came from the dossier's own
+    unverified figures."""
+    from app.services.fabrication_check import check
+
+    report = check(
+        _claim_guide("Studies show 75% of Kenyan children pray daily."),
+        _DESIGN_WITH_SCRIPTURE,
+    )
+    assert {f.kind for f in report.findings} == {"invented_statistic"}
+
+
+def test_an_authority_nobody_retrieved_is_caught():
+    from app.services.fabrication_check import check
+
+    report = check(
+        _claim_guide("According to the KNBS 2023 Survey, engagement is high."),
+        _DESIGN_WITH_SCRIPTURE, has_sources=False,
+    )
+    assert {f.kind for f in report.findings} == {"invented_authority"}
+
+
+def test_invention_counts_against_the_measured_score():
+    from app.services.quality_score import WEIGHTS, score
+
+    assert round(sum(WEIGHTS.values()), 3) == 1.0
+
+    scored = score({
+        "grounded": True, "source_material_length": 31689,
+        "fabrication": {"checked_chars": 5000, "score": 50.0,
+                        "findings": [{"kind": "invented_scripture"},
+                                     {"kind": "invented_statistic"}]},
+    }, "notes")
+
+    invention = scored.scores["no_invention"] if hasattr(scored, "scores") else None
+    assert scored.weakest == "no_invention"
+    assert invention is None or invention.value == 50.0
+
+
+def test_the_prompt_draws_the_line_between_analogy_and_claim():
+    import inspect
+
+    import app.routes.curriculum as routes
+
+    source = inspect.getsource(routes.factory_generate_notes)
+    assert "ANALOGIES YES, INVENTION NO" in source
+    assert "NEVER cite a scripture reference the design does not name" in source
+    assert "NEVER state a statistic" in source
+    # Topic count follows the material rather than a fixed number.
+    assert "Let the material decide" in source
+
+
+def test_every_reviewer_is_told_to_check_the_claims():
+    from app.services import review_layers
+
+    artifact = type("A", (), {"kind": "notes", "grade": "grade-pp1",
+                              "subject": "CRE", "strand_name": "Creation",
+                              "sub_strand_name": "Our God", "version": 1,
+                              "content": {}})()
+    for layer in (1, 2, 3):
+        system = review_layers.build_messages(artifact, layer)[0]["content"]
+        assert "CHECK EVERY CLAIM AGAINST THE DESIGN" in system, layer
+        assert "survives inspection" in system, layer

@@ -82,6 +82,7 @@ def test_confidence_reports_how_much_of_the_scheme_applied():
         "citations": {"total": 3, "verified": 3, "percentage": 100},
         "sub_strands": [{"assessment_rubrics": [{"rubric_source": "design"}]}],
         "quality_gate": {"overall_score": 90, "passed": True},
+        "fabrication": {"checked_chars": 4000, "score": 100.0, "findings": []},
     }, "notes")
     assert full.confidence == 1.0
 

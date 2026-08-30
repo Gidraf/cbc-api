@@ -406,6 +406,22 @@ export function QueuePanel({
                     .map((j) => (
                       <li key={j.job_id}>
                         {KIND_LABEL[j.kind] || j.kind} · {j.sub_strand}: {j.error}
+                        {j.failed_under_build && health.data &&
+                          j.failed_under_build !== health.data.generator && (
+                            <div style={{ color: "var(--warn, var(--ink-3))" }}>
+                              This failed under build{" "}
+                              <code>{j.failed_under_build}</code>, and the API is
+                              now running <code>{health.data.generator}</code> —
+                              so it predates the code that is deployed. Retry it.
+                            </div>
+                          )}
+                        {j.failed_under_build && health.data &&
+                          j.failed_under_build === health.data.generator && (
+                            <div style={{ color: "var(--danger)" }}>
+                              This failed under the build that is running now, so
+                              it is a live fault rather than a stale row.
+                            </div>
+                          )}
                       </li>
                     ))}
                 </ul>

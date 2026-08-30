@@ -29,9 +29,13 @@ logger = logging.getLogger("cbc-quality-score")
 WEIGHTS: dict[str, float] = {
     "grounded": 0.20,        # read from the design at all
     "lesson_coverage": 0.25, # every funded lesson planned, none of them thin
-    "citations": 0.20,       # every page:line reference resolves
-    "rubrics": 0.15,         # rubrics read from KICD rather than derived
-    "gate": 0.20,            # the local reviewer and approvers
+    "citations": 0.15,       # every page:line reference resolves
+    "rubrics": 0.10,         # rubrics read from KICD rather than derived
+    "gate": 0.15,            # the local reviewer and approvers
+    # Invented claims. Weighted like the gate because a fabricated scripture
+    # reference in a religious education guide is not a small defect, and it is
+    # the one failure a reader cannot detect by reading.
+    "no_invention": 0.15,
 }
 
 
@@ -166,6 +170,17 @@ def score(result: dict[str, Any], kind: str = "") -> ItemScore:
             f"the design rather than written from their outcomes")
     else:
         add("rubrics", None, "no sub-strands in this result")
+
+    # ── claims the design does not support ──────────────────────────────────
+    fabrication = result.get("fabrication")
+    if isinstance(fabrication, dict) and fabrication.get("checked_chars"):
+        findings = fabrication.get("findings") or []
+        add("no_invention", _pct(fabrication.get("score")),
+            "nothing invented" if not findings else
+            f"{len(findings)} invented claim(s): "
+            + "; ".join(str(f.get("kind")) for f in findings[:3]))
+    else:
+        add("no_invention", None, "not checked for this station")
 
     # ── the local reviewer and both approvers ───────────────────────────────
     gate = result.get("quality_gate")

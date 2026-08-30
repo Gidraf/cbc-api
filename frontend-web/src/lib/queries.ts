@@ -633,6 +633,9 @@ export type QueueStatus = {
     position?: number;
     /** Which step of the chain, for a pipeline job. */
     step?: string;
+    /** The build that produced a failure. If it differs from the running
+     *  build, the failure predates the code now deployed. */
+    failed_under_build?: string;
   }[];
 };
 

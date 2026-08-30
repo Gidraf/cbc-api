@@ -392,15 +392,25 @@ def _execute(job: dict[str, Any]) -> dict[str, Any]:
         status = QUEUED if attempts < MAX_ATTEMPTS else FAILED
         logger.error("Job %s (%s) failed on attempt %d: %s", job_id, kind, attempts, exc)
         run_meter.stop()
+        # Which build produced this failure. Without it a failure from before a
+        # fix and one from after are the same red line in the console, and the
+        # only way to tell them apart is to remember when you restarted — which
+        # nobody does. Three rounds went on exactly that ambiguity.
+        from .generation_version import VERSION as _BUILD
+
         # A job that failed halfway still spent whatever it spent. Recording
         # only successes makes the bill look smaller than the statement.
         execute(
             "UPDATE jobs SET status = :status, error = :error, "
+            "result = CAST(:failure AS jsonb), "
             "llm_calls = llm_calls + :calls, total_tokens = total_tokens + :tokens, "
             "cost_usd = cost_usd + :cost, "
             "finished_at = CASE WHEN :status = 'failed' THEN NOW() ELSE NULL END "
             "WHERE job_id = :job_id",
             {"job_id": job_id, "status": status, "error": str(exc)[:1000],
+             "failure": to_json({"failed_under_build": _BUILD,
+                                 "failed_at": _now(),
+                                 "error_type": type(exc).__name__}),
              "calls": meter.calls, "tokens": meter.total_tokens,
              "cost": round(meter.cost_usd, 6)},
         )
@@ -556,7 +566,9 @@ def status(
                -- Which step of the chain a pipeline job is on. Without it every
                -- stage of a full run reads as "pipeline" and the operator
                -- cannot tell reading the design from writing the questions.
-               (payload->'steps'->>COALESCE((payload->>'index')::int, 0)) AS step
+               (payload->'steps'->>COALESCE((payload->>'index')::int, 0)) AS step,
+               -- Which build produced a failure, so a stale one is visibly stale.
+               (result->>'failed_under_build') AS failed_under_build
         FROM jobs WHERE {clause}
         ORDER BY created_at DESC LIMIT :limit
         """,
