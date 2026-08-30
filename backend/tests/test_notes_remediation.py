@@ -577,3 +577,42 @@ def test_each_pass_records_its_own_cost():
     model_passes = [p for p in report.passes if p.rung != "repair"]
     assert model_passes and all(p.calls >= 1 for p in model_passes)
     assert report.calls == sum(p.calls for p in report.passes)
+
+
+# ── the console has to show the work that was filed ─────────────────────────
+
+
+def _factory() -> str:
+    import pathlib
+
+    return (pathlib.Path(__file__).resolve().parents[2]
+            / "frontend-web/src/views/ContentFactory.tsx").read_text()
+
+
+def test_a_finished_job_refreshes_the_version_list():
+    """The station files a version every time it generates, and the list was
+    fetched before the run — so it held the empty result from before and the
+    panel said "nothing filed yet" about work that had just been filed. There
+    was then no way to review or approve it without a full reload."""
+    source = _factory()
+    effect = source[source.index("A finished job's result is read back"):]
+    effect = effect[: effect.index("}, [job.data")]
+
+    assert 'invalidateQueries({ queryKey: ["artifacts"] })' in effect
+    assert 'invalidateQueries({ queryKey: ["artifact-versions"] })' in effect
+
+
+def test_the_empty_state_is_not_shown_over_a_list_that_is_refreshing():
+    source = _factory()
+
+    assert "artifacts.isFetching && !rows.length" in source
+
+
+def test_the_run_log_is_shown_as_a_timeline_not_a_numbered_list():
+    """Every line opened with an index nobody needs, and the elapsed time — the
+    one number that says whether a run is moving — sat behind it."""
+    source = _factory()
+
+    assert "function RunTimeline(" in source
+    assert "<RunTimeline steps={liveSteps}" in source, "not used while running"
+    assert "<RunTimeline steps={steps}" in source, "not used once finished"

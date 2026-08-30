@@ -110,7 +110,12 @@ function StationVersions({
 
   const active = chosen || rows[0]?.artifact_id || "";
 
-  if (artifacts.isLoading) return <LoadingBlock rows={3} label="Loading versions" />;
+  // `isFetching`, not just `isLoading`: a refetch after a run finishes keeps
+  // the previous (empty) rows in place, and showing "nothing filed yet" over a
+  // list that is being refreshed is how a version that had just been filed
+  // looked like a version that had not.
+  if (artifacts.isLoading || (artifacts.isFetching && !rows.length))
+    return <LoadingBlock rows={3} label="Loading versions" />;
   if (!rows.length) {
     return (
       <EmptyState
@@ -479,7 +484,14 @@ export function ContentFactory() {
     if (watchedStation === "notes") setNotes(data.result?.notes ?? data.result);
     qc.invalidateQueries({ queryKey: ["progress"] });
     qc.invalidateQueries({ queryKey: ["bundle"] });
-  }, [job.data, watchedStation, qc]);
+    // The station files a version every time it generates, and this list was
+    // fetched before the run — so it held the empty result from before and the
+    // panel said "nothing filed yet" about work that had just been filed.
+    // There was then no way to review or approve it without a full reload.
+    qc.invalidateQueries({ queryKey: ["artifacts"] });
+    qc.invalidateQueries({ queryKey: ["artifact-versions"] });
+    qc.invalidateQueries({ queryKey: ["coverage"] });
+  }, [job.data?.job_id, job.data?.status, watchedStation, qc]);
 
   // Changing sub-strand abandons the job that belonged to the old one, rather
   // than leaving the console showing another sub-strand's output under this
@@ -881,38 +893,9 @@ export function ContentFactory() {
                       whether a run is thirty seconds in or wedged — and hid the
                       checks and repairs happening inside it. */}
                   {watchedStation === station.id && jobRunning && liveSteps.length > 0 && (
-                    <ol
-                      style={{
-                        margin: "var(--s2) 0 0",
-                        paddingLeft: "1.1rem",
-                        fontSize: "var(--text-sm)",
-                        color: "var(--ink-2)",
-                      }}
-                    >
-                      {liveSteps.map((s: any, i: number) => (
-                        <li key={i} style={{ marginBottom: "3px" }}>
-                          <span className="mono" style={{ color: "var(--ink-3)" }}>
-                            {s.at}s
-                          </span>{" "}
-                          <strong
-                            style={{
-                              color:
-                                s.status === "fail"
-                                  ? "var(--danger)"
-                                  : s.status === "warn"
-                                  ? "var(--warn)"
-                                  : "var(--ink-1)",
-                            }}
-                          >
-                            {s.step}
-                          </strong>
-                          {s.detail ? ` — ${s.detail}` : ""}
-                          {i === liveSteps.length - 1 && (
-                            <span style={{ color: "var(--ink-3)" }}> …</span>
-                          )}
-                        </li>
-                      ))}
-                    </ol>
+                    <div style={{ marginTop: "var(--s2)" }}>
+                      <RunTimeline steps={liveSteps} remediation={null} live />
+                    </div>
                   )}
 
                   {watchedStation === station.id && job.data?.status === "failed" && (
@@ -1067,6 +1050,139 @@ export function ContentFactory() {
  * per-metric scores, risk flags and both auditors' reasoning; the previous
  * console discarded all of it and showed a spinner then a success message.
  */
+/**
+ * What the run actually did, as a timeline rather than a numbered list.
+ *
+ * The steps were rendered as an <ol>, so every line opened with an index
+ * nobody needs and the elapsed time — the one number that says whether a run
+ * is moving — sat behind it. The interesting lines are the ones that changed
+ * something: repairs, rewrites, regenerations. Those are marked; the rest
+ * recede.
+ */
+function RunTimeline({
+  steps,
+  remediation,
+  live = false,
+}: {
+  steps: any[];
+  remediation: any;
+  /** Still running: keep it open, and say which step is in flight. */
+  live?: boolean;
+}) {
+  const total = steps.length ? steps[steps.length - 1].at : 0;
+  const troubled = steps.filter((s) => s.status === "warn" || s.status === "fail").length;
+
+  const dot = (status: string) =>
+    status === "fail" ? "var(--danger)" : status === "warn" ? "var(--warn)" : "var(--ok)";
+
+  return (
+    <details
+      open={live || troubled > 0}
+      style={{
+        border: "1px solid var(--line)",
+        borderRadius: "var(--radius-sm)",
+        padding: "var(--s3)",
+        background: "var(--surface-2)",
+      }}
+    >
+      <summary
+        style={{
+          cursor: "pointer",
+          fontSize: "var(--text-sm)",
+          fontWeight: 550,
+          display: "flex",
+          alignItems: "center",
+          gap: "var(--s2)",
+          flexWrap: "wrap",
+        }}
+      >
+        <span>{live ? "What this run is doing" : "What this run did"}</span>
+        <span className="mono" style={{ color: "var(--ink-3)", fontWeight: 400 }}>
+          {steps.length} steps · {total}s
+        </span>
+        {remediation?.attempted && (
+          <>
+            <Badge tone={remediation.clean ? "ok" : "warn"}>
+              self-check {remediation.score_before} → {remediation.score_after}
+            </Badge>
+            <span style={{ color: "var(--ink-3)", fontWeight: 400 }}>
+              {remediation.passes_run} pass{remediation.passes_run === 1 ? "" : "es"}
+              {remediation.rewrites > 0 &&
+                `, ${remediation.rewrites} rewrite${remediation.rewrites === 1 ? "" : "s"}`}
+              {remediation.regenerations > 0 &&
+                `, ${remediation.regenerations} full regeneration${
+                  remediation.regenerations === 1 ? "" : "s"
+                }`}
+              {remediation.repair_calls > 0 &&
+                ` · ${remediation.repair_calls} extra call${
+                  remediation.repair_calls === 1 ? "" : "s"
+                }, $${Number(remediation.repair_cost_usd).toFixed(4)}`}
+            </span>
+          </>
+        )}
+      </summary>
+
+      <div style={{ marginTop: "var(--s3)", display: "grid", gap: "2px" }}>
+        {steps.map((s: any, i: number) => (
+          <div
+            key={i}
+            style={{
+              display: "grid",
+              gridTemplateColumns: "3.5rem 0.6rem 1fr",
+              gap: "var(--s2)",
+              alignItems: "baseline",
+              fontSize: "var(--text-sm)",
+              padding: "3px 0",
+              borderTop: i === 0 ? "none" : "1px solid var(--line-soft, transparent)",
+            }}
+          >
+            <span
+              className="mono"
+              style={{ color: "var(--ink-3)", textAlign: "right", fontSize: "0.8em" }}
+            >
+              {s.at}s
+            </span>
+            <span
+              aria-hidden
+              style={{
+                width: "6px",
+                height: "6px",
+                borderRadius: "50%",
+                background: dot(s.status),
+                display: "inline-block",
+                transform: "translateY(-2px)",
+              }}
+            />
+            <span style={{ color: "var(--ink-2)" }}>
+              <strong style={{ color: "var(--ink-1)" }}>{s.step}</strong>
+              {s.detail ? ` — ${s.detail}` : ""}
+              {live && i === steps.length - 1 && (
+                <span style={{ color: "var(--ink-3)" }}> …</span>
+              )}
+            </span>
+          </div>
+        ))}
+      </div>
+
+      {remediation?.outstanding?.length > 0 && (
+        <p style={{ margin: "var(--s3) 0 0", fontSize: "var(--text-sm)", color: "var(--warn)" }}>
+          {/* Say what a rerun would and would not change. "2 findings still
+              stand" left nothing to do but press the button again — which costs
+              a whole generation to learn what the pipeline already knew. */}
+          {remediation.regenerations > 0
+            ? `The whole guide was written again ${remediation.regenerations} time${
+                remediation.regenerations === 1 ? "" : "s"
+              } and ${remediation.outstanding.length} finding(s) survived every attempt. Rerunning is unlikely to help — this sub-strand may not fund this many distinct lessons.`
+            : `${remediation.outstanding.length} finding(s) still stand (${String(
+                remediation.stopped_because
+              ).replace(/_/g, " ")}).`}
+        </p>
+      )}
+    </details>
+  );
+}
+
+
 function StationResult({ result }: { result: any }) {
   const gate = result?.quality_gate;
   const rejected: any[] = result?.rejected || [];
@@ -1114,75 +1230,7 @@ function StationResult({ result }: { result: any }) {
         </div>
       )}
 
-      {steps.length > 0 && (
-        <details open>
-          <summary style={{ cursor: "pointer", fontSize: "var(--text-sm)", fontWeight: 550 }}>
-            What this run did{" "}
-            {remediation?.attempted && (
-              <>
-                <Badge tone={remediation.clean ? "ok" : "warn"}>
-                  self-check {remediation.score_before} → {remediation.score_after}
-                </Badge>{" "}
-                <span style={{ color: "var(--ink-3)", fontWeight: 400 }}>
-                  {remediation.passes_run} pass
-                  {remediation.passes_run === 1 ? "" : "es"}
-                  {remediation.rewrites > 0 && `, ${remediation.rewrites} rewrite${remediation.rewrites === 1 ? "" : "s"}`}
-                  {remediation.regenerations > 0 &&
-                    `, ${remediation.regenerations} full regeneration${remediation.regenerations === 1 ? "" : "s"}`}
-                  {remediation.repair_calls > 0 &&
-                    ` · ${remediation.repair_calls} extra call${remediation.repair_calls === 1 ? "" : "s"}, $${Number(
-                      remediation.repair_cost_usd
-                    ).toFixed(4)}`}
-                </span>
-              </>
-            )}
-          </summary>
-          <ol
-            style={{
-              margin: "var(--s2) 0 0",
-              paddingLeft: "1.1rem",
-              fontSize: "var(--text-sm)",
-              color: "var(--ink-2)",
-            }}
-          >
-            {steps.map((s: any, i: number) => (
-              <li key={i} style={{ marginBottom: "3px" }}>
-                <span className="mono" style={{ color: "var(--ink-3)" }}>
-                  {String(s.at).padStart(5, " ")}s
-                </span>{" "}
-                <strong
-                  style={{
-                    color:
-                      s.status === "fail"
-                        ? "var(--danger)"
-                        : s.status === "warn"
-                        ? "var(--warn)"
-                        : "var(--ink-1)",
-                  }}
-                >
-                  {s.step}
-                </strong>
-                {s.detail ? ` — ${s.detail}` : ""}
-              </li>
-            ))}
-          </ol>
-          {remediation?.outstanding?.length > 0 && (
-            <p style={{ margin: "var(--s2) 0 0", fontSize: "var(--text-sm)", color: "var(--warn)" }}>
-              {/* Say what a rerun would and would not change. "2 findings still
-                  stand" left nothing to do but press the button again — which
-                  costs a whole generation to learn what the pipeline already
-                  knew. */}
-              {remediation.regenerations > 0
-                ? `The whole guide was written again ${remediation.regenerations} time${
-                    remediation.regenerations === 1 ? "" : "s"
-                  } and ${remediation.outstanding.length} finding(s) survived every attempt. Rerunning is unlikely to help — this sub-strand may not fund this many distinct lessons.`
-                : `${remediation.outstanding.length} finding(s) still stand (${String(
-                    remediation.stopped_because
-                  ).replace(/_/g, " ")}).`}
-            </p>
-          )}
-        </details>
-      )}
+      {steps.length > 0 && <RunTimeline steps={steps} remediation={remediation} />}
 
       {contradictions.length > 0 && (
         <div
