@@ -1119,9 +1119,22 @@ function StationResult({ result }: { result: any }) {
           <summary style={{ cursor: "pointer", fontSize: "var(--text-sm)", fontWeight: 550 }}>
             What this run did{" "}
             {remediation?.attempted && (
-              <Badge tone={remediation.clean ? "ok" : "warn"}>
-                self-check {remediation.score_before} → {remediation.score_after}
-              </Badge>
+              <>
+                <Badge tone={remediation.clean ? "ok" : "warn"}>
+                  self-check {remediation.score_before} → {remediation.score_after}
+                </Badge>{" "}
+                <span style={{ color: "var(--ink-3)", fontWeight: 400 }}>
+                  {remediation.passes_run} pass
+                  {remediation.passes_run === 1 ? "" : "es"}
+                  {remediation.rewrites > 0 && `, ${remediation.rewrites} rewrite${remediation.rewrites === 1 ? "" : "s"}`}
+                  {remediation.regenerations > 0 &&
+                    `, ${remediation.regenerations} full regeneration${remediation.regenerations === 1 ? "" : "s"}`}
+                  {remediation.repair_calls > 0 &&
+                    ` · ${remediation.repair_calls} extra call${remediation.repair_calls === 1 ? "" : "s"}, $${Number(
+                      remediation.repair_cost_usd
+                    ).toFixed(4)}`}
+                </span>
+              </>
             )}
           </summary>
           <ol
@@ -1155,9 +1168,17 @@ function StationResult({ result }: { result: any }) {
           </ol>
           {remediation?.outstanding?.length > 0 && (
             <p style={{ margin: "var(--s2) 0 0", fontSize: "var(--text-sm)", color: "var(--warn)" }}>
-              Stopped because: {String(remediation.stopped_because).replace(/_/g, " ")}.
-              {" "}
-              {remediation.outstanding.length} finding(s) still stand.
+              {/* Say what a rerun would and would not change. "2 findings still
+                  stand" left nothing to do but press the button again — which
+                  costs a whole generation to learn what the pipeline already
+                  knew. */}
+              {remediation.regenerations > 0
+                ? `The whole guide was written again ${remediation.regenerations} time${
+                    remediation.regenerations === 1 ? "" : "s"
+                  } and ${remediation.outstanding.length} finding(s) survived every attempt. Rerunning is unlikely to help — this sub-strand may not fund this many distinct lessons.`
+                : `${remediation.outstanding.length} finding(s) still stand (${String(
+                    remediation.stopped_because
+                  ).replace(/_/g, " ")}).`}
             </p>
           )}
         </details>

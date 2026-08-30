@@ -1296,6 +1296,16 @@ def factory_generate_notes(
         lesson_plan = notes_coverage.check(
             notes_content, allocation, slos, experiences=design_experiences
         )
+        run_log.step(
+            "Self-check settled",
+            f"{remediation.score_before}/100 → {remediation.score_after}/100 "
+            f"after {len(remediation.passes)} pass(es) "
+            f"({remediation.rewrites} rewrite(s), "
+            f"{remediation.regenerations} regeneration(s), "
+            f"{remediation.calls} extra model call(s), "
+            f"${remediation.cost_usd:.4f})",
+            "ok" if remediation.clean else "warn",
+        )
 
     audit_report = web_research_agent.perform_quality_audit(notes_content, "notes", dossier)
 

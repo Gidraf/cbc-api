@@ -19,6 +19,7 @@ the check is a comparison.
 """
 from __future__ import annotations
 
+import difflib
 import logging
 import re
 from typing import Any
@@ -32,6 +33,24 @@ REQUIRED_MODULE_FIELDS = (
     "slos_covered", "formative_check", "differentiation", "key_questions",
     "resources_needed", "common_misconceptions", "citations",
 )
+
+
+# How close two statements of an outcome have to be to count as the same one.
+# The model paraphrases — "Practising short prayers" for "practice saying short
+# prayers" — and exact matching made the checker and the repair disagree about
+# what "the same outcome" means, so the repair created findings the checker
+# then reported.
+SLO_MATCH = 0.60
+
+
+def same_outcome(a: str, b: str) -> bool:
+    """Whether two statements name the same learning outcome."""
+    left, right = _norm(a), _norm(b)
+    if not left or not right:
+        return False
+    if left == right or left in right or right in left:
+        return True
+    return difflib.SequenceMatcher(None, left, right).ratio() >= SLO_MATCH
 
 
 def _norm(text: str) -> str:
@@ -69,8 +88,8 @@ def check_slo_map(notes: dict[str, Any]) -> list[str]:
                 "carries which outcome."]
 
     by_number = {_number(m, i): m for i, m in enumerate(modules)}
-    covered: dict[int, set[str]] = {
-        n: {_norm(s) for s in (m.get("slos_covered") or [])}
+    covered: dict[int, list[str]] = {
+        n: [str(s) for s in (m.get("slos_covered") or [])]
         for n, m in by_number.items()
     }
 
@@ -93,7 +112,8 @@ def check_slo_map(notes: dict[str, Any]) -> list[str]:
                         f"`slo_map` says \"{slo}\" is {field.replace('_', ' ')} "
                         f"lesson {number}, and there is no lesson {number}.")
                     continue
-                if key and key not in covered[number]:
+                if key and not any(same_outcome(slo, c)
+                                   for c in covered[number]):
                     findings.append(
                         f"`slo_map` says \"{slo}\" is "
                         f"{field.replace('_', ' ')} lesson {number}, but "

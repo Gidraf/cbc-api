@@ -94,13 +94,50 @@ def test_the_derived_map_assesses_where_the_outcome_was_taught_last():
     assert love["assessed_in"] == [4]
 
 
-def test_an_outcome_no_lesson_claims_is_left_out_rather_than_invented():
+def test_an_outcome_no_lesson_claims_is_placed_rather_than_dropped():
+    """Dropping it produced a map missing a funded outcome — and when every
+    lesson paraphrased, an EMPTY map, which the checker then reported as "the
+    guide has no slo_map": a finding the repair had itself caused."""
     guide = _guide()
     for module in guide["modules"]:
         module["slos_covered"] = [QUALITIES]
     notes_remediation.rebuild_slo_map(guide, SLOS)
 
-    assert [r["slo"] for r in guide["slo_map"]] == [QUALITIES]
+    assert {r["slo"] for r in guide["slo_map"]} == set(SLOS)
+
+
+def test_a_paraphrased_outcome_still_matches_its_design_slo():
+    """The model writes "Practising short prayers" for "practice saying short
+    prayers". Exact matching dropped that lesson out of the map."""
+    guide = _guide()
+    guide["modules"][1]["slos_covered"] = ["Practising short prayers"]
+    notes_remediation.rebuild_slo_map(guide, SLOS)
+    row = next(r for r in guide["slo_map"] if r["slo"] == PRAYERS)
+
+    assert row["taught_in"] == [2]
+
+
+def test_the_checker_and_the_repair_agree_on_what_the_same_outcome_means():
+    """Two definitions is how a repair comes to create findings the checker
+    then reports."""
+    from app.services import notes_integrity
+
+    guide = _guide()
+    guide["modules"][1]["slos_covered"] = ["Practising short prayers"]
+    notes_remediation.rebuild_slo_map(guide, SLOS)
+
+    assert notes_integrity.check_slo_map(guide) == []
+
+
+def test_a_placed_outcome_is_written_onto_the_lesson_too():
+    """Otherwise the map says lesson 3 carries it and lesson 3 does not."""
+    guide = _guide()
+    for module in guide["modules"]:
+        module["slos_covered"] = [QUALITIES]
+    notes_remediation.rebuild_slo_map(guide, SLOS)
+
+    everything = [s for m in guide["modules"] for s in m["slos_covered"]]
+    assert PRAYERS in everything and LOVE in everything
 
 
 def test_a_map_that_already_matches_is_left_alone():
@@ -146,6 +183,9 @@ def test_the_free_repairs_run_even_with_no_generator():
     assert report.attempted
     assert report.score_after > report.score_before
     assert report.stopped_because == "no_generator"
+    # The free repairs survive the stop — they are the whole point of running
+    # them before anything is asked of a model.
+    assert guide["slo_map"]
     assert any("Rebuilt `slo_map`" in d
                for p in report.passes for d in p.deterministic)
 
@@ -244,13 +284,15 @@ def test_a_rewrite_that_omits_a_field_does_not_delete_it():
     assert guide["modules"][3]["differentiation"]
 
 
-def test_a_pass_that_does_not_help_stops_the_loop():
-    """A model that has not fixed this in one attempt will not fix it in five,
-    and each attempt is paid for."""
+def test_a_targeted_rewrite_that_does_not_help_escalates_rather_than_stopping():
+    """"2 findings still stand" leaves an operator nothing to do but press the
+    button again, which costs a whole generation to learn what the pipeline
+    already knew. A rewrite that cannot fix a lesson is evidence about the
+    rewrite, not about the guide."""
     calls: list = []
 
     def useless(model_config, messages, **kw):
-        calls.append(1)
+        calls.append(messages[-1]["content"])
         return type("R", (), {"content": {}})()
 
     _, report = notes_remediation.run(
@@ -258,8 +300,47 @@ def test_a_pass_that_does_not_help_stops_the_loop():
         generate=useless, model_config=object(), base_messages=[],
         sub_strand="Our God", allocation_phrase="7 lessons")
 
-    assert len(calls) == 1
+    assert any("WRITE THIS GUIDE AGAIN" in c for c in calls), "never escalated"
+    assert report.regenerations >= 1
     assert report.stopped_because == "no_improvement"
+
+
+def test_the_ladder_is_bounded():
+    """"Even if generation is expensive" is not "without limit"."""
+    calls: list = []
+
+    def useless(model_config, messages, **kw):
+        calls.append(1)
+        return type("R", (), {"content": {}})()
+
+    notes_remediation.run(
+        _guide(), design_experiences=DESIGN, slos=SLOS,
+        generate=useless, model_config=object(), base_messages=[],
+        sub_strand="Our God", allocation_phrase="7 lessons")
+
+    assert len(calls) <= notes_remediation.MAX_PASSES
+
+
+def test_the_best_version_is_kept_not_the_last():
+    """A pass that made the guide worse used to be the version that got
+    saved."""
+    def worse(model_config, messages, **kw):
+        return type("R", (), {"content": {"modules": [
+            {"module_number": n, "title": f"Lesson {n}: The Same Lesson",
+             "slos_covered": [LOVE], "learning_experiences_used": [],
+             "exposition_segments": [
+                 {"topic": "Understanding God's Love", "minutes": 10,
+                  "body": "Identical body. " * 30}]}
+            for n in range(1, 5)]}})()
+
+    guide, report = notes_remediation.run(
+        _guide(), design_experiences=DESIGN, slos=SLOS,
+        generate=worse, model_config=object(), base_messages=[],
+        sub_strand="Our God", allocation_phrase="7 lessons")
+
+    titles = [m["title"] for m in guide["modules"]]
+    assert "Lesson 1: Introducing God" in titles, "the worse version was kept"
+    assert report.score_after >= report.score_before
 
 
 def test_a_generator_that_raises_does_not_lose_the_guide():
@@ -426,3 +507,73 @@ def test_the_station_accepts_a_run_id_and_publishes_under_it():
     source = inspect.getsource(curriculum.factory_generate_notes)
     assert "_run_log.start(run_id=payload.run_id)" in source
     assert hasattr(curriculum, "factory_progress")
+
+
+def test_a_short_regeneration_is_refused():
+    """The design funds a fixed number of lessons, and losing four of them to
+    fix a repeated one is not a repair."""
+    guide = _guide()
+    landed = notes_remediation._replace(
+        guide, {"modules": [{"module_number": 1, "title": "Only one"}]})
+
+    assert landed == []
+    assert len(guide["modules"]) == 4
+
+
+def test_a_full_regeneration_replaces_rather_than_merges():
+    """The point of escalating is that the previous PLAN was the defect, so
+    merging the old lessons back would carry it forward."""
+    guide = _guide()
+    fresh = [{"module_number": n, "title": f"Lesson {n}: Fresh",
+              "slos_covered": [QUALITIES]} for n in range(1, 5)]
+    landed = notes_remediation._replace(guide, {"modules": fresh, "gaps": ["…"]})
+
+    assert landed == [1, 2, 3, 4]
+    assert all("Fresh" in m["title"] for m in guide["modules"])
+    assert guide["gaps"] == ["…"]
+
+
+# ── what the run cost, and how many attempts it took ────────────────────────
+
+
+def test_the_report_says_how_many_attempts_and_of_what_kind():
+    calls: list = []
+
+    def useless(model_config, messages, **kw):
+        calls.append(1)
+        return type("R", (), {"content": {}})()
+
+    _, report = notes_remediation.run(
+        _guide(), design_experiences=DESIGN, slos=SLOS,
+        generate=useless, model_config=object(), base_messages=[],
+        sub_strand="Our God", allocation_phrase="7 lessons")
+
+    body = report.to_dict()
+    assert body["passes_run"] >= 2
+    assert body["rewrites"] >= 1
+    assert body["regenerations"] >= 1
+    assert "repair_cost_usd" in body and "repair_calls" in body
+
+
+def test_each_pass_records_its_own_cost():
+    from app.services import run_meter
+
+    class Usage:
+        prompt_tokens, completion_tokens, total_tokens = 1000, 500, 1500
+
+    def spending(model_config, messages, **kw):
+        run_meter.add(Usage(), "gpt-4o-mini", "openai")
+        return type("R", (), {"content": {}})()
+
+    run_meter.start("test-job")
+    try:
+        _, report = notes_remediation.run(
+            _guide(), design_experiences=DESIGN, slos=SLOS,
+            generate=spending, model_config=object(), base_messages=[],
+            sub_strand="Our God", allocation_phrase="7 lessons")
+    finally:
+        run_meter.stop()
+
+    model_passes = [p for p in report.passes if p.rung != "repair"]
+    assert model_passes and all(p.calls >= 1 for p in model_passes)
+    assert report.calls == sum(p.calls for p in report.passes)

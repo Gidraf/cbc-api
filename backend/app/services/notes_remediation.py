@@ -26,6 +26,8 @@ attempts will not fix it in five, and each attempt is paid for.
 """
 from __future__ import annotations
 
+import copy
+import difflib
 import logging
 import re
 from dataclasses import dataclass, field
@@ -35,9 +37,15 @@ from . import notes_integrity, redundancy_check, run_log
 
 logger = logging.getLogger("cbc-notes-remediation")
 
-MAX_PASSES = 2
+# The ladder. Cheap first, and it does not stop at the cheap rungs: an operator
+# who is handed "2 findings still stand" has nothing to do but press the button
+# again, which costs a whole generation to learn what the pipeline already knew.
+TARGETED_PASSES = 2   # rewrite only the lessons that failed
+MAX_PASSES = 4        # then regenerate the whole guide, twice if it helps
 
-# A pass has to clear this much of the outstanding score to be worth another.
+# A pass has to clear this much to be worth another AT THE SAME RUNG. Failing
+# to improve escalates rather than stopping — a targeted rewrite that cannot
+# fix a lesson is evidence about the rewrite, not about the guide.
 MIN_GAIN = 3.0
 
 
@@ -46,15 +54,20 @@ class Pass:
     number: int
     before: float
     after: float
+    rung: str = "repair"      # repair | rewrite | regenerate
     deterministic: list[str] = field(default_factory=list)
     asked_of_model: list[int] = field(default_factory=list)
     findings: list[str] = field(default_factory=list)
+    calls: int = 0
+    cost_usd: float = 0.0
 
     def to_dict(self) -> dict[str, Any]:
-        return {"pass": self.number, "before": self.before, "after": self.after,
+        return {"pass": self.number, "rung": self.rung,
+                "before": self.before, "after": self.after,
                 "deterministic": self.deterministic,
                 "asked_of_model": self.asked_of_model,
-                "findings": self.findings}
+                "findings": self.findings,
+                "calls": self.calls, "cost_usd": round(self.cost_usd, 6)}
 
 
 @dataclass(slots=True)
@@ -66,6 +79,23 @@ class Report:
     clean: bool = False
     stopped_because: str = ""
     outstanding: list[str] = field(default_factory=list)
+    best_pass: int = 0
+
+    @property
+    def rewrites(self) -> int:
+        return sum(1 for p in self.passes if p.rung == "rewrite")
+
+    @property
+    def regenerations(self) -> int:
+        return sum(1 for p in self.passes if p.rung == "regenerate")
+
+    @property
+    def calls(self) -> int:
+        return sum(p.calls for p in self.passes)
+
+    @property
+    def cost_usd(self) -> float:
+        return round(sum(p.cost_usd for p in self.passes), 6)
 
     def to_dict(self) -> dict[str, Any]:
         return {"attempted": self.attempted,
@@ -74,6 +104,12 @@ class Report:
                 "clean": self.clean,
                 "stopped_because": self.stopped_because,
                 "outstanding": self.outstanding,
+                "passes_run": len(self.passes),
+                "best_pass": self.best_pass,
+                "rewrites": self.rewrites,
+                "regenerations": self.regenerations,
+                "repair_calls": self.calls,
+                "repair_cost_usd": self.cost_usd,
                 "passes": [p.to_dict() for p in self.passes]}
 
 
@@ -99,6 +135,14 @@ def _number(module: dict[str, Any], fallback: int) -> int:
 # ── the repairs that need no model ──────────────────────────────────────────
 
 
+# The checker owns the definition of "the same outcome", and the repair uses
+# it. Two definitions is how a repair comes to create findings the checker then
+# reports: the model paraphrases ("Practising short prayers" for "practice
+# saying short prayers"), and under exact matching the rebuild placed the
+# lesson while the check said it had not been placed.
+_same_outcome = notes_integrity.same_outcome
+
+
 def rebuild_slo_map(notes: dict[str, Any], slos: list[str]) -> str:
     """Derive the map from the modules, so the two cannot disagree.
 
@@ -122,15 +166,14 @@ def rebuild_slo_map(notes: dict[str, Any], slos: list[str]) -> str:
         return ""
 
     rows = []
+    unplaced: list[str] = []
     for slo in ordered:
-        key = _norm(slo)
         taught = [
             _number(m, i) for i, m in enumerate(modules, start=1)
-            if any(_norm(s) == key for s in (m.get("slos_covered") or []))
+            if any(_same_outcome(slo, s) for s in (m.get("slos_covered") or []))
         ]
         if not taught:
-            # Nothing to derive from. Left out rather than invented — an SLO
-            # no lesson claims is a real gap, and the check below reports it.
+            unplaced.append(slo)
             continue
         rows.append({"slo": slo, "taught_in": taught,
                      # Assessed where it was taught last: the module that can
@@ -138,13 +181,36 @@ def rebuild_slo_map(notes: dict[str, Any], slos: list[str]) -> str:
                      # does not carry the outcome.
                      "assessed_in": [taught[-1]]})
 
+    # An outcome no lesson claims is placed with the lesson that most nearly
+    # teaches it, and that lesson's own `slos_covered` is corrected to say so.
+    # Leaving it out produced a map that omitted a funded outcome — and the
+    # guide then failed a check for something the repair had done.
+    for slo in unplaced:
+        home = _best_home(modules, slo)
+        if not home:
+            continue
+        module = next((m for i, m in enumerate(modules, start=1)
+                       if _number(m, i) == home), None)
+        if module is None:
+            continue
+        covered = list(module.get("slos_covered") or [])
+        if not any(_same_outcome(slo, c) for c in covered):
+            covered.append(slo)
+            module["slos_covered"] = covered
+        rows.append({"slo": slo, "taught_in": [home], "assessed_in": [home]})
+
+    rows.sort(key=lambda r: (r["taught_in"][0], r["slo"]))
+
     was = notes.get("slo_map")
     if rows == was:
         return ""
     notes["slo_map"] = rows
+    placed = (f", {len(unplaced)} placed with the lesson that most nearly "
+              f"teaches it" if unplaced else "")
     return (f"Rebuilt `slo_map` from the modules' own `slos_covered` "
-            f"({len(rows)} outcome(s) mapped). It is a summary of the modules, "
-            f"not a separate opinion, so it is derived rather than authored.")
+            f"({len(rows)} outcome(s) mapped{placed}). It is a summary of the "
+            f"modules, not a separate opinion, so it is derived rather than "
+            f"authored.")
 
 
 def strip_invented_experiences(notes: dict[str, Any],
@@ -303,6 +369,41 @@ def _instruction(findings: list[str], targets: list[int],
     ])
 
 
+def _whole_guide_instruction(findings: list[str], sub_strand: str,
+                             allocation_phrase: str, modules: int) -> str:
+    """Write the guide again, knowing what was wrong with the last one.
+
+    Reached when rewriting the failing lessons has not cleared them twice over.
+    At that point the defect is in how the guide was planned — the same three
+    beats reached for whenever the material runs out — and no amount of
+    rewriting one lesson at a time fixes a plan.
+    """
+    return "\n".join([
+        "=== WRITE THIS GUIDE AGAIN. THE LAST ONE FAILED ITS CHECKS. ===",
+        f"You wrote a guide for '{sub_strand}' ({allocation_phrase}) and it was "
+        f"compared against itself mechanically. Rewriting the failing lessons "
+        f"one at a time did not clear these:",
+        "",
+        *[f"  - {f}" for f in findings],
+        "",
+        f"Produce all {modules} lessons again, numbered 1 to {modules}.",
+        "",
+        "PLAN BEFORE YOU WRITE. Take the design's suggested learning "
+        "experiences and deal them out across the lessons FIRST, so each "
+        "lesson has its own material before a word is written. That is what "
+        "was missing: the last guide wrote lessons in order, ran out of "
+        "material, and reached for the same three beats — discuss how a parent "
+        "does it, invent a gesture, sing a song — under new titles.",
+        "Two lessons that share a shape are one lesson however different the "
+        "sentences are. If, having dealt the experiences out, there is not "
+        "enough material for every funded lesson, say so in `gaps` in those "
+        "words. That is a true and useful answer; a padded lesson is not.",
+        "Every outcome must appear in some lesson's `slos_covered`, worded as "
+        "the design words it, and `learning_experiences_used` may name only "
+        "the design's own suggested experiences.",
+    ])
+
+
 def _merge(notes: dict[str, Any], rewritten: Any) -> list[int]:
     """Put the rewritten lessons back, by number. Returns which landed."""
     if not isinstance(rewritten, dict):
@@ -334,6 +435,55 @@ def _merge(notes: dict[str, Any], rewritten: Any) -> list[int]:
     return landed
 
 
+def _spent() -> tuple[int, float]:
+    """Calls and cost so far, so each pass can report what it cost."""
+    from . import run_meter
+
+    meter = run_meter.current()
+    return (meter.calls, meter.cost_usd) if meter else (0, 0.0)
+
+
+def _since(before: tuple[int, float]) -> tuple[int, float]:
+    calls, cost = _spent()
+    return calls - before[0], round(cost - before[1], 6)
+
+
+def _replace(notes: dict[str, Any], written: Any) -> list[int]:
+    """Take a whole regenerated guide, keeping nothing that was wrong.
+
+    Unlike a targeted rewrite this replaces the lessons outright: the point of
+    escalating is that the previous PLAN was the defect, so merging the old
+    lessons back into it would carry the defect forward.
+    """
+    if not isinstance(written, dict):
+        return []
+    incoming = written.get("modules")
+    if not isinstance(incoming, list) or not incoming:
+        return []
+    modules = [m for m in incoming if isinstance(m, dict)]
+    if not modules:
+        return []
+
+    # A regeneration that comes back short is worse than the guide it would
+    # replace: the design funds a fixed number of lessons, and losing four of
+    # them to fix a repeated one is not a repair. Keep what we have.
+    have = len(_modules(notes))
+    if have and len(modules) < have:
+        logger.warning(
+            "A regeneration returned %d lesson(s) for a %d-lesson guide; "
+            "keeping the longer one.", len(modules), have)
+        return []
+
+    notes["modules"] = modules
+    if isinstance(notes.get("hour_modules"), list):
+        notes["hour_modules"] = modules
+    for key in ("gaps", "uncited_content", "slo_map", "assessment_alignment",
+                "scheme_of_work_summary", "practical_connections"):
+        if written.get(key):
+            notes[key] = written[key]
+    return [_number(m, i) for i, m in enumerate(modules, start=1)]
+
+
 def run(
     notes: dict[str, Any],
     *,
@@ -362,8 +512,13 @@ def run(
     run_log.step("Self-check", f"{len(findings)} finding(s) at {score}/100", "warn")
     report.attempted = True
 
+    best = copy.deepcopy(notes)
+    best_score, best_findings, best_number = score, findings, 0
+
     for number in range(1, max(1, max_passes) + 1):
-        this = Pass(number=number, before=score, after=score)
+        rung = "rewrite" if number <= TARGETED_PASSES else "regenerate"
+        this = Pass(number=number, before=score, after=score, rung="repair")
+        spent_before = _spent()
 
         for repair in (rebuild_slo_map(notes, slos),
                        strip_invented_experiences(notes, design_experiences)):
@@ -373,6 +528,14 @@ def run(
 
         score, findings, targets = _inspect(notes, design_experiences)
         this.after = score
+
+        # The free repairs only ever help, so the repaired guide is the new
+        # baseline. Recording it here — rather than only after a model pass —
+        # is what stops a later failure from reverting them.
+        if score >= best_score:
+            best, best_score, best_findings = copy.deepcopy(notes), score, findings
+            if this.deterministic:
+                best_number = number
 
         if not findings:
             this.findings = []
@@ -384,50 +547,60 @@ def run(
         # What is left needs the generator. Without one — a dry run, or a
         # caller that only wants the free repairs — stop here rather than
         # pretending a pass happened.
+        #
         # `base_messages` is checked for None, not for truth: an empty list is
         # a legitimate caller, and treating it as "no generator" silently
         # skipped every rewrite.
-        if not (generate and model_config is not None
-                and base_messages is not None and targets):
+        if not (generate and model_config is not None and base_messages is not None):
             this.findings = findings
             report.passes.append(this)
-            report.stopped_because = (
-                "no_generator" if not (generate and model_config is not None
-                                       and base_messages is not None)
-                else "nothing_to_rewrite")
+            report.stopped_because = "no_generator"
             run_log.step(f"Re-check {number}",
                          f"{len(findings)} finding(s) left at {score}/100 — "
                          f"no rewrite attempted", "warn")
             break
 
-        run_log.step(f"Rewrite {number}",
-                     f"lesson(s) {', '.join(str(n) for n in targets)}: "
-                     f"{findings[0][:120]}", "warn")
-        this.asked_of_model = targets
+        # Nothing to target and still on the cheap rung: go straight to the
+        # expensive one rather than reporting a finding nobody can act on.
+        if rung == "rewrite" and not targets:
+            rung = "regenerate"
+
+        this.rung = rung
+        if rung == "rewrite":
+            run_log.step(f"Rewrite {number}",
+                         f"lesson(s) {', '.join(str(n) for n in targets)}: "
+                         f"{findings[0][:110]}", "warn")
+            this.asked_of_model = targets
+            instruction = _instruction(findings, targets, sub_strand,
+                                       allocation_phrase)
+        else:
+            run_log.step(f"Regenerate {number}",
+                         f"rewriting one lesson at a time did not clear "
+                         f"{len(findings)} finding(s); writing the whole guide "
+                         f"again", "warn")
+            instruction = _whole_guide_instruction(
+                findings, sub_strand, allocation_phrase, len(_modules(notes)))
+
         try:
             response = generate(
                 model_config,
-                (base_messages or []) + [{
-                    "role": "user",
-                    "content": _instruction(findings, targets, sub_strand,
-                                            allocation_phrase),
-                }],
+                (base_messages or []) + [{"role": "user", "content": instruction}],
                 temperature=0.2,
             )
-            landed = _merge(
-                notes,
-                response.content if hasattr(response, "content") else response,
-            )
+            content = response.content if hasattr(response, "content") else response
+            if rung == "rewrite":
+                landed = _merge(notes, content)
+            else:
+                landed = _replace(notes, content)
         except Exception as exc:  # noqa: BLE001
-            logger.warning("Remediation pass %d could not rewrite: %s", number, exc)
-            run_log.step(f"Rewrite {number}", f"failed: {exc}", "fail")
+            logger.warning("Remediation pass %d could not %s: %s", number, rung, exc)
+            run_log.step(f"{rung.title()} {number}", f"failed: {exc}", "fail")
             this.findings = findings
+            this.calls, this.cost_usd = _since(spent_before)
             report.passes.append(this)
             report.stopped_because = "rewrite_failed"
             break
 
-        # The deterministic repairs run again over the new lessons, then the
-        # whole guide is re-checked — a rewrite can introduce its own defects.
         for repair in (rebuild_slo_map(notes, slos),
                        strip_invented_experiences(notes, design_experiences)):
             if repair:
@@ -436,26 +609,51 @@ def run(
         after, findings, targets = _inspect(notes, design_experiences)
         this.after = after
         this.findings = findings
+        this.calls, this.cost_usd = _since(spent_before)
         report.passes.append(this)
-        run_log.step(f"Re-check {number}",
-                     f"{len(landed)} lesson(s) rewritten, "
-                     f"{score}/100 → {after}/100"
-                     + (f", {len(findings)} finding(s) left" if findings else ", clean"),
-                     "ok" if after > score else "warn")
+        run_log.step(
+            f"Re-check {number}",
+            f"{len(landed)} lesson(s) {'rewritten' if rung == 'rewrite' else 'regenerated'}, "
+            f"{score}/100 → {after}/100"
+            + (f", {len(findings)} finding(s) left" if findings else ", clean"),
+            "ok" if after > score else "warn")
+
+        # Keep the best version seen, not the last one. A pass that makes the
+        # guide worse used to be the version that got saved.
+        if after > best_score:
+            best, best_score, best_findings, best_number = (
+                copy.deepcopy(notes), after, findings, number)
 
         if not findings:
             score = after
             report.stopped_because = "clean"
             break
+
         if after < score + MIN_GAIN:
-            # A model that has not fixed this in one attempt will not fix it in
-            # five, and each attempt is paid for.
+            if rung == "rewrite":
+                # A targeted rewrite that cannot fix a lesson is evidence about
+                # the rewrite, not about the guide. Escalate to writing the
+                # whole thing again rather than handing the operator a finding
+                # and a button.
+                run_log.step(f"Escalating after {number}",
+                             "targeted rewriting is not clearing this", "warn")
+                score = after
+                continue
             score = max(score, after)
             report.stopped_because = "no_improvement"
             break
         score = after
     else:
         report.stopped_because = "max_passes"
+
+    # Restore the best version. A pass that made the guide worse used to be the
+    # version that got saved. `notes` is mutated in place by the caller's
+    # reference, so the contents are swapped rather than the name rebound.
+    if best_score > score:
+        notes.clear()
+        notes.update(best)
+        score, findings = best_score, best_findings
+    report.best_pass = best_number
 
     report.score_after = score
     report.clean = not findings
