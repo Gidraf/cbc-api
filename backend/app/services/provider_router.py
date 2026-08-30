@@ -38,6 +38,27 @@ OPENAI_VALID_MODELS = {
 }
 
 
+def _is_qualified(lower: str, prefix: str) -> bool:
+    """Whether a binding already names a specific model rather than a family.
+
+    The rules below used to match on a bare word: `"pro" in lower` rewrote
+    EVERY Gemini model with "pro" in its name to gemini-1.5-pro, so a stage
+    bound to gemini-2.5-pro was silently downgraded to a model Google has since
+    retired — and the run then failed with
+
+        Model 'gemini-1.5-pro' not found on gemini
+
+    naming a model the operator had never chosen. The same shape sent every
+    Anthropic binding containing "opus" to claude-3-opus-20240229.
+
+    A normaliser exists to turn "sonnet" into a real model id. It has no
+    business rewriting an id that is already one — new models ship constantly,
+    and a mapping table that has to be edited before any of them can be used is
+    a mapping table that will be out of date every time.
+    """
+    return lower.startswith(prefix) and any(ch.isdigit() for ch in lower)
+
+
 def normalize_model_name(provider: str, raw_model: str) -> str:
     """Normalizes and auto-corrects model names, typos, and version aliases."""
     cleaned = (raw_model or "").strip()
@@ -48,43 +69,45 @@ def normalize_model_name(provider: str, raw_model: str) -> str:
             return "gpt-4o-mini"
         if cleaned in OPENAI_VALID_MODELS:
             return cleaned
-        # Common typos & aliases (e.g. 'gpt-5 mini', 'gpt5', 'gpt-4 mini')
-        if "gpt-5" in lower or "gpt5" in lower or "gpt-4-mini" in lower or "gpt4-mini" in lower or "4o-mini" in lower:
+        # A fully-qualified id is passed through before any alias rule runs.
+        # "gpt-5" used to be listed as a typo for gpt-4o-mini, written when no
+        # such model existed. It exists now, and a stage bound to it was
+        # silently served a cheaper one — the failure that is hardest to
+        # notice, because the run succeeds.
+        if _is_qualified(lower, "gpt-") or lower.startswith("o1") or lower.startswith("o3"):
+            return lower
+        # Genuine aliases: a family typed without a version.
+        if "4o-mini" in lower or "gpt-4-mini" in lower or "gpt4-mini" in lower:
             return "gpt-4o-mini"
         if "4o" in lower:
             return "gpt-4o"
         if "3.5" in lower or "35" in lower:
             return "gpt-3.5-turbo"
-        if "o1-mini" in lower:
-            return "o1-mini"
-        if "o3-mini" in lower:
-            return "o3-mini"
-        if lower.startswith("gpt-"):
-            return lower
         return "gpt-4o-mini"
 
     elif provider == Provider.ANTHROPIC.value:
         if not cleaned or lower in {"", "null", "undefined", "default", "none"}:
             return "claude-3-5-sonnet-20241022"
-        if "3.5-sonnet" in lower or "3-5-sonnet" in lower or "sonnet-3.5" in lower or "sonnet" in lower:
+        if _is_qualified(lower, "claude-"):
+            return cleaned
+        # Bare families only, for a binding typed as "sonnet" or "opus".
+        if "sonnet" in lower:
             return "claude-3-5-sonnet-20241022"
-        if "3.5-haiku" in lower or "3-5-haiku" in lower or "haiku-3.5" in lower:
-            return "claude-3-5-haiku-20241022"
-        if "3-opus" in lower or "opus" in lower:
+        if "opus" in lower:
             return "claude-3-opus-20240229"
-        if "3-haiku" in lower or "haiku" in lower:
-            return "claude-3-haiku-20240307"
+        if "haiku" in lower:
+            return "claude-3-5-haiku-20241022"
         return cleaned
 
     elif provider == Provider.GEMINI.value:
         if not cleaned or lower in {"", "null", "undefined", "default", "none"}:
             return "gemini-2.0-flash"
-        if "2.0-flash" in lower or "2-flash" in lower or "2.0" in lower:
+        if _is_qualified(lower, "gemini-"):
+            return cleaned
+        if "pro" in lower:
+            return "gemini-2.5-pro"
+        if "flash" in lower:
             return "gemini-2.0-flash"
-        if "1.5-pro" in lower or "pro" in lower:
-            return "gemini-1.5-pro"
-        if "1.5-flash" in lower or "flash" in lower:
-            return "gemini-1.5-flash"
         return cleaned
 
     elif provider == Provider.OLLAMA.value:

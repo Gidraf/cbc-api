@@ -27,6 +27,9 @@ MODEL_PRICING: dict[str, dict[str, float]] = {
     "claude-3-haiku-20240307": {"input": 0.25, "output": 1.25},
     # Google Gemini
     "gemini-2.0-flash": {"input": 0.075, "output": 0.30},
+    "gemini-2.5-flash": {"input": 0.30, "output": 2.50},
+    "gemini-2.5-pro": {"input": 1.25, "output": 10.00},
+    # Retired by Google, kept so an old job's recorded cost still resolves.
     "gemini-1.5-flash": {"input": 0.075, "output": 0.30},
     "gemini-1.5-pro": {"input": 1.25, "output": 5.00},
     # Ollama / local models — free

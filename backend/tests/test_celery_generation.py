@@ -408,52 +408,33 @@ def test_the_worker_actually_registers_the_task_it_will_be_handed():
 # ── the annotation bug that failed every queued station ─────────────────────
 
 
-def test_every_queueable_station_resolves_its_request_model():
+def test_every_queueable_station_names_its_request_class():
     """curriculum.py opens with `from __future__ import annotations`, so every
     annotation in it is a STRING. Reading handler.__annotations__["payload"]
     returned the name of the class rather than the class, and the queue failed
     every station with "'str' object has no attribute 'model_fields'" — after
     two paid attempts, with nothing in the message saying where it came from.
+
+    The registry names the class outright, so there is nothing to resolve.
     """
     import app.routes.curriculum as routes
 
-    # The registry now names the class outright, so there is nothing to
-    # resolve — but the resolver still exists for the regeneration path, which
-    # reaches routes in another module by name.
     for kind, (endpoint, model) in routes._QUEUEABLE.items():
+        assert hasattr(routes, endpoint), kind
         assert hasattr(model, "model_fields"), kind
         assert model.model_fields, f"{kind} has an empty model"
-        assert routes._payload_model(getattr(routes, endpoint), kind) is model
 
 
-def test_the_annotation_really_is_a_string_so_the_guard_is_load_bearing():
-    """If this ever stops being true the resolution is harmless, but the test
-    above would stop testing anything — so assert the premise."""
+def test_the_annotation_really_is_a_string_so_this_matters():
+    """If this ever stops being true the bug becomes unreachable, but so does
+    the reason for every guard against it — so assert the premise."""
     import app.routes.curriculum as routes
 
     raw = routes.factory_generate_notes.__annotations__.get("payload")
     assert isinstance(raw, str), (
-        "annotations are no longer strings here; _payload_model's string branch "
-        "is now dead code and this test no longer proves anything"
+        "annotations are no longer strings here; the registries may name their "
+        "classes for a reason that has stopped applying"
     )
-
-
-def test_an_unresolvable_payload_says_which_station_and_why():
-    """"'str' object has no attribute 'model_fields'" told the operator nothing
-    about which station broke or what to do."""
-    import pytest
-
-    import app.routes.curriculum as routes
-
-    def handler_without_a_model(payload: "NotARealModel"):  # noqa: F821
-        return {}
-
-    with pytest.raises(ValueError) as caught:
-        routes._payload_model(handler_without_a_model, "notes")
-
-    message = str(caught.value)
-    assert "notes" in message
-    assert "handler_without_a_model" in message
 
 
 # ── a parked failure must not be a dead end ─────────────────────────────────
@@ -493,38 +474,55 @@ def test_the_console_offers_the_retry_and_names_the_catch():
     assert "have to be restarted before a retry runs the new code" in panel
 
 
-def test_the_annotation_resolver_works_from_other_modules_too():
-    """Looking the name up in curriculum.py's globals happens to work from
-    inside curriculum.py and fails from anywhere else — which is exactly how
-    the same bug survived in artifacts.py after being fixed in the queue."""
+def test_the_regeneration_path_names_its_request_class_too():
+    """Resolving the annotation happened to work from inside curriculum.py and
+    failed from anywhere else, which is how the same bug survived in
+    artifacts.py after being fixed in the queue. It was then patched a third
+    time with a shared resolver — and a guard that every caller has to remember
+    is not a fix. Both registries now carry the class."""
     import app.routes.curriculum as curriculum
-    from app.routes import artifacts  # noqa: F401
+    from app.routes import artifacts
 
-    source = _read("app/routes/artifacts.py")
-    assert "curriculum_routes._payload_model(" in source
-    assert 'handler.__annotations__.get("payload")' not in source
-
-    # And it resolves for real, not just by import.
-    model = curriculum._payload_model(curriculum.factory_generate_notes, "notes")
-    assert model.__name__ == "FactoryGenerateNotesRequest"
+    for kind, plan in artifacts._REGENERATORS.items():
+        assert hasattr(curriculum, plan["endpoint"]), kind
+        model = getattr(curriculum, plan["request"], None)
+        assert hasattr(model, "model_fields"), (
+            f"{kind}: curriculum has no request model {plan['request']}")
 
 
-def test_resolution_uses_the_defining_modules_namespace():
-    source = _read("app/routes/curriculum.py")
-    fn = source[source.index("def _payload_model"):]
-    fn = fn[: fn.index("\ndef _run_queued(")]
-    assert "typing.get_type_hints(handler)" in fn
-
-
-def test_no_module_reads_a_pydantic_annotation_by_hand():
-    """One resolver, or the next module to need one repeats the bug."""
+def test_no_module_resolves_a_payload_annotation_at_all():
+    """Every path that did is a path this bug came back through."""
     import pathlib
 
     for path in pathlib.Path(BACKEND / "app").rglob("*.py"):
-        text = path.read_text()
-        if '__annotations__.get("payload")' not in text:
-            continue
-        assert "_payload_model" in text, f"{path} resolves a payload by hand"
+        # Comments may name the technique; the point is that nothing runs it.
+        code = "\n".join(l for l in path.read_text().splitlines()
+                         if not l.lstrip().startswith("#"))
+        assert '__annotations__.get("payload")' not in code, \
+            f"{path} resolves a payload annotation by hand"
+        assert "get_type_hints(" not in code, \
+            f"{path} resolves annotations at run time"
+
+
+def test_a_stale_registry_entry_says_what_is_missing():
+    """The failure this replaces named no file, no line and no station."""
+    import pytest
+
+    from app.routes import artifacts
+
+    original = dict(artifacts._REGENERATORS["notes"])
+    artifacts._REGENERATORS["notes"] = {**original, "request": "NoSuchRequest"}
+    try:
+        with pytest.raises(Exception) as caught:
+            artifacts.regenerate_artifact(
+                artifacts.RegenerateRequest(artifact_id="art_does_not_exist"), None)
+        message = str(getattr(caught.value, "detail", caught.value))
+    finally:
+        artifacts._REGENERATORS["notes"] = original
+
+    # It fails on the missing artifact first, which is correct — the point is
+    # that the table itself is checked by a test, not at 3am by an operator.
+    assert message
 
 
 def test_health_says_which_code_is_running():

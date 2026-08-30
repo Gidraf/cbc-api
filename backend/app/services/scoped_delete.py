@@ -132,6 +132,13 @@ DERIVED: tuple[Scoped, ...] = (
            subject_json="curriculum_link->>'subject'",
            strand_json="curriculum_link->>'strand'",
            sub_strand_json="curriculum_link->>'sub_strand'"),
+    # Queued and failed work for a scope that no longer exists. A job left
+    # behind is worse than an orphaned row: it still runs, and regenerates
+    # content for a sub-strand nobody can see, which then reappears in the
+    # console as if the delete had silently undone itself.
+    Scoped("jobs", "queued and failed jobs",
+           grade="grade", subject="subject",
+           strand="strand", sub_strand="sub_strand"),
     Scoped("curriculum_substrands", "the sub-strand itself",
            grade="grade", subject="subject",
            strand="strand_name", sub_strand="sub_strand_name"),
@@ -238,6 +245,80 @@ def _remove_strand_from_design(
         {"metadata": to_json(metadata), "design_id": row["design_id"]},
     )
     return True
+
+
+# Artifacts whose sub-strand no longer exists in the curriculum. Matched on the
+# normalised grade because artifacts store "grade-pp1" and the curriculum
+# tables have carried both that and "pp1".
+_ORPHAN_ARTIFACTS = """
+    SELECT a.artifact_id, a.kind, a.grade, a.subject,
+           a.strand_name, a.sub_strand_name, a.version
+    FROM artifacts a
+    WHERE a.sub_strand_name <> ''
+      AND NOT EXISTS (
+        SELECT 1 FROM curriculum_substrands c
+        WHERE LOWER(c.subject) = LOWER(a.subject)
+          AND LOWER(c.sub_strand_name) = LOWER(a.sub_strand_name)
+          AND REPLACE(LOWER(c.grade), 'grade-', '')
+              = REPLACE(LOWER(a.grade), 'grade-', '')
+      )
+"""
+
+
+def find_orphans(limit: int = 500) -> list[dict[str, Any]]:
+    """Generated content whose sub-strand is gone.
+
+    The delete endpoints the older console calls used to remove three tables
+    and leave `artifacts` — with every review verdict, label and comment — in
+    place. Anything deleted through them before that was fixed is still here,
+    still counting toward coverage, still describing a sub-strand nobody can
+    see. This finds it after the fact.
+    """
+    from ..infra.db import fetch_all
+
+    return fetch_all(f"{_ORPHAN_ARTIFACTS} ORDER BY a.subject, a.sub_strand_name "
+                     f"LIMIT :limit", {"limit": limit}) or []
+
+
+def sweep_orphans(confirm: str = "") -> dict[str, Any]:
+    """Remove orphaned artifacts and everything hanging off them."""
+    from ..infra.db import execute, fetch_one
+
+    found = find_orphans(limit=10_000)
+    if confirm.strip().upper() != CONFIRMATION:
+        by_scope: dict[str, int] = {}
+        for row in found:
+            key = (f"{row['grade']} / {row['subject']} / "
+                   f"{row['strand_name'] or '—'} / {row['sub_strand_name']}")
+            by_scope[key] = by_scope.get(key, 0) + 1
+        return {
+            "dry_run": True, "artifacts": len(found),
+            "scopes": [{"scope": k, "versions": v}
+                       for k, v in sorted(by_scope.items(), key=lambda i: -i[1])],
+            "confirmation_required": CONFIRMATION,
+            "message": (
+                f"{len(found)} artifact version(s) describe a sub-strand that no "
+                f"longer exists. Send confirm=\"{CONFIRMATION}\" to remove them "
+                f"and their reviews, labels and comments."
+            ),
+        }
+
+    removed: dict[str, int] = {}
+    inner = f"SELECT artifact_id FROM ({_ORPHAN_ARTIFACTS}) o"
+    for table in ("artifact_comments", "artifact_reviews", "artifact_labels"):
+        try:
+            row = fetch_one(
+                f"SELECT COUNT(*) AS n FROM {table} WHERE artifact_id IN ({inner})")
+            execute(f"DELETE FROM {table} WHERE artifact_id IN ({inner})")
+            removed[table] = int((row or {}).get("n") or 0)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Could not sweep %s: %s", table, exc)
+
+    execute(f"DELETE FROM artifacts WHERE artifact_id IN ({inner})")
+    removed["artifacts"] = len(found)
+    logger.info("Swept %d orphaned artifact version(s).", len(found))
+    return {"dry_run": False, "artifacts": len(found), "tables": removed,
+            "message": f"Removed {len(found)} orphaned artifact version(s)."}
 
 
 def delete(

@@ -386,41 +386,37 @@ def delete_curriculum_substrand(
     sub_strand: str = Query(...),
     _: AuthContext = Depends(require_roles("admin", "operator", "reviewer")),
 ) -> dict[str, Any]:
-    """Deletes a sub-strand and all associated generated outputs (notes, diagrams, activities, questions)."""
-    clean_subj = subject.lower().strip()
-    clean_ss = sub_strand.lower().strip()
+    """Delete one sub-strand and everything generated from it.
 
-    execute(
-        """
-        DELETE FROM substrand_resources
-        WHERE LOWER(curriculum->>'subject') = :subject
-          AND LOWER(curriculum->>'sub_strand') LIKE :ss
-        """,
-        {"subject": clean_subj, "ss": f"%{clean_ss}%"},
-    )
-    execute(
-        """
-        DELETE FROM curriculum_substrands
-        WHERE LOWER(subject) = :subject
-          AND LOWER(sub_strand_name) LIKE :ss
-        """,
-        {"subject": clean_subj, "ss": f"%{clean_ss}%"},
-    )
-    execute(
-        """
-        DELETE FROM question_dna
-        WHERE LOWER(curriculum_link->>'subject') = :subject
-          AND LOWER(curriculum_link->>'sub_strand') LIKE :ss
-        """,
-        {"subject": clean_subj, "ss": f"%{clean_ss}%"},
-    )
+    This used to run three DELETEs of its own, against substrand_resources,
+    curriculum_substrands and question_dna. It was wrong in three ways.
 
+    It never touched `artifacts`, so every version of the notes, diagrams,
+    activities and media briefs stayed, along with `artifact_reviews`,
+    `artifact_labels`, `artifact_comments` and `artifact_dna`. Those still
+    count toward coverage and still describe a sub-strand that is gone.
+
+    It took `grade` and never used it, so removing a sub-strand from one grade
+    removed it from EVERY grade that had one by that name.
+
+    And it matched with LIKE '%name%', so deleting "God" also deleted "Our God"
+    and "God's Love".
+
+    `scoped_delete` already did this correctly for the newer console. There is
+    one implementation now.
+    """
+    report = scoped_delete.delete(
+        grade=grade, subject=subject,
+        strand=(strand or ""), sub_strand=sub_strand,
+        confirm=scoped_delete.CONFIRMATION,
+    )
     return {
         "success": True,
         "message": f"Deleted sub-strand '{sub_strand}' and all generated assets.",
         "grade": grade,
         "subject": subject,
         "sub_strand": sub_strand,
+        "removed": report.to_dict(),
     }
 
 
@@ -431,41 +427,24 @@ def delete_curriculum_strand(
     strand: str = Query(...),
     _: AuthContext = Depends(require_roles("admin", "operator", "reviewer")),
 ) -> dict[str, Any]:
-    """Deletes an entire strand, all child sub-strands, and all associated generations."""
-    clean_subj = subject.lower().strip()
-    clean_st = strand.lower().strip()
+    """Delete one strand, its sub-strands, and everything generated from them.
 
-    execute(
-        """
-        DELETE FROM substrand_resources
-        WHERE LOWER(curriculum->>'subject') = :subject
-          AND (LOWER(curriculum->>'strand') LIKE :st OR LOWER(curriculum->>'strand_name') LIKE :st)
-        """,
-        {"subject": clean_subj, "st": f"%{clean_st}%"},
+    See `delete_curriculum_substrand` for what this used to leave behind. The
+    same three faults applied here, and the grade one was worse: a strand name
+    like "Creation" appears in several grades, so removing it from one removed
+    it from all of them.
+    """
+    report = scoped_delete.delete(
+        grade=grade, subject=subject, strand=strand,
+        confirm=scoped_delete.CONFIRMATION,
     )
-    execute(
-        """
-        DELETE FROM curriculum_substrands
-        WHERE LOWER(subject) = :subject
-          AND LOWER(strand_name) LIKE :st
-        """,
-        {"subject": clean_subj, "st": f"%{clean_st}%"},
-    )
-    execute(
-        """
-        DELETE FROM question_dna
-        WHERE LOWER(curriculum_link->>'subject') = :subject
-          AND (LOWER(curriculum_link->>'strand') LIKE :st OR LOWER(curriculum_link->>'strand_name') LIKE :st)
-        """,
-        {"subject": clean_subj, "st": f"%{clean_st}%"},
-    )
-
     return {
         "success": True,
         "message": f"Deleted strand '{strand}' and all child sub-strands.",
         "grade": grade,
         "subject": subject,
         "strand": strand,
+        "removed": report.to_dict(),
     }
 
 
@@ -4167,43 +4146,6 @@ _QUEUEABLE: dict[str, tuple[str, Any]] = {
 }
 
 
-def _payload_model(handler: Any, kind: str) -> Any:
-    """The request class a station's route takes.
-
-    This module opens with `from __future__ import annotations`, so EVERY
-    annotation in it is a string. Reading `handler.__annotations__["payload"]`
-    returned the name of the class rather than the class, and the queue then
-    failed every station with
-
-        'str' object has no attribute 'model_fields'
-
-    after two paid attempts — a message that says nothing about where it came
-    from. Resolve the name against this module, and say so plainly when it
-    cannot be resolved.
-    """
-    # typing.get_type_hints resolves the string against the module the function
-    # was DEFINED in, which is the only place the name is guaranteed to exist.
-    # Looking it up in this module's globals happens to work from here and
-    # fails from anywhere else — which is exactly how the same bug survived in
-    # app/routes/artifacts.py after being fixed here.
-    model_cls = None
-    try:
-        import typing
-
-        model_cls = typing.get_type_hints(handler).get("payload")
-    except Exception:  # noqa: BLE001
-        model_cls = None
-    if model_cls is None:
-        raw = handler.__annotations__.get("payload")
-        model_cls = globals().get(raw) if isinstance(raw, str) else raw
-    if model_cls is None or not hasattr(model_cls, "model_fields"):
-        raise ValueError(
-            f"Cannot queue '{kind}': the route {getattr(handler, '__name__', handler)} "
-            f"does not annotate its payload with a resolvable request model."
-        )
-    return model_cls
-
-
 def _run_queued(job: dict[str, Any]) -> dict[str, Any]:
     """Run one queued station for one sub-strand.
 
@@ -5050,6 +4992,40 @@ def factory_delete_scope(
         confirm=payload.confirm,
     )
     return report.to_dict()
+
+
+class SweepOrphansRequest(BaseModel):
+    confirm: str = ""
+
+
+@router.post("/factory/sweep-orphans")
+def factory_sweep_orphans(
+    payload: SweepOrphansRequest,
+    _: AuthContext = Depends(require_roles("admin", "operator")),
+) -> dict[str, Any]:
+    """Remove generated content whose sub-strand no longer exists.
+
+    The delete endpoints the older console calls removed three tables and left
+    `artifacts` — with every version, review verdict, label and comment — in
+    place. Anything deleted through them before that was fixed is still in the
+    database, still counting toward coverage, still describing a sub-strand
+    nobody can see.
+
+    Fixing the endpoints does nothing for what they already left. This is the
+    sweep for that, and like every other destructive route here it is a dry run
+    until `confirm` says DELETE.
+    """
+    return scoped_delete.sweep_orphans(payload.confirm)
+
+
+@router.get("/factory/orphans")
+def factory_list_orphans(
+    limit: int = Query(default=200, ge=1, le=1000),
+    _: AuthContext = Depends(require_roles("admin", "operator", "reviewer")),
+) -> dict[str, Any]:
+    """What the sweep would remove, listed one version at a time."""
+    found = scoped_delete.find_orphans(limit=limit)
+    return {"total": len(found), "orphans": found}
 
 
 @router.post("/factory/regenerate-scope")

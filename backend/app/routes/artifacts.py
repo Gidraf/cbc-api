@@ -415,17 +415,40 @@ def review_artifact(
 
 # ── Regenerate with the review's own findings ───────────────────────────────
 
-# Which generator produces each kind, and how its payload is shaped. A kind
-# absent here cannot be regenerated from a review yet, and says so rather than
-# silently doing nothing.
+# Which generator produces each kind, how its payload is shaped, and the name
+# of the request class it takes. A kind absent here cannot be regenerated from
+# a review yet, and says so rather than silently doing nothing.
+#
+# `request` is a NAME, resolved with getattr against the curriculum module. It
+# used to be recovered from the route's own annotation at run time, and
+# curriculum.py opens with `from __future__ import annotations`, so that
+# annotation is the string "FactoryGenerateNotesRequest" rather than the class.
+# Calling `.model_fields` on it gave
+#
+#     'str' object has no attribute 'model_fields'
+#
+# after two paid attempts, naming no file, no line and no station. That was
+# patched three times — in the queue, then here, then with a shared resolver
+# that tried typing.get_type_hints first and fell back to module globals — and
+# each patch left the same failure reachable by one more path.
+#
+# There is nothing to resolve now. A wrong name here is an AttributeError at
+# the point of use, naming the attribute, in a file a person can open.
 _REGENERATORS: dict[str, dict[str, Any]] = {
-    "strand": {"endpoint": "factory_generate_strands", "scope": "strand_list"},
-    "sub_strand": {"endpoint": "factory_generate_substrands", "scope": "strand"},
-    "notes": {"endpoint": "factory_generate_notes", "scope": "sub_strand"},
-    "diagram": {"endpoint": "factory_plan_visuals", "scope": "sub_strand"},
-    "activity": {"endpoint": "factory_plan_activities", "scope": "sub_strand"},
-    "photo_prompt": {"endpoint": "factory_generate_media_prompts", "scope": "sub_strand"},
-    "video_prompt": {"endpoint": "factory_generate_media_prompts", "scope": "sub_strand"},
+    "strand": {"endpoint": "factory_generate_strands",
+               "request": "FactoryGenerateStrandsRequest", "scope": "strand_list"},
+    "sub_strand": {"endpoint": "factory_generate_substrands",
+                   "request": "FactoryGenerateSubstrandsRequest", "scope": "strand"},
+    "notes": {"endpoint": "factory_generate_notes",
+              "request": "FactoryGenerateNotesRequest", "scope": "sub_strand"},
+    "diagram": {"endpoint": "factory_plan_visuals",
+                "request": "FactoryPlanVisualsRequest", "scope": "sub_strand"},
+    "activity": {"endpoint": "factory_plan_activities",
+                 "request": "FactoryPlanActivitiesRequest", "scope": "sub_strand"},
+    "photo_prompt": {"endpoint": "factory_generate_media_prompts",
+                     "request": "GenerateMediaPromptsRequest", "scope": "sub_strand"},
+    "video_prompt": {"endpoint": "factory_generate_media_prompts",
+                     "request": "GenerateMediaPromptsRequest", "scope": "sub_strand"},
 }
 
 
@@ -491,16 +514,18 @@ def regenerate_artifact(
         common["strand"] = artifact.strand_name
         common["sub_strand"] = artifact.sub_strand_name
 
-    handler = getattr(curriculum_routes, plan["endpoint"])
-    # The SAME resolver the queue uses. curriculum.py opens with
-    # `from __future__ import annotations`, so every annotation in it is a
-    # string — and reading it raw from here produced
-    # "'str' object has no attribute 'model_fields'", the identical failure
-    # that was fixed in the queue and left standing in this path.
-    try:
-        model_cls = curriculum_routes._payload_model(handler, plan["endpoint"])
-    except ValueError as exc:
-        raise_api_error("VALIDATION_FAILED", str(exc))
+    handler = getattr(curriculum_routes, plan["endpoint"], None)
+    model_cls = getattr(curriculum_routes, plan["request"], None)
+    if handler is None or not hasattr(model_cls, "model_fields"):
+        # Reached only if _REGENERATORS names something curriculum.py does not
+        # export — a rename, or a typo in the table above. Say which, because
+        # the failure this replaces said nothing at all.
+        raise_api_error(
+            "VALIDATION_FAILED",
+            f"Cannot regenerate '{artifact.kind}': app.routes.curriculum has no "
+            f"{'route ' + plan['endpoint'] if handler is None else 'request model ' + plan['request']}. "
+            f"The _REGENERATORS entry for this kind is out of date.",
+        )
 
     # Fields the generator needs that this artifact does not carry are left to
     # the model's own defaults rather than guessed at here.

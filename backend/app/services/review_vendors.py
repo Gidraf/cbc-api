@@ -37,8 +37,10 @@ REVIEW_MODELS: dict[str, dict[str, Any]] = {
     },
     "gemini": {
         "label": "Google Gemini",
-        "models": ["gemini-2.0-flash", "gemini-1.5-pro", "gemini-1.5-flash"],
-        "default": "gemini-1.5-pro",
+        # gemini-1.5-pro and gemini-1.5-flash were listed here and are retired:
+        # the API answers 404, and the run fails after paying to reach the call.
+        "models": ["gemini-2.0-flash", "gemini-2.5-pro", "gemini-2.5-flash"],
+        "default": "gemini-2.0-flash",
         "notes": "Long context, useful when the whole design must be re-read.",
     },
     "ollama": {
