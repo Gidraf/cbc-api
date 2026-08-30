@@ -11,6 +11,7 @@ import {
   Td,
   Th,
 } from "../ui/components";
+import { AutoRunActivity } from "./AutoRunActivity";
 import {
   PIPELINE_STEPS,
   STEP_LABEL,
@@ -211,6 +212,10 @@ export function AutoRunPanel({ grade }: { grade: string }) {
 
         {start.error && <ErrorNotice error={start.error} />}
 
+        {/* The live picture: what it is doing, producing and spending. A
+            progress bar alone answers only "how far". */}
+        {(running || halted) && <AutoRunActivity grade={grade} running={running} />}
+
         {run && run.items_scored !== undefined && run.items_scored > 0 && (
           <>
             <Stack direction="row" gap="var(--s3)" align="center" wrap>
@@ -222,14 +227,6 @@ export function AutoRunPanel({ grade }: { grade: string }) {
                 floor {run.floor}
               </span>
             </Stack>
-
-            {queue && queue.total > 0 && (
-              <ProgressBar
-                value={queue.percentage}
-                height={10}
-                label={`${queue.finished} of ${queue.total} jobs done`}
-              />
-            )}
 
             {halted && run.halted_reason && (
               <div

@@ -1055,6 +1055,49 @@ export function useAutoRunStatus(grade: string) {
   });
 }
 
+export type AutoRunActivity = {
+  running: boolean;
+  run_id?: string;
+  status?: string;
+  floor?: number;
+  recent_median?: number;
+  average?: number;
+  halted_reason?: string;
+  progress?: { finished: number; total: number; remaining: number; percentage: number };
+  spend?: {
+    cost_usd: number; tokens: number; per_item_usd: number;
+    projected_remaining_usd: number;
+    by_station: { kind: string; jobs: number; calls: number; tokens: number; cost: number }[];
+  };
+  pace?: { elapsed_seconds: number; items_per_hour: number };
+  now_running?: {
+    job_id: string; kind: string; step?: string; strand: string;
+    sub_strand: string; subject: string; seconds: number; attempts: number;
+  }[];
+  recent?: {
+    job_id: string; kind: string; step?: string; strand: string; sub_strand: string;
+    subject: string; status: string; score?: string; weakest?: string;
+    cycles?: string; cost_usd?: number; total_tokens?: number; error?: string;
+    finished_at?: string;
+  }[];
+  note?: string;
+};
+
+/** What the run is doing, producing and spending — polled while it runs. */
+export function useAutoRunActivity(grade: string, running: boolean) {
+  const api = useApi();
+  return useQuery({
+    queryKey: ["auto-run-activity", grade],
+    queryFn: () =>
+      api<AutoRunActivity>(
+        `/api/v1/curriculum/factory/auto-run/activity?grade=${encodeURIComponent(grade)}`
+      ),
+    enabled: Boolean(grade),
+    // Fast while it moves, once when it stops. A finished run does not change.
+    refetchInterval: running ? 4000 : false,
+  });
+}
+
 export function useStopAutoRun() {
   const api = useApi();
   const qc = useQueryClient();

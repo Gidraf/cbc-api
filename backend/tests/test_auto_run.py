@@ -6,6 +6,8 @@ unusable content, at full price, and the operator finds out at the end.
 """
 from __future__ import annotations
 
+import re
+
 import pathlib
 
 from app.services import auto_run, quality_score
@@ -236,3 +238,89 @@ def test_an_empty_subject_selection_still_means_everything():
     route = route[: route.index("@router.get")]
     assert "if not subjects:" in route
     assert "SELECT DISTINCT subject FROM curriculum_designs" in route
+
+
+# ── seeing what it is doing, and what it costs ──────────────────────────────
+
+
+def test_every_model_call_is_metered_in_one_place():
+    """Threading a meter through fourteen route handlers guarantees the one
+    that gets missed is the one that spends the most."""
+    source = (BACKEND / "app/services/llm_client.py").read_text()
+    generate = source[source.index("    def generate("):]
+    generate = generate[: generate.index("    def _classify_http_error")]
+
+    assert "from .run_meter import add as _meter" in generate
+    assert "_meter(usage, config.model, config.provider)" in generate
+
+
+def test_the_meter_turns_tokens_into_money():
+    from app.services import run_meter
+    from app.services.cost_tracker import TokenUsage
+
+    run_meter.start("job_x")
+    run_meter.add(TokenUsage(prompt_tokens=50_000, completion_tokens=4_000),
+                  "gpt-4o", "openai")
+    meter = run_meter.stop()
+
+    assert meter.calls == 1
+    assert meter.total_tokens == 54_000
+    assert meter.cost_usd > 0, "a priced model must produce a cost"
+
+
+def test_a_call_outside_a_job_is_not_an_error():
+    """A plain HTTP request is not part of a run; metering it would be wrong
+    and raising would break it."""
+    from app.services import run_meter
+    from app.services.cost_tracker import TokenUsage
+
+    run_meter.stop()
+    run_meter.add(TokenUsage(prompt_tokens=10, completion_tokens=1), "gpt-4o", "openai")
+    assert run_meter.current() is None
+
+
+def test_the_meter_never_fails_a_generation():
+    """Losing a cost figure is the lesser harm by a wide margin."""
+    from app.services import run_meter
+
+    run_meter.start("job_x")
+    run_meter.add(object(), "no-such-model", "no-such-provider")  # nonsense on purpose
+    assert run_meter.stop() is not None
+
+
+def test_a_failed_job_still_records_what_it_spent():
+    """Recording only successes makes the bill look smaller than the
+    statement."""
+    source = (BACKEND / "app/services/job_queue.py").read_text()
+    execute = source[source.index("def _execute("):]
+    execute = execute[: execute.index("\ndef _loop")]
+
+    failure = execute[execute.index("except Exception"):execute.index("return {\"job_id\": job_id, \"status\": status")]
+    assert "cost_usd = cost_usd + :cost" in failure
+
+
+def test_the_activity_view_answers_the_three_real_questions():
+    """What is it doing, is it any good, and what has it cost."""
+    source = (BACKEND / "app/routes/curriculum.py").read_text()
+    route = source[source.index("def factory_auto_run_activity"):]
+    route = route[: route.index("\n@router.post")]
+
+    assert '"now_running"' in route
+    assert '"recent"' in route and "'quality'->>'score'" in route
+    assert '"spend"' in route and '"cost_usd"' in route
+    # The projection is labelled an estimate rather than sold as a quote.
+    assert "an estimate" in route
+
+
+def test_the_projection_is_not_presented_as_a_quote():
+    view = " ".join((FRONTEND / "src/views/AutoRunActivity.tsx").read_text().split())
+    assert "an estimate, not a quote" in view
+
+
+def test_the_cost_columns_have_a_migration():
+    source = (BACKEND / "app/infra/db.py").read_text()
+    assert '"025_job_cost"' in source
+    assert "ADD COLUMN IF NOT EXISTS cost_usd" in source
+
+    names = re.findall(r'^\s+"(\d{3}_[a-z0-9_]+)",', source, re.M)
+    assert names == sorted(names)
