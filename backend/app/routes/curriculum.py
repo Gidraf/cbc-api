@@ -4086,9 +4086,21 @@ def _payload_model(handler: Any, kind: str) -> Any:
     from. Resolve the name against this module, and say so plainly when it
     cannot be resolved.
     """
-    model_cls = handler.__annotations__.get("payload")
-    if isinstance(model_cls, str):
-        model_cls = globals().get(model_cls)
+    # typing.get_type_hints resolves the string against the module the function
+    # was DEFINED in, which is the only place the name is guaranteed to exist.
+    # Looking it up in this module's globals happens to work from here and
+    # fails from anywhere else — which is exactly how the same bug survived in
+    # app/routes/artifacts.py after being fixed here.
+    model_cls = None
+    try:
+        import typing
+
+        model_cls = typing.get_type_hints(handler).get("payload")
+    except Exception:  # noqa: BLE001
+        model_cls = None
+    if model_cls is None:
+        raw = handler.__annotations__.get("payload")
+        model_cls = globals().get(raw) if isinstance(raw, str) else raw
     if model_cls is None or not hasattr(model_cls, "model_fields"):
         raise ValueError(
             f"Cannot queue '{kind}': the route {getattr(handler, '__name__', handler)} "

@@ -234,10 +234,18 @@ async def api_error_handler(_, exc: ApiError):
     )
 
 
+# Stamped once, at import. A restart moves it; a browser refresh does not.
+_STARTED_AT = __import__("datetime").datetime.now(
+    __import__("datetime").timezone.utc
+).isoformat()
+
+
 @app.get("/health")
 def health() -> dict:
     redis_ok = False
     minio_ok = False
+
+    from .services import job_queue as job_queue_service  # noqa: F401
 
     try:
         redis_ok = job_queue.ping()
@@ -250,13 +258,34 @@ def health() -> dict:
     except Exception:  # noqa: BLE001
         minio_ok = False
 
+    # Which code is actually running. Two rounds went on a bug that was already
+    # fixed, because there was no way to tell a stale process from a live fix —
+    # the operator restarted the console, the API kept its old module in memory,
+    # and the same error came back looking like the fix had not worked.
+    from .services.generation_version import VERSION as GENERATOR_VERSION
+
     return {
         "status": "ok" if redis_ok and minio_ok else "degraded",
         "checks": {
             "redis": redis_ok,
             "minio": minio_ok,
         },
+        "generator": GENERATOR_VERSION,
+        "started_at": _STARTED_AT,
+        "worker": {
+            "celery": _celery_status(),
+            "in_process": job_queue_service.worker_running(),
+        },
     }
+
+
+def _celery_status() -> str:
+    try:
+        from .celery_app import broker_available
+
+        return "reachable" if broker_available() else "unreachable"
+    except Exception:  # noqa: BLE001
+        return "not installed"
 
 
 @app.get("/api/v1/metrics")

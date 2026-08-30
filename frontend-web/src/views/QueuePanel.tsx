@@ -23,6 +23,7 @@ import {
   useQueueStatus,
   useQueueWork,
   useRetryFailed,
+  useServerHealth,
 } from "../lib/queries";
 
 /**
@@ -83,6 +84,7 @@ export function QueuePanel({
   const [from, setFrom] = React.useState<string>("substrands");
   const cancel = useCancelQueue();
   const retry = useRetryFailed(grade, subject);
+  const health = useServerHealth();
   const status = useQueueStatus(grade, subject, queue.data?.batch_id);
   const [kinds, setKinds] = React.useState<string[]>(defaultKinds);
 
@@ -386,6 +388,16 @@ export function QueuePanel({
                   If the failure was a bug that has since been fixed, the API and
                   the worker have to be restarted before a retry runs the new
                   code — otherwise it fails the same way.
+                  {health.data && (
+                    <div style={{ marginTop: 4 }}>
+                      This API started{" "}
+                      <strong>
+                        {new Date(health.data.started_at).toLocaleString()}
+                      </strong>{" "}
+                      running generator <code>{health.data.generator}</code>. If
+                      that time is older than the fix, restart before retrying.
+                    </div>
+                  )}
                 </div>
                 <ul style={{ margin: "6px 0 0", paddingLeft: "1.1em", color: "var(--ink-3)" }}>
                   {data.jobs

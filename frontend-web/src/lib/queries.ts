@@ -1104,6 +1104,26 @@ export function useDiscardDraft() {
  *  A job that crashed twice is parked rather than retried automatically, but
  *  "parked" was a dead end: a job that failed on a bug since fixed stayed
  *  failed for ever with no way to move it. */
+export type ServerHealth = {
+  status: string;
+  generator: string;
+  started_at: string;
+  worker: { celery: string; in_process: boolean };
+};
+
+/** What code the API is actually running, and since when.
+ *
+ *  Two rounds went on a bug that was already fixed, because a stale process and
+ *  a live fix were indistinguishable from the console. */
+export function useServerHealth() {
+  const api = useApi();
+  return useQuery({
+    queryKey: ["server-health"],
+    queryFn: () => api<ServerHealth>("/health"),
+    refetchInterval: 30_000,
+  });
+}
+
 export function useRetryFailed(grade: string, subject?: string) {
   const api = useApi();
   const qc = useQueryClient();

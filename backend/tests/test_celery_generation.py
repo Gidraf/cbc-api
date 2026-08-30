@@ -489,3 +489,52 @@ def test_the_console_offers_the_retry_and_names_the_catch():
 
     assert "Retry {failed} failed job(s)" in panel
     assert "have to be restarted before a retry runs the new code" in panel
+
+
+def test_the_annotation_resolver_works_from_other_modules_too():
+    """Looking the name up in curriculum.py's globals happens to work from
+    inside curriculum.py and fails from anywhere else — which is exactly how
+    the same bug survived in artifacts.py after being fixed in the queue."""
+    import app.routes.curriculum as curriculum
+    from app.routes import artifacts  # noqa: F401
+
+    source = _read("app/routes/artifacts.py")
+    assert "curriculum_routes._payload_model(" in source
+    assert 'handler.__annotations__.get("payload")' not in source
+
+    # And it resolves for real, not just by import.
+    model = curriculum._payload_model(curriculum.factory_generate_notes, "notes")
+    assert model.__name__ == "FactoryGenerateNotesRequest"
+
+
+def test_resolution_uses_the_defining_modules_namespace():
+    source = _read("app/routes/curriculum.py")
+    fn = source[source.index("def _payload_model"):]
+    fn = fn[: fn.index("\ndef _run_queued(")]
+    assert "typing.get_type_hints(handler)" in fn
+
+
+def test_no_module_reads_a_pydantic_annotation_by_hand():
+    """One resolver, or the next module to need one repeats the bug."""
+    import pathlib
+
+    for path in pathlib.Path(BACKEND / "app").rglob("*.py"):
+        text = path.read_text()
+        if '__annotations__.get("payload")' not in text:
+            continue
+        assert "_payload_model" in text, f"{path} resolves a payload by hand"
+
+
+def test_health_says_which_code_is_running():
+    """A stale process and a live fix were indistinguishable from the console,
+    so the same already-fixed error came back looking like the fix failed."""
+    from app.main import health
+
+    body = health()
+    assert body["generator"]
+    assert body["started_at"]
+    assert "celery" in body["worker"]
+
+    panel = " ".join(_front("src/views/QueuePanel.tsx").split())
+    assert "This API started" in panel
+    assert "older than the fix, restart before retrying" in panel

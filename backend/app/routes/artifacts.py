@@ -472,10 +472,15 @@ def regenerate_artifact(
         common["sub_strand"] = artifact.sub_strand_name
 
     handler = getattr(curriculum_routes, plan["endpoint"])
-    model_cls = handler.__annotations__.get("payload")
-    if model_cls is None:
-        raise_api_error("VALIDATION_FAILED",
-                        f"'{plan['endpoint']}' does not take a request body.")
+    # The SAME resolver the queue uses. curriculum.py opens with
+    # `from __future__ import annotations`, so every annotation in it is a
+    # string — and reading it raw from here produced
+    # "'str' object has no attribute 'model_fields'", the identical failure
+    # that was fixed in the queue and left standing in this path.
+    try:
+        model_cls = curriculum_routes._payload_model(handler, plan["endpoint"])
+    except ValueError as exc:
+        raise_api_error("VALIDATION_FAILED", str(exc))
 
     # Fields the generator needs that this artifact does not carry are left to
     # the model's own defaults rather than guessed at here.
