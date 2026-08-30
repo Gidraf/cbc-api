@@ -5198,6 +5198,131 @@ def factory_auto_run_status(
     }
 
 
+@router.get("/factory/auto-run/activity")
+def factory_auto_run_activity(
+    run_id: str = Query(""),
+    grade: str = Query(""),
+    _: AuthContext = Depends(require_roles("admin", "operator", "reviewer")),
+) -> dict[str, Any]:
+    """What the run is doing, what it has produced, and what it has cost.
+
+    A progress bar answers "how far" and nothing else. The three questions an
+    operator actually has are "what is it doing right now", "is what it is
+    producing any good", and "how much have I spent" — and the last one was
+    unanswerable until the bill arrived.
+    """
+    from ..infra.db import fetch_all, fetch_one
+    from ..services import auto_run as auto_run_service
+
+    run = auto_run_service.get(run_id=run_id, grade=grade)
+    if run is None:
+        return {"running": False, "note": "No auto-run has been started."}
+
+    params = {"batch_id": run.batch_id}
+
+    # What is on the bench now, and for how long.
+    running = fetch_all(
+        """
+        SELECT job_id, kind, strand, sub_strand, subject, started_at, attempts,
+               (payload->'steps'->>COALESCE((payload->>'index')::int, 0)) AS step,
+               EXTRACT(EPOCH FROM (NOW() - started_at)) AS seconds
+        FROM jobs WHERE batch_id = :batch_id AND status = 'running'
+        ORDER BY started_at ASC
+        """,
+        params,
+    ) or []
+
+    # What finished recently, newest first, with what each one cost.
+    recent = fetch_all(
+        """
+        SELECT job_id, kind, strand, sub_strand, subject, status, finished_at,
+               llm_calls, total_tokens, cost_usd, error,
+               (payload->'steps'->>COALESCE((payload->>'index')::int, 0)) AS step,
+               (result->'quality'->>'score') AS score,
+               (result->'quality'->>'weakest') AS weakest,
+               (result->'review_cycles'->>'cycles_run') AS cycles
+        FROM jobs
+        WHERE batch_id = :batch_id AND status IN ('done', 'failed')
+        ORDER BY finished_at DESC NULLS LAST LIMIT 25
+        """,
+        params,
+    ) or []
+
+    # Where the money went, by station.
+    by_kind = fetch_all(
+        """
+        SELECT kind, COUNT(*) AS jobs, SUM(llm_calls) AS calls,
+               SUM(total_tokens) AS tokens, SUM(cost_usd) AS cost
+        FROM jobs WHERE batch_id = :batch_id
+        GROUP BY kind ORDER BY SUM(cost_usd) DESC NULLS LAST
+        """,
+        params,
+    ) or []
+
+    totals = fetch_one(
+        """
+        SELECT COUNT(*) AS total,
+               COUNT(*) FILTER (WHERE status IN ('done','failed','cancelled')) AS finished,
+               COALESCE(SUM(cost_usd), 0) AS cost,
+               COALESCE(SUM(total_tokens), 0) AS tokens,
+               MIN(started_at) AS first_started,
+               MAX(finished_at) AS last_finished
+        FROM jobs WHERE batch_id = :batch_id
+        """,
+        params,
+    ) or {}
+
+    done = int(totals.get("finished") or 0)
+    total = int(totals.get("total") or 0)
+    cost = float(totals.get("cost") or 0.0)
+
+    # Throughput and what the rest would cost at the rate it is going. An
+    # estimate that says so, not a promise.
+    per_item = round(cost / done, 4) if done else 0.0
+    remaining = max(0, total - done)
+
+    elapsed_seconds = 0.0
+    if totals.get("first_started"):
+        from datetime import datetime, timezone
+
+        end = totals.get("last_finished") or datetime.now(timezone.utc)
+        try:
+            elapsed_seconds = max(0.0, (end - totals["first_started"]).total_seconds())
+        except Exception:  # noqa: BLE001
+            elapsed_seconds = 0.0
+
+    return {
+        "running": run.status == auto_run_service.RUNNING,
+        "run_id": run.run_id,
+        "status": run.status,
+        "floor": run.floor,
+        "recent_median": run.recent_median,
+        "average": run.average,
+        "halted_reason": run.halted_reason,
+        "progress": {
+            "finished": done, "total": total, "remaining": remaining,
+            "percentage": round(done / total * 100) if total else 0,
+        },
+        "spend": {
+            "cost_usd": round(cost, 4),
+            "tokens": int(totals.get("tokens") or 0),
+            "per_item_usd": per_item,
+            # Named an estimate because that is what it is: the stages still to
+            # come are not the stages already done, and notes cost more than
+            # strands.
+            "projected_remaining_usd": round(per_item * remaining, 2),
+            "by_station": [dict(r) for r in by_kind],
+        },
+        "pace": {
+            "elapsed_seconds": round(elapsed_seconds),
+            "items_per_hour": round(done / (elapsed_seconds / 3600), 1)
+            if elapsed_seconds > 60 and done else 0,
+        },
+        "now_running": [dict(r) for r in running],
+        "recent": [dict(r) for r in recent],
+    }
+
+
 @router.post("/factory/auto-run/stop")
 def factory_auto_run_stop(
     run_id: str = Query(...),
