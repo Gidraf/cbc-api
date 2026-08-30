@@ -109,7 +109,19 @@ class ProviderRouter:
         asked twice. The caller picks the vendor; the resolution, credential
         handling and reachability checks stay exactly the same.
         """
-        binding = self.state.stage_bindings.get(stage)
+        # An unbound stage inherits from the nearest bound relative before it
+        # defaults. Splitting one stage into six would otherwise drop every new
+        # one to the hardcoded fallback the moment the code shipped — a silent
+        # downgrade on the run after a deploy, with nothing in the output
+        # saying why the quality fell.
+        from .stages import chain
+
+        binding = None
+        for candidate in chain(stage):
+            binding = self.state.stage_bindings.get(candidate)
+            if binding:
+                break
+
         if not binding:
             # Fallback to default binding if stage not explicitly bound
             provider = provider or Provider.OPENAI.value

@@ -465,7 +465,7 @@ def ai_improve_profile(profile_data: dict[str, Any], instructions: str = "") -> 
         f"Return the enhanced, complete profile JSON now."
     )
 
-    resolved = pipeline_orchestrator.router.resolve_for_stage("notes_generation")
+    resolved = pipeline_orchestrator.router.resolve_for_stage("profile_generation")
     messages = [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_prompt},
@@ -635,7 +635,7 @@ def ai_generate_profile_from_dataset(
         f"Synthesize the comprehensive, master-tier Pedagogical Profile JSON covering all skills now."
     )
 
-    resolved = pipeline_orchestrator.router.resolve_for_stage("notes_generation")
+    resolved = pipeline_orchestrator.router.resolve_for_stage("profile_generation")
     messages = [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_prompt},

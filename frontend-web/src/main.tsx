@@ -13,6 +13,7 @@ import { Coverage } from "./views/Coverage";
 import { ContentFactory } from "./views/ContentFactory";
 import { Datasets } from "./views/Datasets";
 import { Profiles } from "./views/Profiles";
+import { StageModels } from "./views/StageModels";
 import { DiagramLibrary } from "./views/DiagramLibrary";
 import { ExamBuilder } from "./views/ExamBuilder";
 import { MediaLibrary } from "./views/MediaLibrary";
@@ -80,6 +81,7 @@ function Router() {
         />
         <Route path="datasets" element={<Screen name="Datasets"><Datasets /></Screen>} />
         <Route path="skills" element={<Screen name="Teaching skills"><Profiles /></Screen>} />
+        <Route path="models" element={<Screen name="Model per station"><StageModels /></Screen>} />
         <Route
           path="legacy"
           element={

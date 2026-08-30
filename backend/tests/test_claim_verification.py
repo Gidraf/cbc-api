@@ -210,3 +210,43 @@ def test_verified_audit_reports_the_sources_it_used(monkeypatch):
     check = _check(report, "Scientific & Technical Accuracy")
     assert check["status"] == "PASS"
     assert "https://kicd.ac.ke/d" in check["sources"]
+
+
+def test_the_audit_agrees_with_the_coverage_check_about_depth():
+    """Both measure the same guide. The audit said "comprehensive depth
+    achieved (3,455 words)" on the run where coverage found six of seven
+    modules too thin to teach from — two numbers, one guide, shown side by side
+    to the operator."""
+    from types import SimpleNamespace
+
+    from app.services import notes_coverage
+    from app.services.web_research import web_research_agent
+
+    prose = "Gather the learners in a circle and greet them warmly before you begin. " * 14
+    modules = [{"module_number": n, "teacher_exposition": prose, "lesson_flow": []}
+               for n in range(1, 8)]
+    guide = {"title": "Teacher's Guide for Kenya learners", "modules": modules,
+             "intro": "An introduction.", "hour_modules": modules}
+
+    report = web_research_agent.perform_quality_audit(guide, "notes", _dossier())
+    depth = _check(report, "Content Depth & Substance")
+    coverage = notes_coverage.check(
+        guide, SimpleNamespace(modules=7, unit="lessons", total_minutes=210)
+    )
+
+    assert depth["status"] == "WARN"
+    assert len(coverage.thin_modules) == 7
+    assert "1,500" in depth["reason"]
+
+
+def test_the_audit_does_not_count_the_guide_twice():
+    """The route mirrors `modules` into `hour_modules`; flattening the payload
+    counts both."""
+    from app.services.web_research import _deduplicated, _human_text
+
+    modules = [{"teacher_exposition": "one two three four five"}]
+    with_mirror = {"modules": modules, "hour_modules": modules,
+                   "key_concepts": [{"content": "one two three four five"}]}
+
+    assert len(_human_text(_deduplicated(with_mirror)).split()) == 5
+    assert len(_human_text(with_mirror).split()) == 15, "the bug this guards"

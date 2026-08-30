@@ -2,6 +2,7 @@ import React from "react";
 import { useSearchParams } from "react-router-dom";
 import { Badge, Button, Card, CopyButton, EmptyState, ErrorNotice, Grid, Label, LoadingBlock, PageHeader, ProgressBar, QueryState, Select, Stack, Table, Td, Th, useToast } from "../ui/components";
 import { Link } from "react-router-dom";
+import { AutoRunPanel } from "./AutoRunPanel";
 import { CurriculumStructure } from "./CurriculumStructure";
 import { HourWorkbench } from "./HourWorkbench";
 import { PromptInspector, type Inspection } from "./PromptInspector";
@@ -183,6 +184,64 @@ function emptyReport(row: Record<string, any>) {
     slo_coverage: { ...dimension },
     unmeasured: true,
   };
+}
+
+/** The measured score for one generated item, and what made it up.
+ *
+ *  This is the number auto mode gates on, so it has to be visible on a single
+ *  station too — comparing one model against another should cost one
+ *  sub-strand, not a pipeline run. */
+function QualityScore({ quality, model }: { quality: any; model?: string }) {
+  const components: any[] = quality?.components || [];
+  const measured = components.filter((c) => c.measured);
+  if (!measured.length) return null;
+
+  return (
+    <div
+      style={{
+        marginTop: "var(--s3)",
+        padding: "var(--s3)",
+        background: "var(--surface-2)",
+        borderRadius: "var(--radius-sm)",
+        fontSize: "var(--text-sm)",
+      }}
+    >
+      <Stack direction="row" gap="var(--s2)" align="center" wrap>
+        <strong>Measured score {quality.score}</strong>
+        <Badge tone={quality.score >= 95 ? "ok" : quality.score >= 80 ? "warn" : "danger"}>
+          {quality.score >= 95 ? "above a 95 floor" : "below a 95 floor"}
+        </Badge>
+        <span style={{ color: "var(--ink-3)" }}>
+          confidence {quality.confidence} · weakest{" "}
+          {String(quality.weakest || "—").replace(/_/g, " ")}
+          {model ? ` · ${model}` : ""}
+        </span>
+      </Stack>
+      <Table caption="What the score is made of">
+        <thead>
+          <tr>
+            <Th>Measure</Th>
+            <Th numeric>Score</Th>
+            <Th>Evidence</Th>
+          </tr>
+        </thead>
+        <tbody>
+          {components.map((c) => (
+            <tr key={c.name} style={{ opacity: c.measured ? 1 : 0.5 }}>
+              <Td>{String(c.name).replace(/_/g, " ")}</Td>
+              <Td numeric>{c.measured ? c.score : "—"}</Td>
+              <Td style={{ color: "var(--ink-3)" }}>{c.evidence}</Td>
+            </tr>
+          ))}
+        </tbody>
+      </Table>
+      <p style={{ color: "var(--ink-3)", margin: "var(--s2) 0 0" }}>
+        Change one thing — the model on this station — regenerate, and compare
+        this number. Everything else is held constant, so the difference is the
+        model.
+      </p>
+    </div>
+  );
 }
 
 /** What the worker's review loop did: generate, save, review, revise, save.
@@ -549,6 +608,10 @@ export function ContentFactory() {
         </details>
       )}
 
+      {!substrand && effectiveGrade && (
+        <AutoRunPanel grade={effectiveGrade} />
+      )}
+
       {!substrand && subject && allSubstrands.length > 0 && (
         <QueuePanel grade={effectiveGrade} subject={subject} />
       )}
@@ -824,6 +887,15 @@ export function ContentFactory() {
                       attempt{job.data.attempts === 1 ? "" : "s"}: {job.data.error}
                     </p>
                   )}
+
+                  {watchedStation === station.id &&
+                    job.data?.status === "done" &&
+                    job.data.result?.quality && (
+                      <QualityScore
+                        quality={job.data.result.quality}
+                        model={job.data.result?.model}
+                      />
+                    )}
 
                   {watchedStation === station.id &&
                     job.data?.status === "done" &&

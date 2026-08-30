@@ -285,3 +285,74 @@ def test_what_is_said_to_the_child_is_still_scored_against_the_child():
 
     assert fit.method == "sentence_length_vs_grade_band"
     assert fit.value is not None
+
+
+# ── the review cycle must chase something achievable ────────────────────────
+
+
+def test_grounding_a_guide_means_teaching_the_designs_own_lesson():
+    """Term overlap scored a sound guide 0.37 — a guide is mostly pedagogy,
+    none of which is in the design and none of which should be. Worse, the
+    number named nothing to do, so three review cycles went 78 -> 83 -> 79
+    chasing it."""
+    from app.services.dna_scoring import score_notes
+
+    experiences = [
+        "say the name of God in their mother tongue or language of catchment area",
+        "sing songs about God in groups",
+        "listen to a recorded clip of a short prayer",
+    ]
+    guide = {
+        "title": "Teacher's Guide: Our God",
+        "modules": [{
+            "module_number": 1,
+            "teacher_exposition": (
+                "Ask each learner to say the name of God in their own mother tongue, "
+                "or the language of the catchment area. Then sing songs about God in "
+                "groups. Play the recorded clip of a short prayer and let them listen."
+            ),
+            "lesson_flow": [],
+        }],
+    }
+
+    scored = score_notes(guide, [], grade_ordinal=1, raw_source="unrelated design text",
+                         experiences=experiences)
+    grounding = scored.scores["source_grounding"]
+
+    assert grounding.method == "design_experiences_taught"
+    assert grounding.value == 1.0
+
+
+def test_a_dropped_experience_makes_the_finding_actionable():
+    """"Improve source grounding" names nothing to do. "You did not teach:
+    listen to a recorded clip of a short prayer" does."""
+    from app.services.dna_scoring import score_notes
+
+    experiences = ["sing songs about God in groups",
+                   "listen to a recorded clip of a short prayer"]
+    guide = {"modules": [{"teacher_exposition": "Sing songs about God in groups.",
+                          "lesson_flow": []}]}
+
+    grounding = score_notes(guide, [], 1, "", experiences=experiences).scores["source_grounding"]
+
+    assert grounding.value == 0.5
+    assert "recorded clip of a short prayer" in grounding.evidence
+
+
+def test_a_revision_directive_is_not_a_search_query():
+    """On a review cycle `custom_instructions` carries the whole revision block,
+    and it went into the web search string and then into the stored dossier."""
+    from app.services.web_research import web_research_agent
+
+    directive = (
+        "=== REVISION 2: WHAT THE REVIEW FOUND ===\n"
+        "The previous version of this content scored 83/100 and did not pass "
+        "the quality gate. Fix these, in this order: 1. Improve source grounding"
+    )
+    queries = web_research_agent._generate_search_queries(
+        "Christian Religious Education", "Creation", "Our God",
+        "grade-pp1", "notes", directive,
+    )
+
+    assert all("===" not in q for q in queries)
+    assert all(len(q) < 200 for q in queries)

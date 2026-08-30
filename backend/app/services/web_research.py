@@ -229,8 +229,15 @@ class WebResearchAgent:
         if any(word in lowered for word in _DEVELOPMENT):
             base_queries.append(f"Kenya {subject} {clean_sub} real world case study Vision 2030")
 
-        if extra_query:
-            base_queries.insert(0, f"Kenya {subject} {clean_sub} {extra_query}")
+        # A search query is a phrase. On a review cycle `custom_instructions`
+        # carries the whole revision block — "=== REVISION 2: WHAT THE REVIEW
+        # FOUND === The previous version scored 83/100 ..." — and it went
+        # straight into the search string and then into the stored dossier.
+        hint = " ".join(str(extra_query or "").split())
+        if "===" in hint or len(hint) > 120:
+            hint = ""
+        if hint:
+            base_queries.insert(0, f"Kenya {subject} {clean_sub} {hint}"[:200])
         return base_queries[:4]
 
     def _execute_search(self, query: str) -> list[dict[str, Any]]:
@@ -457,7 +464,7 @@ class WebResearchAgent:
         # string matched schema KEY NAMES rather than content — "safety" matched
         # `"safety_precautions": ""`, so the safety check passed on the presence
         # of an empty field.
-        raw_text = _human_text(content)
+        raw_text = _human_text(_deduplicated(content))
         word_count = len(raw_text.split())
         if word_count < 250:
             checks.append({"name": "Content Depth & Substance", "status": "FAIL", "reason": f"Content is too brief ({word_count} words). Minimum 300 words required."})
@@ -465,8 +472,32 @@ class WebResearchAgent:
             score -= 25
             no_shallow = False
         else:
-            checks.append({"name": "Content Depth & Substance", "status": "PASS", "detail": f"Comprehensive depth achieved ({word_count} words)."})
-            no_shallow = True
+            # Word count alone called a guide of seven 1,000-character modules
+            # "comprehensive". Depth is per lesson, and the coverage check has
+            # already measured it — agree with it rather than contradict it.
+            from .notes_coverage import MIN_BODY_CHARS, _body_of, _modules_of
+
+            modules = _modules_of(_deduplicated(content) if isinstance(content, dict) else {})
+            thin = [m for m in modules if len(_body_of(m)) < MIN_BODY_CHARS]
+            if thin:
+                checks.append({
+                    "name": "Content Depth & Substance", "status": "WARN",
+                    "reason": (
+                        f"{len(thin)} of {len(modules)} module(s) are under "
+                        f"{MIN_BODY_CHARS:,} characters — too short to teach from "
+                        f"without further preparation ({word_count} words overall)."
+                    ),
+                })
+                suggestions.append(
+                    "Expand the thin modules with the teacher's actual words, the "
+                    "actual song or prayer, and what a confused child does."
+                )
+                score -= 15
+                no_shallow = False
+            else:
+                checks.append({"name": "Content Depth & Substance", "status": "PASS",
+                               "detail": f"Comprehensive depth achieved ({word_count} words)."})
+                no_shallow = True
 
         if any(w in raw_text.lower() for w in ["curriculum", "kenya", "competenc", "kicd", "learner", "student", "teacher"]):
             checks.append({"name": "KICD Curriculum Grounding", "status": "PASS", "detail": "Aligned with Kenyan Basic Education Curriculum Framework."})
@@ -568,6 +599,24 @@ class WebResearchAgent:
 # Keys whose value, where it has one, is a safety statement.
 _SAFETY_KEYS = ("safety_precautions", "safety", "hazards", "precautions",
                 "safety_notes", "risk_assessment")
+
+
+def _deduplicated(content: Any) -> Any:
+    """The payload without its own mirrors.
+
+    The notes route copies `modules` into `hour_modules` and derives
+    `key_concepts` from it, so a guide counted by flattening the whole payload
+    is counted two and a bit times. That is how this audit reported
+    "comprehensive depth achieved (3,455 words)" on the same run where the
+    coverage check found six of seven modules too thin to teach from — two
+    numbers about the same guide, disagreeing, both shown to the operator.
+    """
+    if not isinstance(content, dict):
+        return content
+    if not content.get("modules"):
+        return content
+    return {k: v for k, v in content.items()
+            if k not in ("hour_modules", "key_concepts")}
 
 
 def _human_text(value: Any, depth: int = 0) -> str:

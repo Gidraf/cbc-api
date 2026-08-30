@@ -262,6 +262,10 @@ class QualityGateService:
                 blueprint.get("slos") or [],
                 grade_ord,
                 str(blueprint.get("raw_source") or ""),
+                # Already on the sub-strand row. Without it grounding falls back
+                # to term overlap, which a sound guide cannot score well on and
+                # cannot act on either.
+                experiences=blueprint.get("learning_experiences") or [],
             )
 
         elif layer_name == "diagram":

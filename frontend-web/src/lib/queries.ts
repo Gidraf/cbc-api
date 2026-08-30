@@ -960,6 +960,117 @@ export function useExportBundle(grade: string, subject?: string) {
   });
 }
 
+export type AutoRunStatus = {
+  running: boolean;
+  run_id?: string;
+  grade?: string;
+  subjects?: string[];
+  floor?: number;
+  window?: number;
+  status?: string;
+  items_scored?: number;
+  items_counted?: number;
+  average?: number;
+  recent_average?: number;
+  recent_median?: number;
+  halted_reason?: string;
+  weakest_items?: { label: string; score: number; weakest: string }[];
+  queue?: QueueStatus;
+  note?: string;
+};
+
+/** Generate a grade unattended, with a floor the run stops at. */
+export type StageBinding = {
+  name: string;
+  label: string;
+  drives: string;
+  guidance: string;
+  falls_back_to: string;
+  provider: string;
+  model: string;
+  base_url: string | null;
+  /** Bound elsewhere and borrowed, rather than set on this stage. */
+  inherited_from: string;
+  configured: boolean;
+};
+
+/** Which model runs which station. */
+export function useStageBindings() {
+  const api = useApi();
+  return useQuery({
+    queryKey: ["stage-bindings"],
+    queryFn: () =>
+      api<{ stages: StageBinding[]; providers: string[]; note: string }>(
+        "/admin/pipeline-bindings"
+      ),
+    staleTime: 60_000,
+  });
+}
+
+export function useSetStageBinding() {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { stage: string; provider: string; model: string; base_url?: string | null }) =>
+      api<StageBinding>(`/admin/pipeline-bindings/${encodeURIComponent(v.stage)}`, {
+        method: "POST",
+        body: JSON.stringify({
+          provider: v.provider, model: v.model, base_url: v.base_url ?? null,
+        }),
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["stage-bindings"] }),
+  });
+}
+
+export function useStartAutoRun(grade: string) {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { subjects?: string[]; floor?: number; window?: number;
+                      steps?: string[]; review_cycles?: number;
+                      custom_instructions?: string }) =>
+      api<AutoRunStatus>("/api/v1/curriculum/factory/auto-run", {
+        method: "POST",
+        body: JSON.stringify({ grade, ...v }),
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["auto-run"] });
+      qc.invalidateQueries({ queryKey: ["queue"] });
+    },
+  });
+}
+
+/** Poll while it runs, stop when it halts — a finished run does not change. */
+export function useAutoRunStatus(grade: string) {
+  const api = useApi();
+  return useQuery({
+    queryKey: ["auto-run", grade],
+    queryFn: () =>
+      api<AutoRunStatus>(
+        `/api/v1/curriculum/factory/auto-run/status?grade=${encodeURIComponent(grade)}`
+      ),
+    enabled: Boolean(grade),
+    refetchInterval: (query) =>
+      (query.state.data as AutoRunStatus | undefined)?.running ? 6000 : false,
+  });
+}
+
+export function useStopAutoRun() {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (runId: string) =>
+      api<{ cancelled_jobs: number }>(
+        `/api/v1/curriculum/factory/auto-run/stop?run_id=${encodeURIComponent(runId)}`,
+        { method: "POST" }
+      ),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["auto-run"] });
+      qc.invalidateQueries({ queryKey: ["queue"] });
+    },
+  });
+}
+
 export function useDiscardStaleDrafts(grade: string, subject: string) {
   const api = useApi();
   const qc = useQueryClient();

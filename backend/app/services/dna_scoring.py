@@ -227,6 +227,7 @@ def score_notes(
     blueprint_slos: list[Any],
     grade_ordinal: int,
     raw_source: str = "",
+    experiences: list[Any] | None = None,
 ) -> ScoreSet:
     out = ScoreSet()
     body = _flatten(notes)
@@ -287,22 +288,41 @@ def score_notes(
             "the guide names nothing said directly to the learner",
         ))
 
-    if raw_source.strip():
-        # Containment, not similarity. Symmetric Jaccard asks "how alike are
-        # these two texts", and the design section holds five strands, twelve
-        # sub-strands, four rubric tables and every page header — so a guide
-        # correctly confined to ONE sub-strand is punished for every word of the
-        # other eleven it properly left out. It scored 0.20 and the compliance
-        # approver rejected the run on it, while the real defect (seven modules
-        # under the depth floor) never reached the gate at all.
-        #
-        # The question worth asking is asymmetric: of what this guide asserts,
-        # how much is in the design? That is what grounding means.
+    # Grounding a TEACHER'S GUIDE means it teaches the lesson KICD published —
+    # not that its vocabulary overlaps the design's.
+    #
+    # Term containment scored a perfectly sound guide at 0.37, because a guide
+    # is mostly pedagogy: differentiation, misconceptions, formative checks,
+    # the teacher's own words. None of that is in the design and none of it
+    # should be. Worse, the number is unactionable: the review cycle's only
+    # directive became "improve source grounding", which names nothing to do,
+    # and three cycles went 78 -> 83 -> 79 chasing it.
+    #
+    # The design's suggested learning experiences ARE the lesson. Whether each
+    # one is taught is checkable, achievable, and says exactly what to fix.
+    experience_texts = [
+        (e.get("text") if isinstance(e, dict) else str(e)) or ""
+        for e in (experiences or [])
+    ]
+    experience_texts = [t for t in experience_texts if str(t).strip()]
+
+    if experience_texts:
+        taught = [t for t in experience_texts if containment(t, body) >= 0.5]
+        missing = [t for t in experience_texts if t not in taught]
+        out.add("source_grounding", Score(
+            round(len(taught) / len(experience_texts), 4),
+            "design_experiences_taught",
+            f"{len(taught)} of {len(experience_texts)} of the design's suggested "
+            f"learning experiences are taught"
+            + (f"; not taught: {'; '.join(t[:70] for t in missing[:3])}" if missing else ""),
+            len(experience_texts),
+        ))
+    elif raw_source.strip():
         out.add("source_grounding", Score(
             containment(body, raw_source),
             "notes_term_containment_in_design",
             f"fraction of the guide's key terms found in {len(raw_source)} chars "
-            f"of curriculum design",
+            f"of curriculum design (no suggested learning experiences to check against)",
         ))
     else:
         out.add("source_grounding", Score(None, "pending_no_raw_source", "no curriculum source text supplied"))

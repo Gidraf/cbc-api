@@ -16,9 +16,11 @@ from ..services.curriculum_extractor import curriculum_extractor
 from ..services import (
     artifact_registry,
     citation_check,
+    auto_run,
     design_source,
     export_bundle,
     generation_version,
+    quality_score,
     media_registry,
     media_validators,
     notes_coverage,
@@ -3143,6 +3145,25 @@ class QueuePipelineRequest(BaseModel):
     force_ingest: bool = False
 
 
+class AutoRunRequest(BaseModel):
+    """Generate unattended, with a floor the run stops at."""
+
+    grade: str
+    # Empty means every learning area with an ingested design for this grade.
+    subjects: list[str] = []
+    steps: list[str] = []
+    # The measured score the recent average must stay above. This is what the
+    # pipeline's own validators report, not a human reading the output — see
+    # quality_score for exactly what it does and does not know.
+    floor: float = 95.0
+    window: int = 5
+    # How many times a failing generation is sent back with the review's
+    # findings. One is cheapest; three is the default and three times the bill
+    # across a grade.
+    review_cycles: int = 3
+    custom_instructions: str = ""
+
+
 class QueueRegenerateRequest(BaseModel):
     """Regenerate versions from their reviewers' findings, in the background."""
 
@@ -3425,7 +3446,7 @@ def factory_generate_strands(
     from ..services.content_type_classifier import get_profile_from_db as _profile_for_strands
 
     strand_profile = _profile_for_strands(payload.subject, payload.grade)
-    resolved = pipeline_orchestrator.router.resolve_for_stage("notes_generation")
+    resolved = pipeline_orchestrator.router.resolve_for_stage("structure_generation")
     context = langfuse_context_service.assemble_agent_context(
         agent_name="strand-generator",
         grade_slug=payload.grade,
@@ -3617,6 +3638,21 @@ def _ground_substrands(
             dropped_model_rubrics += 1
     report["model_rubrics_dropped"] = dropped_model_rubrics
 
+    # One shape per field. The generator returned
+    # `link_to_other_learning_areas` as a string for eleven sub-strands and as
+    # a list for the twelfth, so anything reading it has to handle both — and
+    # the one that forgets fails on whichever sub-strand happens to differ.
+    for sub in sub_strands:
+        if not isinstance(sub, dict):
+            continue
+        link = sub.get("link_to_other_learning_areas")
+        if isinstance(link, list):
+            sub["link_to_other_learning_areas"] = " ".join(
+                str(item).strip() for item in link if str(item).strip()
+            )
+        elif link is not None and not isinstance(link, str):
+            sub["link_to_other_learning_areas"] = str(link)
+
     # Pages FIRST. Each sub-strand's own rubric page is the strongest evidence
     # there is about which rubric measures it, and word overlap alone cannot
     # settle it: "identify three ways loving God" fits both "Love for God" and
@@ -3682,7 +3718,7 @@ def factory_generate_substrands(
     outcomes_str = "\n".join([f"- {o}" for o in gen_outcomes]) if gen_outcomes else "Standard KICD BECF Outcomes."
     master_context = langfuse_context_service.get_master_context()
 
-    resolved = pipeline_orchestrator.router.resolve_for_stage("notes_generation")
+    resolved = pipeline_orchestrator.router.resolve_for_stage("structure_generation")
 
     # Who the learner is decides what may be asked of them. Without this the
     # shared prompt's own examples set the register, and a pre-primary sub-strand
@@ -3941,7 +3977,7 @@ def factory_ingest_learning_area(
     skill: dict[str, Any] = {"status": "skipped"}
 
     if payload.with_skill:
-        resolved = pipeline_orchestrator.router.resolve_for_stage("notes_generation")
+        resolved = pipeline_orchestrator.router.resolve_for_stage("ingest_extraction")
 
         # Read the section in page-aligned chunks and reconcile what it bounds.
         scope = scope_service.derive_scope(
@@ -4097,13 +4133,23 @@ def _run_queued(job: dict[str, Any]) -> dict[str, Any]:
     # console and stop there: an operator read "needs revision at 76/100",
     # retyped the findings into the instructions box, and clicked Generate
     # again, by hand, per sub-strand, across a grade.
+    # Cycles are the main cost lever: three passes over a grade is three times
+    # the bill. The operator sets it per run rather than per deploy.
     result, cycles = review_cycle.run(
         produce,
         label=f"{kind} for {job.get('sub_strand') or job.get('subject')}",
         base_instructions=str(payload.get("custom_instructions") or ""),
+        max_cycles=int(payload.get("review_cycles") or review_cycle.MAX_CYCLES),
     )
     out = _queued_result(result)
     out["review_cycles"] = cycles.to_dict()
+    # Scored here as well as in the pipeline, so a single station queued on its
+    # own comes back with a number. Without it the only way to compare one
+    # model against another was to run a whole pipeline — which is the opposite
+    # of the cheap experiment an operator wants before committing to a model.
+    out["quality"] = quality_score.score(
+        result if isinstance(result, dict) else {}, kind
+    ).to_dict()
     return out
 
 
@@ -4180,9 +4226,17 @@ def _run_queued_questions(job: dict[str, Any]) -> dict[str, Any]:
         produce,
         label=f"questions for {job.get('sub_strand') or job.get('subject')}",
         base_instructions=str(payload.get("custom_instructions") or ""),
+        max_cycles=int(payload.get("review_cycles") or review_cycle.MAX_CYCLES),
     )
     out = _queued_result(result)
     out["review_cycles"] = cycles.to_dict()
+    # Scored here as well as in the pipeline, so a single station queued on its
+    # own comes back with a number. Without it the only way to compare one
+    # model against another was to run a whole pipeline — which is the opposite
+    # of the cheap experiment an operator wants before committing to a model.
+    out["quality"] = quality_score.score(
+        result if isinstance(result, dict) else {}, "questions"
+    ).to_dict()
     return out
 
 
@@ -4529,8 +4583,31 @@ def _run_queued_pipeline(job: dict[str, Any]) -> dict[str, Any]:
     # implementation, so the pipeline cannot drift from the buttons.
     result = handler({**job, "kind": step})
 
+    # Score it against what its own validators checked, and let the auto-run
+    # decide whether to keep going. An unattended run that keeps producing
+    # while quality collapses is the failure this exists to prevent — the
+    # operator finds out at the end, after paying for a grade.
+    scored = quality_score.score(result if isinstance(result, dict) else {}, step)
+    halted = auto_run.record(
+        str(job.get("batch_id") or ""), scored,
+        label=f"{step}: {job.get('sub_strand') or job.get('strand') or job.get('subject')}",
+    )
+    if halted is not None:
+        from ..services import job_queue
+
+        cancelled = job_queue.cancel(batch_id=str(job.get("batch_id") or ""))
+        logger.warning(
+            "Auto-run %s halted and cancelled %d queued job(s).",
+            halted.run_id, cancelled,
+        )
+        return {"step": step, "step_index": index, "advanced_to": "",
+                "quality": scored.to_dict(),
+                "auto_run_halted": halted.halted_reason,
+                "cancelled_jobs": cancelled, **result}
+
     advanced = _advance_pipeline(job, steps, index)
-    return {"step": step, "step_index": index, "advanced_to": advanced, **result}
+    return {"step": step, "step_index": index, "advanced_to": advanced,
+            "quality": scored.to_dict(), **result}
 
 
 def _advance_pipeline(job: dict[str, Any], steps: list[str], index: int) -> str:
@@ -5002,6 +5079,123 @@ def factory_queue_pipeline(
     }
 
 
+@router.post("/factory/auto-run")
+def factory_auto_run(
+    payload: AutoRunRequest,
+    auth: AuthContext = Depends(require_roles("admin", "operator")),
+) -> dict[str, Any]:
+    """Run the whole pipeline across a grade, unattended, with a quality floor.
+
+    Set it going, come back, download everything, review it at leisure. The
+    floor is what makes that safe: every finished item is scored against what
+    its own validators actually checked, and the run halts and cancels what has
+    not started when the recent average falls through it.
+
+    The score is NOT the accuracy a person reading against the KICD design
+    would give. It measures grounding, lesson coverage, citation resolution,
+    how many rubrics came from the design, and the local gate. It catches
+    absence, contradiction and ungroundedness; it cannot tell whether a rubric
+    measures the right thing.
+    """
+    import hashlib as _hashlib
+    from ..infra.db import fetch_all
+    from ..services import job_queue
+
+    steps = [str(x).strip() for x in payload.steps if str(x).strip()] or list(PIPELINE_STEPS)
+    steps = [s for s in PIPELINE_STEPS if s in set(steps)]
+
+    subjects = [s.strip() for s in payload.subjects if s.strip()]
+    if not subjects:
+        rows = fetch_all(
+            """
+            SELECT DISTINCT subject FROM curriculum_designs
+            WHERE (grade = :grade OR grade = :alt_grade) AND subject <> ''
+            ORDER BY subject
+            """,
+            {"grade": payload.grade,
+             "alt_grade": payload.grade.replace("grade-", "")},
+        ) or []
+        subjects = [str(r.get("subject") or "") for r in rows if r.get("subject")]
+
+    if not subjects:
+        raise_api_error(
+            "MISSING_PARENT_CONTEXT",
+            f"No ingested designs for {payload.grade}. Ingest at least one "
+            f"learning area before starting an auto-run.",
+        )
+
+    batch_id = "auto_" + _hashlib.sha256(
+        f"{payload.grade}{subjects}{steps}".encode()
+    ).hexdigest()[:16]
+
+    run = auto_run.start(
+        payload.grade, subjects, batch_id,
+        floor=payload.floor, window=payload.window,
+        started_by=getattr(auth, "subject", ""),
+    )
+
+    queued = 0
+    for subject in subjects:
+        units = _expand_step(steps[0], payload.grade, subject, "")
+        for unit in units:
+            job_queue.enqueue(
+                "pipeline", payload.grade, subject,
+                {"steps": steps, "index": 0,
+                 "custom_instructions": payload.custom_instructions,
+                 "review_cycles": max(1, payload.review_cycles),
+                 "scope_strand": ""},
+                strand=unit.get("strand", ""),
+                sub_strand=unit.get("sub_strand", ""),
+                batch_id=batch_id,
+                queued_by=getattr(auth, "subject", ""),
+            )
+            queued += 1
+
+    job_queue.start_worker()
+
+    return {
+        "status": "running",
+        **run.to_dict(),
+        "queued": queued,
+        "steps": steps,
+        "note": (
+            f"Running unattended across {len(subjects)} learning area(s). Each "
+            f"stage fans out as the one before it finishes. The run halts if the "
+            f"last {payload.window} scored items average below {payload.floor:.0f}."
+        ),
+    }
+
+
+@router.get("/factory/auto-run/status")
+def factory_auto_run_status(
+    run_id: str = Query(""),
+    grade: str = Query(""),
+    _: AuthContext = Depends(require_roles("admin", "operator", "reviewer")),
+) -> dict[str, Any]:
+    """How the unattended run is going, and which items are dragging it down."""
+    from ..services import job_queue
+
+    run = auto_run.get(run_id=run_id, grade=grade)
+    if run is None:
+        return {"running": False, "note": "No auto-run has been started."}
+
+    return {
+        "running": run.status == auto_run.RUNNING,
+        **run.to_dict(),
+        "queue": job_queue.status(batch_id=run.batch_id),
+    }
+
+
+@router.post("/factory/auto-run/stop")
+def factory_auto_run_stop(
+    run_id: str = Query(...),
+    _: AuthContext = Depends(require_roles("admin", "operator")),
+) -> dict[str, Any]:
+    """Stop an unattended run and cancel what it had not started."""
+    cancelled = auto_run.stop(run_id)
+    return {"status": "stopped", "run_id": run_id, "cancelled_jobs": cancelled}
+
+
 @router.post("/factory/queue-regenerate")
 def factory_queue_regenerate(
     payload: QueueRegenerateRequest,
@@ -5448,7 +5642,7 @@ def factory_derive_grade_scope(
     source_material = found.text
     design_id = found.design_id
 
-    resolved = pipeline_orchestrator.router.resolve_for_stage("notes_generation")
+    resolved = pipeline_orchestrator.router.resolve_for_stage("ingest_extraction")
     # Note the shared reader does NOT feed the previously derived scope back in.
     # Deriving a scope while showing the model the last scope makes the second
     # run agree with the first whether or not the first was right.
@@ -5579,7 +5773,7 @@ def factory_generate_media_prompts(
         )
 
     profile = get_profile_from_db(payload.subject, payload.grade)
-    resolved = pipeline_orchestrator.router.resolve_for_stage("diagram_generation")
+    resolved = pipeline_orchestrator.router.resolve_for_stage("media_generation")
 
     context = langfuse_context_service.assemble_agent_context(
         agent_name="media-prompt-generator",
@@ -5748,7 +5942,7 @@ def factory_generate_simulations(
         },
     )
 
-    resolved = pipeline_orchestrator.router.resolve_for_stage("activity_generation")
+    resolved = pipeline_orchestrator.router.resolve_for_stage("simulation_generation")
 
     if payload.inspect:
         return {

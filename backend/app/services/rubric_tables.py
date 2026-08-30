@@ -101,6 +101,9 @@ class RubricRow:
     page: int = 0
     matched_sub_strand: str = ""
     match_score: float = 0.0
+    # Levels finished from the indicator's own words, named so a reviewer can
+    # see that the join happened rather than discovering it.
+    completed_levels: list[str] = field(default_factory=list)
 
     @property
     def complete(self) -> bool:
@@ -146,6 +149,7 @@ class RubricRow:
             "source_page": self.page,
             "rubric_source": "design",
             "truncated_levels": self.truncated_levels,
+            "completed_levels": self.completed_levels,
         }
 
 
@@ -233,6 +237,19 @@ def _split_rows(page: document_index.Page) -> list[RubricRow]:
             if value:
                 setattr(current, level, _GLUED.sub(r"\1 \2", value))
         current.indicator = _GLUED.sub(r"\1 \2", current.indicator)
+
+        # Finish what the column cut off. Half of KICD's cells arrive
+        # truncated — "Identifies three", "Tells three" — and a teacher cannot
+        # mark against those. Only ever a join from the indicator's own words;
+        # where they cannot be located the cell is left as it is.
+        for level in _LEVEL_ORDER:
+            value = getattr(current, level)
+            if not value:
+                continue
+            finished = complete_cell(value, current.indicator)
+            if finished != value:
+                setattr(current, level, finished)
+                current.completed_levels.append(level)
         rows.append(current)
         current, buffer = None, []
 
@@ -378,3 +395,100 @@ def harvest(design_text: str, sub_strands: list[dict[str, Any]]) -> RubricHarves
         len(result.rows), result.pages_read, len(result.unmatched),
     )
     return result
+
+
+# ── completing what the PDF cut off ─────────────────────────────────────────
+
+def _words(text: str) -> list[str]:
+    return re.findall(r"[A-Za-z']+", text or "")
+
+
+def _same(a: str, b: str) -> bool:
+    """Loose word equality, so "thing" matches "things"."""
+    a, b = a.lower(), b.lower()
+    return a == b or a.rstrip("s") == b.rstrip("s")
+
+
+# Words a truncated cell can end on that carry no meaning to anchor against.
+# "Demonstrates one way of" ends on "of"; the word to look for is "way".
+_FUNCTION_TAIL = {"of", "the", "a", "an", "to", "in", "for", "with", "and",
+                  "on", "at", "by", "from", "their", "his", "her", "its"}
+
+# A level opens by stating how many. "one", "two", "one to two", "more than
+# three" — after the quantity comes the same object the indicator names.
+_QUANTITY = {"one", "two", "three", "four", "five", "six", "seven", "eight",
+             "nine", "ten", "more", "than", "fewer", "less", "least"}
+
+
+def _indicator_tail(indicator: str) -> list[str]:
+    """The indicator's object phrase — what the level is measuring.
+
+    "Ability to identify three qualities of God." -> three qualities of God
+    """
+    stripped = re.sub(r"^\s*ability\s+to\s+", "", indicator or "", flags=re.IGNORECASE)
+    words = _words(stripped)
+    # Drop the leading verb; the levels supply their own.
+    return words[1:] if words else []
+
+
+def complete_cell(cell: str, indicator: str) -> str:
+    """Finish a cell the PDF cut off, using the indicator's own words.
+
+    Half of KICD's rubric cells arrive truncated — "Identifies three",
+    "Names one thing", "Tells three" — because the table column ran out. A
+    teacher cannot mark against "Meeting: Identifies three".
+
+    This is a JOIN, not a guess: the cell's trailing words are located inside
+    the indicator's object phrase, and only the remainder of that phrase is
+    appended. Where they cannot be located, the cell is returned untouched
+    rather than completed on a hunch.
+    """
+    if not cell or _TERMINAL.search(cell):
+        return cell
+
+    cell_words = _words(cell)
+    tail = _indicator_tail(indicator)
+    if not cell_words or not tail:
+        return cell
+
+    # Longest suffix of the cell that appears as a run inside the tail. Longest
+    # first, so "qualities of" is preferred over the bare "of".
+    #
+    # Trailing function words are stripped before anchoring: "Demonstrates one
+    # way of" ends on "of", which appears everywhere and anchors nowhere, while
+    # the word that actually locates it is "way".
+    anchorable = list(cell_words)
+    while anchorable and anchorable[-1].lower() in _FUNCTION_TAIL:
+        anchorable.pop()
+
+    for length in range(min(len(anchorable), len(tail)), 0, -1):
+        suffix = anchorable[-length:]
+        for start in range(len(tail) - length + 1):
+            if all(_same(a, b) for a, b in zip(suffix, tail[start:start + length])):
+                remainder = tail[start + length:]
+                # The function words stripped above may already be in the cell
+                # AND at the head of the remainder — "handling the" then "the
+                # holy Bible" — in which case saying them twice is wrong. Skip
+                # only the ones that genuinely match: "way of" followed by
+                # "loving God" shares nothing, and dropping a word there would
+                # cost the sentence its verb.
+                stripped_tail = cell_words[len(anchorable):]
+                skip = 0
+                while (skip < len(stripped_tail) and skip < len(remainder)
+                       and _same(stripped_tail[skip], remainder[skip])):
+                    skip += 1
+                remainder = remainder[skip:]
+                if not remainder:
+                    return cell.rstrip() + "."
+                return f"{cell.rstrip()} {' '.join(remainder)}."
+
+    # No anchor, but the cell ends on a quantity and the indicator's object
+    # opens with one: "Identifies one to two" against "four activities they do
+    # in church" is stating a different count of the same thing.
+    if cell_words[-1].lower() in _QUANTITY:
+        after_quantity = list(tail)
+        while after_quantity and after_quantity[0].lower() in _QUANTITY:
+            after_quantity.pop(0)
+        if after_quantity and len(after_quantity) < len(tail):
+            return f"{cell.rstrip()} {' '.join(after_quantity)}."
+    return cell

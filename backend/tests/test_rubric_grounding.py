@@ -519,3 +519,80 @@ def test_a_meets_cell_the_pdf_stripped_of_its_verb_fails_the_row():
     assert row.meeting == "David and Goliath."
     assert not row.complete
     assert harvest.for_sub_strand("Bible Story: David and Goliath") == []
+
+
+# ── finishing what KICD's PDF cut off ───────────────────────────────────────
+
+
+def test_a_truncated_cell_is_completed_from_the_indicators_own_words():
+    """Half of KICD's rubric cells arrive cut off — "Identifies three", "Tells
+    three", "Names one thing". A teacher cannot mark against those."""
+    assert rubric_tables.complete_cell(
+        "Identifies three", "Ability to identify three qualities of God."
+    ) == "Identifies three qualities of God."
+
+    assert rubric_tables.complete_cell(
+        "Tells three", "Ability to tell three differences between the church and other buildings."
+    ) == "Tells three differences between the church and other buildings."
+
+    assert rubric_tables.complete_cell(
+        "Names one thing", "Ability to name three things created by God."
+    ) == "Names one thing created by God.", "singular/plural must not block the join"
+
+
+def test_completion_is_a_join_and_never_a_guess():
+    """Where the cell's words cannot be located in the indicator there is
+    nothing to join to, and inventing the rest is how a wrong rubric that reads
+    plausibly gets into a classroom."""
+    assert rubric_tables.complete_cell(
+        "Something else entirely", "Ability to identify three qualities of God."
+    ) == "Something else entirely"
+
+    # A cell ending on a function word still has an anchor once that word is
+    # stripped: "way" locates it, and only what follows is appended — the verb
+    # is not swallowed along with it.
+    assert rubric_tables.complete_cell(
+        "Identifies one way of", "Ability to identify three ways loving God."
+    ) == "Identifies one way of loving God."
+
+    # And a cell stating a different count of the same thing is completed from
+    # the object the indicator names, without repeating its number.
+    assert rubric_tables.complete_cell(
+        "Identifies one to two", "Ability to tell four activities they do in church."
+    ) == "Identifies one to two activities they do in church."
+
+
+def test_a_completed_cell_is_never_completed_silently():
+    design = (
+        "[PAGE 203]\n203:10  1.1\n203:11  Our God\n"
+        "[PAGE 207]\n207:2  Suggested Assessment Rubric s\n"
+        "207:8  Ability to identify three\n207:9  qualities of God.\n"
+        "207:10  Identifies more than\n207:11  three qualities of\n207:12  God.\n"
+        "207:13  Identifies three\n207:14  Identifiestwo qualities of\n"
+        "207:15  Identifies one quality\n207:16  of God.\n"
+    )
+    row = rubric_tables.harvest(design, [
+        {"sub_strand_name": "Our God", "sub_strand_id": "1.1",
+         "slos": ["identify three qualities of God"]},
+    ]).rows[0]
+
+    assert row.meeting == "Identifies three qualities of God."
+    assert row.completed_levels == ["meeting", "approaching"]
+    assert row.truncated_levels == [], "nothing left cut off"
+    assert row.to_dict()["completed_levels"] == ["meeting", "approaching"]
+
+
+def test_one_field_has_one_shape():
+    """The generator returned link_to_other_learning_areas as a string for
+    eleven sub-strands and a list for the twelfth, so every reader has to
+    handle both — and the one that forgets fails on whichever differs."""
+    import app.routes.curriculum as routes
+
+    subs = [
+        {"sub_strand_name": "A", "link_to_other_learning_areas": ["one", "two"]},
+        {"sub_strand_name": "B", "link_to_other_learning_areas": "plain string"},
+    ]
+    routes._ground_substrands(subs, "")
+
+    assert subs[0]["link_to_other_learning_areas"] == "one two"
+    assert subs[1]["link_to_other_learning_areas"] == "plain string"

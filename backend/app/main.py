@@ -62,14 +62,9 @@ pipeline_service = PipelineService(router)
 workflow_service = WorkflowService(runtime_state)
 logger = logging.getLogger("cbc-api")
 
-STAGE_NAMES = {
-    "notes_generation",
-    "diagram_generation",
-    "activity_generation",
-    "question_generation",
-    "reviewer_panel",
-    "regeneration",
-}
+# One definition, in app.services.stages, so the list the admin API accepts and
+# the list the router resolves cannot drift apart.
+from .services.stages import NAMES as STAGE_NAMES  # noqa: E402
 
 
 def _apply_bootstrap_bindings(provider: str, model: str, base_url: str | None) -> dict:
@@ -321,6 +316,54 @@ def configure_provider(
         "has_api_key": bool(conf.encrypted_api_key),
         "credential_ref_id": credential_ref_id,
         "ollama_models": conf.ollama_models,
+    }
+
+
+@app.get("/admin/pipeline-bindings")
+def list_stage_bindings(
+    _: AuthContext = Depends(require_roles("admin", "operator", "reviewer")),
+) -> dict:
+    """Every stage, what it drives, and which model actually runs it.
+
+    "Which model writes the notes" had no answer short of reading the source:
+    the bindings were writable and not readable, and six stages did the work of
+    fourteen. An operator paying per token should be able to see what they are
+    buying for each station, and whether a stage is bound directly or inheriting
+    from another one.
+    """
+    from .services.stages import STAGES, chain
+
+    rows = []
+    for stage in STAGES:
+        bound_at = next(
+            (name for name in chain(stage.name) if name in runtime_state.stage_bindings),
+            "",
+        )
+        binding = runtime_state.stage_bindings.get(bound_at) if bound_at else None
+        rows.append({
+            "name": stage.name,
+            "label": stage.label,
+            "drives": stage.drives,
+            "guidance": stage.guidance,
+            "falls_back_to": stage.falls_back_to,
+            "provider": binding.provider if binding else "",
+            "model": binding.model if binding else "",
+            "base_url": binding.base_url if binding else None,
+            # Set here, or borrowed from a stage upstream of it.
+            "inherited_from": bound_at if bound_at and bound_at != stage.name else "",
+            "configured": bool(binding),
+        })
+
+    return {
+        "stages": rows,
+        "providers": sorted(runtime_state.provider_credentials),
+        "note": (
+            "A stage with no binding of its own inherits from the stage it falls "
+            "back to. Model names are passed to the provider as typed — this "
+            "service does not keep a list of which models your account can "
+            "actually call, so a wrong name fails at generation time with the "
+            "provider's own error."
+        ),
     }
 
 

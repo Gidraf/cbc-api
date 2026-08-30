@@ -766,6 +766,42 @@ MIGRATIONS: list[tuple[str, str]] = [
             WHERE consumed_at IS NULL;
         """,
     ),
+    (
+        "024_auto_runs",
+        """
+        -- Unattended generation, with a floor it stops at.
+        --
+        -- Running a whole grade without watching is only safe if something is
+        -- watching. Every item is scored against what its own validators
+        -- checked, and the run halts when the recent average falls through the
+        -- floor the operator set — so a pipeline that starts producing
+        -- ungrounded content stops after a few sub-strands rather than after a
+        -- grade.
+        CREATE TABLE IF NOT EXISTS auto_runs (
+            run_id TEXT PRIMARY KEY,
+            batch_id TEXT NOT NULL DEFAULT '',
+            grade TEXT NOT NULL DEFAULT '',
+            subjects JSONB NOT NULL DEFAULT '[]'::jsonb,
+            floor NUMERIC NOT NULL DEFAULT 95,
+            window_size INTEGER NOT NULL DEFAULT 5,
+            status TEXT NOT NULL DEFAULT 'running',
+            items_scored INTEGER NOT NULL DEFAULT 0,
+            average NUMERIC NOT NULL DEFAULT 0,
+            recent_average NUMERIC NOT NULL DEFAULT 0,
+            mean_confidence NUMERIC NOT NULL DEFAULT 0,
+            halted_reason TEXT NOT NULL DEFAULT '',
+            -- Every item's score, so the operator can see WHICH sub-strand
+            -- dragged the average down rather than only that it fell.
+            items JSONB NOT NULL DEFAULT '[]'::jsonb,
+            started_by TEXT NOT NULL DEFAULT '',
+            started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            finished_at TIMESTAMPTZ
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_auto_runs_batch ON auto_runs(batch_id);
+        CREATE INDEX IF NOT EXISTS idx_auto_runs_status ON auto_runs(status, started_at DESC);
+        """,
+    ),
 ]
 
 
