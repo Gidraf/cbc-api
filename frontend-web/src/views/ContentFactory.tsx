@@ -1031,8 +1031,13 @@ function StationResult({ result }: { result: any }) {
   // reported on its own rather than folded into the gate's score.
   const repetition = result?.repetition;
   const repeats: string[] = repetition?.checked && !repetition?.clean ? repetition.findings || [] : [];
+  // The guide against its own claims: an slo_map naming lessons that teach
+  // something else, a learning experience the design never suggested.
+  const integrity = result?.integrity;
+  const contradictions: string[] =
+    integrity?.checked && !integrity?.clean ? integrity.findings || [] : [];
 
-  if (!gate && !rejected.length && !repeats.length) return null;
+  if (!gate && !rejected.length && !repeats.length && !contradictions.length) return null;
 
   return (
     <div style={{ marginTop: "var(--s4)", display: "flex", flexDirection: "column", gap: "var(--s3)" }}>
@@ -1052,6 +1057,32 @@ function StationResult({ result }: { result: any }) {
             {rejected.slice(0, 5).map((r, i) => (
               <li key={i} style={{ marginBottom: "4px" }}>
                 <span className="mono">{r.display_label || `#${r.index}`}</span> — {r.reason}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {contradictions.length > 0 && (
+        <div
+          style={{
+            border: "1px solid var(--danger)",
+            background: "var(--danger-wash)",
+            borderRadius: "var(--radius-sm)",
+            padding: "var(--s3)",
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: "var(--s2)", flexWrap: "wrap" }}>
+            <Badge tone="danger">contradicts itself</Badge>
+            <strong style={{ fontSize: "var(--text-sm)" }}>{integrity.score}/100 consistent</strong>
+            <span style={{ fontSize: "var(--text-sm)", color: "var(--ink-2)" }}>
+              both halves of each of these are the guide's own words
+            </span>
+          </div>
+          <ul style={{ margin: "var(--s2) 0 0", paddingLeft: "1.1rem", fontSize: "var(--text-sm)" }}>
+            {contradictions.map((f, i) => (
+              <li key={i} style={{ marginBottom: "4px" }}>
+                {f}
               </li>
             ))}
           </ul>

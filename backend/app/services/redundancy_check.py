@@ -47,6 +47,14 @@ TEACHING_FIELDS = (
 # in a sub-strand share vocabulary, a register and a subject by design.
 NEAR_DUPLICATE = 0.80
 
+# The threshold above only catches copying. A model that paraphrases produces
+# lessons 4, 5 and 6 of a PP1 guide — "God's Love", "God's Provision", "God's
+# Care" — that run 7% to 16% alike as prose and are the same lesson three
+# times: discuss how a parent does it, invent a gesture, sing a song. Same
+# outcome, same cited line, same three beats. This threshold compares the
+# SHAPE, which paraphrasing does not change.
+PARALLEL_SHAPE = 0.60
+
 MAX_MODULES = 40
 MAX_REPORTED = 12
 
@@ -226,6 +234,17 @@ def _findings(report: dict[str, Any]) -> list[str]:
             f"The same block of exposition appears in {len(seg['places'])} "
             f"lessons ({'; '.join(seg['places'])}). Write each one fresh."
         )
+    for pair in report.get("parallel_shapes", []):
+        same = (" They also teach the same outcome."
+                if pair["same_outcome"] else "")
+        out.append(
+            f"\"{pair['b']}\" is built to the same template as "
+            f"\"{pair['a']}\" ({pair['shape']}% the same shape: "
+            f"{'; '.join(pair['beats'])}).{same} Different words in the same "
+            f"three beats is one lesson taught twice. Give it its own shape, "
+            f"or say in `gaps` that the design does not fund this many "
+            f"distinct lessons."
+        )
     return out
 
 
@@ -245,6 +264,7 @@ def _score(report: dict[str, Any]) -> float:
         return 100.0
 
     padded = {pair["b"] for pair in report["near_duplicates"]}
+    padded |= {pair["b"] for pair in report.get("parallel_shapes", [])}
 
     # A lesson that shares exposition with another lesson which is ITSELF
     # already counted is not counted twice — and the original is not charged
@@ -260,6 +280,105 @@ def _score(report: dict[str, Any]) -> float:
     return round(max(0.0, distinct - MIRROR_COST * len(report["mirrors"])), 1)
 
 
+# Topic names that describe a lesson's FRAME rather than its content. A guide
+# whose every lesson runs "Introduction / Development / Conclusion" is using
+# the standard shape, not padding, and comparing those names finds a 100% match
+# in every pair — which would report the whole guide and mean nothing.
+_STRUCTURAL = {
+    "introduction", "intro", "opening", "open", "starter", "warm", "up",
+    "warmup", "development", "develop", "main", "body", "activity",
+    "conclusion", "closing", "close", "plenary", "wrap", "review", "recap",
+    "summary", "part", "step", "phase", "segment", "topic", "section",
+    "lesson", "and", "the", "a", "of",
+}
+
+
+def _is_structural(topic: str) -> bool:
+    """Whether a topic name says only where in the lesson it sits."""
+    words = [w for w in re.sub(r"[^a-z ]+", " ", _norm(topic)).split() if w]
+    return not words or all(w in _STRUCTURAL for w in words)
+
+
+def _skeleton(topic: str) -> str:
+    """A segment topic with its subject removed, leaving the teaching move.
+
+    "Expressing Love Through Gestures", "Expressing Gratitude Through Gestures"
+    and "Expressing Appreciation Through Gestures" are one move written three
+    times. Comparing them whole scores them as different; comparing what they
+    do scores them as the same.
+    """
+    return _norm(topic)
+
+
+def _slos_of(module: Any) -> tuple[str, ...]:
+    if not isinstance(module, dict):
+        return ()
+    return tuple(sorted(_norm(str(s)) for s in (module.get("slos_covered") or [])))
+
+
+def _refs_of(module: Any) -> tuple[str, ...]:
+    if not isinstance(module, dict):
+        return ()
+    return tuple(sorted(
+        str(c.get("ref") or "") for c in (module.get("citations") or [])
+        if isinstance(c, dict) and c.get("ref")))
+
+
+def _topics_of(module: Any) -> list[str]:
+    if not isinstance(module, dict):
+        return []
+    return [str(s.get("topic") or "") for s in (module.get("exposition_segments") or [])
+            if isinstance(s, dict)]
+
+
+def _same_outcome_same_source(modules: list) -> list[dict[str, Any]]:
+    """Lessons that teach the same outcome from the same line of the design.
+
+    Not a defect on its own — an outcome can honestly need three lessons. It is
+    the fact a head of department checks first, and it is exact: no threshold,
+    no judgement, just what the guide says about itself.
+    """
+    groups: dict[tuple, list[str]] = {}
+    for i, module in enumerate(modules):
+        slos, refs = _slos_of(module), _refs_of(module)
+        if not slos or not refs:
+            continue
+        groups.setdefault((slos, refs), []).append(_label(module, i))
+    return [{"slo": key[0][0], "ref": key[1][0], "lessons": names}
+            for key, names in groups.items() if len(names) > 1]
+
+
+def _parallel_shapes(modules: list) -> list[dict[str, Any]]:
+    """Lessons built to the same template, in different words."""
+    out = []
+    for i in range(len(modules[:MAX_MODULES])):
+        for j in range(i + 1, len(modules[:MAX_MODULES])):
+            a, b = modules[i], modules[j]
+            ta, tb = _topics_of(a), _topics_of(b)
+            # A different number of beats is a different lesson.
+            if len(ta) < 2 or len(ta) != len(tb):
+                continue
+            # Frame names carry no content, so a match between them is not
+            # evidence of anything. With nothing else to go on, say nothing.
+            if all(_is_structural(t) for t in ta + tb):
+                continue
+            scores = [
+                difflib.SequenceMatcher(None, _skeleton(x), _skeleton(y)).ratio()
+                for x, y in zip(ta, tb)
+            ]
+            mean = sum(scores) / len(scores)
+            if mean < PARALLEL_SHAPE:
+                continue
+            out.append({
+                "a": _label(a, i), "b": _label(b, j),
+                "shape": round(mean * 100),
+                "beats": [f"{x}  ↔  {y}" for x, y in zip(ta, tb)],
+                "same_outcome": _slos_of(a) == _slos_of(b) and bool(_slos_of(a)),
+            })
+    out.sort(key=lambda r: -r["shape"])
+    return out
+
+
 def inspect(content: Any) -> dict[str, Any]:
     """What in this artifact is a copy of something else in it."""
     lists = _module_lists(content)
@@ -272,6 +391,8 @@ def inspect(content: Any) -> dict[str, Any]:
 
     duplicates: list[dict[str, Any]] = []
     segments: list[dict[str, Any]] = []
+    shapes: list[dict[str, Any]] = []
+    concentrated: list[dict[str, Any]] = []
     counted = 0
     for path, modules in lists:
         # Compare one copy of a mirrored pair, not both — otherwise every
@@ -281,6 +402,8 @@ def inspect(content: Any) -> dict[str, Any]:
         counted = max(counted, len(modules))
         duplicates += _near_duplicate_modules(modules, path)
         segments += _repeated_segments(modules, path)
+        shapes += _parallel_shapes(modules)
+        concentrated += _same_outcome_same_source(modules)
 
     report = {
         "checked": True,
@@ -288,7 +411,9 @@ def inspect(content: Any) -> dict[str, Any]:
         "mirrors": mirrors,
         "near_duplicates": duplicates[:MAX_REPORTED],
         "repeated_segments": segments[:MAX_REPORTED],
-        "clean": not mirrors and not duplicates and not segments,
+        "parallel_shapes": shapes[:MAX_REPORTED],
+        "same_outcome_same_source": concentrated[:MAX_REPORTED],
+        "clean": not (mirrors or duplicates or segments or shapes),
     }
     report["score"] = _score(report)
     report["findings"] = _findings(report)
@@ -334,6 +459,26 @@ def render(report: dict[str, Any]) -> str:
         for place in seg["places"]:
             lines.append(f"      {place}")
         lines.append(f"      \"{seg['excerpt']}…\"")
+        lines.append("")
+
+    for pair in report.get("parallel_shapes", []):
+        lines.append(
+            f"  SAME TEMPLATE ({pair['shape']}% the same shape): "
+            f"\"{pair['a']}\" and \"{pair['b']}\""
+        )
+        for beat in pair["beats"]:
+            lines.append(f"      {beat}")
+        if pair["same_outcome"]:
+            lines.append("      and both teach the same learning outcome")
+        lines.append("")
+
+    for group in report.get("same_outcome_same_source", []):
+        lines.append(
+            f"  {len(group['lessons'])} LESSONS TEACH \"{group['slo']}\" "
+            f"FROM THE SAME LINE ({group['ref']}):"
+        )
+        for name in group["lessons"]:
+            lines.append(f"      {name}")
         lines.append("")
 
     lines += [

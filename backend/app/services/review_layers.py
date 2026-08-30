@@ -438,6 +438,12 @@ def build_messages(
         "the design often asks for exactly that. The defect is repeated "
         "TEACHING — the same exposition, the same misconception, the same "
         "check, presented as a new lesson.",
+        "Watch for the version of this that is REWRITTEN rather than copied. "
+        "Three lessons that discuss how a parent does it, then invent a "
+        "gesture, then sing a song — under three different titles, on the same "
+        "outcome, citing the same line — are one lesson taught three times, "
+        "however different the sentences are. The block below reports the "
+        "shape as well as the words.",
         "Where a dimension does not apply, set not_applicable and say why in "
         "evidence. Do not give it a passing score to move on.",
         "Be specific and be hard. Approving weak content costs a Kenyan child a "

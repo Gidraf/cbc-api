@@ -25,6 +25,7 @@ from ..services import (
     media_registry,
     media_validators,
     notes_coverage,
+    notes_integrity,
     redundancy_check,
     notes_repair,
     review_cycle,
@@ -1342,6 +1343,20 @@ def factory_generate_notes(
     # is a full-length lesson. It is only wrong beside the lesson it copies,
     # and nothing that reads the guide forwards — a reviewer included — sees
     # that. So the lessons are compared against each other mechanically.
+    # A guide contradicting itself needs no model to catch: its slo_map names
+    # lessons that do not carry those outcomes, and its
+    # learning_experiences_used names things the design never suggested.
+    integrity = notes_integrity.check(
+        notes_content,
+        [str(e) for e in (design_experiences or [])],
+    )
+    if integrity.get("checked") and not integrity.get("clean"):
+        logger.warning(
+            "Notes for %s contradict themselves (%s/100): %s",
+            payload.sub_strand, integrity.get("score"),
+            "; ".join(integrity.get("findings") or [])[:300],
+        )
+
     repetition = redundancy_check.inspect(notes_content)
     if repetition.get("checked") and not repetition.get("clean"):
         logger.warning(
@@ -1384,6 +1399,14 @@ def factory_generate_notes(
         "lesson_coverage": lesson_plan.to_dict(),
         "fabrication": fabrication.to_dict(),
         "repetition": repetition,
+        "integrity": integrity,
+        # Reported so the measured score can weigh it. It was left off, so the
+        # heaviest signal in the scheme read "not reported by this station" on
+        # a run that had just consumed 31,689 characters of the design — and
+        # the headline score was a weighted mean over 77% of the scheme with
+        # no way to see which 23% was missing.
+        "grounded": bool(source_text),
+        "source_material_length": len(source_text or ""),
         "notes_repair": repair_report.to_dict(),
         "citations": citations.to_dict(),
         "artifact": versioned,

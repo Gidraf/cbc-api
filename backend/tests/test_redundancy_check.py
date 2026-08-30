@@ -383,3 +383,143 @@ def test_a_mirror_is_a_flat_cost():
     mirrored["hour_modules"] = mirrored["modules"]
 
     assert redundancy_check.inspect(mirrored)["score"] == 85.0
+
+
+# ── the same lesson, rewritten rather than copied ───────────────────────────
+
+TEMPLATE = [
+    ("Appreciating God's Love", LOVE_REF := "203:22", [
+        ("God's Love as a Father",
+         "Begin by discussing how a father cares for his children. Ask the "
+         "children, 'How does your father show you love?' Relate this to God's "
+         "love by saying, 'Just like your fathers care for you, God cares for "
+         "you even more.'"),
+        ("Expressing Love Through Gestures",
+         "Guide the children to create gestures that represent God's love. Say, "
+         "'Let's hug ourselves to show how God embraces us.' Encourage them to "
+         "share their gestures with the class."),
+        ("Singing a Song of Appreciation",
+         "Choose a song that expresses appreciation for God's love, such as "
+         "'Jesus Loves Me.' Teach it by singing first, then encouraging them "
+         "to join in."),
+    ]),
+    ("God's Provision", "203:22", [
+        ("Understanding God's Provision",
+         "Begin by discussing how parents provide for their children. Ask, "
+         "'What do your parents provide for you?' Relate this to God's "
+         "provision by saying, 'Just as your parents care for you, God "
+         "provides for all your needs.'"),
+        ("Expressing Gratitude Through Gestures",
+         "Guide the children to create gestures that represent gratitude. Say, "
+         "'Let's place our hands over our hearts to show appreciation.' "
+         "Encourage them to share their gestures with the class."),
+        ("Singing a Song of Gratitude",
+         "Choose a song that expresses gratitude for God's provision, such as "
+         "'Thank You, Lord.' Teach it by singing first, then encouraging them "
+         "to join in."),
+    ]),
+    ("God's Care", "203:22", [
+        ("Understanding God's Care",
+         "Begin by discussing how parents care for their children. Ask, 'How "
+         "do your parents show they care for you?' Relate this to God's care "
+         "by saying, 'Just as your parents care for you, God cares for you in "
+         "every situation.'"),
+        ("Expressing Appreciation Through Gestures",
+         "Guide the children to create gestures that represent appreciation "
+         "for God's care. Say, 'Let's place our hands together in a prayer "
+         "position.' Encourage them to share their gestures."),
+        ("Singing a Song of Appreciation",
+         "Choose a song that expresses appreciation for God's care, such as "
+         "'He's Got the Whole World in His Hands.' Teach it by singing first."),
+    ]),
+]
+
+LOVE = "appreciate God as a loving heavenly father"
+
+
+def _templated() -> dict:
+    modules = [
+        {"title": f"Lesson {n}: {title}", "module_number": n,
+         "slos_covered": [LOVE],
+         "citations": [{"ref": ref, "claim": "c", "quote": "q"}],
+         "exposition_segments": [
+             {"topic": t, "body": b, "minutes": 10} for t, b in segs]}
+        for n, (title, ref, segs) in enumerate(TEMPLATE, start=4)
+    ]
+    modules.insert(0, {
+        "title": "Lesson 3: Practicing Prayer", "module_number": 3,
+        "slos_covered": ["practice saying short prayers"],
+        "citations": [{"ref": "203:21", "claim": "c", "quote": "q"}],
+        "exposition_segments": [
+            {"topic": "Understanding Prayer", "minutes": 10,
+             "body": "Begin by explaining what prayer is in simple terms. Say, "
+                     "'Prayer is talking to God, just like you talk to your "
+                     "parents.' Ask whether they have ever talked to God."},
+            {"topic": "Listening to a Recorded Prayer", "minutes": 10,
+             "body": "Play a recorded clip of a short prayer. After listening, "
+                     "ask the children what they liked about it and how it "
+                     "made them feel."},
+            {"topic": "Saying Short Prayers in Groups", "minutes": 10,
+             "body": "Divide the children into small groups and encourage them "
+                     "to say short prayers together, with prompts like 'Let's "
+                     "thank God for our families'."}]})
+    return {"modules": modules}
+
+
+def test_paraphrased_lessons_are_caught_even_though_the_prose_differs():
+    """These run 7% to 16% alike as prose — nowhere near the copy threshold —
+    and are the same lesson three times: discuss how a parent does it, invent a
+    gesture, sing a song. The prose check scored this guide 100/100."""
+    report = redundancy_check.inspect(_templated())
+
+    assert not report["clean"]
+    assert report["parallel_shapes"]
+    assert not report["near_duplicates"], "these are not copies"
+
+
+def test_the_finding_shows_the_beats_side_by_side():
+    report = redundancy_check.inspect(_templated())
+    beats = " ".join(report["parallel_shapes"][0]["beats"])
+
+    assert "↔" in beats
+    assert "Gestures" in beats
+
+
+def test_a_lesson_on_a_different_outcome_is_not_flagged():
+    report = redundancy_check.inspect(_templated())
+    named = {p["a"] for p in report["parallel_shapes"]} | \
+            {p["b"] for p in report["parallel_shapes"]}
+
+    assert not any("Practicing Prayer" in n for n in named)
+
+
+def test_lessons_sharing_an_outcome_and_a_cited_line_are_reported():
+    """Not a defect on its own — an outcome can honestly need three lessons.
+    It is the fact a head of department checks first, and it is exact."""
+    report = redundancy_check.inspect(_templated())
+    group = report["same_outcome_same_source"][0]
+
+    assert group["ref"] == "203:22"
+    assert len(group["lessons"]) == 3
+
+
+def test_a_standard_lesson_frame_is_not_mistaken_for_a_template():
+    """A guide whose every lesson runs Introduction / Development / Conclusion
+    is using the standard shape. Comparing those names matches every pair, and
+    reporting the whole guide would mean nothing."""
+    modules = [
+        {"title": f"Lesson {n}", "module_number": n, "slos_covered": [f"slo {n}"],
+         "exposition_segments": [
+             {"topic": "Introduction", "body": f"Opening for lesson {n}."},
+             {"topic": "Development", "body": f"Main work for lesson {n}."},
+             {"topic": "Conclusion", "body": f"Closing for lesson {n}."}]}
+        for n in range(1, 6)
+    ]
+    report = redundancy_check.inspect({"modules": modules})
+
+    assert not report["parallel_shapes"]
+
+
+def test_a_templated_lesson_counts_against_the_score_like_a_copied_one():
+    """It wastes the same lesson."""
+    assert redundancy_check.inspect(_templated())["score"] < 70

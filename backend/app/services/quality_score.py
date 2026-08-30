@@ -30,26 +30,31 @@ WEIGHTS: dict[str, float] = {
     # A boolean precondition — was the design read at all. Worth less than it
     # looks, because `citations` already measures whether it was actually USED,
     # and an ungrounded run fails that far more informatively.
-    "grounded": 0.15,
+    "grounded": 0.12,
     # Coverage counts lessons; `distinct` checks they are different lessons.
     # It used to carry both jobs and did the second one badly: a guide that
     # plans seven lessons by copying one of them four times scores 100 here,
     # because each copy is a full-length lesson. The weight it gave up went to
     # `distinct`; the rest of the rebalance came from `grounded` and `rubrics`,
     # so that seven thin lessons still score below the auto-run floor.
-    "lesson_coverage": 0.22, # every funded lesson planned, none of them thin
-    "citations": 0.15,       # every page:line reference resolves
+    "lesson_coverage": 0.20, # every funded lesson planned, none of them thin
+    "citations": 0.14,       # every page:line reference resolves
     "rubrics": 0.08,         # rubrics read from KICD rather than derived
-    "gate": 0.15,            # the local reviewer and approvers
+    "gate": 0.10,            # the local reviewer and approvers
     # Invented claims. Weighted like the gate because a fabricated scripture
     # reference in a religious education guide is not a small defect, and it is
     # the one failure a reader cannot detect by reading.
-    "no_invention": 0.15,
+    "no_invention": 0.14,
     # Lessons that are copies of each other — the half of coverage that
     # counting could never do. A guide that plans seven lessons and teaches
     # four is 40% short of what the design funds, and unlike a thin lesson a
     # duplicated one clears every length check there is.
-    "distinct": 0.10,
+    "distinct": 0.12,
+    # The guide disagreeing with itself: an slo_map naming lessons that do not
+    # carry those outcomes, a learning experience the design never suggested.
+    # Cheap to check and impossible to argue with, because both halves are the
+    # guide's own words.
+    "consistent": 0.10,
 }
 
 
@@ -205,6 +210,16 @@ def score(result: dict[str, Any], kind: str = "") -> ItemScore:
             f"{len(findings)} repetition(s): {findings[0]}")
     else:
         add("distinct", None, "no lessons to compare")
+
+    # ── a guide that contradicts itself ─────────────────────────────────────
+    integrity = result.get("integrity")
+    if isinstance(integrity, dict) and integrity.get("checked"):
+        findings = integrity.get("findings") or []
+        add("consistent", _pct(integrity.get("score")),
+            "the guide agrees with itself" if not findings else
+            f"{len(findings)} contradiction(s): {findings[0]}")
+    else:
+        add("consistent", None, "not checked for this station")
 
     # ── the local reviewer and both approvers ───────────────────────────────
     gate = result.get("quality_gate")
