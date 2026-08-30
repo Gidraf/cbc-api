@@ -67,6 +67,63 @@ def _norm(text: str) -> str:
                    _re.sub(r"\s+", " ", text).strip().lower()).strip()
 
 
+# How far either side of a line to sweep when looking for a quote that is not
+# where it was cited. Wide enough to cover a re-extraction shifting a page, and
+# narrow enough that the answer still means something.
+SEARCH_SPAN = 25
+
+
+def _sweep(quote: str, lines: list, centre: int | None = None) -> int:
+    """The line where a run of `quote` actually starts, or 0."""
+    for line in lines:
+        if centre is not None and abs(line.line - centre) > SEARCH_SPAN:
+            continue
+        window = " ".join(
+            l.text for l in lines if abs(l.line - line.line) <= QUOTE_WINDOW
+        )
+        if _quote_support(quote, window) >= QUOTE_MATCH:
+            return line.line
+    return 0
+
+
+def _find(quote: str, page: Any, by_number: dict) -> str:
+    """Where this quote really is: same page first, then the whole document."""
+    if len(quote) < MIN_QUOTE_CHARS:
+        return ""
+    if page is not None:
+        here = _sweep(quote, page.lines)
+        if here:
+            return f"{page.number}:{here}"
+    for number in sorted(by_number):
+        if page is not None and number == page.number:
+            continue
+        there = _sweep(quote, by_number[number].lines)
+        if there:
+            return f"{number}:{there}"
+    return ""
+
+
+def _unresolved(status: str, ref: str, entry: dict, page: Any,
+                by_number: dict) -> dict[str, Any]:
+    """A row for an address that did not resolve — and where its quote really is.
+
+    Searched even here. An address that misses the page entirely can still
+    carry a quotation lifted straight from the design, and calling that
+    fabricated is the same false accusation as calling a two-line drift one.
+    """
+    quote = str(entry.get("quote") or "").strip()
+    row = {"ref": ref, "status": status,
+           "claim": str(entry.get("claim") or "")[:160], "design_says": []}
+    found = _find(quote, page, by_number)
+    if found:
+        row["quote"] = quote[:200]
+        row["found_at"] = found
+        row["status"] = f"QUOTE IS REAL, AT {found}"
+    elif quote:
+        row["quote"] = quote[:200]
+    return row
+
+
 def _citations_in(content: Any, found: list[dict[str, Any]] | None = None
                   ) -> list[dict[str, Any]]:
     """Every citation anywhere in the artifact, in the order they appear."""
@@ -123,21 +180,15 @@ def resolve(content: Any, design_text: str) -> dict[str, Any]:
         _, page_number, line_number, _ = parsed
         page = by_number.get(page_number)
         if page is None:
-            resolved.append({
-                "ref": ref, "status": "PAGE NOT IN THE DESIGN",
-                "claim": str(entry.get("claim") or "")[:160],
-                "design_says": [],
-            })
+            resolved.append(_unresolved(
+                "PAGE NOT IN THE DESIGN", ref, entry, None, by_number))
             continue
 
         lines = [l for l in page.lines
                  if abs(l.line - line_number) <= LINES_AROUND]
         if not lines:
-            resolved.append({
-                "ref": ref, "status": "LINE NOT ON THAT PAGE",
-                "claim": str(entry.get("claim") or "")[:160],
-                "design_says": [],
-            })
+            resolved.append(_unresolved(
+                "LINE NOT ON THAT PAGE", ref, entry, page, by_number))
             continue
 
         row = {
@@ -164,18 +215,33 @@ def resolve(content: Any, design_text: str) -> dict[str, Any]:
             row["quote"] = quote[:200]
             row["quote_support"] = round(support, 2)
             if support < QUOTE_MATCH:
-                row["status"] = "ADDRESS REAL, QUOTE NOT THERE"
+                # Before calling anything invented, look for it. The reviewer
+                # and the generator do not always read the same rendering of
+                # the design — a re-extraction can shift every line on a page
+                # by two — and a citation that is three lines out is a wrong
+                # address, not a written sentence. Saying "the quote was
+                # written, not copied" about text that is demonstrably in the
+                # document is the same false accusation this module was built
+                # to stop, one level further down.
+                found = _find(quote, page, by_number)
+                if found:
+                    row["status"] = f"QUOTE IS REAL, AT {found}"
+                    row["found_at"] = found
+                else:
+                    row["status"] = "ADDRESS REAL, QUOTE NOT THERE"
 
         resolved.append(row)
 
     verified = sum(1 for r in resolved if r["status"] == "VERIFIED")
     misquoted = sum(1 for r in resolved
                     if r["status"] == "ADDRESS REAL, QUOTE NOT THERE")
+    misaddressed = sum(1 for r in resolved if r.get("found_at"))
     return {
         "checked": True,
         "total": len(resolved),
         "verified": verified,
         "misquoted": misquoted,
+        "misaddressed": misaddressed,
         "citations": resolved,
     }
 
@@ -203,14 +269,21 @@ def render(evidence: dict[str, Any]) -> str:
         lines.append(f"  {row['ref']}  [{row['status']}]")
         if row.get("claim"):
             lines.append(f"      cited for: {row['claim']}")
-        if row.get("status") == "ADDRESS REAL, QUOTE NOT THERE":
+        if row.get("quote") and row["status"] != "VERIFIED":
             lines.append(f"      the artifact quotes: \"{row['quote']}\"")
         for said in row.get("design_says", []):
             lines.append(f"      the design reads: {said}")
-        if row.get("status") == "ADDRESS REAL, QUOTE NOT THERE":
+        if row.get("found_at"):
             lines.append(
-                "      ^ the page and line exist, but that sentence is not on "
-                "them. The quote was written, not copied."
+                f"      ^ that sentence IS in the design, at "
+                f"{row['found_at']}. The quote is real and the address is "
+                f"wrong. Not a fabrication — a citation to fix."
+            )
+        elif row["status"] == "ADDRESS REAL, QUOTE NOT THERE":
+            lines.append(
+                "      ^ the page and line exist, the sentence is not on them, "
+                "and it is nowhere else in the design either. The quote was "
+                "written, not copied."
             )
         lines.append("")
 
@@ -223,9 +296,15 @@ def render(evidence: dict[str, Any]) -> str:
         "cited for something it does not say.",
         "Report as fabricated the addresses marked MALFORMED, PAGE NOT IN THE "
         "DESIGN or LINE NOT ON THAT PAGE — and every one marked ADDRESS REAL, "
-        "QUOTE NOT THERE. That last one is the worst case in this artifact: a "
-        "real address lends its authority to a sentence nobody wrote. It "
-        "passes every check a reader would think to make. Score "
-        "factual_correctness low for it and name the quote.",
+        "QUOTE NOT THERE. That last one is the worst case: a real address "
+        "lends its authority to a sentence nobody wrote, and it passes every "
+        "check a reader would think to make. Score factual_correctness low for "
+        "it and name the quote.",
+        "An address marked QUOTE IS REAL, AT … is NOT a fabrication. The "
+        "sentence was found in the design at the address given after the "
+        "comma; only the reference is off. Raise it as a low-severity citation "
+        "fix and do NOT let it drag factual_correctness down as an invention "
+        "would — the difference between a wrong page number and a written "
+        "quotation is the whole of what this dimension measures.",
     ]
     return "\n".join(lines)

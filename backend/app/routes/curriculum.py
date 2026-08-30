@@ -1284,8 +1284,12 @@ def factory_generate_notes(
     # before the guide is offered for review at all.
     notes_content, remediation = notes_remediation.run(
         notes_content,
-        design_experiences=[str(e) for e in (design_experiences or [])],
-        slos=[str(s) for s in (slos or [])],
+        # `slos` rows come back from the design as {"id": …, "text": …}, so
+        # str() on one produced a map whose outcome read
+        # "{'id': 'grade-pp1-Chr-1.1-1', 'text': 'identify three qualities of
+        # God'}" — a scheme of work with a Python dict printed in it.
+        design_experiences=[_plain(e) for e in (design_experiences or [])],
+        slos=[_plain(s) for s in (slos or [])],
         generate=llm_client.generate,
         model_config=resolved,
         base_messages=context.messages,
@@ -5085,6 +5089,15 @@ def factory_delete_scope(
 
 class SweepOrphansRequest(BaseModel):
     confirm: str = ""
+
+
+def _plain(entry: Any) -> str:
+    """The text of a design row, whether it is a string or a {id, text} dict."""
+    if isinstance(entry, dict):
+        for key in ("text", "name", "description", "experience", "slo"):
+            if entry.get(key):
+                return str(entry[key])
+    return str(entry)
 
 
 @router.get("/factory/progress")

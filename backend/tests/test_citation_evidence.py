@@ -229,3 +229,111 @@ def test_the_block_shows_the_invented_sentence_beside_the_real_line():
     assert "203:11  Our God" in rendered
     assert "The quote was written, not copied." in rendered
     assert "ADDRESS REAL, QUOTE NOT THERE" in rendered
+
+
+# ── a quote that is real but cited at the wrong line ────────────────────────
+
+SHIFTED = """[PAGE 203]
+203:40  The learner is guided to:
+203:41  • say the name of God in their mother tongue or
+203:42  language of catchment area,
+[PAGE 205]
+205:12  • take a nature walk to observe things created by God
+"""
+
+
+def test_a_quote_found_elsewhere_is_not_called_a_fabrication():
+    """The reviewer and the generator do not always read the same rendering of
+    the design — a re-extraction can shift every line on a page — and a
+    citation three lines out is a wrong address, not a written sentence.
+    Saying "the quote was written, not copied" about text that is demonstrably
+    in the document is the same false accusation this module was built to stop,
+    one level further down."""
+    evidence = citation_evidence.resolve(
+        _quoted("203:41", "take a nature walk to observe things created by God"),
+        SHIFTED)
+    row = evidence["citations"][0]
+
+    assert row["status"] == "QUOTE IS REAL, AT 205:12"
+    assert row["found_at"] == "205:12"
+    assert evidence["misquoted"] == 0
+    assert evidence["misaddressed"] == 1
+
+
+def test_a_small_drift_still_verifies_outright():
+    """A citation one or two lines out is absorbed by the matching window; it
+    is not worth reporting at all."""
+    drifted = """[PAGE 203]
+203:27  The learner is guided to:
+203:28  • say the name of God in their mother tongue or
+203:29  language of catchment area,
+"""
+    evidence = citation_evidence.resolve(
+        _quoted("203:26",
+                "say the name of God in their mother tongue or language of "
+                "catchment area"),
+        drifted)
+
+    assert evidence["citations"][0]["status"] == "VERIFIED"
+
+
+def test_a_sentence_nowhere_in_the_design_is_still_a_fabrication():
+    evidence = citation_evidence.resolve(
+        _quoted("203:41",
+                "the learner shall recite the Nicene Creed from memory"),
+        SHIFTED)
+
+    assert evidence["citations"][0]["status"] == "ADDRESS REAL, QUOTE NOT THERE"
+    assert evidence["misquoted"] == 1
+
+
+def test_the_reviewer_is_told_the_two_are_different_defects():
+    """The difference between a wrong page number and a written quotation is
+    the whole of what factual_correctness measures."""
+    rendered = citation_evidence.render(citation_evidence.resolve(
+        _quoted("203:41", "take a nature walk to observe things created by God"),
+        SHIFTED))
+
+    assert "The quote is real and the address is wrong" in rendered
+    assert "is NOT a fabrication" in rendered
+    assert "do NOT let it drag factual_correctness down" in rendered
+
+
+def test_the_search_looks_at_the_cited_page_before_the_rest():
+    """A quote that appears twice should be reported where it was most nearly
+    cited, not at the first page that happens to contain it."""
+    twice = """[PAGE 203]
+203:5  • sing songs about God in groups
+203:60  • sing songs about God in groups
+[PAGE 205]
+205:3  • sing songs about God in groups
+"""
+    evidence = citation_evidence.resolve(
+        _quoted("203:58", "sing songs about God in groups, all together"), twice)
+    row = evidence["citations"][0]
+
+    assert row.get("found_at", "").startswith("203:")
+
+
+# ── design rows that are dicts, not strings ─────────────────────────────────
+
+
+def test_a_design_row_that_is_a_dict_is_read_as_its_text():
+    """`slos` come back as {"id": …, "text": …}, and str() on one produced a
+    scheme of work whose outcome read "{'id': 'grade-pp1-Chr-1.1-1', 'text':
+    'identify three qualities of God'}"."""
+    from app.routes.curriculum import _plain
+
+    assert _plain({"id": "x", "text": "identify three qualities of God"}) == \
+        "identify three qualities of God"
+    assert _plain("already a string") == "already a string"
+
+
+def test_the_notes_station_normalises_design_rows_before_using_them():
+    import inspect
+
+    from app.routes import curriculum
+
+    source = inspect.getsource(curriculum.factory_generate_notes)
+    assert "slos=[_plain(s) for s in (slos or [])]" in source
+    assert "design_experiences=[_plain(e) for e in (design_experiences or [])]" in source
