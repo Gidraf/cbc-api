@@ -122,13 +122,23 @@ def parse_pages(text: str) -> list[Page]:
         if _RULE.match(stripped) or not stripped:
             continue
 
+        # A line that already carries its own address keeps it. Stripping the
+        # address and then counting positionally made rendering and parsing
+        # one-way: "203:26" re-parsed as line 2 of page 203, so every address
+        # resolved against re-parsed text pointed at the wrong line — which is
+        # how a reviewer came to call six real citations fabricated.
         address = _RENDERED_ADDRESS.match(stripped)
+        stated_line = 0
         if address and int(address.group(1)) == current.number:
+            stated_line = int(address.group(0).split(":", 1)[1].split()[0])
             stripped = stripped[address.end():]
             if not stripped:
                 continue
 
-        line_no += 1
+        if stated_line:
+            line_no = stated_line
+        else:
+            line_no += 1
         current.lines.append(Line(page=current.number, line=line_no, text=stripped))
 
     if current.lines:
@@ -139,8 +149,18 @@ def parse_pages(text: str) -> list[Page]:
     for page in pages:
         if page.number in merged:
             existing = merged[page.number]
+            known = {l.line for l in existing.lines}
             for line in page.lines:
-                existing.lines.append(Line(page=page.number, line=len(existing.lines) + 1, text=line.text))
+                # Keep the line's own number where it has one; only invent a
+                # number for a line that never had one.
+                number = line.line
+                while number in known:
+                    number = max(known) + 1
+                known.add(number)
+                existing.lines.append(
+                    Line(page=page.number, line=number, text=line.text)
+                )
+            existing.lines.sort(key=lambda l: l.line)
         else:
             merged[page.number] = page
     return [merged[n] for n in sorted(merged)]

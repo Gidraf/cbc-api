@@ -4133,12 +4133,23 @@ def factory_page_reconciliation(
 
 # Which station each queued kind runs, and the payload shape it needs. Kept
 # beside the routes so a station and its queued form cannot drift apart.
-_QUEUEABLE: dict[str, str] = {
-    "notes": "factory_generate_notes",
-    "diagram": "factory_plan_visuals",
-    "media": "factory_generate_media_prompts",
-    "simulation": "factory_generate_simulations",
-    "activity": "factory_plan_activities",
+# The route AND the request class it takes, named outright.
+#
+# This used to hold only the route name, and the class was recovered from the
+# function's annotation at run time. This module opens with
+# `from __future__ import annotations`, so that annotation is a string, and
+# `"FactoryGenerateNotesRequest".model_fields` is the error every queued
+# station failed with. It was patched twice — once here, once in the
+# regeneration path that reads the same annotations from another module — and
+# a guard that has to be repeated in every caller is not a fix.
+#
+# There is nothing to resolve now. The class is the value.
+_QUEUEABLE: dict[str, tuple[str, Any]] = {
+    "notes": ("factory_generate_notes", FactoryGenerateNotesRequest),
+    "diagram": ("factory_plan_visuals", FactoryPlanVisualsRequest),
+    "media": ("factory_generate_media_prompts", GenerateMediaPromptsRequest),
+    "simulation": ("factory_generate_simulations", GenerateSimulationsRequest),
+    "activity": ("factory_plan_activities", FactoryPlanActivitiesRequest),
 }
 
 
@@ -4187,12 +4198,12 @@ def _run_queued(job: dict[str, Any]) -> dict[str, Any]:
     second implementation to keep correct.
     """
     kind = str(job.get("kind") or "")
-    endpoint = _QUEUEABLE.get(kind)
-    if not endpoint:
+    registered = _QUEUEABLE.get(kind)
+    if not registered:
         raise ValueError(f"'{kind}' has no station to run.")
 
+    endpoint, model_cls = registered
     handler = globals()[endpoint]
-    model_cls = _payload_model(handler, kind)
     payload = dict(job.get("payload") or {})
     fields = {
         "grade": job.get("grade") or "",
@@ -4804,7 +4815,7 @@ def factory_queue_work(
     from ..infra.db import fetch_all
     from ..services import job_queue
 
-    stations = set(_QUEUEABLE) | {"questions"}
+    stations = set(_QUEUEABLE) | {"questions"}  # keys, not the tuples
     unknown = [k for k in payload.kinds if k not in stations]
     if unknown:
         raise_api_error(

@@ -332,9 +332,33 @@ def _schema_block() -> str:
     return "\n".join(lines)
 
 
+def _citation_block(artifact: Any, design_extract: str) -> str:
+    """What the design actually says at each address the artifact cites.
+
+    A reviewer was shown a summary of the design and then told to flag any
+    address "not in the excerpt". There was no excerpt. It followed the
+    instruction the only way it could — by guessing — and reported six real
+    citations as fabricated.
+    """
+    from . import citation_evidence
+
+    content = getattr(artifact, "content", None)
+    if not isinstance(content, dict):
+        return ""
+    evidence = citation_evidence.resolve(content, design_extract or "")
+    # An artifact that cites nothing needs no block at all — neither a listing
+    # nor a warning that citations could not be checked.
+    if not evidence.get("total") and not evidence.get("found"):
+        return ""
+    return citation_evidence.render(evidence)
+
+
 def build_messages(
     artifact: Any, layer: int, *,
     design_extract: str = "", missing_design: str = "", descendants: str = "",
+    # The page-addressed document, as distinct from the summary above. Only
+    # this can settle whether "203:26" is real.
+    design_source_text: str = "",
     register: str = "", faith: str = "",
     prior_reviews: list[dict[str, Any]] | None = None,
     human_comments: list[str] | None = None,
@@ -370,7 +394,10 @@ def build_messages(
         "came from nowhere.",
         "  - an authority named as a source — KNBS, KALRO, NEMA, a ministry, a "
         "report — that does not appear in the design.",
-        "  - a page:line address that is not in the excerpt.",
+        "  - a page:line address the resolution block below marks as NOT "
+        "found. Those addresses have been looked up mechanically for you; an "
+        "address marked VERIFIED is real, and calling it fabricated is a false "
+        "accusation that strips a correct citation out of good content.",
         "A fabricated citation is worse than a missing one: it survives "
         "inspection. Score factual_correctness low when you find one, and say "
         "which.",
@@ -419,6 +446,10 @@ def build_messages(
 
     if design_extract:
         user += ["=== WHAT THE KICD DESIGN SAYS ===", design_extract, ""]
+
+    citation_block = _citation_block(artifact, design_source_text)
+    if citation_block:
+        user += [citation_block, ""]
     else:
         user += [
             "=== NO DESIGN WAS AVAILABLE ===",

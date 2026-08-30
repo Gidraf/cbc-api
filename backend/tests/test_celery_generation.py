@@ -417,11 +417,13 @@ def test_every_queueable_station_resolves_its_request_model():
     """
     import app.routes.curriculum as routes
 
-    for kind, endpoint in routes._QUEUEABLE.items():
-        handler = getattr(routes, endpoint)
-        model = routes._payload_model(handler, kind)
+    # The registry now names the class outright, so there is nothing to
+    # resolve — but the resolver still exists for the regeneration path, which
+    # reaches routes in another module by name.
+    for kind, (endpoint, model) in routes._QUEUEABLE.items():
         assert hasattr(model, "model_fields"), kind
-        assert model.model_fields, f"{kind} resolved to an empty model"
+        assert model.model_fields, f"{kind} has an empty model"
+        assert routes._payload_model(getattr(routes, endpoint), kind) is model
 
 
 def test_the_annotation_really_is_a_string_so_the_guard_is_load_bearing():
@@ -538,3 +540,42 @@ def test_health_says_which_code_is_running():
     panel = " ".join(_front("src/views/QueuePanel.tsx").split())
     assert "This API started" in panel
     assert "older than the fix, restart before retrying" in panel
+
+
+def test_the_queue_registry_names_the_request_class_outright():
+    """The class used to be recovered from the route's annotation at run time.
+    This module opens with `from __future__ import annotations`, so that
+    annotation is a string, and "FactoryGenerateNotesRequest".model_fields was
+    the error every queued station failed with. It was patched twice — once in
+    the queue, once in the regeneration path reading the same annotations from
+    another module — and a guard repeated in every caller is not a fix."""
+    import app.routes.curriculum as routes
+
+    for kind, registered in routes._QUEUEABLE.items():
+        assert isinstance(registered, tuple), kind
+        endpoint, model = registered
+        assert hasattr(routes, endpoint), kind
+        assert hasattr(model, "model_fields"), kind
+        assert model.model_fields, kind
+
+
+def test_the_queue_no_longer_resolves_an_annotation_at_all():
+    import inspect
+
+    import app.routes.curriculum as routes
+
+    source = inspect.getsource(routes._run_queued)
+    assert "_payload_model" not in source
+    assert "__annotations__" not in source
+    assert "endpoint, model_cls = registered" in source
+
+
+def test_there_is_a_way_to_tell_stale_code_from_a_live_fault():
+    """Four rounds went on one error that had been fixed after the first,
+    because nothing could distinguish a live fault from a stale process."""
+    script = (BACKEND / "diagnose.py").read_text()
+
+    assert "SOURCE IN THIS CHECKOUT" in script
+    assert "up -d --build" in script
+    # And it names the trap: restart reuses the image.
+    assert "restart` reuses the existing image" in script

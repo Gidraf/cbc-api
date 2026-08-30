@@ -1,0 +1,153 @@
+"""A reviewer must not have to guess whether a citation is real.
+
+Layer 2 scored factual_correctness 70 and raised a HIGH issue — "fabricated
+citations such as '203:26' and '203:33'" — on a guide whose citations all
+resolve. Our own check had verified six of six at 100%.
+
+The reviewer was given a SUMMARY of the design and then told to flag any
+address "not in the excerpt". There was no excerpt. It followed the instruction
+the only way it could.
+"""
+from __future__ import annotations
+
+import pathlib
+
+from app.services import citation_evidence, document_index
+
+BACKEND = pathlib.Path(__file__).resolve().parents[1]
+
+DESIGN = """[PAGE 203]
+203:25  The learner is guided to:
+203:26  • say the name of God in their mother tongue or
+203:27  language of catchment area,
+203:33  • in turns, say what they know about God ( loving,
+203:34  creator, and provider),
+"""
+
+
+# ── the parsing bug underneath it ───────────────────────────────────────────
+
+
+def test_a_rendered_address_survives_being_parsed_back():
+    """Stripping the address and then counting positionally made rendering and
+    parsing one-way: "203:26" came back as line 2 of page 203, so every address
+    resolved against re-parsed text pointed at the wrong line."""
+    pages = document_index.parse_pages(DESIGN)
+    numbers = [l.line for l in pages[0].lines]
+
+    assert numbers == [25, 26, 27, 33, 34]
+    assert pages[0].lines[1].text.startswith("• say the name of God")
+
+
+def test_a_line_with_no_address_still_gets_one():
+    pages = document_index.parse_pages(
+        "[PAGE 7]\nfirst line with no address\nsecond line\n"
+    )
+    assert [l.line for l in pages[0].lines] == [1, 2]
+
+
+def test_rendering_and_parsing_are_inverses():
+    """The property the whole citation substrate rests on."""
+    pages = document_index.parse_pages(DESIGN)
+    rendered = "\n".join(
+        f"[PAGE {p.number}]\n" + "\n".join(f"{l.page}:{l.line}  {l.text}" for l in p.lines)
+        for p in pages
+    )
+    again = document_index.parse_pages(rendered)
+
+    assert [(l.page, l.line, l.text) for l in again[0].lines] == \
+           [(l.page, l.line, l.text) for l in pages[0].lines]
+
+
+# ── the evidence the reviewer is given ──────────────────────────────────────
+
+
+def _artifact(refs: list[str]) -> dict:
+    return {"modules": [{"citations": [{"ref": r, "claim": f"cited for {r}"}]}
+                        for r in refs]}
+
+
+def test_a_real_address_resolves_and_shows_what_the_design_says():
+    evidence = citation_evidence.resolve(_artifact(["203:26"]), DESIGN)
+    row = evidence["citations"][0]
+
+    assert row["status"] == "VERIFIED"
+    assert any("say the name of God" in s for s in row["design_says"])
+
+
+def test_an_invented_address_is_reported_as_such():
+    evidence = citation_evidence.resolve(_artifact(["999:1", "203:88"]), DESIGN)
+    statuses = {r["ref"]: r["status"] for r in evidence["citations"]}
+
+    assert statuses["999:1"] == "PAGE NOT IN THE DESIGN"
+    assert statuses["203:88"] == "LINE NOT ON THAT PAGE"
+
+
+def test_the_exact_citations_the_reviewer_called_fabricated_verify():
+    """203:26 and 203:33 — the two it named."""
+    evidence = citation_evidence.resolve(_artifact(["203:26", "203:33"]), DESIGN)
+
+    assert evidence["verified"] == 2
+    assert all(r["status"] == "VERIFIED" for r in evidence["citations"])
+
+
+def test_with_no_design_the_reviewer_is_told_not_to_guess():
+    """The failure mode was guessing. Silence about it is what produced the
+    false accusation."""
+    rendered = citation_evidence.render(
+        citation_evidence.resolve(_artifact(["203:26"]), "")
+    )
+    assert "CANNOT judge" in rendered
+    assert "Do not guess" in rendered
+    assert "do not report a citation as fabricated" in rendered
+
+
+def test_the_block_still_asks_the_reviewer_to_judge_the_claim():
+    """An address can resolve and still be cited for something it does not
+    say — which is a real defect this pipeline has produced."""
+    rendered = citation_evidence.render(
+        citation_evidence.resolve(_artifact(["203:26"]), DESIGN)
+    )
+    assert "whether the quoted line actually supports the claim" in rendered
+
+
+# ── wiring ──────────────────────────────────────────────────────────────────
+
+
+def test_the_reviewer_receives_the_resolved_citations():
+    from app.services import review_layers
+
+    artifact = type("A", (), {
+        "kind": "notes", "grade": "grade-pp1", "subject": "CRE",
+        "strand_name": "Creation", "sub_strand_name": "Our God", "version": 1,
+        "content": _artifact(["203:26", "301:9"]),
+    })()
+    messages = review_layers.build_messages(artifact, 2, design_source_text=DESIGN)
+    user = messages[1]["content"]
+
+    assert "=== CITATIONS IN THIS ARTIFACT, ALREADY RESOLVED ===" in user
+    assert "203:26  [VERIFIED]" in user
+    assert "301:9  [PAGE NOT IN THE DESIGN]" in user
+
+
+def test_the_instruction_no_longer_asks_for_the_impossible():
+    from app.services import review_layers
+
+    artifact = type("A", (), {"kind": "notes", "grade": "grade-pp1",
+                              "subject": "CRE", "strand_name": "",
+                              "sub_strand_name": "", "version": 1,
+                              "content": {}})()
+    system = review_layers.build_messages(artifact, 2)[0]["content"]
+
+    assert "a page:line address that is not in the excerpt" not in system
+    assert "the resolution block below marks as NOT found" in system
+    assert "false accusation" in system
+
+
+def test_the_review_route_loads_the_page_addressed_design():
+    source = (BACKEND / "app/routes/artifacts.py").read_text()
+    route = source[source.index("def review_artifact"):]
+    route = route[: route.index("@router.post", 10)]
+
+    assert "design_source.resolve(artifact.grade, artifact.subject)" in route
+    assert "design_source_text=design_source_text" in route

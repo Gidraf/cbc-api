@@ -341,9 +341,26 @@ def review_artifact(
     human = [str(c.get("body") or "") for c in registry.comments_for(artifact.artifact_id)
              if not c.get("resolved")]
 
+    # The page-addressed source, so citations can be resolved rather than
+    # guessed at. Without it a reviewer was told to flag any address "not in
+    # the excerpt" when it had never been given an excerpt.
+    design_source_text = ""
+    try:
+        from ..services import design_source
+
+        found = design_source.resolve(artifact.grade, artifact.subject)
+        design_source_text = found.text or ""
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "Could not load the design for %s (%s); citations will be reported "
+            "as unresolvable rather than guessed at: %s",
+            artifact.artifact_id, artifact.kind, exc,
+        )
+
     messages = review_layers.build_messages(
         artifact, payload.layer,
         design_extract=grounding.text,
+        design_source_text=design_source_text,
         missing_design=grounding.missing_reason,
         descendants=grounding.descendants,
         register=register_block(artifact.grade),
