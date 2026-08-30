@@ -1026,8 +1026,13 @@ export function ContentFactory() {
 function StationResult({ result }: { result: any }) {
   const gate = result?.quality_gate;
   const rejected: any[] = result?.rejected || [];
+  // Lessons compared against each other. A duplicated lesson passes every
+  // length check the gate runs, because it is a full-length lesson — so it is
+  // reported on its own rather than folded into the gate's score.
+  const repetition = result?.repetition;
+  const repeats: string[] = repetition?.checked && !repetition?.clean ? repetition.findings || [] : [];
 
-  if (!gate && !rejected.length) return null;
+  if (!gate && !rejected.length && !repeats.length) return null;
 
   return (
     <div style={{ marginTop: "var(--s4)", display: "flex", flexDirection: "column", gap: "var(--s3)" }}>
@@ -1047,6 +1052,32 @@ function StationResult({ result }: { result: any }) {
             {rejected.slice(0, 5).map((r, i) => (
               <li key={i} style={{ marginBottom: "4px" }}>
                 <span className="mono">{r.display_label || `#${r.index}`}</span> — {r.reason}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {repeats.length > 0 && (
+        <div
+          style={{
+            border: "1px solid var(--warn)",
+            background: "var(--warn-wash)",
+            borderRadius: "var(--radius-sm)",
+            padding: "var(--s3)",
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: "var(--s2)", flexWrap: "wrap" }}>
+            <Badge tone="warn">repeats itself</Badge>
+            <strong style={{ fontSize: "var(--text-sm)" }}>{repetition.score}/100 distinct</strong>
+            <span style={{ fontSize: "var(--text-sm)", color: "var(--ink-2)" }}>
+              every lesson was compared against every other lesson
+            </span>
+          </div>
+          <ul style={{ margin: "var(--s2) 0 0", paddingLeft: "1.1rem", fontSize: "var(--text-sm)" }}>
+            {repeats.map((f, i) => (
+              <li key={i} style={{ marginBottom: "4px" }}>
+                {f}
               </li>
             ))}
           </ul>

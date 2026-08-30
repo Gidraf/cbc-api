@@ -27,15 +27,29 @@ logger = logging.getLogger("cbc-quality-score")
 # What each signal is worth. Grounding and completeness dominate because
 # ungrounded and incomplete are the two ways this pipeline has actually failed.
 WEIGHTS: dict[str, float] = {
-    "grounded": 0.20,        # read from the design at all
-    "lesson_coverage": 0.25, # every funded lesson planned, none of them thin
+    # A boolean precondition — was the design read at all. Worth less than it
+    # looks, because `citations` already measures whether it was actually USED,
+    # and an ungrounded run fails that far more informatively.
+    "grounded": 0.15,
+    # Coverage counts lessons; `distinct` checks they are different lessons.
+    # It used to carry both jobs and did the second one badly: a guide that
+    # plans seven lessons by copying one of them four times scores 100 here,
+    # because each copy is a full-length lesson. The weight it gave up went to
+    # `distinct`; the rest of the rebalance came from `grounded` and `rubrics`,
+    # so that seven thin lessons still score below the auto-run floor.
+    "lesson_coverage": 0.22, # every funded lesson planned, none of them thin
     "citations": 0.15,       # every page:line reference resolves
-    "rubrics": 0.10,         # rubrics read from KICD rather than derived
+    "rubrics": 0.08,         # rubrics read from KICD rather than derived
     "gate": 0.15,            # the local reviewer and approvers
     # Invented claims. Weighted like the gate because a fabricated scripture
     # reference in a religious education guide is not a small defect, and it is
     # the one failure a reader cannot detect by reading.
     "no_invention": 0.15,
+    # Lessons that are copies of each other — the half of coverage that
+    # counting could never do. A guide that plans seven lessons and teaches
+    # four is 40% short of what the design funds, and unlike a thin lesson a
+    # duplicated one clears every length check there is.
+    "distinct": 0.10,
 }
 
 
@@ -181,6 +195,16 @@ def score(result: dict[str, Any], kind: str = "") -> ItemScore:
             + "; ".join(str(f.get("kind")) for f in findings[:3]))
     else:
         add("no_invention", None, "not checked for this station")
+
+    # ── lessons that are copies of each other ───────────────────────────────
+    repetition = result.get("repetition")
+    if isinstance(repetition, dict) and repetition.get("checked"):
+        findings = repetition.get("findings") or []
+        add("distinct", _pct(repetition.get("score")),
+            "no lesson repeats another" if not findings else
+            f"{len(findings)} repetition(s): {findings[0]}")
+    else:
+        add("distinct", None, "no lessons to compare")
 
     # ── the local reviewer and both approvers ───────────────────────────────
     gate = result.get("quality_gate")

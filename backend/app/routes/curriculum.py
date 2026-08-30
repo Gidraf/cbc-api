@@ -25,6 +25,7 @@ from ..services import (
     media_registry,
     media_validators,
     notes_coverage,
+    redundancy_check,
     notes_repair,
     review_cycle,
     rubric_filler,
@@ -1358,6 +1359,18 @@ def factory_generate_notes(
             payload.sub_strand, len(fabrication.findings),
         )
 
+    # A duplicated lesson clears every check that measures length, because it
+    # is a full-length lesson. It is only wrong beside the lesson it copies,
+    # and nothing that reads the guide forwards — a reviewer included — sees
+    # that. So the lessons are compared against each other mechanically.
+    repetition = redundancy_check.inspect(notes_content)
+    if repetition.get("checked") and not repetition.get("clean"):
+        logger.warning(
+            "Notes for %s repeat themselves (%s/100): %s",
+            payload.sub_strand, repetition.get("score"),
+            "; ".join(repetition.get("findings") or [])[:300],
+        )
+
     citations = citation_check.verify(notes_content, source_text)
     if citations.citations and citations.verified < len(citations.citations):
         logger.warning(
@@ -1391,6 +1404,7 @@ def factory_generate_notes(
         "quality_gate": gate_result.to_dict(),
         "lesson_coverage": lesson_plan.to_dict(),
         "fabrication": fabrication.to_dict(),
+        "repetition": repetition,
         "notes_repair": repair_report.to_dict(),
         "citations": citations.to_dict(),
         "artifact": versioned,

@@ -464,7 +464,10 @@ def regenerate_artifact(
             "to start fresh.",
         )
 
-    revision = build_directives(reviews, registry.comments_for(artifact.artifact_id))
+    revision = build_directives(
+        reviews, registry.comments_for(artifact.artifact_id),
+        measured=_measured_defects(artifact),
+    )
     if not revision["directives"]:
         raise_api_error(
             "VALIDATION_FAILED",
@@ -541,6 +544,25 @@ def regenerate_artifact(
 
 
 @router.get("/{artifact_id}/revision-directives")
+def _measured_defects(artifact: Any) -> list[str]:
+    """Defects found by comparison rather than by opinion.
+
+    These reach a regeneration whether or not a reviewer noticed them, because
+    the ones reviewers miss are consistently the ones only visible by
+    comparison — a lesson that is a copy of the lesson four pages earlier reads
+    perfectly well where it sits.
+    """
+    from ..services import redundancy_check
+
+    try:
+        report = redundancy_check.inspect(getattr(artifact, "content", None) or {})
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Could not compare the lessons in %s: %s",
+                       getattr(artifact, "artifact_id", "?"), exc)
+        return []
+    return report.get("findings") or []
+
+
 def read_revision_directives(
     artifact_id: str,
     _: AuthContext = Depends(require_roles("admin", "operator", "reviewer")),
@@ -554,7 +576,8 @@ def read_revision_directives(
 
     artifact = registry.get(artifact_id)
     revision = build_directives(
-        review_layers.reviews_for(artifact_id), registry.comments_for(artifact_id)
+        review_layers.reviews_for(artifact_id), registry.comments_for(artifact_id),
+        measured=_measured_defects(artifact),
     )
     return {
         "artifact_id": artifact_id,

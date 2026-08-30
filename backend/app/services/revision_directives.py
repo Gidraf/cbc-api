@@ -78,17 +78,27 @@ def _weak_dimensions(reviews: list[dict[str, Any]], floor: int = 70) -> list[dic
 def build(
     reviews: list[dict[str, Any]],
     comments: list[dict[str, Any]] | None = None,
+    measured: list[str] | None = None,
 ) -> dict[str, Any]:
-    """The directive block, and the findings it was built from."""
+    """The directive block, and the findings it was built from.
+
+    `measured` carries defects found mechanically — duplicated lessons,
+    citations that do not resolve — which reach the regeneration whether or not
+    a reviewer happened to notice them. Reviewers read an artifact once and
+    forwards, and the defects they miss are consistently the ones that are only
+    visible by comparison.
+    """
     issues = _issues_from(reviews)
     weak = _weak_dimensions(reviews)
     human = [
         str(c.get("body") or "")
         for c in (comments or []) if not c.get("resolved") and c.get("body")
     ]
+    facts = [f for f in (measured or []) if f]
 
-    if not (issues or weak or human):
-        return {"directives": "", "issues": [], "weak_dimensions": [], "human_comments": []}
+    if not (issues or weak or human or facts):
+        return {"directives": "", "issues": [], "weak_dimensions": [],
+                "human_comments": [], "measured": []}
 
     lines = [
         "=== REVISE THE PREVIOUS VERSION ===",
@@ -108,6 +118,13 @@ def build(
             lines.append(
                 f"- [{issue['severity']}] {issue['where']}: {issue['what']}{fix}"
             )
+        lines.append("")
+
+    if facts:
+        lines.append(
+            "MEASURED DEFECTS — these were found by comparison, not by "
+            "opinion, and are not open to argument:")
+        lines.extend(f"- {f}" for f in facts)
         lines.append("")
 
     if weak:
@@ -133,4 +150,5 @@ def build(
         "issues": issues,
         "weak_dimensions": weak,
         "human_comments": human,
+        "measured": facts,
     }

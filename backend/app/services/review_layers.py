@@ -332,6 +332,26 @@ def _schema_block() -> str:
     return "\n".join(lines)
 
 
+def _repetition_block(artifact: Any) -> str:
+    """What in this artifact is a copy of something else in it.
+
+    A reviewer reads an artifact once, forwards. Lesson 6 reads perfectly well
+    on its own and is only wrong beside lesson 5, a page and a half back — so
+    padding is the defect reviewers miss most reliably. Measuring it costs
+    nothing and cannot be overlooked.
+    """
+    from . import redundancy_check
+
+    content = getattr(artifact, "content", None)
+    if not content:
+        return ""
+    try:
+        return redundancy_check.render(redundancy_check.inspect(content))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Could not measure repetition for this artifact: %s", exc)
+        return ""
+
+
 def _citation_block(artifact: Any, design_extract: str) -> str:
     """What the design actually says at each address the artifact cites.
 
@@ -401,6 +421,23 @@ def build_messages(
         "A fabricated citation is worse than a missing one: it survives "
         "inspection. Score factual_correctness low when you find one, and say "
         "which.",
+        "",
+        "CHECK THE LESSONS AGAINST EACH OTHER, NOT ONLY AGAINST THE DESIGN. "
+        "You read forwards, and a padded lesson reads perfectly well on its "
+        "own — it is wrong only beside the lesson it copies, which is by then "
+        "a page back. This is the defect reviews miss most reliably: a guide "
+        "that plans seven lessons by writing four and repeating three passes "
+        "every check that measures length, because each copy is full length.",
+        "Where the repetition block below reports duplicated lessons, "
+        "duplicated exposition or a mirrored lesson list, you MUST raise it in "
+        "`issues` naming the lessons, and reflect it in completeness and "
+        "curriculum_alignment. Reporting nothing about it is not a pass — it "
+        "is the finding going unrecorded.",
+        "Repeating an ACTIVITY is not the defect: a song, a prayer or a "
+        "routine repeated across lessons is how a young child learns it, and "
+        "the design often asks for exactly that. The defect is repeated "
+        "TEACHING — the same exposition, the same misconception, the same "
+        "check, presented as a new lesson.",
         "Where a dimension does not apply, set not_applicable and say why in "
         "evidence. Do not give it a passing score to move on.",
         "Be specific and be hard. Approving weak content costs a Kenyan child a "
@@ -440,12 +477,30 @@ def build_messages(
             "re-litigating it produces a different score for the same text.",
             "State plainly whether each change is an improvement, a regression, "
             "or neither.",
+            "JUDGE THE NEW STATE, NOT THE FACT THAT IT CHANGED. A diff makes "
+            "every removal look like a loss, and asking for removed text back "
+            "is how a review turns into a loop: the next version restores it, "
+            "the version after that is marked down for the padding it "
+            "restored, and nothing improves while both reviews look "
+            "reasonable.",
+            "Before you object to a removal, read what stands in its place. "
+            "Generic filler traded for something specific — \"Visual aids for "
+            "singing\" replaced by \"audio clip of a song about God\" — is an "
+            "improvement, and calling it a regression asks the author to make "
+            "the content worse.",
+            "Object to a removal only when the new version is MISSING "
+            "something the design requires, and name what the design "
+            "requires.",
             json.dumps(diff_summary, indent=2, default=str)[:6000],
             "",
         ]
 
     if design_extract:
         user += ["=== WHAT THE KICD DESIGN SAYS ===", design_extract, ""]
+
+    repetition_block = _repetition_block(artifact)
+    if repetition_block:
+        user += [repetition_block, ""]
 
     citation_block = _citation_block(artifact, design_source_text)
     if citation_block:

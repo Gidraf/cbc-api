@@ -151,3 +151,81 @@ def test_the_review_route_loads_the_page_addressed_design():
 
     assert "design_source.resolve(artifact.grade, artifact.subject)" in route
     assert "design_source_text=design_source_text" in route
+
+
+# ── a real address lending its authority to an invented sentence ────────────
+
+OUR_GOD = """[PAGE 203]
+203:10  1.1
+203:11  Our God
+203:12  (7 lessons)
+203:19  God,
+203:20  b) practice saying
+203:21  short prayers,
+203:22  c) appreciate God
+203:23  as a loving
+203:24  heavenly father.
+"""
+
+
+def _quoted(ref: str, quote: str) -> dict:
+    return {"modules": [{"citations": [
+        {"ref": ref, "claim": "a claim", "quote": quote}]}]}
+
+
+def test_a_quote_that_is_not_at_the_address_is_caught():
+    """The guide cited 203:11 — a line reading "Our God" — for the sentence
+    "By the end of the sub-strand, the learner should be able to: identify
+    three qualities of God." The address resolved, so the reviewer called the
+    citation correct and scored factual_correctness 95.
+
+    This is the one fabrication that survives being checked."""
+    evidence = citation_evidence.resolve(
+        _quoted("203:11", "By the end of the sub-strand, the learner should be "
+                          "able to: identify three qualities of God."),
+        OUR_GOD,
+    )
+    row = evidence["citations"][0]
+
+    assert row["status"] == "ADDRESS REAL, QUOTE NOT THERE"
+    assert evidence["misquoted"] == 1
+
+
+def test_a_quote_wrapped_across_design_lines_still_verifies():
+    """KICD pages break mid-sentence: "b) practice saying" / "short prayers,"
+    is one outcome over two lines. Flagging that as invented would restart the
+    false-accusation loop this module exists to end."""
+    evidence = citation_evidence.resolve(
+        _quoted("203:20", "practice saying short prayers."), OUR_GOD)
+
+    assert evidence["citations"][0]["status"] == "VERIFIED"
+
+
+def test_a_quote_running_past_the_displayed_window_still_verifies():
+    """203:22 shows only "c) appreciate God"; the sentence finishes two lines
+    later. Matching uses a wider window than is displayed for exactly this."""
+    evidence = citation_evidence.resolve(
+        _quoted("203:22", "appreciate God as a loving heavenly father."),
+        OUR_GOD)
+
+    assert evidence["citations"][0]["status"] == "VERIFIED"
+
+
+def test_a_short_quote_is_not_judged_either_way():
+    evidence = citation_evidence.resolve(_quoted("203:11", "Our God"), OUR_GOD)
+
+    assert evidence["citations"][0]["status"] == "VERIFIED"
+    assert "quote_support" not in evidence["citations"][0]
+
+
+def test_the_block_shows_the_invented_sentence_beside_the_real_line():
+    rendered = citation_evidence.render(citation_evidence.resolve(
+        _quoted("203:11", "By the end of the sub-strand, the learner should be "
+                          "able to: identify three qualities of God."),
+        OUR_GOD,
+    ))
+
+    assert "the artifact quotes:" in rendered
+    assert "203:11  Our God" in rendered
+    assert "The quote was written, not copied." in rendered
+    assert "ADDRESS REAL, QUOTE NOT THERE" in rendered
