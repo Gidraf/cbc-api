@@ -1037,7 +1037,14 @@ function StationResult({ result }: { result: any }) {
   const contradictions: string[] =
     integrity?.checked && !integrity?.clean ? integrity.findings || [] : [];
 
-  if (!gate && !rejected.length && !repeats.length && !contradictions.length) return null;
+  // What the station did, in order, while it was doing it. A generation used
+  // to run behind a spinner and then report its defects at the end, when the
+  // only remaining move was to press the button again.
+  const steps: any[] = result?.progress?.steps || [];
+  const remediation = result?.remediation;
+
+  if (!gate && !rejected.length && !repeats.length && !contradictions.length && !steps.length)
+    return null;
 
   return (
     <div style={{ marginTop: "var(--s4)", display: "flex", flexDirection: "column", gap: "var(--s3)" }}>
@@ -1061,6 +1068,55 @@ function StationResult({ result }: { result: any }) {
             ))}
           </ul>
         </div>
+      )}
+
+      {steps.length > 0 && (
+        <details open>
+          <summary style={{ cursor: "pointer", fontSize: "var(--text-sm)", fontWeight: 550 }}>
+            What this run did{" "}
+            {remediation?.attempted && (
+              <Badge tone={remediation.clean ? "ok" : "warn"}>
+                self-check {remediation.score_before} → {remediation.score_after}
+              </Badge>
+            )}
+          </summary>
+          <ol
+            style={{
+              margin: "var(--s2) 0 0",
+              paddingLeft: "1.1rem",
+              fontSize: "var(--text-sm)",
+              color: "var(--ink-2)",
+            }}
+          >
+            {steps.map((s: any, i: number) => (
+              <li key={i} style={{ marginBottom: "3px" }}>
+                <span className="mono" style={{ color: "var(--ink-3)" }}>
+                  {String(s.at).padStart(5, " ")}s
+                </span>{" "}
+                <strong
+                  style={{
+                    color:
+                      s.status === "fail"
+                        ? "var(--danger)"
+                        : s.status === "warn"
+                        ? "var(--warn)"
+                        : "var(--ink-1)",
+                  }}
+                >
+                  {s.step}
+                </strong>
+                {s.detail ? ` — ${s.detail}` : ""}
+              </li>
+            ))}
+          </ol>
+          {remediation?.outstanding?.length > 0 && (
+            <p style={{ margin: "var(--s2) 0 0", fontSize: "var(--text-sm)", color: "var(--warn)" }}>
+              Stopped because: {String(remediation.stopped_because).replace(/_/g, " ")}.
+              {" "}
+              {remediation.outstanding.length} finding(s) still stand.
+            </p>
+          )}
+        </details>
       )}
 
       {contradictions.length > 0 && (

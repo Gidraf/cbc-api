@@ -35,6 +35,16 @@ logger = logging.getLogger("cbc-redundancy")
 # Lists that hold one entry per lesson. Anything else is not compared.
 MODULE_KEYS = ("modules", "hour_modules", "lessons")
 
+# Lists this pipeline deliberately keeps as copies of each other. The notes
+# station mirrors `modules` into `hour_modules` because coverage, the DNA
+# scorer, the stage guard and the visual planner were written against the older
+# name. Reporting that as padding blames the model for something we do, and
+# regenerating cannot fix it — we put it back every time. It is still worth
+# saying, because it doubles the artifact, but it is not a defect in the guide.
+ALIASES: tuple[frozenset[str], ...] = (
+    frozenset({"modules", "hour_modules"}),
+)
+
 # Fields whose repetition across lessons means the lesson was padded, not that
 # a concept was deliberately revisited.
 TEACHING_FIELDS = (
@@ -386,8 +396,12 @@ def inspect(content: Any) -> dict[str, Any]:
         return {"checked": False, "reason": "No lesson list to compare.",
                 "findings": []}
 
-    mirrors = _mirrors(lists)
-    mirrored = {m["b"] for m in mirrors}
+    found = _mirrors(lists)
+    mirrors = [m for m in found
+               if frozenset({m["a"], m["b"]}) not in ALIASES]
+    aliases = [m for m in found
+               if frozenset({m["a"], m["b"]}) in ALIASES]
+    mirrored = {m["b"] for m in found}
 
     duplicates: list[dict[str, Any]] = []
     segments: list[dict[str, Any]] = []
@@ -409,6 +423,7 @@ def inspect(content: Any) -> dict[str, Any]:
         "checked": True,
         "modules": counted,
         "mirrors": mirrors,
+        "aliases": aliases,
         "near_duplicates": duplicates[:MAX_REPORTED],
         "repeated_segments": segments[:MAX_REPORTED],
         "parallel_shapes": shapes[:MAX_REPORTED],

@@ -65,7 +65,9 @@ def _guide(mirror: bool = False) -> dict:
     ]
     guide = {"title": "Our God", "modules": modules}
     if mirror:
-        guide["hour_modules"] = modules
+        # NOT `hour_modules` — that pair is a deliberate alias this pipeline
+        # keeps for older readers, and is excluded by name.
+        guide["lessons"] = modules
     return guide
 
 
@@ -174,7 +176,7 @@ def test_the_mirrored_lesson_list_is_reported():
 
     assert report["mirrors"]
     assert {report["mirrors"][0]["a"], report["mirrors"][0]["b"]} == \
-           {"modules", "hour_modules"}
+           {"modules", "lessons"}
 
 
 def test_a_mirrored_list_is_not_compared_against_itself():
@@ -213,6 +215,39 @@ def test_the_reviewer_receives_the_measurement():
     assert "=== REPETITION IN THIS ARTIFACT, ALREADY MEASURED ===" in user
     assert "MIRRORED" in user
     assert "Lesson 6: God's Love in Action" in user
+
+
+def test_the_pipelines_own_alias_is_not_reported_as_padding():
+    """The notes station mirrors `modules` into `hour_modules` for readers
+    written against the older name. Reporting that blames the model for
+    something we do, and a regeneration cannot fix it — we put it back every
+    time, so the finding would return on every version for ever."""
+    guide = _guide()
+    guide["hour_modules"] = guide["modules"]
+    report = redundancy_check.inspect(guide)
+
+    assert not report["mirrors"]
+    assert report["aliases"]
+    assert not any("hour_modules" in f for f in report["findings"])
+
+
+def test_the_alias_is_stripped_before_the_artifact_reaches_a_reviewer():
+    """Sending both copies doubled the guide and pushed it past the truncation
+    limit, so the reviewer was told the tail was missing when the tail was a
+    copy of the head."""
+    from app.services import review_layers
+
+    guide = _guide()
+    guide["hour_modules"] = guide["modules"]
+    artifact = type("A", (), {
+        "kind": "notes", "grade": "grade-pp1", "subject": "CRE",
+        "strand_name": "", "sub_strand_name": "", "version": 1,
+        "content": guide,
+    })()
+    user = review_layers.build_messages(artifact, 2)[1]["content"]
+
+    assert '"hour_modules"' not in user
+    assert '"modules"' in user
 
 
 def test_a_clean_artifact_gets_no_block():
@@ -380,9 +415,16 @@ def test_a_mirror_is_a_flat_cost():
     """It wastes the reviewer's context window, not the class's time, so it
     does not scale with the lesson count."""
     mirrored = _padded_set(7, 0)
-    mirrored["hour_modules"] = mirrored["modules"]
+    mirrored["lessons"] = mirrored["modules"]
 
     assert redundancy_check.inspect(mirrored)["score"] == 85.0
+
+
+def test_the_alias_costs_nothing():
+    aliased = _padded_set(7, 0)
+    aliased["hour_modules"] = aliased["modules"]
+
+    assert redundancy_check.inspect(aliased)["score"] == 100.0
 
 
 # ── the same lesson, rewritten rather than copied ───────────────────────────

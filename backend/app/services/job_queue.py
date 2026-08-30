@@ -368,12 +368,18 @@ def _execute(job: dict[str, Any]) -> dict[str, Any]:
     """
     from ..infra.db import execute, to_json
 
-    from . import run_meter
+    from . import run_log, run_meter
 
     job_id = str(job["job_id"])
     kind = str(job["kind"])
     handler = _HANDLERS.get(kind)
     meter = run_meter.start(job_id)
+    # What the station is doing, written to this job's row as it happens. A
+    # generation used to run for two minutes behind a spinner and then report
+    # its defects at the end, when the only remaining move was to press the
+    # button again.
+    run_log.start(job_id)
+    run_log.step("Claimed", f"{kind} · {job.get('sub_strand') or job.get('strand') or ''}")
 
     if handler is None:
         execute(
@@ -391,6 +397,8 @@ def _execute(job: dict[str, Any]) -> dict[str, Any]:
         # third time, and retrying spends money to learn nothing.
         status = QUEUED if attempts < MAX_ATTEMPTS else FAILED
         logger.error("Job %s (%s) failed on attempt %d: %s", job_id, kind, attempts, exc)
+        run_log.step("Failed", str(exc)[:200], "fail")
+        run_log.stop()
         run_meter.stop()
         # Which build produced this failure. Without it a failure from before a
         # fix and one from after are the same red line in the console, and the
@@ -416,7 +424,15 @@ def _execute(job: dict[str, Any]) -> dict[str, Any]:
         )
         return {"job_id": job_id, "status": status, "error": str(exc)[:300]}
 
+    run_log.step("Done", f"{meter.calls} model call(s), "
+                         f"${round(meter.cost_usd, 4)}")
+    finished = run_log.stop()
     run_meter.stop()
+    # The final result overwrites the row, so the progress that was flushed
+    # during the run has to be folded back in or the console loses the whole
+    # narration the moment the job succeeds.
+    if isinstance(result, dict) and finished is not None:
+        result = {**result, "progress": finished.to_dict()}
     execute(
         "UPDATE jobs SET status = 'done', result = CAST(:result AS jsonb), "
         "finished_at = NOW(), llm_calls = :calls, total_tokens = :tokens, "
@@ -609,7 +625,11 @@ def status(
         # `strand` too: a sub-strand generation job has no sub_strand — the
         # strand IS the unit of work — so without it the banner said only
         # "running" with nothing named.
-        "SELECT kind, subject, strand, sub_strand FROM jobs WHERE status = 'running' "
+        # `result->'progress'` is written by the station as it works, so the
+        # console can say what the run is doing rather than only that one is.
+        "SELECT kind, subject, strand, sub_strand, "
+        "       result->'progress' AS progress "
+        "FROM jobs WHERE status = 'running' "
         "ORDER BY started_at ASC LIMIT 1"
     )
 

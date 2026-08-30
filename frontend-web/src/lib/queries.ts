@@ -623,7 +623,11 @@ export type QueueStatus = {
   total: number;
   finished: number;
   percentage: number;
-  now_running: { kind: string; subject: string; strand: string; sub_strand: string } | null;
+  now_running: {
+    kind: string; subject: string; strand: string; sub_strand: string;
+    /** What the station is doing right now, written to the row as it works. */
+    progress?: { elapsed_s: number; steps: { at: number; step: string; detail: string; status: string }[] };
+  } | null;
   jobs: {
     job_id: string; batch_id: string; kind: string; subject: string;
     strand: string; sub_strand: string; status: string; attempts: number; error: string;

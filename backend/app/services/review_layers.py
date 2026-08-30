@@ -522,7 +522,14 @@ def build_messages(
             "",
         ]
 
-    rendered = json.dumps(getattr(artifact, "content", {}), indent=2, default=str)
+    # `hour_modules` is a copy of `modules` that the notes station keeps for
+    # older readers. Sending both doubled the artifact and pushed a seven-lesson
+    # guide past the limit, so the reviewer was told the tail was missing when
+    # the tail was a copy of the head.
+    content = getattr(artifact, "content", {})
+    if isinstance(content, dict) and content.get("modules") and content.get("hour_modules"):
+        content = {k: v for k, v in content.items() if k != "hour_modules"}
+    rendered = json.dumps(content, indent=2, default=str)
     body = rendered[:MAX_ARTIFACT_CHARS]
     truncated = len(rendered) > MAX_ARTIFACT_CHARS
 

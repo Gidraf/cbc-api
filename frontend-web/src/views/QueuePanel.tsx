@@ -349,10 +349,29 @@ export function QueuePanel({
             )}
 
             {data.now_running && (
-              <p style={{ fontSize: "var(--text-sm)", color: "var(--ink-2)", margin: 0 }}>
-                Running now: {KIND_LABEL[data.now_running.kind] || data.now_running.kind} for{" "}
-                <strong>{data.now_running.sub_strand || data.now_running.strand}</strong>
-              </p>
+              <div style={{ fontSize: "var(--text-sm)", color: "var(--ink-2)" }}>
+                <p style={{ margin: 0 }}>
+                  Running now: {KIND_LABEL[data.now_running.kind] || data.now_running.kind} for{" "}
+                  <strong>{data.now_running.sub_strand || data.now_running.strand}</strong>
+                  {data.now_running.progress?.elapsed_s != null && (
+                    <span className="mono" style={{ color: "var(--ink-3)" }}>
+                      {" "}· {data.now_running.progress.elapsed_s}s
+                    </span>
+                  )}
+                </p>
+                {/* The last few steps, newest last. A two-minute generation
+                    behind a bare spinner is indistinguishable from a wedged
+                    one, and the console had no way to tell them apart. */}
+                {(data.now_running.progress?.steps || []).slice(-4).map((s, i) => (
+                  <p key={i} style={{ margin: "2px 0 0 var(--s3)" }}>
+                    <span className="mono" style={{ color: "var(--ink-3)" }}>{s.at}s</span>{" "}
+                    <strong style={{ color: s.status === "warn" ? "var(--warn)" : "var(--ink-1)" }}>
+                      {s.step}
+                    </strong>
+                    {s.detail ? ` — ${s.detail}` : ""}
+                  </p>
+                ))}
+              </div>
             )}
 
             {failed > 0 && (

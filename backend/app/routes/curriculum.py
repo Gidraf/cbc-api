@@ -26,7 +26,9 @@ from ..services import (
     media_validators,
     notes_coverage,
     notes_integrity,
+    notes_remediation,
     redundancy_check,
+    run_log,
     notes_repair,
     review_cycle,
     rubric_filler,
@@ -1233,8 +1235,19 @@ def factory_generate_notes(
     lesson_plan = notes_coverage.check(
         notes_content, allocation, slos, experiences=design_experiences
     )
+    run_log.step(
+        "Drafted",
+        f"{lesson_plan.modules_found} of {lesson_plan.modules_required} "
+        f"{allocation.unit or 'lessons'}, "
+        f"{lesson_plan.total_body_chars:,} characters of teaching",
+        "ok" if lesson_plan.complete else "warn",
+    )
+
     repair_report = notes_repair.RepairReport()
     if isinstance(notes_content, dict) and lesson_plan.thin_modules:
+        run_log.step("Expanding thin lessons",
+                     ", ".join(str(t.get("module")) for t in lesson_plan.thin_modules),
+                     "warn")
         notes_content, repair_report = notes_repair.repair(
             notes_content,
             lesson_plan,
@@ -1245,6 +1258,25 @@ def factory_generate_notes(
             allocation_phrase=allocation.phrase(),
             sub_strand=payload.sub_strand,
         )
+        lesson_plan = notes_coverage.check(
+            notes_content, allocation, slos, experiences=design_experiences
+        )
+
+    # Every check below this line used to run, report, and change nothing. A
+    # validator whose finding changes nothing is a comment — so the findings
+    # now drive repairs and, where a repair needs one, a targeted rewrite,
+    # before the guide is offered for review at all.
+    notes_content, remediation = notes_remediation.run(
+        notes_content,
+        design_experiences=[str(e) for e in (design_experiences or [])],
+        slos=[str(s) for s in (slos or [])],
+        generate=llm_client.generate,
+        model_config=resolved,
+        base_messages=context.messages,
+        sub_strand=payload.sub_strand,
+        allocation_phrase=allocation.phrase(),
+    )
+    if remediation.attempted:
         lesson_plan = notes_coverage.check(
             notes_content, allocation, slos, experiences=design_experiences
         )
@@ -1329,6 +1361,8 @@ def factory_generate_notes(
     # Analogies are a teaching device and are meant to be invented. A statistic,
     # a scripture reference or a named authority is a claim, and a model that
     # invents one produces something indistinguishable from a real one.
+    run_log.step("Checking for invention",
+                 "scripture, statistics and named authorities against the design")
     fabrication = fabrication_check.check(
         notes_content, source_text,
         has_sources=bool(getattr(dossier, "citations", None)),
@@ -1400,6 +1434,8 @@ def factory_generate_notes(
         "fabrication": fabrication.to_dict(),
         "repetition": repetition,
         "integrity": integrity,
+        "remediation": remediation.to_dict(),
+        "progress": (run_log.current().to_dict() if run_log.current() else {}),
         # Reported so the measured score can weigh it. It was left off, so the
         # heaviest signal in the scheme read "not reported by this station" on
         # a run that had just consumed 31,689 characters of the design — and
