@@ -533,6 +533,11 @@ class FactoryGenerateNotesRequest(BaseModel):
     general_learning_outcomes: list[str] = []
     source_material_text: str = ""
     custom_instructions: str = ""
+    # A browser-generated id for this run. The station's HTTP response does not
+    # arrive until the work is finished, so progress is published under this id
+    # and the browser polls it while it waits. Optional: without one the run
+    # still works and simply says nothing until it is done.
+    run_id: str = ""
     # Return the compiled prompt instead of generating, so the inputs can be
     # checked before any tokens are spent.
     inspect: bool = False
@@ -885,6 +890,16 @@ def factory_generate_notes(
     payload: FactoryGenerateNotesRequest,
     _: AuthContext = Depends(require_roles("admin", "operator", "reviewer")),
 ) -> dict[str, Any]:
+    # A direct call from the factory blocks until the guide is finished, so
+    # without this the console shows a spinner for two minutes and then the
+    # result. Queued work already has a log started for it by the worker;
+    # starting a second one here would throw that one away.
+    from ..services import run_log as _run_log
+
+    if payload.run_id and _run_log.current() is None:
+        _run_log.start(run_id=payload.run_id)
+        _run_log.step("Started", f"{payload.sub_strand} · {payload.subject}")
+
     # Notes descend from a strand and a sub-strand. Without them there is
     # nothing for the notes to be *about*, and the model would choose the topic.
     from ..services.content_lineage import HOUR_NOTE
@@ -923,7 +938,8 @@ def factory_generate_notes(
           AND LOWER(subject) = LOWER(:subject)
           AND (LOWER(sub_strand_name) = LOWER(:sub_strand) OR LOWER(sub_strand_name) LIKE LOWER(:sub_strand_pattern))
         LIMIT 1
-        """,
+        """
+,
         {
             "grade": payload.grade,
             "alt_grade": payload.grade.replace("grade-", ""),
@@ -1421,6 +1437,10 @@ def factory_generate_notes(
         provenance={"source": "factory_generate_notes",
                     "provider": resolved.provider, "model": resolved.model},
     )
+
+    if payload.run_id:
+        run_log.step("Finished", f"version {versioned.get('version', 1)} saved")
+        _run_log.stop()
 
     return {
         "notes": notes_content,
@@ -5055,6 +5075,22 @@ def factory_delete_scope(
 
 class SweepOrphansRequest(BaseModel):
     confirm: str = ""
+
+
+@router.get("/factory/progress")
+def factory_progress(
+    run_id: str = Query(..., min_length=1),
+    _: AuthContext = Depends(require_roles("admin", "operator", "reviewer")),
+) -> dict[str, Any]:
+    """What a run has done so far.
+
+    A station called from the factory blocks until its guide is finished, so
+    the console showed a spinner for two minutes and then a result — with no
+    way to tell a slow run from a wedged one, and no sight of the checks and
+    repairs happening inside it. The run publishes its steps under an id the
+    browser generated; this reads them back.
+    """
+    return run_log.read(run_id)
 
 
 @router.post("/factory/sweep-orphans")

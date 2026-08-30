@@ -773,8 +773,12 @@ export function useQueuedJob(jobId: string | null) {
     enabled: Boolean(jobId),
     refetchInterval: (query) => {
       const data = query.state.data as QueuedJob | undefined;
-      if (!data) return 3000;
-      return data.status === "queued" || data.status === "running" ? 3000 : false;
+      if (!data) return 2000;
+      // Faster while it is actually working, because this poll also carries the
+      // step-by-step progress the worker writes to the row: at three seconds a
+      // live run reads as a stalled one. A queued job has nothing to say yet.
+      if (data.status === "running") return 1500;
+      return data.status === "queued" ? 3000 : false;
     },
   });
 }

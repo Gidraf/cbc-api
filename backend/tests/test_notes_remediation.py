@@ -317,3 +317,112 @@ def test_the_station_narrates_its_own_steps():
     assert '"Drafted",' in source
     assert '"Checking for invention"' in source
     assert "notes_remediation.run(" in source
+
+
+# ── a finding nothing could act on ──────────────────────────────────────────
+
+
+def test_an_unused_experience_nominates_a_lesson_to_take_it_up():
+    """The loop reported "the design suggests 'listen to a recorded clip of a
+    short prayer' and no lesson uses it", found no pair to rewrite, and
+    stopped. A finding that can never be acted on is the failure this whole
+    module exists to end."""
+    guide = _guide()
+    guide["modules"][1]["learning_experiences_used"] = [DESIGN[5]]
+
+    _, _, targets = notes_remediation._inspect(guide, DESIGN)
+
+    assert targets, "nothing was nominated to teach the unused experience"
+
+
+def test_the_lesson_that_already_talks_about_it_is_the_one_chosen():
+    """'listen to a recorded clip of a short prayer' belongs in the prayer
+    lesson, not in whichever happens to be shortest."""
+    guide = _guide()
+    home = notes_remediation._best_home(guide["modules"], DESIGN[4])
+
+    assert home == 2, "the prayer lesson should take up the prayer experience"
+
+
+def test_with_no_obvious_home_the_shortest_lesson_gets_the_work():
+    """It has the most room and the least to lose."""
+    modules = [
+        {**FULL, "module_number": 1, "title": "Lesson 1",
+         "exposition_segments": [{"topic": "t", "body": "x " * 400}]},
+        {**FULL, "module_number": 2, "title": "Lesson 2",
+         "exposition_segments": [{"topic": "t", "body": "x " * 20}]},
+    ]
+
+    assert notes_remediation._best_home(modules, "colour a drawn picture") == 2
+
+
+def test_the_rewrite_is_told_to_name_the_experience_as_well_as_teach_it():
+    """Teaching it without naming it leaves the guide looking ungrounded;
+    naming it without teaching it is worse."""
+    calls: list = []
+    guide = _guide()
+    guide["modules"][1]["learning_experiences_used"] = [DESIGN[5]]
+
+    notes_remediation.run(
+        guide, design_experiences=DESIGN, slos=SLOS,
+        generate=_rewriter(calls), model_config=object(), base_messages=[],
+        sub_strand="Our God", allocation_phrase="7 lessons")
+
+    assert calls
+    assert "`learning_experiences_used`" in calls[0]
+    assert "worded as the design words it" in calls[0]
+
+
+def test_a_guide_with_no_slo_map_at_all_gets_one():
+    """The model returned none. Nothing said which lesson carried which
+    outcome, and the map is derivable from the modules."""
+    guide = _guide()
+    del guide["slo_map"]
+
+    repaired, report = notes_remediation.run(
+        repaired_guide := guide, design_experiences=DESIGN, slos=SLOS)
+
+    assert repaired["slo_map"], "no map was derived"
+    assert not any("has no `slo_map`" in f for f in report.outstanding)
+
+
+# ── the run has to be watchable while it runs ───────────────────────────────
+
+
+def test_a_run_publishes_its_steps_under_an_id_a_browser_can_poll():
+    """A station called from the factory blocks until its guide is finished, so
+    the console showed a spinner for two minutes and then a result — with no
+    way to tell a slow run from a wedged one."""
+    log = run_log.start(run_id="test-run-1")
+    try:
+        run_log.step("Started", "Our God")
+        mid = run_log.read("test-run-1")
+    finally:
+        run_log.stop()
+
+    if mid.get("error"):
+        import pytest
+        pytest.skip(f"no Redis in this environment: {mid['error']}")
+
+    assert [s["step"] for s in mid["steps"]] == ["Started"]
+    assert mid["finished"] is False
+    assert run_log.read("test-run-1")["finished"] is True
+
+
+def test_an_unknown_run_is_not_an_error():
+    """Not started yet, or expired. Reporting an error would make a run that is
+    simply slow to start look broken."""
+    body = run_log.read("no-such-run")
+
+    assert body["steps"] == []
+    assert body["finished"] is False
+
+
+def test_the_station_accepts_a_run_id_and_publishes_under_it():
+    import inspect
+
+    from app.routes import curriculum
+
+    source = inspect.getsource(curriculum.factory_generate_notes)
+    assert "_run_log.start(run_id=payload.run_id)" in source
+    assert hasattr(curriculum, "factory_progress")

@@ -465,6 +465,11 @@ export function ContentFactory() {
   const job = useQueuedJob(watchedJob || null);
   const jobRunning = job.data?.status === "queued" || job.data?.status === "running";
 
+  // The worker writes its steps onto the job row as it works, so a poll of the
+  // job is also a poll of its progress — no second channel, and it survives the
+  // refresh exactly as the job does.
+  const liveSteps: any[] = job.data?.result?.progress?.steps || [];
+
   // A finished job's result is read back into the station panel, so the output
   // appears exactly where a synchronous run used to put it.
   React.useEffect(() => {
@@ -869,6 +874,45 @@ export function ContentFactory() {
                       the tab and it carries on. The result appears here when it
                       lands, and this page reopens onto it.
                     </p>
+                  )}
+
+                  {/* What the worker is doing, right now. The panel used to show
+                      only "generating in the background", which reads the same
+                      whether a run is thirty seconds in or wedged — and hid the
+                      checks and repairs happening inside it. */}
+                  {watchedStation === station.id && jobRunning && liveSteps.length > 0 && (
+                    <ol
+                      style={{
+                        margin: "var(--s2) 0 0",
+                        paddingLeft: "1.1rem",
+                        fontSize: "var(--text-sm)",
+                        color: "var(--ink-2)",
+                      }}
+                    >
+                      {liveSteps.map((s: any, i: number) => (
+                        <li key={i} style={{ marginBottom: "3px" }}>
+                          <span className="mono" style={{ color: "var(--ink-3)" }}>
+                            {s.at}s
+                          </span>{" "}
+                          <strong
+                            style={{
+                              color:
+                                s.status === "fail"
+                                  ? "var(--danger)"
+                                  : s.status === "warn"
+                                  ? "var(--warn)"
+                                  : "var(--ink-1)",
+                            }}
+                          >
+                            {s.step}
+                          </strong>
+                          {s.detail ? ` — ${s.detail}` : ""}
+                          {i === liveSteps.length - 1 && (
+                            <span style={{ color: "var(--ink-3)" }}> …</span>
+                          )}
+                        </li>
+                      ))}
+                    </ol>
                   )}
 
                   {watchedStation === station.id && job.data?.status === "failed" && (

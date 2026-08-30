@@ -44,8 +44,10 @@ class Step:
 @dataclass(slots=True)
 class RunLog:
     job_id: str = ""
+    run_id: str = ""
     started_at: float = field(default_factory=time.monotonic)
     steps: list[Step] = field(default_factory=list)
+    finished: bool = False
 
     def add(self, step: str, detail: str = "", status: str = "ok") -> Step:
         entry = Step(at=time.monotonic() - self.started_at, step=step,
@@ -55,9 +57,10 @@ class RunLog:
         return entry
 
     def to_dict(self) -> dict[str, Any]:
-        return {"job_id": self.job_id,
+        return {"job_id": self.job_id, "run_id": self.run_id,
                 "elapsed_s": round(time.monotonic() - self.started_at, 1),
-                "steps": [s.to_dict() for s in self.steps]}
+                "steps": [s.to_dict() for s in self.steps],
+                "finished": self.finished}
 
 
 _current: contextvars.ContextVar[RunLog | None] = contextvars.ContextVar(
@@ -65,8 +68,8 @@ _current: contextvars.ContextVar[RunLog | None] = contextvars.ContextVar(
 )
 
 
-def start(job_id: str = "") -> RunLog:
-    log = RunLog(job_id=job_id)
+def start(job_id: str = "", run_id: str = "") -> RunLog:
+    log = RunLog(job_id=job_id, run_id=run_id)
     _current.set(log)
     return log
 
@@ -74,6 +77,10 @@ def start(job_id: str = "") -> RunLog:
 def stop() -> RunLog | None:
     log = _current.get()
     _current.set(None)
+    if log is not None:
+        log.finished = True
+        # So a poller stops rather than waiting for a step that will not come.
+        _flush(log)
     return log
 
 
@@ -99,12 +106,42 @@ def step(name: str, detail: str = "", status: str = "ok") -> None:
     _flush(log)
 
 
+# How long a finished run's progress stays readable. Long enough that a poller
+# on a slow connection still sees the final steps; short enough that this never
+# becomes storage.
+PROGRESS_TTL_SECONDS = 900
+
+
 def _flush(log: RunLog) -> None:
-    """Push the steps onto the running job's row, so the console can poll them.
+    """Publish the steps where the console can read them mid-run.
+
+    Two sinks, because there are two ways work reaches this pipeline. A QUEUED
+    job has a row, and the queue panel already polls it. A station called
+    DIRECTLY from the factory has no row and its HTTP response does not arrive
+    until the work is finished — so its progress goes to Redis under a run id
+    the browser generated, and the browser polls that while it waits.
+
+    Redis rather than a dict in this process: the API can be scaled to more
+    than one container, and a poll that lands on a different replica than the
+    run would find nothing and report the run as dead.
 
     Best-effort by design: a station that cannot write its progress must still
-    finish its work. A failure here is logged once and never raised.
+    finish its work. A failure here is logged and never raised.
     """
+    if log.run_id:
+        try:
+            import json
+
+            import redis
+
+            from ..settings import settings
+
+            client = redis.Redis.from_url(settings.redis_url, decode_responses=True)
+            client.setex(f"cbc:progress:{log.run_id}", PROGRESS_TTL_SECONDS,
+                         json.dumps(log.to_dict()))
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("Could not publish run %s: %s", log.run_id, exc)
+
     if not log.job_id:
         return
     try:
@@ -117,3 +154,31 @@ def _flush(log: RunLog) -> None:
         )
     except Exception as exc:  # noqa: BLE001
         logger.debug("Could not flush run log for %s: %s", log.job_id, exc)
+
+
+def read(run_id: str) -> dict[str, Any]:
+    """What a run has done so far, for a browser that is still waiting on it."""
+    if not run_id:
+        return {"run_id": "", "steps": [], "finished": False,
+                "error": "No run id was given."}
+    try:
+        import json
+
+        import redis
+
+        from ..settings import settings
+
+        client = redis.Redis.from_url(settings.redis_url, decode_responses=True)
+        raw = client.get(f"cbc:progress:{run_id}")
+    except Exception as exc:  # noqa: BLE001
+        return {"run_id": run_id, "steps": [], "finished": False,
+                "error": f"Progress could not be read: {exc}"}
+    if not raw:
+        # Not started yet, or finished long enough ago to have expired. Neither
+        # is an error, and reporting one would make a run that is simply slow
+        # to start look broken.
+        return {"run_id": run_id, "steps": [], "finished": False}
+    try:
+        return json.loads(raw)
+    except Exception:  # noqa: BLE001
+        return {"run_id": run_id, "steps": [], "finished": False}

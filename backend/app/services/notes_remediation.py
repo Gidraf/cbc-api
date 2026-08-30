@@ -200,15 +200,75 @@ def _inspect(notes: dict[str, Any],
 
     # Which lessons to rewrite: the later member of each repeated pair. The
     # earlier one is the real lesson and rewriting it loses good work.
+    modules = _modules(notes)
     by_title = {str(m.get("title") or ""): _number(m, i)
-                for i, m in enumerate(_modules(notes), start=1)}
+                for i, m in enumerate(modules, start=1)}
     targets: list[int] = []
     for pair in (repetition.get("near_duplicates") or []) + \
                 (repetition.get("parallel_shapes") or []):
         number = by_title.get(pair.get("b", ""))
         if number and number not in targets:
             targets.append(number)
+
+    # A design experience nobody taught also needs a lesson rewritten, and
+    # there is no pair to name one. Without this the loop reported "the design
+    # suggests 'listen to a recorded clip of a short prayer' and no lesson uses
+    # it", found nothing to rewrite, and stopped — a finding that could never
+    # be acted on, which is the failure this whole module exists to end.
+    for finding in findings:
+        if "no lesson uses it" not in finding:
+            continue
+        quoted = re.search(r'"([^"]+)"', finding)
+        if not quoted:
+            continue
+        home = _best_home(modules, quoted.group(1))
+        if home and home not in targets:
+            targets.append(home)
+
     return score, findings, targets
+
+
+def _best_home(modules: list[dict[str, Any]], experience: str) -> int:
+    """Which lesson should take up an experience nobody taught.
+
+    The one that already talks about it: 'listen to a recorded clip of a short
+    prayer' belongs in the prayer lesson, not in whichever happens to be
+    shortest. Falls back to the shortest module, which has the most room and
+    the least to lose.
+    """
+    if not modules:
+        return 0
+    words = {w for w in _norm(experience).split() if len(w) > 3}
+    if not words:
+        return 0
+
+    best, best_score = 0, 0.0
+    for i, module in enumerate(modules, start=1):
+        text = _norm(" ".join(str(v) for v in _flatten(module)))
+        overlap = sum(1 for w in words if w in text) / len(words)
+        if overlap > best_score:
+            best, best_score = _number(module, i), overlap
+
+    if best_score >= 0.5:
+        return best
+    shortest = min(
+        modules,
+        key=lambda m: len(" ".join(str(v) for v in _flatten(m))),
+    )
+    return _number(shortest, modules.index(shortest) + 1)
+
+
+def _flatten(value: Any, out: list[str] | None = None) -> list[str]:
+    acc = out if out is not None else []
+    if isinstance(value, str):
+        acc.append(value)
+    elif isinstance(value, dict):
+        for v in value.values():
+            _flatten(v, acc)
+    elif isinstance(value, list):
+        for v in value:
+            _flatten(v, acc)
+    return acc
 
 
 def _instruction(findings: list[str], targets: list[int],
@@ -233,6 +293,11 @@ def _instruction(findings: list[str], targets: list[int],
         "Where a lesson has run out of them, use one no other lesson has used "
         "yet. Where there are genuinely none left, say so in `gaps` rather "
         "than writing a seventh way to sing a song.",
+        "Where a finding above says an experience is UNUSED, the rewritten "
+        "lesson must actually teach it AND name it in that lesson's "
+        "`learning_experiences_used`, worded as the design words it. Teaching "
+        "it without naming it leaves the guide looking ungrounded; naming it "
+        "without teaching it is worse.",
         "Keep every other lesson exactly as it is; you are not being asked for "
         "them and rewriting them loses work that already passed.",
     ])
