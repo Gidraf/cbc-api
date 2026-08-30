@@ -233,6 +233,55 @@ def drafts(kind: str, grade: str = "", subject: str = "", limit: int = 100) -> l
     ) or []
 
 
+def retry(job_id: str = "", grade: str = "", subject: str = "") -> list[str]:
+    """Put failed work back in the queue, by hand.
+
+    A job that crashes twice is parked rather than retried, because retrying a
+    genuine defect spends money to learn nothing. But "parked" was a dead end:
+    the console said the job was left for the operator and gave them no way to
+    do anything with it, so a job that failed on a bug we have since FIXED
+    stayed failed for ever.
+
+    Deliberately manual, and deliberately attempt-resetting. A person clicking
+    retry after a deploy is a different act from the queue retrying on its own,
+    and it should get a full budget of attempts rather than the one it had left.
+    """
+    from ..infra.db import execute, fetch_all
+
+    where = ["status = 'failed'"]
+    params: dict[str, Any] = {}
+    if job_id:
+        where.append("job_id = :job_id")
+        params["job_id"] = job_id
+    if grade:
+        where.append("(grade = :grade OR grade = :alt_grade)")
+        params["grade"] = grade
+        params["alt_grade"] = grade.replace("grade-", "")
+    if subject:
+        where.append("LOWER(subject) = LOWER(:subject)")
+        params["subject"] = subject
+    if not job_id and not (grade or subject):
+        # Retrying every failure everywhere is never what somebody meant.
+        return []
+
+    clause = " AND ".join(where)
+    rows = fetch_all(f"SELECT job_id FROM jobs WHERE {clause}", params) or []
+    if not rows:
+        return []
+
+    execute(
+        f"UPDATE jobs SET status = 'queued', attempts = 0, error = '', "
+        f"started_at = NULL, finished_at = NULL WHERE {clause}",
+        params,
+    )
+
+    retried = [str(r["job_id"]) for r in rows]
+    for one in retried:
+        dispatch(one)
+    logger.info("Retried %d failed job(s) by hand.", len(retried))
+    return retried
+
+
 def cancel(job_id: str = "", batch_id: str = "") -> int:
     """Stop work that has not started. A running job is left to finish.
 

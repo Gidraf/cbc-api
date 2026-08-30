@@ -452,3 +452,40 @@ def test_an_unresolvable_payload_says_which_station_and_why():
     message = str(caught.value)
     assert "notes" in message
     assert "handler_without_a_model" in message
+
+
+# ── a parked failure must not be a dead end ─────────────────────────────────
+
+
+def test_failed_jobs_can_be_retried_by_hand():
+    """A job that crashes twice is parked rather than retried, because retrying
+    a genuine defect spends money to learn nothing. But "parked" was a dead
+    end: a job that failed on a bug since FIXED stayed failed for ever, and the
+    console offered nothing to do about it."""
+    source = _read("app/services/job_queue.py")
+    fn = source[source.index("def retry("):]
+    fn = fn[: fn.index("\ndef cancel(")]
+
+    assert "status = 'failed'" in fn, "only failures, never running or done work"
+    assert "attempts = 0" in fn, "a person retrying after a deploy gets a full budget"
+    assert "dispatch(one)" in fn
+
+
+def test_retrying_everything_everywhere_is_refused():
+    """It is never what anybody meant, and it could requeue a grade's worth of
+    genuine failures at full cost."""
+    source = _read("app/services/job_queue.py")
+    fn = source[source.index("def retry("):]
+    fn = fn[: fn.index("\ndef cancel(")]
+
+    assert "if not job_id and not (grade or subject):" in fn
+    assert "return []" in fn
+
+
+def test_the_console_offers_the_retry_and_names_the_catch():
+    """Retrying before restarting the API runs the same old code and fails the
+    same way — which reads as "the fix did not work"."""
+    panel = " ".join(_front("src/views/QueuePanel.tsx").split())
+
+    assert "Retry {failed} failed job(s)" in panel
+    assert "have to be restarted before a retry runs the new code" in panel

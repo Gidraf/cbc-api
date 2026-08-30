@@ -5500,6 +5500,42 @@ def factory_queue_status(
     return job_queue.status(batch_id=batch_id, grade=grade, subject=subject)
 
 
+@router.post("/factory/queue/retry")
+def factory_queue_retry(
+    job_id: str = Query(""),
+    grade: str = Query(""),
+    subject: str = Query(""),
+    _: AuthContext = Depends(require_roles("admin", "operator")),
+) -> dict[str, Any]:
+    """Put failed work back in the queue.
+
+    A job that crashed twice is parked rather than retried automatically —
+    retrying a genuine defect spends money to learn nothing. But a job that
+    failed on a bug since fixed should not stay failed for ever, and until now
+    there was no way to move it.
+    """
+    from ..services import job_queue
+
+    retried = job_queue.retry(job_id=job_id, grade=grade, subject=subject)
+    if not retried:
+        return {
+            "status": "nothing_to_retry",
+            "retried": 0,
+            "note": ("No failed jobs matched. Name a job_id, or a grade and "
+                     "subject — retrying every failure everywhere is never what "
+                     "anyone means."),
+        }
+    job_queue.start_worker()
+    return {
+        "status": "queued",
+        "retried": len(retried),
+        "job_ids": retried,
+        "note": ("Attempts were reset, so these get a full budget rather than "
+                 "the one they had left. If the cause has not actually been "
+                 "fixed they will fail again at the same cost."),
+    }
+
+
 @router.post("/factory/queue/cancel")
 def factory_queue_cancel(
     batch_id: str = Query(""),

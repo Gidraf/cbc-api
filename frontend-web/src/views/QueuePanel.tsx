@@ -22,6 +22,7 @@ import {
   useQueueReview,
   useQueueStatus,
   useQueueWork,
+  useRetryFailed,
 } from "../lib/queries";
 
 /**
@@ -81,6 +82,7 @@ export function QueuePanel({
   const regenerate = useQueueRegenerate(grade, subject);
   const [from, setFrom] = React.useState<string>("substrands");
   const cancel = useCancelQueue();
+  const retry = useRetryFailed(grade, subject);
   const status = useQueueStatus(grade, subject, queue.data?.batch_id);
   const [kinds, setKinds] = React.useState<string[]>(defaultKinds);
 
@@ -363,6 +365,28 @@ export function QueuePanel({
                 <strong>{failed} job(s) failed.</strong> Each was retried once; a job
                 that crashes twice will crash a third time, so it is left for you
                 rather than retried at cost.
+                <div style={{ margin: "var(--s2) 0" }}>
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    disabled={retry.isPending}
+                    loading={retry.isPending}
+                    title="Put these back in the queue with a full budget of attempts. Only worth doing once the cause is actually fixed — otherwise they fail again at the same price."
+                    onClick={() => retry.mutateAsync({})}
+                  >
+                    Retry {failed} failed job(s)
+                  </Button>
+                  {retry.data && (
+                    <span style={{ marginLeft: "var(--s2)", color: "var(--ink-3)" }}>
+                      {retry.data.retried} requeued.
+                    </span>
+                  )}
+                </div>
+                <div style={{ color: "var(--ink-3)" }}>
+                  If the failure was a bug that has since been fixed, the API and
+                  the worker have to be restarted before a retry runs the new
+                  code — otherwise it fails the same way.
+                </div>
                 <ul style={{ margin: "6px 0 0", paddingLeft: "1.1em", color: "var(--ink-3)" }}>
                   {data.jobs
                     .filter((j) => j.status === "failed")

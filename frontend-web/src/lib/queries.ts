@@ -1099,6 +1099,30 @@ export function useDiscardDraft() {
   });
 }
 
+/** Put failed work back in the queue, by hand.
+ *
+ *  A job that crashed twice is parked rather than retried automatically, but
+ *  "parked" was a dead end: a job that failed on a bug since fixed stayed
+ *  failed for ever with no way to move it. */
+export function useRetryFailed(grade: string, subject?: string) {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { job_id?: string } = {}) => {
+      const qs = new URLSearchParams();
+      if (v.job_id) qs.set("job_id", v.job_id);
+      else {
+        qs.set("grade", grade);
+        if (subject) qs.set("subject", subject);
+      }
+      return api<{ retried: number; note: string }>(
+        `/api/v1/curriculum/factory/queue/retry?${qs}`, { method: "POST" }
+      );
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["queue"] }),
+  });
+}
+
 export function useCancelQueue() {
   const api = useApi();
   const qc = useQueryClient();
