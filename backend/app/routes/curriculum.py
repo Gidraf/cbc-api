@@ -44,7 +44,11 @@ from ..services import (
 from ..services.grade_order import grade_level
 from ..services.faith_scope import prompt_block as faith_prompt_block
 from ..services.grade_scope import notes_for as grade_scope_notes
-from ..services.level_register import register_block, register_for_grade as level_register_for
+from ..services.level_register import (
+    language_block,
+    register_block,
+    register_for_grade as level_register_for,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -521,6 +525,21 @@ def get_dna_by_slo(
 
 
 # ── Content Factory & Interactive Playground Endpoints ───────────────────────
+
+class FactoryGenerateMaterialRequest(BaseModel):
+    """Which plan to write the words from, and for what."""
+
+    grade: str
+    subject: str
+    strand: str
+    sub_strand: str
+    # Left empty, the newest filed plan is used — writing material from a plan
+    # nobody chose is how two versions of the words come to exist for one
+    # version of the lesson.
+    plan_artifact_id: str = ""
+    custom_instructions: str = ""
+    run_id: str = ""
+
 
 class FactoryGenerateNotesRequest(BaseModel):
     grade: str
@@ -1040,6 +1059,7 @@ def factory_generate_notes(
                     payload.grade,
                     notes=grade_scope_notes(payload.grade, payload.subject),
                 ),
+        "language_register": language_block(payload.grade),
         "faith_scope": faith_prompt_block(payload.subject),
         "content_type_directives": ct_profile.format_for_prompt(),
         "level": level,
@@ -1531,6 +1551,7 @@ def factory_generate_diagram(
                     payload.grade,
                     notes=grade_scope_notes(payload.grade, payload.subject),
                 ),
+            "language_register": language_block(payload.grade),
             "faith_scope": faith_prompt_block(payload.subject),
             "content_type_directives": ct_profile.format_for_prompt(),
             "notes_content": notes_summary_str or payload.notes_title or payload.sub_strand,
@@ -1653,6 +1674,7 @@ def factory_generate_activity(
                     payload.grade,
                     notes=grade_scope_notes(payload.grade, payload.subject),
                 ),
+            "language_register": language_block(payload.grade),
             "faith_scope": faith_prompt_block(payload.subject),
             "content_type_directives": ct_profile.format_for_prompt(),
             "notes_content": notes_str or payload.notes_title or payload.sub_strand,
@@ -1772,6 +1794,7 @@ def factory_plan_visuals(
                     payload.grade,
                     notes=grade_scope_notes(payload.grade, payload.subject),
                 ),
+            "language_register": language_block(payload.grade),
             "faith_scope": faith_prompt_block(payload.subject),
             "content_type_directives": ct_profile.format_for_prompt(),
             "notes_content": notes_str or payload.notes_title or payload.sub_strand,
@@ -1926,6 +1949,7 @@ def factory_generate_single_visual(
                     payload.grade,
                     notes=grade_scope_notes(payload.grade, payload.subject),
                 ),
+            "language_register": language_block(payload.grade),
             "faith_scope": faith_prompt_block(payload.subject),
             "content_type_directives": ct_profile.format_for_prompt(),
             "notes_content": notes_str or payload.sub_strand,
@@ -2238,6 +2262,7 @@ def factory_plan_activities(
                     payload.grade,
                     notes=grade_scope_notes(payload.grade, payload.subject),
                 ),
+            "language_register": language_block(payload.grade),
             "faith_scope": faith_prompt_block(payload.subject),
             "content_type_directives": ct_profile.format_for_prompt(),
             "notes_content": notes_str or payload.notes_title or payload.sub_strand,
@@ -2388,6 +2413,7 @@ def factory_generate_single_activity(
                     payload.grade,
                     notes=grade_scope_notes(payload.grade, payload.subject),
                 ),
+            "language_register": language_block(payload.grade),
             "faith_scope": faith_prompt_block(payload.subject),
             "content_type_directives": ct_profile.format_for_prompt(),
             "notes_content": notes_str or payload.sub_strand,
@@ -2508,6 +2534,7 @@ def factory_generate_questions(
                     payload.grade,
                     notes=grade_scope_notes(payload.grade, payload.subject),
                 ),
+            "language_register": language_block(payload.grade),
             "faith_scope": faith_prompt_block(payload.subject),
             "content_type_directives": ct_profile.format_for_prompt(),
             "notes_content": notes_str or payload.notes_summary or payload.sub_strand,
@@ -3618,6 +3645,7 @@ def factory_generate_strands(
                 payload.grade,
                 notes=grade_scope_notes(payload.grade, payload.subject),
             ),
+            "language_register": language_block(payload.grade),
             "faith_scope": faith_prompt_block(payload.subject),
             "content_type_directives": (
                 strand_profile.format_for_prompt() if strand_profile else ""
@@ -3742,6 +3770,7 @@ def _rubric_writer(payload: Any, resolved: Any, design_block: str) -> Any:
                     payload.grade,
                     notes=grade_scope_notes(payload.grade, payload.subject),
                 ),
+                "language_register": language_block(payload.grade),
                 "faith_scope": faith_prompt_block(payload.subject),
                 "strand": payload.strand_name,
                 "sub_strand": str(sub_strand.get("sub_strand_name") or ""),
@@ -3901,6 +3930,7 @@ def factory_generate_substrands(
                     payload.grade,
                     notes=grade_scope_notes(payload.grade, payload.subject),
                 ),
+                "language_register": language_block(payload.grade),
                 "faith_scope": faith_prompt_block(payload.subject),
                 "content_type_directives": (
                     ct_profile.format_for_prompt() if ct_profile else ""
@@ -4055,6 +4085,7 @@ def _scope_chunk_reader(grade: str, subject: str, resolved: Any) -> Any:
             "grade": grade,
             "subject": subject,
             "level_register": register_block(grade),
+            "language_register": language_block(grade),
             "faith_scope": faith_prompt_block(subject),
             "page_range": chunk.page_range,
             "chunk_text": chunk.text,
@@ -4239,6 +4270,10 @@ _QUEUEABLE: dict[str, tuple[str, Any]] = {
     "media": ("factory_generate_media_prompts", GenerateMediaPromptsRequest),
     "simulation": ("factory_generate_simulations", GenerateSimulationsRequest),
     "activity": ("factory_plan_activities", FactoryPlanActivitiesRequest),
+    # The words themselves, written from whichever plan is filed. One call per
+    # instruction, so this is the slowest station here — and the reason the
+    # queue exists.
+    "material": ("factory_generate_material", FactoryGenerateMaterialRequest),
 }
 
 
@@ -4615,7 +4650,9 @@ def _run_queued_approval(job: dict[str, Any]) -> dict[str, Any]:
 # written per sub-strand; everything visual and every question is grounded in
 # the notes.
 PIPELINE_STEPS = (
-    "ingest", "strands", "substrands", "notes",
+    # `material` follows `notes` because it is written FROM the plan: the words
+    # cannot be produced until there is an instruction telling them what to be.
+    "ingest", "strands", "substrands", "notes", "material",
     "diagram", "media", "simulation", "activity", "questions",
 )
 
@@ -4627,6 +4664,7 @@ _STEP_SCOPE = {
     "strands": "subject",
     "substrands": "strand",
     "notes": "sub_strand",
+    "material": "sub_strand",
     "diagram": "sub_strand",
     "media": "sub_strand",
     "simulation": "sub_strand",
@@ -4841,6 +4879,7 @@ _PIPELINE_HANDLERS: dict[str, Any] = {
     "media": _run_queued,
     "simulation": _run_queued,
     "activity": _run_queued,
+    "material": _run_queued,
     "questions": _run_queued_questions,
 }
 
@@ -5101,6 +5140,199 @@ def _plain(entry: Any) -> str:
             if entry.get(key):
                 return str(entry[key])
     return str(entry)
+
+
+@router.post("/factory/generate-material")
+def factory_generate_material(
+    payload: FactoryGenerateMaterialRequest,
+    _: AuthContext = Depends(require_roles("admin", "operator", "reviewer")),
+) -> dict[str, Any]:
+    """Write the words the plan only asked for.
+
+    The plan says "choose a simple song about God" and "tell a simple story
+    that illustrates God's love". A teacher reading that still has to find the
+    song and write the story, which is the whole of the work. This is the song
+    and the story.
+
+    One model call per instruction, not one per guide. The failure this layer
+    exists to prevent — something general where something specific was needed —
+    is exactly what a long prompt produces, and a song is easier to get right,
+    and to check, one song at a time.
+    """
+    from ..services import artifact_registry, lesson_material
+    from ..services.faith_scope import prompt_block as faith_block
+    from ..services.level_register import language_block, register_block
+    from ..services.llm_client import llm_client
+    from ..services.pipeline import pipeline_orchestrator
+
+    if payload.run_id and run_log.current() is None:
+        run_log.start(run_id=payload.run_id)
+
+    plan_id = payload.plan_artifact_id
+    if not plan_id:
+        found = artifact_registry.search(
+            payload.grade, payload.subject, "notes", payload.sub_strand, limit=1)
+        plan_id = (found or [{}])[0].get("artifact_id", "")
+    if not plan_id:
+        raise_api_error(
+            "VALIDATION_FAILED",
+            f"There is no lesson plan filed for '{payload.sub_strand}'. The "
+            f"material is written from the plan — generate the notes first.",
+        )
+
+    plan_artifact = artifact_registry.get(plan_id)
+    plan = lesson_material.directives_of(plan_artifact.content or {})
+    if not plan.directives:
+        raise_api_error(
+            "VALIDATION_FAILED",
+            f"Version {plan_artifact.version} of that plan gives no "
+            f"instructions to fulfil — it has no lesson segments in it.",
+        )
+
+    run_log.step(
+        "Read the plan",
+        f"version {plan_artifact.version}, {plan.modules} lesson(s), "
+        f"{len(plan.directives)} instruction(s), "
+        f"{len(plan.unfulfilled)} of which ask the teacher to supply something",
+    )
+
+    substrand_row = fetch_one(
+        """
+        SELECT slos FROM curriculum_substrands
+        WHERE (grade = :grade OR grade = :alt_grade)
+          AND LOWER(subject) = LOWER(:subject)
+          AND LOWER(sub_strand_name) = LOWER(:sub_strand)
+        LIMIT 1
+        """,
+        {"grade": payload.grade,
+         "alt_grade": payload.grade.replace("grade-", ""),
+         "subject": payload.subject, "sub_strand": payload.sub_strand},
+    )
+    slos = [_plain(s) for s in ((substrand_row or {}).get("slos") or [])]
+
+    resolved = pipeline_orchestrator.router.resolve_for_stage("material_generation")
+    register = register_block(payload.grade)
+    language = language_block(payload.grade)
+    faith = faith_block(payload.subject)
+
+    written: list[dict[str, Any]] = []
+    for i, directive in enumerate(plan.directives, start=1):
+        messages = [{"role": "user", "content": lesson_material.prompt_for(
+            directive, register=register, faith=faith, language=language,
+            sub_strand=payload.sub_strand, slos=slos)}]
+        if payload.custom_instructions:
+            messages.append({"role": "user",
+                             "content": payload.custom_instructions})
+        try:
+            response = llm_client.generate(resolved, messages, temperature=0.4)
+            piece = response.content if isinstance(response.content, dict) else {}
+        except Exception as exc:  # noqa: BLE001
+            # One instruction failing is not the whole sub-strand failing. The
+            # gap is recorded where a reader will see it rather than silently
+            # closing over it.
+            logger.warning("Material for %s part %d failed: %s",
+                           directive.topic, directive.index, exc)
+            run_log.step(f"Wrote {i}/{len(plan.directives)}",
+                         f"{directive.topic}: failed — {exc}", "fail")
+            piece = {"say": "", "error": str(exc)[:200]}
+
+        written.append({
+            **piece,
+            "module_number": directive.module_number,
+            "module_title": directive.module_title,
+            "index": directive.index,
+            "topic": directive.topic,
+            "minutes": directive.minutes,
+            "instruction": directive.instruction,
+        })
+        if piece.get("say"):
+            run_log.step(f"Wrote {i}/{len(plan.directives)}",
+                         f"{directive.topic}: {len(str(piece['say']))} characters")
+
+    content = {
+        "sub_strand": payload.sub_strand,
+        "from_plan": {"artifact_id": plan_id, "version": plan_artifact.version},
+        "material": written,
+    }
+    report = lesson_material.check(content, plan)
+    run_log.step(
+        "Material written",
+        f"{report.written} of {report.total} instruction(s) fulfilled, "
+        f"{report.score}/100"
+        + (f", {len(report.thin)} too thin" if report.thin else "")
+        + (f", {len(report.echoed)} echoed the instruction back" if report.echoed else ""),
+        "ok" if report.clean else "warn",
+    )
+
+    versioned = _record_artifact(
+        "material", payload.grade, payload.subject, content,
+        strand=payload.strand, sub_strand=payload.sub_strand,
+        parent=plan_id,
+        provenance={"source": "factory_generate_material",
+                    "provider": resolved.provider, "model": resolved.model,
+                    "from_plan": plan_id},
+    )
+    if payload.run_id:
+        run_log.stop()
+
+    return {"material": content, "plan": plan.to_dict(),
+            "coverage": report.to_dict(), "model": resolved.model,
+            "artifact": versioned}
+
+
+@router.get("/factory/notes.pdf")
+def factory_notes_pdf(
+    artifact_id: str = Query(..., min_length=1),
+    _: AuthContext = Depends(require_roles("admin", "operator", "reviewer")),
+) -> Any:
+    """One filed guide, as a document a teacher can carry.
+
+    A guide that exists only on a screen is not much use to a teacher whose
+    classroom has no screen in it — and the console's Print button hands the
+    job to whatever browser the operator happens to have, so no two copies
+    match. This is the same file every time, and can be sent to somebody who is
+    not sitting at the console.
+    """
+    from fastapi import Response
+
+    from ..services import artifact_registry, notes_renderer, pdf
+
+    artifact = artifact_registry.get(artifact_id)
+    if artifact.kind not in ("notes", "material"):
+        raise_api_error(
+            "VALIDATION_FAILED",
+            f"'{artifact.kind}' does not render to PDF. The lesson plan and the "
+            f"material written from it do; a diagram or an activity belongs "
+            f"inside one of those.",
+        )
+
+    render = (notes_renderer.render_material_html if artifact.kind == "material"
+              else notes_renderer.render_html)
+    document = render(
+        artifact.content or {},
+        grade=artifact.grade, subject=artifact.subject,
+        strand=artifact.strand_name, sub_strand=artifact.sub_strand_name,
+        version=artifact.version,
+    )
+    try:
+        body = pdf.from_html(document)
+    except pdf.PdfUnavailable as exc:
+        raise_api_error("MODEL_ENDPOINT_UNAVAILABLE", str(exc))
+
+    stem = "-".join(
+        part.lower().replace(" ", "-")
+        for part in (artifact.grade, artifact.subject, artifact.sub_strand_name,
+                     "material" if artifact.kind == "material" else "plan")
+        if part
+    ) or "teachers-guide"
+    return Response(
+        content=body,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition":
+                f'attachment; filename="{stem}-v{artifact.version}.pdf"',
+        },
+    )
 
 
 @router.get("/factory/progress")
@@ -6151,6 +6383,7 @@ def factory_generate_media_prompts(
                 payload.grade,
                 notes=grade_scope_notes(payload.grade, payload.subject),
             ),
+            "language_register": language_block(payload.grade),
             "faith_scope": faith_prompt_block(payload.subject),
             "content_type_directives": profile.format_for_prompt() if profile else "",
             "grade": payload.grade,
@@ -6293,6 +6526,7 @@ def factory_generate_simulations(
             "level_register": register_block(
                 payload.grade, notes=grade_scope_notes(payload.grade, payload.subject)
             ),
+            "language_register": language_block(payload.grade),
             "faith_scope": faith_prompt_block(payload.subject),
             "content_type_directives": profile.format_for_prompt() if profile else "",
             "strand": payload.strand,

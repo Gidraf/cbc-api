@@ -501,6 +501,20 @@ export function useArtifactActions(artifactId: string) {
         qc.invalidateQueries({ queryKey: ["progress"] });
       },
     }),
+    /** Throw a draft away. Refused server-side while a label points at it, so
+     *  nothing silently loses its approved copy. */
+    discard: useMutation({
+      mutationFn: () =>
+        api<{ status: string; artifact_id: string }>(
+          `/api/v1/artifacts/${encodeURIComponent(artifactId)}`,
+          { method: "DELETE" }
+        ),
+      onSuccess: () => {
+        qc.invalidateQueries({ queryKey: ["artifacts"] });
+        qc.invalidateQueries({ queryKey: ["artifact-versions"] });
+        qc.invalidateQueries({ queryKey: ["progress"] });
+      },
+    }),
     regenerate: useMutation({
       mutationFn: (v: { extra_instructions?: string } = {}) =>
         api<{
@@ -664,7 +678,8 @@ export const STEP_LABEL: Record<string, string> = {
   ingest: "Read the design",
   strands: "Strands",
   substrands: "Sub-strands",
-  notes: "Lesson notes",
+  notes: "Lesson plan",
+  material: "Lesson material",
   diagram: "Diagrams",
   media: "Photos & videos",
   simulation: "Simulations",
@@ -750,6 +765,7 @@ export const QUEUEABLE_KINDS = [
  *  had already been paid for. */
 export const STATION_KIND: Record<string, string> = {
   notes: "notes",
+  material: "material",
   visuals: "diagram",
   media: "media",
   simulations: "simulation",
@@ -973,6 +989,31 @@ export function useExportBundle(grade: string, subject?: string) {
       const link = document.createElement("a");
       link.href = url;
       link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      return filename;
+    },
+  });
+}
+
+/** One filed guide as a PDF a teacher can carry.
+ *
+ *  Fetched with the auth header and turned into a blob rather than linked: a
+ *  plain <a href> carries no token and would download the sign-in page. */
+export function useNotesPdf() {
+  const { token } = useAuth();
+  return useMutation({
+    mutationFn: async (artifactId: string) => {
+      const { blob, filename } = await fetchBlob(
+        `/api/v1/curriculum/factory/notes.pdf?artifact_id=${encodeURIComponent(artifactId)}`,
+        { bearerToken: token }
+      );
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = filename || "teachers-guide.pdf";
       document.body.appendChild(link);
       link.click();
       link.remove();

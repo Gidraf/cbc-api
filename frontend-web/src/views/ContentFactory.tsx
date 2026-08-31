@@ -25,14 +25,28 @@ const STATIONS = [
   {
     id: "notes",
     n: 1,
-    label: "Lesson notes",
+    label: "Lesson plan",
     endpoint: "/api/v1/curriculum/factory/generate-notes",
-    blurb: "Hour-by-hour teaching notes grounded in the sub-strand's learning outcomes.",
+    blurb:
+      "What the teacher DOES, lesson by lesson: the moves, the questions, the " +
+      "misconceptions, the checks. Instructions, not the words themselves — " +
+      "those come from the station below it.",
     requires: null as string | null,
   },
   {
-    id: "visuals",
+    id: "material",
     n: 2,
+    label: "Lesson material",
+    endpoint: "/api/v1/curriculum/factory/generate-material",
+    blurb:
+      "The words themselves — the song written out, the story as it is told, " +
+      "the prayer as it is said. The plan above says \"choose a simple song\"; " +
+      "this is the song.",
+    requires: "notes",
+  },
+  {
+    id: "visuals",
+    n: 3,
     label: "Diagrams",
     endpoint: "/api/v1/curriculum/factory/plan-visuals",
     blurb: "Vector diagrams with addressable parts, so questions can test one region.",
@@ -40,7 +54,7 @@ const STATIONS = [
   },
   {
     id: "media",
-    n: 3,
+    n: 4,
     // A diagram is SVG: generated as code and editable afterwards. A photo and
     // a video are neither, so what this station produces is the prompt, the
     // shot list and the alt text. The asset is made elsewhere and uploaded back.
@@ -51,7 +65,7 @@ const STATIONS = [
   },
   {
     id: "simulations",
-    n: 4,
+    n: 5,
     // A diagram is a still picture of a thing; a simulation is the thing
     // behaving. What this station produces is the build brief — the model, the
     // controls, the acceptance criteria — not the code.
@@ -62,7 +76,7 @@ const STATIONS = [
   },
   {
     id: "practicals",
-    n: 5,
+    n: 6,
     label: "Activities & experiments",
     endpoint: "/api/v1/curriculum/factory/plan-activities",
     blurb: "Hands-on tasks with the safety guidance their materials require.",
@@ -70,7 +84,7 @@ const STATIONS = [
   },
   {
     id: "questions",
-    n: 6,
+    n: 7,
     label: "Questions",
     endpoint: "/api/v1/questions/factory/generate-batch",
     blurb: "Assessment items derived from the notes, diagrams and practicals above.",
@@ -1052,6 +1066,13 @@ export function ContentFactory() {
                 notes={readableNotes}
                 subStrand={selected.report.sub_strand_name}
                 version={notes ? 0 : savedNotesArtifact.data?.version || 0}
+                artifactId={
+                  notes
+                    ? lastResult?.res?.artifact?.artifact_id ||
+                      job.data?.result?.artifact?.artifact_id ||
+                      ""
+                    : savedNotesId
+                }
               />
             )}
 

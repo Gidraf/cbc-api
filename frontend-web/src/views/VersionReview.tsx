@@ -246,6 +246,70 @@ export function DiffTable({ artifactId, against = "" }: { artifactId: string; ag
   );
 }
 
+/** Throw one draft away, with the reason it cannot be thrown away when it
+ *  cannot. A version holding a label is somebody's approved copy. */
+function DiscardVersion({
+  artifactId,
+  version,
+  labels,
+  onDiscarded,
+}: {
+  artifactId: string;
+  version: number;
+  labels: string[];
+  onDiscarded?: () => void;
+}) {
+  const actions = useArtifactActions(artifactId);
+  const [confirming, setConfirming] = React.useState(false);
+  const held = labels.filter((l) => l);
+
+  if (held.length) {
+    return (
+      <span
+        style={{ fontSize: "var(--text-xs)", color: "var(--ink-3)" }}
+        title={`Move ${held.join(" and ")} to another version first, so nothing silently loses its approved copy.`}
+      >
+        held by {held.join(", ")}
+      </span>
+    );
+  }
+
+  if (!confirming) {
+    return (
+      <Button size="sm" variant="ghost" onClick={() => setConfirming(true)}>
+        Discard
+      </Button>
+    );
+  }
+
+  return (
+    <Stack direction="row" gap="var(--s2)" style={{ alignItems: "center" }}>
+      <span style={{ fontSize: "var(--text-xs)", color: "var(--ink-3)" }}>
+        Delete version {version} and its reviews?
+      </span>
+      <Button
+        size="sm"
+        variant="danger"
+        disabled={actions.discard.isPending}
+        onClick={() =>
+          actions.discard.mutate(undefined, {
+            onSuccess: () => {
+              setConfirming(false);
+              onDiscarded?.();
+            },
+          })
+        }
+      >
+        {actions.discard.isPending ? "Deleting…" : "Delete"}
+      </Button>
+      <Button size="sm" variant="ghost" onClick={() => setConfirming(false)}>
+        Keep
+      </Button>
+    </Stack>
+  );
+}
+
+
 function LabelBar({
   artifactId,
   labels,
@@ -786,6 +850,7 @@ export function VersionReview({
                 notes={data.content}
                 subStrand={data.sub_strand_name || data.strand_name || readable(data.kind)}
                 version={data.version}
+                artifactId={data.artifact_id}
               />
             )}
             <Stack direction="row" gap="var(--s2)" style={{ flexWrap: "wrap" }}>
@@ -849,11 +914,28 @@ export function VersionReview({
                     ))}
                   </Td>
                   <Td>
-                    {v.artifact_id !== picked && (
-                      <Button size="sm" variant="ghost" onClick={() => select(v.artifact_id)}>
-                        Select
-                      </Button>
-                    )}
+                    <Stack direction="row" gap="var(--s2)">
+                      {v.artifact_id !== picked && (
+                        <Button size="sm" variant="ghost" onClick={() => select(v.artifact_id)}>
+                          Select
+                        </Button>
+                      )}
+                      {/* A draft nobody can throw away accumulates until the
+                          version list is a haystack. Refused server-side while
+                          a label points at it, so nothing loses its approved
+                          copy by accident. */}
+                      <DiscardVersion
+                        artifactId={v.artifact_id}
+                        version={v.version}
+                        labels={v.labels || []}
+                        onDiscarded={() => {
+                          if (v.artifact_id === picked) {
+                            const next = rows.find((r) => r.artifact_id !== v.artifact_id);
+                            if (next) select(next.artifact_id);
+                          }
+                        }}
+                      />
+                    </Stack>
                   </Td>
                 </tr>
               ))}

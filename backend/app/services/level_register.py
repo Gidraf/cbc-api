@@ -130,6 +130,77 @@ class LevelRegister:
         return "\n".join(lines)
 
 
+# How the words themselves have to sound, by age band. The rest of this module
+# governs what a learner may be ASKED to do; this governs the sentences they
+# hear while being asked.
+#
+# The sentence-length figure is not invented here. It is read from
+# `dna_scoring`, which is what MEASURES the finished material — a prompt asking
+# for one register while the check grades against another is how content comes
+# back "correct" and unusable, and neither number is wrong on its own.
+_LANGUAGE: dict[str, dict[str, str]] = {
+    "Pre-Primary": {
+        "vocabulary":
+            "Words a four-year-old already uses at home. No word needs "
+            "explaining unless explaining it IS the lesson. Concrete nouns "
+            "they can point at: mother, food, water, hand, song. Nothing "
+            "abstract standing alone — 'God provides' means nothing; 'God "
+            "gives us food, the way your mother gives you food' does.",
+        "sentences":
+            "Short and complete. One idea each. No clauses joined by 'which', "
+            "'although' or 'however'. A sentence a child cannot hold to its "
+            "end has not been said.",
+        "person":
+            "Speak TO the child, not about them: 'Look at your hands' rather "
+            "than 'learners observe their hands'. Repeat the key phrase — "
+            "repetition is how this age learns, not padding.",
+    },
+    "Lower Primary": {
+        "vocabulary":
+            "Everyday words, with new terms introduced one at a time and used "
+            "again immediately. A new word met once is a word not learned.",
+        "sentences":
+            "Two clauses at most. Read aloud, each should be sayable in one "
+            "breath.",
+        "person":
+            "Speak to the child directly. Questions rather than statements "
+            "wherever the answer is something they already know.",
+    },
+    "Upper Primary": {
+        "vocabulary":
+            "Subject terms are introduced deliberately and defined in the "
+            "sentence that first uses them. Everyday words elsewhere.",
+        "sentences":
+            "Full sentences with connectives — because, so that, if. This is "
+            "where reasoning is carried by the grammar and should be.",
+        "person":
+            "Address the learner, but expect them to follow an argument of two "
+            "or three steps.",
+    },
+    "Junior School": {
+        "vocabulary":
+            "Subject vocabulary used precisely and consistently. Do not "
+            "simplify a technical term into a vaguer one — name it and define "
+            "it.",
+        "sentences":
+            "Complex sentences are fine where the idea is complex. Keep them "
+            "short where it is not.",
+        "person":
+            "Explain rather than instruct. A learner at this age can be told "
+            "why, and should be.",
+    },
+    "Senior School": {
+        "vocabulary":
+            "Full subject register, at the level an examiner would expect in "
+            "an answer.",
+        "sentences":
+            "Whatever the reasoning requires. Precision over brevity.",
+        "person":
+            "Address a young adult preparing for an examination.",
+    },
+}
+
+
 _PRE_PRIMARY = LevelRegister(
     level="Pre-Primary",
     grade_label="PP1/PP2",
@@ -405,3 +476,48 @@ def register_for_grade(grade: str | None, notes: list[str] | None = None) -> Lev
 def register_block(grade: str | None, notes: list[str] | None = None) -> str:
     """The prompt-ready register block for a grade."""
     return register_for_grade(grade, notes=notes).format_for_prompt()
+
+
+def language_block(grade: str) -> str:
+    """How the words must SOUND for this grade, with the age they are for.
+
+    Kept beside the rest of the register because it answers the same question —
+    who is this for — and separate from it in the prompt because it governs the
+    prose rather than the task. A guide can ask a four-year-old to do exactly
+    the right thing in sentences they cannot follow.
+    """
+    register = register_for_grade(grade)
+    band = _LANGUAGE.get(register.level)
+    if not band:
+        return ""
+
+    try:
+        from .dna_scoring import _reading_target
+        from .grade_order import grade_ordinal
+
+        target = _reading_target(grade_ordinal(grade))
+    except Exception:  # noqa: BLE001
+        target = 0.0
+
+    lines = [
+        "=== HOW THE WORDS MUST SOUND ===",
+        f"These words are heard by {register.audience.lower()}, "
+        f"typically {register.typical_ages}. {register.literacy}",
+        "",
+        f"VOCABULARY: {band['vocabulary']}",
+        f"SENTENCES: {band['sentences']}",
+        f"HOW TO ADDRESS THEM: {band['person']}",
+    ]
+    if target:
+        lines.append(
+            f"LENGTH: aim near {target:.0f} words a sentence on average. This "
+            f"is the figure the finished material is measured against, so it "
+            f"is a target rather than a suggestion — but it is a MEAN. A short "
+            f"question and a longer explanation either side of it is right; "
+            f"every sentence the same length is not."
+        )
+    lines.append(
+        "A sentence this learner cannot follow has not taught them anything, "
+        "however true it is."
+    )
+    return "\n".join(lines)

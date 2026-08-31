@@ -1,7 +1,7 @@
 import React from "react";
-import { Badge, Button, Card, CopyButton, EmptyState, Stack } from "../ui/components";
+import { Badge, Button, Card, CopyButton, EmptyState, ErrorNotice, Stack } from "../ui/components";
 import { toReadable } from "../lib/serialize";
-import { hourModulesOf, type HourModule } from "../lib/queries";
+import { hourModulesOf, useNotesPdf, type HourModule } from "../lib/queries";
 
 /**
  * The teacher's guide, as a document a teacher can read.
@@ -175,14 +175,19 @@ export function NotesReader({
   notes,
   subStrand,
   version = 0,
+  artifactId = "",
 }: {
   notes: any;
   subStrand: string;
   /** Non-zero when this is a version read back from the store rather than the
    *  output of the run that is on screen. */
   version?: number;
+  /** The filed version this guide came from. Without one there is nothing for
+   *  the server to render, so the PDF button is not offered. */
+  artifactId?: string;
 }) {
   const modules = hourModulesOf(notes);
+  const pdf = useNotesPdf();
 
   if (!modules.length) {
     return (
@@ -203,12 +208,25 @@ export function NotesReader({
       actions={
         <Stack direction="row" gap="var(--s2)">
           <CopyButton getText={() => toReadable(notes)} label="Copy as text" />
+          {artifactId && (
+            <Button
+              size="sm"
+              variant="secondary"
+              disabled={pdf.isPending}
+              loading={pdf.isPending}
+              onClick={() => pdf.mutate(artifactId)}
+              title="A4, one lesson per page — the same file every time, and sendable to somebody who is not at this console"
+            >
+              {pdf.isPending ? "Rendering…" : "Download PDF"}
+            </Button>
+          )}
           <Button size="sm" variant="ghost" onClick={() => window.print()}>
             Print
           </Button>
         </Stack>
       }
     >
+      {pdf.error && <ErrorNotice error={pdf.error} />}
       <div style={{ maxWidth: "68ch" }}>
         {notes?.intro && (
           <p style={{ margin: "0 0 var(--s3)", lineHeight: 1.65, color: "var(--ink-2)" }}>

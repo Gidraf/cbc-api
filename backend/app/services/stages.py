@@ -43,6 +43,20 @@ STAGES: tuple[Stage, ...] = (
                  "at a third of the required depth however the prompt is worded.",
     ),
     Stage(
+        "material_generation", "Lesson material",
+        "The words themselves, written from the plan: the song's verse, the "
+        "story as it is told, the prayer as it is said, the explanation in the "
+        "sentences the teacher speaks aloud. One call per instruction.",
+        falls_back_to="notes_generation",
+        guidance="Short outputs, many of them, and the only stage whose product "
+                 "a child hears verbatim. A weak model here does not come back "
+                 "shallow — it comes back with the instruction reworded, which "
+                 "reads as material and is not. Worth more than the plan above "
+                 "it: the plan can be corrected by a teacher who knows the "
+                 "subject; these words are what the teacher would otherwise "
+                 "have had to write.",
+    ),
+    Stage(
         "structure_generation", "Strands & sub-strands",
         "Reading the strand list and each strand's sub-strands out of the "
         "design's own tables.",

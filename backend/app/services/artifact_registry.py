@@ -31,6 +31,9 @@ KINDS: tuple[str, ...] = (
     "strand",
     "sub_strand",
     "notes",
+    # The words themselves, written from the plan above it. `notes` is a plan:
+    # "choose a simple song", "tell a story". This is the song and the story.
+    "material",
     "hour_module",
     "diagram",
     "photo_prompt",

@@ -100,13 +100,31 @@ KIND_SCOPE: dict[str, dict[str, str]] = {
                      "generated FROM this sub-strand and reviewed separately.",
     },
     "notes": {
-        "is": "the teaching notes for one sub-strand, one module per lesson the "
-              "design funds.",
+        "is": "the LESSON PLAN for one sub-strand — what the teacher does, in "
+              "the imperative — one module per lesson the design funds. It is "
+              "not the material itself: 'choose a simple song about God' "
+              "belongs here, and the song's words belong in the `material` "
+              "artifact written from this one.",
         "holds": "a module per allocated lesson, each teaching the design's own "
                  "suggested learning experiences, at the register of this learner, "
                  "and making the sub-strand's assessment rubric achievable.",
         "elsewhere": "the sub-strand's own outcomes and rubric — those are the input "
                      "to these notes, shown above, not something the notes restate.",
+    },
+    "material": {
+        "is": "the words themselves for one sub-strand — the song written out, "
+              "the story as it is told, the prayer as it is said, the "
+              "explanation in the sentences the teacher speaks aloud. The plan "
+              "it was written from said 'choose a simple song'; this is the "
+              "song.",
+        "holds": "a piece of material for every instruction the plan gives, "
+                 "each one substantial enough to fill the time the plan "
+                 "allots it, in words this learner can hear.",
+        "elsewhere": "the plan itself — the teacher moves, the differentiation, "
+                     "the formative checks. Those are the INPUT to this, shown "
+                     "beside each piece, not something it restates. Judge "
+                     "whether the words fulfil the instruction, not whether "
+                     "the instruction was a good one.",
     },
     "hour_module": {
         "is": "one lesson's worth of the teaching notes.",
