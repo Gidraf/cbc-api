@@ -192,7 +192,9 @@ def test_a_genuine_second_opinion_can_approve(monkeypatch) -> None:
     state = review.approval_state("a")
 
     assert state["can_approve"], state["blockers"]
-    assert state["vendors"] == ["anthropic", "openai"]
+    # Every vendor that reviewed, not only layers 1 and 2. Reporting a subset
+    # is how the gate came to check a pair it did not require.
+    assert state["vendors"] == ["anthropic", "gemini", "openai"]
 
 
 def test_a_rejection_at_any_layer_blocks_approval(monkeypatch) -> None:
@@ -480,3 +482,48 @@ def test_saving_sub_strands_refreshes_the_remaining_count() -> None:
     block = queries[start: queries.index('["saved-substrands"]', start) + 40]
 
     assert "keys.structure(grade, subject)" in block
+
+
+def test_running_only_the_two_layers_the_gate_asks_for_can_approve(monkeypatch) -> None:
+    """The gate requires layers 2 and 3. It then checked the vendors of layers
+    1 and 2 — so an operator who ran exactly what was asked was blocked by a
+    rule about a layer 1 that had never run, told "layers 1 and 2 used the same
+    vendor" about a comparison with nothing on one side, and had no way to
+    clear it. Approval was unreachable."""
+    monkeypatch.setattr(review, "reviews_for", lambda _id: _reviews(
+        {"layer": 2, "verdict": "pass", "overall_confidence": 91,
+         "provider": "openai", "model": "gpt-4o"},
+        {"layer": 3, "verdict": "pass", "overall_confidence": 90,
+         "provider": "anthropic", "model": "claude-3-5-sonnet-20241022"},
+    ))
+    state = review.approval_state("a")
+
+    assert state["can_approve"], state["blockers"]
+
+
+def test_the_approver_may_not_share_a_vendor_with_the_review_it_approves(monkeypatch) -> None:
+    monkeypatch.setattr(review, "reviews_for", lambda _id: _reviews(
+        {"layer": 2, "verdict": "pass", "overall_confidence": 91,
+         "provider": "openai", "model": "gpt-4o"},
+        {"layer": 3, "verdict": "pass", "overall_confidence": 90,
+         "provider": "openai", "model": "gpt-4o-mini"},
+    ))
+    state = review.approval_state("a")
+
+    assert not state["can_approve"]
+    assert any("Re-run layer 3 with a different vendor" in b
+               for b in state["blockers"])
+
+
+def test_a_layer_1_that_never_ran_is_not_a_blocker(monkeypatch) -> None:
+    """It is not in the gate's list of required layers, so its absence must
+    not be reported as a fault the operator has to fix."""
+    monkeypatch.setattr(review, "reviews_for", lambda _id: _reviews(
+        {"layer": 2, "verdict": "pass", "overall_confidence": 91,
+         "provider": "openai", "model": "gpt-4o"},
+        {"layer": 3, "verdict": "pass", "overall_confidence": 90,
+         "provider": "gemini", "model": "gemini-2.0-flash"},
+    ))
+    state = review.approval_state("a")
+
+    assert not any("layer 1" in b for b in state["blockers"])

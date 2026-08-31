@@ -5,6 +5,7 @@ import { Link } from "react-router-dom";
 import { AutoRunPanel } from "./AutoRunPanel";
 import { CurriculumStructure } from "./CurriculumStructure";
 import { HourWorkbench } from "./HourWorkbench";
+import { NotesReader } from "./NotesReader";
 import { PromptInspector, type Inspection } from "./PromptInspector";
 import { QueuePanel } from "./QueuePanel";
 import { ResetPanel } from "./ResetPanel";
@@ -1027,6 +1028,12 @@ export function ContentFactory() {
                 );
               }}
             />
+
+            {/* The console could produce notes, score them, review them and
+                approve them, and never once show them as prose. */}
+            {notes && selected && (
+              <NotesReader notes={notes} subStrand={selected.report.sub_strand_name} />
+            )}
 
             {notes && selected && (
               <HourWorkbench

@@ -616,3 +616,93 @@ def test_the_run_log_is_shown_as_a_timeline_not_a_numbered_list():
     assert "function RunTimeline(" in source
     assert "<RunTimeline steps={liveSteps}" in source, "not used while running"
     assert "<RunTimeline steps={steps}" in source, "not used once finished"
+
+
+# ── citations whose quote is real and whose address has drifted ─────────────
+
+DRIFTED = """[PAGE 203]
+203:14  The learner is guided to:
+203:15  • say the name of God in their mother tongue or
+203:16  language of catchment area,
+203:40  • sing songs in groups.
+"""
+
+
+def test_a_drifted_citation_address_is_corrected_not_reported():
+    """The reviewer and the generator do not read the same rendering of the
+    design, so addresses drift. Every review since has spent a finding saying
+    "the quote is real but the address is wrong" — which nothing acted on."""
+    notes = {"modules": [{"citations": [{
+        "ref": "203:26", "claim": "c",
+        "quote": "say the name of God in their mother tongue or language of "
+                 "catchment area"}]}]}
+
+    note = notes_remediation.repair_citation_addresses(notes, DRIFTED)
+
+    assert notes["modules"][0]["citations"][0]["ref"] == "203:14"
+    assert "203:26 → 203:14" in note
+
+
+def test_a_corrected_address_then_verifies():
+    from app.services import citation_evidence
+
+    notes = {"modules": [{"citations": [{
+        "ref": "203:26", "claim": "c",
+        "quote": "say the name of God in their mother tongue or language of "
+                 "catchment area"}]}]}
+    notes_remediation.repair_citation_addresses(notes, DRIFTED)
+
+    assert citation_evidence.resolve(notes, DRIFTED)["citations"][0]["status"] \
+        == "VERIFIED"
+
+
+def test_a_citation_that_already_resolves_is_left_alone():
+    notes = {"modules": [{"citations": [{
+        "ref": "203:15", "claim": "c",
+        "quote": "say the name of God in their mother tongue or language of "
+                 "catchment area"}]}]}
+
+    assert notes_remediation.repair_citation_addresses(notes, DRIFTED) == ""
+    assert notes["modules"][0]["citations"][0]["ref"] == "203:15"
+
+
+def test_an_invented_quote_is_not_given_an_address():
+    notes = {"modules": [{"citations": [{
+        "ref": "203:26", "claim": "c",
+        "quote": "the learner shall recite the Nicene Creed from memory"}]}]}
+
+    assert notes_remediation.repair_citation_addresses(notes, DRIFTED) == ""
+    assert notes["modules"][0]["citations"][0]["ref"] == "203:26"
+
+
+def test_with_no_design_no_address_is_touched():
+    notes = {"modules": [{"citations": [{"ref": "203:26", "claim": "c",
+                                         "quote": "anything at all here"}]}]}
+
+    assert notes_remediation.repair_citation_addresses(notes, "") == ""
+
+
+def test_the_station_hands_the_repair_the_page_addressed_design():
+    import inspect
+
+    from app.routes import curriculum
+
+    source = inspect.getsource(curriculum.factory_generate_notes)
+    assert "design_text=source_text or \"\"" in source
+
+
+def test_there_is_somewhere_to_read_the_guide_as_a_document():
+    """The console could produce notes, score them, review them and approve
+    them, and never once show them as prose — which is how a lesson taught
+    three times under three titles survived several reviews."""
+    import pathlib
+
+    views = pathlib.Path(__file__).resolve().parents[2] / "frontend-web/src/views"
+    reader = (views / "NotesReader.tsx").read_text()
+    factory = (views / "ContentFactory.tsx").read_text()
+
+    assert "export function NotesReader" in reader
+    assert "<NotesReader notes={notes}" in factory
+    # The handover between topics is what makes it a lesson rather than four
+    # paragraphs, so it has to be visible.
+    assert "segment.bridge" in reader

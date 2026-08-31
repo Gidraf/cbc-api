@@ -250,6 +250,62 @@ def strip_invented_experiences(notes: dict[str, Any],
             + (" …" if len(unique) > 3 else ""))
 
 
+def repair_citation_addresses(notes: dict[str, Any], design_text: str) -> str:
+    """Point each citation at the line its quote is actually on.
+
+    The reviewer and the generator do not read the same rendering of the
+    design, so addresses drift: a guide cites 203:26 for a sentence that sits
+    at 203:23 in the copy the reviewer was given. The quote is real and the
+    reference is wrong, and every review since has spent a finding saying so.
+
+    Nothing here needs a model. The resolver already knows where the sentence
+    is; this writes that address back onto the citation.
+    """
+    if not design_text.strip():
+        return ""
+    from . import citation_evidence
+
+    try:
+        evidence = citation_evidence.resolve(notes, design_text)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Could not resolve citations to repair them: %s", exc)
+        return ""
+
+    corrections = {
+        row["ref"]: row["found_at"]
+        for row in evidence.get("citations", []) if row.get("found_at")
+    }
+    if not corrections:
+        return ""
+
+    fixed = 0
+
+    def walk(value: Any) -> None:
+        nonlocal fixed
+        if isinstance(value, dict):
+            for entry in (value.get("citations") or []):
+                if not isinstance(entry, dict):
+                    continue
+                ref = str(entry.get("ref") or "")
+                if ref in corrections:
+                    entry["ref"] = corrections[ref]
+                    fixed += 1
+            for key, item in value.items():
+                if key != "citations":
+                    walk(item)
+        elif isinstance(value, list):
+            for item in value:
+                walk(item)
+
+    walk(notes)
+    if not fixed:
+        return ""
+    moved = "; ".join(f"{was} → {now}" for was, now in list(corrections.items())[:4])
+    return (f"Corrected {fixed} citation address(es) to the line the quoted "
+            f"sentence is actually on ({moved}). The quotes were real; the "
+            f"references had drifted.")
+
+
 # ── what still needs the generator ──────────────────────────────────────────
 
 
@@ -489,6 +545,7 @@ def run(
     *,
     design_experiences: list[str],
     slos: list[str],
+    design_text: str = "",
     generate: Any = None,
     model_config: Any = None,
     base_messages: list[dict[str, str]] | None = None,
@@ -521,7 +578,8 @@ def run(
         spent_before = _spent()
 
         for repair in (rebuild_slo_map(notes, slos),
-                       strip_invented_experiences(notes, design_experiences)):
+                       strip_invented_experiences(notes, design_experiences),
+                       repair_citation_addresses(notes, design_text)):
             if repair:
                 this.deterministic.append(repair)
                 run_log.step(f"Repair {number}", repair)
@@ -602,7 +660,8 @@ def run(
             break
 
         for repair in (rebuild_slo_map(notes, slos),
-                       strip_invented_experiences(notes, design_experiences)):
+                       strip_invented_experiences(notes, design_experiences),
+                       repair_citation_addresses(notes, design_text)):
             if repair:
                 this.deterministic.append(repair)
 

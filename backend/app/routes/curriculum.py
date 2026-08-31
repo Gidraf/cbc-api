@@ -1290,6 +1290,9 @@ def factory_generate_notes(
         # God'}" — a scheme of work with a Python dict printed in it.
         design_experiences=[_plain(e) for e in (design_experiences or [])],
         slos=[_plain(s) for s in (slos or [])],
+        # The page-addressed document, so a citation whose quote is real but
+        # whose address has drifted is corrected rather than reported.
+        design_text=source_text or "",
         generate=llm_client.generate,
         model_config=resolved,
         base_messages=context.messages,

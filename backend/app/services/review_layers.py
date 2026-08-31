@@ -699,11 +699,19 @@ def approval_state(artifact_id: str) -> dict[str, Any]:
         if layer not in by_layer:
             blockers.append(f"layer {layer} ({LAYERS[layer]['name']}) has not run")
 
-    vendors = {str(r.get("provider") or "") for r in reviews if int(r["layer"]) in (1, 2)}
-    if len(by_layer) >= 2 and len(vendors) < 2:
+    # The vendors of the layers that ACTUALLY RAN. This used to read layers 1
+    # and 2 while requiring layers 2 and 3, so an operator who ran 2 and 3 —
+    # the two the gate asks for — was blocked by a rule about a layer 1 that
+    # had never run, and told "layers 1 and 2 used the same vendor" about a
+    # comparison with nothing on one side. There was no way to clear it.
+    vendors = {str(r.get("provider") or "") for r in reviews if r.get("provider")}
+    reviewing = str((by_layer.get(2) or {}).get("provider") or "")
+    approving = str((by_layer.get(3) or {}).get("provider") or "")
+    if reviewing and approving and reviewing == approving:
         blockers.append(
-            "layers 1 and 2 used the same vendor — two models from one vendor "
-            "share failure modes, so that is one opinion asked twice"
+            f"layers 2 and 3 used the same vendor ({approving}) — two models "
+            f"from one vendor share failure modes, so that is one opinion "
+            f"asked twice. Re-run layer 3 with a different vendor."
         )
 
     for layer, review in by_layer.items():
