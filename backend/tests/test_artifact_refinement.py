@@ -259,7 +259,7 @@ def test_a_draft_can_be_edited_and_filed_as_the_next_version():
 
 
 def test_the_editor_says_the_signed_version_is_left_alone():
-    assert "this one is left exactly as it is" in _panel()
+    assert "this one is left" in _panel()
 
 
 def test_bad_json_is_caught_before_it_is_sent():

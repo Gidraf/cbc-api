@@ -35,6 +35,8 @@ import {
   type ArtifactLabel,
   type DimensionScore,
   type ReviewVerdict,
+  type ShapeFinding,
+  type ShapeReport,
 } from "../lib/queries";
 
 /**
@@ -260,6 +262,76 @@ export function DiffTable({ artifactId, against = "" }: { artifactId: string; ag
  * somebody's signature under it, and editing in place would make that
  * signature mean whatever the content last became.
  */
+function ShapeNotice({ report }: { report: ShapeReport }) {
+  if (report.clean) {
+    return (
+      <p style={{ color: "var(--ok)", fontSize: "var(--text-sm)", margin: "var(--s2) 0 0" }}>
+        ✓ Same shape as version it came from.
+      </p>
+    );
+  }
+
+  const rows: { finding: ShapeFinding; label: string; tone: string }[] = [
+    ...report.missing.map((f) => ({ finding: f, label: "missing", tone: "danger" })),
+    ...report.type_changed.map((f) => ({ finding: f, label: "changed type", tone: "danger" })),
+    ...report.emptied.map((f) => ({ finding: f, label: "emptied", tone: "danger" })),
+    ...report.added.map((f) => ({ finding: f, label: "added", tone: "warn" })),
+  ];
+
+  return (
+    <div
+      style={{
+        marginTop: "var(--s2)",
+        padding: "var(--s3)",
+        border: `1px solid var(--${report.safe ? "warn" : "danger"})`,
+        background: `var(--${report.safe ? "warn" : "danger"}-wash)`,
+        borderRadius: "var(--radius-sm)",
+        fontSize: "var(--text-sm)",
+      }}
+    >
+      <strong>
+        {report.safe
+          ? "Same shape, with additions"
+          : "This is not the same shape as the version it came from"}
+      </strong>
+      <p style={{ margin: "4px 0 var(--s2)", color: "var(--ink-2)" }}>
+        {report.safe
+          ? "Nothing was lost. New fields are yours to add — nothing downstream reads them yet."
+          : "Everything downstream reads with a default, so a key that is gone and a key that is empty look the same by the time they are read. Coverage counts no modules; the citation resolver finds nothing to resolve."}
+      </p>
+      <ul style={{ margin: 0, paddingLeft: "1.1rem" }}>
+        {rows.slice(0, 20).map(({ finding, label, tone }, i) => (
+          <li key={i} style={{ marginBottom: "2px" }}>
+            <span className="mono" style={{ color: `var(--${tone})` }}>
+              {label}
+            </span>{" "}
+            <span className="mono">{finding.path || "(root)"}</span>
+            <span style={{ color: "var(--ink-3)" }}> — {finding.detail}</span>
+          </li>
+        ))}
+      </ul>
+      {rows.length > 20 && (
+        <p style={{ margin: "var(--s2) 0 0", color: "var(--ink-3)" }}>
+          …and {rows.length - 20} more.
+        </p>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Edit a draft by hand, and file the result as the next version.
+ *
+ * The pipeline is not always the fastest way to a good artifact. An operator
+ * who can see exactly what is wrong will often fix it faster by copying it out,
+ * working on it in another model, and pasting it back — and that is a
+ * legitimate way to work, not a workaround.
+ *
+ * What makes it dangerous is silent drift, so the paste is compared against
+ * what it was copied from before it is filed. Reported, never refused: adding
+ * a field on purpose is reasonable, and a tool that refuses it teaches people
+ * to stop using the tool.
+ */
 function EditDraft({
   artifactId,
   content,
@@ -275,27 +347,41 @@ function EditDraft({
   const [open, setOpen] = React.useState(false);
   const [text, setText] = React.useState("");
   const [problem, setProblem] = React.useState("");
+  const [shape, setShape] = React.useState<ShapeReport | null>(null);
 
   function start() {
     setText(JSON.stringify(content, null, 2));
     setProblem("");
+    setShape(null);
     setOpen(true);
   }
 
-  function save() {
-    let parsed: Record<string, unknown>;
+  function parse(): Record<string, unknown> | null {
     try {
-      parsed = JSON.parse(text);
+      return JSON.parse(text);
     } catch (err) {
       // Told here rather than by the server, so a misplaced comma costs a
       // moment instead of a round trip and a stack trace.
       setProblem(err instanceof Error ? err.message : "That is not valid JSON.");
-      return;
+      return null;
     }
+  }
+
+  function check() {
+    const parsed = parse();
+    if (!parsed) return;
+    setProblem("");
+    actions.checkShape.mutate(parsed, { onSuccess: (r) => setShape(r) });
+  }
+
+  function save() {
+    const parsed = parse();
+    if (!parsed) return;
     setProblem("");
     actions.edit.mutate(parsed, {
       onSuccess: (filed: any) => {
         setOpen(false);
+        setShape(null);
         if (filed?.artifact_id) onEdited?.(filed.artifact_id);
       },
     });
@@ -312,15 +398,20 @@ function EditDraft({
   return (
     <div style={{ marginTop: "var(--s3)" }}>
       <p style={{ fontSize: "var(--text-sm)", color: "var(--ink-2)", margin: "0 0 var(--s2)" }}>
-        Editing version {version}. Saving files the result as a <strong>new
-        version</strong> — this one is left exactly as it is, with whatever has
-        been signed for it.
+        Editing version {version}. Copy this out, improve it wherever you like,
+        and paste it back — <strong>keep the keys as they are</strong>. Saving
+        files the result as a <strong>new version</strong>; this one is left
+        exactly as it is, with whatever has been signed for it.
       </p>
       <Textarea
         rows={24}
         value={text}
         spellCheck={false}
-        onChange={(e) => setText(e.target.value)}
+        onChange={(e) => {
+          setText(e.target.value);
+          // A report about text that has since changed is worse than none.
+          if (shape) setShape(null);
+        }}
         style={{ fontFamily: "var(--mono, monospace)", fontSize: "var(--text-sm)" }}
       />
       {problem && (
@@ -328,9 +419,22 @@ function EditDraft({
           {problem}
         </p>
       )}
-      <Stack direction="row" gap="var(--s2)" style={{ marginTop: "var(--s2)" }}>
+      {shape && <ShapeNotice report={shape} />}
+      <Stack direction="row" gap="var(--s2)" style={{ marginTop: "var(--s2)", flexWrap: "wrap" }}>
+        <Button
+          size="sm"
+          variant="secondary"
+          disabled={actions.checkShape.isPending}
+          onClick={check}
+        >
+          {actions.checkShape.isPending ? "Checking…" : "Check the shape"}
+        </Button>
         <Button size="sm" disabled={actions.edit.isPending} onClick={save}>
-          {actions.edit.isPending ? "Filing…" : "Save as the next version"}
+          {actions.edit.isPending
+            ? "Filing…"
+            : shape && !shape.safe
+            ? "Save anyway as the next version"
+            : "Save as the next version"}
         </Button>
         <Button size="sm" variant="ghost" onClick={() => setOpen(false)}>
           Cancel
@@ -338,6 +442,7 @@ function EditDraft({
         <CopyButton getText={() => text} label="Copy" />
       </Stack>
       {actions.edit.error && <ErrorNotice error={actions.edit.error} />}
+      {actions.checkShape.error && <ErrorNotice error={actions.checkShape.error} />}
     </div>
   );
 }

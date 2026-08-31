@@ -335,6 +335,25 @@ export type ReviewVerdict = {
   weakest: string;
 };
 
+export type ShapeFinding = {
+  path: string;
+  problem: "missing" | "added" | "type_changed" | "emptied";
+  detail: string;
+  was: string;
+  now: string;
+};
+
+export type ShapeReport = {
+  clean: boolean;
+  /** Nothing broken. Additions are the operator's business. */
+  safe: boolean;
+  missing: ShapeFinding[];
+  type_changed: ShapeFinding[];
+  emptied: ShapeFinding[];
+  added: ShapeFinding[];
+  summary: string;
+};
+
 export type ApprovalState = {
   can_approve: boolean;
   /** The approver asked for revision. A person may approve over that, with a
@@ -537,6 +556,18 @@ export function useArtifactActions(artifactId: string) {
         qc.invalidateQueries({ queryKey: ["artifact-versions"] });
         qc.invalidateQueries({ queryKey: ["progress"] });
       },
+    }),
+    /** Compare a pasted version against the one it was copied from, before
+     *  filing it. A model asked to improve a guide returns the right guide
+     *  with `exposition_segments` renamed to `segments` and `citations`
+     *  dropped from three modules — each reads as fine to a person scanning
+     *  the prose, and each breaks something downstream. */
+    checkShape: useMutation({
+      mutationFn: (content: Record<string, unknown>) =>
+        api<ShapeReport & { from_version: number }>(
+          `/api/v1/artifacts/${encodeURIComponent(artifactId)}/check-shape`,
+          { method: "POST", body: JSON.stringify({ content }) }
+        ),
     }),
     /** Throw a draft away. Refused server-side while a label points at it, so
      *  nothing silently loses its approved copy. */

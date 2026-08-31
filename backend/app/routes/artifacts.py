@@ -143,9 +143,66 @@ def edit_artifact(
     Editing in place would make an approved version mean whatever it was last
     edited into, which is exactly what versioning exists to prevent.
     """
-    return registry.update_content(
+    from ..services import content_shape
+
+    current = registry.get(artifact_id)
+    shape = content_shape.compare(current.content or {}, payload.content or {})
+    filed = registry.update_content(
         artifact_id, payload.content, edited_by=getattr(auth, "subject", "")
     ).to_dict()
+
+    # Recorded, not refused. An operator adding a field on purpose is doing
+    # something reasonable, and a tool that refuses it teaches them to stop
+    # using the tool. But a version that quietly lost `citations` should say so
+    # on its own record, where the next person to open it will see it.
+    if not shape.clean:
+        try:
+            registry.add_comment(
+                filed["artifact_id"],
+                f"Hand-edited from version {current.version}. Shape against "
+                f"that version: {content_shape.summarise(shape)}.\n"
+                + content_shape.render(shape),
+                author=getattr(auth, "subject", ""), dimension="edit",
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Could not record the shape change on %s: %s",
+                           filed.get("artifact_id"), exc)
+    return {**filed, "shape": shape.to_dict()}
+
+
+class ShapeCheckRequest(BaseModel):
+    """Content a person has edited elsewhere, before it is filed."""
+
+    content: dict[str, Any]
+
+
+@router.post("/{artifact_id}/check-shape")
+def check_edit_shape(
+    artifact_id: str,
+    payload: ShapeCheckRequest,
+    _: AuthContext = Depends(require_roles("admin", "operator", "reviewer")),
+) -> dict[str, Any]:
+    """Compare a pasted version against the one it was copied from.
+
+    Copying an artifact out, improving it in another model and pasting it back
+    is a legitimate way to work — often the fastest one. What makes it
+    dangerous is silent drift: a model asked to improve a guide returns the
+    right guide with `exposition_segments` renamed to `segments`, `citations`
+    dropped from three modules and `duration_minutes` turned into "30 minutes".
+    Each reads as fine to a person scanning the prose, and each breaks
+    something downstream — because everything downstream reads with `.get()`
+    and a default, and a missing key is indistinguishable from an empty one by
+    the time it is read.
+    """
+    from ..services import content_shape
+
+    current = registry.get(artifact_id)
+    report = content_shape.compare(current.content or {}, payload.content or {})
+    return {
+        "artifact_id": artifact_id,
+        "from_version": current.version,
+        **report.to_dict(),
+    }
 
 
 @router.delete("/{artifact_id}")
