@@ -337,7 +337,11 @@ export type ReviewVerdict = {
 
 export type ApprovalState = {
   can_approve: boolean;
+  /** The approver asked for revision. A person may approve over that, with a
+   *  reason recorded against the version. */
+  requires_override?: boolean;
   blockers: string[];
+  warnings?: string[];
   layers_run: number[];
   vendors: string[];
   reviews: { layer: number; verdict: string; confidence: number; provider: string; model: string }[];
@@ -467,7 +471,14 @@ export function useArtifactActions(artifactId: string) {
       // `reviewed_by_me` is a person signing for the version. Coverage counts
       // approved work as taught-ready, so approval cannot be a side effect of
       // the model layers passing.
-      mutationFn: (v: { label: ArtifactLabel; reviewed_by_me?: boolean; note?: string }) =>
+      mutationFn: (v: {
+        label: ArtifactLabel;
+        reviewed_by_me?: boolean;
+        note?: string;
+        /** Why this version is fit to teach despite the approver asking for
+         *  revision. Required only when there is something to overrule. */
+        override_reason?: string;
+      }) =>
         api<{ status: string; moved_from: string }>(
           `/api/v1/artifacts/${encodeURIComponent(artifactId)}/label`,
           { method: "POST", body: JSON.stringify(v) }

@@ -689,6 +689,39 @@ def reviews_for(artifact_id: str) -> list[dict[str, Any]]:
     ) or []
 
 
+def _worst(review: dict[str, Any]) -> str:
+    """Which dimension held this review back, and by how much.
+
+    "the approver did not pass it" named nothing and pointed nowhere. A
+    blocker a person cannot act on is the same defect as a review finding
+    nobody can act on.
+    """
+    raw = review.get("dimensions")
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except Exception:  # noqa: BLE001
+            raw = None
+    if not isinstance(raw, dict) or not raw:
+        return ""
+
+    scored = [
+        (int(d.get("score") or 0), str(d.get("name") or name))
+        for name, d in raw.items()
+        if isinstance(d, dict) and not d.get("not_applicable")
+    ]
+    if not scored:
+        return ""
+    score, name = min(scored)
+    floor = APPROVAL_DIMENSION_FLOOR if score < APPROVAL_DIMENSION_FLOOR else APPROVAL_FLOOR
+    detail = f" — {name.replace('_', ' ')} scored {score}, against a floor of {floor}"
+
+    issues = (raw.get(name) or {}).get("issues") or []
+    if issues:
+        detail += f' ("{str(issues[0])[:140]}")'
+    return detail
+
+
 def approval_state(artifact_id: str) -> dict[str, Any]:
     """Whether this version may be approved, and precisely what is missing."""
     reviews = reviews_for(artifact_id)
@@ -714,11 +747,34 @@ def approval_state(artifact_id: str) -> dict[str, Any]:
             f"asked twice. Re-run layer 3 with a different vendor."
         )
 
-    for layer, review in by_layer.items():
+    # A model saying "revise" is not the same as a model saying "reject", and
+    # neither is the same as a layer that never ran.
+    #
+    # BLOCKERS are facts about the process: a required layer is missing, the
+    # same vendor reviewed and approved, a layer rejected it outright. A person
+    # cannot sign those away, because signing would not make them untrue.
+    #
+    # WARNINGS are a model's judgement that a person may overrule. `decide()`
+    # returns "revise" whenever ANY single dimension falls below 70, and this
+    # pipeline has measured one model scoring the same unchanged artifact 40,
+    # 70, 95 and 100 on factual_correctness — a 60-point spread. Treating that
+    # as an absolute veto meant a guide a person had read and judged fit could
+    # not be approved, with no way to say so and no way forward. That is not
+    # rigour; it is a dead end wearing rigour's clothes.
+    warnings: list[str] = []
+    for layer, review in sorted(by_layer.items()):
         if review.get("verdict") == "reject":
-            blockers.append(f"layer {layer} rejected it")
+            blockers.append(
+                f"layer {layer} rejected it{_worst(review)}. A rejection is not "
+                f"something to sign past: fix it, or regenerate."
+            )
         elif layer == 3 and review.get("verdict") != "pass":
-            blockers.append("the approver did not pass it")
+            warnings.append(
+                f"the approver asked for revision rather than passing it"
+                f"{_worst(review)}. If you have read this version and judge it "
+                f"fit to teach, you may approve it over that objection — say "
+                f"why, and it is recorded against the version."
+            )
 
     # Approval is a person's decision, always. The layers narrow what reaches
     # them; they do not replace them. Progress counts approved work, so a
@@ -728,7 +784,9 @@ def approval_state(artifact_id: str) -> dict[str, Any]:
         "artifact_id": artifact_id,
         "can_approve": not blockers,
         "requires_human": True,
+        "requires_override": bool(warnings),
         "blockers": blockers,
+        "warnings": warnings,
         "layers_run": sorted(by_layer),
         "vendors": sorted(v for v in vendors if v),
         "reviews": [

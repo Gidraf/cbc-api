@@ -209,19 +209,58 @@ def test_a_rejection_at_any_layer_blocks_approval(monkeypatch) -> None:
     assert not review.approval_state("a")["can_approve"]
 
 
-def test_an_approver_that_only_says_revise_does_not_approve(monkeypatch) -> None:
+def test_an_approver_that_says_revise_is_a_warning_a_person_may_overrule(monkeypatch) -> None:
+    """`decide()` returns "revise" whenever ANY single dimension falls below
+    70, and this pipeline has measured one model scoring the same unchanged
+    artifact 40, 70, 95 and 100 on factual_correctness. Treating that as an
+    absolute veto meant a guide a person had read and judged fit could not be
+    approved, with no way to say so and no way forward."""
     monkeypatch.setattr(review, "reviews_for", lambda _id: _reviews(
-        {"layer": 1, "verdict": "pass", "overall_confidence": 88,
-         "provider": "openai", "model": "gpt-4o-mini"},
         {"layer": 2, "verdict": "pass", "overall_confidence": 85,
          "provider": "anthropic", "model": "claude-3-5-sonnet-20241022"},
         {"layer": 3, "verdict": "revise", "overall_confidence": 72,
-         "provider": "gemini", "model": "gemini-1.5-pro"},
+         "provider": "gemini", "model": "gemini-2.0-flash"},
+    ))
+    state = review.approval_state("a")
+
+    assert state["can_approve"], state["blockers"]
+    assert state["requires_override"]
+    assert any("asked for revision" in w for w in state["warnings"])
+
+
+def test_a_rejection_is_not_something_a_person_can_sign_past(monkeypatch) -> None:
+    monkeypatch.setattr(review, "reviews_for", lambda _id: _reviews(
+        {"layer": 2, "verdict": "pass", "overall_confidence": 85,
+         "provider": "anthropic", "model": "claude-3-5-sonnet-20241022"},
+        {"layer": 3, "verdict": "reject", "overall_confidence": 40,
+         "provider": "gemini", "model": "gemini-2.0-flash"},
     ))
     state = review.approval_state("a")
 
     assert not state["can_approve"]
-    assert any("approver did not pass" in b for b in state["blockers"])
+    assert not state["requires_override"]
+
+
+def test_a_blocker_names_the_dimension_that_held_it_back(monkeypatch) -> None:
+    """"the approver did not pass it" named nothing and pointed nowhere. A
+    blocker a person cannot act on is the same defect as a review finding
+    nobody can act on."""
+    monkeypatch.setattr(review, "reviews_for", lambda _id: _reviews(
+        {"layer": 2, "verdict": "pass", "overall_confidence": 85,
+         "provider": "anthropic", "model": "claude-3-5-sonnet-20241022"},
+        {"layer": 3, "verdict": "revise", "overall_confidence": 72,
+         "provider": "gemini", "model": "gemini-2.0-flash",
+         "dimensions": {
+             "factual_correctness": {"name": "factual_correctness", "score": 55,
+                                     "issues": ["Citation 203:26 is wrong"]},
+             "completeness": {"name": "completeness", "score": 90, "issues": []},
+         }},
+    ))
+    warning = review.approval_state("a")["warnings"][0]
+
+    assert "factual correctness scored 55" in warning
+    assert "against a floor of 70" in warning
+    assert "Citation 203:26 is wrong" in warning
 
 
 # ── Vendors ─────────────────────────────────────────────────────────────────
@@ -571,3 +610,30 @@ def test_an_unparseable_response_is_not_recorded_as_a_rejection():
     assert "returned no scored dimensions" in source
     # And it says how big the prompt was, because that is the usual cause.
     assert "characters; if the artifact is large" in source
+
+
+def test_approving_over_an_objection_needs_a_reason_and_records_it():
+    """An override nobody can find later is not a decision, it is a hole."""
+    import inspect
+
+    from app.routes import artifacts
+
+    source = inspect.getsource(artifacts.apply_label)
+
+    assert 'state.get("requires_override") and not payload.override_reason.strip()' in source
+    assert "Approved over the approver's objection" in source
+    assert 'dimension="approval"' in source
+
+
+def test_the_console_offers_the_override_rather_than_a_dead_button():
+    """"the approver did not pass it" disabled the button and gave a person no
+    way forward — on content they had read and judged fit."""
+    import pathlib
+
+    panel = (pathlib.Path(__file__).resolve().parents[2]
+             / "frontend-web/src/views/VersionReview.tsx").read_text()
+
+    assert "Approvable, over an objection" in panel
+    assert "requiresOverride && !override.trim()" in panel, \
+        "the reason must be required before the button works"
+    assert "override_reason: override" in panel

@@ -250,15 +250,22 @@ function LabelBar({
   labels,
   canApprove,
   blockers,
+  warnings = [],
+  requiresOverride = false,
 }: {
   artifactId: string;
   labels: string[];
   canApprove: boolean;
   blockers: string[];
+  /** A model's judgement a person may overrule, as distinct from a fact about
+   *  the process that signing cannot make untrue. */
+  warnings?: string[];
+  requiresOverride?: boolean;
 }) {
   const actions = useArtifactActions(artifactId);
   const [signing, setSigning] = React.useState(false);
   const [note, setNote] = React.useState("");
+  const [override, setOverride] = React.useState("");
 
   return (
     <>
@@ -310,6 +317,28 @@ function LabelBar({
             Approved work counts toward this grade's progress as taught-ready, so
             this is your signature under that claim.
           </p>
+          {requiresOverride && (
+            <div style={{ marginBottom: "var(--s2)" }}>
+              <ul
+                style={{
+                  margin: "0 0 var(--s2)",
+                  paddingLeft: "1.1em",
+                  color: "var(--warn)",
+                  fontSize: "var(--text-sm)",
+                }}
+              >
+                {warnings.map((w, i) => (
+                  <li key={i}>{w}</li>
+                ))}
+              </ul>
+              <Textarea
+                rows={2}
+                value={override}
+                placeholder="Required: why this version is fit to teach despite that."
+                onChange={(e) => setOverride(e.target.value)}
+              />
+            </div>
+          )}
           <Textarea
             rows={2}
             value={note}
@@ -319,11 +348,25 @@ function LabelBar({
           <Stack direction="row" gap="var(--s2)" style={{ marginTop: "var(--s2)" }}>
             <Button
               size="sm"
-              disabled={actions.label.isPending}
+              disabled={
+                actions.label.isPending ||
+                (requiresOverride && !override.trim())
+              }
               onClick={() =>
                 actions.label.mutate(
-                  { label: "approved", reviewed_by_me: true, note },
-                  { onSuccess: () => { setSigning(false); setNote(""); } }
+                  {
+                    label: "approved",
+                    reviewed_by_me: true,
+                    note,
+                    override_reason: override,
+                  },
+                  {
+                    onSuccess: () => {
+                      setSigning(false);
+                      setNote("");
+                      setOverride("");
+                    },
+                  }
                 )
               }
             >
@@ -353,6 +396,30 @@ function LabelBar({
           <strong>Not approvable yet</strong>
           <ul style={{ margin: "6px 0 0", paddingLeft: "1.1em", color: "var(--ink-3)" }}>
             {blockers.map((b, i) => <li key={i}>{b}</li>)}
+          </ul>
+        </div>
+      )}
+
+      {/* A model asking for revision is not the same as a missing layer. One a
+          person can overrule, having read the version; the other signing
+          cannot make untrue. Showing them the same way is how "the approver
+          did not pass it" came to read as a dead end. */}
+      {canApprove && requiresOverride && !signing && (
+        <div
+          style={{
+            marginTop: "var(--s3)",
+            padding: "var(--s3)",
+            border: "1px solid var(--warn)",
+            background: "var(--warn-wash)",
+            borderRadius: "var(--radius)",
+            fontSize: "var(--text-sm)",
+          }}
+        >
+          <strong>Approvable, over an objection</strong>
+          <ul style={{ margin: "6px 0 0", paddingLeft: "1.1em", color: "var(--ink-2)" }}>
+            {warnings.map((w, i) => (
+              <li key={i}>{w}</li>
+            ))}
           </ul>
         </div>
       )}
@@ -699,6 +766,8 @@ export function VersionReview({
         artifactId={picked}
         labels={data.labels}
         canApprove={approval.can_approve}
+        warnings={approval.warnings || []}
+        requiresOverride={Boolean(approval.requires_override)}
         blockers={approval.blockers}
       />
 

@@ -49,6 +49,11 @@ class LabelRequest(BaseModel):
     # taught-ready.
     reviewed_by_me: bool = False
     note: str = ""
+    # Why this version is fit to teach despite the approver asking for
+    # revision. Required only when there is something to overrule, and kept
+    # with the version — an override nobody can find later is not a decision,
+    # it is a hole.
+    override_reason: str = ""
 
 
 class CommentRequest(BaseModel):
@@ -182,9 +187,28 @@ def apply_label(
                 '"reviewed_by_me": true to sign for it.',
                 detail=state,
             )
+        if state.get("requires_override") and not payload.override_reason.strip():
+            raise_api_error(
+                "VALIDATION_FAILED",
+                "The approver asked for revision: "
+                + "; ".join(state["warnings"])
+                + ". You may approve over that — a model's judgement is not the "
+                  "last word, and this one has scored the same unchanged "
+                  "artifact 60 points apart on separate runs. Send "
+                  '"override_reason" saying why this version is fit to teach, '
+                  "and it is recorded against the version.",
+                detail=state,
+            )
         if payload.note:
             registry.add_comment(
                 artifact_id, payload.note,
+                author=getattr(auth, "subject", ""), dimension="approval",
+            )
+        if payload.override_reason.strip():
+            registry.add_comment(
+                artifact_id,
+                f"Approved over the approver's objection. Reason: "
+                f"{payload.override_reason.strip()}",
                 author=getattr(auth, "subject", ""), dimension="approval",
             )
 
