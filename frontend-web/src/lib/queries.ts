@@ -501,6 +501,43 @@ export function useArtifactActions(artifactId: string) {
         qc.invalidateQueries({ queryKey: ["progress"] });
       },
     }),
+    /** Review it, fix what the review found, review it again — until it meets
+     *  the target or stops improving. "pass at 83%" with four open findings
+     *  was being read as finished, because one number was doing the work of
+     *  two: "not broken" and "stop working on it" are different bars. */
+    refine: useMutation({
+      mutationFn: (v: {
+        provider?: string;
+        model?: string;
+        overall_target?: number;
+        dimension_target?: number;
+        max_cycles?: number;
+      } = {}) =>
+        api<{
+          best_artifact_id: string;
+          best_overall: number;
+          met_target: boolean;
+          stopped_because: string;
+          cycles_run: number;
+          target: { overall: number; dimension: number };
+          outstanding: { severity: string; where: string; what: string; fix: string }[];
+          cycles: {
+            cycle: number; artifact_id: string; version: number; overall: number;
+            weakest: string; weakest_score: number; verdict: string;
+            open_issues: any[]; regenerated_to: string; error: string;
+          }[];
+          approval: ApprovalState;
+        }>("/api/v1/artifacts/refine", {
+          method: "POST",
+          body: JSON.stringify({ artifact_id: artifactId, ...v }),
+        }),
+      onSuccess: () => {
+        refresh();
+        qc.invalidateQueries({ queryKey: ["artifacts"] });
+        qc.invalidateQueries({ queryKey: ["artifact-versions"] });
+        qc.invalidateQueries({ queryKey: ["progress"] });
+      },
+    }),
     /** Throw a draft away. Refused server-side while a label points at it, so
      *  nothing silently loses its approved copy. */
     discard: useMutation({
@@ -1921,4 +1958,133 @@ export function useDesignDocument(designId: string, page: number, query: string)
     enabled: Boolean(designId),
     staleTime: 5 * 60_000,
   });
+}
+
+
+// ── The pipeline board ───────────────────────────────────────────────────────
+// A grade is a project, a subject is a branch of it, and each stage is a build
+// step with its own gate. Everything needed to answer "where is this grade?"
+// existed and was spread across five screens.
+
+export type StagePolicy = {
+  stage: string;
+  required_layers: number[];
+  min_vendors: number;
+  overall_target: number;
+  dimension_target: number;
+  requires_human: boolean;
+  blocks_downstream: boolean;
+  max_refine_cycles: number;
+  updated_by: string;
+  why: string;
+};
+
+export type BoardStage = {
+  stage: string;
+  label: string;
+  status: string;
+  expected: number;
+  built: number;
+  reviewed: number;
+  approved: number;
+  running: number;
+  failed: number;
+  percentage: number;
+  cost_usd: number;
+  last_run: string;
+  blocked_by: string;
+  policy: StagePolicy;
+};
+
+export type BoardBranch = {
+  subject: string;
+  status: string;
+  blocking_stage: string;
+  blocked_by: string;
+  cost_usd: number;
+  stages: BoardStage[];
+};
+
+export type BoardProject = {
+  grade: string;
+  label: string;
+  branches: number;
+  by_status: Record<string, number>;
+  cost_usd: number;
+  subjects: BoardBranch[];
+};
+
+/** Every grade with anything in it, and its state at a glance. */
+export function usePipelines() {
+  const api = useApi();
+  return useQuery({
+    queryKey: ["pipelines"],
+    queryFn: () =>
+      api<{
+        projects: {
+          grade: string; label: string; subjects: number; sub_strands: number;
+          running: number; failed: number; cost_usd: number;
+        }[];
+        stages: StagePolicy[];
+      }>("/api/v1/pipelines"),
+    // A board with work in flight is watched; an idle one is not polled all day.
+    refetchInterval: (query) => {
+      const data = query.state.data as { projects?: { running: number }[] } | undefined;
+      return data?.projects?.some((p) => p.running > 0) ? 5000 : false;
+    },
+  });
+}
+
+/** One grade, stage by stage, subject by subject. */
+export function usePipeline(grade: string) {
+  const api = useApi();
+  return useQuery({
+    queryKey: ["pipeline", grade],
+    queryFn: () => api<BoardProject>(`/api/v1/pipelines/${encodeURIComponent(grade)}`),
+    enabled: Boolean(grade),
+    refetchInterval: (query) => {
+      const data = query.state.data as BoardProject | undefined;
+      const busy = data?.subjects?.some((s) =>
+        s.stages.some((st) => st.running > 0)
+      );
+      return busy ? 5000 : false;
+    },
+  });
+}
+
+/** What each stage has to pass before its output moves on. */
+export function useStagePolicies() {
+  const api = useApi();
+  const qc = useQueryClient();
+  const list = useQuery({
+    queryKey: ["stage-policies"],
+    queryFn: () =>
+      api<{ policies: StagePolicy[]; stages: string[] }>("/api/v1/pipelines/policies"),
+  });
+  const refresh = () => {
+    qc.invalidateQueries({ queryKey: ["stage-policies"] });
+    qc.invalidateQueries({ queryKey: ["pipeline"] });
+    qc.invalidateQueries({ queryKey: ["pipelines"] });
+  };
+  return {
+    list,
+    save: useMutation({
+      mutationFn: (v: { stage: string } & Partial<StagePolicy>) => {
+        const { stage, ...rest } = v;
+        return api<{ policy: StagePolicy }>(
+          `/api/v1/pipelines/policies/${encodeURIComponent(stage)}`,
+          { method: "PUT", body: JSON.stringify(rest) }
+        );
+      },
+      onSuccess: refresh,
+    }),
+    reset: useMutation({
+      mutationFn: (stage: string) =>
+        api<{ policy: StagePolicy }>(
+          `/api/v1/pipelines/policies/${encodeURIComponent(stage)}`,
+          { method: "DELETE" }
+        ),
+      onSuccess: refresh,
+    }),
+  };
 }

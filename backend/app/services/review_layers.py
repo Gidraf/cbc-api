@@ -350,6 +350,37 @@ def _schema_block() -> str:
     return "\n".join(lines)
 
 
+# Kinds that are drawn FROM the plan rather than beside it. Judging one of
+# these on its own terms answers "is this a good diagram?" and never "is this a
+# diagram of THIS lesson?".
+DRAWN_FROM_PLAN = ("diagram", "photo_prompt", "video_prompt", "simulation",
+                   "activity", "experiment")
+
+
+def _linkage_block(artifact: Any, plan: dict[str, Any] | None) -> str:
+    """What the lesson plan teaches, against what this asset depicts.
+
+    An asset planner given a sub-strand's title and outcomes will happily
+    return a soil-profile schematic for a lesson that never mentions soil. The
+    diagram is then drawn, reviewed on its own terms, approved, and printed
+    beside a lesson it illustrates nothing in — because every check downstream
+    asks whether the diagram is good, and none asks whether the lesson contains
+    it.
+    """
+    if getattr(artifact, "kind", "") not in DRAWN_FROM_PLAN or not plan:
+        return ""
+    from . import topic_linkage
+
+    content = getattr(artifact, "content", None)
+    if not content:
+        return ""
+    try:
+        return topic_linkage.render(topic_linkage.check(content, plan))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Could not match this asset against its plan: %s", exc)
+        return ""
+
+
 def _repetition_block(artifact: Any) -> str:
     """What in this artifact is a copy of something else in it.
 
@@ -443,6 +474,8 @@ def build_messages(
     artifact: Any, layer: int, *,
     design_extract: str = "", missing_design: str = "", descendants: str = "",
     design_inventory: str = "",
+    # The lesson plan this asset was drawn from, for the kinds that are.
+    plan_content: dict[str, Any] | None = None,
     # The page-addressed document, as distinct from the summary above. Only
     # this can settle whether "203:26" is real.
     design_source_text: str = "",
@@ -570,6 +603,10 @@ def build_messages(
 
     if design_extract:
         user += ["=== WHAT THE KICD DESIGN SAYS ===", design_extract, ""]
+
+    linkage_block = _linkage_block(artifact, plan_content)
+    if linkage_block:
+        user += [linkage_block, ""]
 
     repetition_block = _repetition_block(artifact)
     if repetition_block:

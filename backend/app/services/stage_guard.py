@@ -71,6 +71,54 @@ def _hours_from(notes_content: Any) -> list[Artifact]:
     return out
 
 
+# Stations that build ON the lesson plan rather than beside it: a diagram, a
+# photo, a video, a simulation and an activity are all drawn from what the plan
+# says is taught. Generating them from an unapproved plan means drawing the
+# lesson that is about to change.
+DOWNSTREAM_OF_PLAN = ("diagram", "media", "photo_prompt", "video_prompt",
+                      "simulation", "activity", "experiment")
+
+
+def require_approved_plan(kind: str, grade: str, subject: str,
+                          sub_strand: str) -> dict[str, Any]:
+    """Refuse to draw a lesson nobody has signed off yet.
+
+    Not a hard refusal in every case — an operator experimenting on one
+    sub-strand should not have to run the whole approval chain first. But the
+    default is to say so, because a diagram planned from a plan that then
+    changes is a diagram of a lesson that no longer exists, and nothing
+    downstream notices: it is a perfectly good picture of the wrong thing.
+    """
+    from . import artifact_registry
+
+    if kind not in DOWNSTREAM_OF_PLAN:
+        return {"required": False}
+
+    plans = artifact_registry.search(grade, subject, "notes", sub_strand, limit=5)
+    if not plans:
+        return {"required": True, "approved": False, "plan": None,
+                "reason": f"There is no lesson plan filed for '{sub_strand}'."}
+
+    for plan in plans:
+        labels = plan.get("labels") or []
+        if "approved" in labels or plan.get("status") == "approved":
+            return {"required": True, "approved": True,
+                    "plan": plan.get("artifact_id"),
+                    "version": plan.get("version")}
+
+    newest = plans[0]
+    return {
+        "required": True, "approved": False,
+        "plan": newest.get("artifact_id"), "version": newest.get("version"),
+        "reason": (
+            f"Version {newest.get('version')} of the lesson plan for "
+            f"'{sub_strand}' has not been approved. What is drawn here comes "
+            f"from what the plan says is taught, so approving the plan first "
+            f"is what stops this being a picture of a lesson that then changes."
+        ),
+    }
+
+
 def require_context(
     stage: str,
     *,

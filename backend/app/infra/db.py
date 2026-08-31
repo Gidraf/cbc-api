@@ -814,6 +814,40 @@ MIGRATIONS: list[tuple[str, str]] = [
         ALTER TABLE jobs ADD COLUMN IF NOT EXISTS cost_usd NUMERIC(12,6) NOT NULL DEFAULT 0;
         """,
     ),
+    (
+        "026_stage_policy",
+        """
+        -- What each stage has to pass before its output may move on.
+        --
+        -- The gate was one rule for everything: two layers, two vendors, a
+        -- person signs. That is right for a lesson plan and absurd for reading
+        -- a strand list out of a table — so operators either ran a full review
+        -- chain on an extraction, or turned the gate off and lost it for the
+        -- lesson plan too.
+        --
+        -- A stage is a build step; this is its quality gate, and it is
+        -- configured per step the way a pipeline configures its own tests.
+        CREATE TABLE IF NOT EXISTS stage_policies (
+            stage TEXT PRIMARY KEY,
+            -- Which review layers must have run. Empty means none required.
+            required_layers INTEGER[] NOT NULL DEFAULT '{}',
+            -- How many distinct vendors those layers must span. Two models
+            -- from one vendor share failure modes.
+            min_vendors INTEGER NOT NULL DEFAULT 1,
+            -- The bar for "finished", as distinct from "not broken".
+            overall_target INTEGER NOT NULL DEFAULT 90,
+            dimension_target INTEGER NOT NULL DEFAULT 85,
+            -- Whether a person must sign before this stage's output is used.
+            requires_human BOOLEAN NOT NULL DEFAULT TRUE,
+            -- Whether the next stage may start before this one is approved.
+            blocks_downstream BOOLEAN NOT NULL DEFAULT TRUE,
+            -- How many times the refinement loop may try before giving up.
+            max_refine_cycles INTEGER NOT NULL DEFAULT 3,
+            updated_by TEXT NOT NULL DEFAULT '',
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        """,
+    ),
 ]
 
 

@@ -18,6 +18,7 @@ import { DiagramLibrary } from "./views/DiagramLibrary";
 import { ExamBuilder } from "./views/ExamBuilder";
 import { MediaLibrary } from "./views/MediaLibrary";
 import { Overview } from "./views/Overview";
+import { Pipelines } from "./views/Pipelines";
 import { QuestionBank } from "./views/QuestionBank";
 import { Review } from "./views/Review";
 import { SignIn } from "./views/SignIn";
@@ -68,6 +69,7 @@ function Router() {
     <Routes>
       <Route element={<AppShell />}>
         <Route index element={<Screen name="Overview"><Overview /></Screen>} />
+        <Route path="pipelines" element={<Screen name="Pipelines"><Pipelines /></Screen>} />
         <Route path="coverage" element={<Screen name="Curriculum coverage"><Coverage /></Screen>} />
         <Route path="factory" element={<Screen name="Content factory"><ContentFactory /></Screen>} />
         <Route path="questions" element={<Screen name="Question bank"><QuestionBank /></Screen>} />

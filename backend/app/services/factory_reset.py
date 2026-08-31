@@ -39,10 +39,31 @@ class Target:
     # Where the scope lives inside a JSONB column instead of its own.
     grade_json: str = ""
     subject_json: str = ""
+    # Rows reachable only through an artifact's key. These tables carry no
+    # grade of their own, so a grade-scoped reset used to SKIP them — deleting
+    # the artifacts and leaving their reviews, labels, comments and
+    # fingerprints behind, pointing at rows that no longer exist. That is the
+    # same orphaning the scoped delete was fixed for, still here.
+    via_artifacts: str = ""
 
     def where(self, grade: str, subject: str) -> tuple[str, dict[str, Any]]:
         clauses: list[str] = []
         params: dict[str, Any] = {}
+
+        if self.via_artifacts:
+            inner = ["1=1"]
+            if grade:
+                inner.append("(a.grade = :grade OR a.grade = :alt_grade)")
+                params["grade"] = grade
+                params["alt_grade"] = grade.replace("grade-", "")
+            if subject:
+                inner.append("LOWER(a.subject) = LOWER(:subject)")
+                params["subject"] = subject
+            return (
+                f"{self.via_artifacts} IN (SELECT a.artifact_id FROM artifacts a "
+                f"WHERE {' AND '.join(inner)})",
+                params,
+            )
 
         if grade:
             if self.grade_column:
@@ -74,9 +95,12 @@ class Target:
 # Children first, parents last. A reset that removes designs before the
 # sub-strands that reference them leaves rows nothing can resolve.
 DERIVED: tuple[Target, ...] = (
-    Target("artifact_comments", "comments on generated versions"),
-    Target("artifact_reviews", "layered review verdicts"),
-    Target("artifact_labels", "approved/production labels"),
+    Target("artifact_comments", "comments on generated versions",
+           via_artifacts="artifact_id"),
+    Target("artifact_reviews", "layered review verdicts",
+           via_artifacts="artifact_id"),
+    Target("artifact_labels", "approved/production labels",
+           via_artifacts="artifact_id"),
     Target("artifacts", "every generated version",
            grade_column="grade", subject_column="subject"),
     Target("substrand_media", "photo and video briefs and assets",
@@ -86,15 +110,26 @@ DERIVED: tuple[Target, ...] = (
     Target("question_dna", "question bank entries",
            grade_json="curriculum_link->>'grade'", subject_json="curriculum_link->>'subject'"),
     Target("diagram_registry", "rendered diagrams and their parts"),
-    Target("artifact_dna", "content fingerprints"),
+    Target("artifact_dna", "content fingerprints",
+           grade_json="curriculum_link->>'grade'",
+           subject_json="curriculum_link->>'subject'"),
+    # Queued work and the drafts it produced. Left behind, a "start again" left
+    # every unaccepted sub-strand draft in place and a queue still holding jobs
+    # for content that no longer exists — which then ran, and regenerated it.
+    Target("jobs", "queued work and unaccepted drafts",
+           grade_column="grade", subject_column="subject"),
     Target("curriculum_substrands", "sub-strands",
            grade_column="grade", subject_column="subject"),
-    Target("curriculum_nodes", "curriculum tree nodes"),
+    Target("curriculum_nodes", "curriculum tree nodes",
+           grade_column="grade", subject_column="subject"),
     Target("grade_scope", "derived per-grade scope summaries",
            grade_column="grade", subject_column="subject"),
     Target("curriculum_designs", "ingested curriculum designs",
            grade_column="grade", subject_column="subject"),
-    Target("dataset_ingest_status", "which dataset items have been ingested"),
+    # Without this a grade cleared and re-ingested was reported as already
+    # ingested, and the design never came back.
+    Target("dataset_ingest_status", "which dataset items have been ingested",
+           grade_column="grade"),
     Target("pipeline_runs", "pipeline run history"),
     Target("generation_costs", "token and cost records"),
     Target("data_repairs", "recorded repairs"),

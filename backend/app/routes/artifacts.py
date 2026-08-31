@@ -426,8 +426,22 @@ def review_artifact(
             artifact.artifact_id, artifact.kind, exc,
         )
 
+    # The plan an asset was drawn from, so "is this a good diagram?" can be
+    # joined to "is this a diagram of this lesson?".
+    plan_content: dict[str, Any] | None = None
+    if artifact.kind in review_layers.DRAWN_FROM_PLAN and artifact.sub_strand_name:
+        try:
+            found = registry.search(artifact.grade, artifact.subject, "notes",
+                                    artifact.sub_strand_name, limit=1)
+            if found:
+                plan_content = registry.get(found[0]["artifact_id"]).content
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Could not load the plan behind %s: %s",
+                           artifact.artifact_id, exc)
+
     messages = review_layers.build_messages(
         artifact, payload.layer,
+        plan_content=plan_content,
         design_extract=grounding.text,
         design_source_text=design_source_text,
         design_inventory=review_layers.design_inventory(design_source_text),
@@ -659,6 +673,71 @@ def regenerate_artifact(
 
 
 @router.get("/{artifact_id}/revision-directives")
+class RefineRequest(BaseModel):
+    artifact_id: str
+    # Reviewing and approving from one vendor is one opinion asked twice, and
+    # the gate refuses it later — so the vendor is chosen here rather than
+    # discovered at approval time.
+    provider: str = ""
+    model: str = ""
+    layer: int = 2
+    # "Not broken" and "finished" are different bars. `decide()` passes at 80
+    # overall with no dimension under 70, which is the right bar for a gate and
+    # the wrong one for stopping work — an 83 with four open findings read as
+    # done because one number was doing both jobs.
+    overall_target: int = review_layers.__dict__.get("APPROVAL_FLOOR", 80)
+    dimension_target: int = 85
+    max_cycles: int = 3
+
+
+@router.post("/refine")
+def refine_artifact(
+    payload: RefineRequest,
+    auth: AuthContext = Depends(require_roles("admin", "operator")),
+) -> dict[str, Any]:
+    """Review it, fix what the review found, review it again. Until it is good.
+
+    The parts all existed and all waited for a button. A review came back "pass
+    at 83%" with four specific, correct, actionable findings, and every one of
+    them sat there — because "pass" made pressing the button look unnecessary.
+    """
+    from ..services import artifact_refinement, run_log
+
+    artifact = registry.get(payload.artifact_id)
+    if artifact.kind not in _REGENERATORS:
+        raise_api_error(
+            "VALIDATION_FAILED",
+            f"'{artifact.kind}' has no regeneration path, so a finding about it "
+            f"cannot be acted on automatically. Kinds that can: "
+            f"{', '.join(sorted(_REGENERATORS))}.",
+        )
+
+    def review_one(artifact_id: str) -> dict[str, Any]:
+        return review_artifact(
+            ReviewRequest(artifact_id=artifact_id, layer=payload.layer,
+                          provider=payload.provider, model=payload.model),
+            auth,
+        )
+
+    def regenerate_one(artifact_id: str) -> str:
+        result = regenerate_artifact(
+            RegenerateRequest(artifact_id=artifact_id), auth)
+        return str(((result or {}).get("new_artifact") or {}).get("artifact_id") or "")
+
+    report = artifact_refinement.run(
+        payload.artifact_id,
+        review=review_one, regenerate=regenerate_one,
+        overall_target=payload.overall_target,
+        dimension_target=payload.dimension_target,
+        max_cycles=payload.max_cycles,
+        step=lambda name, detail, status: run_log.step(name, detail, status),
+    )
+    return {
+        **report.to_dict(),
+        "approval": review_layers.approval_state(report.best_artifact_id),
+    }
+
+
 def _measured_defects(artifact: Any) -> list[str]:
     """Defects found by comparison rather than by opinion.
 

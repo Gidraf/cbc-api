@@ -248,6 +248,101 @@ export function DiffTable({ artifactId, against = "" }: { artifactId: string; ag
 
 /** Throw one draft away, with the reason it cannot be thrown away when it
  *  cannot. A version holding a label is somebody's approved copy. */
+/**
+ * Edit a draft by hand, and file the result as the next version.
+ *
+ * Everything here could be generated, reviewed and regenerated, and none of it
+ * could be FIXED. An operator who could see exactly what was wrong with one
+ * paragraph had to write a custom instruction, spend a generation, and hope
+ * the model changed that paragraph and nothing else.
+ *
+ * The edit is a new version, never an overwrite: an approved version has
+ * somebody's signature under it, and editing in place would make that
+ * signature mean whatever the content last became.
+ */
+function EditDraft({
+  artifactId,
+  content,
+  version,
+  onEdited,
+}: {
+  artifactId: string;
+  content: Record<string, unknown>;
+  version: number;
+  onEdited?: (artifactId: string) => void;
+}) {
+  const actions = useArtifactActions(artifactId);
+  const [open, setOpen] = React.useState(false);
+  const [text, setText] = React.useState("");
+  const [problem, setProblem] = React.useState("");
+
+  function start() {
+    setText(JSON.stringify(content, null, 2));
+    setProblem("");
+    setOpen(true);
+  }
+
+  function save() {
+    let parsed: Record<string, unknown>;
+    try {
+      parsed = JSON.parse(text);
+    } catch (err) {
+      // Told here rather than by the server, so a misplaced comma costs a
+      // moment instead of a round trip and a stack trace.
+      setProblem(err instanceof Error ? err.message : "That is not valid JSON.");
+      return;
+    }
+    setProblem("");
+    actions.edit.mutate(parsed, {
+      onSuccess: (filed: any) => {
+        setOpen(false);
+        if (filed?.artifact_id) onEdited?.(filed.artifact_id);
+      },
+    });
+  }
+
+  if (!open) {
+    return (
+      <Button size="sm" variant="secondary" onClick={start}>
+        Edit
+      </Button>
+    );
+  }
+
+  return (
+    <div style={{ marginTop: "var(--s3)" }}>
+      <p style={{ fontSize: "var(--text-sm)", color: "var(--ink-2)", margin: "0 0 var(--s2)" }}>
+        Editing version {version}. Saving files the result as a <strong>new
+        version</strong> — this one is left exactly as it is, with whatever has
+        been signed for it.
+      </p>
+      <Textarea
+        rows={24}
+        value={text}
+        spellCheck={false}
+        onChange={(e) => setText(e.target.value)}
+        style={{ fontFamily: "var(--mono, monospace)", fontSize: "var(--text-sm)" }}
+      />
+      {problem && (
+        <p style={{ color: "var(--danger)", fontSize: "var(--text-sm)", margin: "var(--s2) 0 0" }}>
+          {problem}
+        </p>
+      )}
+      <Stack direction="row" gap="var(--s2)" style={{ marginTop: "var(--s2)" }}>
+        <Button size="sm" disabled={actions.edit.isPending} onClick={save}>
+          {actions.edit.isPending ? "Filing…" : "Save as the next version"}
+        </Button>
+        <Button size="sm" variant="ghost" onClick={() => setOpen(false)}>
+          Cancel
+        </Button>
+        <CopyButton getText={() => text} label="Copy" />
+      </Stack>
+      {actions.edit.error && <ErrorNotice error={actions.edit.error} />}
+    </div>
+  );
+}
+
+
 function DiscardVersion({
   artifactId,
   version,
@@ -580,8 +675,81 @@ function RunReview({
         >
           {actions.review.isPending ? "Reviewing…" : `Run layer ${layer}`}
         </Button>
+        <Button
+          size="sm"
+          variant="secondary"
+          disabled={actions.refine.isPending || sameVendor}
+          loading={actions.refine.isPending}
+          title={
+            sameVendor
+              ? "Pick a vendor that did not write this first."
+              : "Review it, regenerate from what the review found, review again — until every dimension clears the target or it stops improving."
+          }
+          onClick={() => actions.refine.mutate({ provider, model })}
+        >
+          {actions.refine.isPending ? "Refining…" : "Review and refine"}
+        </Button>
       </Stack>
       {actions.review.error && <ErrorNotice error={actions.review.error} />}
+      {actions.refine.error && <ErrorNotice error={actions.refine.error} />}
+
+      {/* What the loop actually did. "pass at 83%" with four open findings was
+          being read as finished, because one number was doing the work of two:
+          "not broken" and "stop working on it" are different bars. */}
+      {actions.refine.data && (
+        <div
+          style={{
+            marginTop: "var(--s3)",
+            padding: "var(--s3)",
+            border: `1px solid var(--${actions.refine.data.met_target ? "ok" : "warn"})`,
+            background: `var(--${actions.refine.data.met_target ? "ok" : "warn"}-wash)`,
+            borderRadius: "var(--radius)",
+            fontSize: "var(--text-sm)",
+          }}
+        >
+          <Stack direction="row" gap="var(--s2)" style={{ flexWrap: "wrap", alignItems: "center" }}>
+            <Badge tone={actions.refine.data.met_target ? "ok" : "warn"}>
+              {actions.refine.data.met_target ? "target met" : "stopped short"}
+            </Badge>
+            <strong>{actions.refine.data.best_overall}/100</strong>
+            <span style={{ color: "var(--ink-2)" }}>
+              target {actions.refine.data.target.overall} overall,{" "}
+              {actions.refine.data.target.dimension} on every dimension ·{" "}
+              {actions.refine.data.cycles_run} cycle
+              {actions.refine.data.cycles_run === 1 ? "" : "s"}
+            </span>
+          </Stack>
+
+          <ol style={{ margin: "var(--s2) 0 0", paddingLeft: "1.2rem", color: "var(--ink-2)" }}>
+            {actions.refine.data.cycles.map((c) => (
+              <li key={c.cycle} style={{ marginBottom: "3px" }}>
+                v{c.version} — {c.overall}/100, weakest{" "}
+                {String(c.weakest).replace(/_/g, " ")} at {c.weakest_score}
+                {c.open_issues.length > 0 &&
+                  `, ${c.open_issues.length} open finding${c.open_issues.length === 1 ? "" : "s"}`}
+                {c.regenerated_to && " → regenerated"}
+                {c.error && ` — ${c.error}`}
+              </li>
+            ))}
+          </ol>
+
+          {!actions.refine.data.met_target && (
+            <p style={{ margin: "var(--s2) 0 0", color: "var(--ink-2)" }}>
+              Stopped because{" "}
+              {String(actions.refine.data.stopped_because).replace(/_/g, " ")}.
+              {actions.refine.data.outstanding.length > 0 && (
+                <ul style={{ margin: "4px 0 0", paddingLeft: "1.1rem" }}>
+                  {actions.refine.data.outstanding.map((i, n) => (
+                    <li key={n}>
+                      [{i.severity}] {i.where}: {i.what} → {i.fix}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </p>
+          )}
+        </div>
+      )}
       {actions.review.data?.reviewed_a_diff && (
         <p style={{ marginTop: "var(--s2)", color: "var(--ink-3)", fontSize: "var(--text-sm)" }}>
           A regeneration, so the reviewer judged what changed rather than re-reading the whole thing.
@@ -853,7 +1021,13 @@ export function VersionReview({
                 artifactId={data.artifact_id}
               />
             )}
-            <Stack direction="row" gap="var(--s2)" style={{ flexWrap: "wrap" }}>
+            <Stack direction="row" gap="var(--s2)" style={{ flexWrap: "wrap", alignItems: "center" }}>
+              <EditDraft
+                artifactId={data.artifact_id}
+                content={data.content}
+                version={data.version}
+                onEdited={(id) => select(id)}
+              />
               <CopyButton
                 label={`Copy the ${readable(data.kind).toLowerCase()}`}
                 title="Copy this version's content as an outline, to check it in another model"

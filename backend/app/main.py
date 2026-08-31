@@ -29,6 +29,7 @@ from .routes.curriculum import router as curriculum_router
 from .routes.exams import router as exams_router
 from .routes.questions import router as questions_router
 from .routes.targets import router as targets_router
+from .routes.pipelines import router as pipelines_router
 from .services.auth import AuthContext, authenticate_login, create_access_token, get_auth_context, require_roles
 from .services.browser_agent import browse_page
 from .services.metrics import metrics_service
@@ -56,6 +57,7 @@ app.include_router(artifacts_router)
 app.include_router(questions_router)
 app.include_router(exams_router)
 app.include_router(targets_router)
+app.include_router(pipelines_router)
 
 router = ProviderRouter(runtime_state)
 pipeline_service = PipelineService(router)

@@ -10,6 +10,12 @@ const NAV: { group: string; items: NavItem[] }[] = [
     group: "Produce",
     items: [
       { to: "/", label: "Overview", icon: "◇", hint: "Where the factory stands today" },
+      {
+        to: "/pipelines",
+        label: "Pipelines",
+        icon: "⛓",
+        hint: "Every grade as a project, stage by stage — what is built, what passed, what is stuck",
+      },
       { to: "/coverage", label: "Curriculum coverage", icon: "▤", hint: "What is done and what is left, per grade" },
       { to: "/factory", label: "Content factory", icon: "⚒", right: "generate", hint: "Notes, diagrams, activities, questions" },
     ],

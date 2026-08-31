@@ -5280,6 +5280,26 @@ def factory_generate_material(
             "artifact": versioned}
 
 
+@router.get("/factory/plan-approval")
+def factory_plan_approval(
+    grade: str = Query(...),
+    subject: str = Query(...),
+    sub_strand: str = Query(...),
+    kind: str = Query("diagram"),
+    _: AuthContext = Depends(require_roles("admin", "operator", "reviewer")),
+) -> dict[str, Any]:
+    """Whether the plan this station draws from has been signed off.
+
+    A diagram, a photo brief, a video brief, a simulation and an activity are
+    all drawn from what the plan says is taught. Planned from a plan that then
+    changes, they are perfectly good pictures of the wrong lesson — and nothing
+    downstream notices, because nothing downstream re-reads the plan.
+    """
+    from ..services.stage_guard import require_approved_plan
+
+    return require_approved_plan(kind, grade, subject, sub_strand)
+
+
 @router.get("/factory/notes.pdf")
 def factory_notes_pdf(
     artifact_id: str = Query(..., min_length=1),
