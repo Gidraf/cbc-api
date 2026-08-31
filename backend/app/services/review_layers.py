@@ -373,9 +373,58 @@ def _citation_block(artifact: Any, design_extract: str) -> str:
     return citation_evidence.render(evidence)
 
 
+# How many named references to list. Long enough to be a real inventory, short
+# enough that it does not become the prompt.
+MAX_INVENTORY = 60
+
+
+def design_inventory(design_text: str) -> str:
+    """Every scripture reference the design itself names, for THIS grade.
+
+    A reviewer asked whether content is inside the design has been judging from
+    recall. It scored faith_integrity 100 on a PP1 guide that teaches the
+    Prodigal Son — a parable the PP1 design does not carry; its named stories
+    are Adam and Eve, David and Goliath, the birth of Jesus and the wise men.
+    Nothing was wrong with the reviewer's reasoning; it had no list to check
+    against.
+
+    `fabrication_check` already extracts this to decide whether a reference was
+    invented. Showing the reviewer the same list costs nothing and turns a
+    question of memory into a lookup.
+    """
+    if not design_text.strip():
+        return ""
+    try:
+        from . import fabrication_check
+
+        found = fabrication_check.scripture_in(design_text)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Could not read the design's own references: %s", exc)
+        return ""
+
+    named = sorted({str(r) for r in found if str(r).strip()})[:MAX_INVENTORY]
+    if not named:
+        return ""
+    return "\n".join([
+        "=== EVERY SCRIPTURE REFERENCE THIS DESIGN NAMES ===",
+        "Read off the design mechanically. This is the whole of what the "
+        "design carries for this grade and learning area.",
+        "",
+        "  " + "; ".join(named),
+        "",
+        "A story, parable or figure the artifact teaches that is NOT here came "
+        "from outside the design. It may still be sound Christian teaching and "
+        "still be wrong for this sub-strand: the design chose these and not "
+        "those, and a lesson built on something else is a lesson the scheme of "
+        "work cannot account for. Raise it under curriculum_alignment, naming "
+        "the lesson and the story.",
+    ])
+
+
 def build_messages(
     artifact: Any, layer: int, *,
     design_extract: str = "", missing_design: str = "", descendants: str = "",
+    design_inventory: str = "",
     # The page-addressed document, as distinct from the summary above. Only
     # this can settle whether "203:26" is real.
     design_source_text: str = "",
@@ -507,6 +556,9 @@ def build_messages(
     repetition_block = _repetition_block(artifact)
     if repetition_block:
         user += [repetition_block, ""]
+
+    if design_inventory:
+        user += [design_inventory, ""]
 
     citation_block = _citation_block(artifact, design_source_text)
     if citation_block:

@@ -637,3 +637,70 @@ def test_the_console_offers_the_override_rather_than_a_dead_button():
     assert "requiresOverride && !override.trim()" in panel, \
         "the reason must be required before the button works"
     assert "override_reason: override" in panel
+
+
+# ── what the reviewer is given, and what it is told not to say ──────────────
+
+
+def test_layer_two_reviews_without_seeing_anyone_else_s_verdict():
+    """A reviewer shown someone else's scores anchors to them, which is how
+    three runs of one model produced three different numbers and every later
+    layer inherited whichever it happened to be shown. Layer 3 adjudicates, so
+    it does see them."""
+    import inspect
+
+    from app.routes import artifacts
+
+    source = inspect.getsource(artifacts.review_artifact)
+    assert "if payload.layer >= 3 else []" in source
+
+
+def test_the_reviewer_is_shown_the_designs_own_scripture_rather_than_asked_to_recall_it():
+    """It scored faith_integrity 100 on a PP1 guide teaching the Prodigal Son —
+    a parable the PP1 design does not carry. Nothing was wrong with its
+    reasoning; it had no list to check against."""
+    design = """[PAGE 205]
+205:22  c) tell the story of Adam and Eve,
+[PAGE 209]
+209:29  1Samuel 17:41-49,
+[PAGE 206]
+206:37  watch or listen to the Bible story in; Mark 10:13-16.
+"""
+    block = review.design_inventory(design)
+
+    assert "EVERY SCRIPTURE REFERENCE THIS DESIGN NAMES" in block
+    assert "1Samuel 17:41" in block and "Mark 10:13" in block
+    assert "came from outside the design" in block
+    assert "curriculum_alignment" in block
+
+
+def test_a_design_with_no_named_scripture_produces_no_block():
+    """A Mathematics design names none, and an empty inventory would read as
+    'the design permits nothing'."""
+    assert review.design_inventory("[PAGE 1]\n1:1  Count to ten.\n") == ""
+    assert review.design_inventory("") == ""
+
+
+def test_the_inventory_reaches_the_reviewer():
+    artifact = type("A", (), {"kind": "notes", "grade": "grade-pp1",
+                              "subject": "CRE", "strand_name": "",
+                              "sub_strand_name": "", "version": 1,
+                              "content": {}})()
+    user = review.build_messages(
+        artifact, 2, design_inventory="=== EVERY SCRIPTURE REFERENCE ==="
+    )[1]["content"]
+
+    assert "=== EVERY SCRIPTURE REFERENCE ===" in user
+
+
+def test_a_reviewer_can_read_the_guide_it_is_approving():
+    """The version tab showed an outline and a JSON dump — enough to check a
+    field is present, not enough to notice that a lesson teaches a parable the
+    design does not carry."""
+    import pathlib
+
+    panel = (pathlib.Path(__file__).resolve().parents[2]
+             / "frontend-web/src/views/VersionReview.tsx").read_text()
+
+    assert 'data.kind === "notes" && (' in panel
+    assert "<NotesReader" in panel

@@ -108,7 +108,8 @@ def test_the_block_still_asks_the_reviewer_to_judge_the_claim():
     rendered = citation_evidence.render(
         citation_evidence.resolve(_artifact(["203:26"]), DESIGN)
     )
-    assert "whether the quoted line actually supports the claim" in rendered
+    assert "does each quoted line actually SUPPORT the claim made from it" in rendered
+    assert "it is what you are here for" in rendered
 
 
 # ── wiring ──────────────────────────────────────────────────────────────────
@@ -295,8 +296,11 @@ def test_the_reviewer_is_told_the_two_are_different_defects():
         SHIFTED))
 
     assert "The quote is real and the address is wrong" in rendered
-    assert "is NOT a fabrication" in rendered
-    assert "do NOT let it drag factual_correctness down" in rendered
+    # Stated once, as a settled fact, rather than as another prohibition. Three
+    # successive "do NOT report this" instructions taught the reviewer that
+    # raising a citation problem was dangerous, and it stopped raising any.
+    assert "low-severity citation fix and nothing more" in rendered
+    assert rendered.count("do not") + rendered.count("Do NOT") <= 2
 
 
 def test_the_search_looks_at_the_cited_page_before_the_rest():

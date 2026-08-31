@@ -1,5 +1,6 @@
 import React from "react";
 
+import { NotesReader } from "./NotesReader";
 import {
   Badge,
   Button,
@@ -775,7 +776,18 @@ export function VersionReview({
         <Tabs tabs={tabs} active={tab} onChange={setTab} />
 
         {tab === "content" && (
-          <Stack gap="var(--s2)">
+          <Stack gap="var(--s3)">
+            {/* A person approving a guide has to be able to READ it. This tab
+                showed an outline and a JSON dump — enough to check a field is
+                present, not enough to notice that lesson 4 teaches a parable
+                the design does not carry. */}
+            {data.kind === "notes" && (
+              <NotesReader
+                notes={data.content}
+                subStrand={data.sub_strand_name || data.strand_name || readable(data.kind)}
+                version={data.version}
+              />
+            )}
             <Stack direction="row" gap="var(--s2)" style={{ flexWrap: "wrap" }}>
               <CopyButton
                 label={`Copy the ${readable(data.kind).toLowerCase()}`}
@@ -791,7 +803,7 @@ export function VersionReview({
           <pre
             style={{
               margin: 0,
-              maxHeight: 420,
+              maxHeight: data.kind === "notes" ? 240 : 420,
               overflow: "auto",
               fontSize: "var(--text-sm)",
               background: "var(--surface-2)",

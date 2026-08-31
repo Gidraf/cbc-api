@@ -288,23 +288,23 @@ def render(evidence: dict[str, Any]) -> str:
         lines.append("")
 
     lines += [
-        "A citation marked VERIFIED is real. Do NOT report it as fabricated — "
-        "it has been checked against the document, which you have not been "
-        "shown in full.",
-        "What IS worth your judgement: whether the quoted line actually "
-        "supports the claim made from it. An address can resolve and still be "
-        "cited for something it does not say.",
-        "Report as fabricated the addresses marked MALFORMED, PAGE NOT IN THE "
-        "DESIGN or LINE NOT ON THAT PAGE — and every one marked ADDRESS REAL, "
-        "QUOTE NOT THERE. That last one is the worst case: a real address "
-        "lends its authority to a sentence nobody wrote, and it passes every "
-        "check a reader would think to make. Score factual_correctness low for "
-        "it and name the quote.",
-        "An address marked QUOTE IS REAL, AT … is NOT a fabrication. The "
-        "sentence was found in the design at the address given after the "
-        "comma; only the reference is off. Raise it as a low-severity citation "
-        "fix and do NOT let it drag factual_correctness down as an invention "
-        "would — the difference between a wrong page number and a written "
-        "quotation is the whole of what this dimension measures.",
+        "These statuses are SETTLED. Each address was looked up in the "
+        "document before you saw it, and the result is a fact, not an "
+        "opinion — do not re-litigate them, in either direction:",
+        "  VERIFIED, or QUOTE IS REAL AT … — the sentence is genuinely in the "
+        "design. The second means only that the reference points at the wrong "
+        "line; say so as a low-severity citation fix and nothing more.",
+        "  MALFORMED, PAGE NOT IN THE DESIGN, LINE NOT ON THAT PAGE, or "
+        "ADDRESS REAL, QUOTE NOT THERE — the sentence is NOT in the design. "
+        "That is a fabrication: a real-looking reference under a sentence "
+        "nobody wrote, which passes every check a reader would think to make. "
+        "Name it under factual_correctness and score it low.",
+        "",
+        "WHAT IS STILL YOURS TO JUDGE — and it is the only thing above that "
+        "is: does each quoted line actually SUPPORT the claim made from it? "
+        "An address can resolve, and its sentence be real, and still be cited "
+        "for something it does not say. Read the claim beside the line and say "
+        "whether the one follows from the other. That is the defect the "
+        "mechanical check cannot see, and it is what you are here for.",
     ]
     return "\n".join(lines)

@@ -372,8 +372,14 @@ def review_artifact(
     #
     # `reviews_for` orders by layer then newest-first, so the first row for a
     # layer is the one that still stands.
+    # Layer 2 sees NO earlier verdict. It is the independent read, and a
+    # reviewer shown someone else's scores anchors to them — which is how three
+    # runs of the same model produced three different numbers and every later
+    # layer inherited whichever it happened to be shown. Layer 3 is
+    # adjudicating rather than reviewing, so it does see them.
     prior, superseded = [], {}
-    for row in review_layers.reviews_for(artifact.artifact_id):
+    for row in (review_layers.reviews_for(artifact.artifact_id)
+                if payload.layer >= 3 else []):
         layer = int(row["layer"])
         if layer >= payload.layer:
             continue
@@ -424,6 +430,7 @@ def review_artifact(
         artifact, payload.layer,
         design_extract=grounding.text,
         design_source_text=design_source_text,
+        design_inventory=review_layers.design_inventory(design_source_text),
         missing_design=grounding.missing_reason,
         descendants=grounding.descendants,
         register=register_block(artifact.grade),

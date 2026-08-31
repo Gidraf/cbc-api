@@ -120,6 +120,20 @@ def _is_analogy(sentence: str) -> bool:
     return any(marker in lowered for marker in _ANALOGY_MARKERS)
 
 
+def scripture_in(design_text: str) -> list[str]:
+    """Every scripture reference this design names.
+
+    Extracted here already to decide whether a reference in the content was
+    invented. Exposed so the reviewer can be shown the same list rather than
+    judging from recall — it scored faith_integrity 100 on a PP1 guide teaching
+    a parable the PP1 design does not carry.
+    """
+    return sorted({
+        f"{m.group(1).strip()} {m.group(2)}:{m.group(3)}"
+        for m in _SCRIPTURE.finditer(design_text or "")
+    })
+
+
 def check(content: Any, design_text: str = "", has_sources: bool = False) -> FabricationReport:
     """Everything the guide asserts that the design does not support."""
     report = FabricationReport()
