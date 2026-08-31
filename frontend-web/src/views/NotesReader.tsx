@@ -174,9 +174,13 @@ function Lesson({ module, n }: { module: HourModule & any; n: number }) {
 export function NotesReader({
   notes,
   subStrand,
+  version = 0,
 }: {
   notes: any;
   subStrand: string;
+  /** Non-zero when this is a version read back from the store rather than the
+   *  output of the run that is on screen. */
+  version?: number;
 }) {
   const modules = hourModulesOf(notes);
 
@@ -192,7 +196,10 @@ export function NotesReader({
   return (
     <Card
       title="Read the guide"
-      description={`${modules.length} lesson${modules.length === 1 ? "" : "s"} for ${subStrand}`}
+      description={
+        `${modules.length} lesson${modules.length === 1 ? "" : "s"} for ${subStrand}` +
+        (version ? ` · saved version ${version}` : "")
+      }
       actions={
         <Stack direction="row" gap="var(--s2)">
           <CopyButton getText={() => toReadable(notes)} label="Copy as text" />

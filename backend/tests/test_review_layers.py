@@ -527,3 +527,47 @@ def test_a_layer_1_that_never_ran_is_not_a_blocker(monkeypatch) -> None:
     state = review.approval_state("a")
 
     assert not any("layer 1" in b for b in state["blockers"])
+
+
+# ── what reaches the next layer ─────────────────────────────────────────────
+
+
+def _route_source() -> str:
+    import inspect
+
+    from app.routes import artifacts
+
+    return inspect.getsource(artifacts.review_artifact)
+
+
+def test_only_the_latest_review_of_each_layer_reaches_the_next_one():
+    """A layer-2 review run four times gave factual_correctness 95, 40, 100 and
+    70 on identical content, and all four were pasted into the layer-3 prompt
+    from one vendor, contradicting each other. That is not four opinions; it is
+    one model's instability."""
+    source = _route_source()
+
+    assert "if layer in superseded:" in source
+    assert "prior.append(row)" in source
+
+
+def test_a_layer_that_disagreed_with_itself_is_reported_as_one_line():
+    """Instability is a signal. Three more full reviews are not."""
+    source = _route_source()
+
+    assert "HOW STEADY THE EARLIER LAYERS WERE" in source
+    assert "a spread of" in source
+    assert "confidence as low" in source
+
+
+def test_an_unparseable_response_is_not_recorded_as_a_rejection():
+    """Every dimension zero, a low overall, and a verdict of "reject" that
+    looked exactly like a judgement. A reviewer that did not answer has not
+    rejected anything, and recording it blocks approval for a reason nobody can
+    act on."""
+    source = _route_source()
+
+    assert 'if not (content.get("dimensions") or {}):' in source
+    assert "returned no scored dimensions" in source
+    # And it says how big the prompt was, because that is the usual cause.
+    assert "characters; if the artifact is large" in source

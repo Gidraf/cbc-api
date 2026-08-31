@@ -336,8 +336,47 @@ def review_artifact(
             artifact.artifact_id, artifact.kind, grounding.missing_reason,
         )
 
-    prior = [r for r in review_layers.reviews_for(artifact.artifact_id)
-             if int(r["layer"]) < payload.layer]
+    # The LATEST review from each earlier layer, not every one ever run.
+    #
+    # A layer-2 review run four times gave factual_correctness 95, then 40,
+    # then 100, then 70 on identical content — and all four were pasted into
+    # the layer-3 prompt, from one vendor, contradicting each other. That is
+    # not four opinions; it is one model's instability, and averaging it is
+    # worse than reading it once. It also pushed the prompt past 90,000
+    # characters, which is how a layer-3 response comes back truncated and
+    # unparseable.
+    #
+    # `reviews_for` orders by layer then newest-first, so the first row for a
+    # layer is the one that still stands.
+    prior, superseded = [], {}
+    for row in review_layers.reviews_for(artifact.artifact_id):
+        layer = int(row["layer"])
+        if layer >= payload.layer:
+            continue
+        if layer in superseded:
+            superseded[layer].append(row)
+        else:
+            superseded[layer] = []
+            prior.append(row)
+
+    # Instability IS a signal, so it is reported — as one line, not as three
+    # more full reviews.
+    unstable = []
+    for layer, older in superseded.items():
+        if not older:
+            continue
+        scores = [int(r.get("overall_confidence") or 0) for r in older]
+        current = next(int(r.get("overall_confidence") or 0)
+                       for r in prior if int(r["layer"]) == layer)
+        spread = max(scores + [current]) - min(scores + [current])
+        if spread >= 10:
+            unstable.append(
+                f"Layer {layer} has been run {len(older) + 1} times on this "
+                f"version and scored {', '.join(str(s) for s in [current] + scores)} "
+                f"out of 100 — a spread of {spread} points on unchanged "
+                f"content. Only the most recent is shown below. Treat that "
+                f"layer's confidence as low."
+            )
     human = [str(c.get("body") or "") for c in registry.comments_for(artifact.artifact_id)
              if not c.get("resolved")]
 
@@ -368,6 +407,10 @@ def review_artifact(
         prior_reviews=prior, human_comments=human,
         diff_summary=diff_summary or None,
     )
+    if unstable:
+        messages.append({"role": "user",
+                         "content": "=== HOW STEADY THE EARLIER LAYERS WERE ===\n"
+                                    + "\n".join(unstable)})
     if payload.custom_instructions:
         messages.append({"role": "user", "content": payload.custom_instructions})
 
@@ -376,6 +419,22 @@ def review_artifact(
     )
     response = llm_client.generate(resolved, messages, temperature=0.1)
     content = response.content if isinstance(response.content, dict) else {}
+
+    # An unparseable response used to become a review: every dimension zero,
+    # a low overall, and a verdict of "reject" that looked exactly like a
+    # judgement. A reviewer that did not answer has not rejected anything, and
+    # recording it as a rejection blocks approval for a reason nobody can act
+    # on.
+    if not (content.get("dimensions") or {}):
+        raise_api_error(
+            "VALIDATION_FAILED",
+            f"Layer {payload.layer} ({resolved.provider}/{resolved.model}) "
+            f"returned no scored dimensions, so there is nothing to record. "
+            f"The prompt was {sum(len(m.get('content', '')) for m in messages):,} "
+            f"characters; if the artifact is large, the response may have been "
+            f"cut off before the JSON closed. Try again, or use a model with a "
+            f"larger output budget.",
+        )
 
     verdict = review_layers.from_response(
         content, artifact, payload.layer, resolved.provider, resolved.model

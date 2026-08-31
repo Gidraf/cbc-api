@@ -702,7 +702,35 @@ def test_there_is_somewhere_to_read_the_guide_as_a_document():
     factory = (views / "ContentFactory.tsx").read_text()
 
     assert "export function NotesReader" in reader
-    assert "<NotesReader notes={notes}" in factory
+    assert "<NotesReader" in factory
     # The handover between topics is what makes it a lesson rather than four
     # paragraphs, so it has to be visible.
     assert "segment.bridge" in reader
+
+
+def test_the_reader_shows_a_guide_this_session_did_not_generate():
+    """Held only in React state, the guide was visible for as long as the tab
+    stayed open on the run that produced it: a refresh, a navigation, or
+    opening a sub-strand generated yesterday all showed nothing, with the notes
+    sitting in the database the whole time."""
+    import pathlib
+
+    factory = (pathlib.Path(__file__).resolve().parents[2]
+               / "frontend-web/src/views/ContentFactory.tsx").read_text()
+
+    assert "const savedNotes = useArtifacts({" in factory
+    assert "kind: \"notes\"" in factory
+    assert "const readableNotes =" in factory
+    assert "<NotesReader\n                notes={readableNotes}" in factory
+    # The workbench reads the same guide, or it disagrees with the reader about
+    # what the sub-strand contains.
+    assert "notes={readableNotes}" in factory
+
+
+def test_a_guide_read_back_from_the_store_says_which_version_it_is():
+    import pathlib
+
+    reader = (pathlib.Path(__file__).resolve().parents[2]
+              / "frontend-web/src/views/NotesReader.tsx").read_text()
+
+    assert "saved version" in reader

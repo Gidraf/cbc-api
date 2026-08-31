@@ -11,7 +11,7 @@ import { QueuePanel } from "./QueuePanel";
 import { ResetPanel } from "./ResetPanel";
 import { VersionReview } from "./VersionReview";
 import { stationToText } from "../lib/serialize";
-import { useArtifacts, useDesigns, useExportBundle, useInspect, profileFor, useProfiles, gradeOptionLabel, subjectOptionLabel, useApi, useGrades, useProgress, useQueuedJob, useSavedSubstrands, useStoredStructure, useSubjects, STATION_KIND } from "../lib/queries";
+import { useArtifact, useArtifacts, useDesigns, useExportBundle, useInspect, profileFor, useProfiles, gradeOptionLabel, subjectOptionLabel, useApi, useGrades, useProgress, useQueuedJob, useSavedSubstrands, useStoredStructure, useSubjects, STATION_KIND } from "../lib/queries";
 import { useQueryClient } from "@tanstack/react-query";
 
 /**
@@ -507,6 +507,22 @@ export function ContentFactory() {
   // The notes are the source for every per-hour asset, so they are held for the
   // workbench rather than only shown as the last station's output.
   const [notes, setNotes] = React.useState<any>(null);
+
+  // …and read back from the last filed version when this session did not
+  // generate them. Held only in state, the guide was visible for as long as
+  // the tab stayed open on the run that produced it: a refresh, a navigation,
+  // or opening a sub-strand generated yesterday all showed nothing, with the
+  // notes sitting in the database the whole time.
+  const savedNotes = useArtifacts({
+    grade: effectiveGrade,
+    subject,
+    kind: "notes",
+    sub_strand: substrand,
+  });
+  const savedNotesId = notes ? "" : savedNotes.data?.artifacts?.[0]?.artifact_id || "";
+  const savedNotesArtifact = useArtifact(savedNotesId);
+  const readableNotes =
+    notes || (savedNotesId ? savedNotesArtifact.data?.content : null);
   // A subject with no skill still generates — with a generic profile. That is
   // invisible in the output, so say it before the tokens are spent.
   const profiles = useProfiles();
@@ -1031,17 +1047,21 @@ export function ContentFactory() {
 
             {/* The console could produce notes, score them, review them and
                 approve them, and never once show them as prose. */}
-            {notes && selected && (
-              <NotesReader notes={notes} subStrand={selected.report.sub_strand_name} />
+            {readableNotes && selected && (
+              <NotesReader
+                notes={readableNotes}
+                subStrand={selected.report.sub_strand_name}
+                version={notes ? 0 : savedNotesArtifact.data?.version || 0}
+              />
             )}
 
-            {notes && selected && (
+            {readableNotes && selected && (
               <HourWorkbench
                 grade={effectiveGrade}
                 subject={selected.subject}
                 strand={selected.strand}
                 subStrand={selected.report.sub_strand_name}
-                notes={notes}
+                notes={readableNotes}
                 allocatedHours={selected.report.allocated_hours}
               />
             )}
