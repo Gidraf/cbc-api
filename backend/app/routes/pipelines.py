@@ -131,12 +131,10 @@ def run_stage(
             "grade": payload.grade, "subject": payload.subject}
 
 
-# What each stage files, so a stage-level action knows what to act on.
-STAGE_KIND: dict[str, str] = {
-    "notes": "notes", "material": "material", "diagram": "diagram",
-    "media": "photo_prompt", "simulation": "simulation",
-    "activity": "activity", "questions": "question",
-}
+# What each stage files, so a stage-level action knows what to act on. The
+# board's copy is the only copy: two of these drift the first time a station is
+# added, and the half that is missed silently refuses every action on it.
+STAGE_KIND = pipeline_board.STAGE_KIND
 
 
 class StageActionRequest(BaseModel):

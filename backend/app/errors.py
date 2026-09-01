@@ -13,6 +13,11 @@ class ApiError(Exception):
     # than a sentence — which learning areas are missing, which pages were
     # rejected. A caller catching this should not have to parse the message.
     detail: dict | None = None
+    # What to do about it. An error in this system usually has exactly one
+    # sensible next move, and the operator had to know what it was: six
+    # navigations to act on one sentence, in a console with fifteen grades and
+    # nine stages. See services/remedies.py.
+    remedy: list[dict] | None = None
 
 
 ERRORS = {
@@ -71,9 +76,23 @@ ERRORS = {
 }
 
 
-def raise_api_error(code: str, message: str, detail: dict | None = None) -> None:
+def raise_api_error(
+    code: str,
+    message: str,
+    detail: dict | None = None,
+    remedy: object = None,
+) -> None:
+    """Fail, saying what would fix it where there is a single sensible answer.
+
+    `remedy` takes a Remedy, a list of them, or nothing. It is a SUGGESTION
+    with a handle on it, never an automatic action — the one thing worse than
+    an error with no remedy is an error whose remedy quietly did something else.
+    """
+    from .services.remedies import as_payload
+
     status, retryable = ERRORS.get(code, (500, False))
     raise ApiError(
         code=code, message=message, status_code=status,
         retryable=retryable, detail=detail,
+        remedy=as_payload(remedy) or None,
     )

@@ -94,10 +94,13 @@ def require_approved_plan(kind: str, grade: str, subject: str,
     if kind not in DOWNSTREAM_OF_PLAN:
         return {"required": False}
 
+    from .remedies import approve_first, as_payload, run_this_stage
+
     plans = artifact_registry.search(grade, subject, "notes", sub_strand, limit=5)
     if not plans:
         return {"required": True, "approved": False, "plan": None,
-                "reason": f"There is no lesson plan filed for '{sub_strand}'."}
+                "reason": f"There is no lesson plan filed for '{sub_strand}'.",
+                "remedy": as_payload(run_this_stage(grade, subject, "notes"))}
 
     for plan in plans:
         labels = plan.get("labels") or []
@@ -116,6 +119,9 @@ def require_approved_plan(kind: str, grade: str, subject: str,
             f"from what the plan says is taught, so approving the plan first "
             f"is what stops this being a picture of a lesson that then changes."
         ),
+        # `open`, never `run`: approval is a person's decision and no error
+        # should offer to sign for them.
+        "remedy": as_payload(approve_first(grade, subject, "notes")),
     }
 
 
@@ -152,10 +158,14 @@ def require_context(
     if target_hour is not None:
         hour_note = next((h for h in hours if h.hour == target_hour), None)
         if hours and hour_note is None:
+            from .remedies import run_this_stage
+
             raise_api_error(
                 "MISSING_PARENT_CONTEXT",
-                f"Hour {target_hour} has no lesson notes. Generate the notes for "
-                f"'{sub_strand}' first — an asset belongs to a specific hour.",
+                f"Hour {target_hour} has no lesson notes. An asset belongs to a "
+                f"specific hour, so the plan for '{sub_strand}' has to exist "
+                f"before anything can be drawn for it.",
+                remedy=run_this_stage(grade, subject, "notes"),
             )
 
     asset_artifacts = [
@@ -186,7 +196,22 @@ def require_context(
             design_pages=design_pages,
         )
     except MissingParentContext as exc:
-        raise_api_error("MISSING_PARENT_CONTEXT", str(exc))
+        # What is missing is an ancestor, and an ancestor is a stage. Naming
+        # the whole route in order matters more than it looks: "three stages
+        # have to run before this one can" is a different decision from "one
+        # does", and finding that out one failure at a time is how an
+        # afternoon goes.
+        from .remedies import missing_upstream
+
+        have = {"ingest", "strands"}
+        if substrand_artifact:
+            have.add("substrands")
+        if hours:
+            have.add("notes")
+        raise_api_error(
+            "MISSING_PARENT_CONTEXT", str(exc),
+            remedy=missing_upstream(grade, subject, stage, have=have),
+        )
 
     context["skill"] = skill_provenance
     if skill_provenance.get("status") == "derived":

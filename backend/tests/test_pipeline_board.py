@@ -689,3 +689,49 @@ def test_a_grade_with_nothing_in_it_is_pointed_at_the_dataset():
 
     assert "Import the design" in view
     assert "Import from Langfuse" in view
+
+
+def test_the_board_does_not_offer_actions_that_can_only_fail() -> None:
+    """"ingest does not file versions, so there is nothing to review."
+
+    That message is correct, and an operator should never have been able to
+    reach it. Review, Send to the approver and Regenerate all act on filed
+    versions; `ingest`, `strands` and `substrands` write curriculum rows and
+    file none. The buttons were shown on every stage and enabled as soon as the
+    stage had built anything, so pressing Review on a grade whose design had
+    just been read failed every time.
+    """
+    from app.services import pipeline_board
+
+    for stage in ("ingest", "strands", "substrands"):
+        assert pipeline_board.Stage(stage=stage).files_versions is False
+    for stage in ("notes", "material", "diagram", "media", "simulation",
+                  "activity", "questions"):
+        assert pipeline_board.Stage(stage=stage).files_versions is True
+
+    # And the board tells the console, rather than the console guessing.
+    assert "files_versions" in pipeline_board.Stage(stage="notes").to_dict()
+
+
+def test_what_a_stage_files_is_recorded_in_exactly_one_place() -> None:
+    """Two copies drift the first time a station is added, and the half that is
+    missed silently refuses every action on it."""
+    from app.routes import pipelines as routes
+    from app.services import pipeline_board
+
+    assert routes.STAGE_KIND is pipeline_board.STAGE_KIND
+
+    source = open("app/routes/pipelines.py").read()
+    assert 'STAGE_KIND: dict[str, str] = {' not in source, "the routes must not redeclare it"
+
+
+def test_the_console_hides_those_actions_rather_than_greying_them_out() -> None:
+    """A greyed-out Review reads as "not yet", which is a different and wrong
+    answer — the stage will never have anything to review."""
+    board = " ".join(
+        open("../frontend-web/src/views/Pipelines.tsx").read().split()
+    )
+
+    assert "{stage.files_versions ? (" in board
+    assert "Files no versions of its own" in board
+    assert "it is checked by what comes after it" in board

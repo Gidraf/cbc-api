@@ -627,9 +627,42 @@ export function QueryState({
   return null;
 }
 
-export function ErrorNotice({ error, onRetry }: { error: unknown; onRetry?: () => void }) {
+/**
+ * What went wrong, and — where the server knows one — what to do about it.
+ *
+ * The remedy is rendered by RemedyActions, which is imported lazily: this file
+ * is the shared primitives, and RemedyActions reaches for the router and the
+ * query hooks. Importing it eagerly would make every screen that shows a
+ * button depend on the whole data layer.
+ */
+const LazyRemedy = React.lazy(() =>
+  import("./Remedy").then((m) => ({ default: m.RemedyActions }))
+);
+
+export function ErrorNotice({
+  error,
+  onRetry,
+  title = "Could not load this",
+}: {
+  error: unknown;
+  onRetry?: () => void;
+  title?: string;
+}) {
   const message =
     error instanceof Error ? error.message : typeof error === "string" ? error : "Something went wrong.";
+
+  // Attached by the API layer from the error body. An error that carries a
+  // remedy is one the server already knows the single next move for.
+  const body = (error as any)?.data;
+  const remedies = body?.errors?.[0]?.remedy || body?.remedy;
+  const hasRemedy = Array.isArray(remedies) && remedies.length > 0;
+
+  // Retryable says whether pressing the same button again could possibly work.
+  // Offering "Try again" on a model id the provider does not have is offering
+  // an action that fails identically, every time.
+  const retryable = body?.errors?.[0]?.retryable;
+  const showRetry = Boolean(onRetry) && retryable !== false;
+
   return (
     <div
       role="alert"
@@ -644,10 +677,15 @@ export function ErrorNotice({ error, onRetry }: { error: unknown; onRetry?: () =
         alignItems: "flex-start",
       }}
     >
-      <strong style={{ color: "var(--danger)" }}>Could not load this</strong>
+      <strong style={{ color: "var(--danger)" }}>{title}</strong>
       <p style={{ fontSize: "var(--text-sm)", color: "var(--ink-2)" }}>{message}</p>
-      {onRetry && (
-        <Button size="sm" onClick={onRetry}>
+      {hasRemedy && (
+        <React.Suspense fallback={<Spinner />}>
+          <LazyRemedy remedies={remedies} onDone={onRetry} />
+        </React.Suspense>
+      )}
+      {showRetry && (
+        <Button size="sm" variant={hasRemedy ? "ghost" : "primary"} onClick={onRetry}>
           Try again
         </Button>
       )}

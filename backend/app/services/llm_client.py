@@ -26,6 +26,22 @@ class LlmResponse:
     provider: str
 
 
+def _model_remedy(config: "ResolvedModelConfig"):
+    """The station's model field, offered where the failure was reported.
+
+    The provider's own list where we have one — a free-text box is how
+    'gemini-1.5-pro' got bound to a station that has never served it.
+    """
+    from .provider_router import known_models_for
+    from .remedies import set_the_model
+
+    return set_the_model(
+        config.pipeline_stage,
+        current=config.model,
+        options=sorted(known_models_for(config.provider)),
+    )
+
+
 class LlmClient:
     def __init__(self, timeout_seconds: float = 120.0) -> None:
         self.timeout = timeout_seconds
@@ -101,18 +117,25 @@ class LlmClient:
                 f"The system will retry automatically.",
             )
         elif status == 404:
+            # "Check your pipeline stage bindings in the Pipelines tab" is an
+            # instruction, and the operator still has to find the tab, the
+            # station, and the field. The remedy carries the field itself.
             raise_api_error(
                 "LLM_INVALID_MODEL",
-                f"Model '{model_name}' not found on {provider_name}. "
-                f"Check your pipeline stage bindings in the Pipelines tab.",
+                f"Model '{model_name}' not found on {provider_name}. Every "
+                f"generation at this station fails the same way until the "
+                f"model is changed — retrying will not help.",
+                remedy=_model_remedy(config),
             )
         elif status == 400:
             body_lower = resp.text.lower() if resp.text else ""
             if "invalid model" in body_lower or "model_not_found" in body_lower or "does not exist" in body_lower or "unknown model" in body_lower:
                 raise_api_error(
                     "LLM_INVALID_MODEL",
-                    f"Model '{model_name}' is not recognized or invalid on {provider_name} ({body_preview}). "
-                    f"Please update your model name to a supported model (e.g. 'gpt-4o-mini', 'gpt-4o') in the Stage Bindings tab.",
+                    f"Model '{model_name}' is not recognised on {provider_name} "
+                    f"({body_preview}). Every generation at this station fails "
+                    f"the same way until the model is changed.",
+                    remedy=_model_remedy(config),
                 )
             if "content_filter" in body_lower or "content_policy" in body_lower or "safety" in body_lower:
                 raise_api_error(

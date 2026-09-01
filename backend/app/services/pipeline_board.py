@@ -79,12 +79,29 @@ class Stage:
     policy: dict[str, Any] = field(default_factory=dict)
     # Only on `ingest`: where the design came from, and whether it arrived.
     dataset: dict[str, Any] = field(default_factory=dict)
+    # What would unblock it. A board that says "waiting on the lesson plan" and
+    # makes you go and find the lesson plan has told you where to click, which
+    # is not the same as letting you click it.
+    remedy: list[dict[str, Any]] = field(default_factory=list)
 
     @property
     def percentage(self) -> int:
         if not self.expected:
             return 0
         return min(100, round(self.built / self.expected * 100))
+
+    @property
+    def files_versions(self) -> bool:
+        """Whether there is anything here to review, approve or regenerate.
+
+        `ingest`, `strands` and `substrands` write curriculum rows, not
+        artifacts — nothing is filed with a version, a review or a label. The
+        board offered Review on them anyway, enabled the moment they had built
+        anything, and every press came back "there is nothing to review". A
+        button that is enabled and always fails is worse than no button, so the
+        board has to know this rather than find out from the server.
+        """
+        return bool(STAGE_KIND.get(self.stage))
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -93,9 +110,11 @@ class Stage:
             "reviewed": self.reviewed, "approved": self.approved,
             "running": self.running, "failed": self.failed,
             "percentage": self.percentage,
+            "files_versions": self.files_versions,
             "cost_usd": round(self.cost_usd, 4),
             "last_run": self.last_run, "blocked_by": self.blocked_by,
             "policy": self.policy, "dataset": self.dataset,
+            "remedy": self.remedy,
         }
 
 
@@ -528,10 +547,40 @@ def branch(grade: str, subject: str,
             stage.blocked_by = (
                 f"Waiting on {upstream.label.lower()}: {upstream.blocked_by}"
             )
+            # Everything between here and what is blocking it, in the order it
+            # has to be built. The board knows this already; the operator had
+            # to work it out from ten red tiles with one cause.
+            stage.remedy = _remedy_for(grade, subject, stage, out.stages[:i])
             continue
         if blocking_index is None and stage.status != "approved" and policy.blocks_downstream:
             blocking_index = i
+
+    # A stage that is not blocked but has nothing in it is one press, and a
+    # grade with no design at all is a different press entirely.
+    for stage in out.stages:
+        if stage.remedy:
+            continue
+        if stage.stage == "ingest" and dataset.get("state") == "not_imported":
+            stage.remedy = remedies.as_payload(remedies.import_the_design(grade))
+        elif stage.status == "not_started":
+            stage.remedy = remedies.as_payload(
+                remedies.run_this_stage(grade, subject, stage.stage)
+            )
     return out
+
+
+def _remedy_for(grade: str, subject: str, stage: Stage,
+                earlier: list[Stage]) -> list[dict[str, Any]]:
+    """The route from where this branch actually is to where this stage needs it.
+
+    Built from what is already done rather than from the chain alone: proposing
+    stages that have already run is how a remedy teaches an operator to ignore
+    remedies.
+    """
+    have = {s.stage for s in earlier if s.status == "approved"}
+    return remedies.as_payload(
+        remedies.missing_upstream(grade, subject, stage.stage, have=have)
+    )
 
 
 def project(grade: str) -> Project:

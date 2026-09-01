@@ -746,47 +746,63 @@ function BranchRow({
                 >
                   Run
                 </Button>
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  disabled={act.isPending || !stage.built}
-                  title={
-                    stage.built
-                      ? `Send all ${stage.built} for an independent read`
-                      : "Nothing built to review yet"
-                  }
-                  onClick={() =>
-                    act.mutate({ grade, stage: stage.stage, subject: branch.subject, action: "review", layer: 2 })
-                  }
-                >
-                  Review
-                </Button>
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  disabled={act.isPending || !stage.reviewed}
-                  title={
-                    stage.reviewed
-                      ? "Run the approving layer's work — approval itself stays a person's decision"
-                      : "Review it first; the approver reads the review"
-                  }
-                  onClick={() =>
-                    act.mutate({ grade, stage: stage.stage, subject: branch.subject, action: "approval" })
-                  }
-                >
-                  Send to the approver
-                </Button>
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  disabled={act.isPending || !stage.reviewed}
-                  title="Write the next version from what the reviews found"
-                  onClick={() =>
-                    act.mutate({ grade, stage: stage.stage, subject: branch.subject, action: "regenerate" })
-                  }
-                >
-                  Regenerate from findings
-                </Button>
+                {/* Review, approval and regeneration all act on filed
+                    versions. `ingest`, `strands` and `substrands` write
+                    curriculum rows instead, so these were enabled the moment
+                    those stages had built anything and every press came back
+                    "there is nothing to review". Not shown at all rather than
+                    shown disabled: a greyed-out Review reads as "not yet",
+                    which is a different and wrong answer. */}
+                {stage.files_versions ? (
+                  <>
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      disabled={act.isPending || !stage.built}
+                      title={
+                        stage.built
+                          ? `Send all ${stage.built} for an independent read`
+                          : "Nothing built to review yet"
+                      }
+                      onClick={() =>
+                        act.mutate({ grade, stage: stage.stage, subject: branch.subject, action: "review", layer: 2 })
+                      }
+                    >
+                      Review
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      disabled={act.isPending || !stage.reviewed}
+                      title={
+                        stage.reviewed
+                          ? "Run the approving layer's work — approval itself stays a person's decision"
+                          : "Review it first; the approver reads the review"
+                      }
+                      onClick={() =>
+                        act.mutate({ grade, stage: stage.stage, subject: branch.subject, action: "approval" })
+                      }
+                    >
+                      Send to the approver
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      disabled={act.isPending || !stage.reviewed}
+                      title="Write the next version from what the reviews found"
+                      onClick={() =>
+                        act.mutate({ grade, stage: stage.stage, subject: branch.subject, action: "regenerate" })
+                      }
+                    >
+                      Regenerate from findings
+                    </Button>
+                  </>
+                ) : (
+                  <span style={{ fontSize: "var(--text-sm)", color: "var(--ink-3)", alignSelf: "center" }}>
+                    Files no versions of its own — it is checked by what comes
+                    after it.
+                  </span>
+                )}
                 <Button size="sm" variant="ghost" onClick={() => setUnits(!units)}>
                   {units ? "Hide the versions" : "Versions & approve"}
                 </Button>

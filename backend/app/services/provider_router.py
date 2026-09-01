@@ -38,6 +38,30 @@ OPENAI_VALID_MODELS = {
 }
 
 
+# What each provider is known to serve, for the moment a binding turns out to
+# name something it does not. Not exhaustive and not a gate — providers add
+# models faster than this list can be maintained, and refusing an unlisted one
+# would block a model released this morning. It exists so the error that says
+# "not found" can offer somewhere to start rather than a free-text box, which
+# is how `gemini-1.5-pro` came to be bound to a station that never served it.
+KNOWN_MODELS: dict[str, tuple[str, ...]] = {
+    Provider.OPENAI.value: tuple(sorted(OPENAI_VALID_MODELS)),
+    Provider.ANTHROPIC.value: (
+        "claude-3-5-sonnet-20241022", "claude-3-5-haiku-20241022",
+        "claude-3-opus-20240229",
+    ),
+    Provider.GEMINI.value: (
+        "gemini-2.0-flash", "gemini-2.5-pro", "gemini-2.5-flash",
+    ),
+    Provider.OLLAMA.value: ("llama3.1",),
+}
+
+
+def known_models_for(provider: str) -> tuple[str, ...]:
+    """A starting point for a station whose model turned out not to exist."""
+    return KNOWN_MODELS.get((provider or "").strip().lower(), ())
+
+
 def _is_qualified(lower: str, prefix: str) -> bool:
     """Whether a binding already names a specific model rather than a family.
 

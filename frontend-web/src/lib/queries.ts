@@ -2036,6 +2036,11 @@ export type BoardStage = {
   running: number;
   failed: number;
   percentage: number;
+  /** Whether this stage files anything with a version, a review and a label.
+   *  `ingest`, `strands` and `substrands` write curriculum rows instead, so
+   *  there is nothing to review, approve or regenerate — they are checked by
+   *  what comes after them. */
+  files_versions: boolean;
   cost_usd: number;
   last_run: string;
   blocked_by: string;
