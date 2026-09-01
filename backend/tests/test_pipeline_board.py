@@ -345,7 +345,7 @@ def test_a_run_in_flight_is_polled_and_an_idle_one_is_not():
 def test_a_grade_that_has_not_been_ingested_is_pointed_at_the_next_step():
     """A dead row is worse than no row: it says something is wrong and nothing
     about what to do."""
-    assert "Read the design in" in _view()
+    assert "Import the design" in _view()
     assert "not ingested" in _view()
 
 
@@ -552,3 +552,140 @@ def test_the_unit_list_says_what_each_version_still_needs():
 
 def test_refusals_are_shown_after_a_bulk_approval():
     assert "refused:" in _view()
+
+
+# ── the journey starts at the dataset ───────────────────────────────────────
+
+
+def test_the_first_stage_answers_whether_the_design_arrived():
+    """`ingest` went green the moment a design row existed, which says nothing
+    about the dataset it came from — whether anything is waiting, whether an
+    item failed, or whether the grade has simply never been imported. A grade
+    with nothing in it read as "not started" either way, and "no design" and
+    "never imported" are different problems with different next actions."""
+    state = pb.dataset_state("grade-pp1")
+
+    assert set(state) >= {"state", "note", "designs", "items", "by_status"}
+
+
+def test_a_grade_nobody_has_imported_says_where_to_start():
+    state = pb.dataset_state("grade-pp1")
+
+    assert state["state"] == "not_imported"
+    assert "starts at the Langfuse dataset" in state["note"]
+
+
+def test_a_failed_dataset_item_is_a_hole_in_every_stage_after_it():
+    stage = _stage("ingest")
+    stage.dataset = {"state": "failing", "note": "1 item(s) failed to read.",
+                     "designs": 0, "items": 3, "by_status": {"failed": 1}}
+    pb._decide(stage, sp.default_for("ingest"))
+
+    assert stage.status == "failing"
+    assert "failed to read" in stage.blocked_by
+
+
+def test_the_dataset_state_beats_the_row_count_on_the_first_stage():
+    """A design row existing is not the same as the dataset being read."""
+    stage = _stage("ingest", built=1, approved=1)
+    stage.dataset = {"state": "not_imported", "note": "Nothing has been imported.",
+                     "designs": 0, "items": 0, "by_status": {}}
+    pb._decide(stage, sp.default_for("ingest"))
+
+    assert stage.status == "not_started"
+
+
+# ── resetting a stage rather than a grade ───────────────────────────────────
+
+
+def test_a_stage_can_be_thrown_away_on_its_own():
+    """Clearing a whole grade to re-run the diagrams costs the lesson plans
+    that were fine, and clearing nothing means living with the first attempt."""
+    assert set(pb.RESET_KINDS) == {
+        "notes", "material", "diagram", "media", "simulation", "activity",
+        "questions"}
+
+
+def test_a_stage_that_files_nothing_says_so_rather_than_deleting_a_grade():
+    """Clearing the design a grade was built from is a very large action to
+    put behind a very small button."""
+    result = pb.reset_stage("grade-pp1", "CRE", "ingest")
+
+    assert not result["supported"]
+    assert "not a stage" in result["reason"]
+
+
+def test_a_reset_is_a_dry_run_until_the_word_is_typed():
+    """Two steps, always: the first says what would go, the second does it."""
+    import inspect
+
+    source = inspect.getsource(pb.reset_stage)
+
+    assert 'confirm.strip().upper() != "DELETE"' in source
+    assert '"dry_run": True' in source
+    assert "everything else stays" in source, \
+        "it should say what survives a stage reset"
+
+
+def test_queued_work_goes_with_the_stage_it_would_rebuild():
+    """A job left behind runs and rebuilds what was just deleted, which reads
+    as the reset silently undoing itself."""
+    import inspect
+
+    source = inspect.getsource(pb.reset_stage)
+    assert "DELETE FROM jobs" in source
+    assert "silently undoing itself" in source
+
+
+def test_reviews_and_labels_go_before_the_versions_they_point_at():
+    import inspect
+
+    source = inspect.getsource(pb.reset_stage)
+    reviews = source.index("artifact_reviews")
+    versions = source.index("DELETE FROM artifacts a")
+
+    assert reviews < versions
+
+
+def test_clearing_a_whole_grade_goes_through_the_factory_reset():
+    """Reimplementing it would miss the tables a stage reset has no business
+    in — designs, sub-strands, ingest status."""
+    import inspect
+
+    from app.routes import pipelines
+
+    source = inspect.getsource(pipelines.reset)
+    assert "curriculum_routes.factory_reset(" in source
+    assert "factory_reset.CONFIRMATION" in source
+
+
+def _view() -> str:
+    import pathlib
+
+    return (pathlib.Path(__file__).resolve().parents[2]
+            / "frontend-web/src/views/Pipelines.tsx").read_text()
+
+
+def test_the_console_shows_what_would_go_before_it_goes():
+    """A reset that clears more than the operator pictured is the one they find
+    out about a week later."""
+    view = _view()
+
+    assert "function ResetButton(" in view
+    assert 'confirm: "DELETE"' in view
+    assert "Counting…" in view
+
+
+def test_reset_is_offered_at_the_stage_the_subject_and_the_grade():
+    view = _view()
+
+    assert 'label={`Reset ${stage.label.toLowerCase()}`}' in view
+    assert 'label="Reset this subject"' in view
+    assert 'label="Reset"' in view
+
+
+def test_a_grade_with_nothing_in_it_is_pointed_at_the_dataset():
+    view = _view()
+
+    assert "Import the design" in view
+    assert "Import from Langfuse" in view

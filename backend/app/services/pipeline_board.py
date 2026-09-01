@@ -77,6 +77,8 @@ class Stage:
     # Why this stage is not green, in the words an operator would use.
     blocked_by: str = ""
     policy: dict[str, Any] = field(default_factory=dict)
+    # Only on `ingest`: where the design came from, and whether it arrived.
+    dataset: dict[str, Any] = field(default_factory=dict)
 
     @property
     def percentage(self) -> int:
@@ -93,7 +95,7 @@ class Stage:
             "percentage": self.percentage,
             "cost_usd": round(self.cost_usd, 4),
             "last_run": self.last_run, "blocked_by": self.blocked_by,
-            "policy": self.policy,
+            "policy": self.policy, "dataset": self.dataset,
         }
 
 
@@ -171,6 +173,17 @@ def _rows(sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
 
 def _decide(stage: Stage, policy: stage_policy.Policy) -> None:
     """What colour this stage is, and why."""
+    # The first stage answers a different question from the rest: not "has it
+    # been built" but "has the design arrived". A grade with nothing in it
+    # reads as "not started" either way, and those are different problems with
+    # different next actions.
+    if stage.stage == "ingest" and stage.dataset:
+        state = stage.dataset.get("state")
+        if state in ("not_imported", "imported", "failing", "running"):
+            stage.status = {"not_imported": "not_started", "imported": "built",
+                            "failing": "failing", "running": "running"}[state]
+            stage.blocked_by = stage.dataset.get("note", "")
+            return
     if stage.failed:
         stage.status = "failing"
         stage.blocked_by = (
@@ -276,6 +289,61 @@ def _job_counts(grade: str, subject: str) -> dict[str, dict[str, Any]]:
     }
 
 
+def dataset_state(grade: str) -> dict[str, Any]:
+    """Whether this grade's design has been imported and read in yet.
+
+    The journey starts here and the board did not show it. `ingest` was drawn
+    green the moment a design row existed, which says nothing about the dataset
+    it came from — whether anything is waiting, whether an item failed, or
+    whether the grade has simply never been imported. An operator looking at a
+    grade with nothing in it could not tell "no design" from "not imported".
+    """
+    rows = _rows(
+        """
+        SELECT status, COUNT(*) AS n
+        FROM dataset_ingest_status
+        WHERE LOWER(grade) = LOWER(:grade) OR LOWER(grade) = LOWER(:alt)
+        GROUP BY status
+        """,
+        {"grade": grade, "alt": grade.replace("grade-", "")},
+    )
+    counts = {str(r["status"]): int(r["n"] or 0) for r in rows}
+    designs = _rows(
+        "SELECT COUNT(*) AS n FROM curriculum_designs "
+        "WHERE LOWER(grade) = LOWER(:grade) OR LOWER(grade) = LOWER(:alt)",
+        {"grade": grade, "alt": grade.replace("grade-", "")},
+    )
+    filed = int((designs or [{}])[0].get("n") or 0)
+    total = sum(counts.values())
+
+    if not total and not filed:
+        state, note = "not_imported", (
+            "Nothing has been imported for this grade. The pipeline starts at "
+            "the Langfuse dataset: import the design documents, then read them "
+            "in."
+        )
+    elif counts.get("failed"):
+        state, note = "failing", (
+            f"{counts['failed']} dataset item(s) failed to read. Everything "
+            f"below is built from what did read, so a failure here is a hole "
+            f"in every stage after it."
+        )
+    elif counts.get("pending") or counts.get("running"):
+        state, note = "running", (
+            f"{counts.get('pending', 0) + counts.get('running', 0)} item(s) "
+            f"still to read."
+        )
+    elif filed:
+        state, note = "done", ""
+    else:
+        state, note = "imported", (
+            f"{total} dataset item(s) imported and none read in yet."
+        )
+
+    return {"state": state, "note": note, "designs": filed,
+            "items": total, "by_status": counts}
+
+
 def _expected(grade: str, subject: str) -> dict[str, int]:
     """How many units each stage owes, from the design rather than from what
     was produced. Measuring completion against what exists means a stage that
@@ -311,6 +379,101 @@ def _expected(grade: str, subject: str) -> dict[str, int]:
     }
 
 
+# What a stage's reset actually deletes, keyed by stage. `ingest` is not here:
+# clearing the design a grade was built from is `factory/reset`, and doing it
+# from a stage tile would be a very large action behind a very small button.
+RESET_KINDS: dict[str, tuple[str, ...]] = {
+    "notes": ("notes",),
+    "material": ("material",),
+    "diagram": ("diagram",),
+    "media": ("photo_prompt", "video_prompt"),
+    "simulation": ("simulation",),
+    "activity": ("activity", "experiment"),
+    "questions": ("question", "answer"),
+}
+
+
+def reset_stage(grade: str, subject: str, stage: str, *,
+                confirm: str = "") -> dict[str, Any]:
+    """Throw away one stage's output, so it can be built again.
+
+    A stage-level reset because that is the unit an operator actually works in.
+    Clearing a whole grade to re-run the diagrams costs the lesson plans that
+    were fine, and clearing nothing means living with the first attempt.
+
+    A dry run unless confirmed, like every other destructive path here: the
+    counts should be visible before anything is irreversible.
+    """
+    from ..infra.db import execute, fetch_one
+
+    kinds = RESET_KINDS.get(stage)
+    if not kinds:
+        return {"stage": stage, "supported": False,
+                "reason": (
+                    f"{stage} files no versions of its own, so there is nothing "
+                    f"to reset. Clearing the design a grade was read from is "
+                    f"the factory reset, not a stage."
+                )}
+
+    where = ["a.kind = ANY(:kinds)",
+             "(LOWER(a.grade) = LOWER(:grade) OR LOWER(a.grade) = LOWER(:alt))"]
+    params: dict[str, Any] = {
+        "kinds": list(kinds), "grade": grade,
+        "alt": grade.replace("grade-", ""),
+    }
+    if subject:
+        where.append("LOWER(a.subject) = LOWER(:subject)")
+        params["subject"] = subject
+    clause = " AND ".join(where)
+    inner = f"SELECT a.artifact_id FROM artifacts a WHERE {clause}"
+
+    counted = fetch_one(f"SELECT COUNT(*) AS n FROM ({inner}) x", params) or {}
+    versions = int(counted.get("n") or 0)
+
+    # Queued work for a stage that is about to be deleted would run and rebuild
+    # it, which reads as the reset silently undoing itself.
+    job_where = ["kind = :stage",
+                 "(LOWER(grade) = LOWER(:grade) OR LOWER(grade) = LOWER(:alt))"]
+    job_params = {"stage": stage, "grade": grade,
+                  "alt": grade.replace("grade-", "")}
+    if subject:
+        job_where.append("LOWER(subject) = LOWER(:subject)")
+        job_params["subject"] = subject
+    jobs_row = fetch_one(
+        f"SELECT COUNT(*) AS n FROM jobs WHERE {' AND '.join(job_where)}",
+        job_params) or {}
+    jobs = int(jobs_row.get("n") or 0)
+
+    if confirm.strip().upper() != "DELETE":
+        return {
+            "stage": stage, "supported": True, "dry_run": True,
+            "versions": versions, "jobs": jobs,
+            "message": (
+                f"{versions} version(s) and {jobs} job(s) would be deleted for "
+                f"{stage} in {subject or 'every subject'}. Nothing has been "
+                f"deleted. Send confirm=\"DELETE\" to proceed — the lesson "
+                f"plan and everything else stays."
+            ),
+        }
+
+    # Children before parents, as everywhere else: a review pointing at a
+    # version that is gone is an orphan nothing can resolve.
+    for table in ("artifact_comments", "artifact_reviews", "artifact_labels"):
+        try:
+            execute(f"DELETE FROM {table} WHERE artifact_id IN ({inner})", params)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Could not clear %s for %s: %s", table, stage, exc)
+    execute(f"DELETE FROM artifacts a WHERE {clause}", params)
+    execute(f"DELETE FROM jobs WHERE {' AND '.join(job_where)}", job_params)
+
+    logger.info("Reset %s for %s/%s: %d version(s), %d job(s).",
+                stage, grade, subject or "every subject", versions, jobs)
+    return {"stage": stage, "supported": True, "dry_run": False,
+            "versions": versions, "jobs": jobs,
+            "message": f"{versions} version(s) and {jobs} job(s) deleted. "
+                       f"Run {stage} again to rebuild."}
+
+
 def branch(grade: str, subject: str,
            policies: list[stage_policy.Policy] | None = None) -> Branch:
     """One subject, stage by stage."""
@@ -318,6 +481,7 @@ def branch(grade: str, subject: str,
     artifacts = _artifact_counts(grade, subject)
     jobs = _job_counts(grade, subject)
     expected = _expected(grade, subject)
+    dataset = dataset_state(grade)
 
     out = Branch(subject=subject)
     for policy in policies:
@@ -334,6 +498,7 @@ def branch(grade: str, subject: str,
             stage.approved = counts.get("approved", 0)
         elif name == "ingest":
             stage.built = stage.approved = stage.reviewed = expected.get("ingest", 0)
+            stage.dataset = dataset
         elif name == "strands":
             stage.built = stage.approved = stage.reviewed = (
                 1 if expected.get("substrands") else 0)

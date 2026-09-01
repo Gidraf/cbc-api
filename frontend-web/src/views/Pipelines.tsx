@@ -22,6 +22,7 @@ import { AutoRunPanel } from "./AutoRunPanel";
 import {
   usePipeline,
   usePipelines,
+  useResetPipeline,
   useStageAction,
   useStageLogs,
   useStageRequirements,
@@ -132,6 +133,79 @@ function StageCell({ stage, onOpen }: { stage: BoardStage; onOpen: () => void })
  * works, so a run in flight narrates itself here and a finished one keeps the
  * narration.
  */
+/**
+ * Throw a stage away so it can be built again.
+ *
+ * Two steps, always: the first says what would go, the second does it. Every
+ * destructive path here works that way, because the counts should be visible
+ * before anything is irreversible — and a reset that clears more than the
+ * operator pictured is the one they find out about a week later.
+ */
+function ResetButton({
+  grade,
+  subject,
+  stage,
+  label,
+}: {
+  grade: string;
+  subject?: string;
+  stage?: string;
+  label: string;
+}) {
+  const reset = useResetPipeline();
+  const [asked, setAsked] = React.useState(false);
+
+  const preview = reset.data && reset.data.dry_run !== false ? reset.data : null;
+  const done = reset.data && reset.data.dry_run === false ? reset.data : null;
+
+  if (done) {
+    return (
+      <span style={{ fontSize: "var(--text-sm)", color: "var(--ok)" }}>
+        {done.message}
+      </span>
+    );
+  }
+
+  if (!asked) {
+    return (
+      <Button
+        size="sm"
+        variant="ghost"
+        disabled={reset.isPending}
+        onClick={() => {
+          setAsked(true);
+          reset.mutate({ grade, subject, stage });
+        }}
+      >
+        {label}
+      </Button>
+    );
+  }
+
+  return (
+    <Stack direction="row" gap="var(--s2)" style={{ alignItems: "center", flexWrap: "wrap" }}>
+      <span style={{ fontSize: "var(--text-sm)", color: "var(--warn)" }}>
+        {reset.isPending ? "Counting…" : preview?.message || "Nothing to delete."}
+      </span>
+      {preview && (
+        <Button
+          size="sm"
+          variant="danger"
+          disabled={reset.isPending}
+          onClick={() => reset.mutate({ grade, subject, stage, confirm: "DELETE" })}
+        >
+          Delete
+        </Button>
+      )}
+      <Button size="sm" variant="ghost" onClick={() => { setAsked(false); reset.reset(); }}>
+        Keep
+      </Button>
+      {reset.error && <ErrorNotice error={reset.error} />}
+    </Stack>
+  );
+}
+
+
 function StageLog({
   grade,
   stage,
@@ -564,6 +638,7 @@ function BranchRow({
           <Button size="sm" variant="ghost" onClick={onToggle}>
             {open ? "Hide stages" : "Show stages"}
           </Button>
+          <ResetButton grade={grade} subject={branch.subject} label="Reset this subject" />
         </Stack>
       }
     >
@@ -602,6 +677,36 @@ function BranchRow({
                 <p style={{ margin: "var(--s2) 0 0", fontSize: "var(--text-sm)" }}>
                   {stage.blocked_by}
                 </p>
+              )}
+
+              {/* The journey starts at the dataset, and the board did not show
+                  it: `ingest` went green the moment a design row existed, which
+                  says nothing about whether anything is waiting or whether an
+                  item failed. A grade with nothing in it read as "not started"
+                  either way, and "no design" and "never imported" are different
+                  problems with different next actions. */}
+              {stage.dataset && (
+                <Stack
+                  direction="row"
+                  gap="var(--s3)"
+                  style={{ marginTop: "var(--s2)", flexWrap: "wrap", alignItems: "center" }}
+                >
+                  <span style={{ fontSize: "var(--text-sm)", color: "var(--ink-2)" }}>
+                    Dataset: <strong>{stage.dataset.items}</strong> item(s) imported,{" "}
+                    <strong>{stage.dataset.designs}</strong> design(s) read in
+                    {Object.entries(stage.dataset.by_status || {}).length > 0 &&
+                      ` · ${Object.entries(stage.dataset.by_status)
+                        .map(([k, n]) => `${n} ${k}`)
+                        .join(", ")}`}
+                  </span>
+                  <Link to={`/datasets?grade=${encodeURIComponent(grade)}`}>
+                    <Button size="sm" variant="secondary">
+                      {stage.dataset.state === "not_imported"
+                        ? "Import from Langfuse"
+                        : "Open the dataset"}
+                    </Button>
+                  </Link>
+                </Stack>
               )}
 
               <Table caption={`${stage.label} counts`}>
@@ -715,6 +820,12 @@ function BranchRow({
                 <Link to={`/factory?grade=${encodeURIComponent(grade)}&subject=${encodeURIComponent(branch.subject)}`}>
                   <Button size="sm" variant="ghost">Open in the factory</Button>
                 </Link>
+                <ResetButton
+                  grade={grade}
+                  subject={branch.subject}
+                  stage={stage.stage}
+                  label={`Reset ${stage.label.toLowerCase()}`}
+                />
               </Stack>
               {act.data && (
                 <p style={{ margin: "var(--s2) 0 0", fontSize: "var(--text-sm)", color: "var(--ok)" }}>
@@ -945,17 +1056,25 @@ export function Pipelines() {
                 </Td>
                 <Td numeric>{p.cost_usd > 0 ? `$${p.cost_usd.toFixed(4)}` : "—"}</Td>
                 <Td>
-                  {p.ingested ? (
-                    <Button size="sm" onClick={() => setParams({ grade: p.grade })}>
-                      Open
-                    </Button>
-                  ) : (
-                    <Link to="/datasets">
-                      <Button size="sm" variant="ghost">
-                        Read the design in
-                      </Button>
-                    </Link>
-                  )}
+                  <Stack direction="row" gap="var(--s2)" style={{ justifyContent: "flex-end", flexWrap: "wrap" }}>
+                    {p.ingested ? (
+                      <>
+                        <Button size="sm" onClick={() => setParams({ grade: p.grade })}>
+                          Open
+                        </Button>
+                        {/* Clearing a grade is the same path the factory reset
+                            uses, so a grade cleared here is cleared the same
+                            way and leaves nothing behind. */}
+                        <ResetButton grade={p.grade} label="Reset" />
+                      </>
+                    ) : (
+                      <Link to={`/datasets?grade=${encodeURIComponent(p.grade)}`}>
+                        <Button size="sm" variant="ghost">
+                          Import the design
+                        </Button>
+                      </Link>
+                    )}
+                  </Stack>
                 </Td>
               </tr>
             ))}

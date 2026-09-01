@@ -2040,6 +2040,14 @@ export type BoardStage = {
   last_run: string;
   blocked_by: string;
   policy: StagePolicy;
+  /** Only on `ingest`: where the design came from, and whether it arrived. */
+  dataset?: {
+    state: "not_imported" | "imported" | "running" | "failing" | "done";
+    note: string;
+    designs: number;
+    items: number;
+    by_status: Record<string, number>;
+  };
 };
 
 export type BoardBranch = {
@@ -2247,6 +2255,35 @@ export function useStageRequirements(
       }>(`/api/v1/pipelines/${encodeURIComponent(grade)}/requirements?${qs}`);
     },
     enabled: on && Boolean(grade && subject),
+  });
+}
+
+/** Throw away one stage's output, or a grade's, so it can be built again.
+ *
+ *  A stage-level reset because that is the unit an operator works in: clearing
+ *  a whole grade to re-run the diagrams costs the lesson plans that were fine. */
+export function useResetPipeline() {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { grade: string; stage?: string; subject?: string; confirm?: string }) =>
+      api<{
+        stage: string;
+        supported: boolean;
+        dry_run?: boolean;
+        versions?: number;
+        jobs?: number;
+        total?: number;
+        message: string;
+      }>("/api/v1/pipelines/reset", { method: "POST", body: JSON.stringify(v) }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["pipeline"] });
+      qc.invalidateQueries({ queryKey: ["pipelines"] });
+      qc.invalidateQueries({ queryKey: ["stage-units"] });
+      qc.invalidateQueries({ queryKey: ["stage-logs"] });
+      qc.invalidateQueries({ queryKey: ["artifacts"] });
+      qc.invalidateQueries({ queryKey: ["progress"] });
+    },
   });
 }
 

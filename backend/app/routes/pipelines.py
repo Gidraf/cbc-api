@@ -405,6 +405,58 @@ def edit_fragment(
     return {"fragment": fragment.to_dict(), "saved": True}
 
 
+class ResetStageRequest(BaseModel):
+    """Throw away one stage's output, or a grade's, so it can be built again."""
+
+    grade: str
+    stage: str = ""
+    subject: str = ""
+    # The exact word, because a boolean is too easy to send by accident from a
+    # form or a retried request.
+    confirm: str = ""
+
+
+@router.post("/reset")
+def reset(
+    payload: ResetStageRequest,
+    auth: AuthContext = Depends(require_roles("admin", "operator")),
+) -> dict[str, Any]:
+    """Reset one stage, or everything a grade has produced.
+
+    A stage-level reset because that is the unit an operator works in. Clearing
+    a whole grade to re-run the diagrams costs the lesson plans that were fine,
+    and clearing nothing means living with the first attempt.
+
+    Without a stage this clears the grade — every stage, every subject unless
+    one is named — through the same path the factory reset uses, so a grade
+    cleared here is cleared the same way and leaves nothing behind.
+    """
+    from ..routes import curriculum as curriculum_routes
+    from ..services import factory_reset, pipeline_board
+
+    if payload.stage:
+        result = pipeline_board.reset_stage(
+            payload.grade, payload.subject, payload.stage,
+            confirm=payload.confirm)
+        if not result.get("supported"):
+            raise_api_error("VALIDATION_FAILED", result["reason"])
+        return result
+
+    # No stage named: the whole grade. Routed through the factory reset rather
+    # than reimplemented, because that one knows about the tables a stage reset
+    # has no business in — designs, sub-strands, ingest status.
+    report = curriculum_routes.factory_reset(
+        curriculum_routes.FactoryResetRequest(
+            grade=payload.grade, subject=payload.subject,
+            confirm=(factory_reset.CONFIRMATION
+                     if payload.confirm.strip().upper() == "DELETE"
+                     else payload.confirm),
+        ),
+        auth,
+    )
+    return {"stage": "", "supported": True, **report}
+
+
 class BulkApproveRequest(BaseModel):
     """Sign for several versions at once."""
 
