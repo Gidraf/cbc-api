@@ -125,3 +125,48 @@ def test_the_console_shows_the_gap_rather_than_two_numbers() -> None:
     # And the grade list itself flags it, because that is where the low number
     # appears with no explanation next to it.
     assert "read, no design" in queries
+
+
+# ── the grade a design is filed under ───────────────────────────────────────
+
+
+def test_a_grade_is_read_however_the_cover_spells_it() -> None:
+    """The separator was a REQUIRED space.
+
+    So the pattern matched the words on a cover page and matched NONE of the
+    slugs the system itself uses — which is how the fallback to the grade the
+    operator declared could never fire, and sixteen Grade 9 designs were filed
+    under grade-7 by a default while Grade 9 read as empty.
+    """
+    from app.services.curriculum_extractor import _GRADE_NUM
+
+    for spelling in ("GRADE 9", "Grade9", "GRADE-9", "grade-9", "grade_9",
+                     "Agriculture Grade9 1.8.2024 -Proofread"):
+        found = _GRADE_NUM.search(spelling)
+        assert found and found.group(1) == "9", spelling
+
+
+def test_the_dataset_settles_it_when_the_cover_does_not() -> None:
+    """The dataset the operator chose is a fact, not a guess."""
+    from app.services.curriculum_extractor import _grade_from_text
+
+    assert _grade_from_text("", {"grade": "grade-9"}) == ("grade-9", "Junior School")
+    assert _grade_from_text("AGRICULTURE Grade9 CURRICULUM DESIGN",
+                            {"grade": "grade-9"})[0] == "grade-9"
+
+    # A cover that names a grade still wins — that is how a misfiled document
+    # is caught rather than silently relabelled.
+    assert _grade_from_text("MATHEMATICS GRADE 4", {"grade": "grade-9"})[0] == "grade-4"
+
+
+def test_nothing_is_ever_filed_under_a_guessed_grade() -> None:
+    """Defaulting put a design in another cohort's curriculum, where it stays
+    invisible until questions are generated from it."""
+    import inspect
+
+    from app.services import curriculum_extractor
+
+    source = inspect.getsource(curriculum_extractor.CurriculumExtractorService._parse_curriculum_text)
+    assert 'grade, level = "grade-7", "Basic Education"' not in source
+    assert "INVALID_GRADE_DATASET" in source
+    assert "the dataset it was ingested from" in source

@@ -98,7 +98,11 @@ _LEVEL_WORDS = re.compile(
 # "Pure Sciences #2". That is a group, never a learning area.
 _INDEXED_PATHWAY = re.compile(r"#\s*\d+\s*$")
 
-_GRADE_NUM = re.compile(r"\bGRADE\s+(\d{1,2})\b", re.IGNORECASE)
+# "Grade 9", "Grade9", "GRADE-9", "grade_9". The separator was a REQUIRED
+# space, so this matched the words on a cover page and matched none of the
+# slugs the system itself uses — which is how the fallback to the grade the
+# operator declared could never fire.
+_GRADE_NUM = re.compile(r"\bGRADE[\s\-_]*(\d{1,2})\b", re.IGNORECASE)
 
 _LEVEL_BY_GRADE = {
     1: "Lower Primary", 2: "Lower Primary", 3: "Lower Primary",
@@ -250,7 +254,13 @@ def _grade_from_text(text: str, meta: dict[str, Any]) -> tuple[str, str]:
         if 1 <= number <= 12:
             return f"grade-{number}", _LEVEL_BY_GRADE[number]
 
-    # Fall back to what the ingesting catalogue declared.
+    # Fall back to what the ingesting catalogue declared. Normalised first:
+    # the declared value is usually already a slug, and a slug is exactly what
+    # a text pattern is worst at reading.
+    declared_slug = normalize_grade(str(meta.get("grade") or ""))
+    if declared_slug:
+        return declared_slug, _grade_level_for(declared_slug) or str(meta.get("level") or "")
+
     declared = str(meta.get("grade") or meta.get("level") or "")
     declared_match = _GRADE_NUM.search(declared)
     if declared_match:
@@ -730,12 +740,29 @@ class CurriculumExtractorService:
 
         if not grade:
             # Guessing a grade silently files a design under the wrong cohort,
-            # which is invisible until questions are generated for it.
-            logger.warning(
-                "No grade found on the cover of '%s' (file_id=%s); defaulting to grade-7.",
-                subject, meta.get("file_id", "?"),
-            )
-            grade, level = "grade-7", "Basic Education"
+            # which is invisible until questions are generated from it — and
+            # this defaulted to grade-7, so Grade 9 designs went into Grade 7
+            # while Grade 9 itself read as empty. The dataset the operator
+            # chose is a fact, not a guess: use it, and refuse only when there
+            # is nothing at all to go on.
+            declared = normalize_grade(str(meta.get("grade") or ""))
+            if declared:
+                grade = declared
+                level = _grade_level_for(declared) or str(meta.get("level") or "")
+                logger.warning(
+                    "No grade on the cover of '%s' (file_id=%s); filing under %s, "
+                    "the dataset it was ingested from.",
+                    subject, meta.get("file_id", "?"), grade,
+                )
+            else:
+                raise_api_error(
+                    "INVALID_GRADE_DATASET",
+                    f"No grade could be read from the cover of '{subject}', and "
+                    f"the dataset it came from names none either. Filing it "
+                    f"under a guess would put this design in another cohort's "
+                    f"curriculum, where it stays invisible until questions are "
+                    f"generated from it.",
+                )
 
         subject_code = "".join([w[0] for w in subject.split() if w]).upper()[:4]
 
