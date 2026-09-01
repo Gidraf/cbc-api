@@ -2049,8 +2049,9 @@ export type BoardStage = {
    *  lesson plan" and makes you go and find the lesson plan has told you where
    *  to click, which is not the same as letting you click it. */
   remedy: import("../ui/Remedy").Remedy[];
-  /** Only on `ingest`: where the design came from, and whether it arrived. */
-  dataset?: {
+  /** Only on `ingest`: where the design came from, and whether it arrived.
+   *  Null everywhere else — never an empty object, which reads as truthy. */
+  dataset?: null | {
     state: "not_imported" | "imported" | "running" | "failing" | "done";
     note: string;
     designs: number;

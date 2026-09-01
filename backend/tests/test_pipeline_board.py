@@ -294,7 +294,7 @@ def test_a_stage_can_be_started_from_the_board():
     from app.routes import pipelines
 
     source = inspect.getsource(pipelines.run_stage)
-    assert "factory_queue_work" in source
+    assert "_queue_stage" in source
     assert "is not a pipeline stage" in source
 
 
@@ -448,7 +448,7 @@ def test_a_stage_can_be_run_reviewed_approved_or_regenerated_from_the_board():
     source = inspect.getsource(pipelines.act_on_stage)
     for action in ("run", "review", "approval", "regenerate"):
         assert f'"{action}"' in source, action
-    assert "factory_queue_work" in source
+    assert "_queue_stage" in source
     assert "factory_queue_review" in source
     assert "factory_queue_regenerate" in source
 
@@ -735,3 +735,48 @@ def test_the_console_hides_those_actions_rather_than_greying_them_out() -> None:
     assert "{stage.files_versions ? (" in board
     assert "Files no versions of its own" in board
     assert "it is checked by what comes after it" in board
+
+
+def test_a_structure_stage_is_queued_through_the_mechanism_that_can_run_it() -> None:
+    """There are two queues, and the board only ever used one.
+
+    `queue-work` fans a station out across sub-strands that already exist.
+    `ingest`, `strands` and `substrands` have no sub-strands to fan out across
+    — they are what CREATES them — and run through the pipeline queue instead.
+    Sending them to `queue-work` gave "Cannot queue strands. Known: activity,
+    diagram, material, media, notes, questions, simulation.", which meant the
+    board could not build the first three stages of its own chain and no grade
+    could be started from it at all.
+    """
+    import inspect
+
+    from app.routes import pipelines
+
+    source = inspect.getsource(pipelines._queue_stage)
+    assert "factory_queue_pipeline" in source, "structure stages"
+    assert "factory_queue_work" in source, "the stations"
+    assert "STAGE_KIND" in source, "one rule decides which, and it is the board's"
+
+    # And the stages that need the pipeline queue are exactly the ones that
+    # file no versions, so there is one fact here rather than two lists.
+    from app.services import pipeline_board
+
+    for stage in ("ingest", "strands", "substrands"):
+        assert not pipeline_board.STAGE_KIND.get(stage)
+    for stage in ("notes", "material", "diagram", "questions"):
+        assert pipeline_board.STAGE_KIND.get(stage)
+
+
+def test_the_dataset_panel_is_not_shown_where_there_is_no_dataset() -> None:
+    """An empty dict is falsy in Python and TRUTHY in JavaScript, so "Dataset:
+    item(s) imported, design(s) read in" — with no numbers in it — appeared
+    under every stage."""
+    from app.services import pipeline_board
+
+    assert pipeline_board.Stage(stage="strands").to_dict()["dataset"] is None
+    assert pipeline_board.Stage(
+        stage="ingest", dataset={"state": "done"}
+    ).to_dict()["dataset"] == {"state": "done"}
+
+    board = open("../frontend-web/src/views/Pipelines.tsx").read()
+    assert "{stage.dataset?.state && (" in board

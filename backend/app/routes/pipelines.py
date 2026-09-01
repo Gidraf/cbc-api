@@ -93,6 +93,45 @@ class RunRequest(BaseModel):
     custom_instructions: str = ""
 
 
+def _queue_stage(stage: str, grade: str, subject: str, auth,
+                 *, sub_strands: list[str] | None = None,
+                 custom_instructions: str = "") -> dict[str, Any]:
+    """Run one stage, through whichever mechanism can actually run it.
+
+    There are two, and the board only ever used one. `queue-work` fans a
+    station out across sub-strands that already exist — notes, diagrams,
+    questions. `ingest`, `strands` and `substrands` do not have sub-strands to
+    fan out across; they are what CREATES them, and they run through the
+    pipeline queue instead.
+
+    Sending them to `queue-work` gave "Cannot queue strands. Known: activity,
+    diagram, material, media, notes, questions, simulation." — which meant the
+    board could not build the first three stages of its own chain, so no grade
+    could be started from it at all.
+    """
+    from ..routes import curriculum as curriculum_routes
+
+    if not pipeline_board.STAGE_KIND.get(stage):
+        queued = curriculum_routes.factory_queue_pipeline(
+            curriculum_routes.QueuePipelineRequest(
+                grade=grade, subject=subject, steps=[stage],
+                custom_instructions=custom_instructions,
+            ),
+            auth,
+        )
+        # The two report different words for the same fact; the board reads one.
+        return {**queued, "queued": queued.get("queued", 0)}
+
+    return curriculum_routes.factory_queue_work(
+        curriculum_routes.QueueWorkRequest(
+            grade=grade, subject=subject, kinds=[stage],
+            sub_strands=sub_strands or [],
+            custom_instructions=custom_instructions,
+        ),
+        auth,
+    )
+
+
 @router.post("/run")
 def run_stage(
     payload: RunRequest,
@@ -114,15 +153,10 @@ def run_stage(
             f"{', '.join(stage_policy.STAGES)}.",
         )
 
-    queued = curriculum_routes.factory_queue_work(
-        curriculum_routes.QueueWorkRequest(
-            grade=payload.grade,
-            subject=payload.subject,
-            kinds=[payload.stage],
-            sub_strands=payload.sub_strands,
-            custom_instructions=payload.custom_instructions,
-        ),
-        auth,
+    queued = _queue_stage(
+        payload.stage, payload.grade, payload.subject, auth,
+        sub_strands=payload.sub_strands,
+        custom_instructions=payload.custom_instructions,
     )
     logger.info("Board queued %s for %s/%s: %s job(s).",
                 payload.stage, payload.grade, payload.subject or "every subject",
@@ -175,13 +209,9 @@ def act_on_stage(
 
     kind = STAGE_KIND.get(payload.stage)
     if payload.action == "run":
-        result = curriculum_routes.factory_queue_work(
-            curriculum_routes.QueueWorkRequest(
-                grade=payload.grade, subject=payload.subject,
-                kinds=[payload.stage],
-                custom_instructions=payload.custom_instructions,
-            ),
-            auth,
+        result = _queue_stage(
+            payload.stage, payload.grade, payload.subject, auth,
+            custom_instructions=payload.custom_instructions,
         )
     elif payload.action in ("review", "approval"):
         if not kind:

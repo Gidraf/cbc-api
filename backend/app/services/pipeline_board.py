@@ -113,7 +113,12 @@ class Stage:
             "files_versions": self.files_versions,
             "cost_usd": round(self.cost_usd, 4),
             "last_run": self.last_run, "blocked_by": self.blocked_by,
-            "policy": self.policy, "dataset": self.dataset,
+            "policy": self.policy,
+            # Only where there is one. An empty dict is falsy in Python and
+            # TRUTHY in JavaScript, so the console rendered "Dataset: item(s)
+            # imported, design(s) read in" — with no numbers in it — under
+            # every stage that has no dataset to report.
+            "dataset": self.dataset or None,
             "remedy": self.remedy,
         }
 

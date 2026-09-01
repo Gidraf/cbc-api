@@ -809,3 +809,23 @@ def test_the_model_screen_uses_the_shared_controls() -> None:
 
     assert "<Select" in screen and "<Input" in screen
     assert "<select" not in screen and "<input" not in screen
+
+
+def test_the_console_reads_the_error_envelope_rather_than_dumping_it() -> None:
+    """This API answers failures as {status, errors: [{code, message, ...}]},
+    and nothing read it.
+
+    `body.message` does not exist at the top level, so every failure fell
+    through to JSON.stringify and the operator was shown the whole envelope
+    with the sentence buried in the middle of it. Carefully worded error
+    messages are worth nothing if they are never read as words.
+    """
+    api = open("../frontend-web/src/api.ts").read()
+
+    assert "export function errorMessage" in api
+    assert "Array.isArray(body.errors) ? body.errors[0] : null" in api
+    # Both readers, not just the JSON one — fetchBlob had its own copy.
+    assert api.count("errorMessage(") >= 3
+    assert "body?.error?.message" not in api, "the old top-level guess"
+    # More than one failure is rare and always worth seeing.
+    assert "and ${rest} more" in api

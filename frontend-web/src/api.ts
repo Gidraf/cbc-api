@@ -60,11 +60,11 @@ export async function fetchBlob(
 
   const response = await fetch(apiUrl(path), { headers });
   if (!response.ok) {
-    // The error body is JSON even when the success body is not.
+    // The error body is JSON even when the success body is not, and it comes
+    // in the same envelope as everywhere else.
     let detail = `${response.status} ${response.statusText}`;
     try {
-      const body = await response.json();
-      detail = body?.error?.message || body?.detail || detail;
+      detail = errorMessage(await response.json()) || detail;
     } catch {
       /* a non-JSON error body is still an error */
     }
@@ -74,6 +74,35 @@ export async function fetchBlob(
   const disposition = response.headers.get("content-disposition") || "";
   const match = /filename="?([^";]+)"?/.exec(disposition);
   return { blob: await response.blob(), filename: match?.[1] || "download" };
+}
+
+/**
+ * The sentence out of an error body.
+ *
+ * This API answers failures in an envelope — {status, errors: [{code, message,
+ * retryable, remedy}]} — and nothing here read it. `body.message` does not
+ * exist at the top level, so every failure fell through to JSON.stringify and
+ * the operator was shown
+ *
+ *   {"status":"failed","errors":[{"code":"VALIDATION_FAILED","message":"Cannot
+ *   queue strands. Known: activity, diagram, ...","retryable":false}]}
+ *
+ * with the actual sentence buried in the middle of it. Carefully worded error
+ * messages are worth nothing if they are never read as words.
+ */
+export function errorMessage(body: any): string {
+  if (!body || typeof body !== "object") return "";
+  const first = Array.isArray(body.errors) ? body.errors[0] : null;
+  if (first?.message) {
+    // More than one is rare and always worth seeing in full: "three learning
+    // areas failed" is a different problem from one.
+    const rest = body.errors.length - 1;
+    return rest > 0 ? `${first.message} (and ${rest} more)` : String(first.message);
+  }
+  if (typeof body.detail === "string") return body.detail;
+  if (body.message) return String(body.message);
+  if (typeof body.error === "string") return body.error;
+  return "";
 }
 
 export async function fetchJson<T>(path: string, init?: RequestInit, auth?: AuthHeaders): Promise<T> {
@@ -111,14 +140,14 @@ export async function fetchJson<T>(path: string, init?: RequestInit, auth?: Auth
   if (response.status === 401) {
     // Only trigger if this is not the login endpoint itself
     if (!cleanPath.includes("/auth/login")) {
-      const msg = (body && typeof body === "object") ? (body.message || body.detail || "Session expired") : "Session expired";
-      triggerAuthExpired(msg);
+      triggerAuthExpired(errorMessage(body) || "Session expired");
     }
   }
 
   if (!response.ok) {
-    const errMsg = (body && typeof body === "object") ? (body.message || body.detail || body.error || JSON.stringify(body)) : text;
-    const err = new Error(errMsg || `HTTP ${response.status} ${response.statusText}`);
+    const err = new Error(
+      errorMessage(body) || text || `HTTP ${response.status} ${response.statusText}`
+    );
     (err as any).data = body;
     (err as any).status = response.status;
     throw err;

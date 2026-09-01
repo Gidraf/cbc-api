@@ -670,7 +670,7 @@ function BranchRow({
                   item failed. A grade with nothing in it read as "not started"
                   either way, and "no design" and "never imported" are different
                   problems with different next actions. */}
-              {stage.dataset && (
+              {stage.dataset?.state && (
                 <Stack
                   direction="row"
                   gap="var(--s3)"
