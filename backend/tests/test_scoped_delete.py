@@ -7,6 +7,7 @@ ones with it.
 """
 from __future__ import annotations
 
+import inspect
 import pathlib
 
 import pytest
@@ -257,3 +258,39 @@ def test_the_console_says_stored_sub_strands_were_not_just_generated():
     assert "generating strands does not regenerate them" in view
     # And each row shows its own age.
     assert "<Th>Stored</Th>" in view
+
+
+def test_a_grade_matches_however_it_was_written() -> None:
+    """The same grade is written four ways across this system: "PP1", "pp1",
+    "grade-pp1", "Grade-PP1".
+
+    `artifact_registry.search` compared it case-sensitively and stripped
+    `grade-` only from the value passed IN, never from the value stored. The
+    board counts artifacts with LOWER() and so showed the lesson plan as built,
+    while this search — the one the material and diagram stations ask before
+    they will run — found nothing and reported "no lesson plan filed for this
+    sub-strand". A plan that visibly existed, reviewed and scored, and every
+    station downstream of it locked.
+
+    The delete paths had the same comparison, which is the other half of it:
+    a reset that matched nothing reported success and left the rows behind.
+    """
+    import re
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1] / "app"
+    offenders = []
+    for path in root.rglob("*.py"):
+        for i, line in enumerate(path.read_text().splitlines(), start=1):
+            if re.search(r"a\.grade\s*=\s*:grade\b", line):
+                offenders.append(f"{path.name}:{i}")
+    assert not offenders, (
+        "case-sensitive grade comparison; normalise both sides with "
+        f"REPLACE(LOWER(...), 'grade-', ''): {offenders}"
+    )
+
+    from app.services import artifact_registry
+
+    source = inspect.getsource(artifact_registry.search)
+    assert "REPLACE(LOWER(a.grade), 'grade-', '')" in source
+    assert "REPLACE(LOWER(:grade), 'grade-', '')" in source

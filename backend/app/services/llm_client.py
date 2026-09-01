@@ -289,8 +289,39 @@ class LlmClient:
             return text, usage
 
     def _extract_and_parse_json(self, text: str) -> dict[str, Any]:
-        """Extracts JSON from markdown code fences if present and parses it."""
-        cleaned = text.strip()
+        """The JSON a model meant to send, out of what it actually sent.
+
+        Hosted models answer a json_object request with bare JSON. Local ones
+        very often do not, and the two habits below are not defects to be
+        prompted away — they are how these models work:
+
+        *   **Reasoning models narrate first.** qwen3 and its family emit a
+            `<think>…</think>` block before the answer. It is the whole reason
+            a local run comes back "could not be parsed as JSON" on a prompt
+            that a hosted model answers perfectly.
+        *   **Small models introduce themselves.** "Here is the JSON you asked
+            for:" in front of a perfectly good object.
+
+        So: drop the thinking, take the fences, and if it still will not parse,
+        take the outermost braces. Every one of these is safe for a model that
+        did the right thing, because none of them changes well-formed JSON.
+        """
+        cleaned = (text or "").strip()
+
+        # Thinking first: a fence inside a <think> block would otherwise be
+        # mistaken for the answer.
+        cleaned = re.sub(r"<think(?:ing)?>.*?</think(?:ing)?>", "", cleaned,
+                         flags=re.DOTALL | re.IGNORECASE).strip()
+        # An unclosed block means the model ran out of tokens mid-thought.
+        # There is no answer after it, but saying so beats "Expecting value".
+        if re.match(r"<think(?:ing)?>", cleaned, re.IGNORECASE):
+            raise_api_error(
+                "SCHEMA_VALIDATION_FAILED",
+                "The model was still thinking when it ran out of room and never "
+                "reached its answer. Raise the context length, or run this "
+                "station on a model that does not think out loud.",
+            )
+
         if "```json" in cleaned:
             match = re.search(r"```json\s*(.*?)\s*```", cleaned, re.DOTALL)
             if match:
@@ -302,10 +333,23 @@ class LlmClient:
 
         try:
             return json.loads(cleaned)
-        except json.JSONDecodeError as exc:
-            logger.error("JSON parsing error on LLM output: %s. Output: %s", exc, cleaned[:200])
-            raise_api_error("SCHEMA_VALIDATION_FAILED", f"LLM output could not be parsed as JSON: {exc}")
-            return {}
+        except json.JSONDecodeError:
+            pass
+
+        # Last resort: the outermost object in whatever came back.
+        start, end = cleaned.find("{"), cleaned.rfind("}")
+        if start != -1 and end > start:
+            try:
+                return json.loads(cleaned[start:end + 1])
+            except json.JSONDecodeError:
+                pass
+
+        logger.error("JSON parsing failed on LLM output: %s", cleaned[:300])
+        raise_api_error(
+            "SCHEMA_VALIDATION_FAILED",
+            f"The model did not return JSON. It began: {cleaned[:160]!r}",
+        )
+        return {}
 
 
 llm_client = LlmClient()

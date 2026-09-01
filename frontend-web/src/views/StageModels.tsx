@@ -13,7 +13,7 @@ import {
   Td,
   Th,
 } from "../ui/components";
-import { useSetStageBinding, useStageBindings } from "../lib/queries";
+import { useSetStageBinding, useSetStageRoles, useStageBindings } from "../lib/queries";
 
 /**
  * Which model runs which station.
@@ -27,31 +27,140 @@ import { useSetStageBinding, useStageBindings } from "../lib/queries";
  * Each station now has its own row. The notes are worth a strong model;
  * extracting a strand list from a table that is already correct is not.
  */
+/**
+ * Generate on your own machine; review on a vendor's.
+ *
+ * The bill here is generation — many long calls producing text nobody has read
+ * yet — and review is a fraction of it. But review is also the one place a
+ * weaker model is worth nothing: a reviewer that cannot see what the generator
+ * missed agrees with it, and you have paid for a second opinion that is the
+ * first one repeated. So the split is by what the work IS, not by what it
+ * costs, and the review stays hosted in both presets.
+ */
+function LocalSplit() {
+  const roles = useSetStageRoles();
+  const [preset, setPreset] = React.useState("careful");
+  const [model, setModel] = React.useState("qwen3:14b");
+  const [url, setUrl] = React.useState("http://host.docker.internal:11434");
+
+  return (
+    <Card
+      title="Run the bulk of it on your own machine"
+      description="Bind every station at once by what its work actually is, instead of setting fourteen rows by hand."
+    >
+      <Stack gap="var(--s3)">
+        <Stack direction="row" gap="var(--s3)" wrap style={{ alignItems: "flex-end" }}>
+          <label style={{ fontSize: "var(--text-sm)", color: "var(--ink-2)" }}>
+            <div>How much goes local</div>
+            <Select
+              value={preset}
+              aria-label="Split"
+              onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setPreset(e.target.value)}
+              style={{ minWidth: "22rem" }}
+            >
+              <option value="careful">
+                Careful — material, photo briefs, activities, profiles
+              </option>
+              <option value="most">
+                Most — everything but reading the design, the plan and the review
+              </option>
+            </Select>
+          </label>
+          <label style={{ fontSize: "var(--text-sm)", color: "var(--ink-2)" }}>
+            <div>Local model</div>
+            <Input
+              className="mono"
+              aria-label="Local model"
+              value={model}
+              placeholder="qwen3:14b"
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) => setModel(e.target.value)}
+              style={{ minWidth: "11rem" }}
+            />
+          </label>
+          <label style={{ fontSize: "var(--text-sm)", color: "var(--ink-2)" }}>
+            <div>Where Ollama is</div>
+            <Input
+              className="mono"
+              aria-label="Ollama base URL"
+              value={url}
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) => setUrl(e.target.value)}
+              style={{ minWidth: "15rem" }}
+            />
+          </label>
+          <Button
+            disabled={!model.trim() || roles.isPending}
+            loading={roles.isPending}
+            onClick={() =>
+              roles.mutateAsync({ preset, local_model: model, local_base_url: url })
+            }
+          >
+            Apply
+          </Button>
+        </Stack>
+
+        <div style={{ fontSize: "var(--text-sm)", color: "var(--ink-3)" }}>
+          <strong>Careful</strong> moves the stations whose work is short, repeated
+          and already told what to write — the material station alone is one call
+          per instruction and the largest share of the bill.{" "}
+          <strong>Most</strong> saves more and is where quality starts to show.
+          Reading the design, the lesson plan and the review stay hosted either
+          way: everything downstream is grounded in the plan, and a reviewer
+          weaker than the generator agrees with it.
+          <br />
+          <br />
+          Two things that will bite: the API runs in a container, so{" "}
+          <code>localhost</code> is the container — use{" "}
+          <code>host.docker.internal</code> or the host's IP. And Ollama defaults
+          to a 4,096-token context whatever the model advertises, which silently
+          truncates these prompts; serve it with{" "}
+          <code>OLLAMA_CONTEXT_LENGTH=32768</code>.
+        </div>
+
+        {roles.error && <ErrorNotice error={roles.error} />}
+        {roles.data && <Badge tone="ok">{roles.data.note}</Badge>}
+      </Stack>
+    </Card>
+  );
+}
+
 export function StageModels() {
   const bindings = useStageBindings();
   const save = useSetStageBinding();
-  const [draft, setDraft] = React.useState<Record<string, { provider: string; model: string }>>({});
+  const [draft, setDraft] = React.useState<
+    Record<string, { provider: string; model: string; base_url: string }>
+  >({});
+
+  // Providers this system reaches at a URL of yours rather than a vendor's.
+  // Ollama on your own machine is free to run, which makes it the right place
+  // to put the long, cheap, high-volume work.
+  const SELF_HOSTED = new Set(["ollama"]);
 
   const rows = bindings.data?.stages || [];
   const providers = bindings.data?.providers || [];
 
-  function valueFor(name: string, field: "provider" | "model") {
+  type Field = "provider" | "model" | "base_url";
+
+  function valueFor(name: string, field: Field) {
     const row = rows.find((r) => r.name === name);
-    return draft[name]?.[field] ?? (row ? row[field] : "");
+    return draft[name]?.[field] ?? (row ? (row[field] ?? "") : "");
   }
 
-  function edit(name: string, field: "provider" | "model", value: string) {
+  function edit(name: string, field: Field, value: string) {
     const row = rows.find((r) => r.name === name);
+    const current = draft[name];
     setDraft((d) => ({
       ...d,
       [name]: {
-        provider: field === "provider" ? value : d[name]?.provider ?? row?.provider ?? "",
-        model: field === "model" ? value : d[name]?.model ?? row?.model ?? "",
+        provider: field === "provider" ? value : current?.provider ?? row?.provider ?? "",
+        model: field === "model" ? value : current?.model ?? row?.model ?? "",
+        base_url: field === "base_url" ? value : current?.base_url ?? row?.base_url ?? "",
       },
     }));
   }
 
   return (
+    <Stack gap="var(--s4)">
+    <LocalSplit />
     <Card
       title="Model per station"
       description="Each stage of the pipeline can run on a different model. Spend where the work is hard; don't spend where it is extraction."
@@ -78,7 +187,9 @@ export function StageModels() {
                 const dirty =
                   draft[row.name] &&
                   (draft[row.name].provider !== row.provider ||
-                    draft[row.name].model !== row.model);
+                    draft[row.name].model !== row.model ||
+                    draft[row.name].base_url !== (row.base_url ?? ""));
+                const selfHosted = SELF_HOSTED.has(valueFor(row.name, "provider"));
                 return (
                   <tr key={row.name}>
                     <Td>
@@ -125,6 +236,31 @@ export function StageModels() {
                         className="mono"
                         style={{ minWidth: "11rem" }}
                       />
+                      {/* Where the model actually is. Vendors have one address
+                          and it is built in; your own Ollama does not, and
+                          without this the station could be pointed at a local
+                          model only by editing an environment variable and
+                          restarting the API. */}
+                      {selfHosted && (
+                        <>
+                          <Input
+                            aria-label={`Base URL for ${row.label}`}
+                            className="mono"
+                            value={valueFor(row.name, "base_url")}
+                            placeholder="http://host.docker.internal:11434"
+                            onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                              edit(row.name, "base_url", e.target.value)
+                            }
+                            style={{ minWidth: "11rem", marginTop: 4 }}
+                          />
+                          <div style={{ fontSize: "var(--text-xs)", color: "var(--ink-3)", marginTop: 2 }}>
+                            The API runs in a container, so <code>localhost</code>{" "}
+                            here means the container, not your machine. Use{" "}
+                            <code>host.docker.internal</code> on Mac or Windows,
+                            or the host's IP on Linux.
+                          </div>
+                        </>
+                      )}
                     </Td>
                     <Td>
                       <Button
@@ -136,6 +272,7 @@ export function StageModels() {
                             stage: row.name,
                             provider: valueFor(row.name, "provider"),
                             model: valueFor(row.name, "model"),
+                            base_url: valueFor(row.name, "base_url") || null,
                           })
                         }
                       >
@@ -160,5 +297,6 @@ export function StageModels() {
         </>
       )}
     </Card>
+    </Stack>
   );
 }

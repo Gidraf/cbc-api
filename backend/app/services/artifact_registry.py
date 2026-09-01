@@ -392,9 +392,20 @@ def search(
     conditions = ["1=1"]
     params: dict[str, Any] = {"limit": max(1, min(limit, 1000))}
     if grade:
-        conditions.append("(a.grade = :grade OR a.grade = :alt_grade)")
+        # Normalised on BOTH sides, because the same grade is written four
+        # ways across this system: "PP1", "pp1", "grade-pp1", "Grade-PP1".
+        #
+        # This comparison was case-sensitive and only stripped `grade-` from
+        # the value passed IN, never from the value stored. The board counts
+        # artifacts with LOWER() and so showed the lesson plan as built, while
+        # this search — the one the material and diagram stations ask before
+        # they will run — found nothing and reported "no lesson plan filed for
+        # this sub-strand". A plan that visibly exists, reviewed and scored,
+        # and every station downstream of it locked.
+        conditions.append(
+            "REPLACE(LOWER(a.grade), 'grade-', '') = REPLACE(LOWER(:grade), 'grade-', '')"
+        )
         params["grade"] = grade
-        params["alt_grade"] = grade.replace("grade-", "")
     if subject:
         conditions.append("LOWER(a.subject) = LOWER(:subject)")
         params["subject"] = subject

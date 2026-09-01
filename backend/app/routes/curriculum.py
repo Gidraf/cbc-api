@@ -6069,7 +6069,7 @@ def factory_queue_regenerate(
                    a.strand_name, a.sub_strand_name
             FROM artifacts a
             JOIN artifact_reviews r ON r.artifact_id = a.artifact_id
-            WHERE (a.grade = :grade OR a.grade = :alt_grade)
+            WHERE (REPLACE(LOWER(a.grade), 'grade-', '') = REPLACE(LOWER(:grade), 'grade-', ''))
               AND (:subject = '' OR LOWER(a.subject) = LOWER(:subject))
               AND r.verdict IN ('revise', 'reject')
             LIMIT 500
@@ -6150,7 +6150,7 @@ def factory_queue_review(
             SELECT a.artifact_id, a.grade, a.subject, a.strand_name,
                    a.sub_strand_name, a.kind
             FROM artifacts a
-            WHERE (a.grade = :grade OR a.grade = :alt_grade)
+            WHERE (REPLACE(LOWER(a.grade), 'grade-', '') = REPLACE(LOWER(:grade), 'grade-', ''))
               AND (:subject = '' OR LOWER(a.subject) = LOWER(:subject))
               AND (:strand = '' OR LOWER(a.strand_name) = LOWER(:strand))
               AND (:kinds = '' OR a.kind = ANY(STRING_TO_ARRAY(:kinds, ',')))

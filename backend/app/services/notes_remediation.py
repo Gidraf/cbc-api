@@ -332,6 +332,23 @@ def _inspect(notes: dict[str, Any],
         if number and number not in targets:
             targets.append(number)
 
+    # Lessons that teach the SAME outcome from the SAME line of the design.
+    #
+    # This was reported and never acted on. A sub-strand funding seven lessons
+    # against three outcomes came back with lessons 4, 5, 6 and 7 all teaching
+    # "appreciate God as a loving heavenly father" from 203:24 — the reviewer
+    # caught it every time, scored it 60 on curriculum alignment, and the loop
+    # had no lesson to rewrite, so it regenerated, failed identically, and
+    # stopped at 77 for good.
+    #
+    # Keep the FIRST lesson of each group: it is the honest one. The rest are
+    # what padding looks like.
+    for group in repetition.get("same_outcome_same_source") or []:
+        for title in (group.get("lessons") or [])[1:]:
+            number = by_title.get(title)
+            if number and number not in targets:
+                targets.append(number)
+
     # A design experience nobody taught also needs a lesson rewritten, and
     # there is no pair to name one. Without this the loop reported "the design
     # suggests 'listen to a recorded clip of a short prayer' and no lesson uses

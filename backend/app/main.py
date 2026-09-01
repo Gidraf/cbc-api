@@ -92,6 +92,74 @@ def _apply_bootstrap_bindings(provider: str, model: str, base_url: str | None) -
     }
 
 
+class RoleSplitRequest(BaseModel):
+    """Run the bulk of the generating on your own machine, review on a vendor's.
+
+    The token bill here is generation: many long calls, all of them producing
+    text nobody has read yet. Review is a fraction of it and is the one place
+    where a weaker model is worth nothing — so the split is not "local to save
+    money" but "local where the work is mechanical, hosted where it is
+    judgement".
+    """
+
+    preset: str = "careful"          # careful | most
+    local_provider: str = "ollama"
+    local_model: str
+    local_base_url: str | None = None
+    hosted_provider: str = "openai"
+    hosted_model: str = "gpt-4o"
+
+
+@app.post("/admin/pipeline-bindings/roles")
+def set_stage_roles(
+    payload: RoleSplitRequest,
+    _: AuthContext = Depends(require_roles("admin", "operator")),
+) -> dict:
+    """Bind every station at once, by what its work actually is."""
+    from .services.stages import split_by_role
+
+    split = split_by_role(payload.preset)
+    if not any(v == "local" for v in split.values()):
+        raise_api_error(
+            "VALIDATION_FAILED",
+            f"'{payload.preset}' is not a split. Use 'careful' (the short, "
+            f"high-volume stations) or 'most' (everything except reading the "
+            f"design, the lesson plan and the review).",
+        )
+    for provider in (payload.local_provider, payload.hosted_provider):
+        if provider not in runtime_state.provider_credentials:
+            raise_api_error("UNSUPPORTED_MODEL_PROVIDER", f"Unsupported provider: {provider}")
+
+    local, hosted = [], []
+    for stage, role in split.items():
+        if stage not in STAGE_NAMES:
+            continue
+        is_local = role == "local"
+        runtime_state.stage_bindings[stage] = StageBinding(
+            pipeline_stage=stage,
+            provider=payload.local_provider if is_local else payload.hosted_provider,
+            model=payload.local_model if is_local else payload.hosted_model,
+            # Only the local one carries a URL; a vendor has its own.
+            base_url=payload.local_base_url if is_local else None,
+        )
+        runtime_state.persist_stage_binding(stage)
+        (local if is_local else hosted).append(stage)
+
+    return {
+        "preset": payload.preset,
+        "local": {"provider": payload.local_provider, "model": payload.local_model,
+                  "base_url": payload.local_base_url, "stages": sorted(local)},
+        "hosted": {"provider": payload.hosted_provider, "model": payload.hosted_model,
+                   "stages": sorted(hosted)},
+        "note": (
+            f"{len(local)} station(s) now run on {payload.local_model} on your own "
+            f"machine; {len(hosted)} stay on {payload.hosted_model}. The review "
+            f"stays hosted in every preset — a reviewer weaker than the generator "
+            f"agrees with it."
+        ),
+    }
+
+
 class BrowseRequest(BaseModel):
     url: str
 

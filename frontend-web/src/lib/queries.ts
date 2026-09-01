@@ -2418,6 +2418,44 @@ export function useImportPrompts() {
   });
 }
 
+export type RoleSplit = {
+  preset: string;
+  local: { provider: string; model: string; base_url: string | null; stages: string[] };
+  hosted: { provider: string; model: string; stages: string[] };
+  note: string;
+};
+
+/** Bind every station at once by what its work actually is.
+ *
+ *  The token bill is generation: many long calls producing text nobody has
+ *  read yet. Review is a fraction of it, and the one place a weaker model is
+ *  worth nothing — so the split is not "local to save money" but "local where
+ *  the work is mechanical, hosted where it is judgement". */
+export function useSetStageRoles() {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: {
+      preset: string;
+      local_model: string;
+      local_base_url?: string | null;
+      hosted_model?: string;
+    }) =>
+      api<RoleSplit>("/admin/pipeline-bindings/roles", {
+        method: "POST",
+        body: JSON.stringify({
+          preset: v.preset,
+          local_provider: "ollama",
+          local_model: v.local_model,
+          local_base_url: v.local_base_url || null,
+          hosted_provider: "openai",
+          hosted_model: v.hosted_model || "gpt-4o",
+        }),
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["stage-bindings"] }),
+  });
+}
+
 export function usePipelines() {
   const api = useApi();
   return useQuery({

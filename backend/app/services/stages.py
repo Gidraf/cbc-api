@@ -126,6 +126,51 @@ BY_NAME: dict[str, Stage] = {s.name: s for s in STAGES}
 NAMES: frozenset[str] = frozenset(BY_NAME)
 
 
+# Which stations are worth running on your own machine, and which are not.
+#
+# Not a preference — a consequence of what each station does. `material` is
+# many short calls against an explicit instruction ("the plan says choose a
+# simple song; write the song"), which is exactly the work a 14B model does
+# competently and exactly the work that costs the most tokens. `notes` is the
+# opposite: one long call, the most judgement in the pipeline, and everything
+# downstream is grounded in it — the stage's own guidance says a weak model
+# shows here first.
+#
+# And a REVIEWER weaker than the generator is not a reviewer. It agrees.
+LOCAL_FRIENDLY: tuple[str, ...] = (
+    "material_generation",
+    "media_generation",
+    "activity_generation",
+    "profile_generation",
+)
+
+# Never local, whatever the preset. Layer 2 exists to be a second opinion, and
+# a second opinion that cannot see what the first one missed is one opinion
+# asked twice.
+HOSTED_ONLY: tuple[str, ...] = (
+    "reviewer_panel",
+    "notes_generation",
+    "ingest_extraction",
+)
+
+
+def split_by_role(preset: str) -> dict[str, str]:
+    """Which stations go local, for a given appetite. The rest stay hosted.
+
+    `careful`  — only the stations whose work is short, high-volume and driven
+                 by an instruction the plan already wrote.
+    `most`     — everything except the reading, the plan and the review. Saves
+                 the most and is where quality starts to show.
+    """
+    if preset == "most":
+        local = [s.name for s in STAGES if s.name not in HOSTED_ONLY]
+    elif preset == "careful":
+        local = list(LOCAL_FRIENDLY)
+    else:
+        local = []
+    return {s.name: ("local" if s.name in local else "hosted") for s in STAGES}
+
+
 def chain(stage: str) -> list[str]:
     """The stage, then whatever it inherits from, in order.
 

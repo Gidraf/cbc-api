@@ -748,7 +748,7 @@ def get_dataset_progress_report(
             FROM artifacts a
             LEFT JOIN artifact_labels l
                    ON l.artifact_id = a.artifact_id AND l.label = 'approved'
-            WHERE (a.grade = :grade OR a.grade = :alt_grade)
+            WHERE (REPLACE(LOWER(a.grade), 'grade-', '') = REPLACE(LOWER(:grade), 'grade-', ''))
             GROUP BY a.subject, a.sub_strand_name
             """,
             {"grade": grade_slug, "alt_grade": alt_grade},

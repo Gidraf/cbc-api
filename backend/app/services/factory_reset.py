@@ -53,7 +53,7 @@ class Target:
         if self.via_artifacts:
             inner = ["1=1"]
             if grade:
-                inner.append("(a.grade = :grade OR a.grade = :alt_grade)")
+                inner.append("(REPLACE(LOWER(a.grade), 'grade-', '') = REPLACE(LOWER(:grade), 'grade-', ''))")
                 params["grade"] = grade
                 params["alt_grade"] = grade.replace("grade-", "")
             if subject:

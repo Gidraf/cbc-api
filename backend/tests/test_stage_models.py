@@ -141,3 +141,87 @@ def test_the_console_shows_the_score_on_the_station():
     # And names the one variable the operator is meant to change.
     flat = " ".join(view.split())
     assert "Change one thing — the model on this station" in flat
+
+
+# ── running the bulk of it on your own machine ──────────────────────────────
+
+
+def test_the_split_is_by_what_the_work_is_not_by_what_it_costs() -> None:
+    """Review is a fraction of the bill and the one place a weaker model is
+    worth nothing: a reviewer that cannot see what the generator missed agrees
+    with it, and you have paid for the first opinion twice."""
+    from app.services.stages import split_by_role
+
+    for preset in ("careful", "most"):
+        split = split_by_role(preset)
+        assert split["reviewer_panel"] == "hosted", preset
+        # Everything downstream is grounded in the plan, and the design is read
+        # once — neither is where the volume is.
+        assert split["notes_generation"] == "hosted", preset
+        assert split["ingest_extraction"] == "hosted", preset
+
+    careful = split_by_role("careful")
+    # The material station is one call per instruction and the largest share
+    # of the bill, which is exactly the work a local model does competently.
+    assert careful["material_generation"] == "local"
+    assert careful["question_generation"] == "hosted"
+
+    most = split_by_role("most")
+    assert most["question_generation"] == "local"
+    assert sum(v == "local" for v in most.values()) > sum(
+        v == "local" for v in careful.values()
+    )
+
+    assert not any(v == "local" for v in split_by_role("nonsense").values())
+
+
+def test_a_reasoning_model_s_thinking_is_not_mistaken_for_its_answer() -> None:
+    """qwen3 and its family emit <think>…</think> before the answer. It is the
+    whole reason a local run comes back "could not be parsed as JSON" on a
+    prompt a hosted model answers perfectly."""
+    from app.services.llm_client import LlmClient
+
+    client = LlmClient()
+
+    assert client._extract_and_parse_json(
+        '<think>\nLet me plan the seven lessons.\n</think>\n{"title": "Our God"}'
+    ) == {"title": "Our God"}
+
+    # A fence inside the thinking is not the answer.
+    assert client._extract_and_parse_json(
+        '<think>maybe ```json {"wrong": 1} ```</think>\n```json\n{"title": "real"}\n```'
+    ) == {"title": "real"}
+
+    # Small models introduce themselves.
+    assert client._extract_and_parse_json(
+        'Here is the JSON you asked for:\n{"title": "Our God"}\nHope this helps!'
+    ) == {"title": "Our God"}
+
+    # And none of it changes well-formed JSON.
+    assert client._extract_and_parse_json('{"title": "Our God"}') == {"title": "Our God"}
+
+
+def test_thinking_that_never_finished_says_so() -> None:
+    """"Expecting value: line 1 column 1" tells an operator nothing about a
+    model that ran out of room mid-thought."""
+    import pytest
+
+    from app.errors import ApiError
+    from app.services.llm_client import LlmClient
+
+    with pytest.raises(ApiError) as caught:
+        LlmClient()._extract_and_parse_json("<think>I need to consider the seven")
+
+    assert "still thinking" in caught.value.message
+    assert "context length" in caught.value.message
+
+
+def test_the_console_warns_about_the_two_things_that_will_bite() -> None:
+    screen = " ".join(
+        (FRONTEND / "src/views/StageModels.tsx").read_text().split()
+    )
+
+    # localhost inside a container is the container.
+    assert "host.docker.internal" in screen
+    # And Ollama truncates to 4,096 tokens whatever the model advertises.
+    assert "OLLAMA_CONTEXT_LENGTH=32768" in screen

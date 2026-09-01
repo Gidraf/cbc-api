@@ -217,6 +217,17 @@ MIRROR_COST = 15.0
 PARTIAL_WEIGHT = 0.5
 
 
+def _is_padding(group: dict[str, Any]) -> bool:
+    """Whether a shared outcome is depth or filler.
+
+    An outcome can honestly need two lessons, and often does — so two is not a
+    finding by itself. It becomes one when a third lesson joins them, or when
+    the lessons sharing it also have the learners do the same things, which is
+    the guide stating in its own fields that they are one lesson.
+    """
+    return len(group.get("lessons") or []) >= 3 or bool(group.get("same_experiences"))
+
+
 def _findings(report: dict[str, Any]) -> list[str]:
     """The same defects, in one line each, for a regeneration to act on.
 
@@ -255,6 +266,22 @@ def _findings(report: dict[str, Any]) -> list[str]:
             f"or say in `gaps` that the design does not fund this many "
             f"distinct lessons."
         )
+    for group in report.get("same_outcome_same_source", []):
+        if not _is_padding(group):
+            continue
+        names = group["lessons"]
+        doing = (" All of them have the learners do the same things"
+                 if group.get("same_experiences") else "")
+        out.append(
+            f"{len(names)} lessons ({'; '.join(names)}) all teach "
+            f"\"{group['slo']}\" from the same line ({group['ref']}).{doing}. "
+            f"Keep the first. Rewrite the rest to draw on suggested learning "
+            f"experiences the design offers and no lesson has used yet, and to "
+            f"take the outcome further — introduce it, then practise it, then "
+            f"apply it — never to restate it. If the design genuinely does not "
+            f"fund this many distinct lessons, say so in `gaps` instead of "
+            f"filling them."
+        )
     return out
 
 
@@ -275,6 +302,12 @@ def _score(report: dict[str, Any]) -> float:
 
     padded = {pair["b"] for pair in report["near_duplicates"]}
     padded |= {pair["b"] for pair in report.get("parallel_shapes", [])}
+    # Every lesson of a padded group except the first. Their prose differs, so
+    # no similarity check charges them, and a guide could be four sevenths one
+    # outcome taught four times and still score 100.
+    for group in report.get("same_outcome_same_source", []):
+        if _is_padding(group):
+            padded |= set(group["lessons"][1:])
 
     # A lesson that shares exposition with another lesson which is ITSELF
     # already counted is not counted twice — and the original is not charged
@@ -334,6 +367,20 @@ def _refs_of(module: Any) -> tuple[str, ...]:
         if isinstance(c, dict) and c.get("ref")))
 
 
+def _experiences_of(module: Any) -> tuple[str, ...]:
+    """Which of the design's suggested experiences this lesson uses.
+
+    The guide's own account of what the learners DO. Four lessons that list the
+    same two experiences are four lessons doing the same two things, however
+    differently the prose is worded — which is why differently-worded padding
+    slipped past every similarity check.
+    """
+    if not isinstance(module, dict):
+        return ()
+    return tuple(sorted(
+        _norm(str(e)) for e in (module.get("learning_experiences_used") or [])))
+
+
 def _topics_of(module: Any) -> list[str]:
     if not isinstance(module, dict):
         return []
@@ -349,13 +396,27 @@ def _same_outcome_same_source(modules: list) -> list[dict[str, Any]]:
     no judgement, just what the guide says about itself.
     """
     groups: dict[tuple, list[str]] = {}
+    experiences: dict[tuple, set[tuple[str, ...]]] = {}
     for i, module in enumerate(modules):
         slos, refs = _slos_of(module), _refs_of(module)
         if not slos or not refs:
             continue
-        groups.setdefault((slos, refs), []).append(_label(module, i))
-    return [{"slo": key[0][0], "ref": key[1][0], "lessons": names}
-            for key, names in groups.items() if len(names) > 1]
+        key = (slos, refs)
+        groups.setdefault(key, []).append(_label(module, i))
+        experiences.setdefault(key, set()).add(_experiences_of(module))
+
+    out = []
+    for key, names in groups.items():
+        if len(names) < 2:
+            continue
+        # One distinct set of experiences across the whole group means every
+        # lesson in it has the learners do the same things. That is the exact
+        # shape of padding, and it is the guide's own claim about itself.
+        used = experiences.get(key) or set()
+        same = len(used) == 1 and bool(next(iter(used), ()))
+        out.append({"slo": key[0][0], "ref": key[1][0], "lessons": names,
+                    "same_experiences": same})
+    return out
 
 
 def _parallel_shapes(modules: list) -> list[dict[str, Any]]:
@@ -428,7 +489,8 @@ def inspect(content: Any) -> dict[str, Any]:
         "repeated_segments": segments[:MAX_REPORTED],
         "parallel_shapes": shapes[:MAX_REPORTED],
         "same_outcome_same_source": concentrated[:MAX_REPORTED],
-        "clean": not (mirrors or duplicates or segments or shapes),
+        "clean": not (mirrors or duplicates or segments or shapes
+                      or [g for g in concentrated if _is_padding(g)]),
     }
     report["score"] = _score(report)
     report["findings"] = _findings(report)
