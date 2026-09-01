@@ -206,16 +206,19 @@ def test_stages_can_be_left_out_of_the_run():
     are often the ones worth watching."""
     panel = " ".join((FRONTEND / "src/views/AutoRunPanel.tsx").read_text().split())
 
-    assert "What runs unattended" in panel
-    assert "Untick a stage to keep it for yourself" in panel
-    assert "You will run these yourself" in panel
+    assert "The chain" in panel
+    assert "Click one to hold it back and run it yourself" in panel
+    assert "Held back for you" in panel
     assert "steps: autoSteps" in panel
+    # And it does not pretend it can carry on past one: the chain depends on
+    # itself, so a held-back stage is where the run ends.
+    assert "does not skip past a held-back stage" in panel
 
 
 def test_learning_areas_can_be_chosen_one_at_a_time():
     panel = " ".join((FRONTEND / "src/views/AutoRunPanel.tsx").read_text().split())
 
-    assert "Which learning areas" in panel
+    assert "Learning areas" in panel
     assert "subjects: autoSubjects" in panel
     # And it says why you would start with one.
     assert "read the weakest-items table before turning the rest loose" in panel
@@ -327,3 +330,65 @@ def test_the_cost_columns_have_a_migration():
 
     names = re.findall(r'^\s+"(\d{3}_[a-z0-9_]+)",', source, re.M)
     assert names == sorted(names)
+
+
+def test_auto_mode_plans_against_the_board_not_beside_it() -> None:
+    """The stage picker was a wall of identical buttons in no particular order.
+
+    You chose which stages to run unattended with no idea which of them were
+    already done, already failing, or waiting on something upstream — and then
+    read the answer on a different screen. The picker is now the board's own
+    stage row: same tiles, same words, same counts, in dependency order.
+    """
+    panel = open("../frontend-web/src/views/AutoRunPanel.tsx").read()
+    board = open("../frontend-web/src/views/Pipelines.tsx").read()
+    shared = open("../frontend-web/src/views/pipelineVocabulary.ts").read()
+
+    # One vocabulary, imported by both — not two copies that drift apart the
+    # first time a stage is renamed on one screen.
+    assert 'from "./pipelineVocabulary"' in panel
+    assert 'from "./pipelineVocabulary"' in board
+    for screen in (panel, board):
+        assert "const TONE" not in screen, "the tones belong in the shared module"
+        assert "const WORDS" not in screen
+    assert "approved" in shared and "waiting upstream" in shared
+
+    # The panel reads real state, so a tile can say what the stage is actually
+    # doing rather than only whether it is ticked.
+    assert "usePipeline" in panel
+    assert "rollupStages" in panel
+
+    # The chain is a chain: one scrolling row in PIPELINE_STEPS order, never
+    # wrapped. Wrapping put Questions underneath Read the design.
+    assert "overflowX" in panel and "flexWrap" not in panel.split("The chain")[1][:2000]
+    assert "PIPELINE_STEPS.map" in panel
+
+
+def test_auto_mode_refuses_to_quietly_run_a_grade_with_no_design() -> None:
+    """A run over a grade whose dataset was never imported produces nothing and
+    says so only at the end."""
+    panel = open("../frontend-web/src/views/AutoRunPanel.tsx").read()
+
+    assert "nothingImported" in panel
+    assert "no design to read" in panel
+    assert "/datasets?grade=" in panel
+
+
+def test_auto_mode_does_not_show_a_score_before_anything_is_scored() -> None:
+    """"median 0 of the last 5 - mean 0 across 0 scored item(s)" was shown
+    before a run had ever started, and a red zero reads as a failure."""
+    panel = open("../frontend-web/src/views/AutoRunPanel.tsx").read()
+
+    assert "items_counted ?? 0) > 0" in panel, "gate on what was counted, not on what was attempted"
+    assert "run && scored" in panel
+
+
+def test_the_rollup_reports_the_stage_that_still_needs_work() -> None:
+    """A grade rolled up across seven learning areas has seven answers per
+    stage. Reporting the best of them is how a stage reads 'approved' while two
+    subjects in it have not started."""
+    shared = open("../frontend-web/src/views/pipelineVocabulary.ts").read()
+
+    ranks = shared.split("const RANK = [")[1].split("]")[0]
+    order = [w.strip().strip('",') for w in ranks.replace("\n", " ").split() if w.strip(' ",')]
+    assert order.index("failing") < order.index("not_started") < order.index("approved")

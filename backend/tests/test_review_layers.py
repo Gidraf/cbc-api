@@ -370,6 +370,41 @@ def test_the_api_proxy_survives_the_switch_to_a_built_bundle() -> None:
     assert config.count("proxy") >= 3, "the same proxy must serve dev and preview"
 
 
+def test_no_client_route_is_swallowed_by_an_api_proxy_prefix() -> None:
+    """A proxy key is matched by PREFIX, so `/pipeline` also caught `/pipelines`.
+
+    The board's own page then answered {"detail": "Not Found"} from the API on a
+    refresh while working perfectly when reached from the sidebar, because only
+    the refresh is a server request. This has now happened three times —
+    /questions, /review, /pipelines — so it is asserted rather than remembered.
+    """
+    import re
+
+    config = open("../frontend-web/vite.config.ts").read()
+    main = open("../frontend-web/src/main.tsx").read()
+
+    prefixes = re.search(r"const API_PREFIXES = \[(.*?)\]", config, re.S)
+    assert prefixes, "the proxied prefixes must stay in one readable list"
+    proxied = re.findall(r'"(/[^"]+)"', prefixes.group(1))
+    assert "/api" in proxied
+
+    routes = [f"/{p}" for p in re.findall(r'path="([a-z-]+)"', main)]
+    assert "/pipelines" in routes, "the board's route is the one this regressed on"
+
+    # The keys must be anchored at a path boundary, so a route added later is
+    # safe without anyone re-reading this test.
+    assert '`^${path}(?:[/?]|$)`' in config, "proxy keys must be anchored regexes"
+
+    # Match the way the running proxy matches, not the way the list reads.
+    for route in routes:
+        for prefix in proxied:
+            key = re.compile(f"^{re.escape(prefix)}(?:[/?]|$)")
+            assert not key.match(route), (
+                f"the client route {route} is swallowed by the proxied prefix "
+                f"{prefix}; the page will answer with API JSON on a refresh"
+            )
+
+
 def test_the_review_panel_is_reachable_from_the_factory_itself() -> None:
     """The decisions belong where the work is. Sending an operator to another
     screen to see what changed and back to decide made them hold the previous

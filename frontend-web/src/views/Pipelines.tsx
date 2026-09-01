@@ -35,6 +35,9 @@ import {
   type StagePolicy,
   type StageUnit,
 } from "../lib/queries";
+// Shared with auto mode, so the two screens cannot describe the same stage in
+// two different words. See pipelineVocabulary.ts.
+import { TONE, WORDS } from "./pipelineVocabulary";
 
 /**
  * The pipeline board.
@@ -58,25 +61,6 @@ import {
 // have asked them for.
 const STATION_STAGES = new Set(["diagram", "media", "simulation", "activity"]);
 
-const TONE: Record<string, "ok" | "warn" | "danger" | "accent" | "neutral"> = {
-  approved: "ok",
-  reviewed: "accent",
-  built: "warn",
-  running: "accent",
-  failing: "danger",
-  blocked: "neutral",
-  not_started: "neutral",
-};
-
-const WORDS: Record<string, string> = {
-  approved: "approved",
-  reviewed: "awaiting sign-off",
-  built: "built, not through the gate",
-  running: "running",
-  failing: "failing",
-  blocked: "waiting upstream",
-  not_started: "not started",
-};
 
 function StageCell({ stage, onOpen }: { stage: BoardStage; onOpen: () => void }) {
   const tone = TONE[stage.status] || "neutral";

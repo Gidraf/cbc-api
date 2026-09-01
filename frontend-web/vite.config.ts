@@ -14,12 +14,23 @@ export default defineConfig(({ mode }) => {
   // navigating to /questions returned raw API JSON instead of the page. The
   // console calls those endpoints under /api/v1.
   //
+  // Each key is an ANCHORED REGEX, not a bare prefix. A bare prefix matches by
+  // string, so `/pipeline` also swallowed `/pipelines` — the pipeline board's
+  // own client route — and a refresh on that page returned {"detail":"Not
+  // Found"} from the API while clicking through to it from the sidebar worked,
+  // because only the refresh is a server request. `(/|$)` requires the prefix
+  // to end at a path boundary, so a client route can never again be shadowed
+  // by an API prefix that merely starts the same way. The boundary includes
+  // `?` because the proxy matches the request URL, query string and all, and
+  // `/health?verbose=1` is the same endpoint as `/health`.
+  //
   // Shared between `server` and `preview`: the deployed console serves a built
   // bundle through `preview`, and an API that is only reachable in dev is an
   // API that works on a laptop and 502s in production.
+  const API_PREFIXES = ["/api", "/admin", "/generate", "/auth", "/pipeline", "/health"];
   const proxy = Object.fromEntries(
-    ["/api", "/admin", "/generate", "/auth", "/pipeline", "/health"].map((path) => [
-      path,
+    API_PREFIXES.map((path) => [
+      `^${path}(?:[/?]|$)`,
       { target: proxyTarget, changeOrigin: true },
     ])
   );
