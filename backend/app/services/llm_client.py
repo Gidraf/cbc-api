@@ -38,7 +38,9 @@ def _model_remedy(config: "ResolvedModelConfig"):
     return set_the_model(
         config.pipeline_stage,
         current=config.model,
-        options=sorted(known_models_for(config.provider)),
+        # The same URL the failed call used, so a self-hosted server is asked
+        # what it has rather than guessed at.
+        options=sorted(known_models_for(config.provider, config.resolved_base_url)),
     )
 
 

@@ -13,7 +13,12 @@ import {
   Td,
   Th,
 } from "../ui/components";
-import { useSetStageBinding, useSetStageRoles, useStageBindings } from "../lib/queries";
+import {
+  useProviderModels,
+  useSetStageBinding,
+  useSetStageRoles,
+  useStageBindings,
+} from "../lib/queries";
 
 /**
  * Which model runs which station.
@@ -39,9 +44,11 @@ import { useSetStageBinding, useSetStageRoles, useStageBindings } from "../lib/q
  */
 function LocalSplit() {
   const roles = useSetStageRoles();
-  const [preset, setPreset] = React.useState("careful");
+  const [preset, setPreset] = React.useState("all");
   const [model, setModel] = React.useState("qwen3:14b");
   const [url, setUrl] = React.useState("http://host.docker.internal:11434");
+  const catalogue = useProviderModels("ollama", url);
+  const installed = catalogue.data?.models || [];
 
   return (
     <Card
@@ -58,24 +65,36 @@ function LocalSplit() {
               onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setPreset(e.target.value)}
               style={{ minWidth: "22rem" }}
             >
-              <option value="careful">
-                Careful — material, photo briefs, activities, profiles
+              <option value="all">
+                All generating stations — only the review stays hosted
               </option>
               <option value="most">
-                Most — everything but reading the design, the plan and the review
+                Most — all but reading the design and the lesson plan
+              </option>
+              <option value="careful">
+                Careful — material, photo briefs, activities, profiles
               </option>
             </Select>
           </label>
           <label style={{ fontSize: "var(--text-sm)", color: "var(--ink-2)" }}>
             <div>Local model</div>
-            <Input
-              className="mono"
+            {/* Asked of the server at that URL. Ollama names carry a tag —
+                `llama3.1:8b`, not `llama3.1` — and a bare family name resolves
+                only if `:latest` was pulled, which is how a station ends up
+                bound to a model the machine does not have. */}
+            <Select
               aria-label="Local model"
               value={model}
-              placeholder="qwen3:14b"
-              onChange={(e: React.ChangeEvent<HTMLInputElement>) => setModel(e.target.value)}
-              style={{ minWidth: "11rem" }}
-            />
+              onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setModel(e.target.value)}
+              style={{ minWidth: "13rem" }}
+            >
+              {!installed.includes(model) && model && (
+                <option value={model}>{model} (not installed there)</option>
+              )}
+              {installed.map((m) => (
+                <option key={m} value={m}>{m}</option>
+              ))}
+            </Select>
           </label>
           <label style={{ fontSize: "var(--text-sm)", color: "var(--ink-2)" }}>
             <div>Where Ollama is</div>
@@ -99,13 +118,17 @@ function LocalSplit() {
         </Stack>
 
         <div style={{ fontSize: "var(--text-sm)", color: "var(--ink-3)" }}>
-          <strong>Careful</strong> moves the stations whose work is short, repeated
-          and already told what to write — the material station alone is one call
-          per instruction and the largest share of the bill.{" "}
-          <strong>Most</strong> saves more and is where quality starts to show.
-          Reading the design, the lesson plan and the review stay hosted either
-          way: everything downstream is grounded in the plan, and a reviewer
-          weaker than the generator agrees with it.
+          <strong>All</strong> puts every generating station on your own machine —
+          the largest saving, and the largest risk: the lesson plan goes local
+          too, and every other station is grounded in it, so a weak plan is felt
+          everywhere downstream. <strong>Most</strong> keeps the plan and the
+          design reading hosted. <strong>Careful</strong> moves only the short,
+          repeated work that the plan has already told what to write.
+          <br />
+          <br />
+          The review is hosted in all three and cannot be moved. A reviewer
+          weaker than the generator agrees with it, which is worse than no
+          review — it passes.
           <br />
           <br />
           Two things that will bite: the API runs in a container, so{" "}
@@ -116,6 +139,11 @@ function LocalSplit() {
           <code>OLLAMA_CONTEXT_LENGTH=32768</code>.
         </div>
 
+        {catalogue.data && (
+          <div style={{ fontSize: "var(--text-sm)", color: catalogue.data.models.length ? "var(--ink-3)" : "var(--warn)" }}>
+            {catalogue.data.note}
+          </div>
+        )}
         {roles.error && <ErrorNotice error={roles.error} />}
         {roles.data && <Badge tone="ok">{roles.data.note}</Badge>}
       </Stack>
@@ -139,6 +167,19 @@ export function StageModels() {
   const providers = bindings.data?.providers || [];
 
   type Field = "provider" | "model" | "base_url";
+
+  // One lookup per distinct Ollama URL on the screen, not one per row: every
+  // station usually points at the same server.
+  const ollamaUrl =
+    rows.find((r) => r.provider === "ollama" && (draft[r.name]?.base_url ?? r.base_url))
+      ? (draft[Object.keys(draft).find((k) => draft[k]?.base_url) || ""]?.base_url ??
+         rows.find((r) => r.provider === "ollama" && r.base_url)?.base_url ?? "")
+      : "";
+  const catalogue = useProviderModels("ollama", ollamaUrl);
+
+  function rowModels(_name: string) {
+    return catalogue.data?.models || [];
+  }
 
   function valueFor(name: string, field: Field) {
     const row = rows.find((r) => r.name === name);
@@ -226,16 +267,41 @@ export function StageModels() {
                       </Select>
                     </Td>
                     <Td>
-                      <Input
-                        aria-label={`Model for ${row.label}`}
-                        value={valueFor(row.name, "model")}
-                        onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-                          edit(row.name, "model", e.target.value)
-                        }
-                        placeholder="model id"
-                        className="mono"
-                        style={{ minWidth: "11rem" }}
-                      />
+                      {/* Free text for a vendor, whose catalogue moves faster
+                          than any list here; the server's own answer for a
+                          self-hosted one, which can simply be asked. */}
+                      {selfHosted ? (
+                        <Select
+                          aria-label={`Model for ${row.label}`}
+                          value={valueFor(row.name, "model")}
+                          onChange={(e: React.ChangeEvent<HTMLSelectElement>) =>
+                            edit(row.name, "model", e.target.value)
+                          }
+                          style={{ minWidth: "11rem" }}
+                        >
+                          <option value="">choose a model</option>
+                          {!rowModels(row.name).includes(valueFor(row.name, "model")) &&
+                            valueFor(row.name, "model") && (
+                              <option value={valueFor(row.name, "model")}>
+                                {valueFor(row.name, "model")} (not installed there)
+                              </option>
+                            )}
+                          {rowModels(row.name).map((m) => (
+                            <option key={m} value={m}>{m}</option>
+                          ))}
+                        </Select>
+                      ) : (
+                        <Input
+                          aria-label={`Model for ${row.label}`}
+                          value={valueFor(row.name, "model")}
+                          onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                            edit(row.name, "model", e.target.value)
+                          }
+                          placeholder="model id"
+                          className="mono"
+                          style={{ minWidth: "11rem" }}
+                        />
+                      )}
                       {/* Where the model actually is. Vendors have one address
                           and it is built in; your own Ollama does not, and
                           without this the station could be pointed at a local

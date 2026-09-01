@@ -144,26 +144,35 @@ LOCAL_FRIENDLY: tuple[str, ...] = (
     "profile_generation",
 )
 
-# Never local, whatever the preset. Layer 2 exists to be a second opinion, and
-# a second opinion that cannot see what the first one missed is one opinion
-# asked twice.
-HOSTED_ONLY: tuple[str, ...] = (
-    "reviewer_panel",
-    "notes_generation",
-    "ingest_extraction",
-)
+# Never local, in ANY preset. Layer 2 exists to be a second opinion, and a
+# second opinion that cannot see what the first one missed is one opinion asked
+# twice — worse than no review, because it passes.
+NEVER_LOCAL: tuple[str, ...] = ("reviewer_panel",)
+
+# Local only once the operator has decided the trade is worth it. These are not
+# the expensive stations; they are the ones everything else is built ON. The
+# lesson plan is the most judgement-heavy writing here and what every other
+# station is grounded in, and reading the design runs once per grade — so
+# neither is where the token bill is, and a weak model at either is felt
+# everywhere downstream.
+FOUNDATIONAL: tuple[str, ...] = ("notes_generation", "ingest_extraction")
 
 
 def split_by_role(preset: str) -> dict[str, str]:
     """Which stations go local, for a given appetite. The rest stay hosted.
 
-    `careful`  — only the stations whose work is short, high-volume and driven
-                 by an instruction the plan already wrote.
-    `most`     — everything except the reading, the plan and the review. Saves
-                 the most and is where quality starts to show.
+    `careful`  — the stations whose work is short, high-volume and driven by an
+                 instruction the plan already wrote.
+    `most`     — everything except the reading, the plan and the review.
+    `all`      — every generating station, review excepted. The largest saving
+                 and the largest risk: the plan is written locally too, and
+                 everything downstream is grounded in it.
     """
-    if preset == "most":
-        local = [s.name for s in STAGES if s.name not in HOSTED_ONLY]
+    if preset == "all":
+        local = [s.name for s in STAGES if s.name not in NEVER_LOCAL]
+    elif preset == "most":
+        local = [s.name for s in STAGES
+                 if s.name not in NEVER_LOCAL and s.name not in FOUNDATIONAL]
     elif preset == "careful":
         local = list(LOCAL_FRIENDLY)
     else:

@@ -2418,6 +2418,30 @@ export function useImportPrompts() {
   });
 }
 
+/** What a provider can actually serve.
+ *
+ *  For Ollama this is asked of the server itself: the answer depends on which
+ *  machine is running it and what was pulled onto it this week. Guessing gave
+ *  a station bound to `llama3.1` on a machine that has `llama3.1:8b`. */
+export function useProviderModels(provider: string, baseUrl: string) {
+  const api = useApi();
+  return useQuery({
+    queryKey: ["provider-models", provider, baseUrl],
+    queryFn: () => {
+      const qs = new URLSearchParams({ provider });
+      if (baseUrl) qs.set("base_url", baseUrl);
+      return api<{
+        provider: string; base_url: string; models: string[];
+        live: boolean; note: string;
+      }>(`/admin/pipeline-bindings/models?${qs}`);
+    },
+    enabled: Boolean(provider),
+    // A pulled model does not appear on its own; a stale list is worse than a
+    // slightly slow one when it is the fix for "that model does not exist".
+    staleTime: 30_000,
+  });
+}
+
 export type RoleSplit = {
   preset: string;
   local: { provider: string; model: string; base_url: string | null; stages: string[] };

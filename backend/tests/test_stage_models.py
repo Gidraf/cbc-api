@@ -152,13 +152,25 @@ def test_the_split_is_by_what_the_work_is_not_by_what_it_costs() -> None:
     with it, and you have paid for the first opinion twice."""
     from app.services.stages import split_by_role
 
+    # The review is hosted in EVERY preset, including the one that moves
+    # everything else. A reviewer weaker than the generator agrees with it,
+    # which is worse than no review because it passes.
+    for preset in ("careful", "most", "all"):
+        assert split_by_role(preset)["reviewer_panel"] == "hosted", preset
+
+    # Everything downstream is grounded in the plan, and the design is read
+    # once — neither is where the volume is, so neither moves until asked for.
     for preset in ("careful", "most"):
         split = split_by_role(preset)
-        assert split["reviewer_panel"] == "hosted", preset
-        # Everything downstream is grounded in the plan, and the design is read
-        # once — neither is where the volume is.
         assert split["notes_generation"] == "hosted", preset
         assert split["ingest_extraction"] == "hosted", preset
+
+    # `all` is the operator's call, made after that was said out loud: every
+    # generating station local, review excepted.
+    every = split_by_role("all")
+    assert every["notes_generation"] == "local"
+    assert every["ingest_extraction"] == "local"
+    assert sum(v == "local" for v in every.values()) == len(every) - 1
 
     careful = split_by_role("careful")
     # The material station is one call per instruction and the largest share
@@ -225,3 +237,56 @@ def test_the_console_warns_about_the_two_things_that_will_bite() -> None:
     assert "host.docker.internal" in screen
     # And Ollama truncates to 4,096 tokens whatever the model advertises.
     assert "OLLAMA_CONTEXT_LENGTH=32768" in screen
+
+
+def test_a_self_hosted_server_is_asked_what_it_has_not_guessed_at() -> None:
+    """"llama3.1" was the guess, and it is not a model anybody has.
+
+    Ollama names carry a tag, so the installed model is `llama3.1:8b`, and a
+    bare family name resolves only if `:latest` was pulled. The guess was
+    offered as the FIX for a missing model and was itself missing.
+    """
+    from app.services.provider_router import KNOWN_MODELS, known_models_for
+
+    assert KNOWN_MODELS["ollama"] == (), "nothing hardcoded for a server that can be asked"
+
+    # Unreachable is empty, not a fabricated list.
+    assert known_models_for("ollama", "http://127.0.0.1:1/") == ()
+    assert known_models_for("ollama", "") == ()
+
+    # Vendors stay static: their catalogues cannot be enumerated from here.
+    assert "gpt-4o-mini" in known_models_for("openai")
+
+
+def test_the_tag_list_is_read_from_the_server_root_not_the_chat_path() -> None:
+    """A binding may carry either `http://host:11434` or `.../v1`; the tag list
+    only exists at the root."""
+    import inspect
+
+    from app.services import provider_router
+
+    source = inspect.getsource(provider_router.installed_models)
+    assert 'root.endswith("/v1")' in source
+    assert "/api/tags" in source
+    # A slow or missing server must not hold up the error it is explaining.
+    assert "timeout=" in source
+
+
+def test_the_remedy_asks_the_server_that_just_failed() -> None:
+    """The station's own base URL, not a default — the whole point is which
+    machine was being called."""
+    import inspect
+
+    from app.services import llm_client
+
+    source = inspect.getsource(llm_client._model_remedy)
+    assert "config.resolved_base_url" in source
+
+
+def test_the_console_offers_installed_models_rather_than_free_text() -> None:
+    screen = " ".join((FRONTEND / "src/views/StageModels.tsx").read_text().split())
+
+    assert "useProviderModels" in screen
+    # And a bound model the server does not have stays visible and selectable,
+    # because hiding it hides what is actually bound.
+    assert "(not installed there)" in screen

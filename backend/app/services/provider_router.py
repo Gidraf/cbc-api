@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 from dataclasses import dataclass
 from urllib import request
 from urllib.error import HTTPError
@@ -20,6 +21,8 @@ class ResolvedModelConfig:
     credential_ref_id: str
     api_key: str | None
 
+
+logger = logging.getLogger("cbc-provider-router")
 
 OPENAI_VALID_MODELS = {
     "gpt-4o-mini",
@@ -53,13 +56,54 @@ KNOWN_MODELS: dict[str, tuple[str, ...]] = {
     Provider.GEMINI.value: (
         "gemini-2.0-flash", "gemini-2.5-pro", "gemini-2.5-flash",
     ),
-    Provider.OLLAMA.value: ("llama3.1",),
+    # Deliberately empty: a self-hosted server is the one provider that can be
+    # ASKED what it has, and guessing at it is worse than useless. "llama3.1"
+    # was the guess here, and it is not a model anybody has — Ollama names are
+    # tagged, so the installed model is `llama3.1:8b`. The guess was offered as
+    # a fix for a missing model and was itself missing.
+    Provider.OLLAMA.value: (),
 }
 
 
-def known_models_for(provider: str) -> tuple[str, ...]:
-    """A starting point for a station whose model turned out not to exist."""
-    return KNOWN_MODELS.get((provider or "").strip().lower(), ())
+def installed_models(base_url: str) -> tuple[str, ...]:
+    """What this Ollama actually has, from the server itself.
+
+    Ollama names carry a tag — `llama3.1:8b`, `qwen3:14b` — and a bare family
+    name resolves only if `:latest` was pulled. That is the whole of this bug:
+    a station bound to `llama3.1` fails on a machine that has `llama3.1:8b`,
+    and no amount of retrying changes it.
+    """
+    if not base_url:
+        return ()
+    import httpx
+
+    root = base_url.rstrip("/")
+    # The tag list lives at the server root; the chat endpoint may be under /v1.
+    if root.endswith("/v1"):
+        root = root[:-3]
+    try:
+        with httpx.Client(timeout=4.0) as client:
+            found = client.get(f"{root}/api/tags").json()
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("Could not list models at %s: %s", root, exc)
+        return ()
+    return tuple(sorted(
+        str(m.get("name") or "") for m in (found.get("models") or [])
+        if isinstance(m, dict) and m.get("name")
+    ))
+
+
+def known_models_for(provider: str, base_url: str = "") -> tuple[str, ...]:
+    """A starting point for a station whose model turned out not to exist.
+
+    For a self-hosted server this is the real list, asked for at the moment it
+    is needed, because the answer depends on which machine is serving and what
+    was pulled onto it this week — neither of which any table here can know.
+    """
+    provider = (provider or "").strip().lower()
+    if provider == Provider.OLLAMA.value:
+        return installed_models(base_url)
+    return KNOWN_MODELS.get(provider, ())
 
 
 def _is_qualified(lower: str, prefix: str) -> bool:

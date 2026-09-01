@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import time
 
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -92,6 +92,45 @@ def _apply_bootstrap_bindings(provider: str, model: str, base_url: str | None) -
     }
 
 
+@app.get("/admin/pipeline-bindings/models")
+def list_provider_models(
+    provider: str = Query("ollama"),
+    base_url: str = Query(""),
+    _: AuthContext = Depends(require_roles("admin", "operator", "developer")),
+) -> dict:
+    """What this provider can actually serve.
+
+    For a vendor this is a maintained list and inevitably a little behind. For
+    a self-hosted server it is asked of the server itself, because the answer
+    depends on which machine is running it and what was pulled onto it this
+    week — and because a wrong guess here is exactly the bug this fixes: a
+    station bound to `llama3.1` on a machine that has `llama3.1:8b`.
+    """
+    from .services.provider_router import known_models_for
+
+    resolved = base_url
+    if provider == "ollama" and not resolved:
+        config = runtime_state.provider_credentials.get("ollama")
+        resolved = getattr(config, "base_url", "") or ""
+
+    models = known_models_for(provider, resolved)
+    return {
+        "provider": provider,
+        "base_url": resolved,
+        "models": list(models),
+        "live": provider == "ollama",
+        "note": (
+            f"{len(models)} model(s) installed on the server at {resolved}."
+            if provider == "ollama" and models else
+            "Could not reach that server, so there is nothing to list. Check the "
+            "URL — from inside a container, localhost is the container."
+            if provider == "ollama" else
+            "A maintained list, not the vendor's own — a model released this "
+            "week may be missing from it and still work."
+        ),
+    }
+
+
 class RoleSplitRequest(BaseModel):
     """Run the bulk of the generating on your own machine, review on a vendor's.
 
@@ -102,7 +141,7 @@ class RoleSplitRequest(BaseModel):
     judgement".
     """
 
-    preset: str = "careful"          # careful | most
+    preset: str = "all"              # all | most | careful
     local_provider: str = "ollama"
     local_model: str
     local_base_url: str | None = None
@@ -122,9 +161,10 @@ def set_stage_roles(
     if not any(v == "local" for v in split.values()):
         raise_api_error(
             "VALIDATION_FAILED",
-            f"'{payload.preset}' is not a split. Use 'careful' (the short, "
-            f"high-volume stations) or 'most' (everything except reading the "
-            f"design, the lesson plan and the review).",
+            f"'{payload.preset}' is not a split. Use 'all' (every generating "
+            f"station), 'most' (all but the reading and the lesson plan) or "
+            f"'careful' (the short, high-volume stations). The review is never "
+            f"local in any of them.",
         )
     for provider in (payload.local_provider, payload.hosted_provider):
         if provider not in runtime_state.provider_credentials:
