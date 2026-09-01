@@ -81,3 +81,47 @@ def test_every_grade_has_a_published_subject_list_and_a_register() -> None:
         block = register_block(slug)
         assert "AUDIENCE:" in block, label
         assert "PRACTICAL WORK:" in block, label
+
+
+# ── two counters, two tables, no reconciliation ─────────────────────────────
+
+
+def test_ingested_and_written_are_reported_as_different_facts() -> None:
+    """A grade read "16 of 16 ingested" on one screen and "Grade 9 — 1/16" on
+    another, with nothing saying they count different tables.
+
+    "Ingested" means the document was PROCESSED. It does not mean a design came
+    out of it, and the difference is real work missing.
+    """
+    import inspect
+
+    from app.services import dataset_ingest
+    from app.services.langfuse_context import langfuse_context_service
+
+    # The grade list now reports both numbers rather than one.
+    source = inspect.getsource(langfuse_context_service.list_datasets)
+    assert '"design_count"' in source
+    assert '"ingested_count"' in source
+    assert "FROM dataset_ingest_status" in source
+
+    # And the dataset screen can name exactly which items are the gap.
+    missing = inspect.getsource(dataset_ingest.designs_missing)
+    assert "LEFT JOIN curriculum_designs" in missing
+    assert "s.status = 'ingested'" in missing
+    assert "d.design_id IS NULL" in missing
+    # Matched the way every other grade comparison is.
+    assert "REPLACE(LOWER(s.grade), 'grade-', '')" in missing
+
+
+def test_the_console_shows_the_gap_rather_than_two_numbers() -> None:
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2] / "frontend-web/src"
+    datasets = " ".join((root / "views/Datasets.tsx").read_text().split())
+    queries = " ".join((root / "lib/queries.ts").read_text().split())
+
+    assert "produced no curriculum design" in datasets
+    assert "designs_missing" in datasets
+    # And the grade list itself flags it, because that is where the low number
+    # appears with no explanation next to it.
+    assert "read, no design" in queries

@@ -132,6 +132,41 @@ export function Datasets() {
         <Stat label="Failed" value={`${counts?.failed ?? 0}`} sub="Need a retry" />
       </Grid>
 
+      {/* "Ingested" above means the document was PROCESSED. It does not mean a
+          design came out of it — and those two facts were reported by two
+          different screens, counting two different tables, with nothing saying
+          so. A grade could read "16 of 16 ingested" here and "1/16" in the
+          grade list, and the gap is real work missing rather than a display
+          quirk. */}
+      {(state?.designs_missing?.length ?? 0) > 0 && (
+        <div
+          role="alert"
+          style={{
+            border: "1px solid var(--warn)",
+            background: "var(--warn-wash)",
+            borderRadius: "var(--radius)",
+            padding: "var(--s3)",
+            fontSize: "var(--text-sm)",
+          }}
+        >
+          <strong>
+            {state!.designs_missing!.length} document(s) are marked ingested but
+            produced no curriculum design.
+          </strong>{" "}
+          They were read and nothing was written, so nothing downstream can be
+          built from them — the grade list counts designs and will show a lower
+          number than the one above. Re-process them.
+          <ul style={{ margin: "var(--s2) 0 0", paddingLeft: "18px" }}>
+            {state!.designs_missing!.slice(0, 10).map((d) => (
+              <li key={d.item_id}>
+                {d.resolved_subject || d.declared_subject || d.title}
+                {d.char_count ? ` — ${Math.round(d.char_count / 1000)}k characters read` : ""}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       {actions.process.error && <ErrorNotice error={actions.process.error} />}
       {actions.sync.error && <ErrorNotice error={actions.sync.error} />}
 

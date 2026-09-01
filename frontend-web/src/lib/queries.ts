@@ -44,6 +44,9 @@ export const keys = {
 /* ── Curriculum ─────────────────────────────────────────────────────────── */
 
 export type GradeInfo = {
+  /** Documents processed. NOT the same as designs written — an item can be
+   *  marked ingested and produce no design row. */
+  ingested_count?: number;
   name: string;
   slug: string;
   label: string;
@@ -61,7 +64,14 @@ export function gradeOptionLabel(g: GradeInfo): string {
   const label = g.label || g.name;
   if (g.design_count === undefined || g.expected_design_count === undefined) return label;
   if (g.expected_design_count === 0) return label;
-  return `${label} — ${g.design_count}/${g.expected_design_count}`;
+  // Two different facts were shown as one number on two different screens: the
+  // Datasets page counts DOCUMENTS PROCESSED and this counted DESIGNS WRITTEN.
+  // A grade could read "16 of 16 ingested" here and "1/16" there, with nothing
+  // saying they were counting different things — and the gap is real work
+  // missing, not a display quirk.
+  const stalled = (g.ingested_count ?? 0) - g.design_count;
+  const flag = stalled > 0 ? ` ⚠ ${stalled} read, no design` : "";
+  return `${label} — ${g.design_count}/${g.expected_design_count}${flag}`;
 }
 
 export function useGrades() {
@@ -1552,6 +1562,16 @@ export type IngestState = {
   total: number;
   ingested_percentage: number;
   in_progress: number;
+  /** Items marked ingested that produced no design row. "Ingested" means the
+   *  document was processed; it does not mean a design came out of it. */
+  designs_missing?: {
+    item_id: string;
+    title: string;
+    resolved_subject: string;
+    declared_subject: string;
+    design_id: string;
+    char_count: number;
+  }[];
 };
 
 export function useIngestStatus(grade: string) {

@@ -756,6 +756,15 @@ class LangfuseContextService:
             if slug:
                 counts[slug] = counts.get(slug, 0) + int(row.get("n") or 0)
 
+        processed: dict[str, int] = {}
+        for row in fetch_all(
+            "SELECT grade, COUNT(*) AS n FROM dataset_ingest_status "
+            "WHERE status = 'ingested' GROUP BY grade"
+        ) or []:
+            slug = normalize_grade(row.get("grade"))
+            if slug:
+                processed[slug] = processed.get(slug, 0) + int(row.get("n") or 0)
+
         if not counts:
             for row in fetch_all(
                 "SELECT DISTINCT grade FROM curriculum_substrands"
@@ -773,6 +782,11 @@ class LangfuseContextService:
                 **describe(slug),
                 "design_count": ingested,
                 "expected_design_count": expected,
+                # How many documents were PROCESSED, which is a different fact
+                # from how many designs came out of them. A grade reading "16
+                # of 16 ingested" beside "1/16" had no way to show that the
+                # two numbers count different things.
+                "ingested_count": processed.get(slug, 0),
                 "has_data": ingested > 0,
             })
 
@@ -785,6 +799,7 @@ class LangfuseContextService:
                     **describe(slug),
                     "design_count": ingested,
                     "expected_design_count": 0,
+                    "ingested_count": processed.get(slug, 0),
                     "has_data": ingested > 0,
                 })
 

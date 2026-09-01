@@ -293,6 +293,32 @@ def set_status(item_id: str, status: str, **fields: Any) -> None:
     )
 
 
+def designs_missing(grade_slug: str) -> list[dict[str, Any]]:
+    """Items marked ingested that produced no design row.
+
+    Two counters read two different tables and neither said so: the dashboard
+    counts `dataset_ingest_status` and the grade list counts
+    `curriculum_designs`, so a grade could read "16 of 16 ingested" beside
+    "Grade 9 — 1/16" with nothing to explain the gap. The gap is real work
+    missing — an item whose document was read and whose design was never
+    written — and it is invisible until somebody notices two numbers
+    disagreeing on two different screens.
+    """
+    return fetch_all(
+        """
+        SELECT s.item_id, s.title, s.resolved_subject, s.declared_subject,
+               s.design_id, s.char_count, s.updated_at
+        FROM dataset_ingest_status s
+        LEFT JOIN curriculum_designs d ON d.design_id = s.design_id
+        WHERE REPLACE(LOWER(s.grade), 'grade-', '') = REPLACE(LOWER(:grade), 'grade-', '')
+          AND s.status = 'ingested'
+          AND (s.design_id = '' OR s.design_id IS NULL OR d.design_id IS NULL)
+        ORDER BY COALESCE(NULLIF(s.resolved_subject, ''), s.declared_subject, s.title)
+        """,
+        {"grade": grade_slug},
+    ) or []
+
+
 def list_grade(grade_slug: str) -> dict[str, Any]:
     rows = fetch_all(
         """
@@ -321,6 +347,10 @@ def list_grade(grade_slug: str) -> dict[str, Any]:
         "total": total,
         "ingested_percentage": round(counts[INGESTED] / total * 100, 1) if total else 0.0,
         "in_progress": counts[SELECTED] + counts[PROCESSING],
+        # "Ingested" means the item was processed. It does not mean a design
+        # came out of it, and the two were reported by different screens with
+        # nothing reconciling them.
+        "designs_missing": designs_missing(grade_slug),
     }
 
 
