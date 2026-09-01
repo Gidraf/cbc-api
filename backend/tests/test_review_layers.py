@@ -769,3 +769,43 @@ def test_a_reviewer_can_read_the_guide_it_is_approving():
 
     assert 'data.kind === "notes" && (' in panel
     assert "<NotesReader" in panel
+
+
+def test_form_controls_are_themed_by_the_stylesheet_not_by_each_screen() -> None:
+    """Setting only `color` on a control left the background to the user agent.
+
+    On a dark page that is a white box with near-white text in it, so a typed
+    model id was invisible on the Model-per-station screen. It has to be fixed
+    at the stylesheet, not on the one screen it was noticed on: a form control
+    should look right by default rather than only where somebody remembered to
+    reach for the styled component.
+    """
+    css = open("../frontend-web/src/ui/tokens.css").read()
+
+    # `color-scheme` is the only way to reach the parts CSS cannot: the popup a
+    # <select> opens, the scrollbars, the autofill wash, the date picker.
+    assert "color-scheme: light" in css
+    # Both ways the console can be dark: the system preference, and the
+    # explicit toggle. Declaring it in only one leaves the other with white
+    # controls on a dark page.
+    assert 'color-scheme: dark' in css.split('prefers-color-scheme: dark')[1].split('}')[0]
+    assert 'color-scheme: dark' in css.split('[data-theme="dark"] {')[1].split('}')[0]
+
+    block = css.split("input,\nselect,\ntextarea {")[1].split("}")[0]
+    assert "background: var(--surface)" in block
+    assert "color: var(--ink)" in block
+    assert "border: 1px solid var(--line)" in block
+
+    # A checkbox is drawn and sized by the platform; that padding would inflate
+    # it into a rectangle.
+    assert 'input[type="checkbox"]' in css
+    assert "accent-color: var(--accent)" in css
+    # And a disabled control must read as disabled rather than as empty.
+    assert "input:disabled" in css
+
+
+def test_the_model_screen_uses_the_shared_controls() -> None:
+    screen = " ".join((open("../frontend-web/src/views/StageModels.tsx").read()).split())
+
+    assert "<Select" in screen and "<Input" in screen
+    assert "<select" not in screen and "<input" not in screen

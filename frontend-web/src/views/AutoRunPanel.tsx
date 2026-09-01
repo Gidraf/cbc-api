@@ -364,7 +364,7 @@ export function AutoRunPanel({ grade }: { grade: string }) {
                   value={cycles}
                   onChange={(e) => setCycles(Number(e.target.value))}
                   aria-label="Review cycles per item"
-                  style={{ width: "5rem", padding: "6px 8px", borderRadius: "var(--radius-sm)" }}
+                  style={{ width: "5rem" }}
                 />
               </label>
               <label style={{ fontSize: "var(--text-sm)", color: "var(--ink-2)" }}>
@@ -376,7 +376,7 @@ export function AutoRunPanel({ grade }: { grade: string }) {
                   value={floor}
                   onChange={(e) => setFloor(Number(e.target.value))}
                   aria-label="Quality floor"
-                  style={{ width: "5rem", padding: "6px 8px", borderRadius: "var(--radius-sm)" }}
+                  style={{ width: "5rem" }}
                 />
               </label>
               <Button

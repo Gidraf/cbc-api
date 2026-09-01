@@ -5,7 +5,9 @@ import {
   Button,
   Card,
   ErrorNotice,
+  Input,
   QueryState,
+  Select,
   Stack,
   Table,
   Td,
@@ -99,24 +101,29 @@ export function StageModels() {
                       )}
                     </Td>
                     <Td>
-                      <select
+                      <Select
                         aria-label={`Provider for ${row.label}`}
                         value={valueFor(row.name, "provider")}
-                        onChange={(e) => edit(row.name, "provider", e.target.value)}
-                        style={{ padding: "6px 8px", borderRadius: "var(--radius-sm)" }}
+                        onChange={(e: React.ChangeEvent<HTMLSelectElement>) =>
+                          edit(row.name, "provider", e.target.value)
+                        }
+                        style={{ minWidth: "8rem" }}
                       >
                         {providers.map((p) => (
                           <option key={p} value={p}>{p}</option>
                         ))}
-                      </select>
+                      </Select>
                     </Td>
                     <Td>
-                      <input
+                      <Input
                         aria-label={`Model for ${row.label}`}
                         value={valueFor(row.name, "model")}
-                        onChange={(e) => edit(row.name, "model", e.target.value)}
+                        onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                          edit(row.name, "model", e.target.value)
+                        }
                         placeholder="model id"
-                        style={{ width: "13rem", padding: "6px 8px", borderRadius: "var(--radius-sm)" }}
+                        className="mono"
+                        style={{ minWidth: "11rem" }}
                       />
                     </Td>
                     <Td>

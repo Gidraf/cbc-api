@@ -11,6 +11,13 @@
  */
 
 :root {
+  /* Tells the browser which way round this document is, which is the only way
+   * to reach the parts of a form control CSS cannot: the dropdown popup a
+   * <select> opens, the scrollbars, the autofill wash, the date picker. Without
+   * it every native control renders light on a dark page — white boxes with
+   * near-white text in them, which is how a typed model id became invisible. */
+  color-scheme: light;
+
   /* Surfaces */
   --ground: #F2F4F3;
   --surface: #FFFFFF;
@@ -77,6 +84,8 @@
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
+    color-scheme: dark;
+
     --ground: #10161A;
     --surface: #171F24;
     --surface-2: #1D262B;
@@ -110,6 +119,8 @@
 }
 
 :root[data-theme="dark"] {
+  color-scheme: dark;
+
   --ground: #10161A;
   --surface: #171F24;
   --surface-2: #1D262B;
@@ -207,15 +218,68 @@ button {
   color: inherit;
 }
 
+/* Every control, wherever it is written. Setting only `color` here left the
+ * background to the user agent, so a raw <input> on a screen that had not
+ * imported the styled one came out white with near-white text in it. A form
+ * control should look right by default rather than only where somebody
+ * remembered to reach for the component. */
 input,
 select,
 textarea {
   font: inherit;
   color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 7px 10px;
+  max-width: 100%;
+}
+
+/* Checkboxes and radios are drawn by the platform and sized by the platform;
+ * the padding above would inflate them into rectangles. */
+input[type="checkbox"],
+input[type="radio"] {
+  padding: 0;
+  border: none;
+  background: none;
+  width: auto;
+  accent-color: var(--accent);
+}
+
+input[type="file"] {
+  padding: 5px 8px;
+  color: var(--ink-2);
+}
+
+select {
+  /* Room for the arrow the platform draws. */
+  padding-right: var(--s5);
+}
+
+/* Firefox draws the open list from the element's own colours rather than from
+ * color-scheme alone. */
+option {
+  background: var(--surface);
+  color: var(--ink);
+}
+
+input:hover:not(:disabled),
+select:hover:not(:disabled),
+textarea:hover:not(:disabled) {
+  border-color: var(--ink-3);
+}
+
+input:disabled,
+select:disabled,
+textarea:disabled {
+  background: var(--surface-2);
+  color: var(--ink-3);
+  cursor: not-allowed;
 }
 
 ::placeholder {
   color: var(--ink-3);
+  opacity: 1; /* Firefox dims it a second time, to about 40% contrast. */
 }
 
 /* Wide content scrolls inside its own container, never the page body. */
