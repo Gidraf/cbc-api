@@ -215,6 +215,11 @@ def compute_substrand_coverage(
             "required": requirement.hours,
             "remaining": max(0, requirement.hours - hours_generated),
             "percentage": _pct(hours_generated, requirement.hours),
+            # Whether anything is filed here at all. What gates the next
+            # station is existence, not depth: a thin lesson is a quality
+            # problem, an absent one is the only thing that should stop the
+            # work built on top of it.
+            "planned": hours_generated > 0,
             "estimated": requirement.estimated["hours"],
         },
         "visuals": {

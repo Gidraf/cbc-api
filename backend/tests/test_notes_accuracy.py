@@ -11,8 +11,12 @@ from __future__ import annotations
 
 import pytest
 
+from pathlib import Path
+
 from app.services.citation_check import reconcile_pages, verify
 from app.services.web_research import web_research_agent as agent
+
+FRONTEND = Path(__file__).resolve().parents[2] / "frontend-web"
 
 _RULE = "=" * 80
 _DESIGN = (
@@ -292,3 +296,56 @@ def test_the_loop_now_has_lessons_to_rewrite() -> None:
     directive = next(f for f in findings if "all teach" in f)
     assert "Keep the first" in directive
     assert "no lesson has used yet" in directive
+
+
+def test_the_prompt_says_what_to_do_with_more_lessons_than_outcomes() -> None:
+    """Three outcomes across seven lessons is normal, and it is NOT an
+    instruction to teach one outcome four times.
+
+    The prompt said "spread the SLOs across the modules deliberately" and
+    stopped there, so the model spread three outcomes over seven lessons by
+    repeating the last one — the exact defect the reviewer then caught, every
+    time, at a cost of three refinement passes that could not clear it.
+    """
+    from app.services.prompt_sync import _all_prompts
+
+    prompt = " ".join(_all_prompts()["generate/lesson-plan"].split())
+
+    assert "MORE LESSONS THAN OUTCOMES" in prompt
+    # The design already answers it: its suggested experiences ARE the lesson
+    # list, and here there were exactly seven of them for seven lessons.
+    assert "SUGGESTED LEARNING EXPERIENCES are the lesson list" in prompt
+    assert "give each lesson its own experience, in the design's own order" in prompt
+    # Where there are fewer, the extra lessons go further rather than again.
+    assert "introduce it, then practise it, then apply it, then assess it" in prompt
+    # And it names the exact mechanical check, so the instruction and the
+    # detector cannot drift apart.
+    assert "`slos_covered`, `citations` and `learning_experiences_used`" in prompt
+    # An honest gap beats padding.
+    assert "say exactly that in `gaps`" in prompt
+
+
+def test_a_thin_lesson_is_not_a_missing_lesson() -> None:
+    """A guide with seven lessons, all a little short, scored 0 — identical to
+    a sub-strand nobody had generated anything for."""
+    from app.services.notes_coverage import LessonCoverage
+
+    report = LessonCoverage(modules_required=7, modules_found=7, unit="lessons")
+    report.thin_modules = [{"module": n} for n in range(1, 8)]
+
+    assert report.percentage == 0, "depth is a quality problem and still scores 0"
+    assert report.planned_percentage == 100, "but all seven lessons exist"
+    assert report.to_dict()["planned_percentage"] == 100
+
+
+def test_the_next_station_gates_on_existence_not_on_depth() -> None:
+    factory = " ".join((FRONTEND / "src/views/ContentFactory.tsx").read_text().split())
+
+    # The comment explains the old expression, so match the code, not the prose.
+    assert "const locked = Boolean(gate && gate.percentage <= 0)" not in factory
+    assert "gatePlanned" in factory
+    # And a person who has read the plan can go ahead regardless.
+    assert "I have read the" in factory
+    assert "Unlocked by you rather than by the gate" in factory
+    # The override is about one plan, not a setting that outlives it.
+    assert "React.useEffect(() => setOverrides([]), [substrand])" in factory

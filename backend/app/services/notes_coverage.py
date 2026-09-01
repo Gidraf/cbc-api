@@ -84,15 +84,35 @@ class LessonCoverage:
 
     @property
     def percentage(self) -> int:
+        """How much of this sub-strand is planned AND deep enough to teach from."""
         if self.modules_required <= 0:
             return 0
         sound = self.modules_found - len(self.thin_modules)
         return max(0, min(100, round(sound / self.modules_required * 100)))
 
+    @property
+    def planned_percentage(self) -> int:
+        """How much of it EXISTS, whatever its depth.
+
+        Two different facts were reported as one number, and the difference is
+        what unlocks the next station. A guide with seven lessons, all a little
+        short, scored 0 — identical to a sub-strand nobody has generated
+        anything for. The stations downstream then said "none exist yet for
+        this sub-strand" about a guide that was written, reviewed, scored 87 by
+        the gate and signed off by both approvers.
+
+        Thin is a quality problem and belongs in the score. Absent is a
+        different problem and is the only one that should stop the next stage.
+        """
+        if self.modules_required <= 0:
+            return 0
+        return max(0, min(100, round(self.modules_found / self.modules_required * 100)))
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "complete": self.complete,
             "percentage": self.percentage,
+            "planned_percentage": self.planned_percentage,
             "modules_required": self.modules_required,
             "modules_found": self.modules_found,
             "unit": self.unit,

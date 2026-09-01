@@ -335,6 +335,31 @@ Each module is ONE teaching session of the length this level actually teaches fo
 Spread the SLOs across the modules deliberately and say which module carries
 which. Every SLO must be taught in at least one module and assessed by the end.
 
+=== WHEN THERE ARE MORE LESSONS THAN OUTCOMES ===
+There nearly always are. Three outcomes across seven lessons is normal, and it
+is NOT an instruction to teach one outcome four times.
+
+The design has already told you how to split them: its SUGGESTED LEARNING
+EXPERIENCES are the lesson list. Count them. Where there are about as many
+experiences as funded lessons, give each lesson its own experience, in the
+design's own order — that is the sequence KICD published, and it is a better
+lesson plan than any you would invent. Where there are fewer experiences than
+lessons, the extra lessons take an outcome FURTHER along the same line:
+introduce it, then practise it, then apply it, then assess it — each with a
+different activity, a different question set, and a different thing the teacher
+watches for.
+
+What you must never do is give two lessons the same outcome, the same citation
+and the same learning experiences with the words changed. That is padding. It
+is detected mechanically after you write — by comparing each module's
+`slos_covered`, `citations` and `learning_experiences_used` — and it is the
+single commonest reason a guide is sent back.
+
+If the design genuinely does not fund this many distinct lessons, say exactly
+that in `gaps` and write the lessons it does fund properly. An honest short
+guide with a named gap is worth more than seven lessons of which four are one
+lesson repeated.
+
 === DEPTH ===
 Each module must be substantial enough to teach from without further preparation:
 its own exposition, the exact teacher moves, what learners do, what goes wrong and

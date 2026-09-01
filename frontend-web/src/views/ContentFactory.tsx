@@ -347,6 +347,11 @@ export function ContentFactory() {
   const progress = useProgress(effectiveGrade, subject || undefined);
 
   const [running, setRunning] = React.useState<string | null>(null);
+  // Stations a person has deliberately unlocked after reading what they are
+  // grounded in. Deliberately NOT persisted: the override is a judgement about
+  // one plan as it stands, and a stored one would silently keep the gate off
+  // after that plan was regenerated into something else.
+  const [overrides, setOverrides] = React.useState<string[]>([]);
 
   function setParam(patch: Record<string, string>) {
     const next = new URLSearchParams(params);
@@ -428,6 +433,10 @@ export function ContentFactory() {
     const hit = allSubstrands.find((s) => s.name === substrand);
     return hit ? { subject: hit.subject, strand: hit.strand, report: hit.report } : null;
   }, [allSubstrands, substrand]);
+
+  // An override is a judgement about ONE plan as it stands. Carrying it to the
+  // next sub-strand would silently disable the gate for a plan nobody read.
+  React.useEffect(() => setOverrides([]), [substrand]);
 
   /** Queue a station and follow it, rather than holding the browser open on it.
    *
@@ -811,7 +820,22 @@ export function ContentFactory() {
               const gate = station.requires
                 ? dimensionFor(selected.report, station.requires)
                 : null;
-              const locked = Boolean(gate && gate.percentage <= 0);
+              // What gates a station is whether the thing it is grounded in
+              // EXISTS — not whether that thing is finished to standard.
+              //
+              // This read `gate.percentage <= 0`, and the notes percentage
+              // counts only lessons deep enough to teach from. A guide with
+              // seven lessons, all a little short, scored 0 — identical to a
+              // sub-strand nobody had generated anything for — so every station
+              // below it said "none exist yet" about a guide that had been
+              // written, reviewed, scored 87 by the gate and signed off by both
+              // approvers. Thin is a quality problem; absent is the only one
+              // that should stop the work built on top of it.
+              const gatePlanned = Boolean(
+                gate && (gate.planned || (gate.generated_count ?? gate.generated_hours ?? 0) > 0)
+              );
+              const unlocked = overrides.includes(station.id);
+              const locked = Boolean(gate) && !gatePlanned && !unlocked;
               const gateLabel = STATIONS.find((s) => s.id === station.requires)?.label;
 
               return (
@@ -896,6 +920,28 @@ export function ContentFactory() {
                       Blocked: this station is grounded in the {gateLabel?.toLowerCase()}, and none exist yet
                       for this sub-strand. Generating now would produce content with nothing to be accurate
                       against.
+                      <br />
+                      <br />
+                      {/* The override. The gate is a default, not a verdict:
+                          the lesson plan is a set of INSTRUCTIONS, and a person
+                          who has read it knows better than a length threshold
+                          whether the next station has enough to work from.
+                          Without this the only way past was to regenerate until
+                          a number moved. */}
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        onClick={() => setOverrides((o) => [...o, station.id])}
+                      >
+                        I have read the {gateLabel?.toLowerCase()} — unlock this
+                      </Button>
+                    </p>
+                  )}
+                  {unlocked && !locked && (
+                    <p style={{ marginTop: "var(--s2)", fontSize: "var(--text-sm)", color: "var(--warn)" }}>
+                      Unlocked by you rather than by the gate. What is produced here
+                      is grounded in a {gateLabel?.toLowerCase()} that did not meet
+                      the depth floor.
                     </p>
                   )}
 
