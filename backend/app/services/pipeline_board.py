@@ -26,7 +26,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any
 
-from . import stage_policy
+from . import remedies, stage_policy
 
 logger = logging.getLogger("cbc-pipeline-board")
 

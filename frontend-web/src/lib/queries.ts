@@ -2045,6 +2045,10 @@ export type BoardStage = {
   last_run: string;
   blocked_by: string;
   policy: StagePolicy;
+  /** What would unblock it, ready to press. A board that says "waiting on the
+   *  lesson plan" and makes you go and find the lesson plan has told you where
+   *  to click, which is not the same as letting you click it. */
+  remedy: import("../ui/Remedy").Remedy[];
   /** Only on `ingest`: where the design came from, and whether it arrived. */
   dataset?: {
     state: "not_imported" | "imported" | "running" | "failing" | "done";

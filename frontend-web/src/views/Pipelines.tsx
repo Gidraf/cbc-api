@@ -38,6 +38,7 @@ import {
 // Shared with auto mode, so the two screens cannot describe the same stage in
 // two different words. See pipelineVocabulary.ts.
 import { TONE, WORDS } from "./pipelineVocabulary";
+import { RemedyActions } from "../ui/Remedy";
 
 /**
  * The pipeline board.
@@ -746,6 +747,15 @@ function BranchRow({
                 >
                   Run
                 </Button>
+                {/* Where the board already knows what is missing, it offers
+                    it here rather than describing it. Several stages run one
+                    at a time and in order: each is built from the one before
+                    it, so firing them together fails all but the first. */}
+                {stage.remedy?.length > 0 && (
+                  <div style={{ width: "100%", marginBottom: "var(--s2)" }}>
+                    <RemedyActions remedies={stage.remedy} />
+                  </div>
+                )}
                 {/* Review, approval and regeneration all act on filed
                     versions. `ingest`, `strands` and `substrands` write
                     curriculum rows instead, so these were enabled the moment
