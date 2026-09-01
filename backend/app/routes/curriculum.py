@@ -5462,7 +5462,11 @@ def factory_generate_material(
         run_log.stop()
 
     return {"material": content, "plan": plan.to_dict(),
-            "coverage": report.to_dict(), "model": resolved.model,
+            "coverage": report.to_dict(),
+            # The same shape every other station reports its gate in. Without
+            # it the review loop read no score and filed a 95/100 run as 0.
+            "quality_gate": lesson_material.gate_of(report),
+            "model": resolved.model,
             "artifact": versioned}
 
 

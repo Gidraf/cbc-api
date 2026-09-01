@@ -396,3 +396,73 @@ def test_a_restatement_padded_out_to_length_is_left_to_the_reviewer():
 
     assert not report.echoed
     assert report.written == 1
+
+
+# ── the station has to report its gate the way every other station does ─────
+
+
+def test_the_material_station_reports_a_gate() -> None:
+    """It returned its findings under `coverage` and no `quality_gate` at all.
+
+    The review loop reads `quality_gate`, so it saw no score, no pass and
+    nothing to act on — and filed a run that had fulfilled 21 of 21
+    instructions at 95.2/100 as "0/100, not passed, the gate failed but named
+    nothing to fix". The number the operator saw had no relation to the work.
+    """
+    import inspect as _inspect
+
+    from app.routes import curriculum
+    from app.services.lesson_material import MaterialReport, gate_of
+
+    source = _inspect.getsource(curriculum.factory_generate_material)
+    assert '"quality_gate": lesson_material.gate_of(report)' in source
+
+    gate = gate_of(MaterialReport(total=21, written=21, echoed=[
+        {"title": "Introducing God's Name", "chars": 168}]))
+
+    assert gate["overall_score"] == 95
+    assert gate["passed"] is True
+    assert "95.2/100" in gate["summary_message"]
+
+
+def test_the_loop_is_given_something_to_act_on() -> None:
+    """Without `next_actions` the loop has a failure it cannot regenerate
+    against, which is the same call again at the same price."""
+    from app.services.lesson_material import MaterialReport, gate_of
+    from app.services.review_cycle import _directives_from
+
+    report = MaterialReport(
+        total=4, written=3,
+        thin=[{"title": "Singing Together", "chars": 40}],
+        echoed=[{"title": "A song about God", "chars": 120}],
+    )
+    gate = gate_of(report)
+
+    assert gate["passed"] is False
+    directives = _directives_from(gate)
+    assert directives, "the loop must have something to regenerate against"
+    # Named per piece, not as an average.
+    assert any("A song about God" in d for d in directives)
+    assert any("Singing Together" in d for d in directives)
+    assert any("got no material at all" in d for d in directives)
+
+
+def test_a_clean_run_passes() -> None:
+    from app.services.lesson_material import MaterialReport, gate_of
+
+    gate = gate_of(MaterialReport(total=21, written=21))
+    assert gate["passed"] is True and gate["overall_score"] == 100
+    assert gate["next_actions"] == []
+
+
+def test_the_result_can_be_read_rather_than_only_copied() -> None:
+    """A station could finish 21 pieces of material and the operator had no way
+    to read one of them."""
+    from pathlib import Path
+
+    factory = " ".join(
+        (Path(__file__).resolve().parents[2] / "frontend-web/src/views/ContentFactory.tsx")
+        .read_text().split()
+    )
+    assert "Read it as a book" in factory
+    assert '["notes", "material"].includes(station.id)' in factory

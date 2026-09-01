@@ -237,6 +237,85 @@ class MaterialReport:
                 "clean": self.clean, "score": self.score}
 
 
+# What this station has to reach before its output moves on. Lower than the
+# plan's gate on purpose: the plan is judged on whether a teacher could teach
+# from it, and the material on whether each instruction actually got words.
+PASS_SCORE = 90.0
+
+
+def gate_of(report: "MaterialReport") -> dict[str, Any]:
+    """The material check, in the shape every other station reports.
+
+    This station returned its findings under `coverage` and no `quality_gate`
+    at all — so the review loop, which reads `quality_gate`, saw no score, no
+    pass and nothing to act on. It filed a run that had fulfilled 21 of 21
+    instructions at 95.2/100 as **0/100, not passed, "the gate failed but named
+    nothing to fix"**, and stopped. The number the operator saw had no relation
+    to the work.
+
+    `next_actions` is the part that matters beyond the score: without it the
+    loop has a failure it cannot regenerate against, which is the same call
+    again at the same price.
+    """
+    passed = report.score >= PASS_SCORE and report.written == report.total
+
+    feedback = [
+        {"aspect": "instructions_fulfilled", "method": "written_vs_asked",
+         "status": "pass" if report.written == report.total else "fail",
+         "score": round(report.written / report.total, 4) if report.total else 1.0,
+         "comment": f"{report.written} of {report.total} instruction(s) got material"},
+        {"aspect": "substance", "method": "length_vs_floor",
+         "status": "fail" if report.thin else "pass",
+         "score": round(1 - len(report.thin) / report.total, 4) if report.total else 1.0,
+         "comment": f"{len(report.thin)} too short to use"
+                    if report.thin else "every piece has substance"},
+        {"aspect": "not_an_echo", "method": "overlap_with_the_instruction",
+         "status": "fail" if report.echoed else "pass",
+         "score": round(1 - len(report.echoed) / report.total, 4) if report.total else 1.0,
+         "comment": f"{len(report.echoed)} handed the instruction back"
+                    if report.echoed else "nothing echoed the instruction"},
+    ]
+
+    # Named per piece, so a regeneration knows WHICH song to write rather than
+    # being told the average was low.
+    actions = []
+    for item in report.echoed[:4]:
+        actions.append(
+            f"\"{item.get('title') or item.get('directive') or 'One piece'}\" gave the "
+            f"instruction back instead of the words. Write the thing itself — "
+            f"the actual verse, the actual sentences the teacher says aloud."
+        )
+    for item in report.thin[:4]:
+        actions.append(
+            f"\"{item.get('title') or item.get('directive') or 'One piece'}\" is "
+            f"{item.get('chars', 'too few')} characters — too short to use as it "
+            f"stands. Write it in full."
+        )
+    if report.written < report.total:
+        actions.append(
+            f"{report.total - report.written} instruction(s) got no material at all. "
+            f"Every directive the plan gives needs its own piece."
+        )
+
+    return {
+        "passed": passed,
+        "overall_score": int(round(report.score)),
+        "layer_name": "material",
+        "summary_message": (
+            f"Material gate {'passed' if passed else 'not passed'} at "
+            f"{report.score}/100. {report.written} of {report.total} instruction(s) "
+            f"fulfilled"
+            + (f", {len(report.thin)} thin" if report.thin else "")
+            + (f", {len(report.echoed)} echoed" if report.echoed else "")
+            + "."
+        ),
+        "reviewer": {"score": int(round(report.score)), "passed": passed,
+                     "status": "approved" if passed else "revise",
+                     "feedback": feedback, "risk_flags": []},
+        "next_actions": actions,
+    }
+
+
 def _norm(text: str) -> str:
     return re.sub(r"[^a-z0-9 ]+", " ", re.sub(r"\s+", " ", str(text)).lower()).strip()
 

@@ -11,7 +11,7 @@ import { QueuePanel } from "./QueuePanel";
 import { ResetPanel } from "./ResetPanel";
 import { VersionReview } from "./VersionReview";
 import { stationToText } from "../lib/serialize";
-import { useArtifact, useArtifacts, useDesigns, useExportBundle, useInspect, profileFor, useProfiles, gradeOptionLabel, subjectOptionLabel, useApi, useGrades, useProgress, useQueuedJob, useSavedSubstrands, useStoredStructure, useSubjects, STATION_KIND } from "../lib/queries";
+import { useArtifact, useArtifacts, useDesigns, useExportBundle, useInspect, profileFor, useProfiles, gradeOptionLabel, subjectOptionLabel, useApi, useGrades, useProgress, useQueuedJob, useSavedSubstrands, useStoredStructure, useSubjects, STATION_KIND, useNotesDocument } from "../lib/queries";
 import { useQueryClient } from "@tanstack/react-query";
 
 /**
@@ -352,6 +352,7 @@ export function ContentFactory() {
   // one plan as it stands, and a stored one would silently keep the gate off
   // after that plan was regenerated into something else.
   const [overrides, setOverrides] = React.useState<string[]>([]);
+  const book = useNotesDocument();
 
   function setParam(patch: Record<string, string>) {
     const next = new URLSearchParams(params);
@@ -1028,6 +1029,26 @@ export function ContentFactory() {
                             {inspect.notes.isPending ? "Loading…" : "Inspect prompt"}
                           </Button>
                         )}
+                        {/* The lesson plan and the material both render as a
+                            typeset document. Until now the only way to see
+                            what a run produced was to copy the JSON out — so a
+                            station could finish 21 pieces of material and the
+                            operator had no way to read one of them. */}
+                        {["notes", "material"].includes(station.id) &&
+                          lastResult.res?.artifact?.artifact_id && (
+                            <Button
+                              size="sm"
+                              variant="secondary"
+                              disabled={book.isPending}
+                              loading={book.isPending}
+                              title="Two columns, figures in place — exactly what prints"
+                              onClick={() =>
+                                book.mutateAsync(lastResult.res.artifact.artifact_id)
+                              }
+                            >
+                              Read it as a book
+                            </Button>
+                          )}
                         <CopyButton
                           label={`Copy ${station.label.toLowerCase()}`}
                           title="Copy this station's output to check it in another model"

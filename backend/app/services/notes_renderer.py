@@ -398,6 +398,7 @@ def render_material_html(material: dict[str, Any], *, grade: str = "",
         "<!doctype html><html lang='en'><head><meta charset='utf-8'>",
         f"<title>{_esc(title)}</title>",
         f"<style>{PRINT_CSS}{_MATERIAL_CSS}</style></head><body>",
+        "<div class='sheet'>",
         "<div class='masthead'>",
         f"<h1>{_esc(title)}</h1>",
         "<div class='meta'>" + "".join(f"<span>{_esc(m)}</span>" for m in meta) + "</div>",
@@ -447,11 +448,16 @@ def render_material_html(material: dict[str, Any], *, grade: str = "",
 
     out.append("<div class='foot'>Written from the lesson plan for this "
                "sub-strand. Read it before you read it aloud.</div>")
-    out.append("</body></html>")
+    out.append("</div></body></html>")
     return "".join(out)
 
 
 _MATERIAL_CSS = """
+/* Read ALOUD, off a page held in one hand. So: one column at a large size,
+   ragged right, and no hyphenation — a word broken across a line is a word the
+   teacher stumbles on in front of the class, which is the one place the
+   typography of the plan's document would actively hurt. */
+body { text-align: left; hyphens: none; -webkit-hyphens: none; font-size: 11pt; }
 .lessonhead { font-size: 13pt; margin: 22px 0 8px; padding-top: 10px;
               border-top: 1.5px solid #111; page-break-after: avoid; }
 .piece { margin-bottom: 18px; page-break-inside: avoid; }
