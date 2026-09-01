@@ -14,6 +14,7 @@ from ..services.artifact_dna import artifact_dna_service
 from ..services.cost_tracker import CostResult, calculate_cost, format_cost_summary, persist_stage_cost
 from ..services.diagram_dedup import diagram_deduplicator
 from ..services.faith_scope import prompt_block as faith_prompt_block
+from ..services import notation, prompt_fragments
 from ..services.level_register import register_block
 from ..services.langfuse_context import langfuse_context_service
 from ..services.llm_client import LlmResponse, llm_client
@@ -608,6 +609,15 @@ class PipelineService:
                 # pre-primary defect from a senior-secondary one, and one with no
                 # faith scope cannot tell CRE content from IRE content.
                 "level_register": register_block(grade_slug),
+                # The reviewers and approvers judge notation too: a guide that
+                # writes "45 degrees" where its subject writes $45^\\circ$ is
+                # wrong in a way only somebody holding the same rule can see.
+                "notation": notation.block_for(subject or ""),
+                # The reviewers judge against the same domain rules the
+                # generator was given, or they are judging against their own
+                # recollection of what a map needs.
+                "domain_directives": prompt_fragments.compose(
+                    subject or "", "notes", grade_slug),
                 "faith_scope": faith_prompt_block(subject),
                 "notes_title": notes_output.get("title", ""),
                 "experiments": activities_output.get("experiments", []),
@@ -645,6 +655,15 @@ class PipelineService:
             # the slots rendered empty and the deliberation ran without knowing
             # the learner's age or the learning area's faith.
             "level_register": register_block(grade_slug),
+                # The reviewers and approvers judge notation too: a guide that
+                # writes "45 degrees" where its subject writes $45^\\circ$ is
+                # wrong in a way only somebody holding the same rule can see.
+                "notation": notation.block_for(subject or ""),
+                # The reviewers judge against the same domain rules the
+                # generator was given, or they are judging against their own
+                # recollection of what a map needs.
+                "domain_directives": prompt_fragments.compose(
+                    subject or "", "notes", grade_slug),
             "faith_scope": faith_prompt_block(subject),
         }
 

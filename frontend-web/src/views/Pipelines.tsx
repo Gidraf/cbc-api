@@ -17,17 +17,20 @@ import {
   Th,
 } from "../ui/components";
 import { AutoRunActivity } from "./AutoRunActivity";
+import { PromptFragments } from "./PromptFragments";
 import { AutoRunPanel } from "./AutoRunPanel";
 import {
   usePipeline,
   usePipelines,
   useStageAction,
   useStageLogs,
+  useStageRequirements,
   useStagePolicies,
   useStageUnits,
   type BoardBranch,
   type BoardRun,
   type BoardStage,
+  type AssetRequirement,
   type StagePolicy,
   type StageUnit,
 } from "../lib/queries";
@@ -49,6 +52,10 @@ import {
  * stage, because that is what is actually blocking it — a board showing ten
  * reds tells you ten things when one of them caused the other nine.
  */
+
+// The stations that build FROM the plan, and so have something the plan can
+// have asked them for.
+const STATION_STAGES = new Set(["diagram", "media", "simulation", "activity"]);
 
 const TONE: Record<string, "ok" | "warn" | "danger" | "accent" | "neutral"> = {
   approved: "ok",
@@ -244,6 +251,84 @@ function StageLog({
  * left out, because a bulk action that silently does less than it says is worse
  * than one that refuses.
  */
+/**
+ * What the lesson plans ask this station for, in their own words.
+ *
+ * The plan already names its assets — "visual aids for gestures", "observe
+ * pictures of Adam and Eve". Nothing was reading them: each asset station was
+ * given the sub-strand's title and outcomes and asked to plan from scratch. So
+ * an asset the plan asked for was never guaranteed to exist, and one it never
+ * mentioned could be produced, reviewed on its own terms and approved.
+ */
+function StageRequirements({
+  grade,
+  subject,
+  station,
+}: {
+  grade: string;
+  subject: string;
+  station: string;
+}) {
+  const wanted = useStageRequirements(grade, subject, station, true);
+
+  if (wanted.isLoading) return <LoadingBlock rows={3} label="Reading the plans" />;
+  if (wanted.isError) return <ErrorNotice error={wanted.error} />;
+
+  const items = wanted.data?.items || [];
+  if (!wanted.data?.plans_read) {
+    return (
+      <p style={{ marginTop: "var(--s3)", fontSize: "var(--text-sm)", color: "var(--ink-3)" }}>
+        No lesson plan is filed yet, so nothing has asked for anything. This
+        station plans from the plan.
+      </p>
+    );
+  }
+  if (!items.length) {
+    return (
+      <p style={{ marginTop: "var(--s3)", fontSize: "var(--text-sm)", color: "var(--ink-3)" }}>
+        Read {wanted.data.plans_read} plan(s); none of them asks this station
+        for anything. It will plan from what each lesson teaches instead.
+      </p>
+    );
+  }
+
+  const byLesson = new Map<string, AssetRequirement[]>();
+  for (const item of items) {
+    const key = item.module_title;
+    byLesson.set(key, [...(byLesson.get(key) || []), item]);
+  }
+
+  return (
+    <div style={{ marginTop: "var(--s3)" }}>
+      <p style={{ fontSize: "var(--text-sm)", color: "var(--ink-2)", margin: "0 0 var(--s2)" }}>
+        <strong>{items.length}</strong> asked for across{" "}
+        {wanted.data.plans_read} plan(s).{" "}
+        {Object.entries(wanted.data.by_kind || {})
+          .map(([k, n]) => `${n} ${k}`)
+          .join(" · ")}
+      </p>
+      <div style={{ maxHeight: 260, overflow: "auto" }}>
+        {[...byLesson.entries()].map(([lesson, rows]) => (
+          <div key={lesson} style={{ marginBottom: "var(--s2)" }}>
+            <div style={{ fontSize: "var(--text-sm)", fontWeight: 550 }}>{lesson}</div>
+            <ul style={{ margin: "2px 0 0", paddingLeft: "1.2rem", fontSize: "var(--text-sm)" }}>
+              {rows.map((r, i) => (
+                <li key={i} style={{ color: "var(--ink-2)" }}>
+                  <Badge tone="neutral">{r.kind}</Badge> {r.what}
+                  {r.topic && (
+                    <span style={{ color: "var(--ink-3)" }}> — in “{r.topic}”</span>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+
 function StageUnits({
   grade,
   stage,
@@ -456,6 +541,8 @@ function BranchRow({
   const [stage, setStage] = React.useState<BoardStage | null>(null);
   const [logs, setLogs] = React.useState(false);
   const [units, setUnits] = React.useState(false);
+  const [wanted, setWanted] = React.useState(false);
+  const [domain, setDomain] = React.useState(false);
   const { act } = useStageAction();
 
   return (
@@ -614,6 +701,14 @@ function BranchRow({
                 <Button size="sm" variant="ghost" onClick={() => setUnits(!units)}>
                   {units ? "Hide the versions" : "Versions & approve"}
                 </Button>
+                {STATION_STAGES.has(stage.stage) && (
+                  <Button size="sm" variant="ghost" onClick={() => setWanted(!wanted)}>
+                    {wanted ? "Hide what the plan asks for" : "What the plan asks for"}
+                  </Button>
+                )}
+                <Button size="sm" variant="ghost" onClick={() => setDomain(!domain)}>
+                  {domain ? "Hide the domain prompts" : "Domain prompts"}
+                </Button>
                 <Button size="sm" variant="ghost" onClick={() => setLogs(!logs)}>
                   {logs ? "Hide the log" : "Show the log"}
                 </Button>
@@ -629,6 +724,21 @@ function BranchRow({
               {act.error && <ErrorNotice error={act.error} />}
               {units && (
                 <StageUnits grade={grade} stage={stage.stage} subject={branch.subject} />
+              )}
+              {domain && (
+                <PromptFragments
+                  subject={branch.subject}
+                  grade={grade}
+                  station={stage.stage}
+                  compact
+                />
+              )}
+              {wanted && (
+                <StageRequirements
+                  grade={grade}
+                  subject={branch.subject}
+                  station={stage.stage}
+                />
               )}
               {logs && (
                 <StageLog

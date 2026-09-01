@@ -2127,6 +2127,54 @@ export function useRunStage() {
   });
 }
 
+export type PromptFragment = {
+  name: string;
+  langfuse_name: string;
+  title: string;
+  subjects: string[];
+  stations: string[];
+  grades: string[];
+  from_ordinal: number;
+  to_ordinal: number;
+  why: string;
+  /** What in the KICD design this serves — domain knowledge is exactly where a
+   *  prompt drifts away from the curriculum and towards what the author
+   *  happens to know about the subject. */
+  kicd: string;
+  chars: number;
+  body: string;
+  applies_here?: boolean;
+};
+
+/** The domain prompts, and where each applies. */
+export function usePromptFragments(subject = "", grade = "", station = "") {
+  const api = useApi();
+  const qc = useQueryClient();
+  const list = useQuery({
+    queryKey: ["prompt-fragments", subject, grade, station],
+    queryFn: () => {
+      const qs = new URLSearchParams();
+      if (subject) qs.set("subject", subject);
+      if (grade) qs.set("grade", grade);
+      if (station) qs.set("station", station);
+      return api<{ fragments: PromptFragment[] }>(
+        `/api/v1/pipelines/fragments${qs.toString() ? `?${qs}` : ""}`
+      );
+    },
+  });
+  return {
+    list,
+    save: useMutation({
+      mutationFn: (v: { name: string; body: string }) =>
+        api<{ fragment: PromptFragment; saved: boolean }>(
+          `/api/v1/pipelines/fragments/${encodeURIComponent(v.name)}`,
+          { method: "PUT", body: JSON.stringify({ body: v.body }) }
+        ),
+      onSuccess: () => qc.invalidateQueries({ queryKey: ["prompt-fragments"] }),
+    }),
+  };
+}
+
 export type StageUnit = {
   artifact_id: string;
   artifact_key: string;
@@ -2159,6 +2207,46 @@ export function useStageUnits(grade: string, stage: string, subject: string, on:
       );
     },
     enabled: on && Boolean(grade && stage),
+  });
+}
+
+export type AssetRequirement = {
+  kind: string;
+  what: string;
+  module_number: number;
+  module_title: string;
+  topic: string;
+  source: string;
+  station: string;
+};
+
+/** What the lesson plans ask for, per lesson, in their own words.
+ *
+ *  The plan already names its assets. Nothing was reading them: each asset
+ *  station was given the sub-strand's title and outcomes and asked to plan from
+ *  scratch, so an asset the plan asked for was never guaranteed to exist. */
+export function useStageRequirements(
+  grade: string,
+  subject: string,
+  station: string,
+  on: boolean
+) {
+  const api = useApi();
+  return useQuery({
+    queryKey: ["stage-requirements", grade, subject, station],
+    queryFn: () => {
+      const qs = new URLSearchParams({ subject });
+      if (station) qs.set("station", station);
+      return api<{
+        plans_read: number;
+        total: number;
+        to_generate: number;
+        by_kind: Record<string, number>;
+        by_station: Record<string, number>;
+        items: AssetRequirement[];
+      }>(`/api/v1/pipelines/${encodeURIComponent(grade)}/requirements?${qs}`);
+    },
+    enabled: on && Boolean(grade && subject),
   });
 }
 

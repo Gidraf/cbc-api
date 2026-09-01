@@ -590,7 +590,56 @@ class LangfuseContextService:
 
         return compiled_text, version_str, label_str
 
+    # Langfuse has no folders: a prompt's NAME is its path, and a slash in it
+    # is what the console renders as a folder. Nineteen prompts in one flat
+    # list is a list nobody edits; the same nineteen under `generate/`,
+    # `review/` and `extract/` is a place to work.
+    #
+    # Both names are accepted, foldered first. Renaming outright would orphan
+    # every edit already made in Langfuse against the old name — which is the
+    # work this is supposed to make easier, thrown away to make it tidier.
+    FOLDERS: dict[str, str] = {
+        "curriculum-extractor": "extract/curriculum",
+        "grade-scope-extractor": "extract/grade-scope",
+        "rubric-generator": "extract/rubrics",
+        "strand-generator": "structure/strands",
+        "substrand-generator": "structure/sub-strands",
+        "slo-aligner": "structure/slo-alignment",
+        "note-generator": "generate/lesson-plan",
+        "diagram-generator": "generate/diagrams",
+        "media-prompt-generator": "generate/photos-and-videos",
+        "simulation-generator": "generate/simulations",
+        "activity-generator": "generate/activities",
+        "question-generator": "generate/questions",
+        "content-repair": "generate/repair",
+        "layer-reviewer": "review/layered",
+        "reviewer-panel": "review/panel",
+        "approver-agent1": "review/approver-1",
+        "approver-agent2": "review/approver-2",
+    }
+
+    def folder_name(self, agent_name: str) -> str:
+        """Where this prompt lives in the Langfuse console."""
+        return self.FOLDERS.get(agent_name, agent_name)
+
     def get_agent_prompt(self, agent_name: str) -> str:
+        """The prompt, by its foldered name if there is one, else its flat name.
+
+        Order matters: an operator who has edited `generate/lesson-plan` should
+        get that edit, and one who has only ever edited `note-generator` should
+        keep getting theirs. Falling back the other way would silently serve a
+        stale prompt to whoever migrated first.
+        """
+        foldered = self.FOLDERS.get(agent_name)
+        if foldered:
+            try:
+                found = self.get_prompt(foldered)
+                text = getattr(found, "prompt", "")
+                if text and "{{" in text:
+                    return text
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("No foldered prompt %s (%s); using %s.",
+                             foldered, exc, agent_name)
         prompt_obj = self.get_prompt(agent_name)
         return getattr(prompt_obj, "prompt", str(prompt_obj))
 

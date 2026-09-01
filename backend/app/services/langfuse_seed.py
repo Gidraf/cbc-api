@@ -117,6 +117,10 @@ You are a KICD assessment specialist writing the suggested assessment rubric for
 
 === WHO THIS IS FOR ===
 {{ level_register }}
+
+{{ notation }}
+
+{{ domain_directives }}
 {{ faith_scope }}
 
 === THE SUB-STRAND ===
@@ -173,6 +177,10 @@ You are repairing generated curriculum content that failed validation. You are N
 
 === WHO THIS IS FOR ===
 {{ level_register }}
+
+{{ notation }}
+
+{{ domain_directives }}
 {{ faith_scope }}
 
 === WHAT FAILED ===
@@ -208,6 +216,10 @@ You are mapping generated content back to the Specific Learning Outcomes it is s
 
 === WHO THIS IS FOR ===
 {{ level_register }}
+
+{{ notation }}
+
+{{ domain_directives }}
 {{ faith_scope }}
 
 === THE OUTCOMES ===
@@ -262,6 +274,10 @@ Do not confuse the two. Thin notes for young learners is the most common way thi
 guide fails.
 
 {{ level_register }}
+
+{{ notation }}
+
+{{ domain_directives }}
 {{ faith_scope }}
 
 === KICD BASIC EDUCATION CURRICULUM FRAMEWORK (BECF) ===
@@ -458,6 +474,10 @@ behaviour, including the physics, the ranges and what counts as correct.
 
 === WHO THIS IS FOR ===
 {{ level_register }}
+
+{{ notation }}
+
+{{ domain_directives }}
 {{ faith_scope }}
 
 === CONTENT-TYPE PEDAGOGICAL DIRECTIVES ===
@@ -597,6 +617,10 @@ have not looked hard enough at what the learner has to picture in their head.
 
 === WHO THIS IS FOR ===
 {{ level_register }}
+
+{{ notation }}
+
+{{ domain_directives }}
 {{ faith_scope }}
 
 === CONTENT-TYPE PEDAGOGICAL DIRECTIVES ===
@@ -755,6 +779,10 @@ Concept: {{ concept }}
 
 === WHO THIS IS FOR ===
 {{ level_register }}
+
+{{ notation }}
+
+{{ domain_directives }}
 {{ faith_scope }}
 
 === CONTENT-TYPE PEDAGOGICAL DIRECTIVES ===
@@ -794,6 +822,10 @@ SLO ID: {{ slo_id }}
 
 === WHO THIS IS FOR ===
 {{ level_register }}
+
+{{ notation }}
+
+{{ domain_directives }}
 {{ faith_scope }}
 
 === CONTENT-TYPE PEDAGOGICAL DIRECTIVES ===
@@ -858,6 +890,10 @@ Difficulty Target: {{ difficulty }}
 
 === WHO THIS IS FOR ===
 {{ level_register }}
+
+{{ notation }}
+
+{{ domain_directives }}
 {{ faith_scope }}
 
 === CONTENT-TYPE PEDAGOGICAL DIRECTIVES ===
@@ -1013,6 +1049,10 @@ Perform an exhaustive quality, content-type alignment, and safety review on the 
 
 === WHO THIS IS FOR ===
 {{ level_register }}
+
+{{ notation }}
+
+{{ domain_directives }}
 {{ faith_scope }}
 Judge the content against THIS audience. Content correctly pitched for this level
 must never be marked down for lacking depth, apparatus, or a national-development
@@ -1067,6 +1107,10 @@ Perform an exhaustive, multi-aspect quality and safety audit on the generated CB
 
 === WHO THIS IS FOR ===
 {{ level_register }}
+
+{{ notation }}
+
+{{ domain_directives }}
 {{ faith_scope }}
 Judge the content against THIS audience. Content correctly pitched for this level
 must never be marked down for lacking depth, apparatus, or a national-development
@@ -1121,6 +1165,10 @@ Review pedagogical depth, constructivist alignment, SVG diagram clarity, visual-
 
 === WHO THIS IS FOR ===
 {{ level_register }}
+
+{{ notation }}
+
+{{ domain_directives }}
 {{ faith_scope }}
 Judge the content against THIS audience. Content correctly pitched for this level
 must never be marked down for lacking depth, apparatus, or a national-development
@@ -1147,6 +1195,10 @@ Check for consensus, risk flags, visual-semantic contradictions, safety verifica
 
 === WHO THIS IS FOR ===
 {{ level_register }}
+
+{{ notation }}
+
+{{ domain_directives }}
 {{ faith_scope }}
 Judge the content against THIS audience. Content correctly pitched for this level
 must never be marked down for lacking depth, apparatus, or a national-development
@@ -1173,6 +1225,10 @@ have had.
 
 === WHO THIS IS FOR ===
 {{ level_register }}
+
+{{ notation }}
+
+{{ domain_directives }}
 {{ faith_scope }}
 
 === SUBJECT-SPECIFIC DIRECTIVES ===
@@ -1236,6 +1292,10 @@ Learning area / subject: {{ subject }}
 
 === WHO THIS IS FOR ===
 {{ level_register }}
+
+{{ notation }}
+
+{{ domain_directives }}
 {{ faith_scope }}
 
 === PAGES {{ page_range }} ===
@@ -1293,6 +1353,10 @@ syllabus could contain.
 
 === WHO THIS IS FOR ===
 {{ level_register }}
+
+{{ notation }}
+
+{{ domain_directives }}
 {{ faith_scope }}
 
 === SUBJECT-SPECIFIC DIRECTIVES ===

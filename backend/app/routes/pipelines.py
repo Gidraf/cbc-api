@@ -293,6 +293,118 @@ def stage_units(
             "units": units}
 
 
+@router.get("/{grade}/requirements")
+def stage_requirements(
+    grade: str,
+    subject: str = Query(..., min_length=1),
+    station: str = Query("", description="Only what this station owes"),
+    _: AuthContext = Depends(require_roles("admin", "operator", "reviewer", "developer")),
+) -> dict[str, Any]:
+    """What the lesson plans ask for, per lesson, in their own words.
+
+    The plan already names its assets — "visual aids for gestures", "observe
+    pictures of Adam and Eve". Nothing was reading them: each asset station was
+    given the sub-strand's title and outcomes and asked to plan from scratch,
+    so an asset the plan asked for was never guaranteed to exist and one it
+    never mentioned could be produced and approved.
+    """
+    from ..services import artifact_registry, asset_requirements
+
+    plans = artifact_registry.search(grade, subject, "notes", limit=200)
+    wanted = asset_requirements.Requirements()
+    for row in plans:
+        try:
+            plan = artifact_registry.get(str(row["artifact_id"])).content or {}
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Could not read plan %s: %s", row.get("artifact_id"), exc)
+            continue
+        found = asset_requirements.read(plan)
+        for item in found.items:
+            item.module_title = f"{row.get('sub_strand_name') or ''} — {item.module_title}".strip(" —")
+            wanted.items.append(item)
+
+    if station:
+        wanted.items = [i for i in wanted.items if i.station == station]
+    return {"grade": grade, "subject": subject, "station": station,
+            "plans_read": len(plans), **wanted.to_dict()}
+
+
+@router.get("/fragments")
+def list_fragments(
+    subject: str = Query("", description="Only what applies to this subject"),
+    grade: str = Query(""),
+    station: str = Query(""),
+    _: AuthContext = Depends(require_roles("admin", "operator", "reviewer", "developer")),
+) -> dict[str, Any]:
+    """The domain prompts, and where each one applies.
+
+    Education is wide. A prompt that must serve every subject is a prompt
+    nobody improves: change the paragraph about balancing equations and you
+    have edited the prompt that writes a PP1 singing lesson, so the person who
+    knows chemistry will not touch it — and it stays wrong.
+
+    Each of these is separate, small, and its own Langfuse prompt.
+    """
+    from ..services import prompt_fragments
+
+    catalogue = prompt_fragments.catalogue()
+    if subject or grade or station:
+        applies = {f.name for f in prompt_fragments.for_context(subject, station, grade)}
+        for entry in catalogue:
+            entry["applies_here"] = entry["name"] in applies
+    return {"fragments": catalogue,
+            "filtered_for": {"subject": subject, "grade": grade, "station": station}}
+
+
+class FragmentEditRequest(BaseModel):
+    """A fragment improved in the console."""
+
+    body: str
+
+
+@router.put("/fragments/{name}")
+def edit_fragment(
+    name: str,
+    payload: FragmentEditRequest,
+    auth: AuthContext = Depends(require_roles("admin", "operator")),
+) -> dict[str, Any]:
+    """Improve one domain prompt, without touching any of the others.
+
+    Written to Langfuse under the fragment's own name, so it can be edited
+    there too and so the change is versioned where every other prompt change
+    is. The built-in text stays in the code as the default, which is what makes
+    a fresh deployment work with no prompt store at all.
+    """
+    from ..services import prompt_fragments
+    from ..services.prompt_sync import push_one
+
+    fragment = next((f for f in prompt_fragments.FRAGMENTS if f.name == name), None)
+    if fragment is None:
+        raise_api_error(
+            "VALIDATION_FAILED",
+            f"There is no '{name}' fragment. The fragments are: "
+            f"{', '.join(f.name for f in prompt_fragments.FRAGMENTS)}.",
+        )
+    if not payload.body.strip():
+        raise_api_error(
+            "VALIDATION_FAILED",
+            "An empty fragment would silently remove this subject's domain "
+            "rules from every station that uses it. To stop using it, narrow "
+            "the subjects it applies to instead.",
+        )
+
+    try:
+        push_one(fragment.langfuse_name, payload.body)
+    except Exception as exc:  # noqa: BLE001
+        raise_api_error(
+            "MODEL_ENDPOINT_UNAVAILABLE",
+            f"Could not save the fragment to Langfuse ({exc}). The built-in "
+            f"text is still in use, so nothing has changed.",
+        )
+    logger.info("Fragment %s edited by %s.", name, getattr(auth, "subject", "?"))
+    return {"fragment": fragment.to_dict(), "saved": True}
+
+
 class BulkApproveRequest(BaseModel):
     """Sign for several versions at once."""
 

@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 
 from ..errors import raise_api_error
+from ..services import notation, prompt_fragments
 from ..services.auth import AuthContext, require_roles
 from ..services.level_register import register_block
 from ..services.faith_scope import prompt_block as faith_prompt_block
@@ -444,6 +445,15 @@ def factory_generate_questions_batch(
                     payload.grade,
                     notes=grade_scope_notes(payload.grade, payload.subject),
                 ),
+            # A question whose answer is "3/4" and a marking scheme expecting
+            # "$\\frac{3}{4}$" are the same answer written two ways, and one of
+            # them is marked wrong. The notation has to be the same in the
+            # question as it was in the lesson.
+            "notation": notation.block_for(payload.subject, grade=payload.grade),
+            # What this subject needs that no other does — a balanced equation
+            # for Chemistry, a scaled map for Geography, sol-fa for Music.
+            "domain_directives": prompt_fragments.compose(
+                payload.subject, "questions", payload.grade),
             "faith_scope": faith_prompt_block(payload.subject),
             "content_type_directives": ct_profile.format_for_prompt(),
             "notes_content": notes_text[:3000] or payload.sub_strand,

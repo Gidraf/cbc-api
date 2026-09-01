@@ -44,6 +44,7 @@ from ..services import (
 from ..services.grade_order import grade_level
 from ..services.faith_scope import prompt_block as faith_prompt_block
 from ..services.grade_scope import notes_for as grade_scope_notes
+from ..services import notation, prompt_fragments
 from ..services.level_register import (
     language_block,
     register_block,
@@ -1060,6 +1061,19 @@ def factory_generate_notes(
                     notes=grade_scope_notes(payload.grade, payload.subject),
                 ),
         "language_register": language_block(payload.grade),
+            # How this subject writes what it cannot write in words. Empty for
+            # most subjects — a CRE guide carrying two pages about balancing
+            # equations spends a page of prompt on something it never uses, and
+            # every irrelevant instruction makes the relevant ones harder to
+            # find.
+            "notation": notation.block_for(payload.subject, grade=payload.grade),
+            # What THIS subject needs that no other does: maps and scale for
+            # Geography, equations that balance for Chemistry, sol-fa for
+            # Music, a cutting list for Carpentry. Empty for most pairings,
+            # which is the point — a CRE lesson plan receives no paragraph
+            # about mortise and tenon joints.
+            "domain_directives": prompt_fragments.compose(
+                payload.subject, "notes", payload.grade),
         "faith_scope": faith_prompt_block(payload.subject),
         "content_type_directives": ct_profile.format_for_prompt(),
         "level": level,
@@ -1552,6 +1566,19 @@ def factory_generate_diagram(
                     notes=grade_scope_notes(payload.grade, payload.subject),
                 ),
             "language_register": language_block(payload.grade),
+            # How this subject writes what it cannot write in words. Empty for
+            # most subjects — a CRE guide carrying two pages about balancing
+            # equations spends a page of prompt on something it never uses, and
+            # every irrelevant instruction makes the relevant ones harder to
+            # find.
+            "notation": notation.block_for(payload.subject, grade=payload.grade),
+            # What THIS subject needs that no other does: maps and scale for
+            # Geography, equations that balance for Chemistry, sol-fa for
+            # Music, a cutting list for Carpentry. Empty for most pairings,
+            # which is the point — a CRE lesson plan receives no paragraph
+            # about mortise and tenon joints.
+            "domain_directives": prompt_fragments.compose(
+                payload.subject, "diagram", payload.grade),
             "faith_scope": faith_prompt_block(payload.subject),
             "content_type_directives": ct_profile.format_for_prompt(),
             "notes_content": notes_summary_str or payload.notes_title or payload.sub_strand,
@@ -1675,6 +1702,19 @@ def factory_generate_activity(
                     notes=grade_scope_notes(payload.grade, payload.subject),
                 ),
             "language_register": language_block(payload.grade),
+            # How this subject writes what it cannot write in words. Empty for
+            # most subjects — a CRE guide carrying two pages about balancing
+            # equations spends a page of prompt on something it never uses, and
+            # every irrelevant instruction makes the relevant ones harder to
+            # find.
+            "notation": notation.block_for(payload.subject, grade=payload.grade),
+            # What THIS subject needs that no other does: maps and scale for
+            # Geography, equations that balance for Chemistry, sol-fa for
+            # Music, a cutting list for Carpentry. Empty for most pairings,
+            # which is the point — a CRE lesson plan receives no paragraph
+            # about mortise and tenon joints.
+            "domain_directives": prompt_fragments.compose(
+                payload.subject, "activity", payload.grade),
             "faith_scope": faith_prompt_block(payload.subject),
             "content_type_directives": ct_profile.format_for_prompt(),
             "notes_content": notes_str or payload.notes_title or payload.sub_strand,
@@ -1795,11 +1835,35 @@ def factory_plan_visuals(
                     notes=grade_scope_notes(payload.grade, payload.subject),
                 ),
             "language_register": language_block(payload.grade),
+            # How this subject writes what it cannot write in words. Empty for
+            # most subjects — a CRE guide carrying two pages about balancing
+            # equations spends a page of prompt on something it never uses, and
+            # every irrelevant instruction makes the relevant ones harder to
+            # find.
+            "notation": notation.block_for(payload.subject, grade=payload.grade),
+            # What THIS subject needs that no other does: maps and scale for
+            # Geography, equations that balance for Chemistry, sol-fa for
+            # Music, a cutting list for Carpentry. Empty for most pairings,
+            # which is the point — a CRE lesson plan receives no paragraph
+            # about mortise and tenon joints.
+            "domain_directives": prompt_fragments.compose(
+                payload.subject, "diagram", payload.grade),
             "faith_scope": faith_prompt_block(payload.subject),
             "content_type_directives": ct_profile.format_for_prompt(),
             "notes_content": notes_str or payload.notes_title or payload.sub_strand,
         },
     )
+
+    # The plan names its own assets — "visual aids for gestures", "observe
+    # pictures of Adam and Eve". Planning visuals from the sub-strand's title
+    # and outcomes instead is how a station came back with assets the lesson
+    # never mentions, and how an asset the plan DID ask for was never made.
+    from ..services import asset_requirements
+
+    _wanted = asset_requirements.read(notes_dict if isinstance(notes_dict, dict) else {})
+    asset_brief = (asset_requirements.render(_wanted, "diagram")
+                   or asset_requirements.render(_wanted))
+    geometry_spec = notation.geometry_block(payload.subject)
 
     context.messages.append({
         "role": "user",
@@ -1807,12 +1871,24 @@ def factory_plan_visuals(
             f"{ct_profile.format_for_prompt()}\n\n"
             f"{dossier.formatted_context}\n\n"
             f"=== LAYER 1 MASTER LESSON NOTES CONTEXT (MANDATORY 4-HOUR SOURCE OF TRUTH) ===\n{notes_str}\n\n"
-            f"MANDATORY 4-HOUR BALANCED MULTI-VISUAL ASSET DISCOVERY DIRECTIVE:\n"
-            f"You MUST discover and specify 2 to 3 distinct pedagogical visual assets FOR EACH of the 4 Lesson Hours listed above (Total 8 to 12 distinct assets):\n"
-            f"1. For Hour 1 ({h_mods[0].get('hour_title', 'Hour 1') if len(h_mods) > 0 else 'Hour 1'}): Generate 2-3 visuals illustrating Hour 1 concepts (flowcharts, economic dynamics, overview models) -> set 'hour_index': 1, 'hour_title': 'Hour 1: ...'\n"
-            f"2. For Hour 2 ({h_mods[1].get('hour_title', 'Hour 2') if len(h_mods) > 1 else 'Hour 2'}): Generate 2-3 visuals illustrating that hour's own concepts, in the visual style named in the directives above -> set 'hour_index': 2, 'hour_title': 'Hour 2: ...'\n"
-            f"3. For Hour 3 ({h_mods[2].get('hour_title', 'Hour 3') if len(h_mods) > 2 else 'Hour 3'}): Generate 2-3 visuals illustrating Hour 3 concepts (e.g. Soil Erosion types, Contour Bunds, Gabions, Ecological Equilibrium) -> set 'hour_index': 3, 'hour_title': 'Hour 3: ...'\n"
-            f"4. For Hour 4 ({h_mods[3].get('hour_title', 'Hour 4') if len(h_mods) > 3 else 'Hour 4'}): Generate 2-3 visuals illustrating Hour 4 concepts (e.g. Soil Profile Horizon Strata O-A-B-C, pH Titration & Buffer Capacity Apparatus) -> set 'hour_index': 4, 'hour_title': 'Hour 4: ...'\n\n"
+            # What the PLAN asks for, rather than four hardcoded examples.
+            #
+            # This block used to name "Soil Erosion types, Contour Bunds,
+            # Gabions" and "Soil Profile Horizon Strata O-A-B-C, pH Titration"
+            # as its examples — for every subject, including a PP1 lesson about
+            # God. A reviewer later flagged a soil-profile schematic on that
+            # lesson as an invention. It was not an invention: it was this
+            # prompt's own example, followed faithfully.
+            f"{asset_brief}\n\n"
+            # A figure described in prose cannot be drawn twice the same way,
+            # and the question asked about it then does not match the picture
+            # printed beside it.
+            f"{geometry_spec}\n\n"
+            f"WHERE THE PLAN ASKS FOR NOTHING in a lesson, work from that "
+            f"lesson's own topics and produce 1-3 visuals for it. Every visual "
+            f"must be traceable to a topic in the notes above: set "
+            f"'hour_index' and 'hour_title' to the lesson it belongs to, and "
+            f"do not produce a visual for a lesson that is not listed.\n\n"
             f"For EACH visual asset provide:\n"
             f"- asset_id (e.g. vis_01, vis_02, vis_03, vis_04, vis_05, vis_06, vis_07, vis_08)\n"
             f"- hour_index (1 | 2 | 3 | 4 - the specific hour module in the lesson notes this visual illustrates)\n"
@@ -1950,6 +2026,19 @@ def factory_generate_single_visual(
                     notes=grade_scope_notes(payload.grade, payload.subject),
                 ),
             "language_register": language_block(payload.grade),
+            # How this subject writes what it cannot write in words. Empty for
+            # most subjects — a CRE guide carrying two pages about balancing
+            # equations spends a page of prompt on something it never uses, and
+            # every irrelevant instruction makes the relevant ones harder to
+            # find.
+            "notation": notation.block_for(payload.subject, grade=payload.grade),
+            # What THIS subject needs that no other does: maps and scale for
+            # Geography, equations that balance for Chemistry, sol-fa for
+            # Music, a cutting list for Carpentry. Empty for most pairings,
+            # which is the point — a CRE lesson plan receives no paragraph
+            # about mortise and tenon joints.
+            "domain_directives": prompt_fragments.compose(
+                payload.subject, "diagram", payload.grade),
             "faith_scope": faith_prompt_block(payload.subject),
             "content_type_directives": ct_profile.format_for_prompt(),
             "notes_content": notes_str or payload.sub_strand,
@@ -2263,11 +2352,32 @@ def factory_plan_activities(
                     notes=grade_scope_notes(payload.grade, payload.subject),
                 ),
             "language_register": language_block(payload.grade),
+            # How this subject writes what it cannot write in words. Empty for
+            # most subjects — a CRE guide carrying two pages about balancing
+            # equations spends a page of prompt on something it never uses, and
+            # every irrelevant instruction makes the relevant ones harder to
+            # find.
+            "notation": notation.block_for(payload.subject, grade=payload.grade),
+            # What THIS subject needs that no other does: maps and scale for
+            # Geography, equations that balance for Chemistry, sol-fa for
+            # Music, a cutting list for Carpentry. Empty for most pairings,
+            # which is the point — a CRE lesson plan receives no paragraph
+            # about mortise and tenon joints.
+            "domain_directives": prompt_fragments.compose(
+                payload.subject, "activity", payload.grade),
             "faith_scope": faith_prompt_block(payload.subject),
             "content_type_directives": ct_profile.format_for_prompt(),
             "notes_content": notes_str or payload.notes_title or payload.sub_strand,
             "diagram_info": json_lib.dumps(payload.diagram_info, ensure_ascii=False) if payload.diagram_info else "Visual diagram context",
         },
+    )
+
+    # What the plan asks this station for, rather than a lesson about soil.
+    from ..services import asset_requirements as _asset_requirements
+
+    activity_brief = _asset_requirements.render(
+        _asset_requirements.read(notes_dict if isinstance(notes_dict, dict) else {}),
+        "activity",
     )
 
     context.messages.append({
@@ -2276,12 +2386,20 @@ def factory_plan_activities(
             f"{ct_profile.format_for_prompt()}\n\n"
             f"{dossier.formatted_context}\n\n"
             f"=== LAYER 1 MASTER LESSON NOTES CONTEXT (MANDATORY 4-HOUR SOURCE OF TRUTH) ===\n{notes_str}\n\n"
-            f"MANDATORY 4-HOUR BALANCED MULTI-PRACTICAL DISCOVERY DIRECTIVE:\n"
-            f"You MUST discover and specify at least 1 authentic practical task / laboratory experiment FOR EACH of the 4 Lesson Hours listed above (Total 4 to 6 distinct activities):\n"
-            f"1. For Hour 1 ({h_mods[0].get('hour_title', 'Hour 1') if len(h_mods) > 0 else 'Hour 1'}): Practical inquiry / policy review -> set 'hour_index': 1, 'hour_title': 'Hour 1: ...'\n"
-            f"2. For Hour 2 ({h_mods[1].get('hour_title', 'Hour 2') if len(h_mods) > 1 else 'Hour 2'}): Agroforestry layout & field sampling / Soil pH buffer inquiry -> set 'hour_index': 2, 'hour_title': 'Hour 2: ...'\n"
-            f"3. For Hour 3 ({h_mods[2].get('hour_title', 'Hour 3') if len(h_mods) > 2 else 'Hour 3'}): Soil conservation / contour terracing / CSL project -> set 'hour_index': 3, 'hour_title': 'Hour 3: ...'\n"
-            f"4. For Hour 4 ({h_mods[3].get('hour_title', 'Hour 4') if len(h_mods) > 3 else 'Hour 4'}): 60-Minute Standardized Laboratory Practicum (Soil pH Titration & Buffer Capacity) -> set 'hour_index': 4, 'hour_title': 'Hour 4: ...'\n\n"
+            # The same hardcoded soil-science lesson the visuals prompt
+            # carried: "Agroforestry layout", "contour terracing", "Soil pH
+            # Titration & Buffer Capacity" — offered as the examples for every
+            # subject, including a PP1 lesson taught by singing. A station given
+            # those examples and asked to be authentic will be authentic about
+            # soil.
+            f"{activity_brief}\n\n"
+            f"WHAT COUNTS AS A PRACTICAL IS SET BY THE LEARNER, NOT BY THE "
+            f"SUBJECT. The register above says what this age can do with their "
+            f"hands: at pre-primary that is singing games, role-play, "
+            f"modelling and nature walks, and there are no laboratory "
+            f"practicals at all. Produce one practical per lesson, drawn from "
+            f"what THAT lesson teaches, and set 'hour_index' and 'hour_title' "
+            f"to it.\n\n"
             f"For EACH activity include:\n"
             f"- activity_id (e.g. act_01, act_02, act_03, act_04)\n"
             f"- hour_index (1 | 2 | 3 | 4 - the specific hour module in the lesson notes this practical task belongs to)\n"
@@ -2414,6 +2532,19 @@ def factory_generate_single_activity(
                     notes=grade_scope_notes(payload.grade, payload.subject),
                 ),
             "language_register": language_block(payload.grade),
+            # How this subject writes what it cannot write in words. Empty for
+            # most subjects — a CRE guide carrying two pages about balancing
+            # equations spends a page of prompt on something it never uses, and
+            # every irrelevant instruction makes the relevant ones harder to
+            # find.
+            "notation": notation.block_for(payload.subject, grade=payload.grade),
+            # What THIS subject needs that no other does: maps and scale for
+            # Geography, equations that balance for Chemistry, sol-fa for
+            # Music, a cutting list for Carpentry. Empty for most pairings,
+            # which is the point — a CRE lesson plan receives no paragraph
+            # about mortise and tenon joints.
+            "domain_directives": prompt_fragments.compose(
+                payload.subject, "activity", payload.grade),
             "faith_scope": faith_prompt_block(payload.subject),
             "content_type_directives": ct_profile.format_for_prompt(),
             "notes_content": notes_str or payload.sub_strand,
@@ -2535,6 +2666,19 @@ def factory_generate_questions(
                     notes=grade_scope_notes(payload.grade, payload.subject),
                 ),
             "language_register": language_block(payload.grade),
+            # How this subject writes what it cannot write in words. Empty for
+            # most subjects — a CRE guide carrying two pages about balancing
+            # equations spends a page of prompt on something it never uses, and
+            # every irrelevant instruction makes the relevant ones harder to
+            # find.
+            "notation": notation.block_for(payload.subject, grade=payload.grade),
+            # What THIS subject needs that no other does: maps and scale for
+            # Geography, equations that balance for Chemistry, sol-fa for
+            # Music, a cutting list for Carpentry. Empty for most pairings,
+            # which is the point — a CRE lesson plan receives no paragraph
+            # about mortise and tenon joints.
+            "domain_directives": prompt_fragments.compose(
+                payload.subject, "questions", payload.grade),
             "faith_scope": faith_prompt_block(payload.subject),
             "content_type_directives": ct_profile.format_for_prompt(),
             "notes_content": notes_str or payload.notes_summary or payload.sub_strand,
@@ -3646,6 +3790,19 @@ def factory_generate_strands(
                 notes=grade_scope_notes(payload.grade, payload.subject),
             ),
             "language_register": language_block(payload.grade),
+            # How this subject writes what it cannot write in words. Empty for
+            # most subjects — a CRE guide carrying two pages about balancing
+            # equations spends a page of prompt on something it never uses, and
+            # every irrelevant instruction makes the relevant ones harder to
+            # find.
+            "notation": notation.block_for(payload.subject, grade=payload.grade),
+            # What THIS subject needs that no other does: maps and scale for
+            # Geography, equations that balance for Chemistry, sol-fa for
+            # Music, a cutting list for Carpentry. Empty for most pairings,
+            # which is the point — a CRE lesson plan receives no paragraph
+            # about mortise and tenon joints.
+            "domain_directives": prompt_fragments.compose(
+                payload.subject, "structure", payload.grade),
             "faith_scope": faith_prompt_block(payload.subject),
             "content_type_directives": (
                 strand_profile.format_for_prompt() if strand_profile else ""
@@ -3771,6 +3928,19 @@ def _rubric_writer(payload: Any, resolved: Any, design_block: str) -> Any:
                     notes=grade_scope_notes(payload.grade, payload.subject),
                 ),
                 "language_register": language_block(payload.grade),
+            # How this subject writes what it cannot write in words. Empty for
+            # most subjects — a CRE guide carrying two pages about balancing
+            # equations spends a page of prompt on something it never uses, and
+            # every irrelevant instruction makes the relevant ones harder to
+            # find.
+            "notation": notation.block_for(payload.subject, grade=payload.grade),
+            # What THIS subject needs that no other does: maps and scale for
+            # Geography, equations that balance for Chemistry, sol-fa for
+            # Music, a cutting list for Carpentry. Empty for most pairings,
+            # which is the point — a CRE lesson plan receives no paragraph
+            # about mortise and tenon joints.
+            "domain_directives": prompt_fragments.compose(
+                payload.subject, "structure", payload.grade),
                 "faith_scope": faith_prompt_block(payload.subject),
                 "strand": payload.strand_name,
                 "sub_strand": str(sub_strand.get("sub_strand_name") or ""),
@@ -3931,6 +4101,19 @@ def factory_generate_substrands(
                     notes=grade_scope_notes(payload.grade, payload.subject),
                 ),
                 "language_register": language_block(payload.grade),
+            # How this subject writes what it cannot write in words. Empty for
+            # most subjects — a CRE guide carrying two pages about balancing
+            # equations spends a page of prompt on something it never uses, and
+            # every irrelevant instruction makes the relevant ones harder to
+            # find.
+            "notation": notation.block_for(payload.subject, grade=payload.grade),
+            # What THIS subject needs that no other does: maps and scale for
+            # Geography, equations that balance for Chemistry, sol-fa for
+            # Music, a cutting list for Carpentry. Empty for most pairings,
+            # which is the point — a CRE lesson plan receives no paragraph
+            # about mortise and tenon joints.
+            "domain_directives": prompt_fragments.compose(
+                payload.subject, "structure", payload.grade),
                 "faith_scope": faith_prompt_block(payload.subject),
                 "content_type_directives": (
                     ct_profile.format_for_prompt() if ct_profile else ""
@@ -4086,6 +4269,8 @@ def _scope_chunk_reader(grade: str, subject: str, resolved: Any) -> Any:
             "subject": subject,
             "level_register": register_block(grade),
             "language_register": language_block(grade),
+            "notation": notation.block_for(subject, grade=grade),
+            "domain_directives": prompt_fragments.compose(subject, "structure", grade),
             "faith_scope": faith_prompt_block(subject),
             "page_range": chunk.page_range,
             "chunk_text": chunk.text,
@@ -6479,6 +6664,19 @@ def factory_generate_media_prompts(
                 notes=grade_scope_notes(payload.grade, payload.subject),
             ),
             "language_register": language_block(payload.grade),
+            # How this subject writes what it cannot write in words. Empty for
+            # most subjects — a CRE guide carrying two pages about balancing
+            # equations spends a page of prompt on something it never uses, and
+            # every irrelevant instruction makes the relevant ones harder to
+            # find.
+            "notation": notation.block_for(payload.subject, grade=payload.grade),
+            # What THIS subject needs that no other does: maps and scale for
+            # Geography, equations that balance for Chemistry, sol-fa for
+            # Music, a cutting list for Carpentry. Empty for most pairings,
+            # which is the point — a CRE lesson plan receives no paragraph
+            # about mortise and tenon joints.
+            "domain_directives": prompt_fragments.compose(
+                payload.subject, "media", payload.grade),
             "faith_scope": faith_prompt_block(payload.subject),
             "content_type_directives": profile.format_for_prompt() if profile else "",
             "grade": payload.grade,
@@ -6622,6 +6820,19 @@ def factory_generate_simulations(
                 payload.grade, notes=grade_scope_notes(payload.grade, payload.subject)
             ),
             "language_register": language_block(payload.grade),
+            # How this subject writes what it cannot write in words. Empty for
+            # most subjects — a CRE guide carrying two pages about balancing
+            # equations spends a page of prompt on something it never uses, and
+            # every irrelevant instruction makes the relevant ones harder to
+            # find.
+            "notation": notation.block_for(payload.subject, grade=payload.grade),
+            # What THIS subject needs that no other does: maps and scale for
+            # Geography, equations that balance for Chemistry, sol-fa for
+            # Music, a cutting list for Carpentry. Empty for most pairings,
+            # which is the point — a CRE lesson plan receives no paragraph
+            # about mortise and tenon joints.
+            "domain_directives": prompt_fragments.compose(
+                payload.subject, "simulation", payload.grade),
             "faith_scope": faith_prompt_block(payload.subject),
             "content_type_directives": profile.format_for_prompt() if profile else "",
             "strand": payload.strand,

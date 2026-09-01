@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import { AppShell } from "./app/AppShell";
 import { RouteBoundary } from "./app/RouteBoundary";
+import { PageHeader } from "./ui/components";
 import { AuthProvider, useAuth } from "./lib/auth";
 import { LoadingBlock, ToastProvider } from "./ui/components";
 
@@ -19,6 +20,7 @@ import { ExamBuilder } from "./views/ExamBuilder";
 import { MediaLibrary } from "./views/MediaLibrary";
 import { Overview } from "./views/Overview";
 import { Pipelines } from "./views/Pipelines";
+import { PromptFragments } from "./views/PromptFragments";
 import { QuestionBank } from "./views/QuestionBank";
 import { Review } from "./views/Review";
 import { SignIn } from "./views/SignIn";
@@ -70,6 +72,20 @@ function Router() {
       <Route element={<AppShell />}>
         <Route index element={<Screen name="Overview"><Overview /></Screen>} />
         <Route path="pipelines" element={<Screen name="Pipelines"><Pipelines /></Screen>} />
+        <Route
+          path="prompts"
+          element={
+            <Screen name="Domain prompts">
+              <>
+                <PageHeader
+                  title="Domain prompts"
+                  description="Small, separate pieces of prompt, each for one domain and each its own Langfuse prompt. A prompt that must serve every subject is a prompt nobody improves."
+                />
+                <PromptFragments />
+              </>
+            </Screen>
+          }
+        />
         <Route path="coverage" element={<Screen name="Curriculum coverage"><Coverage /></Screen>} />
         <Route path="factory" element={<Screen name="Content factory"><ContentFactory /></Screen>} />
         <Route path="questions" element={<Screen name="Question bank"><QuestionBank /></Screen>} />
