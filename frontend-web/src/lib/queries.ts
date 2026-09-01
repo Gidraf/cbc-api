@@ -2333,6 +2333,81 @@ export function useStageAction() {
 }
 
 /** Every grade there is, in curriculum order — not only the ingested ones. */
+/** Every prompt as a folder of files, to edit anywhere and bring back.
+ *
+ *  The console can only ever show one prompt at a time, and the work that
+ *  matters most is work across the whole set — making the chemistry fragment
+ *  agree with the notation block, making every authoring prompt use the same
+ *  register language. That work does not get done one textarea at a time. */
+export function useExportPrompts() {
+  const { token } = useAuth();
+  return useMutation({
+    mutationFn: async () => {
+      const { blob, filename } = await fetchBlob(
+        "/api/v1/pipelines/prompts/export",
+        { bearerToken: token }
+      );
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      return filename;
+    },
+  });
+}
+
+export type PromptChange = {
+  name: string;
+  action: "changed" | "new" | "unchanged" | "unknown" | "empty";
+  aliases: string[];
+  was: number;
+  now: number;
+  promotable: boolean;
+  errors: string[];
+  warnings: string[];
+  note: string;
+};
+
+export type PromptImportPlan = {
+  changes: PromptChange[];
+  absent: string[];
+  absent_note: string;
+  summary: Record<string, number>;
+  applied: boolean;
+  confirm_with: string;
+  written?: { prompt: string; promoted: boolean }[];
+  failed?: { prompt: string; error: string }[];
+  message?: string;
+};
+
+/** Bring an edited bundle back. Without `confirm` it only says what would
+ *  change — prompts are the behaviour of every generator in the system, and an
+ *  upload that turns out to have been the wrong folder is not something to
+ *  discover from the output a week later. */
+export function useImportPrompts() {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { file: File; confirm?: string; allowNew?: boolean }) => {
+      const form = new FormData();
+      form.append("file", v.file);
+      form.append("confirm", v.confirm || "");
+      form.append("allow_new", String(Boolean(v.allowNew)));
+      return api<PromptImportPlan>("/api/v1/pipelines/prompts/import", {
+        method: "POST",
+        body: form,
+      });
+    },
+    onSuccess: (result) => {
+      if (result.applied) qc.invalidateQueries({ queryKey: ["prompt-fragments"] });
+    },
+  });
+}
+
 export function usePipelines() {
   const api = useApi();
   return useQuery({

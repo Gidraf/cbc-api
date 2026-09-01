@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, File, Form, Query, Response, UploadFile
 from pydantic import BaseModel
 
 from ..errors import raise_api_error
@@ -403,6 +403,82 @@ def edit_fragment(
         )
     logger.info("Fragment %s edited by %s.", name, getattr(auth, "subject", "?"))
     return {"fragment": fragment.to_dict(), "saved": True}
+
+
+@router.get("/prompts/export")
+def export_prompts(
+    _: AuthContext = Depends(require_roles("admin", "operator", "developer")),
+) -> Response:
+    """Every prompt, as a folder of Markdown files.
+
+    Prompts are the part of this system that most needs editing and is worst
+    served by editing it one textarea at a time. The interesting work — making
+    the chemistry fragment agree with the notation block, making every
+    authoring prompt use the same register language — is work across the whole
+    set at once, and a console that only ever shows one is a console in which
+    that work does not get done.
+
+    The text is what is CURRENTLY SERVING, not the built-in defaults. Exporting
+    the defaults would hand back a bundle that silently reverts every edit
+    already made in Langfuse the moment it is uploaded again.
+    """
+    from ..services import prompt_bundle
+
+    files = prompt_bundle.collect()
+    blob = prompt_bundle.write_zip(files)
+    logger.info("Exported %d prompt(s) as a bundle.", len(files))
+    return Response(
+        content=blob,
+        media_type="application/zip",
+        headers={"content-disposition": 'attachment; filename="cbc-prompts.zip"'},
+    )
+
+
+@router.post("/prompts/import")
+async def import_prompts(
+    file: UploadFile = File(..., description="The edited bundle, zipped"),
+    confirm: str = Form("", description="The word APPLY, once the plan has been read"),
+    allow_new: bool = Form(False),
+    auth: AuthContext = Depends(require_roles("admin", "operator")),
+) -> dict[str, Any]:
+    """Bring an edited bundle back.
+
+    Two steps, always: without `confirm` this reports what WOULD change and
+    writes nothing. Prompts are the behaviour of every generator in the system,
+    and an upload that turns out to have been the wrong folder is not something
+    to discover from the output a week later.
+
+    Three things it will not do, each learned from a way this kind of tool goes
+    wrong:
+
+    *   It never DELETES. A prompt missing from the bundle is reported and left
+        exactly as it is, because half a bundle is a normal accident and a
+        wiped prompt store is not a recoverable one.
+    *   It never PROMOTES a prompt that fails validation. An edit that renamed
+        {{ level_register }} still looks fine and fails days later as output
+        that quietly lost its register — so the text is saved, and production
+        keeps serving the version that works.
+    *   It never invents a prompt from a name it does not recognise unless
+        asked, because that is nearly always a typo in a folder name, and
+        accepting it creates an orphan while the real prompt serves old text.
+    """
+    from ..services import prompt_bundle
+
+    blob = await file.read()
+    try:
+        incoming = prompt_bundle.read_zip(blob)
+    except ValueError as exc:
+        raise_api_error("VALIDATION_FAILED", str(exc))
+
+    result = prompt_bundle.apply_bundle(
+        incoming, allow_new=allow_new, confirm=confirm.strip().upper()
+    )
+    logger.info(
+        "Prompt bundle from %s: %s",
+        getattr(auth, "subject", "?"),
+        "applied" if result.get("applied") else "planned only",
+    )
+    return result
 
 
 class ResetStageRequest(BaseModel):

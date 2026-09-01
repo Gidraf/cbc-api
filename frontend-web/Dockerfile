@@ -19,7 +19,8 @@ COPY . .
 
 # Baked at build time because Vite inlines it into the bundle. The default
 # matches the proxy below, so the console calls its own origin.
-ARG VITE_API_BASE_URL=/api
+# Empty: same origin. See docker-compose.yml.
+ARG VITE_API_BASE_URL=
 ENV VITE_API_BASE_URL=$VITE_API_BASE_URL
 RUN npm run build
 

@@ -15,7 +15,7 @@ import {
   Td,
   Th,
 } from "../ui/components";
-import { API_BASE_URL } from "../api";
+import { apiUrl } from "../api";
 import { gradeOptionLabel, useExams, useGrades } from "../lib/queries";
 
 /**
@@ -32,7 +32,7 @@ export function ExamBuilder() {
     const params = new URLSearchParams({ format: opts.format || "html" });
     if (opts.answers) params.set("include_answers", "true");
     if (opts.download) params.set("download", "true");
-    return `${API_BASE_URL}/api/v1/exams/${encodeURIComponent(examId)}/render?${params}`;
+    return apiUrl(`/api/v1/exams/${encodeURIComponent(examId)}/render?${params}`);
   }
 
   return (

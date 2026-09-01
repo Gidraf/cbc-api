@@ -17,7 +17,7 @@ import {
   Td,
   Th,
 } from "../ui/components";
-import { API_BASE_URL } from "../api";
+import { apiUrl } from "../api";
 import { useApi, useDiagram } from "../lib/queries";
 import { useQuery } from "@tanstack/react-query";
 
@@ -54,7 +54,7 @@ export function DiagramLibrary() {
     if (hidden.length) qs.set("hide_layers", hidden.join(","));
     if (region) qs.set("region_id", region);
     if (highlight.length) qs.set("highlight", highlight.join(","));
-    return `${API_BASE_URL}/api/v1/public/diagrams/${encodeURIComponent(diagramId)}/render?${qs}`;
+    return apiUrl(`/api/v1/public/diagrams/${encodeURIComponent(diagramId)}/render?${qs}`);
   }, [diagramId, hidden, region, highlight]);
 
   const svg = useQuery({

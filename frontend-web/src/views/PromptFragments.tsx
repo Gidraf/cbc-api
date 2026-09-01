@@ -10,7 +10,14 @@ import {
   Stack,
   Textarea,
 } from "../ui/components";
-import { usePromptFragments, type PromptFragment } from "../lib/queries";
+import {
+  useExportPrompts,
+  useImportPrompts,
+  usePromptFragments,
+  type PromptChange,
+  type PromptFragment,
+  type PromptImportPlan,
+} from "../lib/queries";
 
 /**
  * The domain prompts, one at a time.
@@ -130,6 +137,209 @@ function Fragment({ fragment }: { fragment: PromptFragment }) {
   );
 }
 
+/**
+ * Every prompt as a project: download the folder, edit it anywhere, upload it.
+ *
+ * One textarea at a time is the wrong shape for the work that matters. Making
+ * the chemistry fragment agree with the notation block, or every authoring
+ * prompt use the same register language, is work across the whole set at once —
+ * and a console that only ever shows one is a console in which that work does
+ * not get done. So: thirty files, your own editor, one upload back.
+ *
+ * The upload is two steps, like every other path here that cannot be undone.
+ * Prompts are the behaviour of every generator in the system, and an upload
+ * that turns out to have been the wrong folder is not something to find out
+ * from the output a week later.
+ */
+function ACTION_TONE(action: PromptChange["action"], promotable: boolean) {
+  if (action === "changed") return promotable ? "ok" : "danger";
+  if (action === "new") return "accent";
+  if (action === "unknown" || action === "empty") return "warn";
+  return "neutral";
+}
+
+function PlanRow({ change }: { change: PromptChange }) {
+  const tone = ACTION_TONE(change.action, change.promotable);
+  const delta = change.now - change.was;
+  return (
+    <div
+      style={{
+        borderTop: "1px solid var(--line)",
+        padding: "var(--s2) 0",
+        fontSize: "var(--text-sm)",
+      }}
+    >
+      <Stack direction="row" gap="var(--s2)" align="center" wrap>
+        <Badge tone={tone as any}>
+          {change.action === "changed" && !change.promotable ? "staging only" : change.action}
+        </Badge>
+        <span className="mono">{change.name}</span>
+        {change.action === "changed" && (
+          <span style={{ color: "var(--ink-3)" }}>
+            {delta >= 0 ? `+${delta}` : delta} characters
+          </span>
+        )}
+        {change.aliases.length > 0 && (
+          <span style={{ color: "var(--ink-3)", fontSize: "0.75rem" }}>
+            also written to {change.aliases.join(", ")}
+          </span>
+        )}
+      </Stack>
+      {change.errors.map((e, i) => (
+        <div key={i} style={{ color: "var(--danger)", marginTop: 2 }}>{e}</div>
+      ))}
+      {change.warnings.map((w, i) => (
+        <div key={i} style={{ color: "var(--warn)", marginTop: 2 }}>{w}</div>
+      ))}
+      {change.note && (
+        <div style={{ color: "var(--ink-3)", marginTop: 2 }}>{change.note}</div>
+      )}
+    </div>
+  );
+}
+
+export function PromptBundle() {
+  const download = useExportPrompts();
+  const upload = useImportPrompts();
+  const [file, setFile] = React.useState<File | null>(null);
+  const [allowNew, setAllowNew] = React.useState(false);
+  const [plan, setPlan] = React.useState<PromptImportPlan | null>(null);
+  const input = React.useRef<HTMLInputElement>(null);
+
+  // A plan describes one file. Choosing a different one must throw it away, or
+  // the confirm button applies a bundle nobody read the plan for.
+  function choose(next: File | null) {
+    setFile(next);
+    setPlan(null);
+  }
+
+  const interesting = (plan?.changes || []).filter((c) => c.action !== "unchanged");
+
+  return (
+    <Card
+      title="Edit them all at once"
+      description="Download every prompt as a folder of Markdown files, edit them wherever you actually write, and bring the folder back as one upload."
+    >
+      <Stack gap="var(--s3)">
+        <Stack direction="row" gap="var(--s2)" align="center" wrap>
+          <Button
+            onClick={() => download.mutateAsync()}
+            loading={download.isPending}
+            disabled={download.isPending}
+          >
+            {download.isPending ? "Preparing…" : "Download all prompts"}
+          </Button>
+          <span style={{ fontSize: "var(--text-sm)", color: "var(--ink-3)" }}>
+            The text currently serving, not the built-in defaults — so uploading
+            it back changes nothing.
+          </span>
+        </Stack>
+
+        <div style={{ borderTop: "1px solid var(--line)", paddingTop: "var(--s3)" }}>
+          <Stack direction="row" gap="var(--s2)" align="center" wrap>
+            <input
+              ref={input}
+              type="file"
+              accept=".zip,application/zip"
+              aria-label="Edited prompt bundle"
+              onChange={(e) => choose(e.target.files?.[0] || null)}
+              style={{ fontSize: "var(--text-sm)" }}
+            />
+            <label style={{ fontSize: "var(--text-sm)", color: "var(--ink-2)" }}>
+              <input
+                type="checkbox"
+                checked={allowNew}
+                onChange={(e) => setAllowNew(e.target.checked)}
+              />{" "}
+              Accept names I have not used before
+            </label>
+          </Stack>
+          <div style={{ fontSize: "var(--text-sm)", color: "var(--ink-3)", marginTop: 4 }}>
+            Unticked, a file whose name matches no known prompt is reported and
+            skipped — that is nearly always a typo in a folder name, and
+            accepting it makes an orphan while the real prompt keeps serving its
+            old text.
+          </div>
+
+          <Stack direction="row" gap="var(--s2)" align="center" style={{ marginTop: "var(--s2)" }}>
+            <Button
+              variant="secondary"
+              disabled={!file || upload.isPending}
+              loading={upload.isPending && !plan}
+              onClick={async () =>
+                file && setPlan(await upload.mutateAsync({ file, allowNew }))
+              }
+            >
+              See what would change
+            </Button>
+            {plan && !plan.applied && interesting.length > 0 && (
+              <Button
+                variant="primary"
+                disabled={upload.isPending}
+                loading={upload.isPending}
+                onClick={async () =>
+                  file &&
+                  setPlan(
+                    await upload.mutateAsync({
+                      file, allowNew, confirm: plan.confirm_with,
+                    })
+                  )
+                }
+              >
+                Write {plan.summary.changed + plan.summary.new} prompt(s)
+              </Button>
+            )}
+          </Stack>
+        </div>
+
+        {upload.error && <ErrorNotice error={upload.error} />}
+
+        {plan && (
+          <div>
+            {plan.applied ? (
+              <Badge tone={plan.failed?.length ? "danger" : "ok"}>
+                {plan.message}
+              </Badge>
+            ) : interesting.length === 0 ? (
+              <p style={{ fontSize: "var(--text-sm)", color: "var(--ink-2)", margin: 0 }}>
+                Nothing in that bundle differs from what is already serving.
+              </p>
+            ) : (
+              <p style={{ fontSize: "var(--text-sm)", color: "var(--ink-2)", margin: 0 }}>
+                <strong>Nothing has been written yet.</strong>{" "}
+                {plan.summary.changed} changed, {plan.summary.unchanged} unchanged
+                {plan.summary.blocked > 0 && (
+                  <>
+                    , <strong>{plan.summary.blocked}</strong> that would break
+                    production and will be left in staging
+                  </>
+                )}
+                .
+              </p>
+            )}
+
+            {interesting.map((c) => (
+              <PlanRow key={c.name} change={c} />
+            ))}
+
+            {plan.absent_note && (
+              <div
+                style={{
+                  marginTop: "var(--s2)",
+                  fontSize: "var(--text-sm)",
+                  color: "var(--ink-3)",
+                }}
+              >
+                {plan.absent_note}
+              </div>
+            )}
+          </div>
+        )}
+      </Stack>
+    </Card>
+  );
+}
+
 export function PromptFragments({
   subject = "",
   grade = "",
@@ -163,6 +373,7 @@ export function PromptFragments({
 
   return (
     <Stack gap="var(--s3)" style={{ marginTop: compact ? "var(--s3)" : 0 }}>
+      {!compact && <PromptBundle />}
       {!compact && (
         <Field label="Show what applies to" hint="Leave empty to see all of them">
           {(a11y) => (

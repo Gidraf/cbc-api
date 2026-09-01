@@ -74,7 +74,14 @@ services:
         # Vite inlines this into the bundle, so it is a build argument rather
         # than a runtime variable. Setting it only in `environment` had no
         # effect on the served console.
-        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-/api}
+        #
+        # EMPTY by default, and it should stay empty wherever the console and
+        # the API are the same origin. It is an ORIGIN, not a mount point: this
+        # API serves /api/v1/... but also /admin, /generate, /pipeline and
+        # /health at the ROOT, so "/api" here made every root-mounted call 404
+        # — /api/admin/pipeline-bindings. Set it only to point at a different
+        # host, e.g. https://api.example.com.
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-}
     environment:
       # Read by vite.config.ts when the preview server starts, so the API can be
       # repointed without rebuilding the image.

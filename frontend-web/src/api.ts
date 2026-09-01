@@ -1,6 +1,37 @@
 export const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL?.replace(/\/$/, "") || "";
 
+/**
+ * The full URL for an API path.
+ *
+ * `VITE_API_BASE_URL` is an ORIGIN, not a mount point. It exists for the case
+ * where the console is served from somewhere other than the API: set it to
+ * https://api.example.com and every path works.
+ *
+ * It is NOT a prefix to put in front of every route, because this API does not
+ * live under one. The versioned routes are /api/v1/..., but /admin, /generate,
+ * /pipeline and /health are served at the ROOT. Setting it to "/api" turned
+ * /admin/pipeline-bindings into /api/admin/pipeline-bindings — a 404 the
+ * console showed as an empty Model-per-station screen with no error, because a
+ * 404 on a list endpoint looks exactly like an empty list.
+ *
+ * So a same-origin base contributes nothing: the dev/preview proxy already
+ * forwards /api, /admin, /generate, /pipeline and /health to the API without
+ * rewriting them, which means the path the console asks for is the path the
+ * API must see. Only an absolute base is prepended.
+ */
+export function apiUrl(path: string): string {
+  const cleanPath = path.startsWith("/") ? path : `/${path}`;
+  if (!/^https?:\/\//i.test(API_BASE_URL)) return cleanPath;
+  const base = API_BASE_URL;
+  // A base that already ends in /api plus a path that starts with it is the
+  // /api/api that this guard has always existed to prevent.
+  if (base.endsWith("/api") && cleanPath.startsWith("/api/")) {
+    return `${base.slice(0, -4)}${cleanPath}`;
+  }
+  return `${base}${cleanPath}`;
+}
+
 export const AUTH_EXPIRED_EVENT = "cbc:auth_expired";
 
 export type AuthHeaders = {
@@ -27,13 +58,7 @@ export async function fetchBlob(
   if (auth?.bearerToken) headers.set("Authorization", `Bearer ${auth.bearerToken}`);
   if (auth?.apiKey) headers.set("x-api-key", auth.apiKey);
 
-  let cleanPath = path.startsWith("/") ? path : `/${path}`;
-  let baseUrl = API_BASE_URL;
-  if (baseUrl.endsWith("/api") && cleanPath.startsWith("/api")) {
-    cleanPath = cleanPath.slice(4);
-  }
-
-  const response = await fetch(baseUrl ? `${baseUrl}${cleanPath}` : cleanPath, { headers });
+  const response = await fetch(apiUrl(path), { headers });
   if (!response.ok) {
     // The error body is JSON even when the success body is not.
     let detail = `${response.status} ${response.statusText}`;
@@ -67,14 +92,8 @@ export async function fetchJson<T>(path: string, init?: RequestInit, auth?: Auth
     headers.set("x-api-key", auth.apiKey);
   }
 
-  // Normalize path and base URL to prevent duplicate /api/api
-  let cleanPath = path.startsWith("/") ? path : `/${path}`;
-  let baseUrl = API_BASE_URL;
-  if (baseUrl.endsWith("/api") && cleanPath.startsWith("/api")) {
-    cleanPath = cleanPath.slice(4);
-  }
-
-  const url = baseUrl ? `${baseUrl}${cleanPath}` : cleanPath;
+  const cleanPath = path.startsWith("/") ? path : `/${path}`;
+  const url = apiUrl(cleanPath);
 
   const response = await fetch(url, {
     headers,

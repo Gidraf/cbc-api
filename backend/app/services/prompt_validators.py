@@ -100,6 +100,26 @@ class PromptReport:
         }
 
 
+def flat_name(name: str) -> str:
+    """The name the CODE knows this prompt by.
+
+    Every prompt is stored under two names — `note-generator` and its foldered
+    twin `generate/lesson-plan` — but the bindings, and the list of prompts that
+    author rather than extract, are keyed on the flat one. Validating the
+    foldered name found no bindings and no authoring rules, so it passed every
+    check by not being checked: `generate/lesson-plan` could lose
+    {{ level_register }} and be promoted to production clean.
+    """
+    from .langfuse_context import langfuse_context_service
+
+    if name in {"BECF", "cbc-master-context"}:
+        return name
+    for flat, foldered in langfuse_context_service.FOLDERS.items():
+        if foldered == name:
+            return flat
+    return name
+
+
 def _bound_variables(name: str) -> set[str]:
     """Which variables the code actually supplies to this agent.
 
@@ -108,7 +128,7 @@ def _bound_variables(name: str) -> set[str]:
     """
     from .prompt_bindings import bindings_for
 
-    return bindings_for(name)
+    return bindings_for(flat_name(name))
 
 
 def validate(name: str, text: str) -> PromptReport:
@@ -136,6 +156,7 @@ def validate(name: str, text: str) -> PromptReport:
              f"'{malformed}' is an unbalanced placeholder and will render literally "
              "into the model's context.")
 
+    checked_as = flat_name(name)
     bound = _bound_variables(name)
     if bound:
         unbound = [v for v in variables if v not in bound]
@@ -151,7 +172,7 @@ def validate(name: str, text: str) -> PromptReport:
                  f"The code supplies {', '.join(sorted(unused))}, which this prompt "
                  "does not use. Either the prompt lost a slot or the binding is dead.")
 
-    if name in _AUTHORING_AGENTS:
+    if checked_as in _AUTHORING_AGENTS:
         if "level_register" not in variables:
             fail("missing_register",
                  "An authoring prompt with no {{ level_register }} lets its own examples "
@@ -167,14 +188,14 @@ def validate(name: str, text: str) -> PromptReport:
                  "authoring without knowing which curriculum it serves.")
 
     _SOURCE_SLOTS = ("source", "document", "raw_text", "text", "excerpt", "chunk")
-    if name in _EXTRACTION_AGENTS and not any(
+    if checked_as in _EXTRACTION_AGENTS and not any(
         v.startswith(_SOURCE_SLOTS) for v in variables
     ):
         from .prompt_bindings import raw_fetched
 
         message = ("An extraction prompt with no source slot reports what it recalls "
                    "rather than what the document says — and reports it as grounded.")
-        if name in raw_fetched():
+        if checked_as in raw_fetched():
             # Fetched as text and framed by hand-built messages: the document is
             # appended as a message, which is a different shape, not a defect.
             warn("no_source_slot", message + " This one is framed in code instead.")

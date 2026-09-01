@@ -405,6 +405,36 @@ def test_no_client_route_is_swallowed_by_an_api_proxy_prefix() -> None:
             )
 
 
+def test_the_api_base_url_is_an_origin_not_a_mount_point() -> None:
+    """This API serves /api/v1/... but ALSO /admin, /generate, /pipeline and
+    /health at the root.
+
+    A base of "/api" turned /admin/pipeline-bindings into
+    /api/admin/pipeline-bindings — a 404 the console showed as an empty
+    Model-per-station screen with no error at all, because a 404 on a list
+    endpoint looks exactly like an empty list. It also made every diagram and
+    exam render URL /api/api/v1/...
+    """
+    api = open("../frontend-web/src/api.ts").read()
+    compose = open("../docker-compose.yml").read()
+
+    # Empty by default: same origin, and the proxy already routes each prefix.
+    assert "VITE_API_BASE_URL: ${VITE_API_BASE_URL:-}" in compose
+    assert "ORIGIN, not a mount point" in compose
+
+    # And only an absolute base is ever prepended, so setting it to a path
+    # again cannot resurrect the bug.
+    assert "export function apiUrl" in api
+    assert 'if (!/^https?:\\/\\//i.test(API_BASE_URL)) return cleanPath;' in api
+
+    # Nothing builds an API URL by hand any more; that is how the two render
+    # URLs drifted into /api/api/v1 without anyone noticing.
+    for screen in ("src/views/DiagramLibrary.tsx", "src/views/ExamBuilder.tsx"):
+        source = open(f"../frontend-web/{screen}").read()
+        assert "${API_BASE_URL}" not in source
+        assert "apiUrl(" in source
+
+
 def test_the_review_panel_is_reachable_from_the_factory_itself() -> None:
     """The decisions belong where the work is. Sending an operator to another
     screen to see what changed and back to decide made them hold the previous

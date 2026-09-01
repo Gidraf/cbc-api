@@ -278,13 +278,20 @@ def promote(name: str) -> dict[str, Any]:
     return {"status": "promoted", "prompt": name, "version": version}
 
 
-def push_one(name: str, text: str) -> dict[str, Any]:
+def push_one(name: str, text: str, *, promote: bool = True) -> dict[str, Any]:
     """Write one prompt, now, with whatever text a person has just improved.
 
     Distinct from `sync_prompts`, which writes the built-in text for everything
     that has changed since it was last written. This is the console's edit
     path: a person has rewritten one domain fragment and expects that one
     fragment to change, and nothing else.
+
+    `promote=False` writes the version and leaves production on the previous
+    one. That is what a prompt edited outside the console and brought back in a
+    bundle gets when it fails validation: the text is saved and readable in
+    staging, and the pipeline keeps running on the last text known to work.
+    Refusing the write outright would lose the editing; promoting it would ship
+    a prompt whose {{ slots }} no longer bind.
     """
     from langfuse import Langfuse
 
@@ -298,11 +305,14 @@ def push_one(name: str, text: str) -> dict[str, Any]:
         secret_key=settings.langfuse_secret_key,
         host=settings.langfuse_host,
     )
+    labels = list(STAGING_LABELS) + (list(PRODUCTION_LABELS) if promote else [])
     created = client.create_prompt(
-        name=name, prompt=text, type="text",
-        labels=list(STAGING_LABELS) + list(PRODUCTION_LABELS),
+        name=name, prompt=text, type="text", labels=labels,
     )
     version = getattr(created, "version", None)
     _record(name, content_hash(text), version)
-    logger.info("Prompt '%s' written at version %s.", name, version)
-    return {"prompt": name, "version": version}
+    logger.info(
+        "Prompt '%s' written at version %s (%s).",
+        name, version, "promoted" if promote else "staging only",
+    )
+    return {"prompt": name, "version": version, "promoted": promote}
