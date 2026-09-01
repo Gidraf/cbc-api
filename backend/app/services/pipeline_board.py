@@ -227,7 +227,12 @@ def _artifact_counts(grade: str, subject: str) -> dict[str, dict[str, int]]:
         FROM artifacts a
         LEFT JOIN artifact_reviews r ON r.artifact_id = a.artifact_id
         LEFT JOIN artifact_labels l ON l.artifact_id = a.artifact_id
-        WHERE (a.grade = :grade OR a.grade = :alt_grade)
+        -- LOWER on BOTH sides. The rows are written "grade-pp1"; a caller
+        -- sending "PP1" derives "grade-PP1", which is not equal to it in
+        -- Postgres — and the board then reports a grade with seven ingested
+        -- designs as having no sub-strands at all. Fixed once already on the
+        -- sub-strands endpoint, and reintroduced here.
+        WHERE (LOWER(a.grade) = LOWER(:grade) OR LOWER(a.grade) = LOWER(:alt_grade))
           AND LOWER(a.subject) = LOWER(:subject)
         GROUP BY a.kind
         """,
@@ -253,7 +258,7 @@ def _job_counts(grade: str, subject: str) -> dict[str, dict[str, Any]]:
                COALESCE(SUM(cost_usd), 0) AS cost,
                MAX(finished_at) AS last_run
         FROM jobs
-        WHERE (grade = :grade OR grade = :alt_grade)
+        WHERE (LOWER(grade) = LOWER(:grade) OR LOWER(grade) = LOWER(:alt_grade))
           AND LOWER(subject) = LOWER(:subject)
         GROUP BY kind
         """,
@@ -278,8 +283,8 @@ def _expected(grade: str, subject: str) -> dict[str, int]:
     alt = grade.replace("grade-", "")
     design = _rows(
         "SELECT metadata FROM curriculum_designs "
-        "WHERE (grade = :grade OR grade = :alt) AND LOWER(subject) = LOWER(:subject) "
-        "LIMIT 1",
+        "WHERE (LOWER(grade) = LOWER(:grade) OR LOWER(grade) = LOWER(:alt)) "
+        "  AND LOWER(subject) = LOWER(:subject) LIMIT 1",
         {"grade": grade, "alt": alt, "subject": subject},
     )
     strands = 0
@@ -290,7 +295,8 @@ def _expected(grade: str, subject: str) -> dict[str, int]:
 
     substrands = _rows(
         "SELECT COUNT(*) AS n FROM curriculum_substrands "
-        "WHERE (grade = :grade OR grade = :alt) AND LOWER(subject) = LOWER(:subject)",
+        "WHERE (LOWER(grade) = LOWER(:grade) OR LOWER(grade) = LOWER(:alt)) "
+        "  AND LOWER(subject) = LOWER(:subject)",
         {"grade": grade, "alt": alt, "subject": subject},
     )
     count = int((substrands or [{}])[0].get("n") or 0)
@@ -369,7 +375,8 @@ def project(grade: str) -> Project:
 
     subjects = _rows(
         "SELECT DISTINCT subject FROM curriculum_designs "
-        "WHERE (grade = :grade OR grade = :alt) ORDER BY subject",
+        "WHERE LOWER(grade) = LOWER(:grade) OR LOWER(grade) = LOWER(:alt) "
+        "ORDER BY subject",
         {"grade": grade, "alt": grade.replace("grade-", "")},
     )
     policies = stage_policy.all_policies()
@@ -382,45 +389,63 @@ def project(grade: str) -> Project:
 
 
 def projects() -> list[dict[str, Any]]:
-    """Every grade that has anything in it, with just enough to pick one.
+    """Every grade there is, in curriculum order — not only the ingested ones.
 
-    Deliberately shallow: the top of a build board is a list of projects and
-    their state, not every step of every one of them.
+    Listing only what has been started answers "what have I done" and hides the
+    question actually being asked, which is "what is left". A grade with
+    nothing in it is the most actionable row on the board: it is the one to
+    start next. So the list comes from the curriculum's own sequence, and what
+    exists is joined onto it.
     """
-    from .grade_order import grade_label, sort_grades
+    from .grade_order import GRADE_SEQUENCE
 
-    rows = _rows(
-        """
-        SELECT d.grade,
-               COUNT(DISTINCT d.subject) AS subjects,
-               COUNT(DISTINCT s.sub_strand_name) AS sub_strands
-        FROM curriculum_designs d
-        LEFT JOIN curriculum_substrands s
-               ON (s.grade = d.grade OR s.grade = REPLACE(d.grade, 'grade-', ''))
-              AND LOWER(s.subject) = LOWER(d.subject)
-        GROUP BY d.grade
-        """,
-        {},
-    )
-    by_grade = {str(r["grade"]): r for r in rows}
-    ordered = sort_grades(list(by_grade))
+    designs = {
+        str(r["grade"]).lower(): r
+        for r in _rows(
+            """
+            SELECT LOWER(grade) AS grade,
+                   COUNT(DISTINCT subject) AS subjects
+            FROM curriculum_designs GROUP BY LOWER(grade)
+            """,
+            {},
+        )
+    }
+    substrands = {
+        str(r["grade"]).lower(): int(r["n"] or 0)
+        for r in _rows(
+            """
+            SELECT LOWER(REPLACE(grade, 'grade-', '')) AS grade, COUNT(*) AS n
+            FROM curriculum_substrands GROUP BY LOWER(REPLACE(grade, 'grade-', ''))
+            """,
+            {},
+        )
+    }
+    jobs = {
+        str(r["grade"]).lower(): r
+        for r in _rows(
+            """
+            SELECT LOWER(REPLACE(grade, 'grade-', '')) AS grade,
+                   COUNT(*) FILTER (WHERE status = 'failed') AS failed,
+                   COUNT(*) FILTER (WHERE status IN ('queued','running')) AS running,
+                   COALESCE(SUM(cost_usd), 0) AS cost
+            FROM jobs GROUP BY LOWER(REPLACE(grade, 'grade-', ''))
+            """,
+            {},
+        )
+    }
 
     out = []
-    for grade in ordered:
-        row = by_grade[grade]
-        jobs = _rows(
-            "SELECT COUNT(*) FILTER (WHERE status = 'failed') AS failed, "
-            "       COUNT(*) FILTER (WHERE status IN ('queued','running')) AS running, "
-            "       COALESCE(SUM(cost_usd), 0) AS cost "
-            "FROM jobs WHERE (grade = :grade OR grade = :alt)",
-            {"grade": grade, "alt": grade.replace("grade-", "")},
-        )
-        counts = (jobs or [{}])[0]
+    for slug, label, level in GRADE_SEQUENCE:
+        bare = slug.replace("grade-", "")
+        design = designs.get(slug) or designs.get(bare) or {}
+        counts = jobs.get(bare) or {}
         out.append({
-            "grade": grade,
-            "label": grade_label(grade),
-            "subjects": int(row.get("subjects") or 0),
-            "sub_strands": int(row.get("sub_strands") or 0),
+            "grade": slug,
+            "label": label,
+            "level": level,
+            "ingested": bool(design),
+            "subjects": int(design.get("subjects") or 0),
+            "sub_strands": substrands.get(bare, 0),
             "running": int(counts.get("running") or 0),
             "failed": int(counts.get("failed") or 0),
             "cost_usd": round(float(counts.get("cost") or 0), 4),

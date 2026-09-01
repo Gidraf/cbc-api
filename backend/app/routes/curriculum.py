@@ -5664,14 +5664,50 @@ def factory_auto_run_activity(
 
     params = {"batch_id": run.batch_id}
 
-    # What is on the bench now, and for how long.
+    # What is on the bench now, for how long, and what it is saying while it
+    # works. The steps come off the job row the worker writes as it goes, so a
+    # run narrates itself instead of showing a bar that only moves at the end.
     running = fetch_all(
         """
         SELECT job_id, kind, strand, sub_strand, subject, started_at, attempts,
                (payload->'steps'->>COALESCE((payload->>'index')::int, 0)) AS step,
-               EXTRACT(EPOCH FROM (NOW() - started_at)) AS seconds
+               EXTRACT(EPOCH FROM (NOW() - started_at)) AS seconds,
+               result->'progress' AS progress
         FROM jobs WHERE batch_id = :batch_id AND status = 'running'
         ORDER BY started_at ASC
+        """,
+        params,
+    ) or []
+
+    # The same shape the pipeline board uses, for this run's batch: which stage
+    # of which subject it is on. A percentage answers "how far" and nothing
+    # about WHERE — and an operator watching a grade run overnight is asking
+    # which stage is slow, not what fraction is done.
+    by_stage = fetch_all(
+        """
+        SELECT kind AS stage,
+               COUNT(*) AS total,
+               COUNT(*) FILTER (WHERE status IN ('queued')) AS queued,
+               COUNT(*) FILTER (WHERE status = 'running') AS running,
+               COUNT(*) FILTER (WHERE status = 'done') AS done,
+               COUNT(*) FILTER (WHERE status = 'failed') AS failed,
+               COALESCE(SUM(cost_usd), 0) AS cost
+        FROM jobs WHERE batch_id = :batch_id
+        GROUP BY kind
+        """,
+        params,
+    ) or []
+
+    by_subject = fetch_all(
+        """
+        SELECT subject,
+               COUNT(*) AS total,
+               COUNT(*) FILTER (WHERE status IN ('done')) AS done,
+               COUNT(*) FILTER (WHERE status = 'failed') AS failed,
+               COUNT(*) FILTER (WHERE status IN ('queued','running')) AS active,
+               COALESCE(SUM(cost_usd), 0) AS cost
+        FROM jobs WHERE batch_id = :batch_id AND subject <> ''
+        GROUP BY subject ORDER BY subject
         """,
         params,
     ) or []
@@ -5764,7 +5800,46 @@ def factory_auto_run_activity(
         },
         "now_running": [dict(r) for r in running],
         "recent": [dict(r) for r in recent],
+        # In the pipeline's own vocabulary, so the auto-run reads as the board
+        # advancing rather than as a separate thing with its own words.
+        "stages": _auto_run_stages(by_stage),
+        "subjects": [dict(r) for r in by_subject],
     }
+
+
+def _auto_run_stages(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """This run's jobs, arranged as pipeline stages in pipeline order.
+
+    A stage the run has not reached is listed with zeros rather than left out:
+    the shape of the whole pipeline is what says how far there is still to go,
+    and a board that grows as work arrives cannot be read at a glance.
+    """
+    from ..services import pipeline_board, stage_policy
+
+    counted = {str(r["stage"]): r for r in rows}
+    out = []
+    for stage in stage_policy.STAGES:
+        row = counted.get(stage, {})
+        total = int(row.get("total") or 0)
+        done = int(row.get("done") or 0)
+        out.append({
+            "stage": stage,
+            "label": pipeline_board.STAGE_LABEL.get(stage, stage),
+            "total": total,
+            "queued": int(row.get("queued") or 0),
+            "running": int(row.get("running") or 0),
+            "done": done,
+            "failed": int(row.get("failed") or 0),
+            "cost_usd": round(float(row.get("cost") or 0), 4),
+            "percentage": round(done / total * 100) if total else 0,
+            "status": (
+                "failing" if int(row.get("failed") or 0) else
+                "running" if int(row.get("running") or 0) else
+                "done" if total and done == total else
+                "queued" if total else "not_reached"
+            ),
+        })
+    return out
 
 
 @router.post("/factory/auto-run/stop")

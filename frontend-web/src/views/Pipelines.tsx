@@ -4,7 +4,6 @@ import {
   Badge,
   Button,
   Card,
-  EmptyState,
   ErrorNotice,
   Field,
   Input,
@@ -14,15 +13,23 @@ import {
   Stack,
   Table,
   Td,
+  Textarea,
   Th,
 } from "../ui/components";
+import { AutoRunActivity } from "./AutoRunActivity";
+import { AutoRunPanel } from "./AutoRunPanel";
 import {
   usePipeline,
   usePipelines,
+  useStageAction,
+  useStageLogs,
   useStagePolicies,
+  useStageUnits,
   type BoardBranch,
+  type BoardRun,
   type BoardStage,
   type StagePolicy,
+  type StageUnit,
 } from "../lib/queries";
 
 /**
@@ -110,6 +117,331 @@ function StageCell({ stage, onOpen }: { stage: BoardStage; onOpen: () => void })
   );
 }
 
+/**
+ * What this stage's jobs did, newest first, with the steps each one wrote.
+ *
+ * A stage that says "2 failed" and cannot say what failed is a red light with
+ * no wiring behind it. The worker already writes its steps to the job row as it
+ * works, so a run in flight narrates itself here and a finished one keeps the
+ * narration.
+ */
+function StageLog({
+  grade,
+  stage,
+  subject,
+}: {
+  grade: string;
+  stage: string;
+  subject: string;
+}) {
+  const logs = useStageLogs(grade, stage, subject, true);
+  const [open, setOpen] = React.useState<string>("");
+
+  if (logs.isLoading) return <LoadingBlock rows={3} label="Loading the log" />;
+  if (logs.isError) return <ErrorNotice error={logs.error} />;
+
+  const runs = logs.data?.runs || [];
+  if (!runs.length) {
+    return (
+      <p style={{ marginTop: "var(--s3)", fontSize: "var(--text-sm)", color: "var(--ink-3)" }}>
+        This stage has not run for {subject} yet.
+      </p>
+    );
+  }
+
+  return (
+    <div style={{ marginTop: "var(--s3)" }}>
+      {runs.map((r: BoardRun) => {
+        const steps = r.progress?.steps || [];
+        const tone =
+          r.status === "failed" ? "danger" : r.status === "done" ? "ok" : "accent";
+        return (
+          <div
+            key={r.job_id}
+            style={{
+              borderTop: "1px solid var(--line)",
+              padding: "var(--s2) 0",
+              fontSize: "var(--text-sm)",
+            }}
+          >
+            <Stack direction="row" gap="var(--s2)" style={{ alignItems: "center", flexWrap: "wrap" }}>
+              <Badge tone={tone as any}>{r.status}</Badge>
+              <strong>{r.sub_strand || r.strand || subject}</strong>
+              {r.attempts > 1 && (
+                <span style={{ color: "var(--ink-3)" }}>attempt {r.attempts}</span>
+              )}
+              <span className="mono" style={{ color: "var(--ink-3)", fontSize: "0.75rem" }}>
+                {r.llm_calls > 0 && `${r.llm_calls} call(s) · $${Number(r.cost_usd).toFixed(4)}`}
+              </span>
+              {steps.length > 0 && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => setOpen(open === r.job_id ? "" : r.job_id)}
+                >
+                  {open === r.job_id ? "Hide steps" : `${steps.length} steps`}
+                </Button>
+              )}
+            </Stack>
+
+            {/* A failure with no reason is the same red light again. */}
+            {r.error && (
+              <p style={{ margin: "4px 0 0", color: "var(--danger)" }}>{r.error}</p>
+            )}
+
+            {open === r.job_id && (
+              <div style={{ marginTop: "var(--s2)", display: "grid", gap: 2 }}>
+                {steps.map((st, i) => (
+                  <div
+                    key={i}
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "3.5rem 1fr",
+                      gap: "var(--s2)",
+                      alignItems: "baseline",
+                    }}
+                  >
+                    <span
+                      className="mono"
+                      style={{ color: "var(--ink-3)", textAlign: "right", fontSize: "0.75rem" }}
+                    >
+                      {st.at}s
+                    </span>
+                    <span style={{ color: "var(--ink-2)" }}>
+                      <strong
+                        style={{
+                          color:
+                            st.status === "fail"
+                              ? "var(--danger)"
+                              : st.status === "warn"
+                              ? "var(--warn)"
+                              : "var(--ink-1)",
+                        }}
+                      >
+                        {st.step}
+                      </strong>
+                      {st.detail ? ` — ${st.detail}` : ""}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+
+/**
+ * The individual versions at a stage, and what each still needs.
+ *
+ * A stage that says "5 of 7 not reviewed" and cannot say WHICH five leaves a
+ * person to go and find them, which is the work the board was supposed to
+ * remove. Selecting some and signing for them is the same gate as approving
+ * one — a version that cannot be approved is reported here rather than quietly
+ * left out, because a bulk action that silently does less than it says is worse
+ * than one that refuses.
+ */
+function StageUnits({
+  grade,
+  stage,
+  subject,
+}: {
+  grade: string;
+  stage: string;
+  subject: string;
+}) {
+  const units = useStageUnits(grade, stage, subject, true);
+  const { approve } = useStageAction();
+  const [picked, setPicked] = React.useState<string[]>([]);
+  const [note, setNote] = React.useState("");
+  const [signing, setSigning] = React.useState(false);
+
+  if (units.isLoading) return <LoadingBlock rows={3} label="Loading the versions" />;
+  if (units.isError) return <ErrorNotice error={units.error} />;
+
+  const rows = units.data?.units || [];
+  if (units.data?.note) {
+    return (
+      <p style={{ marginTop: "var(--s3)", fontSize: "var(--text-sm)", color: "var(--ink-3)" }}>
+        {units.data.note}
+      </p>
+    );
+  }
+  if (!rows.length) {
+    return (
+      <p style={{ marginTop: "var(--s3)", fontSize: "var(--text-sm)", color: "var(--ink-3)" }}>
+        Nothing filed at this stage yet.
+      </p>
+    );
+  }
+
+  const ready = rows.filter((u) => u.can_approve).map((u) => u.artifact_id);
+  const toggle = (id: string) =>
+    setPicked(picked.includes(id) ? picked.filter((p) => p !== id) : [...picked, id]);
+
+  return (
+    <div style={{ marginTop: "var(--s3)" }}>
+      <Table caption="Versions at this stage">
+        <thead>
+          <tr>
+            <Th />
+            <Th>Sub-strand</Th>
+            <Th numeric>Version</Th>
+            <Th>Layers</Th>
+            <Th>Latest verdict</Th>
+            <Th>What it still needs</Th>
+            <Th />
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((u: StageUnit) => (
+            <tr key={u.artifact_id}>
+              <Td>
+                <input
+                  type="checkbox"
+                  checked={picked.includes(u.artifact_id)}
+                  disabled={!u.can_approve}
+                  onChange={() => toggle(u.artifact_id)}
+                  title={u.can_approve ? "Approve this one" : u.blockers.join("; ")}
+                />
+              </Td>
+              <Td>{u.sub_strand_name || u.strand_name || u.subject}</Td>
+              <Td numeric>v{u.version}</Td>
+              <Td>
+                {u.layers_run.length
+                  ? u.layers_run.map((l) => (
+                      <Badge key={l} tone="neutral">
+                        L{l}
+                      </Badge>
+                    ))
+                  : "—"}
+              </Td>
+              <Td>
+                {u.verdict ? (
+                  <Badge tone={u.verdict === "pass" ? "ok" : u.verdict === "reject" ? "danger" : "warn"}>
+                    {u.verdict} {u.confidence}%
+                  </Badge>
+                ) : (
+                  "—"
+                )}
+              </Td>
+              <Td>
+                <span style={{ fontSize: "var(--text-sm)", color: "var(--ink-3)" }}>
+                  {u.can_approve
+                    ? u.requires_override
+                      ? "approvable over an objection"
+                      : "ready to sign"
+                    : u.blockers[0] || "—"}
+                </span>
+              </Td>
+              <Td>
+                <Link to={`/approvals?artifact=${encodeURIComponent(u.artifact_id)}`}>
+                  <Button size="sm" variant="ghost">
+                    Open
+                  </Button>
+                </Link>
+              </Td>
+            </tr>
+          ))}
+        </tbody>
+      </Table>
+
+      <Stack direction="row" gap="var(--s2)" style={{ marginTop: "var(--s2)", flexWrap: "wrap", alignItems: "center" }}>
+        <Button
+          size="sm"
+          variant="ghost"
+          disabled={!ready.length}
+          onClick={() => setPicked(picked.length === ready.length ? [] : ready)}
+        >
+          {picked.length === ready.length && ready.length
+            ? "Select none"
+            : `Select the ${ready.length} ready`}
+        </Button>
+        <Button size="sm" disabled={!picked.length} onClick={() => setSigning(true)}>
+          Approve {picked.length || ""}
+        </Button>
+      </Stack>
+
+      {signing && (
+        <div
+          style={{
+            marginTop: "var(--s2)",
+            padding: "var(--s3)",
+            border: "1px solid var(--accent)",
+            borderRadius: "var(--radius)",
+          }}
+        >
+          <strong style={{ fontSize: "var(--text-sm)" }}>
+            You are signing for {picked.length} version
+            {picked.length === 1 ? "" : "s"}
+          </strong>
+          <p style={{ color: "var(--ink-3)", fontSize: "var(--text-sm)", margin: "6px 0" }}>
+            The review layers narrow what reaches you; they do not replace you.
+            Coverage counts approved work as taught-ready, so this is your
+            signature under that claim.
+          </p>
+          <Textarea
+            rows={2}
+            value={note}
+            placeholder="Optional: what you checked, or what you accepted despite."
+            onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setNote(e.target.value)}
+          />
+          <Stack direction="row" gap="var(--s2)" style={{ marginTop: "var(--s2)" }}>
+            <Button
+              size="sm"
+              disabled={approve.isPending}
+              onClick={() =>
+                approve.mutate(
+                  { artifact_ids: picked, reviewed_by_me: true, note },
+                  {
+                    onSuccess: () => {
+                      setSigning(false);
+                      setPicked([]);
+                      setNote("");
+                    },
+                  }
+                )
+              }
+            >
+              {approve.isPending ? "Approving…" : "I have read these — approve"}
+            </Button>
+            <Button size="sm" variant="ghost" onClick={() => setSigning(false)}>
+              Cancel
+            </Button>
+          </Stack>
+        </div>
+      )}
+
+      {approve.data && (
+        <p
+          style={{
+            marginTop: "var(--s2)",
+            fontSize: "var(--text-sm)",
+            color: approve.data.counts.refused ? "var(--warn)" : "var(--ok)",
+          }}
+        >
+          {approve.data.counts.approved} approved
+          {approve.data.counts.refused > 0 && (
+            <>
+              , {approve.data.counts.refused} refused:
+              <ul style={{ margin: "4px 0 0", paddingLeft: "1.1rem" }}>
+                {approve.data.refused.map((r) => (
+                  <li key={r.artifact_id}>{r.reason}</li>
+                ))}
+              </ul>
+            </>
+          )}
+        </p>
+      )}
+      {approve.error && <ErrorNotice error={approve.error} />}
+    </div>
+  );
+}
+
+
 function BranchRow({
   grade,
   branch,
@@ -122,6 +454,9 @@ function BranchRow({
   onToggle: () => void;
 }) {
   const [stage, setStage] = React.useState<BoardStage | null>(null);
+  const [logs, setLogs] = React.useState(false);
+  const [units, setUnits] = React.useState(false);
+  const { act } = useStageAction();
 
   return (
     <Card
@@ -221,15 +556,87 @@ function BranchRow({
               </p>
 
               <Stack direction="row" gap="var(--s2)" style={{ marginTop: "var(--s3)", flexWrap: "wrap" }}>
+                {/* Everything a stage can be asked for, where the stage is.
+                    Each of these already existed on a different screen, asking
+                    for the same grade and subject again. */}
+                <Button
+                  size="sm"
+                  disabled={act.isPending}
+                  loading={act.isPending}
+                  onClick={() =>
+                    act.mutate({ grade, stage: stage.stage, subject: branch.subject, action: "run" })
+                  }
+                  title={`Queue ${stage.label.toLowerCase()} for every sub-strand in ${branch.subject}`}
+                >
+                  Run
+                </Button>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  disabled={act.isPending || !stage.built}
+                  title={
+                    stage.built
+                      ? `Send all ${stage.built} for an independent read`
+                      : "Nothing built to review yet"
+                  }
+                  onClick={() =>
+                    act.mutate({ grade, stage: stage.stage, subject: branch.subject, action: "review", layer: 2 })
+                  }
+                >
+                  Review
+                </Button>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  disabled={act.isPending || !stage.reviewed}
+                  title={
+                    stage.reviewed
+                      ? "Run the approving layer's work — approval itself stays a person's decision"
+                      : "Review it first; the approver reads the review"
+                  }
+                  onClick={() =>
+                    act.mutate({ grade, stage: stage.stage, subject: branch.subject, action: "approval" })
+                  }
+                >
+                  Send to the approver
+                </Button>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  disabled={act.isPending || !stage.reviewed}
+                  title="Write the next version from what the reviews found"
+                  onClick={() =>
+                    act.mutate({ grade, stage: stage.stage, subject: branch.subject, action: "regenerate" })
+                  }
+                >
+                  Regenerate from findings
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => setUnits(!units)}>
+                  {units ? "Hide the versions" : "Versions & approve"}
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => setLogs(!logs)}>
+                  {logs ? "Hide the log" : "Show the log"}
+                </Button>
                 <Link to={`/factory?grade=${encodeURIComponent(grade)}&subject=${encodeURIComponent(branch.subject)}`}>
-                  <Button size="sm">Open in the factory</Button>
-                </Link>
-                <Link to="/queue">
-                  <Button size="sm" variant="ghost">
-                    See the queue
-                  </Button>
+                  <Button size="sm" variant="ghost">Open in the factory</Button>
                 </Link>
               </Stack>
+              {act.data && (
+                <p style={{ margin: "var(--s2) 0 0", fontSize: "var(--text-sm)", color: "var(--ok)" }}>
+                  {act.data.queued} job(s) queued for {act.data.action}. The log below follows them.
+                </p>
+              )}
+              {act.error && <ErrorNotice error={act.error} />}
+              {units && (
+                <StageUnits grade={grade} stage={stage.stage} subject={branch.subject} />
+              )}
+              {logs && (
+                <StageLog
+                  grade={grade}
+                  stage={stage.stage}
+                  subject={branch.subject}
+                />
+              )}
             </div>
           )}
         </>
@@ -383,47 +790,68 @@ export function Pipelines() {
       <>
         <PageHeader
           title="Pipelines"
-          description="A grade is a project, a subject is a branch of it, and each stage is a build step with its own gate."
+          description={
+            `${rows.filter((p) => p.ingested).length} of ${rows.length} grades started. ` +
+            "A grade is a project, a subject is a branch of it, and each stage is a build step with its own gate."
+          }
         />
-        {!rows.length ? (
-          <EmptyState
-            title="Nothing ingested yet"
-            description="A grade appears here once its design has been read in."
-          />
-        ) : (
-          <Table caption="Projects">
-            <thead>
-              <tr>
-                <Th>Grade</Th>
-                <Th numeric>Subjects</Th>
-                <Th numeric>Sub-strands</Th>
-                <Th>State</Th>
-                <Th numeric>Spent</Th>
-                <Th />
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((p) => (
-                <tr key={p.grade}>
-                  <Td>{p.label}</Td>
-                  <Td numeric>{p.subjects}</Td>
-                  <Td numeric>{p.sub_strands}</Td>
-                  <Td>
-                    {p.failed > 0 && <Badge tone="danger">{p.failed} failed</Badge>}{" "}
-                    {p.running > 0 && <Badge tone="accent">{p.running} running</Badge>}
-                    {!p.failed && !p.running && <span style={{ color: "var(--ink-3)" }}>idle</span>}
-                  </Td>
-                  <Td numeric>${p.cost_usd.toFixed(4)}</Td>
-                  <Td>
+        {/* Every grade, not only the ingested ones. Listing what has been
+            started answers "what have I done" and hides the question actually
+            being asked — a grade with nothing in it is the most actionable row
+            here, because it is the one to start next. */}
+        <Table caption="Projects">
+          <thead>
+            <tr>
+              <Th>Grade</Th>
+              <Th>Level</Th>
+              <Th numeric>Subjects</Th>
+              <Th numeric>Sub-strands</Th>
+              <Th>State</Th>
+              <Th numeric>Spent</Th>
+              <Th />
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((p) => (
+              <tr key={p.grade} style={{ opacity: p.ingested ? 1 : 0.6 }}>
+                <Td>{p.label}</Td>
+                <Td>
+                  <span style={{ color: "var(--ink-3)", fontSize: "var(--text-sm)" }}>
+                    {p.level}
+                  </span>
+                </Td>
+                <Td numeric>{p.subjects || "—"}</Td>
+                <Td numeric>{p.sub_strands || "—"}</Td>
+                <Td>
+                  {!p.ingested ? (
+                    <Badge tone="neutral">not ingested</Badge>
+                  ) : p.failed > 0 ? (
+                    <Badge tone="danger">{p.failed} failed</Badge>
+                  ) : p.running > 0 ? (
+                    <Badge tone="accent">{p.running} running</Badge>
+                  ) : (
+                    <span style={{ color: "var(--ink-3)" }}>idle</span>
+                  )}
+                </Td>
+                <Td numeric>{p.cost_usd > 0 ? `$${p.cost_usd.toFixed(4)}` : "—"}</Td>
+                <Td>
+                  {p.ingested ? (
                     <Button size="sm" onClick={() => setParams({ grade: p.grade })}>
                       Open
                     </Button>
-                  </Td>
-                </tr>
-              ))}
-            </tbody>
-          </Table>
-        )}
+                  ) : (
+                    <Link to="/datasets">
+                      <Button size="sm" variant="ghost">
+                        Read the design in
+                      </Button>
+                    </Link>
+                  )}
+                </Td>
+              </tr>
+            ))}
+          </tbody>
+        </Table>
+
         <div style={{ marginTop: "var(--s4)" }}>
           <PolicyEditor />
         </div>
@@ -444,6 +872,14 @@ export function Pipelines() {
       />
       {project.isLoading && <LoadingBlock rows={4} label="Loading the branches" />}
       {project.isError && <ErrorNotice error={project.error} />}
+      {/* An unattended run IS a pipeline run, so it belongs on the board
+          rather than in a panel of its own with its own words for the same
+          stages. */}
+      <div style={{ marginBottom: "var(--s4)" }}>
+        <AutoRunPanel grade={grade} />
+        <AutoRunActivity grade={grade} running />
+      </div>
+
       <Stack gap="var(--s3)">
         {(project.data?.subjects || []).map((b) => (
           <BranchRow

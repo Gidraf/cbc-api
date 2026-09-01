@@ -238,3 +238,317 @@ def test_a_busy_board_is_watched_and_an_idle_one_is_not():
                / "frontend-web/src/lib/queries.ts").read_text()
 
     assert "st.running > 0" in queries
+
+
+# ── every grade, not only the started ones ──────────────────────────────────
+
+
+def test_the_board_lists_every_grade_in_the_curriculum():
+    """Listing only what has been started answers "what have I done" and hides
+    the question actually being asked. A grade with nothing in it is the most
+    actionable row on the board: it is the one to start next."""
+    from app.services.grade_order import GRADE_SEQUENCE
+
+    rows = pb.projects()
+
+    assert len(rows) == len(GRADE_SEQUENCE)
+    assert [r["grade"] for r in rows] == [g for g, _, _ in GRADE_SEQUENCE]
+
+
+def test_the_grades_are_in_curriculum_order_not_alphabetical():
+    rows = [r["grade"] for r in pb.projects()]
+
+    assert rows.index("grade-pp1") < rows.index("grade-2")
+    assert rows.index("grade-2") < rows.index("grade-12")
+
+
+def test_a_grade_says_whether_its_design_has_been_read_in():
+    for row in pb.projects():
+        assert "ingested" in row
+        assert "level" in row
+
+
+def test_a_grade_is_compared_case_insensitively_on_both_sides():
+    """The rows are written "grade-pp1"; a caller sending "PP1" derives
+    "grade-PP1", which is not equal to it in Postgres — and the board then
+    reported a grade with seven ingested designs as having no sub-strands at
+    all. Fixed once on the sub-strands endpoint and reintroduced here."""
+    import pathlib
+
+    source = (pathlib.Path(__file__).resolve().parents[1]
+              / "app/services/pipeline_board.py").read_text()
+
+    assert "a.grade = :grade OR a.grade = :alt_grade" not in source
+    assert "LOWER(a.grade) = LOWER(:grade)" in source
+    assert source.count("grade = :grade OR grade = :alt") == 0
+
+
+# ── starting work from the board, and watching it ───────────────────────────
+
+
+def test_a_stage_can_be_started_from_the_board():
+    """Starting work meant leaving the board, finding the factory, choosing the
+    same grade and subject again, and pressing a station."""
+    import inspect
+
+    from app.routes import pipelines
+
+    source = inspect.getsource(pipelines.run_stage)
+    assert "factory_queue_work" in source
+    assert "is not a pipeline stage" in source
+
+
+def test_a_stage_reports_what_its_jobs_did():
+    """A stage that says "2 failed" and cannot say what failed is a red light
+    with no wiring behind it."""
+    import inspect
+
+    from app.routes import pipelines
+
+    source = inspect.getsource(pipelines.stage_logs)
+    assert "result->'progress'" in source
+    assert "ORDER BY COALESCE(finished_at, started_at, created_at) DESC" in source
+
+
+def test_the_log_is_scoped_to_the_stage_and_grade_asked_for():
+    import inspect
+
+    from app.routes import pipelines
+
+    source = inspect.getsource(pipelines.stage_logs)
+    assert "kind = :stage" in source
+    assert "LOWER(grade) = LOWER(:grade)" in source
+
+
+def _view() -> str:
+    import pathlib
+
+    return (pathlib.Path(__file__).resolve().parents[2]
+            / "frontend-web/src/views/Pipelines.tsx").read_text()
+
+
+def test_the_board_can_run_a_stage_and_then_follow_it():
+    view = _view()
+
+    assert "function StageLog(" in view
+    assert 'act.mutate({ grade, stage: stage.stage, subject: branch.subject, action: "run" })' in view
+
+
+def test_a_run_in_flight_is_polled_and_an_idle_one_is_not():
+    queries = (__import__("pathlib").Path(__file__).resolve().parents[2]
+               / "frontend-web/src/lib/queries.ts").read_text()
+
+    assert 'queryKey: ["stage-logs"' in queries
+    assert "busy > 0 ? 2000 : false" in queries
+
+
+def test_a_grade_that_has_not_been_ingested_is_pointed_at_the_next_step():
+    """A dead row is worse than no row: it says something is wrong and nothing
+    about what to do."""
+    assert "Read the design in" in _view()
+    assert "not ingested" in _view()
+
+
+# ── an unattended run is a pipeline run ─────────────────────────────────────
+
+
+def test_the_auto_run_reports_itself_in_pipeline_stages():
+    """A percentage answers "how far" and nothing about WHERE — and an operator
+    watching a grade run overnight is asking which stage is slow, not what
+    fraction is done."""
+    from app.routes.curriculum import _auto_run_stages
+
+    stages = _auto_run_stages([
+        {"stage": "notes", "total": 7, "queued": 2, "running": 1, "done": 4,
+         "failed": 0, "cost": 0.12},
+    ])
+    notes = next(s for s in stages if s["stage"] == "notes")
+
+    assert notes["label"] == "Lesson plan"
+    assert notes["status"] == "running"
+    assert notes["percentage"] == 57
+
+
+def test_a_stage_the_run_has_not_reached_is_listed_with_zeros():
+    """The shape of the whole pipeline is what says how far there is still to
+    go, and a board that grows as work arrives cannot be read at a glance."""
+    from app.routes.curriculum import _auto_run_stages
+    from app.services import stage_policy
+
+    stages = _auto_run_stages([{"stage": "notes", "total": 7, "done": 7}])
+
+    assert [s["stage"] for s in stages] == list(stage_policy.STAGES)
+    assert next(s for s in stages if s["stage"] == "questions")["status"] \
+        == "not_reached"
+
+
+def test_a_failing_stage_is_reported_as_failing_however_much_is_done():
+    from app.routes.curriculum import _auto_run_stages
+
+    stages = _auto_run_stages([
+        {"stage": "notes", "total": 7, "done": 6, "failed": 1}])
+
+    assert next(s for s in stages if s["stage"] == "notes")["status"] == "failing"
+
+
+def test_the_running_job_carries_the_steps_it_is_writing():
+    """Without them "running · 94s" reads the same whether it is thinking or
+    wedged, which is the whole question an operator has at 94s."""
+    import inspect
+
+    from app.routes import curriculum
+
+    source = inspect.getsource(curriculum.factory_auto_run_activity)
+    assert "result->'progress' AS progress" in source
+    assert "by_subject" in source
+
+
+def _auto_view() -> str:
+    import pathlib
+
+    return (pathlib.Path(__file__).resolve().parents[2]
+            / "frontend-web/src/views/AutoRunActivity.tsx").read_text()
+
+
+def test_the_auto_run_shows_the_stage_strip_not_only_a_bar():
+    view = _auto_view()
+
+    assert "Stages" in view
+    assert "STAGE_TONE" in view
+    assert "not_reached" in view
+
+
+def test_the_auto_run_narrates_the_job_on_the_bench():
+    assert "job.progress?.steps" in _auto_view()
+
+
+def test_the_auto_run_lives_on_the_board():
+    """It IS a pipeline run, so it belongs where a person looks for one rather
+    than in a panel of its own with its own words for the same stages."""
+    import pathlib
+
+    board = (pathlib.Path(__file__).resolve().parents[2]
+             / "frontend-web/src/views/Pipelines.tsx").read_text()
+
+    assert "<AutoRunPanel grade={grade} />" in board
+    assert "<AutoRunActivity grade={grade} running />" in board
+
+
+# ── every action, where the stage is ────────────────────────────────────────
+
+
+def test_a_stage_can_be_run_reviewed_approved_or_regenerated_from_the_board():
+    """Each of these already existed, on a different screen, asking for the
+    same grade and subject again. The board is the screen that knows what a
+    stage is short of."""
+    import inspect
+
+    from app.routes import pipelines
+
+    source = inspect.getsource(pipelines.act_on_stage)
+    for action in ("run", "review", "approval", "regenerate"):
+        assert f'"{action}"' in source, action
+    assert "factory_queue_work" in source
+    assert "factory_queue_review" in source
+    assert "factory_queue_regenerate" in source
+
+
+def test_an_action_a_stage_cannot_take_says_why():
+    import inspect
+
+    from app.routes import pipelines
+
+    source = inspect.getsource(pipelines.act_on_stage)
+    assert "does not file versions, so there is nothing" in source
+    assert "is not something a stage can be asked for" in source
+
+
+def test_a_stage_says_which_versions_still_need_something():
+    """A stage that says "5 of 7 not reviewed" and cannot say WHICH five leaves
+    a person to go and find them, which is the work the board was supposed to
+    remove."""
+    import inspect
+
+    from app.routes import pipelines
+
+    source = inspect.getsource(pipelines.stage_units)
+    assert "DISTINCT ON (a.artifact_key)" in source, "one row per thing, latest version"
+    assert "approval_state" in source
+    assert "can_approve" in source
+
+
+def test_a_stage_with_no_versions_of_its_own_says_so_rather_than_looking_empty():
+    from app.routes import pipelines
+
+    assert "ingest" not in pipelines.STAGE_KIND
+    assert "strands" not in pipelines.STAGE_KIND
+
+
+# ── approving in bulk is still a signature ──────────────────────────────────
+
+
+def test_bulk_approval_still_needs_a_person_to_say_they_read_it():
+    import inspect
+
+    from app.routes import pipelines
+
+    source = inspect.getsource(pipelines.approve_units)
+    assert "reviewed_by_me" in source
+    assert "they do not replace" in source
+
+
+def test_a_version_that_cannot_be_approved_is_reported_not_skipped():
+    """A bulk action that silently does less than it says is worse than one
+    that refuses."""
+    import inspect
+
+    from app.routes import pipelines
+
+    source = inspect.getsource(pipelines.approve_units)
+    assert "refused.append(" in source
+    assert '"counts": {"approved"' in source
+
+
+def test_bulk_approval_runs_the_same_gate_per_artifact():
+    """Not a second, looser path to the same label."""
+    import inspect
+
+    from app.routes import pipelines
+
+    assert "apply_label(" in inspect.getsource(pipelines.approve_units)
+
+
+def _view() -> str:
+    import pathlib
+
+    return (pathlib.Path(__file__).resolve().parents[2]
+            / "frontend-web/src/views/Pipelines.tsx").read_text()
+
+
+def test_the_board_offers_every_action_on_the_stage_panel():
+    view = _view()
+
+    for label in ("Run", "Review", "Send to the approver",
+                  "Regenerate from findings", "Versions & approve"):
+        assert f">{label}<" in view or f"{label}" in view, label
+
+
+def test_review_is_offered_only_once_there_is_something_to_review():
+    """An action that cannot work is worse than one that is not offered: it
+    reads as broken."""
+    view = _view()
+
+    assert "disabled={act.isPending || !stage.built}" in view
+    assert "disabled={act.isPending || !stage.reviewed}" in view
+
+
+def test_the_unit_list_says_what_each_version_still_needs():
+    view = _view()
+
+    assert "ready to sign" in view
+    assert "approvable over an objection" in view
+    assert "u.blockers[0]" in view
+
+
+def test_refusals_are_shown_after_a_bulk_approval():
+    assert "refused:" in _view()

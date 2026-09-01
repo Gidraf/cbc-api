@@ -1201,9 +1201,22 @@ export type AutoRunActivity = {
     by_station: { kind: string; jobs: number; calls: number; tokens: number; cost: number }[];
   };
   pace?: { elapsed_seconds: number; items_per_hour: number };
+  /** The run in the pipeline's own vocabulary: which stage of which subject
+   *  it is on. A percentage answers "how far" and nothing about WHERE, and an
+   *  operator watching a grade run overnight is asking which stage is slow. */
+  stages?: {
+    stage: string; label: string; total: number; queued: number;
+    running: number; done: number; failed: number; cost_usd: number;
+    percentage: number; status: string;
+  }[];
+  subjects?: {
+    subject: string; total: number; done: number; failed: number;
+    active: number; cost: number;
+  }[];
   now_running?: {
     job_id: string; kind: string; step?: string; strand: string;
     sub_strand: string; subject: string; seconds: number; attempts: number;
+    progress?: { elapsed_s: number; steps: { at: number; step: string; detail: string; status: string }[] };
   }[];
   recent?: {
     job_id: string; kind: string; step?: string; strand: string; sub_strand: string;
@@ -1225,7 +1238,9 @@ export function useAutoRunActivity(grade: string, running: boolean) {
       ),
     enabled: Boolean(grade),
     // Fast while it moves, once when it stops. A finished run does not change.
-    refetchInterval: running ? 4000 : false,
+    // Two seconds while it moves: the step log is what makes this worth
+    // watching, and at four it reads as a stalled run.
+    refetchInterval: running ? 2000 : false,
   });
 }
 
@@ -2045,7 +2060,154 @@ export type BoardProject = {
   subjects: BoardBranch[];
 };
 
-/** Every grade with anything in it, and its state at a glance. */
+export type BoardRun = {
+  job_id: string;
+  kind: string;
+  subject: string;
+  strand: string;
+  sub_strand: string;
+  status: string;
+  attempts: number;
+  error: string;
+  created_at: string;
+  started_at: string;
+  finished_at: string;
+  llm_calls: number;
+  total_tokens: number;
+  cost_usd: number;
+  progress?: { elapsed_s: number; steps: { at: number; step: string; detail: string; status: string }[] };
+};
+
+/** What a stage's jobs did, newest first, with the steps each one wrote. A
+ *  stage that says "2 failed" and cannot say what failed is a red light with
+ *  no wiring behind it. */
+export function useStageLogs(grade: string, stage: string, subject: string, on: boolean) {
+  const api = useApi();
+  return useQuery({
+    queryKey: ["stage-logs", grade, stage, subject],
+    queryFn: () => {
+      const qs = new URLSearchParams({ stage });
+      if (subject) qs.set("subject", subject);
+      return api<{
+        grade: string; stage: string; subject: string;
+        runs: BoardRun[];
+        counts: Record<string, number>;
+      }>(`/api/v1/pipelines/${encodeURIComponent(grade)}/logs?${qs}`);
+    },
+    enabled: on && Boolean(grade && stage),
+    refetchInterval: (query) => {
+      const data = query.state.data as { counts?: Record<string, number> } | undefined;
+      const busy = (data?.counts?.running ?? 0) + (data?.counts?.queued ?? 0);
+      return busy > 0 ? 2000 : false;
+    },
+  });
+}
+
+/** Start one stage from the board. It knows what is missing; it should be able
+ *  to ask for it, rather than sending an operator to the factory to choose the
+ *  same grade and subject again. */
+export function useRunStage() {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: {
+      grade: string; stage: string; subject?: string;
+      sub_strands?: string[]; custom_instructions?: string;
+    }) =>
+      api<{ queued: number; jobs: { job_id: string }[]; stage: string }>(
+        "/api/v1/pipelines/run",
+        { method: "POST", body: JSON.stringify(v) }
+      ),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["pipeline"] });
+      qc.invalidateQueries({ queryKey: ["pipelines"] });
+      qc.invalidateQueries({ queryKey: ["stage-logs"] });
+      qc.invalidateQueries({ queryKey: ["queue"] });
+    },
+  });
+}
+
+export type StageUnit = {
+  artifact_id: string;
+  artifact_key: string;
+  version: number;
+  status: string;
+  subject: string;
+  strand_name: string;
+  sub_strand_name: string;
+  layers_run: number[];
+  verdict: string;
+  confidence: number;
+  can_approve: boolean;
+  requires_override: boolean;
+  blockers: string[];
+  warnings: string[];
+};
+
+/** The individual versions at one stage, and what each still needs. A stage
+ *  that says "5 of 7 not reviewed" and cannot say WHICH five leaves a person to
+ *  go and find them, which is the work the board was supposed to remove. */
+export function useStageUnits(grade: string, stage: string, subject: string, on: boolean) {
+  const api = useApi();
+  return useQuery({
+    queryKey: ["stage-units", grade, stage, subject],
+    queryFn: () => {
+      const qs = new URLSearchParams({ stage });
+      if (subject) qs.set("subject", subject);
+      return api<{ grade: string; stage: string; kind: string; units: StageUnit[]; note?: string }>(
+        `/api/v1/pipelines/${encodeURIComponent(grade)}/units?${qs}`
+      );
+    },
+    enabled: on && Boolean(grade && stage),
+  });
+}
+
+/** Run, review, send for approval, or regenerate — from the board.
+ *
+ *  Every one of these already existed, on a different screen, asking for the
+ *  same grade and subject again. */
+export function useStageAction() {
+  const api = useApi();
+  const qc = useQueryClient();
+  const refresh = () => {
+    qc.invalidateQueries({ queryKey: ["pipeline"] });
+    qc.invalidateQueries({ queryKey: ["pipelines"] });
+    qc.invalidateQueries({ queryKey: ["stage-logs"] });
+    qc.invalidateQueries({ queryKey: ["stage-units"] });
+    qc.invalidateQueries({ queryKey: ["queue"] });
+  };
+  return {
+    act: useMutation({
+      mutationFn: (v: {
+        grade: string; stage: string; subject?: string;
+        action: "run" | "review" | "approval" | "regenerate";
+        layer?: number; provider?: string; model?: string;
+      }) =>
+        api<{ queued: number; stage: string; action: string }>(
+          "/api/v1/pipelines/act",
+          { method: "POST", body: JSON.stringify(v) }
+        ),
+      onSuccess: refresh,
+    }),
+    approve: useMutation({
+      mutationFn: (v: {
+        artifact_ids: string[]; reviewed_by_me: boolean;
+        note?: string; override_reason?: string;
+      }) =>
+        api<{
+          approved: string[];
+          refused: { artifact_id: string; reason: string }[];
+          counts: { approved: number; refused: number };
+        }>("/api/v1/pipelines/approve", {
+          method: "POST",
+          body: JSON.stringify(v),
+        }),
+      onSuccess: refresh,
+    }),
+  };
+}
+
+/** Every grade there is, in curriculum order — not only the ingested ones. */
 export function usePipelines() {
   const api = useApi();
   return useQuery({
@@ -2053,7 +2215,8 @@ export function usePipelines() {
     queryFn: () =>
       api<{
         projects: {
-          grade: string; label: string; subjects: number; sub_strands: number;
+          grade: string; label: string; level: string; ingested: boolean;
+          subjects: number; sub_strands: number;
           running: number; failed: number; cost_usd: number;
         }[];
         stages: StagePolicy[];
