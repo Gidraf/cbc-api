@@ -164,10 +164,86 @@ def _drop_documentless_designs(dry_run: bool) -> RepairResult:
 
 
 # Order matters: debris first, then names, then the orphan designs those left.
+def _file_diagrams_in_object_storage(dry_run: bool) -> RepairResult:
+    """Put every diagram's markup in MinIO, then empty the column.
+
+    The SVG was written to both `diagram_registry.svg_markup` and MinIO, with
+    nothing keeping the two in step. MinIO is the copy now — a diagram is a
+    file: served to a browser, embedded in a printed paper, never queried a
+    field at a time. Postgres keeps what Postgres is for: the identity, the
+    scene document that says which region is which, the alt text, the reuse
+    count, and the link.
+
+    A sweep rather than a migration, and in this order, because the column
+    cannot be emptied on trust: a row whose object is missing would lose its
+    diagram outright. So each row is UPLOADED and READ BACK first, and only a
+    row confirmed present in MinIO has its column cleared. A row that cannot be
+    filed keeps its markup and is reported, so a storage outage leaves the
+    sweep with work to do next time rather than a hole in the paper.
+    """
+    from ..infra.db import execute, fetch_all
+    from ..infra.storage import object_storage
+
+    result = RepairResult("004_diagram_svg_to_object_storage", dry_run=dry_run)
+    rows = fetch_all(
+        """
+        SELECT diagram_id, storage_url, svg_markup
+        FROM diagram_registry
+        WHERE svg_markup <> ''
+        ORDER BY created_at
+        LIMIT 500
+        """
+    ) or []
+    if not rows:
+        return result
+
+    for row in rows:
+        diagram_id = str(row.get("diagram_id") or "")
+        markup = str(row.get("svg_markup") or "")
+        url = str(row.get("storage_url") or "")
+        name = object_storage.object_name_of(url) or f"diagrams/{diagram_id}.svg"
+
+        if dry_run:
+            result.rows_affected += 1
+            result.detail.append({"diagram_id": diagram_id, "object": name})
+            continue
+
+        # Upload unless it is already there, then read it back. "Saved" is not
+        # the same fact as "readable", and only the second one makes it safe to
+        # drop the copy in the database.
+        if not object_storage.read_text(name):
+            url = object_storage.save_svg(name, markup)
+            name = object_storage.object_name_of(url) or name
+
+        if not object_storage.read_text(name):
+            result.detail.append({"diagram_id": diagram_id, "object": name,
+                                  "kept": "not readable back from storage"})
+            continue
+
+        execute(
+            "UPDATE diagram_registry SET svg_markup = '', storage_url = :url "
+            "WHERE diagram_id = :did",
+            {"url": url, "did": diagram_id},
+        )
+        result.rows_affected += 1
+        result.detail.append({"diagram_id": diagram_id, "object": name})
+
+    kept = len([d for d in result.detail if d.get("kept")])
+    if kept:
+        result.error = (
+            f"{kept} diagram(s) could not be read back from object storage and "
+            f"kept their copy in the database. They are still served; run the "
+            f"sweep again once storage is reachable."
+        )
+        logger.warning("%s", result.error)
+    return result
+
+
 REPAIRS: list[tuple[str, Callable[[bool], RepairResult]]] = [
     ("001_purge_substrand_debris", _purge_debris),
     ("002_denumber_strand_names", _denumber_names),
     ("003_drop_documentless_designs", _drop_documentless_designs),
+    ("004_diagram_svg_to_object_storage", _file_diagrams_in_object_storage),
 ]
 
 

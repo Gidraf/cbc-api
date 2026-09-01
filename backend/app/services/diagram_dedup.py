@@ -14,6 +14,9 @@ from ..infra.db import execute, fetch_one, to_json
 from ..infra.storage import object_storage
 from .diagram_scene import build_scene_from_svg
 from .ids import mint_diagram_id
+# Aliased: this module has a `diagram_svg` FIELD on its result type, and
+# one name for both is a trap for whoever edits it next.
+from . import diagram_svg as svg_store
 
 logger = logging.getLogger(__name__)
 
@@ -216,7 +219,13 @@ class DiagramDeduplicator:
                 {"did": existing["diagram_id"]},
             )
             stored_scene = existing.get("scene_document") or {}
-            stored_svg = existing.get("svg_markup") or clean_svg
+            # From the file for a swept row, from the column for one the sweep
+            # has not reached. Reading the column alone returned "" here and
+            # fell through to the freshly generated markup — which is the same
+            # content by hash, but NOT the instrumented copy the scene document
+            # describes, so every part id the questions address would have
+            # pointed at nothing.
+            stored_svg = svg_store.svg_for(existing) or clean_svg
             return DeduplicatedDiagramResult(
                 diagram_id=existing["diagram_id"],
                 diagram_title=existing.get("title") or diagram_title,
@@ -236,6 +245,18 @@ class DiagramDeduplicator:
 
         diagram_id = mint_diagram_id(str(meta.get("subject", "")), str(meta.get("sub_strand", "")))
         storage_url = object_storage.save_svg(f"diagrams/{diagram_id}.svg", instrumented)
+
+        # The markup is the FILE now, and the column stays empty — see
+        # services/diagram_svg.py. It was written to both, with nothing keeping
+        # the two in step: edit the object and the column is stale, edit the
+        # column and the served file is stale, and no reader could say which
+        # copy it got.
+        #
+        # Except when the save did not reach MinIO. `save_svg` swallows that and
+        # hands back a `local://` URL, so writing nothing to the column would
+        # lose the diagram entirely to a storage outage. In that one case the
+        # column carries it until the sweep can file it properly.
+        stored_in_minio = not storage_url.startswith("local://")
 
         execute(
             """
@@ -259,7 +280,7 @@ class DiagramDeduplicator:
                 "grade": str(meta.get("grade", "")),
                 "subject": str(meta.get("subject", "")),
                 "storage_url": storage_url,
-                "svg_markup": instrumented,
+                "svg_markup": "" if stored_in_minio else instrumented,
                 "scene_document": to_json(scene),
                 "alt_text": alt_text,
                 "tactile_description": tactile_description,

@@ -58,6 +58,41 @@ class ObjectStorage:
             logger.warning("MinIO save_svg failed for '%s': %s", object_name, exc)
             return f"local://{settings.minio_bucket}/{object_name}"
 
+    def object_name_of(self, url: str) -> str:
+        """The object a stored URL points at.
+
+        A saved URL is `{public_base}/{bucket}/{object}`, and a save that could
+        not reach MinIO returns `local://{bucket}/{object}` instead — both end
+        with the bucket followed by the object path, so both are read the same
+        way rather than one of them being an unhandled shape later.
+        """
+        if not url:
+            return ""
+        marker = f"/{settings.minio_bucket}/"
+        index = url.find(marker)
+        return url[index + len(marker):] if index != -1 else ""
+
+    def read_text(self, object_name: str) -> str:
+        """One stored object, as text. Empty when it is not there.
+
+        Returns "" rather than raising: the caller is usually rendering a page
+        that has other diagrams on it, and one missing object should leave a
+        gap rather than fail the whole render.
+        """
+        if not object_name:
+            return ""
+        response = None
+        try:
+            response = self._get_client().get_object(settings.minio_bucket, object_name)
+            return response.read().decode("utf-8")
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("MinIO read failed for '%s': %s", object_name, exc)
+            return ""
+        finally:
+            if response is not None:
+                response.close()
+                response.release_conn()
+
     def save_bytes(self, object_name: str, payload: bytes, content_type: str) -> str:
         """Store an uploaded photograph or video exactly as it arrived.
 

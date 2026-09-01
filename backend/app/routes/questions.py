@@ -15,6 +15,7 @@ from ..services.faith_scope import prompt_block as faith_prompt_block
 from ..services.grade_scope import notes_for as grade_scope_notes
 from ..services.grade_order import grade_label, grade_level, grade_ordinal, normalize_grade
 from ..services.question_dna import question_dna_service
+from ..services import diagram_svg
 
 logger = logging.getLogger("cbc-questions-factory")
 
@@ -694,7 +695,7 @@ def factory_author_questions_from_diagram(
         "asset_id": row["diagram_id"],
         "diagram_id": row["diagram_id"],
         "title": row.get("title", ""),
-        "svg_markup": row.get("svg_markup", ""),
+        "svg_markup": diagram_svg.svg_for(row),
         "scene_document": row.get("scene_document") or {},
         "storage_url": row.get("storage_url", ""),
     }
@@ -807,12 +808,13 @@ def factory_export_exam_paper(
     if diagram_ids:
         rows = fetch_all(
             """
-            SELECT diagram_id, title, svg_markup, scene_document
+            SELECT diagram_id, title, svg_markup, storage_url, scene_document
             FROM diagram_registry WHERE diagram_id = ANY(:ids)
             """,
             {"ids": list(diagram_ids)},
         )
-        diagrams = {r["diagram_id"]: r for r in rows}
+        # The markup lives in MinIO; the row carries the link to it.
+        diagrams = {r["diagram_id"]: diagram_svg.with_svg(r) for r in rows}
 
     missing_visuals = [
         q.get("display_label") or q.get("question_id")

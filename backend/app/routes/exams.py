@@ -25,6 +25,7 @@ from ..services.exam_renderer import DEFAULT_INSTRUCTIONS, render_html, render_m
 from ..services.grade_order import GRADE_SEQUENCE, describe, grade_label, grade_ordinal, normalize_grade
 from ..services.ids import mint_exam_id
 from ..services.question_dna import question_dna_service
+from ..services import diagram_svg
 
 logger = logging.getLogger("cbc-exams")
 
@@ -79,7 +80,8 @@ def _load_diagrams(questions: list[dict[str, Any]]) -> dict[str, dict[str, Any]]
         """,
         {"ids": list(diagram_ids)},
     )
-    found = {r["diagram_id"]: r for r in rows}
+    # The markup lives in MinIO; the row carries the link to it.
+    found = {r["diagram_id"]: diagram_svg.with_svg(r) for r in rows}
 
     for missing in diagram_ids - set(found):
         logger.warning("Exam references diagram %s which is not in the registry", missing)
@@ -417,14 +419,15 @@ def public_render_diagram(
     from ..services.diagram_scene import render_svg
 
     row = fetch_one(
-        "SELECT diagram_id, title, svg_markup, scene_document FROM diagram_registry WHERE diagram_id = :did",
+        "SELECT diagram_id, title, svg_markup, storage_url, scene_document "
+        "FROM diagram_registry WHERE diagram_id = :did",
         {"did": diagram_id},
     )
     if not row:
         raise_api_error("NOT_FOUND", f"No diagram with id {diagram_id}")
 
     svg = render_svg(
-        str(row.get("svg_markup") or ""),
+        diagram_svg.svg_for(row),
         row.get("scene_document") or {},
         hide_layers=[h.strip() for h in hide_layers.split(",") if h.strip()],
         region_id=region_id,
