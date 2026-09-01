@@ -5,6 +5,7 @@ import logging
 import re
 from typing import Any, Optional
 
+from fastapi.responses import HTMLResponse
 from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
 from pydantic import BaseModel
 
@@ -5483,6 +5484,37 @@ def factory_plan_approval(
     from ..services.stage_guard import require_approved_plan
 
     return require_approved_plan(kind, grade, subject, sub_strand)
+
+
+@router.get("/factory/notes.html", response_class=HTMLResponse)
+def factory_notes_html(
+    artifact_id: str = Query(..., min_length=4),
+    _: AuthContext = Depends(require_roles("admin", "operator", "reviewer", "developer")),
+):
+    """The same document the PDF is made from, to read on a screen.
+
+    There was only a download. Judging a guide meant waiting for a PDF, opening
+    it in another application, and going back to the console to act on it — for
+    every version of every sub-strand. The page is the same renderer, so what
+    is reviewed here is exactly what prints, down to where the pictures sit.
+    """
+    from ..services import artifact_registry, notes_renderer
+
+    artifact = artifact_registry.get(artifact_id)
+    if artifact.kind not in ("notes", "material"):
+        raise_api_error(
+            "VALIDATION_FAILED",
+            f"'{artifact.kind}' does not render as a document. The lesson plan "
+            f"and the material written from it do.",
+        )
+    render = (notes_renderer.render_material_html if artifact.kind == "material"
+              else notes_renderer.render_html)
+    return HTMLResponse(render(
+        artifact.content or {},
+        grade=artifact.grade, subject=artifact.subject,
+        strand=artifact.strand_name, sub_strand=artifact.sub_strand_name,
+        version=artifact.version,
+    ))
 
 
 @router.get("/factory/notes.pdf")

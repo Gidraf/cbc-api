@@ -58,19 +58,20 @@ def test_it_is_a_complete_document_not_a_fragment():
     html = _html()
 
     assert html.startswith("<!doctype html>")
-    assert "@page { size: A4" in html
+    assert "@page" in html and "size: A4" in html
     assert html.rstrip().endswith("</html>")
 
 
 def test_each_lesson_starts_on_its_own_page():
     """A teacher carries the page for the lesson they are about to teach, not a
     stapled block they have to hunt through."""
-    assert ".lesson { page-break-before: always;" in _html()
-    assert ".lesson:first-of-type { page-break-before: avoid; }" in _html()
+    assert "break-before: page" in _html(), "a lesson starts on its own page"
+    # …except the first, which would otherwise leave a blank sheet in front.
+    assert ".lesson:first-of-type { break-before: avoid; }" in _html()
 
 
 def test_a_topic_is_never_split_across_a_page_break():
-    assert ".seg { margin-bottom: 14px; page-break-inside: avoid; }" in _html()
+    assert ".seg { margin: 0 0 12px; break-inside: avoid; }" in _html()
 
 
 def test_the_teachers_own_words_and_the_handover_both_survive():
@@ -254,3 +255,108 @@ def test_the_material_pdf_is_named_apart_from_the_plans():
 
     source = inspect.getsource(curriculum.factory_notes_pdf)
     assert '"material" if artifact.kind == "material" else "plan"' in source
+
+
+# ── it has to read like a book, not a printout ──────────────────────────────
+
+
+def _guide() -> str:
+    from app.services import notes_renderer
+
+    return notes_renderer.render_html(
+        {
+            "title": "Teacher's Guide: Our God",
+            "intro": "What this sub-strand teaches.",
+            "modules": [{
+                "title": "Lesson 1: Saying the Name of God",
+                "module_number": 1, "duration_minutes": 30,
+                "resources_needed": ["Picture cards of God's creation",
+                                     "Audio player for the prayer clip"],
+                "exposition_segments": [
+                    {"topic": "Introducing God", "minutes": 10,
+                     "body": "Begin by asking the children. " * 10,
+                     "bridge": "Next we say the name aloud."},
+                ],
+            }],
+        },
+        grade="grade-pp1", subject="CRE", sub_strand="Our God", version=3,
+    )
+
+
+def test_the_text_is_set_to_a_readable_measure() -> None:
+    """One column at 11pt across a full A4 measure is about 100 characters a
+    line — roughly twice what the eye tracks, and why a teacher scanning it
+    under time pressure loses their place."""
+    html = _guide()
+
+    assert "column-count: 2" in html
+    assert "<div class='body'>" in html
+    # Justified with hyphenation, or two columns produce rivers of white space.
+    assert "hyphens: auto" in html
+    assert "text-align: justify" in html
+    # And no line left alone at the foot or head of a column.
+    assert "orphans: 3" in html and "widows: 3" in html
+
+
+def test_every_picture_the_plan_asks_for_gets_a_place_on_the_page() -> None:
+    """A guide that says "observe pictures of Adam and Eve" and prints no space
+    for them is a guide the teacher re-lays-out by hand at the photocopier."""
+    html = _guide()
+
+    # Numbered per lesson, the way a book numbers its figures.
+    assert "PICTURE 1.1" in html.upper()
+    assert "Picture cards of God&#x27;s creation" in html
+    # A recording is a cue, not a plate to look at.
+    assert "RECORDING 1.2" in html.upper()
+    assert "play the recording at this point" in html
+
+
+def test_a_picture_nobody_has_made_yet_still_takes_up_its_space() -> None:
+    """An empty plate is not a defect to hide — it is the production list: which
+    picture is still to be made, in the lesson that needs it."""
+    html = _guide()
+
+    assert "picture to be placed here" in html
+    assert "class='plate'" in html
+    # At the size it will occupy, or the teacher finds out at the copier that
+    # the page has no room for it.
+    assert "height: 46mm" in html
+
+
+def test_the_page_carries_its_own_navigation() -> None:
+    """A stapled block on a desk with three other things on it."""
+    html = _guide()
+
+    assert "string-set: guide-title" in html
+    assert "string-set: lesson-head" in html
+    assert "@bottom-center { content: counter(page)" in html
+
+
+def test_the_screen_shows_the_page_it_will_print() -> None:
+    """What the operator reviews should be what the teacher will hold."""
+    html = _guide()
+
+    assert "<div class='sheet'>" in html
+    assert "width: 210mm" in html
+    assert "@media print" in html
+
+
+def test_the_document_can_be_read_without_downloading_it() -> None:
+    """Judging a guide meant waiting for a PDF, opening it elsewhere, and going
+    back to the console to act on it — for every version of every sub-strand."""
+    from app.main import app
+
+    paths = [getattr(r, "path", "") for r in app.routes]
+    assert "/api/v1/curriculum/factory/notes.html" in paths
+    assert "/api/v1/curriculum/factory/notes.pdf" in paths
+
+
+def test_the_console_offers_the_book_not_only_the_download() -> None:
+    from pathlib import Path
+
+    reader = " ".join(
+        (Path(__file__).resolve().parents[2] / "frontend-web/src/views/NotesReader.tsx")
+        .read_text().split()
+    )
+    assert "Open as a book" in reader
+    assert "useNotesDocument" in reader

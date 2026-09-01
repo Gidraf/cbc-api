@@ -1070,6 +1070,31 @@ export function useExportBundle(grade: string, subject?: string) {
  *
  *  Fetched with the auth header and turned into a blob rather than linked: a
  *  plain <a href> carries no token and would download the sign-in page. */
+/** Open the typeset guide in a tab: the same renderer the PDF is made from.
+ *
+ *  Judging a guide meant waiting for a PDF, opening it in another application,
+ *  and coming back to the console to act on it — for every version of every
+ *  sub-strand. Fetched as a blob rather than linked, because a plain window
+ *  .open carries no token and would show the sign-in page. */
+export function useNotesDocument() {
+  const { token } = useAuth();
+  return useMutation({
+    mutationFn: async (artifactId: string) => {
+      const { blob } = await fetchBlob(
+        `/api/v1/curriculum/factory/notes.html?artifact_id=${encodeURIComponent(artifactId)}`,
+        { bearerToken: token }
+      );
+      const url = URL.createObjectURL(
+        new Blob([await blob.text()], { type: "text/html" })
+      );
+      window.open(url, "_blank", "noopener");
+      // Not revoked immediately: the new tab is still loading from it.
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+      return url;
+    },
+  });
+}
+
 export function useNotesPdf() {
   const { token } = useAuth();
   return useMutation({

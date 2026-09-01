@@ -23,43 +23,155 @@ def _esc(value: Any) -> str:
 
 
 PRINT_CSS = """
-@page { size: A4; margin: 18mm 16mm; }
+/* A textbook, not a printout.
+ *
+ * The guide read as a wall of one-column prose at 11pt across a full A4
+ * measure — about 100 characters a line, which is roughly twice what the eye
+ * tracks comfortably and why a teacher scanning it under time pressure loses
+ * their place. A publisher solves that with a narrower measure, and on A4 that
+ * means two columns.
+ *
+ * Everything else here follows from printing: it will be photocopied in
+ * greyscale on a machine in a shop, so nothing carries meaning by colour
+ * alone, and it will be read a lesson at a time, so a lesson starts on its own
+ * page and no box is ever split across one.
+ */
+@page {
+  size: A4;
+  margin: 20mm 16mm 18mm;
+  /* The running head is what makes a stapled block navigable once it is on a
+     desk with three other things on it. */
+  @top-left  { content: string(guide-title); font-family: Georgia, serif;
+               font-size: 8pt; color: #555; letter-spacing: 0.04em; }
+  @top-right { content: string(lesson-head); font-family: Georgia, serif;
+               font-size: 8pt; color: #555; }
+  @bottom-center { content: counter(page); font-family: Georgia, serif;
+                   font-size: 9pt; color: #444; }
+}
 * { box-sizing: border-box; }
-body { font-family: Georgia, 'Times New Roman', serif; font-size: 11pt;
-       line-height: 1.55; color: #111; margin: 0; }
-.masthead { border-bottom: 2.5px solid #111; padding-bottom: 10px; margin-bottom: 16px; }
-.masthead h1 { font-size: 16pt; margin: 0 0 6px; }
-.meta { display: flex; flex-wrap: wrap; gap: 4px 18px; font-size: 9pt;
-        text-transform: uppercase; letter-spacing: 0.06em; color: #444; }
-.intro { font-size: 10.5pt; color: #333; margin-bottom: 18px; }
-.gaps { border: 1px solid #b45309; padding: 10px 14px; margin-bottom: 18px;
-        font-size: 10pt; }
-.gaps h2 { font-size: 10pt; margin: 0 0 6px; text-transform: uppercase;
-           letter-spacing: 0.06em; }
 
-/* One lesson per page: a teacher carries the page for the lesson they are
-   about to teach, not a stapled block they have to hunt through. */
-.lesson { page-break-before: always; page-break-inside: auto; }
-.lesson:first-of-type { page-break-before: avoid; }
-.lesson h2 { font-size: 13pt; margin: 0 0 4px; }
-.slos { font-size: 9pt; text-transform: uppercase; letter-spacing: 0.05em;
-        color: #444; margin-bottom: 8px; }
-.intent { font-size: 10.5pt; margin: 0 0 14px; }
+html { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+body {
+  font-family: Georgia, 'Times New Roman', serif;
+  font-size: 10.5pt;
+  line-height: 1.5;
+  color: #111;
+  margin: 0;
+  hyphens: auto;
+  -webkit-hyphens: auto;
+  orphans: 3;
+  widows: 3;
+  text-align: justify;
+}
+h1, h2, h3, h4, .label, .meta, .figure figcaption {
+  font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  text-align: left;
+  hyphens: none;
+}
+h2, h3, h4 { break-after: avoid; }
 
-.seg { margin-bottom: 14px; page-break-inside: avoid; }
-.seg h3 { font-size: 11pt; margin: 0 0 4px; }
-.seg .mins { font-weight: normal; color: #666; font-size: 9.5pt; }
+/* ── the title page ─────────────────────────────────────────────────────── */
+.masthead {
+  string-set: guide-title content();
+  border-bottom: 3px solid #111;
+  padding-bottom: 12px;
+  margin-bottom: 20px;
+  break-after: avoid;
+}
+.masthead h1 { font-size: 21pt; line-height: 1.15; margin: 0 0 8px;
+               letter-spacing: -0.01em; }
+.meta { display: flex; flex-wrap: wrap; gap: 3px 16px; font-size: 8pt;
+        text-transform: uppercase; letter-spacing: 0.09em; color: #555; }
+.intro { font-size: 11.5pt; line-height: 1.55; color: #222; margin: 0 0 18px;
+         column-span: all; }
+/* The opening paragraph is set wider and larger, the way a chapter opener is. */
+.intro::first-line { font-variant: small-caps; letter-spacing: 0.02em; }
+
+.gaps { border: 1.5px solid #111; border-left-width: 5px; padding: 10px 14px;
+        margin-bottom: 20px; font-size: 9.5pt; break-inside: avoid; }
+.gaps h2 { font-size: 8.5pt; margin: 0 0 5px; text-transform: uppercase;
+           letter-spacing: 0.09em; }
+.gaps ul { margin: 0; padding-left: 16px; }
+
+/* ── a lesson ───────────────────────────────────────────────────────────── */
+.lesson { break-before: page; }
+.lesson:first-of-type { break-before: avoid; }
+.lesson-head { string-set: lesson-head content(); border-bottom: 1px solid #111;
+               padding-bottom: 7px; margin-bottom: 12px; break-after: avoid; }
+.lesson h2 { font-size: 15pt; margin: 0 0 3px; line-height: 1.2; }
+.lesson .n { display: block; font-size: 8pt; letter-spacing: 0.16em;
+             text-transform: uppercase; color: #666; margin-bottom: 3px; }
+.slos { font-size: 8pt; text-transform: uppercase; letter-spacing: 0.07em;
+        color: #555; margin: 0; }
+.intent { font-size: 10.5pt; margin: 0 0 12px; padding: 8px 12px;
+          background: #f2f2f0; border-left: 3px solid #111; break-inside: avoid;
+          column-span: all; }
+
+/* THE COLUMNS. Two on A4 gives about 62 characters a line — the measure a
+   book is set to, and the reason this reads as a book rather than a memo. */
+.body { column-count: 2; column-gap: 8mm; column-rule: 0.5pt solid #ddd; }
+
+.seg { margin: 0 0 12px; break-inside: avoid; }
+.seg h3 { font-size: 10.5pt; margin: 0 0 3px; }
+.seg h3 .mins { font-weight: normal; color: #777; font-size: 8.5pt;
+                letter-spacing: 0.04em; }
 .seg p { margin: 0 0 6px; }
-.bridge { border-left: 2px solid #bbb; padding-left: 10px; color: #444;
-          font-style: italic; margin: 0; }
+/* The first line of a topic is indented the way a book indents a paragraph
+   after a heading's first — a small thing that reads as typeset. */
+.seg p + p { text-indent: 1.2em; margin-top: -3px; }
+.bridge { border-left: 2px solid #999; padding-left: 9px; color: #444;
+          font-style: italic; font-size: 9.5pt; margin: 0; text-indent: 0; }
 
-.aside { margin-top: 10px; font-size: 10pt; page-break-inside: avoid; }
-.aside h4 { font-size: 9pt; text-transform: uppercase; letter-spacing: 0.06em;
-            color: #444; margin: 0 0 3px; }
-.aside ol, .aside ul { margin: 0; padding-left: 18px; }
+/* ── figures: where a picture goes, whether or not it exists yet ────────── */
+.figure { break-inside: avoid; margin: 0 0 12px; border: 1px solid #111;
+          padding: 0; background: #fff; }
+.figure .plate {
+  /* The empty plate. A teacher photocopying this needs to SEE the space the
+     picture will occupy, or they discover at the copier that the page has no
+     room for it. */
+  height: 46mm; border-bottom: 1px solid #111;
+  background:
+    repeating-linear-gradient(45deg, #fafafa 0 6px, #f0f0f0 6px 12px);
+  display: flex; align-items: center; justify-content: center;
+  text-align: center; padding: 8px;
+}
+.figure .plate span { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+                      font-size: 8pt; letter-spacing: 0.08em;
+                      text-transform: uppercase; color: #666; }
+.figure img, .figure svg { display: block; width: 100%; height: auto;
+                           border-bottom: 1px solid #111; }
+.figure figcaption { font-size: 8.5pt; line-height: 1.35; padding: 6px 8px;
+                     color: #222; }
+.figure figcaption b { letter-spacing: 0.06em; text-transform: uppercase;
+                       font-size: 7.5pt; color: #444; display: block;
+                       margin-bottom: 2px; }
+/* A video or a recording has no plate to show — it has a cue. */
+.figure.cue .plate { height: 20mm;
+  background: repeating-linear-gradient(90deg, #f7f7f7 0 8px, #efefef 8px 16px); }
+
+/* ── asides ─────────────────────────────────────────────────────────────── */
+.aside { font-size: 9.5pt; break-inside: avoid; margin: 0 0 12px;
+         padding: 8px 10px; background: #f7f7f5; border-top: 2px solid #111; }
+.aside h4 { font-size: 7.5pt; text-transform: uppercase; letter-spacing: 0.1em;
+            color: #333; margin: 0 0 4px; }
+.aside ol, .aside ul { margin: 0; padding-left: 15px; }
+.aside li { margin-bottom: 3px; }
 .aside p { margin: 0 0 4px; }
-.foot { margin-top: 22px; border-top: 1px solid #ccc; padding-top: 6px;
-        font-size: 8.5pt; color: #666; }
+.aside p:last-child { margin-bottom: 0; }
+
+.foot { column-span: all; margin-top: 18px; border-top: 1px solid #999;
+        padding-top: 6px; font-size: 8pt; color: #666; text-align: left; }
+
+@media screen {
+  /* On a screen it is still a book: a page-width sheet on a desk, so what the
+     operator reviews is what the teacher will hold. */
+  body { background: #6b6b6b; padding: 24px 0; }
+  .sheet { width: 210mm; min-height: 297mm; margin: 0 auto 24px;
+           padding: 20mm 16mm 18mm; background: #fff;
+           box-shadow: 0 2px 14px rgba(0,0,0,0.35); }
+}
+@media print { .sheet { width: auto; min-height: 0; margin: 0; padding: 0;
+                        box-shadow: none; } }
 """
 
 
@@ -71,24 +183,81 @@ def _modules(notes: dict[str, Any]) -> list[dict[str, Any]]:
     return []
 
 
+# What each kind of asset is called on the page, and what the empty plate says
+# when nobody has produced it yet.
+_PLATE: dict[str, tuple[str, str]] = {
+    "diagram": ("Diagram", "diagram to be placed here"),
+    "image": ("Picture", "picture to be placed here"),
+    "video": ("Video", "play the clip at this point"),
+    "audio": ("Recording", "play the recording at this point"),
+    "simulation": ("Activity screen", "interactive activity at this point"),
+}
+
+
+def _figures(module: dict[str, Any], n: int, assets: dict[str, str] | None = None) -> str:
+    """The pictures this lesson asks for, as places on the page.
+
+    A guide that says "observe pictures of Adam and Eve" and prints no space
+    for them is a guide the teacher has to re-lay-out by hand at the
+    photocopier. So every visual the plan names gets a numbered plate at the
+    size it will occupy — filled where the asset exists, hatched and captioned
+    where it does not.
+
+    An empty plate is not a defect to hide. It is the production list: it says
+    which picture is still to be made, in the lesson that needs it.
+    """
+    from . import asset_requirements
+
+    wanted = [r for r in asset_requirements.read({"modules": [module]}).items
+              if r.kind in _PLATE]
+    if not wanted:
+        return ""
+
+    assets = assets or {}
+    out = []
+    for i, req in enumerate(wanted, start=1):
+        label, empty = _PLATE[req.kind]
+        found = assets.get(req.what.lower())
+        cue = " cue" if req.kind in ("video", "audio") else ""
+        plate = (f"<img src='{_esc(found)}' alt='{_esc(req.what)}'>" if found
+                 else f"<div class='plate'><span>{_esc(empty)}</span></div>")
+        where = f" · {_esc(req.topic)}" if req.topic else ""
+        out.append(
+            f"<figure class='figure{cue}'>{plate}"
+            f"<figcaption><b>{label} {n}.{i}{where}</b>{_esc(req.what)}</figcaption>"
+            f"</figure>"
+        )
+    return "".join(out)
+
+
 def _aside(title: str, body: str) -> str:
     return f"<div class='aside'><h4>{_esc(title)}</h4>{body}</div>" if body else ""
 
 
-def _lesson(module: dict[str, Any], n: int) -> str:
+def _lesson(module: dict[str, Any], n: int,
+            assets: dict[str, str] | None = None) -> str:
+    title = str(module.get("title") or f"Lesson {n}")
     out = ["<section class='lesson'>"]
-    out.append(f"<h2>{_esc(module.get('title') or f'Lesson {n}')}</h2>")
 
+    # The head sets the running head for every page this lesson spills onto.
+    out.append("<div class='lesson-head'>")
+    out.append(f"<h2><span class='n'>Lesson {n}</span>{_esc(title)}</h2>")
     bits = []
     if module.get("duration_minutes"):
         bits.append(f"{_esc(module['duration_minutes'])} minutes")
     bits += [_esc(s) for s in (module.get("slos_covered") or [])]
     if bits:
         out.append(f"<div class='slos'>{' · '.join(bits)}</div>")
+    out.append("</div>")
 
     if module.get("learning_intent"):
         out.append(f"<p class='intent'><strong>By the end:</strong> "
                    f"{_esc(module['learning_intent'])}</p>")
+
+    # Everything below runs in two columns, and the figures flow with the
+    # teaching that asks for them rather than being collected at the end.
+    out.append("<div class='body'>")
+    out.append(_figures(module, n, assets))
 
     segments = [s for s in (module.get("exposition_segments") or [])
                 if isinstance(s, dict)]
@@ -144,13 +313,21 @@ def _lesson(module: dict[str, Any], n: int) -> str:
         out.append(_aside("After the lesson",
                           f"<p>{_esc(module['homework_or_follow_up'])}</p>"))
 
+    out.append("</div>")
     out.append("</section>")
     return "".join(out)
 
 
 def render_html(notes: dict[str, Any], *, grade: str = "", subject: str = "",
-                strand: str = "", sub_strand: str = "", version: int = 0) -> str:
-    """The whole guide as one print-ready document."""
+                strand: str = "", sub_strand: str = "", version: int = 0,
+                assets: dict[str, str] | None = None) -> str:
+    """The whole guide as one print-ready document.
+
+    `assets` maps what the plan ASKED FOR, lowercased, to a URL for the thing
+    that was produced. Anything unmatched prints as a captioned empty plate at
+    the size the picture will occupy, which is what turns the guide into its
+    own production list.
+    """
     modules = _modules(notes)
     title = str(notes.get("title") or f"Teacher's Guide: {sub_strand or 'Lesson notes'}")
 
@@ -164,6 +341,7 @@ def render_html(notes: dict[str, Any], *, grade: str = "", subject: str = "",
         "<!doctype html><html lang='en'><head><meta charset='utf-8'>",
         f"<title>{_esc(title)}</title>",
         f"<style>{PRINT_CSS}</style></head><body>",
+        "<div class='sheet'>",
         "<div class='masthead'>",
         f"<h1>{_esc(title)}</h1>",
         "<div class='meta'>" + "".join(f"<span>{_esc(m)}</span>" for m in meta) + "</div>",
@@ -182,13 +360,13 @@ def render_html(notes: dict[str, Any], *, grade: str = "", subject: str = "",
     if not modules:
         out.append("<p>This guide holds no lessons.</p>")
     for i, module in enumerate(modules, start=1):
-        out.append(_lesson(module, i))
+        out.append(_lesson(module, i, assets))
 
     out.append(
         "<div class='foot'>Generated from the KICD curriculum design. "
         "Check it before you teach from it.</div>"
     )
-    out.append("</body></html>")
+    out.append("</div></body></html>")
     return "".join(out)
 
 

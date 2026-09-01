@@ -1,7 +1,12 @@
 import React from "react";
 import { Badge, Button, Card, CopyButton, EmptyState, ErrorNotice, Stack } from "../ui/components";
 import { toReadable } from "../lib/serialize";
-import { hourModulesOf, useNotesPdf, type HourModule } from "../lib/queries";
+import {
+  hourModulesOf,
+  useNotesDocument,
+  useNotesPdf,
+  type HourModule,
+} from "../lib/queries";
 
 /**
  * The teacher's guide, as a document a teacher can read.
@@ -188,6 +193,7 @@ export function NotesReader({
 }) {
   const modules = hourModulesOf(notes);
   const pdf = useNotesPdf();
+  const book = useNotesDocument();
 
   if (!modules.length) {
     return (
@@ -208,6 +214,17 @@ export function NotesReader({
       actions={
         <Stack direction="row" gap="var(--s2)">
           <CopyButton getText={() => toReadable(notes)} label="Copy as text" />
+          {artifactId && (
+            <Button
+              size="sm"
+              disabled={book.isPending}
+              loading={book.isPending}
+              onClick={() => book.mutateAsync(artifactId)}
+              title="The typeset guide — two columns, figures in place, exactly what prints"
+            >
+              Open as a book
+            </Button>
+          )}
           {artifactId && (
             <Button
               size="sm"
