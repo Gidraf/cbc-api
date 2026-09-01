@@ -79,7 +79,7 @@ def _strand_grounding(grade: str, subject: str, strand: str) -> ReviewGrounding:
     stored = fetch_one(
         """
         SELECT metadata FROM curriculum_designs
-        WHERE (grade = :grade OR grade = :alt_grade) AND LOWER(subject) = LOWER(:subject)
+        WHERE (REPLACE(LOWER(grade), 'grade-', '') = REPLACE(LOWER(:grade), 'grade-', '')) AND LOWER(subject) = LOWER(:subject)
           AND metadata ? 'strands'
         ORDER BY updated_at DESC LIMIT 1
         """,
@@ -98,7 +98,7 @@ def _strand_grounding(grade: str, subject: str, strand: str) -> ReviewGrounding:
         SELECT DISTINCT strand_name, COUNT(*) AS sub_strands,
                STRING_AGG(sub_strand_name, ', ' ORDER BY sub_strand_id) AS names
         FROM curriculum_substrands
-        WHERE (grade = :grade OR grade = :alt_grade) AND LOWER(subject) = LOWER(:subject)
+        WHERE (REPLACE(LOWER(grade), 'grade-', '') = REPLACE(LOWER(:grade), 'grade-', '')) AND LOWER(subject) = LOWER(:subject)
         GROUP BY strand_name ORDER BY strand_name
         """,
         {"grade": grade, "alt_grade": grade.replace("grade-", ""), "subject": subject},
@@ -162,7 +162,7 @@ def _descendants(grade: str, subject: str, strand: str) -> str:
         """
         SELECT strand_name, sub_strand_id, sub_strand_name, allocated_hours, slos
         FROM curriculum_substrands
-        WHERE (grade = :grade OR grade = :alt_grade) AND LOWER(subject) = LOWER(:subject)
+        WHERE (REPLACE(LOWER(grade), 'grade-', '') = REPLACE(LOWER(:grade), 'grade-', '')) AND LOWER(subject) = LOWER(:subject)
         ORDER BY strand_id, sub_strand_id
         """,
         {"grade": grade, "alt_grade": grade.replace("grade-", ""), "subject": subject},

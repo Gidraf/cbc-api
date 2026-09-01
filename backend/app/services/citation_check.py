@@ -366,7 +366,7 @@ def reconcile_from_db(grade: str, subject: str, strand: str) -> PageReconciliati
     rows = fetch_all(
         """
         SELECT sub_strand_name, source_pages FROM curriculum_substrands
-        WHERE (grade = :grade OR grade = :alt_grade)
+        WHERE (REPLACE(LOWER(grade), 'grade-', '') = REPLACE(LOWER(:grade), 'grade-', ''))
           AND LOWER(subject) = LOWER(:subject)
           AND LOWER(strand_name) = LOWER(:strand)
         ORDER BY sub_strand_id

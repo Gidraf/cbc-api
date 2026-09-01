@@ -97,7 +97,7 @@ def build_report(grade: str) -> dict[str, Any]:
         """
         SELECT subject, strand_name, COUNT(*) AS sub_strand_count
         FROM curriculum_substrands
-        WHERE grade = :grade OR grade = :alt
+        WHERE (REPLACE(LOWER(grade), 'grade-', '') = REPLACE(LOWER(:grade), 'grade-', ''))
         GROUP BY subject, strand_name
         ORDER BY subject, strand_name
         """,

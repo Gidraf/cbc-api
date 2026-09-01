@@ -97,7 +97,7 @@ def _from_stored_design(grade: str, subject: str, design_id: str) -> SourceMater
                general_learning_outcomes, raw_payload
         FROM curriculum_designs
         WHERE (design_id = :design_id)
-           OR ((grade = :grade OR grade = :alt_grade) AND LOWER(subject) = LOWER(:subject))
+           OR ((REPLACE(LOWER(grade), 'grade-', '') = REPLACE(LOWER(:grade), 'grade-', '')) AND LOWER(subject) = LOWER(:subject))
         ORDER BY updated_at DESC
         LIMIT :cap
         """,

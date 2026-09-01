@@ -185,7 +185,7 @@ def sync_grade(grade_slug: str) -> dict[str, int]:
     known = {
         r["item_id"]
         for r in fetch_all(
-            "SELECT item_id FROM dataset_ingest_status WHERE grade = :grade",
+            "SELECT item_id FROM dataset_ingest_status WHERE REPLACE(LOWER(grade), 'grade-', '') = REPLACE(LOWER(:grade), 'grade-', '')",
             {"grade": grade_slug},
         )
     }
@@ -300,7 +300,7 @@ def list_grade(grade_slug: str) -> dict[str, Any]:
                design_id, status, char_count, error, selected_at, started_at,
                finished_at, updated_at
         FROM dataset_ingest_status
-        WHERE grade = :grade
+        WHERE REPLACE(LOWER(grade), 'grade-', '') = REPLACE(LOWER(:grade), 'grade-', '')
         ORDER BY
             CASE status WHEN 'failed' THEN 0 WHEN 'processing' THEN 1
                         WHEN 'selected' THEN 2 WHEN 'pending' THEN 3 ELSE 4 END,
@@ -696,7 +696,7 @@ def attach_source_document(
             """
             SELECT design_id, grade, subject, metadata, raw_payload
             FROM curriculum_designs
-            WHERE (grade = :grade OR grade = :alt) AND LOWER(subject) = LOWER(:subject)
+            WHERE (REPLACE(LOWER(grade), 'grade-', '') = REPLACE(LOWER(:grade), 'grade-', '')) AND LOWER(subject) = LOWER(:subject)
             ORDER BY updated_at DESC LIMIT 1
             """,
             {"grade": grade, "alt": grade.replace("grade-", ""), "subject": subject},

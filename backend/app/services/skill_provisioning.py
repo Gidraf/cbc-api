@@ -39,7 +39,7 @@ def _design_context(grade: str, subject: str) -> dict[str, Any]:
         """
         SELECT design_id, level, essence_statement, general_learning_outcomes
         FROM curriculum_designs
-        WHERE (grade = :grade OR grade = :alt) AND LOWER(subject) = LOWER(:subject)
+        WHERE (REPLACE(LOWER(grade), 'grade-', '') = REPLACE(LOWER(:grade), 'grade-', '')) AND LOWER(subject) = LOWER(:subject)
         ORDER BY updated_at DESC LIMIT 1
         """,
         {"grade": grade, "alt": (grade or "").replace("grade-", ""), "subject": subject},

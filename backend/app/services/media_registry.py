@@ -170,7 +170,7 @@ def list_for(grade: str, subject: str, sub_strand: str = "") -> list[dict[str, A
 
     sql = """
         SELECT * FROM substrand_media
-        WHERE (grade = :grade OR grade = :alt_grade) AND LOWER(subject) = LOWER(:subject)
+        WHERE (REPLACE(LOWER(grade), 'grade-', '') = REPLACE(LOWER(:grade), 'grade-', '')) AND LOWER(subject) = LOWER(:subject)
     """
     params: dict[str, Any] = {
         "grade": grade,

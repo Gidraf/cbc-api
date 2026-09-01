@@ -199,7 +199,7 @@ def list_exams(
     conditions = ["1=1"]
     params: dict[str, Any] = {"limit": limit}
     if grade:
-        conditions.append("grade = :grade")
+        conditions.append("REPLACE(LOWER(grade), 'grade-', '') = REPLACE(LOWER(:grade), 'grade-', '')")
         params["grade"] = normalize_grade(grade)
     if subject:
         conditions.append("LOWER(subject) = LOWER(:subject)")

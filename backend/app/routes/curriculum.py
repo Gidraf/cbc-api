@@ -338,7 +338,7 @@ def list_curriculum_substrands(
     design_conds = ["1=1"]
     design_params: dict[str, Any] = {}
     if grade:
-        design_conds.append("(grade = :grade OR grade = :alt_grade)")
+        design_conds.append("(REPLACE(LOWER(grade), 'grade-', '') = REPLACE(LOWER(:grade), 'grade-', ''))")
         design_params["grade"] = grade
         design_params["alt_grade"] = alt_grade
     if subject:
@@ -955,7 +955,7 @@ def factory_generate_notes(
         SELECT allocated_hours, slos, learning_experiences, key_inquiry_questions,
                core_competencies, values, required_diagrams, experiments, pedagogical_guidance
         FROM curriculum_substrands
-        WHERE (grade = :grade OR grade = :alt_grade)
+        WHERE (REPLACE(LOWER(grade), 'grade-', '') = REPLACE(LOWER(:grade), 'grade-', ''))
           AND LOWER(subject) = LOWER(:subject)
           AND (LOWER(sub_strand_name) = LOWER(:sub_strand) OR LOWER(sub_strand_name) LIKE LOWER(:sub_strand_pattern))
         LIMIT 1
@@ -4418,7 +4418,7 @@ def factory_page_reconciliation(
         str(r["strand_name"]) for r in (fetch_all(
             """
             SELECT DISTINCT strand_name FROM curriculum_substrands
-            WHERE (grade = :grade OR grade = :alt_grade)
+            WHERE (REPLACE(LOWER(grade), 'grade-', '') = REPLACE(LOWER(:grade), 'grade-', ''))
               AND LOWER(subject) = LOWER(:subject)
             ORDER BY strand_name
             """,
@@ -4872,7 +4872,7 @@ def _stored_strands(grade: str, subject: str) -> list[dict[str, str]]:
     row = fetch_one(
         """
         SELECT metadata FROM curriculum_designs
-        WHERE (grade = :grade OR grade = :alt_grade)
+        WHERE (REPLACE(LOWER(grade), 'grade-', '') = REPLACE(LOWER(:grade), 'grade-', ''))
           AND LOWER(subject) = LOWER(:subject)
         ORDER BY updated_at DESC LIMIT 1
         """,
@@ -4893,7 +4893,7 @@ def _stored_substrands(grade: str, subject: str, strand: str = "") -> list[dict[
     rows = fetch_all(
         """
         SELECT strand_name, sub_strand_name FROM curriculum_substrands
-        WHERE (grade = :grade OR grade = :alt_grade)
+        WHERE (REPLACE(LOWER(grade), 'grade-', '') = REPLACE(LOWER(:grade), 'grade-', ''))
           AND LOWER(subject) = LOWER(:subject)
           AND (:strand = '' OR LOWER(strand_name) = LOWER(:strand))
         ORDER BY strand_id, sub_strand_id
@@ -5103,7 +5103,7 @@ def factory_queue_work(
     rows = fetch_all(
         """
         SELECT strand_name, sub_strand_name FROM curriculum_substrands
-        WHERE (grade = :grade OR grade = :alt_grade)
+        WHERE (REPLACE(LOWER(grade), 'grade-', '') = REPLACE(LOWER(:grade), 'grade-', ''))
           AND LOWER(subject) = LOWER(:subject)
           AND (:strand = '' OR LOWER(strand_name) = LOWER(:strand))
         ORDER BY strand_id, sub_strand_id
@@ -5191,7 +5191,7 @@ def factory_queue_substrands(
             for r in (fetch_all(
                 """
                 SELECT DISTINCT strand_name FROM curriculum_substrands
-                WHERE (grade = :grade OR grade = :alt_grade)
+                WHERE (REPLACE(LOWER(grade), 'grade-', '') = REPLACE(LOWER(:grade), 'grade-', ''))
                   AND LOWER(subject) = LOWER(:subject)
                 """,
                 {"grade": payload.grade,
@@ -5385,7 +5385,7 @@ def factory_generate_material(
     substrand_row = fetch_one(
         """
         SELECT slos FROM curriculum_substrands
-        WHERE (grade = :grade OR grade = :alt_grade)
+        WHERE (REPLACE(LOWER(grade), 'grade-', '') = REPLACE(LOWER(:grade), 'grade-', ''))
           AND LOWER(subject) = LOWER(:subject)
           AND LOWER(sub_strand_name) = LOWER(:sub_strand)
         LIMIT 1
@@ -5786,7 +5786,7 @@ def factory_auto_run(
         rows = fetch_all(
             """
             SELECT DISTINCT subject FROM curriculum_designs
-            WHERE (grade = :grade OR grade = :alt_grade) AND subject <> ''
+            WHERE (REPLACE(LOWER(grade), 'grade-', '') = REPLACE(LOWER(:grade), 'grade-', '')) AND subject <> ''
             ORDER BY subject
             """,
             {"grade": payload.grade,
@@ -6610,7 +6610,7 @@ def _substrand_design_block(grade: str, subject: str, sub_strand: str) -> tuple[
                values, assessment_rubrics, pertinent_contemporary_issues,
                link_to_other_learning_areas, allocated_hours, source_pages
         FROM curriculum_substrands
-        WHERE (grade = :grade OR grade = :alt_grade)
+        WHERE (REPLACE(LOWER(grade), 'grade-', '') = REPLACE(LOWER(:grade), 'grade-', ''))
           AND LOWER(subject) = LOWER(:subject)
           AND LOWER(sub_strand_name) = LOWER(:sub_strand)
         LIMIT 1
@@ -7142,7 +7142,7 @@ def factory_read_structure(
                pertinent_contemporary_issues, link_to_other_learning_areas,
                source_pages, updated_at
         FROM curriculum_substrands
-        WHERE (grade = :grade OR grade = :alt_grade) AND LOWER(subject) = LOWER(:subject)
+        WHERE (REPLACE(LOWER(grade), 'grade-', '') = REPLACE(LOWER(:grade), 'grade-', '')) AND LOWER(subject) = LOWER(:subject)
         ORDER BY strand_id ASC, sub_strand_id ASC
         """,
         params,
@@ -7153,7 +7153,7 @@ def factory_read_structure(
     design = fetch_one(
         """
         SELECT design_id, metadata FROM curriculum_designs
-        WHERE (grade = :grade OR grade = :alt_grade) AND LOWER(subject) = LOWER(:subject)
+        WHERE (REPLACE(LOWER(grade), 'grade-', '') = REPLACE(LOWER(:grade), 'grade-', '')) AND LOWER(subject) = LOWER(:subject)
           AND metadata ? 'strands'
         ORDER BY updated_at DESC LIMIT 1
         """,
@@ -7305,7 +7305,7 @@ def factory_save_strands(
         for r in (fetch_all(
             """
             SELECT DISTINCT strand_name FROM curriculum_substrands
-            WHERE (grade = :grade OR grade = :alt_grade)
+            WHERE (REPLACE(LOWER(grade), 'grade-', '') = REPLACE(LOWER(:grade), 'grade-', ''))
               AND LOWER(subject) = LOWER(:subject)
             """,
             {"grade": payload.grade,

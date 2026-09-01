@@ -216,7 +216,7 @@ def _remove_strand_from_design(
     row = fetch_one(
         """
         SELECT design_id, metadata FROM curriculum_designs
-        WHERE (grade = :grade OR grade = :alt_grade)
+        WHERE (REPLACE(LOWER(grade), 'grade-', '') = REPLACE(LOWER(:grade), 'grade-', ''))
           AND LOWER(subject) = LOWER(:subject)
         ORDER BY updated_at DESC LIMIT 1
         """,

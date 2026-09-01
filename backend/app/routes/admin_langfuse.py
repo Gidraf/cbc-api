@@ -87,7 +87,7 @@ def grade_diagnostics(
                (SELECT COUNT(*) FROM curriculum_substrands s
                  WHERE s.design_id = d.design_id) AS substrand_count
         FROM curriculum_designs d
-        WHERE d.grade = :grade OR d.grade = :alt_grade
+        WHERE (REPLACE(LOWER(d.grade), 'grade-', '') = REPLACE(LOWER(:grade), 'grade-', ''))
         ORDER BY d.subject
         """,
         {"grade": grade_slug, "alt_grade": alt_grade},
@@ -97,7 +97,7 @@ def grade_diagnostics(
         """
         SELECT subject, strand_name, COUNT(*) AS n
         FROM curriculum_substrands
-        WHERE grade = :grade OR grade = :alt_grade
+        WHERE (REPLACE(LOWER(grade), 'grade-', '') = REPLACE(LOWER(:grade), 'grade-', ''))
         GROUP BY subject, strand_name
         ORDER BY subject, strand_name
         """,
@@ -111,7 +111,7 @@ def grade_diagnostics(
         SELECT s.grade AS substrand_grade, d.grade AS design_grade, COUNT(*) AS n
         FROM curriculum_substrands s
         JOIN curriculum_designs d ON d.design_id = s.design_id
-        WHERE (d.grade = :grade OR d.grade = :alt_grade) AND s.grade <> d.grade
+        WHERE (REPLACE(LOWER(d.grade), 'grade-', '') = REPLACE(LOWER(:grade), 'grade-', '')) AND s.grade <> d.grade
         GROUP BY s.grade, d.grade
         """,
         {"grade": grade_slug, "alt_grade": alt_grade},
@@ -120,7 +120,7 @@ def grade_diagnostics(
     tracked = fetch_all(
         """
         SELECT item_id, source_item_id, status, title, resolved_subject, design_id
-        FROM dataset_ingest_status WHERE grade = :grade ORDER BY title
+        FROM dataset_ingest_status WHERE REPLACE(LOWER(grade), 'grade-', '') = REPLACE(LOWER(:grade), 'grade-', '') ORDER BY title
         """,
         {"grade": grade_slug},
     )
@@ -147,7 +147,7 @@ def grade_diagnostics(
             "question_dna": count("question_dna", "curriculum_link"),
         },
         "tracked_items": tracked,
-        "reads_substrands_from": "curriculum_substrands WHERE grade = :grade OR grade = :alt_grade",
+        "reads_substrands_from": "curriculum_substrands WHERE (REPLACE(LOWER(grade), 'grade-', '') = REPLACE(LOWER(:grade), 'grade-', ''))",
     }
 
 
@@ -511,7 +511,7 @@ def inspect_dataset_deletion(
     alt_grade = grade_slug.replace("grade-", "")
 
     # 1. Inspect curriculum substrands
-    query = "SELECT strand_name, sub_strand_name, subject FROM curriculum_substrands WHERE (grade = :grade OR grade = :alt_grade)"
+    query = "SELECT strand_name, sub_strand_name, subject FROM curriculum_substrands WHERE (REPLACE(LOWER(grade), 'grade-', '') = REPLACE(LOWER(:grade), 'grade-', ''))"
     params: dict[str, Any] = {"grade": grade_slug, "alt_grade": alt_grade}
     if subject:
         query += " AND LOWER(subject) = LOWER(:subject)"
@@ -631,7 +631,7 @@ def clear_grade_dataset(
     strand = payload.strand.strip() if payload.strand else None
 
     # Clear dataset definitions
-    cs_query = "DELETE FROM curriculum_substrands WHERE (grade = :grade OR grade = :alt_grade)"
+    cs_query = "DELETE FROM curriculum_substrands WHERE (REPLACE(LOWER(grade), 'grade-', '') = REPLACE(LOWER(:grade), 'grade-', ''))"
     cs_params: dict[str, Any] = {"grade": grade_slug, "alt_grade": alt_grade}
     if subject:
         cs_query += " AND LOWER(subject) = LOWER(:subject)"
@@ -641,7 +641,7 @@ def clear_grade_dataset(
         cs_params["strand"] = strand
     execute(cs_query, cs_params)
 
-    cd_query = "DELETE FROM curriculum_designs WHERE (grade = :grade OR grade = :alt_grade)"
+    cd_query = "DELETE FROM curriculum_designs WHERE (REPLACE(LOWER(grade), 'grade-', '') = REPLACE(LOWER(:grade), 'grade-', ''))"
     cd_params: dict[str, Any] = {"grade": grade_slug, "alt_grade": alt_grade}
     if subject:
         cd_query += " AND LOWER(subject) = LOWER(:subject)"
@@ -728,7 +728,7 @@ def get_dataset_progress_report(
         for row in fetch_all(
             """
             SELECT subject, sub_strand_name, status FROM substrand_media
-            WHERE (grade = :grade OR grade = :alt_grade)
+            WHERE (REPLACE(LOWER(grade), 'grade-', '') = REPLACE(LOWER(:grade), 'grade-', ''))
             """,
             {"grade": grade_slug, "alt_grade": alt_grade},
         ) or []:
@@ -787,7 +787,7 @@ def get_dataset_progress_report(
     cs_query = """
         SELECT subject, strand_name, sub_strand_name, allocated_hours, required_diagrams, experiments, slos
         FROM curriculum_substrands
-        WHERE (grade = :grade OR grade = :alt_grade)
+        WHERE (REPLACE(LOWER(grade), 'grade-', '') = REPLACE(LOWER(:grade), 'grade-', ''))
     """
     cs_params: dict[str, Any] = {"grade": grade_slug, "alt_grade": alt_grade}
     if subject:
@@ -809,7 +809,7 @@ def get_dataset_progress_report(
     cd_query = """
         SELECT subject, metadata, raw_payload
         FROM curriculum_designs
-        WHERE (grade = :grade OR grade = :alt_grade)
+        WHERE (REPLACE(LOWER(grade), 'grade-', '') = REPLACE(LOWER(:grade), 'grade-', ''))
     """
     cd_params: dict[str, Any] = {"grade": grade_slug, "alt_grade": alt_grade}
     if subject:

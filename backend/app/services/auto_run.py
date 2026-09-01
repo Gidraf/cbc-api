@@ -173,7 +173,8 @@ def get(run_id: str = "", grade: str = "") -> AutoRun | None:
                         {"run_id": run_id})
     else:
         row = fetch_one(
-            "SELECT * FROM auto_runs WHERE (:grade = '' OR grade = :grade) "
+            "SELECT * FROM auto_runs WHERE (:grade = '' OR "
+            "REPLACE(LOWER(grade), 'grade-', '') = REPLACE(LOWER(:grade), 'grade-', '')) "
             "ORDER BY started_at DESC LIMIT 1",
             {"grade": grade},
         )

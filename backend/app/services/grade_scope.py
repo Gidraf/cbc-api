@@ -196,7 +196,7 @@ def notes_for(grade: str, subject: str) -> list[str]:
         from ..infra.db import fetch_one
 
         row = fetch_one(
-            "SELECT facts FROM grade_scope WHERE grade = :grade AND LOWER(subject) = LOWER(:subject)",
+            "SELECT facts FROM grade_scope WHERE REPLACE(LOWER(grade), 'grade-', '') = REPLACE(LOWER(:grade), 'grade-', '') AND LOWER(subject) = LOWER(:subject)",
             {"grade": grade, "subject": subject},
         )
     except Exception as exc:  # noqa: BLE001

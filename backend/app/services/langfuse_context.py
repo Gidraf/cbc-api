@@ -449,7 +449,7 @@ class LangfuseContextService:
         design_rows = fetch_all(
             """
             SELECT metadata, raw_payload FROM curriculum_designs
-            WHERE (grade = :grade OR grade = :alt_grade) AND LOWER(subject) = LOWER(:subject)
+            WHERE (REPLACE(LOWER(grade), 'grade-', '') = REPLACE(LOWER(:grade), 'grade-', '')) AND LOWER(subject) = LOWER(:subject)
             """,
             {"grade": grade_slug, "alt_grade": alt_grade, "subject": subject},
         )
@@ -839,7 +839,7 @@ class LangfuseContextService:
             """
             SELECT DISTINCT subject, subject_code, essence_statement
             FROM curriculum_designs
-            WHERE grade = :grade
+            WHERE REPLACE(LOWER(grade), 'grade-', '') = REPLACE(LOWER(:grade), 'grade-', '')
             ORDER BY subject ASC
             """,
             {"grade": grade_slug},
@@ -849,7 +849,7 @@ class LangfuseContextService:
                 """
                 SELECT DISTINCT subject, '' as subject_code, '' as essence_statement
                 FROM curriculum_substrands
-                WHERE grade = :grade
+                WHERE REPLACE(LOWER(grade), 'grade-', '') = REPLACE(LOWER(:grade), 'grade-', '')
                 ORDER BY subject ASC
                 """,
                 {"grade": grade_slug},

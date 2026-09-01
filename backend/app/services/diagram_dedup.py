@@ -206,7 +206,7 @@ class DiagramDeduplicator:
             existing = fetch_one(
                 """
                 SELECT * FROM diagram_registry
-                WHERE semantic_key = :skey AND grade = :grade AND LOWER(subject) = LOWER(:subject)
+                WHERE semantic_key = :skey AND REPLACE(LOWER(grade), 'grade-', '') = REPLACE(LOWER(:grade), 'grade-', '') AND LOWER(subject) = LOWER(:subject)
                 LIMIT 1
                 """,
                 {"skey": semantic_key, "grade": meta.get("grade", ""), "subject": meta.get("subject", "")},

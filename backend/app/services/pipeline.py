@@ -63,7 +63,7 @@ class PipelineService:
                    learning_experiences, key_inquiry_questions, required_diagrams,
                    experiments, prompt_context
             FROM curriculum_substrands
-            WHERE grade = :grade AND LOWER(subject) = LOWER(:subject) AND (
+            WHERE REPLACE(LOWER(grade), 'grade-', '') = REPLACE(LOWER(:grade), 'grade-', '') AND LOWER(subject) = LOWER(:subject) AND (
                 LOWER(sub_strand_name) LIKE LOWER(:sub) OR LOWER(sub_strand_id) = LOWER(:sub)
             )
             LIMIT 1

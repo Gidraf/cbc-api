@@ -111,7 +111,7 @@ def enqueue(
     duplicate = fetch_one(
         """
         SELECT job_id FROM jobs
-        WHERE kind = :kind AND grade = :grade AND LOWER(subject) = LOWER(:subject)
+        WHERE kind = :kind AND REPLACE(LOWER(grade), 'grade-', '') = REPLACE(LOWER(:grade), 'grade-', '') AND LOWER(subject) = LOWER(:subject)
           AND strand = :strand AND sub_strand = :sub_strand
           AND COALESCE(payload->>'artifact_id', '') = :artifact_id
           AND COALESCE(payload->>'layer', '') = :layer
@@ -196,7 +196,7 @@ def consume(job_id: str = "", *, kind: str = "", grade: str = "", subject: str =
               "strand": strand}
     clause = (
         "consumed_at IS NULL AND (job_id = :job_id OR (:job_id = '' "
-        "AND kind = :kind AND (grade = :grade OR grade = :alt_grade) "
+        "AND kind = :kind AND (REPLACE(LOWER(grade), 'grade-', '') = REPLACE(LOWER(:grade), 'grade-', '')) "
         "AND LOWER(subject) = LOWER(:subject) AND LOWER(strand) = LOWER(:strand)))"
     )
     row = fetch_one(f"SELECT COUNT(*) AS n FROM jobs WHERE {clause}", params)
@@ -215,7 +215,7 @@ def drafts(kind: str, grade: str = "", subject: str = "", limit: int = 100) -> l
     where = ["kind = :kind", "status = 'done'", "consumed_at IS NULL"]
     params: dict[str, Any] = {"kind": kind, "limit": max(1, min(limit, 200))}
     if grade:
-        where.append("(grade = :grade OR grade = :alt_grade)")
+        where.append("(REPLACE(LOWER(grade), 'grade-', '') = REPLACE(LOWER(:grade), 'grade-', ''))")
         params["grade"] = grade
         params["alt_grade"] = grade.replace("grade-", "")
     if subject:
@@ -254,7 +254,7 @@ def retry(job_id: str = "", grade: str = "", subject: str = "") -> list[str]:
         where.append("job_id = :job_id")
         params["job_id"] = job_id
     if grade:
-        where.append("(grade = :grade OR grade = :alt_grade)")
+        where.append("(REPLACE(LOWER(grade), 'grade-', '') = REPLACE(LOWER(:grade), 'grade-', ''))")
         params["grade"] = grade
         params["alt_grade"] = grade.replace("grade-", "")
     if subject:
@@ -567,7 +567,7 @@ def status(
         where.append("batch_id = :batch_id")
         params["batch_id"] = batch_id
     if grade:
-        where.append("(grade = :grade OR grade = :alt_grade)")
+        where.append("(REPLACE(LOWER(grade), 'grade-', '') = REPLACE(LOWER(:grade), 'grade-', ''))")
         params["grade"] = grade
         params["alt_grade"] = grade.replace("grade-", "")
     if subject:
