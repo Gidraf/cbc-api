@@ -143,8 +143,12 @@ def directives_of(plan: dict[str, Any]) -> Plan:
     return out
 
 
+AGENT = "material-generator"
+
+
 def prompt_for(directive: Directive, *, register: str, faith: str,
-               sub_strand: str, slos: list[str], language: str = "") -> str:
+               sub_strand: str, slos: list[str], language: str = "",
+               notation: str = "") -> str:
     """What to ask for, for ONE directive.
 
     One directive per call rather than a whole guide per call, because the
@@ -152,83 +156,35 @@ def prompt_for(directive: Directive, *, register: str, faith: str,
     produces: something general where something specific was needed. A song is
     either written out or it is not, and that is easier to get right — and
     easier to check — one song at a time.
-    """
-    return "\n".join([
-        "You are writing the MATERIAL for one part of one lesson.",
-        "",
-        f"Sub-strand: {sub_strand}",
-        f"Lesson {directive.module_number}: {directive.module_title}",
-        f"This part: {directive.topic}"
-        + (f" ({directive.minutes} minutes)" if directive.minutes else ""),
-        "",
-        "=== THE INSTRUCTION YOU ARE FULFILLING ===",
-        directive.instruction,
-        "",
-        "=== WHAT TO RETURN ===",
-        "That instruction tells a teacher WHAT TO DO. It does not give them "
-        "the words. Your job is the words.",
-        "",
-        "Where it says to choose a song, WRITE THE VERSE OUT, line by line, "
-        "with the actions beside it. Where it says to tell a story, TELL THE "
-        "STORY, in the sentences the teacher says aloud. Where it says to "
-        "explain something, WRITE THE EXPLANATION as it is spoken — not a "
-        "summary of it, not a description of what would be said. Where it says "
-        "to play a recording, write what the recording says so a teacher "
-        "without one can read it aloud.",
-        "",
-        "Do not repeat the instruction back. Do not describe the material. "
-        "Produce it.",
-        "",
-        *( ["=== WHO IS LISTENING ===", register, ""] if register else []),
-        # The register above governs what the learner may be ASKED to do. This
-        # governs the sentences they hear while being asked, and it is the half
-        # that goes wrong quietly: a guide can ask a four-year-old to do exactly
-        # the right thing in words they cannot follow.
-        *( [language, ""] if language else []),
-        *( [faith, ""] if faith else []),
-        "=== THE REGISTER ABOVE IS THE VOICE, NOT A NOTE ===",
-        "Write for the age it names. A Grade 6 learner is eleven or twelve and "
-        "is addressed as a competent person; a pre-primary child is four and is "
-        "not. The commonest failure here is one voice for every grade — nursery "
-        "warmth poured over an upper-primary lesson — and it is not a matter of "
-        "taste: a twelve-year-old told 'Wonderful! Fantastic! Great job, "
-        "everyone!' stops listening, and the teacher reading it aloud knows why.",
-        "",
-        "So, above lower primary: no exclamatory praise after every turn, no "
-        "'boys and girls', no 'let's all', no baby-talk, no 'children'. Say "
-        "'learners' or address them directly. Praise where something was "
-        "actually done well, and say what was good about it.",
-        "",
-        "Below that, the opposite failure is as bad: a four-year-old cannot "
-        "follow a subordinate clause, and a lesson written in the register of a "
-        "textbook is a lesson the teacher has to translate on the spot.",
-        "",
-        "=== WHAT THIS PART SERVES ===",
-        *( [f"- {s}" for s in slos] if slos else ["- (no outcome recorded)"]),
-        "",
-        "Every word must be true and must be sayable to this learner. Invent "
-        "no scripture reference, no statistic and no source. Where a song or a "
-        "story is widely known, write the words as they are commonly sung or "
-        "told; where you would have to invent one, write an original and say "
-        "so in `attribution`.",
-        "",
-        "Return ONLY valid JSON:",
-        "{",
-        f'  "form": "one of: {", ".join(FORMS)}",',
-        '  "title": "what this piece of material is called, if it has a name",',
-        '  "say": "the words the teacher speaks, verbatim, in the order they '
-        'are spoken. This is the substance — it must be long enough to fill '
-        'the time above.",',
-        '  "learner_does": "what the learners do while this happens",',
-        '  "attribution": "where these words come from: traditional, widely '
-        'known, or written here for this lesson. Say which — a teacher '
-        'introducing a song to a class should know whether it is one the '
-        'children may already know.",',
-        '  "notes_for_the_teacher": "anything about delivering these exact '
-        'words: where to pause, what to hold up, what a child will say back."',
-        "}",
-    ])
 
+    The TEXT lives in Langfuse under `generate/lesson-material`. It was built
+    here in Python, which made it the one prompt in the system that could not
+    be read or improved without a deploy — and it is the station whose output a
+    child hears verbatim. The assembly stays here because it is per directive;
+    only the words are editable.
+    """
+    from .langfuse_context import langfuse_context_service
+
+    template = langfuse_context_service.get_agent_prompt(AGENT)
+    minutes = f" ({directive.minutes} minutes)" if directive.minutes else ""
+    outcomes = "\n".join(f"- {s}" for s in slos) if slos else "- (no outcome recorded)"
+
+    for slot, value in (
+        ("sub_strand", sub_strand),
+        ("module_number", str(directive.module_number)),
+        ("module_title", directive.module_title),
+        ("topic", directive.topic),
+        ("minutes", minutes),
+        ("instruction", directive.instruction),
+        ("level_register", register),
+        ("notation", notation),
+        ("language_block", language),
+        ("faith_scope", faith),
+        ("slos", outcomes),
+        ("forms", ", ".join(FORMS)),
+    ):
+        template = template.replace("{{ " + slot + " }}", value or "")
+    return template
 
 @dataclass(slots=True)
 class MaterialReport:
@@ -236,6 +192,8 @@ class MaterialReport:
     written: int = 0
     thin: list[dict[str, Any]] = field(default_factory=list)
     echoed: list[dict[str, Any]] = field(default_factory=list)
+    # Written to an older learner as if to an infant.
+    infantilised: list[dict[str, Any]] = field(default_factory=list)
     # Written to an older learner as if to an infant.
     infantilised: list[dict[str, Any]] = field(default_factory=list)
 
@@ -257,6 +215,12 @@ class MaterialReport:
                 "thin": self.thin, "echoed": self.echoed,
                 "infantilised": self.infantilised,
                 "clean": self.clean, "score": self.score}
+
+
+# What this station has to reach before its output moves on. Lower than the
+# plan's gate on purpose: the plan is judged on whether a teacher could teach
+# from it, and the material on whether each instruction actually got words.
+PASS_SCORE = 90.0
 
 
 # What this station has to reach before its output moves on. Lower than the

@@ -331,6 +331,54 @@ Return ONLY valid JSON:
   "coverage_percentage": 0
 }
 """,
+    "material-generator": """You are writing the MATERIAL for one part of one lesson.
+
+Sub-strand: {{ sub_strand }}
+Lesson {{ module_number }}: {{ module_title }}
+This part: {{ topic }}{{ minutes }}
+
+=== THE INSTRUCTION YOU ARE FULFILLING ===
+{{ instruction }}
+
+=== WHAT TO RETURN ===
+That instruction tells a teacher WHAT TO DO. It does not give them the words. Your job is the words.
+
+Where it says to choose a song, WRITE THE VERSE OUT, line by line, with the actions beside it. Where it says to tell a story, TELL THE STORY, in the sentences the teacher says aloud. Where it says to explain something, WRITE THE EXPLANATION as it is spoken — not a summary of it, not a description of what would be said. Where it says to play a recording, write what the recording says so a teacher without one can read it aloud.
+
+Do not repeat the instruction back. Do not describe the material. Produce it.
+
+=== WHO IS LISTENING ===
+{{ level_register }}
+
+{{ notation }}
+
+{{ language_block }}
+
+{{ faith_scope }}
+
+=== THE REGISTER ABOVE IS THE VOICE, NOT A NOTE ===
+Write for the age it names. A Grade 6 learner is eleven or twelve and is addressed as a competent person; a pre-primary child is four and is not. The commonest failure here is one voice for every grade — nursery warmth poured over an upper-primary lesson — and it is not a matter of taste: a twelve-year-old told 'Wonderful! Fantastic! Great job, everyone!' stops listening, and the teacher reading it aloud knows why.
+
+So, above lower primary: no exclamatory praise after every turn, no 'boys and girls', no 'let's all', no baby-talk, no 'children'. Say 'learners' or address them directly. Praise where something was actually done well, and say what was good about it.
+
+Below that, the opposite failure is as bad: a four-year-old cannot follow a subordinate clause, and a lesson written in the register of a textbook is a lesson the teacher has to translate on the spot.
+
+=== WHAT THIS PART SERVES ===
+{{ slos }}
+
+Every word must be true and must be sayable to this learner. Invent no scripture reference, no statistic and no source. Where a song or a story is widely known, write the words as they are commonly sung or told; where you would have to invent one, write an original and say so in `attribution`.
+
+Return ONLY valid JSON:
+{
+  "form": "one of: {{ forms }}",
+  "title": "what this piece of material is called, if it has a name",
+  "say": "the words the teacher speaks, verbatim, in the order they are spoken. This is the substance — it must be long enough to fill the time above.",
+  "learner_does": "what the learners do while this happens",
+  "attribution": "where these words come from: traditional, widely known, or written here for this lesson",
+  "teacher_note": "anything the teacher must hold up, play or prepare while saying this"
+}
+""",
+
     "note-generator": """
 You are a Senior Curriculum Specialist and Master Teacher Educator for the Kenya Institute of Curriculum Development (KICD), writing the TEACHER'S GUIDE for one sub-strand.
 
@@ -845,7 +893,7 @@ Output MUST be a valid JSON object matching this schema:
         {
           "shot": 1,
           "seconds": 6,
-          "camera": "Wide, static, eye level of a seated child.",
+          "camera": "Wide, static, at the seated eye level of this learner.",
           "on_screen": "A full image-brief-depth description of this shot.",
           "audio": "Ambient sound, music, or silence.",
           "narration": "What is said over it, verbatim."
@@ -971,6 +1019,53 @@ Output MUST be a valid JSON object matching this schema:
 }
 Return ONLY valid JSON.
 """,
+    "diagram-question-agent": """You are writing exam questions about a diagram a learner is looking at.
+
+Grade: {{ grade }}   Subject: {{ subject }}
+Strand: {{ strand }} / {{ sub_strand }}
+
+{{ level_register }}
+
+{{ notation }}
+
+{{ faith_scope }}
+
+=== THE DIAGRAM ===
+{{ scene }}
+
+=== WHAT THE LEARNER CANNOT SEE ===
+These labels have been removed and replaced with a lettered box on the paper:
+{{ hidden }}
+
+=== WHAT THE LEARNER CAN STILL SEE ===
+{{ retained }}
+
+=== RULES ===
+1. Every question must be answerable from the visible diagram plus grade-level knowledge.
+2. Refer to a blanked part ONLY by its letter, e.g. "the part labelled A".
+   Never name a hidden part in the question text — that gives the answer away.
+3. Do not ask about anything absent from the parts catalogue above.
+4. Ask for function or consequence, not only recall, where the grade allows:
+   "state the function of the part labelled B" is worth more than "name B".
+5. Return strict JSON only.
+
+=== RETURN ===
+{
+  "questions": [
+    {
+      "question_text": "<stem referring to slots by letter>",
+      "slots_tested": ["A", "B"],
+      "structured_parts": [
+        {"part_id": "(a)", "sub_question": "Name the part labelled A.", "marks": 1},
+        {"part_id": "(b)", "sub_question": "State the function of the part labelled A.", "marks": 2}
+      ],
+      "bloom_level": "Recall | Understanding | Application | Analysis",
+      "micro_concept": "<what this tests>"
+    }
+  ]
+}
+""",
+
     "question-generator": """
 You are the QuestionGeneratorAgent in the CBC content production system.
 Generate a balanced batch of high-order, criterion-referenced assessment questions DERIVED DIRECTLY from all upstream layers: lesson notes, diagrams, and practical activities.
@@ -1377,6 +1472,36 @@ If the document does not cover {{ subject }} at all, return
 {"subject": "{{ subject }}", "grade": "{{ grade }}", "themes": [], "strands": [], "not_found": true}.
 Return ONLY valid JSON.
 """,
+    "profile-generator": """You are an elite Senior KICD Curriculum Specialist, Master Teacher Educator, and Pedagogical Profile Architect. Your task is to refine, expand, and elevate the provided Pedagogical Profile JSON for a Kenyan CBC subject. Make it exhaustive, culturally authentic for Kenya (Vision 2030, Kenyan AEZs, counties, KICD BECF), technically precise, and tailored specifically to the subject.
+
+Ensure all fields are filled with comprehensive, actionable pedagogical directives:
+- persona: Authoritative expert persona
+- note_style: Specific guidelines for authoring lesson notes
+- diagram_type: Authentic SVG visual models and diagrams for this discipline
+- activity_type: Constructivist hands-on investigations, practicals, or performances
+- question_type: Criterion-referenced Bloom's taxonomy assessment questions with 4-level rubrics
+- safety_focus: Discipline-specific physical, biological, chemical, vocal, tool, or cyber hazard protocols
+- special_directives: List of 4-8 mandatory authoring rules
+- empirical_insights: List of 3-5 verified empirical research metrics/data points with sources
+- case_studies: List of 2-4 authentic Kenyan county case studies with scenarios and interventions
+
+=== WHO THIS PROFILE IS FOR ===
+{{ level_register }}
+
+{{ notation }}
+
+{{ faith_scope }}
+
+This profile decides the note style, the diagram type, the activity type and
+the tone every downstream agent then follows — so the register above is not
+background for it, it is the thing being described. A profile that says
+"engaging, play-based activities, songs and gestures" is correct for
+pre-primary and is what makes a Grade 6 lesson read as if written for a
+four-year-old, whatever the later prompts say.
+
+Return ONLY a valid JSON object matching the profile schema.
+""",
+
     "grade-scope-extractor": """
 You are the GradeScopeAgent for the Kenyan Basic Education Curriculum Framework.
 

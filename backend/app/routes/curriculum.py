@@ -5426,12 +5426,17 @@ def factory_generate_material(
     register = register_block(payload.grade)
     language = language_block(payload.grade)
     faith = faith_block(payload.subject)
+    # The maths, chemistry and music blocks. The words a child hears are the
+    # one place a mis-set fraction or an unbalanced equation is read ALOUD.
+    from ..services.notation import block_for as _notation_block
+
+    notation = _notation_block(payload.subject, grade=payload.grade)
 
     written: list[dict[str, Any]] = []
     for i, directive in enumerate(plan.directives, start=1):
         messages = [{"role": "user", "content": lesson_material.prompt_for(
             directive, register=register, faith=faith, language=language,
-            sub_strand=payload.sub_strand, slos=slos)}]
+            notation=notation, sub_strand=payload.sub_strand, slos=slos)}]
         if payload.custom_instructions:
             messages.append({"role": "user",
                              "content": payload.custom_instructions})

@@ -474,5 +474,20 @@ def catalogue() -> list[dict[str, Any]]:
 
 
 def seed_prompts() -> dict[str, str]:
-    """Each fragment as its own Langfuse prompt, under `fragment/<name>`."""
-    return {f.langfuse_name: f.body for f in FRAGMENTS}
+    """Each fragment as its own Langfuse prompt, under `fragment/<name>`.
+
+    The notation blocks are fragments too — how to write a fraction, balance an
+    equation, specify a figure — and they were the last prompt text in the
+    system that lived only in Python. They are injected into six agents, so an
+    error in one of them is an error in six places and none of them editable.
+    """
+    from . import notation
+
+    out = {f.langfuse_name: f.body for f in FRAGMENTS}
+    out.update({
+        "fragment/notation-mathematics": notation.LATEX_BLOCK,
+        "fragment/notation-chemistry": notation.CHEMISTRY_BLOCK,
+        "fragment/notation-physics": notation.PHYSICS_BLOCK,
+        "fragment/notation-geometry": notation.GEOMETRY_BLOCK,
+    })
+    return out

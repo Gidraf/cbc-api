@@ -441,23 +441,28 @@ def ai_improve_profile(profile_data: dict[str, Any], instructions: str = "") -> 
     from .llm_client import llm_client
     from .pipeline import pipeline_orchestrator
 
-    system_prompt = (
-        "You are an elite Senior KICD Curriculum Specialist, Master Teacher Educator, and Pedagogical Profile Architect. "
-        "Your task is to refine, expand, and elevate the provided Pedagogical Profile JSON for a Kenyan CBC subject. "
-        "Make it exhaustive, culturally authentic for Kenya (Vision 2030, Kenyan AEZs, counties, KICD BECF), "
-        "technically precise, and tailored specifically to the subject.\n\n"
-        "Ensure all fields are filled with comprehensive, actionable pedagogical directives:\n"
-        "- persona: Authoritative expert persona\n"
-        "- note_style: Specific guidelines for authoring lesson notes\n"
-        "- diagram_type: Authentic SVG visual models and diagrams for this discipline\n"
-        "- activity_type: Constructivist hands-on investigations, practicals, or performances\n"
-        "- question_type: Criterion-referenced Bloom's taxonomy assessment questions with 4-level rubrics\n"
-        "- safety_focus: Discipline-specific physical, biological, chemical, vocal, tool, or cyber hazard protocols\n"
-        "- special_directives: List of 4-8 mandatory authoring rules\n"
-        "- empirical_insights: List of 3-5 verified empirical research metrics/data points with sources\n"
-        "- case_studies: List of 2-4 authentic Kenyan county case studies with scenarios and interventions\n\n"
-        "Return ONLY a valid JSON object matching the profile schema."
-    )
+    # The text lives in Langfuse under `extract/teaching-profile`. It was the
+    # persona and the house style for every subject, written in Python where
+    # nobody could read it — and it is what decides the note style, the diagram
+    # type and the register directives every downstream agent then follows.
+    from .langfuse_context import langfuse_context_service
+
+    from .faith_scope import prompt_block as _faith_block
+    from .level_register import register_block as _register_block
+    from .notation import block_for as _notation_block
+
+    system_prompt = langfuse_context_service.get_agent_prompt("profile-generator")
+    # From the profile being improved: it is the profile FOR a subject at a
+    # grade, and improving it without either is how a Grade 6 profile comes
+    # back describing songs and gestures.
+    grade = str(profile_data.get("grade") or "")
+    subject = str(profile_data.get("subject") or profile_data.get("content_type") or "")
+    for slot, value in (
+        ("level_register", _register_block(grade) if grade else ""),
+        ("faith_scope", _faith_block(subject) if subject else ""),
+        ("notation", _notation_block(subject, grade=grade) if subject else ""),
+    ):
+        system_prompt = system_prompt.replace("{{ " + slot + " }}", value or "")
 
     user_prompt = (
         f"CURRENT PEDAGOGICAL PROFILE TO ENHANCE:\n{json.dumps(profile_data, indent=2)}\n\n"

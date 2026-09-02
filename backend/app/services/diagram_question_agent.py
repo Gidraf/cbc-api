@@ -47,6 +47,9 @@ def _ground_truth_parts(plan: dict[str, Any]) -> dict[str, dict[str, Any]]:
     return {str(fact["slot"]): fact for fact in (plan.get("removed_facts") or []) if fact.get("slot")}
 
 
+AGENT = "diagram-question-agent"
+
+
 def build_agent_prompt(
     diagram: dict[str, Any],
     plan: dict[str, Any],
@@ -71,42 +74,32 @@ def build_agent_prompt(
         for part in plan.get("retained_parts") or []
     ) or "  (nothing else is labelled)"
 
-    return (
-        "You are writing exam questions about a diagram a learner is looking at.\n\n"
-        f"Grade: {ctx.get('grade', '')}   Subject: {ctx.get('subject', '')}\n"
-        f"Strand: {ctx.get('strand', '')} / {ctx.get('sub_strand', '')}\n\n"
-        "=== THE DIAGRAM ===\n"
-        f"{describe_scene_for_prompt(scene)}\n\n"
-        "=== WHAT THE LEARNER CANNOT SEE ===\n"
-        "These labels have been removed and replaced with a lettered box on the paper:\n"
-        f"{hidden_lines}\n\n"
-        "=== WHAT THE LEARNER CAN STILL SEE ===\n"
-        f"{retained_lines}\n\n"
-        "=== RULES ===\n"
-        "1. Every question must be answerable from the visible diagram plus grade-level knowledge.\n"
-        "2. Refer to a blanked part ONLY by its letter, e.g. \"the part labelled A\".\n"
-        "   Never name a hidden part in the question text — that gives the answer away.\n"
-        "3. Do not ask about anything absent from the parts catalogue above.\n"
-        "4. Ask for function or consequence, not only recall, where the grade allows:\n"
-        "   \"state the function of the part labelled B\" is worth more than \"name B\".\n"
-        "5. Return strict JSON only.\n\n"
-        "=== RETURN ===\n"
-        "{\n"
-        '  "questions": [\n'
-        "    {\n"
-        '      "question_text": "<stem referring to slots by letter>",\n'
-        '      "slots_tested": ["A", "B"],\n'
-        '      "structured_parts": [\n'
-        '        {"part_id": "(a)", "sub_question": "Name the part labelled A.", "marks": 1},\n'
-        '        {"part_id": "(b)", "sub_question": "State the function of the part labelled A.", "marks": 2}\n'
-        "      ],\n"
-        '      "bloom_level": "Recall | Understanding | Application | Analysis",\n'
-        '      "micro_concept": "<what this tests>"\n'
-        "    }\n"
-        "  ]\n"
-        "}\n"
-    )
+    from .langfuse_context import langfuse_context_service
+    from .faith_scope import prompt_block as faith_block
+    from .level_register import register_block
+    from .notation import block_for as notation_block
 
+    grade = str(ctx.get("grade", ""))
+    subject = str(ctx.get("subject", ""))
+    template = langfuse_context_service.get_agent_prompt(AGENT)
+    for slot, value in (
+        ("grade", grade),
+        ("subject", subject),
+        ("strand", str(ctx.get("strand", ""))),
+        ("sub_strand", str(ctx.get("sub_strand", ""))),
+        # Was absent entirely: the questions were written with no statement of
+        # who is answering them, so a Grade 2 diagram and a Grade 11 one were
+        # asked about in the same words.
+        ("level_register", register_block(grade) if grade else ""),
+        ("notation", notation_block(subject, grade=grade) if subject else ""),
+        # A diagram question in CRE must not reach for another faith's imagery.
+        ("faith_scope", faith_block(subject) if subject else ""),
+        ("scene", describe_scene_for_prompt(scene)),
+        ("hidden", hidden_lines),
+        ("retained", retained_lines),
+    ):
+        template = template.replace("{{ " + slot + " }}", value or "")
+    return template
 
 def _answer_for(fact: dict[str, Any], sub_question: str) -> str:
     """The model answer for one sub-question, taken from the diagram.

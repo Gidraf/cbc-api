@@ -566,3 +566,47 @@ def test_the_printed_page_does_not_call_them_children() -> None:
     assert '("learner_does", "The learners")' in renderer
     # The comment quotes the old label to explain it; match the code.
     assert '("learner_does", "The children")' not in renderer
+
+
+def test_no_prompt_fixes_the_audience_in_its_own_output_schema() -> None:
+    """The example in the contract is read last and beats the register above it.
+
+    `"learner_does": "what the children do while this happens"` produced a
+    Grade 6 Arabic page telling its teacher what "the children" do, and
+    `"camera": "Wide, static, eye level of a seated child."` would frame a
+    Grade 11 chemistry video the same way.
+
+    A prompt may still CONTRAST the ages — "a pre-primary child drags one big
+    thing; a senior-secondary learner sets three parameters" is the register
+    being taught, not overridden.
+    """
+    import re
+
+    from app.services.langfuse_seed import SEED_AGENT_PROMPTS
+
+    # Inside a JSON schema example: "key": "...child...".
+    example = re.compile(r'"\w+"\s*:\s*"[^"\n]*\b(child|children)\b[^"\n]*"', re.I)
+    offenders = []
+    for name, text in SEED_AGENT_PROMPTS.items():
+        if "{{ level_register }}" not in text:
+            continue  # not writing for a learner
+        for found in example.finditer(text):
+            offenders.append(f"{name}: {found.group(0)[:70]}")
+    assert not offenders, (
+        "an audience fixed in the output schema overrides {{ level_register }}:\n  "
+        + "\n  ".join(offenders)
+    )
+
+
+def test_the_contrasting_examples_are_left_alone() -> None:
+    """A check that strips those makes every grade sound the same, which is the
+    failure it was written to prevent."""
+    from app.services.langfuse_seed import SEED_AGENT_PROMPTS
+
+    simulations = SEED_AGENT_PROMPTS["simulation-generator"]
+    assert "A pre-primary child drags one" in simulations
+    assert "senior-secondary learner sets three parameters" in simulations
+
+    plan = SEED_AGENT_PROMPTS["note-generator"]
+    assert "a pre-primary child cannot read a worksheet" in plan
+    assert "For senior and tertiary levels it" in plan
