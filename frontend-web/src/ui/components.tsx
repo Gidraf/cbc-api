@@ -732,13 +732,17 @@ export function Td({
   children,
   numeric,
   style,
+  colSpan,
 }: {
   children: React.ReactNode;
   numeric?: boolean;
   style?: React.CSSProperties;
+  /** For a detail row that spans the table — the panel under an item. */
+  colSpan?: number;
 }) {
   return (
     <td
+      colSpan={colSpan}
       style={{
         padding: "var(--s2) var(--s3)",
         borderBottom: "1px solid var(--line-2)",

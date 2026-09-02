@@ -957,3 +957,62 @@ def test_a_dataset_item_is_not_a_pipeline_stage() -> None:
 
     assert "dataset_item" not in curriculum._PIPELINE_HANDLERS
     assert set(curriculum._PIPELINE_HANDLERS) == set(curriculum.PIPELINE_STEPS)
+
+
+# ── seeing the document the ingest actually saw ─────────────────────────────
+
+
+def test_the_text_the_ingest_receives_can_be_read_and_copied() -> None:
+    """"Read but no design" was chased for several sessions by inference: a
+    count is wrong on one screen, so something upstream must be misreading
+    something. The document was never visible."""
+    import inspect
+    from pathlib import Path
+
+    from app.main import app
+    from app.routes import admin_langfuse
+
+    assert "/api/v1/admin/langfuse/datasets/{grade}/items/{item_id}/text" in [
+        getattr(r, "path", "") for r in app.routes
+    ]
+
+    source = inspect.getsource(admin_langfuse.get_item_text)
+    # Nothing is written and nothing is re-run.
+    assert "process_item" not in source
+    assert "_persist_to_db" not in source
+
+    screen = " ".join(
+        (Path(__file__).resolve().parents[2] / "frontend-web/src/views/ItemText.tsx")
+        .read_text().split()
+    )
+    assert "Copy the whole document" in screen
+    assert "Copy the cover" in screen
+    assert "as the ingest receives it" in screen
+
+
+def test_it_shows_the_three_facts_whose_disagreement_is_the_bug() -> None:
+    """The text, the parse, and the design rows that exist right now."""
+    import inspect
+    from pathlib import Path
+
+    from app.routes import admin_langfuse
+
+    source = inspect.getsource(admin_langfuse.get_item_text)
+    assert '"text": text' in source
+    assert '"parsed": parsed' in source
+    # Counted the same way the grade list counts, so the two cannot disagree
+    # for a reason nobody can see.
+    assert "FROM curriculum_designs" in source
+    assert "REPLACE(LOWER(grade), 'grade-', '')" in source
+    # And a design the item CLAIMS that is not there is named.
+    assert '"claimed_but_absent"' in source
+
+    screen = " ".join(
+        (Path(__file__).resolve().parents[2] / "frontend-web/src/views/ItemText.tsx")
+        .read_text().split()
+    )
+    assert "reported success and nothing was written" in screen
+    assert "The row was written and is gone, or was never written" in screen
+    # An empty document would explain everything, so say so rather than showing
+    # an empty box.
+    assert "carries no text at all" in screen

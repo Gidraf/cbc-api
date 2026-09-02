@@ -265,6 +265,113 @@ def process_grade_items(
     }
 
 
+@router.get("/datasets/{grade}/items/{item_id}/text")
+def get_item_text(
+    grade: str,
+    item_id: str,
+    _: AuthContext = Depends(require_roles("admin", "operator", "developer")),
+) -> dict[str, Any]:
+    """The document as the ingest receives it, and what it makes of it.
+
+    "Read but no design" has been chased for several sessions by inference: a
+    count is wrong on one screen, so something upstream must be misreading
+    something. The document the ingest actually saw was never visible, and
+    neither was the gap between what it wrote and what the counter reads.
+
+    All three are here: the text, the parse, and the design rows that exist for
+    this grade right now. Nothing is written and nothing is re-run.
+    """
+    from ..infra.db import fetch_all, fetch_one
+    from ..services import scripture
+    from ..services.curriculum_extractor import (
+        _cover_text, _grade_from_text, curriculum_extractor,
+    )
+    from ..services.dataset_ingest import candidate_items
+    from ..services.grade_order import normalize_grade
+
+    grade_slug = validate_grade_dataset(grade)
+    row = fetch_one(
+        "SELECT * FROM dataset_ingest_status WHERE item_id = :item_id",
+        {"item_id": item_id},
+    ) or {}
+    source_id = str(row.get("source_item_id") or "") or item_id
+
+    item = next(
+        (i for i in candidate_items(row.get("grade") or grade_slug)
+         if str(i.get("id") or "") == source_id),
+        None,
+    )
+    if item is None:
+        raise_api_error(
+            "DATASET_ITEM_NOT_FOUND",
+            f"'{source_id}' is no longer in the Langfuse dataset for "
+            f"{grade_slug}. The tracked row survives a document being removed, "
+            f"which is itself worth knowing.",
+        )
+
+    payload = dict(item.get("input") or {})
+    text = str(item.get("expected_output") or "")
+
+    meta = {"grade": normalize_grade(row.get("grade") or grade_slug),
+            "title": row.get("title", ""), "file_id": row.get("file_id", "")}
+    from_cover, level = _grade_from_text(text, meta)
+    try:
+        design = curriculum_extractor._parse_curriculum_text(text, meta, "preview")
+        parsed = {
+            "subject": design.subject, "grade": design.grade, "level": design.level,
+            "sub_strand_count": len(design.substrands),
+            "strands": sorted({s.strand_name for s in design.substrands if s.strand_name}),
+            "sub_strands": [
+                {"strand": s.strand_name, "name": s.sub_strand_name,
+                 "lessons": s.allocated_hours, "slos": len(s.slos or [])}
+                for s in design.substrands[:60]
+            ],
+            "would_be_design_id": design.design_id,
+        }
+        parse_error = ""
+    except Exception as exc:  # noqa: BLE001
+        parsed, parse_error = {}, f"{type(exc).__name__}: {exc}"
+
+    # What is ACTUALLY in the database for this grade, read the same way the
+    # grade list counts it. The gap between "the ingest said it wrote one" and
+    # "the list shows none" is the whole of the bug being chased.
+    designs = fetch_all(
+        """
+        SELECT design_id, subject, grade, updated_at
+        FROM curriculum_designs
+        WHERE REPLACE(LOWER(grade), 'grade-', '') = REPLACE(LOWER(:grade), 'grade-', '')
+        ORDER BY updated_at DESC LIMIT 40
+        """,
+        {"grade": grade_slug},
+    ) or []
+    claimed = [d for d in ([str(row.get("design_id") or "")] +
+                           list(row.get("design_ids") or [])) if d]
+    stored = {str(d["design_id"]) for d in designs}
+
+    return {
+        "item_id": item_id,
+        "grade": grade_slug,
+        "title": row.get("title", ""),
+        "status": row.get("status", ""),
+        "error": row.get("error", ""),
+        "characters": len(text),
+        "text": text,
+        "input_keys": sorted(payload.keys()),
+        "cover": _cover_text(text)[:1500],
+        "grade_reading": {
+            "read_from_cover": from_cover,
+            "declared_by_dataset": meta["grade"],
+            "level": level,
+        },
+        "parsed": parsed,
+        "parse_error": parse_error,
+        "designs_for_this_grade": designs,
+        "design_ids_claimed": claimed,
+        "claimed_but_absent": [d for d in claimed if d not in stored],
+        "scripture": sorted({str(r) for r in scripture.find(text)}),
+    }
+
+
 @router.post("/datasets/{grade}/uningest")
 def uningest_grade_items(
     grade: str,

@@ -24,6 +24,7 @@ import {
   type DatasetItem,
   type IngestStatus,
 } from "../lib/queries";
+import { ItemText } from "./ItemText";
 import { ReadDesign } from "./ReadDesign";
 
 const STATUS_TONE: Record<IngestStatus, "ok" | "warn" | "danger" | "info"> = {
@@ -45,6 +46,9 @@ const STATUS_LABEL: Record<IngestStatus, string> = {
 export function Datasets() {
   const grades = useGrades();
   const [grade, setGrade] = React.useState("");
+  // Which document's text is open. One at a time: these are tens of
+  // thousands of characters each.
+  const [inspecting, setInspecting] = React.useState("");
   const effectiveGrade = grade || grades.data?.[0]?.slug || grades.data?.[0]?.name || "";
 
   const status = useIngestStatus(effectiveGrade);
@@ -271,7 +275,7 @@ export function Datasets() {
                   </tr>
                 </thead>
                 <tbody>
-                  {items.map((item) => (
+                  {items.flatMap((item) => [
                     <tr key={item.item_id}>
                       <Td>
                         <Badge tone={STATUS_TONE[item.status]}>{STATUS_LABEL[item.status]}</Badge>
@@ -306,6 +310,18 @@ export function Datasets() {
                         {item.char_count ? `${(item.char_count / 1000).toFixed(1)}k` : "—"}
                       </Td>
                       <Td>
+                        {/* Always available, whatever the status: the reason to
+                            look at a document is usually that its status does
+                            not match what came out of it. */}
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() =>
+                            setInspecting(inspecting === item.item_id ? "" : item.item_id)
+                          }
+                        >
+                          {inspecting === item.item_id ? "Hide the text" : "See the text"}
+                        </Button>
                         {item.status === "ingested" ? (
                           <Stack direction="row" gap="var(--s2)">
                             <Button size="sm" variant="ghost" disabled={busy}
@@ -333,8 +349,17 @@ export function Datasets() {
                           </Button>
                         )}
                       </Td>
-                    </tr>
-                  ))}
+                    </tr>,
+                    inspecting === item.item_id ? (
+                      <tr key={`${item.item_id}-text`}>
+                        <Td style={{ padding: 0 }} colSpan={6}>
+                          <div style={{ padding: "0 var(--s3) var(--s3)" }}>
+                            <ItemText grade={effectiveGrade} itemId={item.item_id} />
+                          </div>
+                        </Td>
+                      </tr>
+                    ) : null,
+                  ])}
                 </tbody>
               </Table>
             </>

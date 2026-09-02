@@ -1086,6 +1086,39 @@ export function useExportBundle(grade: string, subject?: string) {
  *  and coming back to the console to act on it — for every version of every
  *  sub-strand. Fetched as a blob rather than linked, because a plain window
  *  .open carries no token and would show the sign-in page. */
+export type ItemText = {
+  item_id: string; grade: string; title: string; status: string; error: string;
+  characters: number; text: string; input_keys: string[]; cover: string;
+  grade_reading: { read_from_cover: string; declared_by_dataset: string; level: string };
+  parsed: {
+    subject?: string; grade?: string; level?: string; sub_strand_count?: number;
+    strands?: string[];
+    sub_strands?: { strand: string; name: string; lessons: string; slos: number }[];
+    would_be_design_id?: string;
+  };
+  parse_error: string;
+  designs_for_this_grade: { design_id: string; subject: string; grade: string }[];
+  design_ids_claimed: string[];
+  claimed_but_absent: string[];
+  scripture: string[];
+};
+
+/** The document as the ingest receives it, what it makes of it, and what is
+ *  actually in the database — the three facts whose disagreement is the bug. */
+export function useItemText(grade: string, itemId: string) {
+  const api = useApi();
+  return useQuery({
+    queryKey: ["item-text", grade, itemId],
+    queryFn: () =>
+      api<ItemText>(
+        `/api/v1/admin/langfuse/datasets/${encodeURIComponent(grade)}` +
+        `/items/${encodeURIComponent(itemId)}/text`
+      ),
+    enabled: Boolean(grade && itemId),
+    staleTime: 30_000,
+  });
+}
+
 export type DesignReading = {
   characters: number;
   cover: string;
