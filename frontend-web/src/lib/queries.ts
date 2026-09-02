@@ -1105,7 +1105,10 @@ export type ItemText = {
   parse_error: string;
   designs_for_this_grade: { design_id: string; subject: string; grade: string }[];
   design_ids_claimed: string[];
+  /** Claimed and nowhere at all. A design under another grade is a different
+   *  fact — see filed_under_another_grade. */
   claimed_but_absent: string[];
+  filed_under_another_grade: { design_id: string; grade: string }[];
   scripture: string[];
 };
 

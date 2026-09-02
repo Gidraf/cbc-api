@@ -233,26 +233,79 @@ def _grade_number(grade: str) -> int:
     return int(match.group(1)) if match else 0
 
 
-def _grade_from_text(text: str, meta: dict[str, Any]) -> tuple[str, str]:
-    """Grade and level, read as a number so 10-12 are not mistaken for 1-2."""
-    cover = _cover_text(text)
-    upper = cover.upper()
+# A grade or level is DECLARED on a cover, in a heading. It is also MENTIONED
+# in prose, and the two had the same weight — which is the whole of this bug.
+#
+# Every KICD Grade 9 design carries, in its foreword:
+#
+#   "...rolled out the implementation of the Competency Based Curriculum (CBC)
+#    at Pre-Primary, Primary and Junior School levels."
+#
+# The cover window is sixty lines and reaches page 3, the pre-primary test ran
+# before the numeric one, and `PRE-?PRIMARY` matched that sentence. So a Social
+# Studies GRADE 9 design was filed under grade-pp1 — written, stored, and
+# invisible under the grade it was ingested for.
+#
+# A heading is short. Prose is not.
+_DECLARATION_CHARS = 60
 
+
+# How strong a declaration is, lowest first. A cover carries several, and the
+# first one down the page is not the most specific: a PP2 design prints
+#
+#   PRE - PRIMARY SCHOOL CURRICULUM DESIGN
+#   PRE - PRIMARY 2
+#
+# so taking the first line found reads it as PP1. The level word alone is the
+# weakest thing on any cover — it is on the PP1 and the PP2 ones both.
+_DTE, _EXPLICIT_PP2, _EXPLICIT_PP1, _NUMBERED, _BARE_LEVEL = 0, 1, 2, 3, 4
+
+
+def _level_in(line: str) -> tuple[int, str, str]:
+    """What a single line declares, and how specifically. Rank 99 for nothing."""
+    upper = line.upper()
     if "DIPLOMA IN TEACHER EDUCATION" in upper:
-        return "grade-dte", "Diploma in Teacher Education (Pre-Primary and Primary)"
-
-    # Pre-primary first: those covers carry a bare "1" or "2" that a numeric
-    # grade match would otherwise claim.
-    if re.search(r"\bPP\s*2\b|PRE\s*-?\s*PRIMARY\s*2", upper):
-        return "grade-pp2", "Pre-Primary"
-    if re.search(r"\bPP\s*1\b|PRE\s*-?\s*PRIMARY", upper):
-        return "grade-pp1", "Pre-Primary"
-
-    match = _GRADE_NUM.search(cover)
+        return _DTE, "grade-dte", "Diploma in Teacher Education (Pre-Primary and Primary)"
+    if re.search(r"\bPP\s*2\b|PRE\s*-?\s*PRIMARY\s*-?\s*2\b", upper):
+        return _EXPLICIT_PP2, "grade-pp2", "Pre-Primary"
+    if re.search(r"\bPP\s*1\b|PRE\s*-?\s*PRIMARY\s*-?\s*1\b", upper):
+        return _EXPLICIT_PP1, "grade-pp1", "Pre-Primary"
+    # Numbers before the bare level word: a Grade 9 cover never says
+    # "pre-primary" in a heading, and a pre-primary cover that says only
+    # "PRE-PRIMARY" has nothing more specific to offer.
+    match = _GRADE_NUM.search(line)
     if match:
         number = int(match.group(1))
         if 1 <= number <= 12:
-            return f"grade-{number}", _LEVEL_BY_GRADE[number]
+            return _NUMBERED, f"grade-{number}", _LEVEL_BY_GRADE[number]
+    if re.search(r"PRE\s*-?\s*PRIMARY", upper):
+        return _BARE_LEVEL, "grade-pp1", "Pre-Primary"
+    return 99, "", ""
+
+
+def _grade_from_text(text: str, meta: dict[str, Any]) -> tuple[str, str]:
+    """Grade and level, read as a number so 10-12 are not mistaken for 1-2.
+
+    Read line by line off the cover, and only from lines short enough to BE a
+    heading. A sentence explaining that the CBC was rolled out across
+    Pre-Primary, Primary and Junior School is not this document declaring
+    itself pre-primary.
+
+    The most specific declaration on the cover wins, not the first one down the
+    page — see the ranks above.
+    """
+    best = (99, "", "")
+    for line in _cover_text(text).split("\n"):
+        line = line.strip()
+        if not line or len(line) > _DECLARATION_CHARS:
+            continue
+        found = _level_in(line)
+        if found[0] < best[0]:
+            best = found
+            if best[0] == _DTE:
+                break
+    if best[1]:
+        return best[1], best[2]
 
     # Fall back to what the ingesting catalogue declared. Normalised first:
     # the declared value is usually already a slug, and a slug is exactly what
@@ -267,16 +320,9 @@ def _grade_from_text(text: str, meta: dict[str, Any]) -> tuple[str, str]:
         number = int(declared_match.group(1))
         if 1 <= number <= 12:
             return f"grade-{number}", _LEVEL_BY_GRADE[number]
-    if "PP2" in declared.upper():
-        return "grade-pp2", "Pre-Primary"
-    if "PP1" in declared.upper() or "PRE-PRIMARY" in declared.upper():
-        return "grade-pp1", "Pre-Primary"
-
     return "", ""
 
 
-# An essence statement is a paragraph. These are the headings that follow one in
-# the KICD designs, and the point at which it must stop.
 _AFTER_ESSENCE = re.compile(
     r"^\s*(?:\d{1,4}:\d{1,5}\s\s)?\s*"
     r"(?:subject\s+general\s+learning\s+outcomes"

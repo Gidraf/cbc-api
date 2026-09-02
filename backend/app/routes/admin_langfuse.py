@@ -344,9 +344,25 @@ def get_item_text(
         """,
         {"grade": grade_slug},
     ) or []
-    claimed = [d for d in ([str(row.get("design_id") or "")] +
-                           list(row.get("design_ids") or [])) if d]
+    claimed = sorted({d for d in ([str(row.get("design_id") or "")] +
+                                  list(row.get("design_ids") or [])) if d})
+
+    # Looked up GLOBALLY, not within this grade. "It claims design X, which is
+    # not in the database" was wrong and sent the diagnosis the wrong way: the
+    # design existed, filed under the grade its cover was misread as, and
+    # saying "absent" hid the fact that mattered — which grade it went to.
+    elsewhere = {
+        str(d["design_id"]): str(d["grade"])
+        for d in (fetch_all(
+            "SELECT design_id, grade FROM curriculum_designs WHERE design_id = ANY(:ids)",
+            {"ids": claimed},
+        ) or [] if claimed else [])
+    }
     stored = {str(d["design_id"]) for d in designs}
+    filed_elsewhere = [
+        {"design_id": d, "grade": elsewhere[d]}
+        for d in claimed if d in elsewhere and d not in stored
+    ]
 
     # What was STORED with the design, beside what was received. These are two
     # different texts and only one of them is what the generators read: the
@@ -405,7 +421,10 @@ def get_item_text(
         "parse_error": parse_error,
         "designs_for_this_grade": designs,
         "design_ids_claimed": claimed,
-        "claimed_but_absent": [d for d in claimed if d not in stored],
+        # Genuinely nowhere. A design under another grade is a different fact.
+        "claimed_but_absent": [d for d in claimed
+                               if d not in stored and d not in elsewhere],
+        "filed_under_another_grade": filed_elsewhere,
         "scripture": sorted({str(r) for r in scripture.find(text)}),
     }
 

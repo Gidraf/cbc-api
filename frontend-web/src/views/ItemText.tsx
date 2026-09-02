@@ -68,10 +68,23 @@ export function ItemText({ grade, itemId }: { grade: string; itemId: string }) {
             the reading.
           </div>
         )}
+        {/* Filed somewhere else is the common case and the useful one: the
+            design exists, under the grade its cover was misread as. Saying
+            "absent" hid the fact that mattered. */}
+        {d.filed_under_another_grade.length > 0 && (
+          <div style={{ color: "var(--warn)", marginTop: 6 }}>
+            The design was written — under{" "}
+            <strong>
+              {Array.from(new Set(d.filed_under_another_grade.map((f) => f.grade))).join(", ")}
+            </strong>
+            , not under {d.grade}. Its cover was read as that grade, so it exists
+            and is invisible here. Un-ingest it there and process it again.
+          </div>
+        )}
         {d.claimed_but_absent.length > 0 && (
           <div style={{ color: "var(--danger)", marginTop: 6 }}>
-            It claims design {d.claimed_but_absent.join(", ")}, which is not in the
-            database. The row was written and is gone, or was never written.
+            It claims design {d.claimed_but_absent.join(", ")}, which is in no
+            grade at all. The row was written and is gone, or was never written.
           </div>
         )}
         {d.parse_error && (

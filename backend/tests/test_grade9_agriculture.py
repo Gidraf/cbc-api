@@ -227,3 +227,96 @@ def test_the_agriculture_design_still_reads_the_same() -> None:
     by_id = {s.sub_strand_id: s for s in subs}
     assert by_id["1.1"].strand_name == "Conservation of Resources"
     assert by_id["4.2"].sub_strand_name == "Homemade Sun Dryer"
+
+
+# ── a level is DECLARED, not mentioned ──────────────────────────────────────
+
+FOREWORD = """================================================================================
+📄 PAGE 1 OF 73
+================================================================================
+
+Page 1 of 73
+Displaying Social Studies Grade 9 - Revised.pdf. Page 1
+KENYA INSTITUTE OF CURRICULUM DEVELOPMENT
+A Skilled and Ethical Society
+JUNIOR SCHOOL CURRICULUM DESIGN
+SOCIAL STUDIES
+GRADE 9
+Page 3 of 73
+FOREWORD
+The Government of Kenya is committed to ensuring that policy objectives for Education meet the
+Ministry of Education (MoE) has successfully and progressively rolled out the implementation of
+the Competency Based Curriculum (CBC) at Pre-Primary, Primary and Junior School levels.
+"""
+
+
+def test_a_mention_of_pre_primary_in_prose_is_not_a_declaration() -> None:
+    """Every KICD Grade 9 design carries that foreword sentence, the cover
+    window is sixty lines and reaches page 3, and the pre-primary test ran
+    before the numeric one — so a Social Studies GRADE 9 design was filed under
+    grade-pp1. Written, stored, and invisible under the grade it was ingested
+    for.
+    """
+    assert _grade_from_text(FOREWORD, {"grade": "grade-9"}) == ("grade-9", "Junior School")
+    # And with no dataset to fall back on, the cover alone still settles it.
+    assert _grade_from_text(FOREWORD, {})[0] == "grade-9"
+
+
+def test_a_real_pre_primary_cover_still_reads_as_pre_primary() -> None:
+    """The fix must not cost the case it was guarding."""
+    assert _grade_from_text(
+        "KENYA INSTITUTE OF CURRICULUM DEVELOPMENT\nPRE-PRIMARY 1\nCRE ACTIVITIES\n", {},
+    ) == ("grade-pp1", "Pre-Primary")
+    assert _grade_from_text("PRE-PRIMARY 2\nLANGUAGE ACTIVITIES\n", {})[0] == "grade-pp2"
+    assert _grade_from_text("PP1\nMATHEMATICAL ACTIVITIES\n", {})[0] == "grade-pp1"
+    assert _grade_from_text("DIPLOMA IN TEACHER EDUCATION\nMATHEMATICS\n", {})[0] == "grade-dte"
+
+
+def test_only_a_heading_can_declare_a_grade() -> None:
+    """A heading is short. Prose is not."""
+    from app.services.curriculum_extractor import _DECLARATION_CHARS, _level_in
+
+    assert _level_in("GRADE 9")[1:] == ("grade-9", "Junior School")
+    assert _level_in("PRE-PRIMARY 1")[1] == "grade-pp1"
+
+    prose = ("the Competency Based Curriculum (CBC) at Pre-Primary, Primary and "
+             "Junior School levels.")
+    assert len(prose) > _DECLARATION_CHARS, "prose must be excluded by length"
+    # The line itself still parses; it is the LENGTH that keeps it out.
+    assert _level_in(prose)[1] == "grade-pp1"
+    assert _grade_from_text(f"SOCIAL STUDIES\nGRADE 9\n{prose}\n", {})[0] == "grade-9"
+
+
+def test_a_design_under_another_grade_is_not_reported_as_absent() -> None:
+    """"It claims design X, which is not in the database" was wrong and sent
+    the diagnosis the wrong way: the design existed, filed under the grade its
+    cover was misread as."""
+    import inspect
+    from pathlib import Path
+
+    from app.routes import admin_langfuse
+
+    source = inspect.getsource(admin_langfuse.get_item_text)
+    assert "WHERE design_id = ANY(:ids)" in source, "looked up globally"
+    assert '"filed_under_another_grade"' in source
+    assert "d not in stored and d not in elsewhere" in source
+
+    screen = " ".join(
+        (Path(__file__).resolve().parents[2] / "frontend-web/src/views/ItemText.tsx")
+        .read_text().split()
+    )
+    assert "The design was written — under" in screen
+    assert "which is in no grade at all" in screen
+
+
+def test_the_most_specific_declaration_wins_not_the_first_one() -> None:
+    """A PP2 design prints "PRE - PRIMARY SCHOOL CURRICULUM DESIGN" above
+    "PRE - PRIMARY 2", so taking the first line found reads it as PP1. The
+    level word alone is the weakest thing on any cover — it is on the PP1 and
+    the PP2 ones both."""
+    pp2 = ("KENYA INSTITUTE OF CURRICULUM DEVELOPMENT\n"
+           "PRE - PRIMARY SCHOOL CURRICULUM DESIGN\nPRE - PRIMARY 2\n")
+    assert _grade_from_text(pp2, {})[0] == "grade-pp2"
+
+    # A cover with only the level word still resolves, at the weakest rank.
+    assert _grade_from_text("PRE-PRIMARY CURRICULUM DESIGN\nCRE ACTIVITIES\n", {})[0] == "grade-pp1"
