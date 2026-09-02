@@ -320,3 +320,77 @@ def test_the_most_specific_declaration_wins_not_the_first_one() -> None:
 
     # A cover with only the level word still resolves, at the weakest rank.
     assert _grade_from_text("PRE-PRIMARY CURRICULUM DESIGN\nCRE ACTIVITIES\n", {})[0] == "grade-pp1"
+
+
+# ── every level on the ladder, told apart ───────────────────────────────────
+
+_FOREWORD = (
+    "The Ministry of Education has rolled out the implementation of the "
+    "Competency Based Curriculum (CBC) at Pre-Primary, Primary and Junior "
+    "School levels."
+)
+
+# Every grade KICD publishes for, with the foreword sentence that broke this
+# appended to each — because it is on every one of these documents.
+_COVERS = {
+    "grade-pp1": "PRE - PRIMARY SCHOOL CURRICULUM DESIGN\nPRE - PRIMARY 1\nCRE ACTIVITIES\n",
+    "grade-pp2": "PRE - PRIMARY SCHOOL CURRICULUM DESIGN\nPRE - PRIMARY 2\nLANGUAGE ACTIVITIES\n",
+    "grade-1": "LOWER PRIMARY CURRICULUM DESIGN\nGRADE 1\nMATHEMATICAL ACTIVITIES\n",
+    "grade-2": "LOWER PRIMARY CURRICULUM DESIGN\nGRADE 2\nENGLISH ACTIVITIES\n",
+    "grade-3": "GRADE 3 CURRICULUM DESIGN\nKISWAHILI\n",
+    "grade-4": "UPPER PRIMARY CURRICULUM DESIGN\nGRADE 4\nSCIENCE AND TECHNOLOGY\n",
+    "grade-5": "GRADE 5 CURRICULUM DESIGN\nAGRICULTURE\n",
+    "grade-6": "GRADE 6 CURRICULUM DESIGN\nSOCIAL STUDIES\n",
+    "grade-7": "JUNIOR SCHOOL CURRICULUM DESIGN\nGRADE 7\nINTEGRATED SCIENCE\n",
+    "grade-8": "JUNIOR SCHOOL CURRICULUM DESIGN\nGRADE 8\nPRE-TECHNICAL STUDIES\n",
+    "grade-9": "JUNIOR SCHOOL CURRICULUM DESIGN\nSOCIAL STUDIES\nGRADE 9\n",
+    "grade-10": "SENIOR SCHOOL CURRICULUM DESIGN\nGRADE 10\nBIOLOGY\n",
+    "grade-11": "SENIOR SCHOOL CURRICULUM DESIGN\nGRADE 11\nCHEMISTRY\n",
+    "grade-12": "SENIOR SCHOOL CURRICULUM DESIGN\nGRADE 12\nPHYSICS\n",
+    "grade-dte": "DIPLOMA IN TEACHER EDUCATION\nCURRICULUM DESIGN\nMATHEMATICS\n",
+}
+
+
+def test_every_grade_on_the_ladder_is_told_apart() -> None:
+    """Each with the foreword sentence appended, because it is on every one of
+    these documents and it is what sent Grade 9 to PP1."""
+    from app.services.grade_order import GRADE_SEQUENCE
+
+    assert set(_COVERS) == {slug for slug, _, _ in GRADE_SEQUENCE}, "a grade is untested"
+
+    for want, cover in _COVERS.items():
+        assert _grade_from_text(cover + _FOREWORD, {})[0] == want, want
+
+
+def test_the_dataset_never_has_to_correct_the_cover() -> None:
+    """With the cover read correctly, the declared grade agrees rather than
+    overriding — which is how a misread cover stayed invisible."""
+    for want, cover in _COVERS.items():
+        assert _grade_from_text(cover + _FOREWORD, {"grade": want})[0] == want, want
+
+
+def test_the_diploma_is_not_mistaken_for_pre_primary() -> None:
+    """Its covers do not always print the phrase whole: "DIPLOMA CURRICULUM
+    DESIGN" above "PRE-PRIMARY AND PRIMARY TEACHER EDUCATION" put the level
+    word on one line and the diploma on another.
+
+    "PRE-PRIMARY AND PRIMARY" is itself the tell — a pre-primary design says
+    "PRE-PRIMARY" without "AND PRIMARY" after it.
+    """
+    for cover in (
+        "DIPLOMA IN TEACHER EDUCATION (PRE-PRIMARY AND PRIMARY)\nMATHEMATICS\n",
+        "PRE-PRIMARY AND PRIMARY TEACHER EDUCATION\nDIPLOMA CURRICULUM DESIGN\n",
+        "DIPLOMA CURRICULUM DESIGN\nENGLISH\n",
+    ):
+        assert _grade_from_text(cover, {})[0] == "grade-dte", cover
+
+    # And the guard must not swallow the pre-primary designs it sits next to.
+    assert _grade_from_text("PRE - PRIMARY SCHOOL CURRICULUM DESIGN\nPRE - PRIMARY 1\n", {})[0] == "grade-pp1"
+    assert _grade_from_text("PRE-PRIMARY CURRICULUM DESIGN\nCRE ACTIVITIES\n", {})[0] == "grade-pp1"
+
+
+def test_a_two_digit_grade_is_not_read_as_one_digit() -> None:
+    """10, 11 and 12 must not be mistaken for 1 and 2 — the reason the grade
+    was read as a number in the first place."""
+    for number in (10, 11, 12):
+        assert _grade_from_text(f"GRADE {number} CURRICULUM DESIGN\n", {})[0] == f"grade-{number}"

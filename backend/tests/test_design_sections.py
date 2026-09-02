@@ -656,3 +656,144 @@ def test_pp2_sections_are_filed_under_pp2() -> None:
         text, {"grade": "grade-pp2"}, "dna", learning_area="Mathematical Activities"
     )
     assert design.grade == "grade-pp2"
+
+
+# ── a single-subject design is not a combined one ───────────────────────────
+
+
+def _numbered_page(n: int, body: str) -> str:
+    return f"[PAGE {n}]\n" + "\n".join(
+        f"{n}:{i + 1}  {line}" for i, line in enumerate(body.split("\n"))
+    )
+
+# What a single-subject design looks like once the PDF reader has flattened
+# its "Link to other Learning Areas" tables: other areas' names, alone on a
+# line, exactly where a banner would be.
+_ARABIC_BODY = [
+    _numbered_page(2, "First published 2024"),
+    _numbered_page(3, "FOREWORD\nThe Government of Kenya is committed"),
+    _numbered_page(4, "STRAND 1.0: LISTENING AND SPEAKING\n1.1 Greetings (4 lessons)"),
+    _numbered_page(5, "Link to other Learning Areas\nKiswahili\nlearners relate greetings to those learnt there."),
+    _numbered_page(6, "STRAND 2.0: READING\n2.1 Letters (6 lessons)"),
+    _numbered_page(7, "Link to other Learning Areas\nSocial Studies\nlearners relate this to community."),
+    _numbered_page(8, "SUGGESTED ASSESSMENT RUBRIC"),
+]
+ARABIC = "\n".join(
+    [_numbered_page(1, "KENYA INSTITUTE OF CURRICULUM DEVELOPMENT\n"
+               "UPPER PRIMARY CURRICULUM DESIGN\nARABIC\nGRADE 6")] + _ARABIC_BODY)
+NO_COVER_AREA = "\n".join(
+    [_numbered_page(1, "KENYA INSTITUTE OF CURRICULUM DEVELOPMENT\n"
+               "UPPER PRIMARY CURRICULUM DESIGN\nGRADE 6")] + _ARABIC_BODY)
+
+
+def _grade6():
+    from app.services.curriculum_catalogue import expected_subjects
+    return expected_subjects("grade-6")
+
+
+def test_a_document_whose_cover_names_an_area_is_that_area() -> None:
+    """A Grade 6 ARABIC design was split into Kiswahili and Social Studies, and
+    Arabic — the subject on its own cover — was reported as "not found in the
+    document".
+
+    The whole design was then filed under two learning areas it is not, which
+    is worse than not splitting at all.
+    """
+    from app.services.design_sections import split_learning_areas
+
+    assert split_learning_areas(ARABIC, _grade6()) == []
+
+
+def test_the_cover_is_what_changes_the_outcome() -> None:
+    """Same body, and the recovery scan does fire on it — so the guard is doing
+    the work rather than something else short-circuiting first."""
+    from app.services.design_sections import split_learning_areas
+
+    without = split_learning_areas(NO_COVER_AREA, _grade6())
+    assert len(without) >= 2, "the fixture must actually trigger a split"
+    assert {"Kiswahili", "Social Studies"} <= {s.learning_area for s in without}
+
+    assert split_learning_areas(ARABIC, _grade6()) == []
+
+
+def test_the_cover_is_read_from_the_first_page_only() -> None:
+    """The cover is the document stating what it is. A banner heuristic and a
+    search for published names are inference about it."""
+    from app.services.design_sections import _cover_area
+    from app.services.document_index import parse_pages
+
+    assert _cover_area(parse_pages(ARABIC), _grade6()) == "Arabic"
+    assert _cover_area(parse_pages(NO_COVER_AREA), _grade6()) == ""
+    assert _cover_area([], _grade6()) == ""
+
+
+def test_every_grade_6_cover_recognises_its_own_learning_area() -> None:
+    """The guard only fires when the cover names an area the catalogue knows.
+
+    Five Grade 6 designs were split into other people's learning areas — French
+    into English and Social Studies, Arabic into Kiswahili and Social Studies,
+    HRE into Social Studies and Creative Arts — because their covers were not
+    recognised and the cross-reference scan was left unchallenged.
+    """
+    from app.services.curriculum_catalogue import expected_subjects
+    from app.services.design_sections import _cover_area
+    from app.services.document_index import parse_pages
+
+    published = expected_subjects("grade-6")
+    covers = {
+        "ARABIC LANGUAGE": "Arabic",
+        "FRENCH": "French",
+        "GERMAN": "German",
+        "MANDARIN": "Mandarin",
+        "MATHEMATICS": "Mathematics",
+        "SOCIAL STUDIES": "Social Studies",
+        "SCIENCE AND TECHNOLOGY": "Science and Technology",
+        "CREATIVE ARTS": "Creative Arts",
+        "KISWAHILI GREDI YA 6": "Kiswahili",
+        # Spelled out on the cover, abbreviated in the catalogue.
+        "HINDU RELIGIOUS EDUCATION": "HRE",
+        "CHRISTIAN RELIGIOUS EDUCATION": "CRE",
+        "ISLAMIC RELIGIOUS ACTIVITIES": "IRE",
+    }
+    for line, want in covers.items():
+        doc = (f"[PAGE 1]\n1:1  KENYA INSTITUTE OF CURRICULUM DEVELOPMENT\n"
+               f"1:2  {line}\n1:3  GRADE 6\n")
+        assert _cover_area(parse_pages(doc), published) == want, line
+
+
+def test_the_abbreviations_are_a_dictionary_not_a_similarity_test() -> None:
+    """Only where the two genuinely name one thing."""
+    from app.services.design_sections import canonical_area_name
+
+    published = ["CRE", "HRE", "IRE", "Mathematics"]
+    assert canonical_area_name("Hindu Religious Education", published) == "HRE"
+    # Not everything that shares words is the same area.
+    assert canonical_area_name("Religious Education", published) == "Religious Education"
+    assert canonical_area_name("Education", published) == "Education"
+
+
+def test_the_real_arabic_cover_is_not_split() -> None:
+    """Verbatim from the received document: no page:line prefixes, the reader's
+    own banners, and the cross-references that were being read as sections."""
+    from app.services.curriculum_catalogue import expected_subjects
+    from app.services.design_sections import split_learning_areas
+
+    banner = "=" * 80
+    doc = "\n".join([
+        banner, "📄 PAGE 1 OF 77", banner,
+        "Page 1 of 77", "Page", "/", "77",
+        "KENYA INSTITUTE OF CURRICULUM DEVELOPMENT",
+        "Nurturing Every Learner's Potential",
+        "PRIMARY SCHOOL EDUCATION CURRICULUM DESIGN",
+        "ARABIC LANGUAGE", "GRADE 6",
+        banner, "📄 PAGE 2 OF 77", banner, "Page 2 of 77", "First Published 2017",
+        banner, "📄 PAGE 3 OF 77", banner, "Page 3 of 77", "FOREWORD",
+        banner, "📄 PAGE 4 OF 77", banner, "Page 4 of 77", "PREFACE",
+        banner, "📄 PAGE 16 OF 77", banner, "Page 16 of 77",
+        "Link to Other Learning Areas:",
+        "The learner relates family members to similar concepts in Social Studies.",
+        banner, "📄 PAGE 18 OF 77", banner, "Page 18 of 77",
+        "Link to Other Learning Areas:",
+        "The learner relates pronunciation to similar concepts in Kiswahili.",
+    ])
+    assert split_learning_areas(doc, expected_subjects("grade-6")) == []

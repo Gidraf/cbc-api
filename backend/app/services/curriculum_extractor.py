@@ -264,7 +264,16 @@ _DTE, _EXPLICIT_PP2, _EXPLICIT_PP1, _NUMBERED, _BARE_LEVEL = 0, 1, 2, 3, 4
 def _level_in(line: str) -> tuple[int, str, str]:
     """What a single line declares, and how specifically. Rank 99 for nothing."""
     upper = line.upper()
-    if "DIPLOMA IN TEACHER EDUCATION" in upper:
+    # DTE is the only diploma here, and its covers do not always print the
+    # phrase whole: "DIPLOMA CURRICULUM DESIGN" above "PRE-PRIMARY AND PRIMARY
+    # TEACHER EDUCATION" put the level word on one line and the diploma on
+    # another, and the level word alone read as PP1.
+    #
+    # "PRE-PRIMARY AND PRIMARY" is itself the tell: it is the DTE level, and a
+    # pre-primary design says "PRE-PRIMARY" without "AND PRIMARY" after it.
+    if ("DIPLOMA" in upper
+            or "TEACHER EDUCATION" in upper
+            or re.search(r"PRE\s*-?\s*PRIMARY\s+AND\s+PRIMARY", upper)):
         return _DTE, "grade-dte", "Diploma in Teacher Education (Pre-Primary and Primary)"
     if re.search(r"\bPP\s*2\b|PRE\s*-?\s*PRIMARY\s*-?\s*2\b", upper):
         return _EXPLICIT_PP2, "grade-pp2", "Pre-Primary"

@@ -141,6 +141,20 @@ def _matches_any(flat: str, listed: set[str]) -> bool:
     return False
 
 
+# Spelled out on the cover, abbreviated in the catalogue. Only where the two
+# genuinely name one thing — this is a dictionary, not a similarity test.
+_ABBREVIATED: dict[str, str] = {
+    "christianreligiouseducation": "cre",
+    "christianreligiousactivities": "cre",
+    "hindureligiouseducation": "hre",
+    "hindureligiousactivities": "hre",
+    "islamicreligiouseducation": "ire",
+    "islamicreligiousactivities": "ire",
+    "kenyasignlanguage": "ksl",
+    "physicalandhealtheducation": "phe",
+}
+
+
 def canonical_area_name(title: str, published: list[str] | None = None) -> str:
     """Map a detected section title onto the grade's published learning-area name.
 
@@ -163,6 +177,17 @@ def canonical_area_name(title: str, published: list[str] | None = None) -> str:
         other = _squash(_normalise(name))
         if flat.startswith(other) or other.startswith(flat):
             return name
+
+    # The catalogue publishes the religious-education areas as abbreviations
+    # and the covers spell them out, so nothing above can connect the two: a
+    # Grade 6 HRE design's cover reads "HINDU RELIGIOUS EDUCATION" and the
+    # published name is "HRE". They share no prefix and are not equal, so the
+    # document could not be recognised as its own learning area.
+    expanded = _ABBREVIATED.get(flat, "")
+    if expanded:
+        for name in published:
+            if _squash(_normalise(name)) == expanded:
+                return name
     return cleaned.title()
 
 
@@ -226,6 +251,24 @@ def missing_learning_areas(sections: list[DesignSection], published: list[str]) 
     return [n for n in published if _squash(_normalise(n)) not in got]
 
 
+def _cover_area(pages: list[Page], published: list[str]) -> str:
+    """The learning area this document's own cover declares, if any.
+
+    The cover is the document stating what it is. Everything else — a banner
+    heuristic, a search for published names — is inference about it.
+    """
+    if not pages or not published:
+        return ""
+    lines = [l for l in _page_body(pages[0]) if l.strip()][:20]
+    for line in lines:
+        name = canonical_area_name(line, published)
+        if name and _squash(_normalise(name)) in {
+            _squash(_normalise(p)) for p in published
+        }:
+            return name
+    return ""
+
+
 def split_learning_areas(text: str, published: list[str] | None = None) -> list[DesignSection]:
     """The learning areas a combined design contains, in document order.
 
@@ -268,6 +311,32 @@ def split_learning_areas(text: str, published: list[str] | None = None) -> list[
 
     if len(banners) < _MIN_SECTIONS:
         return []
+
+    # A document whose cover says ARABIC is an Arabic document.
+    #
+    # `_recover_missing_areas` searches the pages for every published name, and
+    # a single-subject design names other areas all over itself: "Link to other
+    # Learning Areas: Kiswahili", the lesson-allocation table listing all nine.
+    # A Grade 6 ARABIC design was split into Kiswahili and Social Studies, and
+    # Arabic — the subject on its own cover — was reported as "not found in the
+    # document". The whole design was then filed under two learning areas it is
+    # not, which is worse than not splitting at all.
+    #
+    # So the cover has the final say: if it declares an area and the split does
+    # not contain it, the split is reading cross-references, not sections.
+    declared = _cover_area(pages, published or [])
+    if declared:
+        squashed = _squash(_normalise(declared))
+        if not any(
+            _squash(_normalise(canonical_area_name(title, published))) == squashed
+            for _n, title, _i in banners
+        ):
+            logger.info(
+                "Cover declares '%s' and the split found %s instead; treating it "
+                "as a single-area design.",
+                declared, ", ".join(t for _n, t, _i in banners)[:120],
+            )
+            return []
 
     # Back matter follows the last learning area — CSL notes, assessment
     # appendices. Without a terminator the final area absorbs all of it and its
