@@ -1059,3 +1059,69 @@ def test_a_missing_stored_copy_says_what_it_means() -> None:
     assert "No design holds a stored copy" in source
     assert "nothing downstream has this " in source
     assert "reads the stored copy" in source
+
+
+# ── un-ingest cannot reach what nothing claims ──────────────────────────────
+
+
+def test_designs_nothing_claims_are_found() -> None:
+    """Un-ingest removes what a status row SAYS it produced.
+
+    A run that failed part-way wrote designs and recorded only the areas that
+    succeeded; a re-process overwrote `design_ids` and left the previous rows
+    behind; a design filed under a grade its cover was misread as was never
+    claimed at all. Each leaves a design nothing points at — so "un-ingest all"
+    empties the tracking table and the factory still lists the learning areas.
+    """
+    import inspect
+
+    from app.services import dataset_ingest
+
+    source = inspect.getsource(dataset_ingest.orphaned_designs)
+    assert "NOT EXISTS" in source
+    assert "FROM dataset_ingest_status s" in source
+    # Both the primary id and the per-learning-area list, or a combined design
+    # reads as orphaned the moment its primary is empty.
+    assert "s.design_id = d.design_id" in source
+    assert "s.design_ids" in source
+    # Matched the way every other grade comparison is.
+    assert "REPLACE(LOWER(d.grade), 'grade-', '')" in source
+
+
+def test_purging_them_is_asked_for_rather_than_assumed() -> None:
+    """A design can legitimately arrive by another path, and deleting one
+    nothing tracks is not reversible."""
+    import inspect
+
+    from app.routes import admin_langfuse
+
+    assert admin_langfuse.ProcessItemsRequest().purge_orphans is False
+
+    source = inspect.getsource(admin_langfuse.uningest_grade_items)
+    assert "if payload.purge_orphans else {}" in source
+    assert '"orphans_purged"' in source
+
+    purge = inspect.getsource(dataset_ingest_purge())
+    assert "DELETE FROM curriculum_designs WHERE design_id = ANY(:ids)" in purge
+    # Counted before deleting, so the caller is told what actually went.
+    assert "FROM curriculum_substrands WHERE design_id = ANY(:ids)" in purge
+
+
+def dataset_ingest_purge():
+    from app.services.dataset_ingest import purge_orphaned_designs
+    return purge_orphaned_designs
+
+
+def test_the_console_names_them_before_offering_to_delete() -> None:
+    """An orphan you cannot see is one you cannot remove."""
+    from pathlib import Path
+
+    screen = " ".join(
+        (Path(__file__).resolve().parents[2] / "frontend-web/src/views/Datasets.tsx")
+        .read_text().split()
+    )
+    assert "claimed by no document" in screen
+    assert "the factory keeps reading them" in screen
+    # Two steps: un-ingest is confirmed, then the orphans separately.
+    assert "purge_orphans," in screen
+    assert "These are what the factory still reads. Delete them too?" in screen

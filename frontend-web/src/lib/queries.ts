@@ -1649,6 +1649,10 @@ export type IngestState = {
   queued?: number;
   /** Items marked ingested that produced no design row. "Ingested" means the
    *  document was processed; it does not mean a design came out of it. */
+  /** Designs for this grade that no tracked item claims. Un-ingest cannot
+   *  reach these, so without naming them "un-ingest all" looks like it did
+   *  nothing. */
+  orphaned_designs?: { design_id: string; subject: string; grade: string }[];
   designs_missing?: {
     item_id: string;
     title: string;
@@ -1695,7 +1699,9 @@ export function useIngestActions(grade: string) {
       onSuccess: done,
     }),
     uningest: useMutation({
-      mutationFn: (v: { item_ids: string[]; purge_generated?: boolean }) => post("uningest", v),
+      mutationFn: (v: {
+        item_ids: string[]; purge_generated?: boolean; purge_orphans?: boolean;
+      }) => post("uningest", v),
       onSuccess: done,
     }),
   };

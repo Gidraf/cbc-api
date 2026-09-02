@@ -378,6 +378,9 @@ def list_grade(grade_slug: str) -> dict[str, Any]:
         # came out of it, and the two were reported by different screens with
         # nothing reconciling them.
         "designs_missing": designs_missing(grade_slug),
+        # Designs nothing claims. Un-ingest cannot reach these, so without
+        # naming them "un-ingest all" looks like it did nothing.
+        "orphaned_designs": orphaned_designs(grade_slug),
     }
 
 
@@ -646,6 +649,59 @@ def record_external_ingest(payload: dict[str, Any], result: dict[str, Any]) -> s
         error="",
     )
     return row["item_id"]
+
+
+def orphaned_designs(grade_slug: str) -> list[dict[str, Any]]:
+    """Designs for this grade that no tracked item claims any more.
+
+    Un-ingest removes what a status row SAYS it produced. A run that failed
+    part-way wrote designs and recorded only the areas that succeeded; a
+    re-process overwrote `design_ids` with the new set and left the previous
+    rows behind; a design filed under a grade its cover was misread as was
+    never claimed by the item at all.
+
+    Every one of those leaves a design nothing points at — so "un-ingest all"
+    empties the tracking table and the factory still lists the learning areas,
+    because the designs it reads were never anybody's to delete.
+    """
+    return fetch_all(
+        """
+        SELECT d.design_id, d.subject, d.grade, d.updated_at
+        FROM curriculum_designs d
+        WHERE REPLACE(LOWER(d.grade), 'grade-', '') = REPLACE(LOWER(:grade), 'grade-', '')
+          AND NOT EXISTS (
+              SELECT 1 FROM dataset_ingest_status s
+              WHERE s.design_id = d.design_id
+                 OR d.design_id = ANY(
+                        SELECT jsonb_array_elements_text(
+                            CASE WHEN jsonb_typeof(s.design_ids) = 'array'
+                                 THEN s.design_ids ELSE '[]'::jsonb END)
+                    )
+          )
+        ORDER BY d.subject
+        """,
+        {"grade": grade_slug},
+    ) or []
+
+
+def purge_orphaned_designs(grade_slug: str) -> dict[str, Any]:
+    """Delete them. Sub-strands cascade from the design."""
+    orphans = orphaned_designs(grade_slug)
+    if not orphans:
+        return {"designs": 0, "subjects": []}
+
+    ids = [str(o["design_id"]) for o in orphans]
+    counted = fetch_one(
+        "SELECT COUNT(*) AS n FROM curriculum_substrands WHERE design_id = ANY(:ids)",
+        {"ids": ids},
+    ) or {}
+    execute("DELETE FROM curriculum_designs WHERE design_id = ANY(:ids)", {"ids": ids})
+    logger.info("Purged %d orphaned design(s) for %s.", len(ids), grade_slug)
+    return {
+        "designs": len(ids),
+        "substrands": int(counted.get("n") or 0),
+        "subjects": sorted({str(o.get("subject") or "?") for o in orphans}),
+    }
 
 
 def uningest_item(item_id: str, purge_generated: bool = False) -> dict[str, Any]:

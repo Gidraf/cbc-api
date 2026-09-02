@@ -62,6 +62,10 @@ class ProcessItemsRequest(BaseModel):
     # Replace what a previous run produced instead of refusing. Off by default
     # so re-processing is always a deliberate act.
     force: bool = False
+    # Un-ingest only: also delete designs for this grade that no tracked item
+    # claims. Off by default because a design can legitimately arrive by
+    # another path, and deleting one nothing tracks is not reversible.
+    purge_orphans: bool = False
 
 
 @router.get("/datasets/{grade}/diagnostics")
@@ -436,7 +440,9 @@ def uningest_grade_items(
     _: AuthContext = Depends(require_roles("admin", "operator")),
 ) -> dict[str, Any]:
     """Remove what these items produced and return them to pending."""
-    from ..services.dataset_ingest import list_grade, uningest_item
+    from ..services.dataset_ingest import (
+        list_grade, purge_orphaned_designs, uningest_item,
+    )
 
     grade_slug = validate_grade_dataset(grade)
     if not payload.item_ids:
@@ -455,11 +461,22 @@ def uningest_grade_items(
         for key, value in (r.get("removed") or {}).items():
             totals[key] = totals.get(key, 0) + int(value)
 
+    # Designs no status row claims cannot be reached by un-ingesting an item,
+    # because un-ingest removes what an item SAYS it produced. A part-failed
+    # run, a re-process that overwrote the recorded ids, a design filed under a
+    # misread grade — each leaves one behind, and "un-ingest all" then empties
+    # the tracking table while the factory still lists the learning areas.
+    orphans = purge_orphaned_designs(grade_slug) if payload.purge_orphans else {}
+    if orphans.get("designs"):
+        totals["design"] = totals.get("design", 0) + int(orphans["designs"])
+        totals["substrands"] = totals.get("substrands", 0) + int(orphans.get("substrands", 0))
+
     return {
         "grade": grade_slug,
         "uningested": sum(1 for r in results if r["ok"]),
         "failed": sum(1 for r in results if not r["ok"]),
         "removed": totals,
+        "orphans_purged": orphans,
         "results": results,
         **list_grade(grade_slug),
     }

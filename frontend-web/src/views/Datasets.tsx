@@ -157,6 +157,33 @@ export function Datasets() {
           so. A grade could read "16 of 16 ingested" here and "1/16" in the
           grade list, and the gap is real work missing rather than a display
           quirk. */}
+      {(state?.orphaned_designs?.length ?? 0) > 0 && (
+        <div
+          role="alert"
+          style={{
+            border: "1px solid var(--warn)", background: "var(--warn-wash)",
+            borderRadius: "var(--radius)", padding: "var(--s3)",
+            fontSize: "var(--text-sm)",
+          }}
+        >
+          <strong>
+            {state!.orphaned_designs!.length} design(s) for this grade are claimed
+            by no document.
+          </strong>{" "}
+          Un-ingesting cannot remove them — it removes what a document says it
+          produced — so the factory keeps reading them after everything here is
+          back to Not processed. Un-ingest all offers to delete them.
+          <ul style={{ margin: "var(--s2) 0 0", paddingLeft: "18px" }}>
+            {state!.orphaned_designs!.slice(0, 12).map((o) => (
+              <li key={o.design_id}>
+                {o.subject || "no learning area"}{" "}
+                <span className="mono" style={{ color: "var(--ink-3)" }}>{o.design_id}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       {(state?.designs_missing?.length ?? 0) > 0 && (
         <div
           role="alert"
@@ -218,6 +245,12 @@ export function Datasets() {
                   disabled={busy}
                   onClick={() => {
                     const done = items.filter((i) => i.status === "ingested");
+                    // Designs nothing claims are not reached by un-ingesting an
+                    // item, because un-ingest removes what an item SAYS it
+                    // produced. Left behind, the factory still lists the
+                    // learning areas and "un-ingest all" looks like it did
+                    // nothing — so they are counted here and offered by name.
+                    const orphans = state?.orphaned_designs || [];
                     if (
                       window.confirm(
                         `Un-ingest all ${done.length} ingested document(s) for this grade?\n\n` +
@@ -225,7 +258,18 @@ export function Datasets() {
                           `Not processed. Generated content is kept.`
                       )
                     ) {
-                      actions.uningest.mutate({ item_ids: done.map((i) => i.item_id) });
+                      const purge_orphans =
+                        orphans.length > 0 &&
+                        window.confirm(
+                          `${orphans.length} design(s) for this grade are claimed by no ` +
+                            `document, so un-ingesting will not remove them:\n\n` +
+                            orphans.slice(0, 12).map((o) => `  · ${o.subject}`).join("\n") +
+                            `\n\nThese are what the factory still reads. Delete them too?`
+                        );
+                      actions.uningest.mutate({
+                        item_ids: done.map((i) => i.item_id),
+                        purge_orphans,
+                      });
                     }
                   }}
                 >
