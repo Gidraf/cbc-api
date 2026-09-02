@@ -1600,7 +1600,11 @@ export type IngestState = {
   counts: Record<IngestStatus, number>;
   total: number;
   ingested_percentage: number;
+  /** Selected + processing + QUEUED. An item is not `processing` until the
+   *  worker picks it up, so counting only that stops the page refreshing in
+   *  the gap between pressing Process and the work starting. */
   in_progress: number;
+  queued?: number;
   /** Items marked ingested that produced no design row. "Ingested" means the
    *  document was processed; it does not mean a design came out of it. */
   designs_missing?: {

@@ -351,6 +351,16 @@ def list_grade(grade_slug: str) -> dict[str, Any]:
     for row in rows:
         counts[row["status"]] = counts.get(row["status"], 0) + 1
 
+    waiting = fetch_one(
+        """
+        SELECT COUNT(*) AS n FROM jobs
+        WHERE kind = 'dataset_item' AND status IN ('queued', 'running')
+          AND REPLACE(LOWER(grade), 'grade-', '') = REPLACE(LOWER(:grade), 'grade-', '')
+        """,
+        {"grade": grade_slug},
+    ) or {}
+    queued = int(waiting.get("n") or 0)
+
     total = len(rows)
     return {
         "grade": grade_slug,
@@ -358,7 +368,12 @@ def list_grade(grade_slug: str) -> dict[str, Any]:
         "counts": counts,
         "total": total,
         "ingested_percentage": round(counts[INGESTED] / total * 100, 1) if total else 0.0,
-        "in_progress": counts[SELECTED] + counts[PROCESSING],
+        # Queued counts as in progress. The item is not `processing` until the
+        # worker picks it up, so a page that polls on `processing` alone stops
+        # refreshing in the gap between pressing Process and the worker
+        # starting — and reads as idle while the work is sitting in the queue.
+        "in_progress": counts[SELECTED] + counts[PROCESSING] + queued,
+        "queued": queued,
         # "Ingested" means the item was processed. It does not mean a design
         # came out of it, and the two were reported by different screens with
         # nothing reconciling them.

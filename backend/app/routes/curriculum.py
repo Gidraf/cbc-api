@@ -4648,6 +4648,28 @@ def _run_queued_substrands(job: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _run_queued_dataset_item(job: dict[str, Any]) -> dict[str, Any]:
+    """Read one DATASET ITEM, in the worker.
+
+    The Datasets screen ran these on the HTTP request that asked for them, one
+    after another: a 95KB design is about ninety seconds, so pressing Process
+    on one document held the request open and left every other button in the
+    console disabled until it finished. Sixteen documents was a browser tab
+    nobody could touch for half an hour, and a proxy timeout in the middle of
+    it threw away paid work.
+
+    Sub-strand generation has been queued since the beginning; this is the same
+    queue, the same worker and the same progress log.
+    """
+    from ..services.dataset_ingest import process_item
+
+    payload = dict(job.get("payload") or {})
+    item_id = str(payload.get("item_id") or "")
+    if not item_id:
+        raise ValueError("A dataset-item job carries no item_id.")
+    return process_item(item_id, force=bool(payload.get("force")))
+
+
 def _run_queued_ingest(job: dict[str, Any]) -> dict[str, Any]:
     """Read one learning area out of the design, in the worker.
 
@@ -5049,6 +5071,10 @@ def _register_queue_handlers() -> None:
     job_queue.register("review", _run_queued_review)
     job_queue.register("approval", _run_queued_approval)
     job_queue.register("ingest", _run_queued_ingest)
+    # Registered on the QUEUE but deliberately not in _PIPELINE_HANDLERS: a
+    # dataset item is one document being read, not a stage of the chain, and
+    # the pipeline advances stage by stage against PIPELINE_STEPS.
+    job_queue.register("dataset_item", _run_queued_dataset_item)
     job_queue.register("strands", _run_queued_strands)
     job_queue.register("regenerate", _run_queued_regeneration)
     job_queue.register("pipeline", _run_queued_pipeline)

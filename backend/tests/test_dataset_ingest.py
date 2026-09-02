@@ -886,3 +886,74 @@ def test_uningesting_a_combined_item_removes_every_design(db, monkeypatch):
     assert len(deleted) == 7, f"only removed {deleted}"
     assert result["removed"]["design"] == 7
     assert db.rows["grade-pp1__a"]["design_ids"] == []
+
+
+# ── processing a document must not hold the browser ─────────────────────────
+
+
+def test_processing_queues_rather_than_running_on_the_request() -> None:
+    """A 95KB design is about ninety seconds. Pressing Process on one document
+    held the request open with every other control in the console disabled —
+    sixteen documents was a browser tab nobody could touch for half an hour,
+    and a proxy timeout in the middle threw away paid work.
+    """
+    import inspect
+
+    from app.routes import admin_langfuse
+
+    source = inspect.getsource(admin_langfuse.process_grade_items)
+    assert "job_queue.enqueue(" in source
+    assert '"dataset_item"' in source
+    # The work is not done here any more.
+    assert "process_item(item_id" not in source
+    # Still one at a time in the worker: that was the point of doing them
+    # sequentially, and only the browser stops waiting.
+    assert "It is the BROWSER that no longer waits" in source
+
+
+def test_two_documents_of_one_grade_are_not_taken_for_duplicates() -> None:
+    """A grade's sixteen documents share a grade and often a subject, so
+    without the item in the key the second queued was swallowed as a duplicate
+    of the first and never ran."""
+    import inspect
+
+    from app.services import job_queue
+
+    source = inspect.getsource(job_queue.enqueue)
+    assert "COALESCE(payload->>'item_id', '') = :item_id" in source
+    assert '"item_id": str((payload or {}).get("item_id") or "")' in source
+
+
+def test_a_queued_item_counts_as_in_progress() -> None:
+    """It is not `processing` until the worker picks it up, so a page polling
+    on `processing` alone stops refreshing in the gap between pressing Process
+    and the work starting — and reads as idle while the queue is full."""
+    import inspect
+
+    from app.services import dataset_ingest
+
+    source = inspect.getsource(dataset_ingest.list_grade)
+    assert "kind = 'dataset_item'" in source
+    assert "counts[SELECTED] + counts[PROCESSING] + queued" in source
+    assert '"queued": queued' in source
+
+
+def test_the_console_stops_disabling_itself_while_it_queues() -> None:
+    from pathlib import Path
+
+    screen = " ".join(
+        (Path(__file__).resolve().parents[2] / "frontend-web/src/views/Datasets.tsx")
+        .read_text().split()
+    )
+    assert "const busy = actions.sync.isPending || actions.retry.isPending;" in screen
+    assert "Queueing…" in screen
+    assert "waiting for the worker" in screen
+
+
+def test_a_dataset_item_is_not_a_pipeline_stage() -> None:
+    """It is one document being read, not a stage of the chain — and the
+    pipeline advances stage by stage against PIPELINE_STEPS."""
+    from app.routes import curriculum
+
+    assert "dataset_item" not in curriculum._PIPELINE_HANDLERS
+    assert set(curriculum._PIPELINE_HANDLERS) == set(curriculum.PIPELINE_STEPS)

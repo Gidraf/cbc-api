@@ -56,8 +56,14 @@ export function Datasets() {
   const pending = items.filter((i) => i.status === "pending" || i.status === "selected");
   const failed = items.filter((i) => i.status === "failed");
 
-  const busy =
-    actions.sync.isPending || actions.process.isPending || actions.retry.isPending;
+  // `process` no longer blocks: it queues and returns, so the page must not
+  // disable itself while the request is in flight. Pressing Process on one
+  // document used to hold the request open for the ninety seconds it took to
+  // read a 95KB design, with every other control in the console disabled —
+  // sixteen documents was a browser tab nobody could touch for half an hour.
+  //
+  // `sync` and `retry` still do their work on the request, so they still do.
+  const busy = actions.sync.isPending || actions.retry.isPending;
 
   function processAll() {
     if (!pending.length) return;
@@ -129,7 +135,15 @@ export function Datasets() {
           sub={`${state?.ingested_percentage ?? 0}% of this grade's dataset`}
         />
         <Stat label="Not processed" value={`${counts?.pending ?? 0}`} sub="Waiting to be run" />
-        <Stat label="In progress" value={`${state?.in_progress ?? 0}`} sub="Queued or running" />
+        <Stat
+          label="In progress"
+          value={`${state?.in_progress ?? 0}`}
+          sub={
+            (state?.queued ?? 0) > 0
+              ? `${state!.queued} waiting for the worker`
+              : "Queued or running"
+          }
+        />
         <Stat label="Failed" value={`${counts?.failed ?? 0}`} sub="Need a retry" />
       </Grid>
 
@@ -169,6 +183,20 @@ export function Datasets() {
       )}
 
       {actions.process.error && <ErrorNotice error={actions.process.error} />}
+      {actions.process.data?.note && (
+        <div
+          style={{
+            border: "1px solid var(--accent)",
+            background: "var(--accent-wash)",
+            borderRadius: "var(--radius)",
+            padding: "var(--s3)",
+            fontSize: "var(--text-sm)",
+          }}
+        >
+          {actions.process.data.note} Watch them in the queue, or on the pipeline
+          board — this page keeps up on its own.
+        </div>
+      )}
       {actions.sync.error && <ErrorNotice error={actions.sync.error} />}
 
       <QueryState query={status} label="Loading dataset" rows={4} />
@@ -212,7 +240,7 @@ export function Datasets() {
               )}
               <Button size="sm" disabled={busy || !pending.length} onClick={processAll}>
                 {actions.process.isPending
-                  ? "Processing…"
+                  ? "Queueing…"
                   : `Process ${pending.length} remaining`}
               </Button>
             </Stack>

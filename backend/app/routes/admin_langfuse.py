@@ -198,45 +198,69 @@ def process_grade_items(
     payload: ProcessItemsRequest,
     _: AuthContext = Depends(require_roles("admin", "operator")),
 ) -> dict[str, Any]:
-    """Ingest the named items, one at a time.
+    """Queue the named items and hand back what to watch.
 
-    Deliberately manual and sequential: a bad extraction should stop at one
-    document rather than propagate across a grade. Each item reports its own
-    outcome, so one failure does not discard the successes before it.
+    These ran on the request that asked for them, one after another. A 95KB
+    design is about ninety seconds, so pressing Process on one document held
+    the request open and left every other control in the console disabled
+    until it finished — sixteen documents was a browser tab nobody could touch
+    for half an hour, and a proxy timeout in the middle threw away paid work.
+
+    They go through the same queue, worker and progress log as sub-strand
+    generation. Still one at a time in the worker, which was the point of doing
+    them sequentially: a bad extraction stops at one document rather than
+    propagating across a grade. It is the BROWSER that no longer waits.
     """
-    from ..services.dataset_ingest import AlreadyIngested, list_grade, process_item
+    from ..services import job_queue
+    from ..services.dataset_ingest import INGESTED, list_grade
+    from ..infra.db import fetch_all
 
     grade_slug = validate_grade_dataset(grade)
     if not payload.item_ids:
         raise_api_error("SCHEMA_VALIDATION_FAILED", "No item_ids given to process.")
 
-    results = []
+    rows = {
+        str(r["item_id"]): r
+        for r in fetch_all(
+            "SELECT item_id, status, resolved_subject, declared_subject, title "
+            "FROM dataset_ingest_status WHERE item_id = ANY(:ids)",
+            {"ids": list(payload.item_ids)},
+        ) or []
+    }
+
+    queued, skipped = [], []
     for item_id in payload.item_ids:
-        try:
-            outcome = process_item(item_id, force=payload.force)
-            results.append({
-                "item_id": item_id,
-                "ok": True,
-                "replaced": payload.force,
-                "subject": outcome.get("subject"),
-                "grade": outcome.get("grade"),
-                "design_id": outcome.get("design_id"),
-            })
-        except AlreadyIngested as exc:
+        row = rows.get(item_id) or {}
+        if row.get("status") == INGESTED and not payload.force:
             # Not a failure: the work is already done. Reported separately so
             # the caller can offer to replace rather than showing an error.
-            results.append({
-                "item_id": item_id, "ok": False, "already_ingested": True, "error": str(exc),
+            skipped.append({
+                "item_id": item_id, "already_ingested": True,
+                "title": row.get("title", ""),
             })
-        except Exception as exc:  # noqa: BLE001
-            results.append({"item_id": item_id, "ok": False, "error": str(exc)[:300]})
+            continue
+        job = job_queue.enqueue(
+            "dataset_item",
+            grade=grade_slug,
+            subject=str(row.get("resolved_subject") or row.get("declared_subject")
+                        or row.get("title") or item_id),
+            payload={"item_id": item_id, "force": bool(payload.force)},
+            queued_by="datasets",
+        )
+        queued.append({"item_id": item_id, "job_id": job.job_id,
+                       "title": row.get("title", "")})
 
     return {
         "grade": grade_slug,
-        "processed": sum(1 for r in results if r["ok"]),
-        "skipped_already_ingested": sum(1 for r in results if r.get("already_ingested")),
-        "failed": sum(1 for r in results if not r["ok"] and not r.get("already_ingested")),
-        "results": results,
+        "queued": len(queued),
+        "skipped_already_ingested": len(skipped),
+        "jobs": queued,
+        "skipped": skipped,
+        "note": (
+            f"{len(queued)} document(s) queued. They run one at a time in the "
+            f"worker — a bad extraction stops at one document rather than "
+            f"propagating across the grade — and this page follows them."
+        ),
         **list_grade(grade_slug),
     }
 

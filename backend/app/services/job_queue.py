@@ -122,6 +122,12 @@ def enqueue(
           -- duplicate of the job that had just asked for it, and the run
           -- stopped dead one stage in looking like it had finished.
           AND COALESCE(payload->>'index', '') = :step_index
+          -- And the dataset ITEM. A grade's sixteen documents share a grade and
+          -- often a subject, so without this the second of them queued was
+          -- swallowed as a duplicate of the first and never ran — which is
+          -- indistinguishable, from the console, from a document that was
+          -- processed and produced nothing.
+          AND COALESCE(payload->>'item_id', '') = :item_id
           AND status IN ('queued', 'running')
         LIMIT 1
         -- Only work still in flight. A finished draft waiting to be accepted is
@@ -132,7 +138,8 @@ def enqueue(
          "artifact_id": artifact_id,
          "layer": str((payload or {}).get("layer") or ""),
          "step_index": str((payload or {}).get("index"))
-         if (payload or {}).get("index") is not None else ""},
+         if (payload or {}).get("index") is not None else "",
+         "item_id": str((payload or {}).get("item_id") or "")},
     )
     if duplicate:
         logger.info("Already queued: %s for %s.", kind, sub_strand or subject)
