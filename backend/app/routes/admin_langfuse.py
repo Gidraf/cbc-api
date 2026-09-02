@@ -348,6 +348,26 @@ def get_item_text(
                            list(row.get("design_ids") or [])) if d]
     stored = {str(d["design_id"]) for d in designs}
 
+    # What was STORED with the design, beside what was received. These are two
+    # different texts and only one of them is what the generators read: the
+    # design keeps `raw_payload.source_text`, capped, and everything downstream
+    # works from that copy rather than from Langfuse. A document that arrives
+    # whole and is stored empty or truncated looks identical from the outside,
+    # and it is the copy nobody could see.
+    stored_text, stored_from, stored_cap = "", "", 400_000
+    for candidate in claimed or [str(d["design_id"]) for d in designs]:
+        found = fetch_one(
+            "SELECT design_id, raw_payload FROM curriculum_designs "
+            "WHERE design_id = :design_id",
+            {"design_id": candidate},
+        )
+        if found:
+            payload_stored = found.get("raw_payload") or {}
+            if isinstance(payload_stored, dict):
+                stored_text = str(payload_stored.get("source_text") or "")
+                stored_from = str(found["design_id"])
+                break
+
     return {
         "item_id": item_id,
         "grade": grade_slug,
@@ -356,6 +376,24 @@ def get_item_text(
         "error": row.get("error", ""),
         "characters": len(text),
         "text": text,
+        "stored": {
+            "design_id": stored_from,
+            "characters": len(stored_text),
+            "text": stored_text,
+            "truncated": len(text) > stored_cap,
+            "cap": stored_cap,
+            "matches_received": bool(stored_text) and stored_text == text[:stored_cap],
+            "note": (
+                "No design holds a stored copy, so nothing downstream has this "
+                "document to work from."
+                if not stored_text else
+                "The stored copy is the received text, in full."
+                if stored_text == text else
+                f"The received document is {len(text):,} characters and the "
+                f"stored copy is {len(stored_text):,}. Everything downstream "
+                f"reads the stored copy."
+            ),
+        },
         "input_keys": sorted(payload.keys()),
         "cover": _cover_text(text)[:1500],
         "grade_reading": {

@@ -1016,3 +1016,46 @@ def test_it_shows_the_three_facts_whose_disagreement_is_the_bug() -> None:
     # An empty document would explain everything, so say so rather than showing
     # an empty box.
     assert "carries no text at all" in screen
+
+
+def test_both_texts_are_shown_because_only_one_of_them_is_read() -> None:
+    """The design keeps `raw_payload.source_text`, capped, and everything
+    downstream works from THAT copy rather than from Langfuse. A document that
+    arrives whole and is stored empty or truncated looks identical from the
+    outside, and it is the copy nobody could see.
+    """
+    import inspect
+    from pathlib import Path
+
+    from app.routes import admin_langfuse
+
+    source = inspect.getsource(admin_langfuse.get_item_text)
+    assert '"text": text' in source, "as received"
+    assert '"source_text"' in source, "as stored with the design"
+    assert '"matches_received"' in source
+    assert '"truncated"' in source
+
+    screen = " ".join(
+        (Path(__file__).resolve().parents[2] / "frontend-web/src/views/ItemText.tsx")
+        .read_text().split()
+    )
+    assert "as the ingest receives it" in screen
+    assert "as stored with the design" in screen
+    assert "Copy the stored text" in screen
+    # The stored panel only opens when the two differ — showing the same text
+    # twice is noise, and the difference is the whole point.
+    assert "!d.stored.matches_received" in screen
+
+
+def test_a_missing_stored_copy_says_what_it_means() -> None:
+    """Nothing downstream has the document to work from — which is a different
+    and worse fact than a short one."""
+    import inspect
+
+    from app.routes import admin_langfuse
+
+    source = inspect.getsource(admin_langfuse.get_item_text)
+    # Wrapped in the source, so match on the halves rather than the line.
+    assert "No design holds a stored copy" in source
+    assert "nothing downstream has this " in source
+    assert "reads the stored copy" in source

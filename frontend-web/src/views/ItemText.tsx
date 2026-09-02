@@ -107,6 +107,65 @@ export function ItemText({ grade, itemId }: { grade: string; itemId: string }) {
         </details>
       )}
 
+      {/* The two texts, and whether they are the same one. Only the stored
+          copy is what the generators read: a document that arrives whole and
+          is stored empty or truncated looks identical from the outside. */}
+      <div
+        style={{
+          border: `1px solid var(--${d.stored.characters ? (d.stored.matches_received ? "line" : "warn") : "danger"})`,
+          borderRadius: "var(--radius)",
+          padding: "var(--s3)",
+          fontSize: "var(--text-sm)",
+        }}
+      >
+        <Stack direction="row" gap="var(--s3)" align="center" wrap>
+          <span>
+            received <strong className="mono">{d.characters.toLocaleString()}</strong>
+          </span>
+          <span aria-hidden style={{ color: "var(--ink-3)" }}>→</span>
+          <span>
+            stored{" "}
+            <strong
+              className="mono"
+              style={{ color: d.stored.characters ? "inherit" : "var(--danger)" }}
+            >
+              {d.stored.characters.toLocaleString()}
+            </strong>
+          </span>
+          {d.stored.design_id && (
+            <span className="mono" style={{ color: "var(--ink-3)" }}>
+              {d.stored.design_id}
+            </span>
+          )}
+          {d.stored.truncated && (
+            <Badge tone="warn">capped at {d.stored.cap.toLocaleString()}</Badge>
+          )}
+        </Stack>
+        <div style={{ color: "var(--ink-2)", marginTop: 4 }}>{d.stored.note}</div>
+      </div>
+
+      {d.stored.characters > 0 && !d.stored.matches_received && (
+        <div>
+          <Stack direction="row" gap="var(--s2)" align="center" wrap>
+            <strong style={{ fontSize: "var(--text-sm)" }}>
+              The text as stored with the design
+            </strong>
+            <CopyButton getText={() => d.stored.text} label="Copy the stored text" />
+          </Stack>
+          <pre
+            className="mono"
+            style={{
+              marginTop: "var(--s2)", maxHeight: "18rem", overflow: "auto",
+              background: "var(--surface-2)", border: "1px solid var(--line)",
+              borderRadius: "var(--radius-sm)", padding: "var(--s3)",
+              fontSize: "0.78rem", whiteSpace: "pre-wrap", wordBreak: "break-word",
+            }}
+          >
+            {d.stored.text}
+          </pre>
+        </div>
+      )}
+
       <div>
         <Stack direction="row" gap="var(--s2)" align="center" wrap>
           <strong style={{ fontSize: "var(--text-sm)" }}>The text, as the ingest receives it</strong>

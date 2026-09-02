@@ -1089,6 +1089,12 @@ export function useExportBundle(grade: string, subject?: string) {
 export type ItemText = {
   item_id: string; grade: string; title: string; status: string; error: string;
   characters: number; text: string; input_keys: string[]; cover: string;
+  /** What was stored WITH the design — the copy everything downstream reads,
+   *  which is not necessarily the text that arrived. */
+  stored: {
+    design_id: string; characters: number; text: string;
+    truncated: boolean; cap: number; matches_received: boolean; note: string;
+  };
   grade_reading: { read_from_cover: string; declared_by_dataset: string; level: string };
   parsed: {
     subject?: string; grade?: string; level?: string; sub_strand_count?: number;
