@@ -62,6 +62,64 @@ Master BECF Global Context:
 Raw Curriculum Dataset Document:
 {{ raw_text }}
 
+=== THE SAME JSON, WHATEVER THE DOCUMENT LOOKS LIKE ===
+These designs arrive as PDF text, and the reader flattens them differently
+every time. You will see page banners, "Page 12 of 36" repeated three ways,
+"Could not preview the file. There was a problem loading this page", running
+headers, and roman-numeral front matter. None of that is curriculum. Ignore it.
+
+You will also see the four-column sub-strand tables FLATTENED — the columns
+become consecutive lines, so one sub-strand arrives as:
+
+    1.1 Conserving
+    Animal Feed:
+    Hay
+    (12 lessons)
+    By the end of the sub- strand the learner should
+    be able to:
+    a) describe methods of ...
+
+Reassemble it. "1.1 Conserving Animal Feed: Hay", twelve lessons. A hyphen at
+a line break ("sub- strand") is a word broken by the layout, not a compound.
+
+THE SUMMARY TABLE IS THE SPINE. Every design carries "SUMMARY OF STRANDS AND
+SUB-STRANDS" listing every strand, every sub-strand and its lesson count on one
+line each. Read it first and treat it as the authoritative list: if the detail
+pages yield eight sub-strands and the summary lists ten, there are ten, and the
+two you could not read in detail are reported with what the summary gives and
+an entry in `unreadable`. Never return fewer sub-strands than the summary names.
+
+EVERY KEY, EVERY TIME. A field you cannot fill is an empty string or an empty
+list — never absent, never null, never a note explaining why. The consumer of
+this JSON is code, and it must not have to ask whether a key exists.
+
+=== LEARNING AREA OR SUBJECT — USE THE DESIGN'S OWN WORD ===
+KICD does not call these the same thing at every level. Pre-Primary and Junior
+School designs say LEARNING AREA (and "activity area" at Pre-Primary); Senior
+School and the Diploma say SUBJECT. Some designs add a THEME axis above the
+strand, and others use their themes AS the strands.
+
+Record both: `naming.design_word` is the word this document actually uses,
+verbatim, and `subject` is the name itself. Do not translate one into the
+other and do not tidy "Christian Religious Activities" into "Christian
+Religious Education" — a teacher searching for what the cover says must find it.
+Where the design has no theme axis, `theme` is an empty string. Never report a
+theme as if it were a strand, or a strand as if it were a sub-strand.
+
+=== CITE EVERYTHING, BY PAGE AND LINE ===
+The text you are given is numbered: every line arrives as `page:line  text`.
+Every fact you extract carries the address it came from and the words at that
+address, quoted verbatim. A reviewer clicks the address and reads the original.
+
+    {"ref": "12:4", "quote": "1.1 Conserving Animal Feed: Hay 12"}
+
+Cite the line the fact is ON. Do not manufacture an address to fill the field:
+an address that does not resolve is worse than none, because it survives
+inspection. Where a line number is genuinely unavailable, use the page alone
+("12:0") and say so. Every citation is checked mechanically after you answer,
+against the document you were given, and anything that does not resolve is
+reported against this extraction.
+
 Extraction Directives:
 1. Extract Grade/Level: Determine the exact educational tier (e.g., 'Diploma in Teacher Education', 'Grade 7', 'PP1').
 2. Extract Subject & Subject Code: Discovered subject name and 3-4 letter code (e.g. 'Agriculture' -> 'AGR').
@@ -86,6 +144,14 @@ Output MUST be a valid JSON object matching this schema:
   "grade": "grade-dte",
   "level": "Diploma in Teacher Education",
   "essence_statement": "Full comprehensive essence statement...",
+  "naming": {
+    "design_word": "<the word THIS document uses: 'learning area', 'activity area' or 'subject'>",
+    "uses_themes": false
+  },
+  "citations": [
+    {"ref": "1:13", "quote": "GRADE 9", "claim": "the grade this design is for"},
+    {"ref": "10:9", "quote": "ESSENCE STATEMENT", "claim": "where the essence statement begins"}
+  ],
   "general_learning_outcomes": ["Outcome 1", "Outcome 2"],
   "strands": [
     {
@@ -104,11 +170,17 @@ Output MUST be a valid JSON object matching this schema:
           "required_diagrams": ["<only if the design asks for a visual; otherwise []>"],
           "experiments": ["<only if the design describes a practical procedure; otherwise []>"],
           "safety_hazards_to_check": ["<only where a real hazard exists — reagents, heat, flame, sharp tools, soil, animals; otherwise []>"],
-          "source_pages": [12, 13]
+          "source_pages": [12, 13],
+          "citations": [
+            {"ref": "12:4", "quote": "<the exact words at that address>",
+             "claim": "<what this sub-strand takes from that line>"}
+          ]
         }
       ]
     }
-  ]
+  ],
+  "unreadable": ["<anything the summary names that the detail pages did not yield, by name>"],
+  "gaps": ["<anything a teacher will need that this design does not supply, named rather than invented>"]
 }
 Return ONLY valid JSON.
 """,

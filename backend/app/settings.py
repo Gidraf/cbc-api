@@ -32,6 +32,9 @@ class Settings:
     anthropic_api_key: str | None = os.getenv("ANTHROPIC_API_KEY")
     gemini_api_key: str | None = os.getenv("GEMINI_API_KEY")
     ollama_base_url: str | None = os.getenv("OLLAMA_BASE_URL")
+    # Read a design with the agent where the patterns come up short. One model
+    # call per document that needed it, and none for the ones that parsed.
+    design_agent_enabled: bool = os.getenv("DESIGN_AGENT", "1") not in ("0", "false", "False")
 
     # Langfuse Integration
     langfuse_host: str = os.getenv("LANGFUSE_HOST", "http://localhost:3001")

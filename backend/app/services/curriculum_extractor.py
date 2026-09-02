@@ -552,6 +552,20 @@ class CurriculumExtractorService:
         except Exception as p_exc:  # noqa: BLE001
             logger.warning("Dynamic profile synthesis during ingestion deferred: %s", p_exc)
 
+        # 3b. Where the patterns did not reach, read it with the agent.
+        #
+        # The regex reads the designs it was written against and returns
+        # nothing for the rest: a Grade 9 design whose PDF reader flattened the
+        # four-column table came back with zero sub-strands, and an empty
+        # design is indistinguishable in the console from one nobody has run.
+        # A model does not care how the columns landed.
+        #
+        # Only where it is needed. Reading every design with a model costs a
+        # call per document for designs the patterns already read correctly,
+        # and this runs inside the ingest job, so it is on Celery and its steps
+        # appear in the same progress the operator is already watching.
+        self._read_with_agent_if_thin(design, raw_text)
+
         # 4. Generate Subject, Strand, and Substrand DNAs
         self._generate_curriculum_dna_tree(design, dataset_dna.dna_id, raw_text)
 
@@ -810,6 +824,59 @@ class CurriculumExtractorService:
 
 
 
+    # KICD's own summary table, which every design carries and which is the
+    # only place the whole spine appears in one clean list:
+    #
+    #   1.0 Conservation of Resources 1.1 Conserving Animal Feed: Hay 12
+    #   1.2 Conserving Leftover Food 11
+    #   1.3 Integrated Farming 12
+    #
+    # The detail pages that follow are a four-column table flattened by the PDF
+    # reader, so a sub-strand arrives as "1.1 Conserving" / "Animal Feed:" /
+    # "Hay" / "(12 lessons)" on four lines and matches nothing. That is why a
+    # Grade 9 design ingested with zero sub-strands and looked, in the console,
+    # exactly like one that had never been run.
+    _SUMMARY_ROW = re.compile(
+        r"^[ \t]*(?:(\d+\.0)\s+([A-Za-z][A-Za-z ,'&/()-]{3,60}?)\s+)?"
+        r"(\d+\.[1-9]\d?)\s+([A-Za-z][^\n]{3,80}?)\s+(\d{1,3})[ \t]*$",
+        re.MULTILINE,
+    )
+
+    def _substrands_from_summary(
+        self, text: str, subject: str, grade: str, level: str
+    ) -> list[ParsedSubstrand]:
+        """The strands and sub-strands, read off the design's own summary."""
+        window = text
+        head = re.search(r"SUMMARY OF STRANDS AND SUB[\s-]*STRANDS", text, re.IGNORECASE)
+        if head:
+            # Stop at the first strand heading: the detail pages repeat these
+            # numbers in wrapped columns and would be read as more rows.
+            tail = re.search(r"\n[ \t]*STRAND\s+\d+\.\d", text[head.end():], re.IGNORECASE)
+            window = text[head.end(): head.end() + (tail.start() if tail else 4000)]
+
+        out: list[ParsedSubstrand] = []
+        strand_id, strand_label = "", ""
+        for row in self._SUMMARY_ROW.finditer(window):
+            if row.group(1) and row.group(2):
+                strand_id = row.group(1)
+                strand_label = row.group(2).strip()
+            name = row.group(4).strip().rstrip(".")
+            if not strand_label or not name:
+                continue
+            out.append(ParsedSubstrand(
+                strand_id=strand_id,
+                strand_name=strand_label,
+                sub_strand_id=row.group(3),
+                sub_strand_name=name,
+                allocated_hours=f"{row.group(5)} lessons",
+                slos=[], learning_experiences=[], key_inquiry_questions=[],
+                core_competencies=[], values=[], assessment_rubrics={},
+                required_diagrams=[], experiments=[], safety_hazards_to_check=[],
+                pedagogical_guidance="", prompt_package={},
+                raw_snippet=row.group(0).strip(),
+            ))
+        return out
+
     def _extract_substrands(
         self, text: str, subject: str, grade: str, level: str
     ) -> list[ParsedSubstrand]:
@@ -823,7 +890,10 @@ class CurriculumExtractorService:
         # match every SUB-strand heading as a strand — splitting the design at
         # each one and leaving the real sub-strands unreachable inside sections
         # that were themselves sub-strands. A strand heading starts a line.
-        strand_pattern = r"(?:^|\n)[ \t]*(STRAND\s+(\d+\.\d+)\s+([^\n]+))"
+        # "STRAND 1.0: CONSERVATION OF RESOURCES" — the colon is how KICD
+        # writes it, and requiring whitespace straight after the number matched
+        # none of the Grade 9 designs.
+        strand_pattern = r"(?:^|\n)[ \t]*(STRAND\s+(\d+\.\d+)\s*[:.\-]?\s*([^\n]+))"
         strand_matches = list(re.finditer(strand_pattern, text, re.IGNORECASE))
 
         if not strand_matches:
@@ -915,6 +985,26 @@ class CurriculumExtractorService:
                 subject, grade, len(unparsed), ", ".join(unparsed[:6]),
             )
         self._last_unparsed = unparsed
+
+        # The detail pages are a four-column table flattened by the PDF reader,
+        # so a sub-strand arrives as "1.1 Conserving" / "Animal Feed:" / "Hay"
+        # / "(12 lessons)" on four lines and matches nothing. When that happens
+        # the design's own SUMMARY table still holds the whole spine in one
+        # clean list — strand, sub-strand and lesson count — and a design with
+        # the spine and no detail is worth immeasurably more than an empty one,
+        # which is what a Grade 9 ingest produced and what looked, in the
+        # console, exactly like a design that had never been run.
+        summary = self._substrands_from_summary(text, subject, grade, level)
+        if summary:
+            have = {s.sub_strand_name.strip().lower() for s in kept}
+            added = [s for s in summary if s.sub_strand_name.strip().lower() not in have]
+            if added:
+                logger.info(
+                    "%s (%s): %d sub-strand(s) read from the design's summary table "
+                    "that the detail pages did not yield.",
+                    subject, grade, len(added),
+                )
+                kept = kept + added
         return kept
 
     def _parse_single_substrand(
@@ -1136,6 +1226,84 @@ class CurriculumExtractorService:
             prompt_package=prompt_package,
             raw_snippet=body,
         )
+
+    def _read_with_agent_if_thin(
+        self, design: ParsedCurriculumDesign, raw_text: str,
+    ) -> None:
+        """Fill in what the patterns could not read, from the agent's reading.
+
+        Additive only. A sub-strand the regex read carries its SLOs, its
+        learning experiences and its own citations; the agent's version of the
+        same sub-strand is not better, and replacing it would trade a parse
+        that worked for one that costs money. Only names the regex never
+        produced are added.
+        """
+        from ..settings import settings
+
+        if not getattr(settings, "design_agent_enabled", True):
+            return
+
+        from .curriculum_catalogue import expected_structure
+
+        expected = expected_structure(design.grade, design.subject).get("sub_strand_count", 0)
+        found = len(design.substrands)
+        # Thin enough to be worth a call: nothing at all, or well short of what
+        # KICD publishes for this learning area.
+        if found and (not expected or found >= expected):
+            return
+
+        from . import design_agent
+
+        try:
+            reading = design_agent.read(raw_text, grade=design.grade)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "The design agent could not read %s (%s): %s. Keeping the %d "
+                "sub-strand(s) the patterns found.",
+                design.subject, design.grade, exc, found,
+            )
+            return
+
+        have = {s.sub_strand_name.strip().lower() for s in design.substrands}
+        added = 0
+        for strand in reading.design.get("strands") or []:
+            for sub in strand.get("sub_strands") or []:
+                name = str(sub.get("sub_strand_name") or "").strip()
+                if not name or name.lower() in have:
+                    continue
+                design.substrands.append(ParsedSubstrand(
+                    strand_id="", strand_name=str(strand.get("strand_name") or "").strip(),
+                    sub_strand_id="", sub_strand_name=name,
+                    allocated_hours=str(sub.get("allocated_time") or ""),
+                    slos=list(sub.get("slos") or []),
+                    learning_experiences=list(sub.get("learning_experiences") or []),
+                    key_inquiry_questions=list(sub.get("key_inquiry_questions") or []),
+                    core_competencies=list(sub.get("core_competencies") or []),
+                    values=list(sub.get("values") or []),
+                    assessment_rubrics={},
+                    required_diagrams=list(sub.get("required_diagrams") or []),
+                    experiments=list(sub.get("experiments") or []),
+                    safety_hazards_to_check=list(sub.get("safety_hazards_to_check") or []),
+                    pedagogical_guidance="",
+                    prompt_package={},
+                    theme=str(sub.get("theme") or ""),
+                    pertinent_contemporary_issues=list(
+                        sub.get("pertinent_and_contemporary_issues") or []),
+                    source_pages=list(sub.get("source_pages") or []),
+                    raw_snippet="",
+                ))
+                have.add(name.lower())
+                added += 1
+
+        design.raw_payload["design_agent"] = {
+            **reading.to_dict(), "added": added, "found_by_patterns": found,
+        }
+        if added:
+            logger.info(
+                "The design agent added %d sub-strand(s) to %s (%s) that the "
+                "patterns did not read; %d%% of its citations resolve.",
+                added, design.subject, design.grade, reading.citation_percentage,
+            )
 
     def _persist_to_db(self, design: ParsedCurriculumDesign, status: str = "draft_pending_human_review") -> None:
         review_status = design.metadata.get("review_status") or status
