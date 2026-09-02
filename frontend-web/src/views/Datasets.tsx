@@ -24,6 +24,7 @@ import {
   type DatasetItem,
   type IngestStatus,
 } from "../lib/queries";
+import { ReadDesign } from "./ReadDesign";
 
 const STATUS_TONE: Record<IngestStatus, "ok" | "warn" | "danger" | "info"> = {
   ingested: "ok",
@@ -312,6 +313,10 @@ export function Datasets() {
           )}
         </Card>
       )}
+
+      {/* Paste a document and see how the parser reads it — before ingesting,
+          or after, when a count says it went somewhere else. */}
+      <ReadDesign grade={effectiveGrade} />
     </>
   );
 }

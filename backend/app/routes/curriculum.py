@@ -5490,6 +5490,101 @@ def factory_plan_approval(
     return require_approved_plan(kind, grade, subject, sub_strand)
 
 
+class ReadDesignRequest(BaseModel):
+    """A design document pasted in, to see how the extractor reads it."""
+
+    text: str
+    grade: str = ""
+    title: str = ""
+
+
+@router.post("/factory/read-design")
+def factory_read_design(
+    payload: ReadDesignRequest,
+    _: AuthContext = Depends(require_roles("admin", "operator", "developer")),
+) -> dict[str, Any]:
+    """Show what the parser makes of a document, WITHOUT ingesting it.
+
+    Every ingest problem so far has been diagnosed by inference: a count is
+    wrong on one screen, so something upstream must be misreading a cover. The
+    document itself was never visible — sixteen Grade 9 designs were filed
+    under Grade 7 for want of a way to ask "what grade do you think this is?"
+
+    Nothing is written. This reads the text and reports what would be filed:
+    the grade and where it came from, the learning area, the strands and
+    sub-strands found, and every scripture reference — separated from the
+    page:line addresses that look exactly like scripture and are not.
+    """
+    from ..services import scripture
+    from ..services.curriculum_extractor import (
+        _cover_text, _grade_from_text, curriculum_extractor,
+    )
+    from ..services.grade_order import normalize_grade
+
+    text = payload.text or ""
+    if len(text.strip()) < 200:
+        raise_api_error(
+            "VALIDATION_FAILED",
+            f"That is {len(text.strip())} characters. A curriculum design is "
+            f"tens of thousands — paste the document's text, not a fragment.",
+        )
+
+    meta = {"grade": normalize_grade(payload.grade), "title": payload.title,
+            "file_id": "preview"}
+    from_cover, level = _grade_from_text(text, meta)
+
+    try:
+        design = curriculum_extractor._parse_curriculum_text(text, meta, "preview")
+        parsed = {
+            "subject": design.subject,
+            "subject_code": design.subject_code,
+            "grade": design.grade,
+            "level": design.level,
+            "essence_statement": design.essence_statement[:600],
+            "general_learning_outcomes": design.general_learning_outcomes[:12],
+            "strands": sorted({s.strand for s in design.substrands if s.strand}),
+            "sub_strands": [
+                {"strand": s.strand, "name": s.sub_strand, "lessons": s.lessons,
+                 "slos": len(s.slos or [])}
+                for s in design.substrands[:60]
+            ],
+            "sub_strand_count": len(design.substrands),
+        }
+        error = ""
+    except Exception as exc:  # noqa: BLE001
+        parsed, error = {}, f"{type(exc).__name__}: {exc}"
+
+    references = scripture.find(text)
+    return {
+        "characters": len(text),
+        "cover": _cover_text(text)[:1200],
+        "grade": {
+            "read_from_cover": from_cover,
+            "declared_by_dataset": meta["grade"],
+            "would_file_under": parsed.get("grade") or from_cover or meta["grade"],
+            "level": parsed.get("level") or level,
+            "note": (
+                "The cover names it."
+                if from_cover else
+                "Nothing on the cover names a grade, so the dataset settles it."
+            ),
+        },
+        "parsed": parsed,
+        "error": error,
+        "scripture": {
+            "references": sorted({str(r) for r in references}),
+            "impossible": [scripture.impossible(r) for r in references
+                           if scripture.impossible(r)],
+            "not_a_book": scripture.suspect_books(text),
+            "note": (
+                "Read by BOOK, not by shape. `Page 199:2` and `Creation 203:10` "
+                "are the design's own addresses and are deliberately not listed "
+                "here — they were, and they drowned the real references."
+            ),
+        },
+    }
+
+
 @router.get("/factory/notes.html", response_class=HTMLResponse)
 def factory_notes_html(
     artifact_id: str = Query(..., min_length=4),

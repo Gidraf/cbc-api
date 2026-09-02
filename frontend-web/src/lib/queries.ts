@@ -1086,6 +1086,45 @@ export function useExportBundle(grade: string, subject?: string) {
  *  and coming back to the console to act on it — for every version of every
  *  sub-strand. Fetched as a blob rather than linked, because a plain window
  *  .open carries no token and would show the sign-in page. */
+export type DesignReading = {
+  characters: number;
+  cover: string;
+  grade: {
+    read_from_cover: string;
+    declared_by_dataset: string;
+    would_file_under: string;
+    level: string;
+    note: string;
+  };
+  parsed: {
+    subject?: string; grade?: string; level?: string;
+    essence_statement?: string;
+    strands?: string[];
+    sub_strands?: { strand: string; name: string; lessons: string; slos: number }[];
+    sub_strand_count?: number;
+  };
+  error: string;
+  scripture: {
+    references: string[]; impossible: string[]; not_a_book: string[]; note: string;
+  };
+};
+
+/** Read a design without ingesting it.
+ *
+ *  Every ingest problem so far was diagnosed by inference — a count is wrong
+ *  on one screen, so something upstream must be misreading a cover. The
+ *  document itself was never visible. */
+export function useReadDesign() {
+  const api = useApi();
+  return useMutation({
+    mutationFn: (v: { text: string; grade?: string; title?: string }) =>
+      api<DesignReading>("/api/v1/curriculum/factory/read-design", {
+        method: "POST",
+        body: JSON.stringify(v),
+      }),
+  });
+}
+
 export function useNotesDocument() {
   const { token } = useAuth();
   return useMutation({

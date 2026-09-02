@@ -106,9 +106,12 @@ def test_ingested_and_written_are_reported_as_different_facts() -> None:
 
     # And the dataset screen can name exactly which items are the gap.
     missing = inspect.getsource(dataset_ingest.designs_missing)
-    assert "LEFT JOIN curriculum_designs" in missing
+    assert "curriculum_designs" in missing
     assert "s.status = 'ingested'" in missing
-    assert "d.design_id IS NULL" in missing
+    # A combined design records one id per learning area in `design_ids`, so
+    # checking only the primary reports a document that produced five designs
+    # as having produced none.
+    assert "s.design_ids" in missing and "NOT EXISTS" in missing
     # Matched the way every other grade comparison is.
     assert "REPLACE(LOWER(s.grade), 'grade-', '')" in missing
 

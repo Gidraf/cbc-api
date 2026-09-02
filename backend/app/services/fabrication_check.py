@@ -128,10 +128,9 @@ def scripture_in(design_text: str) -> list[str]:
     judging from recall — it scored faith_integrity 100 on a PP1 guide teaching
     a parable the PP1 design does not carry.
     """
-    return sorted({
-        f"{m.group(1).strip()} {m.group(2)}:{m.group(3)}"
-        for m in _SCRIPTURE.finditer(design_text or "")
-    })
+    from . import scripture
+
+    return sorted({str(r) for r in scripture.find(design_text or "")})
 
 
 def check(content: Any, design_text: str = "", has_sources: bool = False) -> FabricationReport:
@@ -146,23 +145,48 @@ def check(content: Any, design_text: str = "", has_sources: bool = False) -> Fab
     design_lower = design.lower()
 
     # ── scripture the design never names ────────────────────────────────────
-    in_design = {
-        f"{m.group(1).strip()} {m.group(2)}:{m.group(3)}"
-        for m in _SCRIPTURE.finditer(design)
-    }
+    #
+    # Read by book, not by shape. "A capitalised word then digits:digits" is a
+    # Bible reference AND the `page:line` format this system cites the design
+    # with, so the list of "scripture the design carries" came back with about
+    # 170 entries — Page 199:2, Creation 203:10, Wallcharts 221:22 — of which a
+    # dozen were scripture. Every comparison after that was against noise.
+    from . import scripture
+
+    in_design = {str(r) for r in scripture.find(design)}
     report.scripture_in_design = sorted(in_design)
 
-    for match in _SCRIPTURE.finditer(body):
-        book = match.group(1).strip()
-        reference = f"{book} {match.group(2)}:{match.group(3)}"
+    for reference in scripture.find(body):
+        # Chapter counts are fixed and knowable, so this is decidable without
+        # any source: Proverbs has 31 chapters whichever translation is open.
+        wrong = scripture.impossible(reference)
+        if wrong:
+            report.findings.append(Finding(
+                "impossible_scripture",
+                f"{wrong} A teacher reads this aloud to a class before anybody "
+                f"checks it.",
+            ))
+            continue
         # Compare on book+chapter+verse, ignoring the range, so "Mark 10:13-16"
         # matches the design's "Mark 10:13-16" however it re-renders the dash.
-        if reference not in in_design:
+        if str(reference) not in in_design:
             report.findings.append(Finding(
                 "invented_scripture",
-                f"'{match.group(0)}' is cited but the KICD design does not name it. "
+                f"'{reference.raw}' is cited but the KICD design does not name it. "
                 f"The design carries: {', '.join(sorted(in_design)) or 'none'}.",
             ))
+
+    # A reference to a book that does not exist is not caught above, because
+    # there is no book to check it against — and silently ignoring it is how an
+    # invented verse reaches the teacher.
+    for suspect in scripture.suspect_books(body):
+        if suspect.split()[0].lower() in design_lower:
+            continue  # a word the design itself uses in an address
+        report.findings.append(Finding(
+            "invented_scripture",
+            f"'{suspect}' is written as a scripture reference, but it names no "
+            f"book of the Bible.",
+        ))
 
     # ── statistics, which this guide has no business carrying ───────────────
     for sentence in _sentences(body):

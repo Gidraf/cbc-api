@@ -734,7 +734,10 @@ def test_the_reviewer_is_shown_the_designs_own_scripture_rather_than_asked_to_re
     block = review.design_inventory(design)
 
     assert "EVERY SCRIPTURE REFERENCE THIS DESIGN NAMES" in block
-    assert "1Samuel 17:41" in block and "Mark 10:13" in block
+    # Canonical names, not the PDF's spelling: the designs render "1Samuel"
+    # with no space, and a reviewer comparing that against a guide's "1 Samuel"
+    # would call a real citation invented.
+    assert "1 Samuel 17:41" in block and "Mark 10:13" in block
     assert "came from outside the design" in block
     assert "curriculum_alignment" in block
 

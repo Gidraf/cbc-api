@@ -309,10 +309,22 @@ def designs_missing(grade_slug: str) -> list[dict[str, Any]]:
         SELECT s.item_id, s.title, s.resolved_subject, s.declared_subject,
                s.design_id, s.char_count, s.updated_at
         FROM dataset_ingest_status s
-        LEFT JOIN curriculum_designs d ON d.design_id = s.design_id
         WHERE REPLACE(LOWER(s.grade), 'grade-', '') = REPLACE(LOWER(:grade), 'grade-', '')
           AND s.status = 'ingested'
-          AND (s.design_id = '' OR s.design_id IS NULL OR d.design_id IS NULL)
+          -- A combined design records one id per learning area in `design_ids`
+          -- and may leave the primary `design_id` empty, so checking only the
+          -- primary reports a document that produced five designs as having
+          -- produced none. The item is short a design when NOTHING it claims
+          -- resolves to a row.
+          AND NOT EXISTS (
+              SELECT 1 FROM curriculum_designs d
+              WHERE d.design_id = s.design_id
+                 OR d.design_id = ANY(
+                        SELECT jsonb_array_elements_text(
+                            CASE WHEN jsonb_typeof(s.design_ids) = 'array'
+                                 THEN s.design_ids ELSE '[]'::jsonb END)
+                    )
+          )
         ORDER BY COALESCE(NULLIF(s.resolved_subject, ''), s.declared_subject, s.title)
         """,
         {"grade": grade_slug},
