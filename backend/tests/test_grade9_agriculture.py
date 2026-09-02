@@ -133,3 +133,97 @@ def test_a_strand_heading_may_be_punctuated() -> None:
     assert found, "the strand heading pattern moved"
     assert re.search(found.group(1), "\nSTRAND 1.0: CONSERVATION OF RESOURCES", re.IGNORECASE)
     assert re.search(found.group(1), "\nSTRAND 1.0 CREATION", re.IGNORECASE), "still matches the unpunctuated form"
+
+
+# ── Social Studies Grade 9: the summary table wraps ─────────────────────────
+
+SOCIAL_STUDIES = """SUMMARY OF STRANDS AND SUB-STRANDS
+Strand Sub-Strand Suggested Number
+of Lessons
+1.0 Social Studies and Career
+Development
+1.1 Pathway Choices 4
+1.2 Pre-career Support Systems 4
+2.0 Community Service-Learning 2.1 Community Service-Learning Project 8
+3.0 People and Relationships 3.1 Socio-economic practices of early humans 6
+3.2 Indigenous knowledge systems in African Societies 8
+3.3 Poverty Reduction 6
+3.4 Population Structure 8
+3.5 Peaceful Conflict Resolution 8
+3.6 Healthy Relationships 4
+4.0 Natural and Historic Built
+Environments
+4.1 Topographical maps 8
+4.2 Internal Land Forming Processes 8
+4.3 Multipurpose River Projects in Africa 8
+4.4 Management and Conservation of the Environment 6
+4.5 World Heritage Sites in Africa 6
+Page 13 of 73 Page 15 of 73
+Page 14 of 73
+xiv
+5.0 Political Developments and
+Governance
+5.1 The Constitution of Kenya 8
+5.2 Civic Engagement in Governance 6
+5.3 Kenya's Bill of Rights 8
+5.4 Cultural Globalisation 6
+Total Number of Lessons 120
+Note: The suggested number of lessons per sub-strand may be less or more depending on the context
+"""
+
+
+def _read(text: str):
+    return curriculum_extractor._substrands_from_summary(
+        text, "Social Studies", "grade-9", "Junior School")
+
+
+def test_a_strand_whose_name_wraps_is_still_read() -> None:
+    """"1.0 Social Studies and Career" / "Development" — the name lands on two
+    lines, and reading only whole rows lost strands 1.0, 4.0 and 5.0."""
+    subs = _read(SOCIAL_STUDIES)
+
+    assert len(subs) == 18, [s.sub_strand_id for s in subs]
+    by_id = {s.sub_strand_id: s for s in subs}
+    assert by_id["1.1"].sub_strand_name == "Pathway Choices"
+    assert by_id["1.1"].strand_name == "Social Studies and Career Development"
+    assert by_id["4.1"].strand_name == "Natural and Historic Built Environments"
+    assert by_id["5.4"].strand_name == "Political Developments and Governance"
+
+    # The design's own total.
+    assert sum(int(s.allocated_hours.split()[0]) for s in subs) == 120
+
+
+def test_a_sub_strand_is_filed_by_its_own_number_not_by_the_last_strand_seen() -> None:
+    """With 4.0 and 5.0 unread, 4.1 through 5.4 were all filed under "People
+    and Relationships" — the last strand that HAD been read.
+
+    Silently wrong is worse than missing: a sub-strand under the wrong strand
+    is generated, reviewed and printed without anybody seeing it.
+    """
+    for sub in _read(SOCIAL_STUDIES):
+        assert sub.strand_id == f"{sub.sub_strand_id.split('.')[0]}.0", sub.sub_strand_id
+        assert sub.strand_name, f"{sub.sub_strand_id} has no strand"
+
+    people = [s for s in _read(SOCIAL_STUDIES)
+              if s.strand_name == "People and Relationships"]
+    assert {s.sub_strand_id for s in people} == {"3.1", "3.2", "3.3", "3.4", "3.5", "3.6"}
+
+
+def test_the_page_furniture_between_the_two_halves_is_not_a_strand() -> None:
+    """The table spans two pages, so "Page 13 of 73 Page 15 of 73", "xiv" and
+    the closing note sit inside it."""
+    names = {s.sub_strand_name.lower() for s in _read(SOCIAL_STUDIES)}
+    assert not any("page" in n or "total" in n or "note" in n for n in names)
+
+
+def test_the_agriculture_design_still_reads_the_same() -> None:
+    """Its strands are on one line each; the change for wrapped names must not
+    cost the unwrapped case."""
+    subs = curriculum_extractor._substrands_from_summary(
+        SUMMARY, "Agriculture", "grade-9", "Junior School")
+
+    assert len(subs) == 10
+    assert sum(int(s.allocated_hours.split()[0]) for s in subs) == 120
+    by_id = {s.sub_strand_id: s for s in subs}
+    assert by_id["1.1"].strand_name == "Conservation of Resources"
+    assert by_id["4.2"].sub_strand_name == "Homemade Sun Dryer"

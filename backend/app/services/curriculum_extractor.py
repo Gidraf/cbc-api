@@ -850,51 +850,96 @@ class CurriculumExtractorService:
     #
     #   1.0 Conservation of Resources 1.1 Conserving Animal Feed: Hay 12
     #   1.2 Conserving Leftover Food 11
-    #   1.3 Integrated Farming 12
     #
     # The detail pages that follow are a four-column table flattened by the PDF
     # reader, so a sub-strand arrives as "1.1 Conserving" / "Animal Feed:" /
     # "Hay" / "(12 lessons)" on four lines and matches nothing. That is why a
     # Grade 9 design ingested with zero sub-strands and looked, in the console,
     # exactly like one that had never been run.
+    #
+    # The summary wraps too. Social Studies Grade 9 prints
+    #
+    #   1.0 Social Studies and Career
+    #   Development
+    #   1.1 Pathway Choices 4
+    #
+    # so a strand's name lands on two lines, and reading only whole rows lost
+    # strands 1.0, 4.0 and 5.0 — and then filed 4.1 through 5.4 under "People
+    # and Relationships", the last strand that HAD been read. Silently wrong is
+    # worse than missing: a sub-strand under the wrong strand is generated,
+    # reviewed and printed without anybody seeing it.
+
+    # A whole row: an optional strand, then the sub-strand and its lesson count.
     _SUMMARY_ROW = re.compile(
         r"^[ \t]*(?:(\d+\.0)\s+([A-Za-z][A-Za-z ,'&/()-]{3,60}?)\s+)?"
-        r"(\d+\.[1-9]\d?)\s+([A-Za-z][^\n]{3,80}?)\s+(\d{1,3})[ \t]*$",
-        re.MULTILINE,
+        r"(\d+\.[1-9]\d?)\s+([A-Za-z][^\n]{3,80}?)\s+(\d{1,3})[ \t]*$"
     )
+    # A strand on a line of its own, its name possibly continuing below.
+    _SUMMARY_STRAND = re.compile(r"^[ \t]*(\d+\.0)\s+([A-Za-z][A-Za-z ,'&/()-]{2,70}?)[ \t]*$")
+    # The continuation: bare words, no numbering, no lesson count.
+    _SUMMARY_TAIL = re.compile(r"^[ \t]*([A-Za-z][A-Za-z ,'&/()-]{2,40})[ \t]*$")
+
+    def _summary_window(self, text: str) -> str:
+        head = re.search(r"SUMMARY OF STRANDS AND SUB[\s-]*STRANDS", text, re.IGNORECASE)
+        if not head:
+            return text
+        # Stop at the first strand heading: the detail pages repeat these
+        # numbers in wrapped columns and would be read as more rows.
+        tail = re.search(r"\n[ \t]*STRAND\s+\d+\.\d", text[head.end():], re.IGNORECASE)
+        return text[head.end(): head.end() + (tail.start() if tail else 6000)]
 
     def _substrands_from_summary(
         self, text: str, subject: str, grade: str, level: str
     ) -> list[ParsedSubstrand]:
         """The strands and sub-strands, read off the design's own summary."""
-        window = text
-        head = re.search(r"SUMMARY OF STRANDS AND SUB[\s-]*STRANDS", text, re.IGNORECASE)
-        if head:
-            # Stop at the first strand heading: the detail pages repeat these
-            # numbers in wrapped columns and would be read as more rows.
-            tail = re.search(r"\n[ \t]*STRAND\s+\d+\.\d", text[head.end():], re.IGNORECASE)
-            window = text[head.end(): head.end() + (tail.start() if tail else 4000)]
+        lines = self._summary_window(text).split("\n")
+
+        names: dict[str, str] = {}
+        rows: list[tuple[str, str, str]] = []
+        pending = ""
+
+        for line in lines:
+            whole = self._SUMMARY_ROW.match(line)
+            if whole:
+                if whole.group(1) and whole.group(2):
+                    names[whole.group(1)] = whole.group(2).strip()
+                pending = ""
+                rows.append((whole.group(3), whole.group(4).strip().rstrip("."),
+                             whole.group(5)))
+                continue
+
+            header = self._SUMMARY_STRAND.match(line)
+            if header:
+                names[header.group(1)] = header.group(2).strip()
+                pending = header.group(1)
+                continue
+
+            # A bare word line straight after a strand finishes its name.
+            if pending:
+                more = self._SUMMARY_TAIL.match(line)
+                if more:
+                    names[pending] = f"{names[pending]} {more.group(1).strip()}".strip()
+                pending = ""
 
         out: list[ParsedSubstrand] = []
-        strand_id, strand_label = "", ""
-        for row in self._SUMMARY_ROW.finditer(window):
-            if row.group(1) and row.group(2):
-                strand_id = row.group(1)
-                strand_label = row.group(2).strip()
-            name = row.group(4).strip().rstrip(".")
-            if not strand_label or not name:
+        for sub_id, name, lessons in rows:
+            if not name:
                 continue
+            # The sub-strand's OWN number says which strand it belongs to. "the
+            # last strand seen" is a guess, and it is the guess that filed 4.1
+            # through 5.4 under People and Relationships.
+            strand_id = f"{sub_id.split('.')[0]}.0"
             out.append(ParsedSubstrand(
                 strand_id=strand_id,
-                strand_name=strand_label,
-                sub_strand_id=row.group(3),
+                strand_name=names.get(strand_id, ""),
+                sub_strand_id=sub_id,
                 sub_strand_name=name,
-                allocated_hours=f"{row.group(5)} lessons",
+                allocated_hours=f"{lessons} lessons",
                 slos=[], learning_experiences=[], key_inquiry_questions=[],
                 core_competencies=[], values=[], assessment_rubrics={},
                 required_diagrams=[], experiments=[], safety_hazards_to_check=[],
                 pedagogical_guidance="", prompt_package={},
-                raw_snippet=row.group(0).strip(),
+                raw_snippet=f"{sub_id} {name} {lessons}",
             ))
         return out
 
