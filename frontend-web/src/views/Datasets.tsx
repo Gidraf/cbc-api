@@ -59,6 +59,14 @@ export function Datasets() {
   const counts = state?.counts;
   const pending = items.filter((i) => i.status === "pending" || i.status === "selected");
   const failed = items.filter((i) => i.status === "failed");
+  // Everything that produced something, not only what SUCCEEDED. A part-failed
+  // ingest wrote designs for the learning areas it did read — five Grade 6
+  // documents failed and left twelve designs between them — and un-ingest
+  // targeted only `ingested`, so the button was hidden and the designs it
+  // would have removed stayed. "Failed" does not mean "wrote nothing".
+  const clearable = items.filter(
+    (i) => i.status === "ingested" || i.status === "failed"
+  );
 
   // `process` no longer blocks: it queues and returns, so the page must not
   // disable itself while the request is in flight. Pressing Process on one
@@ -238,13 +246,13 @@ export function Datasets() {
           description="Each row is one curriculum design. Titles and subjects shown are the ones resolved from the document itself, not the catalogue label."
           actions={
             <Stack direction="row" gap="var(--s2)">
-              {(counts?.ingested ?? 0) > 0 && (
+              {clearable.length + (state?.orphaned_designs?.length ?? 0) > 0 && (
                 <Button
                   size="sm"
                   variant="ghost"
                   disabled={busy}
                   onClick={() => {
-                    const done = items.filter((i) => i.status === "ingested");
+                    const done = clearable;
                     // Designs nothing claims are not reached by un-ingesting an
                     // item, because un-ingest removes what an item SAYS it
                     // produced. Left behind, the factory still lists the
@@ -253,7 +261,7 @@ export function Datasets() {
                     const orphans = state?.orphaned_designs || [];
                     if (
                       window.confirm(
-                        `Un-ingest all ${done.length} ingested document(s) for this grade?\n\n` +
+                        `Un-ingest all ${done.length} document(s) for this grade?\n\n` +
                           `Their designs and sub-strands are removed and they return to ` +
                           `Not processed. Generated content is kept.`
                       )
@@ -273,7 +281,7 @@ export function Datasets() {
                     }
                   }}
                 >
-                  Un-ingest all
+                  Un-ingest all{clearable.length ? ` ${clearable.length}` : ""}
                 </Button>
               )}
               {failed.length > 0 && (
@@ -381,6 +389,26 @@ export function Datasets() {
                           <span style={{ color: "var(--ink-3)", fontSize: "var(--text-sm)" }}>
                             Running…
                           </span>
+                        ) : item.status === "failed" ? (
+                          // "Failed" does not mean "wrote nothing": a
+                          // part-failed ingest saved the learning areas it did
+                          // read, and without this the only way to clear them
+                          // was to process the document again first.
+                          <Stack direction="row" gap="var(--s2)">
+                            <Button
+                              size="sm"
+                              disabled={busy}
+                              onClick={() =>
+                                actions.process.mutate({ item_ids: [item.item_id], force: true })
+                              }
+                            >
+                              Process
+                            </Button>
+                            <Button size="sm" variant="ghost" disabled={busy}
+                                    onClick={() => uningest(item)}>
+                              Un-ingest
+                            </Button>
+                          </Stack>
                         ) : (
                           <Button
                             size="sm"

@@ -1125,3 +1125,40 @@ def test_the_console_names_them_before_offering_to_delete() -> None:
     # Two steps: un-ingest is confirmed, then the orphans separately.
     assert "purge_orphans," in screen
     assert "These are what the factory still reads. Delete them too?" in screen
+
+
+def test_un_ingest_reaches_what_a_failed_run_wrote() -> None:
+    """"Failed" does not mean "wrote nothing".
+
+    Five Grade 6 documents each ingested two or three of their learning areas
+    and then failed, leaving twelve designs between them. Un-ingest targeted
+    only `ingested`, so the button was hidden — the grade read 12/14 designs
+    with nothing on the page able to remove one.
+    """
+    from pathlib import Path
+
+    screen = " ".join(
+        (Path(__file__).resolve().parents[2] / "frontend-web/src/views/Datasets.tsx")
+        .read_text().split()
+    )
+    # The set is named once and includes both.
+    assert 'i.status === "ingested" || i.status === "failed"' in screen
+    assert "const done = clearable;" in screen
+    # And the button appears when there is anything to clear at all, including
+    # designs no document claims.
+    assert "clearable.length + (state?.orphaned_designs?.length ?? 0) > 0" in screen
+    # A failed row can be cleared on its own, without processing it first.
+    assert 'item.status === "failed" ? (' in screen
+    assert '"Failed" does not mean "wrote nothing"' in screen
+
+
+def test_un_ingesting_a_failed_item_is_not_refused_by_the_server() -> None:
+    """It removes what the row records, whatever the row's status — a partial
+    ingest records the areas that succeeded."""
+    import inspect
+
+    from app.services import dataset_ingest
+
+    source = inspect.getsource(dataset_ingest.uningest_item)
+    assert "status" not in source.split("design_ids = _previous_design_ids(row)")[0].split("if not row")[1], \
+        "no status gate before reading what it produced"
