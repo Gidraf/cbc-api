@@ -573,6 +573,15 @@ def process_item(item_id: str, force: bool = False) -> dict[str, Any]:
         logger.warning("Ingest failed for %s: %s", item_id, exc)
         raise
 
+    # "Ingested" has to mean a design exists. It meant "the extractor returned
+    # without raising", and those came apart: sixteen Grade 9 documents were
+    # marked ingested and Grade 9 held no designs at all, with no error to read
+    # anywhere.
+    #
+    # The check itself lives in `_persist_to_db`, which reads the row back
+    # after writing it and refuses the ingest when it is not there. Repeating
+    # it here would be a second implementation of the same fact, and the one at
+    # the write is the one that can say WHICH design failed to land.
     _record_outcome(item_id, result, payload, status=INGESTED, error="")
     return result
 

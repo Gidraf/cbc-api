@@ -533,8 +533,27 @@ class CurriculumExtractorService:
         )
 
         # 2. Parse curriculum metadata & structural sections
+        #
+        # Narrated from here on. "Read but no design" was diagnosed across four
+        # sessions by inference — a count is wrong on one screen, so something
+        # upstream must be misreading something — because an ingest ran twenty
+        # seconds and said nothing about what it did.
+        from .run_log import step
+
         design = self._parse_curriculum_text(
             raw_text, payload_meta, dataset_dna.dna_id, learning_area=learning_area
+        )
+        step(
+            "Read the cover",
+            f"{design.subject or 'no learning area'} · {design.grade or 'NO GRADE'} · "
+            f"{design.level or 'no level'}",
+            "ok" if design.subject and design.grade else "warn",
+        )
+        step(
+            "Read the structure",
+            f"{len(design.substrands)} sub-strand(s) across "
+            f"{len({s.strand_name for s in design.substrands if s.strand_name})} strand(s)",
+            "ok" if design.substrands else "warn",
         )
 
         # 3. Synthesize Dynamic Pedagogical ContentTypeProfile from Curriculum Design Dataset
@@ -571,9 +590,11 @@ class CurriculumExtractorService:
 
         # 5. Persist to PostgreSQL database
         self._persist_to_db(design)
+        step("Design stored", f"{design.design_id} under {design.grade}", "ok")
 
         # 6. Synchronize with Langfuse dataset item
         langfuse_sync_result = self._sync_to_langfuse(design)
+        step("Filed to Langfuse", str(langfuse_sync_result or "skipped"), "ok")
 
         # The regex extractor cannot read every design. KICD's PDFs render each
         # sub-strand table as wrapped columns, so a Pre-Primary sub-strand
@@ -1349,6 +1370,26 @@ class CurriculumExtractorService:
                 "review_status": review_status,
             },
         )
+
+        # Prove it landed. An INSERT that ran without raising is not the same
+        # fact as a row being there — a transaction rolled back elsewhere, a
+        # different database than the reader is looking at, a constraint that
+        # turned the write into a no-op — and every one of those looked like a
+        # successful ingest with no design at the end of it. Sixteen documents
+        # read, zero designs, no error anywhere.
+        landed = fetch_one(
+            "SELECT design_id, grade FROM curriculum_designs WHERE design_id = :design_id",
+            {"design_id": design.design_id},
+        )
+        if not landed:
+            raise_api_error(
+                "SCHEMA_VALIDATION_FAILED",
+                f"The design for {design.subject} ({design.grade}) was written and "
+                f"is not there when read back. Nothing downstream can be built "
+                f"from it, so this is a failed ingest rather than a quiet one.",
+            )
+        logger.info("Design %s stored for %s (%s).",
+                    design.design_id, design.subject, landed.get("grade"))
 
         # Re-ingesting a design must leave it looking exactly as this run
         # describes it. Sub-strands upsert by name, so a renamed or dropped

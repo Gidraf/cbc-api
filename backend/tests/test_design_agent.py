@@ -160,3 +160,53 @@ def test_the_prompt_is_written_to_langfuse_under_its_folder() -> None:
     assert "curriculum-extractor" in prompts
     assert "extract/curriculum" in prompts
     assert prompts["curriculum-extractor"] == prompts["extract/curriculum"]
+
+
+# ── an ingest that writes nothing must not report success ───────────────────
+
+
+def test_a_design_is_read_back_after_it_is_written() -> None:
+    """An INSERT that ran without raising is not the same fact as a row being
+    there — and every way those come apart looked like a successful ingest with
+    no design at the end of it. Sixteen documents read, zero designs, no error
+    anywhere.
+    """
+    import inspect
+
+    from app.services.curriculum_extractor import CurriculumExtractorService
+
+    source = inspect.getsource(CurriculumExtractorService._persist_to_db)
+    write = source.index("INSERT INTO curriculum_designs")
+    read_back = source.index("SELECT design_id, grade FROM curriculum_designs")
+    assert write < read_back, "read it back AFTER writing it"
+    assert "is not there when read back" in source
+    assert "failed ingest rather than a quiet one" in source
+
+
+def test_the_ingest_says_what_it_did_at_each_step() -> None:
+    """"Read but no design" was diagnosed across four sessions by inference,
+    because an ingest ran twenty seconds and said nothing about what it did."""
+    import inspect
+
+    from app.services.curriculum_extractor import CurriculumExtractorService
+
+    source = inspect.getsource(CurriculumExtractorService._ingest_one)
+    for narrated in ("Read the cover", "Read the structure", "Design stored",
+                     "Filed to Langfuse"):
+        assert f'step(\n            "{narrated}"' in source or f'step("{narrated}"' in source, narrated
+
+    # The two that matter most say what was actually read, not that it ran.
+    assert "no learning area" in source and "NO GRADE" in source
+    assert "sub-strand(s) across" in source
+
+
+def test_the_check_is_not_implemented_twice() -> None:
+    """The one at the write is the one that can say WHICH design failed to
+    land."""
+    import inspect
+
+    from app.services import dataset_ingest
+
+    source = inspect.getsource(dataset_ingest.process_item)
+    assert "reported a successful ingest and" not in source
+    assert "lives in `_persist_to_db`" in source
