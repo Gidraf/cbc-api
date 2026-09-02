@@ -5466,7 +5466,7 @@ def factory_generate_material(
         "from_plan": {"artifact_id": plan_id, "version": plan_artifact.version},
         "material": written,
     }
-    report = lesson_material.check(content, plan)
+    report = lesson_material.check(content, plan, grade=payload.grade)
     run_log.step(
         "Material written",
         f"{report.written} of {report.total} instruction(s) fulfilled, "

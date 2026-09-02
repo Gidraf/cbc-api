@@ -186,6 +186,23 @@ def prompt_for(directive: Directive, *, register: str, faith: str,
         # the right thing in words they cannot follow.
         *( [language, ""] if language else []),
         *( [faith, ""] if faith else []),
+        "=== THE REGISTER ABOVE IS THE VOICE, NOT A NOTE ===",
+        "Write for the age it names. A Grade 6 learner is eleven or twelve and "
+        "is addressed as a competent person; a pre-primary child is four and is "
+        "not. The commonest failure here is one voice for every grade — nursery "
+        "warmth poured over an upper-primary lesson — and it is not a matter of "
+        "taste: a twelve-year-old told 'Wonderful! Fantastic! Great job, "
+        "everyone!' stops listening, and the teacher reading it aloud knows why.",
+        "",
+        "So, above lower primary: no exclamatory praise after every turn, no "
+        "'boys and girls', no 'let's all', no baby-talk, no 'children'. Say "
+        "'learners' or address them directly. Praise where something was "
+        "actually done well, and say what was good about it.",
+        "",
+        "Below that, the opposite failure is as bad: a four-year-old cannot "
+        "follow a subordinate clause, and a lesson written in the register of a "
+        "textbook is a lesson the teacher has to translate on the spot.",
+        "",
         "=== WHAT THIS PART SERVES ===",
         *( [f"- {s}" for s in slos] if slos else ["- (no outcome recorded)"]),
         "",
@@ -202,7 +219,7 @@ def prompt_for(directive: Directive, *, register: str, faith: str,
         '  "say": "the words the teacher speaks, verbatim, in the order they '
         'are spoken. This is the substance — it must be long enough to fill '
         'the time above.",',
-        '  "learner_does": "what the children do while this happens",',
+        '  "learner_does": "what the learners do while this happens",',
         '  "attribution": "where these words come from: traditional, widely '
         'known, or written here for this lesson. Say which — a teacher '
         'introducing a song to a class should know whether it is one the '
@@ -219,21 +236,26 @@ class MaterialReport:
     written: int = 0
     thin: list[dict[str, Any]] = field(default_factory=list)
     echoed: list[dict[str, Any]] = field(default_factory=list)
+    # Written to an older learner as if to an infant.
+    infantilised: list[dict[str, Any]] = field(default_factory=list)
 
     @property
     def clean(self) -> bool:
-        return not self.thin and not self.echoed and self.written == self.total
+        return (not self.thin and not self.echoed and not self.infantilised
+                and self.written == self.total)
 
     @property
     def score(self) -> float:
         if not self.total:
             return 100.0
-        good = self.total - len(self.thin) - len(self.echoed)
+        good = (self.total - len(self.thin) - len(self.echoed)
+                - len(self.infantilised))
         return round(max(0.0, good) / self.total * 100, 1)
 
     def to_dict(self) -> dict[str, Any]:
         return {"total": self.total, "written": self.written,
                 "thin": self.thin, "echoed": self.echoed,
+                "infantilised": self.infantilised,
                 "clean": self.clean, "score": self.score}
 
 
@@ -269,6 +291,11 @@ def gate_of(report: "MaterialReport") -> dict[str, Any]:
          "score": round(1 - len(report.thin) / report.total, 4) if report.total else 1.0,
          "comment": f"{len(report.thin)} too short to use"
                     if report.thin else "every piece has substance"},
+        {"aspect": "register", "method": "nursery_phrases_above_lower_primary",
+         "status": "fail" if report.infantilised else "pass",
+         "score": round(1 - len(report.infantilised) / report.total, 4) if report.total else 1.0,
+         "comment": f"{len(report.infantilised)} written to this learner as an infant"
+                    if report.infantilised else "written at the right age"},
         {"aspect": "not_an_echo", "method": "overlap_with_the_instruction",
          "status": "fail" if report.echoed else "pass",
          "score": round(1 - len(report.echoed) / report.total, 4) if report.total else 1.0,
@@ -284,6 +311,13 @@ def gate_of(report: "MaterialReport") -> dict[str, Any]:
             f"\"{item.get('title') or item.get('directive') or 'One piece'}\" gave the "
             f"instruction back instead of the words. Write the thing itself — "
             f"the actual verse, the actual sentences the teacher says aloud."
+        )
+    for item in report.infantilised[:4]:
+        actions.append(
+            f"\"{item.get('title') or 'One piece'}\" is written to an infant: "
+            f"{', '.join(item.get('phrases') or [])}. This learner is not four. "
+            f"Address them as the register says — 'learners', not 'children' — "
+            f"and drop the praise after every turn."
         )
     for item in report.thin[:4]:
         actions.append(
@@ -307,6 +341,8 @@ def gate_of(report: "MaterialReport") -> dict[str, Any]:
             f"fulfilled"
             + (f", {len(report.thin)} thin" if report.thin else "")
             + (f", {len(report.echoed)} echoed" if report.echoed else "")
+            + (f", {len(report.infantilised)} at the wrong register"
+               if report.infantilised else "")
             + "."
         ),
         "reviewer": {"score": int(round(report.score)), "passed": passed,
@@ -320,7 +356,50 @@ def _norm(text: str) -> str:
     return re.sub(r"[^a-z0-9 ]+", " ", re.sub(r"\s+", " ", str(text)).lower()).strip()
 
 
-def check(material: dict[str, Any], plan: Plan) -> MaterialReport:
+# Nursery register, and the grades it is wrong for. Not a style preference:
+# a Grade 6 Arabic lesson came back saying "Wonderful! Fantastic! Great job,
+# everyone!" after every turn, and telling the teacher what "the children" do.
+# An eleven-year-old reads that as being talked down to, and the teacher
+# reading it aloud has to rewrite it in front of the class.
+_NURSERY = (
+    "boys and girls", "the children", "children,", "little ones", "kiddies",
+    "wonderful!", "fantastic!", "excellent!", "well done, everyone",
+    "great job, everyone", "good job, everyone", "let's all say",
+    "clap your hands", "everybody clap",
+)
+
+# Below this, that register is right rather than wrong.
+_YOUNG = ("grade-pp1", "grade-pp2", "grade-1", "grade-2", "grade-3")
+
+
+def nursery_register(material: dict[str, Any], grade: str) -> list[dict[str, Any]]:
+    """Where an older learner is written to as an infant.
+
+    Checked mechanically because the prompt alone does not hold it: the model
+    has one warm classroom voice and reaches for it whenever the subject is a
+    language or a song, whatever the grade says.
+    """
+    from .grade_order import normalize_grade
+
+    if normalize_grade(grade) in _YOUNG:
+        return []
+
+    found: list[dict[str, Any]] = []
+    for piece in (material.get("material") or []):
+        if not isinstance(piece, dict):
+            continue
+        spoken = f"{piece.get('say') or ''} {piece.get('learner_does') or ''}".lower()
+        hits = sorted({phrase for phrase in _NURSERY if phrase in spoken})
+        if hits:
+            found.append({
+                "title": str(piece.get("title") or piece.get("topic") or "One piece"),
+                "module_number": piece.get("module_number"),
+                "phrases": hits[:5],
+            })
+    return found
+
+
+def check(material: dict[str, Any], plan: Plan, grade: str = "") -> MaterialReport:
     """Did each directive get material, or did it get its own words back?
 
     The failure mode here is not fabrication, it is ECHO: asked to write the
@@ -373,4 +452,8 @@ def check(material: dict[str, Any], plan: Plan) -> MaterialReport:
             if shared > ECHO_OVERLAP:
                 report.echoed.append({**where, "overlap": round(shared * 100),
                                       "say": said[:120]})
+    # Checked over the whole set, not per directive: the voice is a
+    # property of the writing, and one piece in the right register
+    # beside three in the wrong one is still a lesson that lurches.
+    report.infantilised = nursery_register(material, grade)
     return report

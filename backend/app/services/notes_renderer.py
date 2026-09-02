@@ -438,7 +438,9 @@ def render_material_html(material: dict[str, Any], *, grade: str = "",
             out.append("<p class='missing'>No words were written for this part. "
                        "The teacher must supply them.</p>")
 
-        for key, label in (("learner_does", "The children"),
+        # "The children" for every grade: a Grade 6 Arabic page told its
+        # teacher what "the children" do. Neutral across the ladder.
+        for key, label in (("learner_does", "The learners"),
                            ("notes_for_the_teacher", "While you say it"),
                            ("attribution", "Where these words come from")):
             if piece.get(key):

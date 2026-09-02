@@ -466,3 +466,103 @@ def test_the_result_can_be_read_rather_than_only_copied() -> None:
     )
     assert "Read it as a book" in factory
     assert '["notes", "material"].includes(station.id)' in factory
+
+
+# ── one classroom voice for every grade ─────────────────────────────────────
+
+
+def _pieces():
+    return [
+        {"title": "Introduction to Arabic Sounds", "module_number": 1, "topic": "a",
+         "say": ("Hello, everyone! Let's start with the letter baa. Can you repeat after "
+                 "me? Great! Wonderful! Now the letter taa. Excellent! Fantastic! "
+                 "Great job, everyone! " * 3),
+         "learner_does": "The children repeat each sound after the teacher."},
+        {"title": "Collaborative Articulation", "module_number": 1, "topic": "b",
+         "say": ("Pair up. One of you says the sound for fatha; the other repeats it, "
+                 "then you swap. If your partner's vowel is short where it should be "
+                 "long, say so and try again. " * 4),
+         "learner_does": "Learners pair up and take turns articulating the sounds."},
+    ]
+
+
+def _plan():
+    from app.services.lesson_material import Directive, Plan
+    return Plan(modules=1, directives=[
+        Directive(index=1, module_number=1, module_title="L1", topic="a",
+                  instruction="write it", minutes=10),
+        Directive(index=2, module_number=1, module_title="L1", topic="b",
+                  instruction="write it", minutes=15),
+    ])
+
+
+def test_an_older_learner_written_to_as_an_infant_is_caught() -> None:
+    """A Grade 6 Arabic lesson came back saying "Wonderful! Fantastic! Great
+    job, everyone!" after every turn, and telling the teacher what "the
+    children" do. An eleven-year-old reads that as being talked down to.
+    """
+    from app.services.lesson_material import check
+
+    report = check({"material": _pieces()}, _plan(), grade="grade-6")
+
+    assert len(report.infantilised) == 1
+    found = report.infantilised[0]
+    assert found["title"] == "Introduction to Arabic Sounds"
+    assert "the children" in found["phrases"]
+    assert "wonderful!" in found["phrases"]
+    # The piece written properly for this age is not flagged.
+    assert report.score == 50.0
+    assert report.clean is False
+
+
+def test_the_same_words_are_right_at_pre_primary() -> None:
+    """Below lower primary that register is correct rather than wrong, and a
+    check that fires everywhere is a check that gets turned off."""
+    from app.services.lesson_material import check
+
+    for grade in ("grade-pp1", "grade-pp2", "grade-1", "grade-3"):
+        report = check({"material": _pieces()}, _plan(), grade=grade)
+        assert report.infantilised == [], grade
+        assert report.score == 100.0, grade
+
+
+def test_the_loop_is_told_what_to_change() -> None:
+    """Without a named directive the regeneration is the same call again."""
+    from app.services.lesson_material import check, gate_of
+
+    gate = gate_of(check({"material": _pieces()}, _plan(), grade="grade-6"))
+
+    assert gate["passed"] is False
+    assert any(f["aspect"] == "register" and f["status"] == "fail"
+               for f in gate["reviewer"]["feedback"])
+    directive = next(a for a in gate["next_actions"] if "infant" in a)
+    assert "This learner is not four" in directive
+    assert "'learners', not 'children'" in directive
+
+
+def test_the_prompt_says_the_register_is_the_voice() -> None:
+    """The schema field itself said "what the children do while this happens" —
+    the model's cue to write for children, whatever the grade."""
+    from app.services.lesson_material import Directive, prompt_for
+
+    directive = Directive(index=1, module_number=1, module_title="L1",
+                          topic="a", instruction="write it", minutes=10)
+    prompt = prompt_for(directive, register="AUDIENCE: Upper-primary learners",
+                        faith="", sub_strand="Pronunciation", slos=[])
+
+    assert '"what the learners do while this happens"' in prompt
+    assert "what the children do" not in prompt
+    assert "THE REGISTER ABOVE IS THE VOICE, NOT A NOTE" in prompt
+    assert "nursery warmth poured over an upper-primary lesson" in prompt
+    # And the opposite failure is named too, or the fix trades one for the other.
+    assert "a four-year-old cannot follow a subordinate clause" in prompt
+
+
+def test_the_printed_page_does_not_call_them_children() -> None:
+    from pathlib import Path
+
+    renderer = (Path(__file__).resolve().parents[1]
+                / "app/services/notes_renderer.py").read_text()
+    assert '("learner_does", "The learners")' in renderer
+    # The comment quotes the old label to explain it; match the code.
+    assert '("learner_does", "The children")' not in renderer
