@@ -1,5 +1,8 @@
 import { FormEvent, useMemo, useState, useEffect } from "react";
 import { API_BASE_URL, AUTH_EXPIRED_EVENT, fetchJson } from "./api";
+import { MathBlock, MathText } from "./ui/MathBlock";
+import { SimulationPlayer, SimulationTrack } from "./ui/SimulationPlayer";
+import { PrintPreviewModal } from "./ui/PrintPreviewModal";
 
 type Role = "admin" | "operator" | "reviewer" | "developer";
 type Provider = "openai" | "anthropic" | "gemini" | "ollama";
@@ -268,6 +271,18 @@ export function App() {
   const [questionsRefinePrompt, setQuestionsRefinePrompt] = useState("");
   const [questionsApproved, setQuestionsApproved] = useState(false);
   const [lastPersistedTime, setLastPersistedTime] = useState<string | null>(null);
+
+  // Mathematics Engine, Simulations & Print Preview
+  const [activeSimulationTrack, setActiveSimulationTrack] = useState<SimulationTrack | null>(null);
+  const [simulatingQuestionIdx, setSimulatingQuestionIdx] = useState<number | null>(null);
+  const [isSimulatingLoading, setIsSimulatingLoading] = useState<boolean>(false);
+  const [showPrintPreviewModal, setShowPrintPreviewModal] = useState<boolean>(false);
+  const [extractedEquations, setExtractedEquations] = useState<any[]>([]);
+  const [isExtractingEqs, setIsExtractingEqs] = useState<boolean>(false);
+  // Why a walkthrough could not be built. The engine solves a fixed set of
+  // shapes and says so; that explanation belongs on the page, not in an alert
+  // the operator has to dismiss before they can read the question again.
+  const [mathNotice, setMathNotice] = useState<string>("");
 
   // Curriculum Digital Textbook / Educational Blog Reader Mode State
   const [factoryStudioMode, setFactoryStudioMode] = useState<"quadrant" | "reader">("quadrant");
@@ -1485,6 +1500,118 @@ export function App() {
       autoPersistStation("notes", updatedNotes, updatedNotes);
     }
     loadDatasetProgress(genGrade);
+  }
+
+  // Narration is synthesised by the worker, not in the request that built the
+  // walkthrough — so the track arrives playable but silent, and the audio
+  // appears underneath it a moment later. Give up after a minute rather than
+  // polling a job that failed.
+  async function pollWalkthroughAudio(track: any) {
+    const id = track?.simulation_id;
+    if (!id || track?.audio_status !== "pending") return;
+
+    for (let attempt = 0; attempt < 12; attempt++) {
+      await new Promise((r) => setTimeout(r, 5000));
+      try {
+        const fresh = await fetchJson<any>(`/api/v1/math/walkthrough/${id}`, {}, auth());
+        if (fresh?.audio_status && fresh.audio_status !== "pending") {
+          setActiveSimulationTrack((current: any) =>
+            current?.simulation_id === id ? fresh : current
+          );
+          return;
+        }
+      } catch {
+        return; // the walkthrough is still watchable on step timings
+      }
+    }
+  }
+
+  async function handleSimulateQuestion(qIdx: number, qItem: any) {
+    setSimulatingQuestionIdx(qIdx);
+    setIsSimulatingLoading(true);
+    setMathNotice("");
+    try {
+      const c = qItem.content || qItem;
+      const text = c.question_text || c.text || "";
+      const res = await fetchJson<any>(
+        "/api/v1/math/simulate",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            problem: text,
+            grade: genGrade || "grade-7",
+            subject: genSubject || "Mathematics",
+            strand: genStrand || "",
+            sub_strand: genSubstrand || "",
+            title: `Question ${qIdx + 1}: ${text.slice(0, 35)}`,
+            enable_tts: true,
+          }),
+        },
+        auth()
+      );
+      setActiveSimulationTrack(res);
+      pollWalkthroughAudio(res);
+    } catch (err: any) {
+      console.error("Walkthrough error:", err);
+      setMathNotice(err.message || String(err));
+      setSimulatingQuestionIdx(null);
+    } finally {
+      setIsSimulatingLoading(false);
+    }
+  }
+
+  async function handleExtractEquations() {
+    if (!stationNotes) return;
+    setIsExtractingEqs(true);
+    try {
+      const rawText = typeof stationNotes === "string" ? stationNotes : JSON.stringify(stationNotes);
+      const res = await fetchJson<any>(
+        "/api/v1/math/extract-equations",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            notes_text: rawText,
+            grade: genGrade || "grade-7",
+          }),
+        },
+        auth()
+      );
+      setExtractedEquations(res.equations || []);
+    } catch (err: any) {
+      console.error("Equation extraction error:", err);
+    } finally {
+      setIsExtractingEqs(false);
+    }
+  }
+
+  async function handleSimulateFormula(eq: any) {
+    setIsSimulatingLoading(true);
+    setMathNotice("");
+    try {
+      const res = await fetchJson<any>(
+        "/api/v1/math/simulate",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            problem: eq.latex || eq.concept || "Formula",
+            grade: genGrade || "grade-7",
+            subject: genSubject || "Mathematics",
+            strand: genStrand || "",
+            sub_strand: genSubstrand || "",
+            title: eq.concept || "Math Walkthrough",
+            enable_tts: true,
+          }),
+        },
+        auth()
+      );
+      setActiveSimulationTrack(res);
+      pollWalkthroughAudio(res);
+    } catch (err: any) {
+      console.error("Walkthrough error:", err);
+      setMathNotice(err.message || String(err));
+    } finally {
+      setIsSimulatingLoading(false);
+    }
   }
 
   function updateNotesForHour(hourNum: number, updatedFields: Partial<any>) {
@@ -5012,6 +5139,108 @@ export function App() {
                               </div>
                             )}
 
+                            {/* MATHEMATICS ENGINE: Equations & worked walkthroughs */}
+                            <div style={{ padding: "14px", background: "#f0fdf4", borderRadius: "8px", border: "1.5px solid #86efac", marginBottom: "12px" }}>
+                              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px", flexWrap: "wrap", gap: "6px" }}>
+                                <div>
+                                  <strong style={{ fontSize: "13.5px", color: "#064e3b" }}>📐 Mathematical Formulas & Walkthrough Simulations:</strong>
+                                  <div style={{ fontSize: "11px", color: "#166534" }}>Derived deterministically from notes equations & curriculum blueprints</div>
+                                </div>
+                                <button
+                                  className="ghost"
+                                  style={{ fontSize: "11px", padding: "3px 10px", borderColor: "#0B6E5F", color: "#0B6E5F", background: "#ffffff", fontWeight: 600 }}
+                                  onClick={handleExtractEquations}
+                                  disabled={isExtractingEqs}
+                                >
+                                  {isExtractingEqs ? "⏳ Extracting..." : "🔍 Scan Notes for Equations"}
+                                </button>
+                              </div>
+
+                              {/* Active walkthrough if opened from Notes */}
+                              {activeSimulationTrack && simulatingQuestionIdx === null && (
+                                <div style={{ marginBottom: "12px" }}>
+                                  <SimulationPlayer track={activeSimulationTrack} onClose={() => setActiveSimulationTrack(null)} />
+                                </div>
+                              )}
+
+                              {extractedEquations.length > 0 ? (
+                                <div style={{ display: "grid", gap: "8px", marginTop: "8px" }}>
+                                  {extractedEquations.map((eq: any, eqIdx: number) => (
+                                    <div
+                                      key={eqIdx}
+                                      style={{
+                                        display: "flex",
+                                        justifyContent: "space-between",
+                                        alignItems: "center",
+                                        background: "#ffffff",
+                                        padding: "8px 12px",
+                                        borderRadius: "6px",
+                                        border: "1px solid #bbf7d0",
+                                        flexWrap: "wrap",
+                                        gap: "8px",
+                                      }}
+                                    >
+                                      <div>
+                                        <div style={{ fontWeight: 600, fontSize: "12px", color: "#064e3b" }}>{eq.concept || "Formula"}</div>
+                                        <div style={{ marginTop: "3px" }}>
+                                          <MathBlock latex={eq.latex} />
+                                        </div>
+                                      </div>
+                                      <button
+                                        style={{ fontSize: "11px", padding: "4px 10px", background: "#0B6E5F", color: "#ffffff", border: "none", borderRadius: "4px", cursor: "pointer", fontWeight: 600 }}
+                                        onClick={() => handleSimulateFormula(eq)}
+                                        disabled={isSimulatingLoading}
+                                      >
+                                        ▶ Walk through
+                                      </button>
+                                    </div>
+                                  ))}
+                                </div>
+                              ) : (
+                                <div style={{ fontSize: "12px", color: "#166534", fontStyle: "italic", padding: "6px 0" }}>
+                                  Scan the notes to list the formulas in them. Each one can then be
+                                  worked through step by step, with narration.
+                                </div>
+                              )}
+
+                              {/* Why a walkthrough could not be built. The engine
+                                  solves a fixed set of shapes; when it does not
+                                  recognise one it says so instead of inventing a
+                                  step, and that explanation belongs here. */}
+                              {mathNotice && (
+                                <div
+                                  style={{
+                                    marginTop: "10px",
+                                    padding: "8px 12px",
+                                    background: "#fffbeb",
+                                    border: "1px solid #fcd34d",
+                                    borderRadius: "6px",
+                                    fontSize: "12px",
+                                    color: "#92400e",
+                                    display: "flex",
+                                    alignItems: "flex-start",
+                                    gap: "8px",
+                                  }}
+                                >
+                                  <span style={{ flex: 1 }}>{mathNotice}</span>
+                                  <button
+                                    onClick={() => setMathNotice("")}
+                                    style={{
+                                      background: "transparent",
+                                      border: "none",
+                                      color: "#92400e",
+                                      cursor: "pointer",
+                                      fontSize: "13px",
+                                      lineHeight: 1,
+                                    }}
+                                    title="Dismiss"
+                                  >
+                                    ✕
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+
                             {/* Worked Case Study Examples */}
                             {stationNotes.worked_examples?.length > 0 && (
                               <div style={{ padding: "14px", background: "#f8fafc", borderRadius: "8px", border: "1px solid #cbd5e1" }}>
@@ -6392,6 +6621,15 @@ export function App() {
                         </span>
                         <button
                           className="ghost"
+                          style={{ fontSize: "11px", padding: "3px 10px", borderColor: "#0B6E5F", color: "#0B6E5F", fontWeight: 600 }}
+                          onClick={() => setShowPrintPreviewModal(true)}
+                          disabled={stationQuestions.length === 0}
+                          title="Preview printable A4 exam paper with student and teacher copies"
+                        >
+                          🖨 Paper Print Preview
+                        </button>
+                        <button
+                          className="ghost"
                           style={{ fontSize: "11px", padding: "3px 8px", color: "#b91c1c", borderColor: "#fca5a5" }}
                           onClick={() => {
                             if (confirm("Are you sure you want to clear all questions for this sub-strand?")) {
@@ -6484,6 +6722,15 @@ export function App() {
                                     {c.max_marks && <span className="pill ok" style={{ fontSize: "10px" }}>{c.max_marks} Marks</span>}
                                     <button
                                       className="ghost"
+                                      style={{ fontSize: "10.5px", padding: "2px 8px", borderColor: "#0B6E5F", color: "#0B6E5F", fontWeight: 600 }}
+                                      onClick={() => handleSimulateQuestion(idx, q)}
+                                      disabled={isSimulatingLoading && simulatingQuestionIdx === idx}
+                                      title="Solve this question step by step, with narration"
+                                    >
+                                      {isSimulatingLoading && simulatingQuestionIdx === idx ? "⏳ Working…" : "▶ Walk through"}
+                                    </button>
+                                    <button
+                                      className="ghost"
                                       style={{ fontSize: "10.5px", padding: "2px 6px", color: "#b91c1c", borderColor: "#fca5a5" }}
                                       onClick={() => {
                                         if (confirm(`Delete Question ${idx + 1}?`)) {
@@ -6507,7 +6754,23 @@ export function App() {
                                   </div>
                                 )}
 
-                                <p style={{ margin: "6px 0 10px", fontSize: "13px", fontWeight: 600, color: "#0f172a" }}>{c.question_text}</p>
+                                <div style={{ margin: "6px 0 10px", fontSize: "13px", fontWeight: 600, color: "#0f172a" }}>
+                                  <MathText text={c.question_text || ""} />
+                                </div>
+
+                                {/* Inline walkthrough if triggered for this question */}
+                                {activeSimulationTrack && simulatingQuestionIdx === idx && (
+                                  <div style={{ margin: "10px 0" }}>
+                                    <SimulationPlayer
+                                      track={activeSimulationTrack}
+                                      compact
+                                      onClose={() => {
+                                        setActiveSimulationTrack(null);
+                                        setSimulatingQuestionIdx(null);
+                                      }}
+                                    />
+                                  </div>
+                                )}
 
                                 {/* Inline Vector SVG Diagram & Action Toolbar */}
                                 {(diagSvg || c.diagram_ref || qType === "diagram_based") && (
@@ -9623,6 +9886,20 @@ export function App() {
           <pre>{output}</pre>
         </section>
       </main>
+
+      {/* PRINT PREVIEW MODAL */}
+      {showPrintPreviewModal && (
+        <PrintPreviewModal
+          title={`${genSubject || "Mathematics"} - ${genSubstrand || "Assessment"}`}
+          grade={genGrade || "Grade 7"}
+          subject={genSubject || "Mathematics"}
+          strand={genStrand || ""}
+          subStrand={genSubstrand || ""}
+          questions={stationQuestions}
+          notesModules={stationNotes?.hour_modules || []}
+          onClose={() => setShowPrintPreviewModal(false)}
+        />
+      )}
     </div>
   );
 }

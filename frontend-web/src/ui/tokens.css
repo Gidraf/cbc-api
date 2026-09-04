@@ -334,3 +334,46 @@ textarea:disabled {
 @keyframes cbc-spin {
   to { transform: rotate(360deg); }
 }
+
+/* ── Printing ───────────────────────────────────────────────────────────────
+   The print preview is a modal drawn on top of the console. Without these
+   rules `window.print()` sends the whole application to the printer — every
+   panel, every station, the modal's own chrome — and the A4 preview the
+   operator is looking at comes out as page 40 of 60.
+
+   `.print-root` is the sheet. Everything else is hidden for the duration of
+   the print, and the sheet is lifted out of the modal's positioning so it
+   flows across pages instead of being clipped to one viewport. */
+@media print {
+    body * { visibility: hidden !important; }
+
+    .print-root,
+    .print-root * { visibility: visible !important; }
+
+    .print-root {
+        position: absolute !important;
+        inset: 0 auto auto 0;
+        width: 100% !important;
+        max-width: none !important;
+        height: auto !important;
+        max-height: none !important;
+        overflow: visible !important;
+        box-shadow: none !important;
+        border: none !important;
+        border-radius: 0 !important;
+        background: #fff !important;
+        padding: 0 !important;
+        margin: 0 !important;
+    }
+
+    /* Modal chrome — the audience toggle, Print and Close buttons — is for the
+       screen. It must never appear on the sheet. */
+    .print-hide { display: none !important; }
+
+    /* A question and its marking guide belong on the same page. */
+    .print-root .question-card,
+    .print-root .worked-example,
+    .print-root .figure { page-break-inside: avoid; }
+
+    @page { size: A4; margin: 16mm 14mm; }
+}

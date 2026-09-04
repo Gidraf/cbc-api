@@ -26,6 +26,7 @@ import { Review } from "./views/Review";
 import { SignIn } from "./views/SignIn";
 
 import "./ui/tokens.css";
+import "katex/dist/katex.min.css";
 
 // The legacy console is ~9,600 lines and its own stylesheet. Loading it lazily
 // keeps it out of the initial bundle for the screens that replaced it.

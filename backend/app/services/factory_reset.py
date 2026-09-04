@@ -109,6 +109,13 @@ DERIVED: tuple[Target, ...] = (
            grade_json="curriculum->>'grade'", subject_json="curriculum->>'subject'"),
     Target("question_dna", "question bank entries",
            grade_json="curriculum_link->>'grade'", subject_json="curriculum_link->>'subject'"),
+    # Maths walkthroughs are keyed on curriculum_link exactly like question_dna.
+    # Left out, a grade-scoped reset deleted the questions and left their
+    # walkthroughs behind — orphans pointing at content that no longer exists,
+    # and narration audio still sitting in MinIO.
+    Target("math_simulations", "maths walkthroughs and their narration",
+           grade_json="curriculum_link->>'grade'",
+           subject_json="curriculum_link->>'subject'"),
     Target("diagram_registry", "rendered diagrams and their parts"),
     Target("artifact_dna", "content fingerprints",
            grade_json="curriculum_link->>'grade'",

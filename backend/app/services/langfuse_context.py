@@ -614,6 +614,8 @@ class LangfuseContextService:
         "activity-generator": "generate/activities",
         "question-generator": "generate/questions",
         "diagram-question-agent": "generate/diagram-questions",
+        "math-equation-extractor": "extract/equations",
+        "math-narrator": "generate/step-narration",
         "content-repair": "generate/repair",
         "layer-reviewer": "review/layered",
         "reviewer-panel": "review/panel",

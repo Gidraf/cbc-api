@@ -35,6 +35,8 @@ class Settings:
     # Read a design with the agent where the patterns come up short. One model
     # call per document that needed it, and none for the ones that parsed.
     design_agent_enabled: bool = os.getenv("DESIGN_AGENT", "1") not in ("0", "false", "False")
+    tts_voice: str = os.getenv("TTS_VOICE", "alloy")
+    tts_speed: float = float(os.getenv("TTS_SPEED", "1.0"))
 
     # Langfuse Integration
     langfuse_host: str = os.getenv("LANGFUSE_HOST", "http://localhost:3001")

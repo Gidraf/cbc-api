@@ -5082,6 +5082,10 @@ def _register_queue_handlers() -> None:
     job_queue.register("strands", _run_queued_strands)
     job_queue.register("regenerate", _run_queued_regeneration)
     job_queue.register("pipeline", _run_queued_pipeline)
+    # Narration audio for a maths walkthrough. Queued rather than synthesised
+    # in the request, which used to cost up to 25 seconds per step.
+    from ..services.math_engine.audio_jobs import JOB_KIND as _AUDIO_KIND, run_audio_job
+    job_queue.register(_AUDIO_KIND, run_audio_job)
 
 
 # One step, one implementation. The pipeline delegates to the same handlers the

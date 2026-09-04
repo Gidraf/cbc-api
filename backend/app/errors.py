@@ -70,6 +70,10 @@ ERRORS = {
     "ALREADY_INGESTED": (409, False),
     "HUMAN_REVIEW_REQUIRED": (409, False),
     "APPROVER_VERIFICATION_REQUIRED": (412, False),
+    # No deterministic solver recognises this problem. Not a fault: the maths
+    # engine covers a fixed set of shapes and says so rather than inventing a
+    # walkthrough, which is what it used to do.
+    "UNSOLVED_PROBLEM": (422, False),
     # Idempotency & Concurrency
     "IDEMPOTENCY_CONFLICT": (409, False),
     "NOT_FOUND": (404, False),

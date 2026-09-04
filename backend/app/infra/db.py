@@ -848,6 +848,26 @@ MIGRATIONS: list[tuple[str, str]] = [
         );
         """,
     ),
+    (
+        "027_math_simulations",
+        """
+        CREATE TABLE IF NOT EXISTS math_simulations (
+            simulation_id TEXT PRIMARY KEY,
+            curriculum_link JSONB NOT NULL DEFAULT '{}'::jsonb,
+            source_type TEXT NOT NULL DEFAULT 'question_solution',
+            source_id TEXT NOT NULL DEFAULT '',
+            title TEXT NOT NULL DEFAULT '',
+            track JSONB NOT NULL DEFAULT '{}'::jsonb,
+            audio_status TEXT NOT NULL DEFAULT 'pending',
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_math_simulations_curriculum
+            ON math_simulations((curriculum_link->>'grade'), (curriculum_link->>'subject'), (curriculum_link->>'sub_strand'));
+        CREATE INDEX IF NOT EXISTS idx_math_simulations_source ON math_simulations(source_type, source_id);
+        """,
+    ),
 ]
 
 
