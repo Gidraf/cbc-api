@@ -148,7 +148,7 @@ AGENT = "material-generator"
 
 def prompt_for(directive: Directive, *, register: str, faith: str,
                sub_strand: str, slos: list[str], language: str = "",
-               notation: str = "") -> str:
+               notation: str = "", target_language: str = "") -> str:
     """What to ask for, for ONE directive.
 
     One directive per call rather than a whole guide per call, because the
@@ -178,6 +178,7 @@ def prompt_for(directive: Directive, *, register: str, faith: str,
         ("instruction", directive.instruction),
         ("level_register", register),
         ("notation", notation),
+        ("target_language", target_language),
         ("language_block", language),
         ("faith_scope", faith),
         ("slos", outcomes),
@@ -194,26 +195,29 @@ class MaterialReport:
     echoed: list[dict[str, Any]] = field(default_factory=list)
     # Written to an older learner as if to an infant.
     infantilised: list[dict[str, Any]] = field(default_factory=list)
+    # A language lesson scripted in English.
+    unscripted: list[dict[str, Any]] = field(default_factory=list)
     # Written to an older learner as if to an infant.
     infantilised: list[dict[str, Any]] = field(default_factory=list)
 
     @property
     def clean(self) -> bool:
         return (not self.thin and not self.echoed and not self.infantilised
-                and self.written == self.total)
+                and not self.unscripted and self.written == self.total)
 
     @property
     def score(self) -> float:
         if not self.total:
             return 100.0
         good = (self.total - len(self.thin) - len(self.echoed)
-                - len(self.infantilised))
+                - len(self.infantilised) - len(self.unscripted))
         return round(max(0.0, good) / self.total * 100, 1)
 
     def to_dict(self) -> dict[str, Any]:
         return {"total": self.total, "written": self.written,
                 "thin": self.thin, "echoed": self.echoed,
                 "infantilised": self.infantilised,
+                "unscripted": self.unscripted,
                 "clean": self.clean, "score": self.score}
 
 
@@ -260,6 +264,11 @@ def gate_of(report: "MaterialReport") -> dict[str, Any]:
          "score": round(1 - len(report.infantilised) / report.total, 4) if report.total else 1.0,
          "comment": f"{len(report.infantilised)} written to this learner as an infant"
                     if report.infantilised else "written at the right age"},
+        {"aspect": "target_language", "method": "script_present_per_piece",
+         "status": "fail" if report.unscripted else "pass",
+         "score": round(1 - len(report.unscripted) / report.total, 4) if report.total else 1.0,
+         "comment": f"{len(report.unscripted)} scripted in English only"
+                    if report.unscripted else "the language is in the script"},
         {"aspect": "not_an_echo", "method": "overlap_with_the_instruction",
          "status": "fail" if report.echoed else "pass",
          "score": round(1 - len(report.echoed) / report.total, 4) if report.total else 1.0,
@@ -275,6 +284,13 @@ def gate_of(report: "MaterialReport") -> dict[str, Any]:
             f"\"{item.get('title') or item.get('directive') or 'One piece'}\" gave the "
             f"instruction back instead of the words. Write the thing itself — "
             f"the actual verse, the actual sentences the teacher says aloud."
+        )
+    for item in report.unscripted[:4]:
+        actions.append(
+            f"\"{item.get('title') or 'One piece'}\" asks the learners to speak "
+            f"and gives them English. Write every phrase they say in "
+            f"{item.get('language')}, with a transliteration and its meaning — "
+            f"a learner repeating \"My name is\" in English is learning nothing."
         )
     for item in report.infantilised[:4]:
         actions.append(
@@ -307,6 +323,8 @@ def gate_of(report: "MaterialReport") -> dict[str, Any]:
             + (f", {len(report.echoed)} echoed" if report.echoed else "")
             + (f", {len(report.infantilised)} at the wrong register"
                if report.infantilised else "")
+            + (f", {len(report.unscripted)} in English only"
+               if report.unscripted else "")
             + "."
         ),
         "reviewer": {"score": int(round(report.score)), "passed": passed,
@@ -363,7 +381,40 @@ def nursery_register(material: dict[str, Any], grade: str) -> list[dict[str, Any
     return found
 
 
-def check(material: dict[str, Any], plan: Plan, grade: str = "") -> MaterialReport:
+def unscripted_language(material: dict[str, Any], subject: str) -> list[dict[str, Any]]:
+    """Pieces of a language lesson that carry none of the language.
+
+    Per piece, not per document: one lesson came back with 'أ' (alif) in its
+    first part and, three parts later, "The first phrase is 'My name is...'.
+    Now, say it with me: 'My name is...'" — the learners repeat English. A
+    document-level check passes that, because the script IS there somewhere.
+
+    Only where the script is not Latin. A French lesson written entirely in
+    English looks, to a pattern, exactly like a French lesson — that one the
+    prompt has to carry, and it is reported as unmeasured rather than passed.
+    """
+    from .target_language import for_subject, scripted
+
+    language = for_subject(subject)
+    if language is None or not language.pattern:
+        return []
+
+    out: list[dict[str, Any]] = []
+    for piece in (material.get("material") or []):
+        if not isinstance(piece, dict):
+            continue
+        said = str(piece.get("say") or "")
+        if said.strip() and not scripted(said, subject):
+            out.append({
+                "title": str(piece.get("title") or piece.get("topic") or "One piece"),
+                "module_number": piece.get("module_number"),
+                "language": language.name,
+            })
+    return out
+
+
+def check(material: dict[str, Any], plan: Plan, grade: str = "",
+          subject: str = "") -> MaterialReport:
     """Did each directive get material, or did it get its own words back?
 
     The failure mode here is not fabrication, it is ECHO: asked to write the
@@ -420,4 +471,5 @@ def check(material: dict[str, Any], plan: Plan, grade: str = "") -> MaterialRepo
     # property of the writing, and one piece in the right register
     # beside three in the wrong one is still a lesson that lurches.
     report.infantilised = nursery_register(material, grade)
+    report.unscripted = unscripted_language(material, subject)
     return report

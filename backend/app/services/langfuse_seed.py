@@ -352,6 +352,8 @@ Do not repeat the instruction back. Do not describe the material. Produce it.
 
 {{ notation }}
 
+{{ target_language }}
+
 {{ language_block }}
 
 {{ faith_scope }}
@@ -396,6 +398,8 @@ guide fails.
 {{ level_register }}
 
 {{ notation }}
+
+{{ target_language }}
 
 {{ domain_directives }}
 {{ faith_scope }}

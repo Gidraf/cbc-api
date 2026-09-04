@@ -46,6 +46,7 @@ from ..services.grade_order import grade_level
 from ..services.faith_scope import prompt_block as faith_prompt_block
 from ..services.grade_scope import notes_for as grade_scope_notes
 from ..services import notation, prompt_fragments
+from ..services.target_language import block_for as target_language_block
 from ..services.level_register import (
     language_block,
     register_block,
@@ -1076,6 +1077,9 @@ def factory_generate_notes(
             "domain_directives": prompt_fragments.compose(
                 payload.subject, "notes", payload.grade),
         "faith_scope": faith_prompt_block(payload.subject),
+        # A language area is taught IN that language; the plan must name
+        # the actual phrases, not "greetings".
+        "target_language": target_language_block(payload.subject),
         "content_type_directives": ct_profile.format_for_prompt(),
         "level": level,
         "strand": payload.strand,
@@ -5431,12 +5435,19 @@ def factory_generate_material(
     from ..services.notation import block_for as _notation_block
 
     notation = _notation_block(payload.subject, grade=payload.grade)
+    # When the learning area IS a language, the words the learner says must be
+    # in that language — not described in English, which is a complete-looking
+    # lesson in which nobody learns the language.
+    from ..services.target_language import block_for as _target_language
+
+    target = _target_language(payload.subject)
 
     written: list[dict[str, Any]] = []
     for i, directive in enumerate(plan.directives, start=1):
         messages = [{"role": "user", "content": lesson_material.prompt_for(
             directive, register=register, faith=faith, language=language,
-            notation=notation, sub_strand=payload.sub_strand, slos=slos)}]
+            notation=notation, target_language=target,
+            sub_strand=payload.sub_strand, slos=slos)}]
         if payload.custom_instructions:
             messages.append({"role": "user",
                              "content": payload.custom_instructions})
@@ -5471,7 +5482,8 @@ def factory_generate_material(
         "from_plan": {"artifact_id": plan_id, "version": plan_artifact.version},
         "material": written,
     }
-    report = lesson_material.check(content, plan, grade=payload.grade)
+    report = lesson_material.check(content, plan, grade=payload.grade,
+                                   subject=payload.subject)
     run_log.step(
         "Material written",
         f"{report.written} of {report.total} instruction(s) fulfilled, "
