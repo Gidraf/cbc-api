@@ -458,11 +458,42 @@ Below that, the opposite failure is as bad: a four-year-old cannot follow a subo
 
 Every word must be true and must be sayable to this learner. Invent no scripture reference, no statistic and no source. Where a song or a story is widely known, write the words as they are commonly sung or told; where you would have to invent one, write an original and say so in `attribution`.
 
+=== `form` IS ONE WORD ===
+Choose exactly ONE of: {{ forms }}. Write that single word. A `form` reading
+"one of: explanation, story, song, ..." is the menu copied back, and it prints
+on the page in front of the class exactly like that.
+
+=== CITE THE DESIGN ===
+`citation` says where in the KICD design this content comes from — the page and
+line, and the design's own words at that address, quoted exactly. A teacher
+challenged on why a lesson teaches what it teaches should be able to turn to
+the page.
+
+Cite the design, not your own knowledge. Where these words are yours — a song
+you wrote, an example you invented, an explanation you composed to serve the
+outcome — leave `ref` and `quote` empty and say so in `attribution`. An
+unverifiable citation is worse than none, because it survives inspection.
+
+=== MONEY IS IN SHILLINGS ===
+Kenyan learners are taught in Kenyan money. Write "200 shillings" or "KES 200",
+never "$200". A dollar sign is also the delimiter this system typesets
+mathematics between, so "$50 and you spend $20" was rendered as an equation and
+printed as "50andyouspend20" in a Grade 9 lesson.
+
+=== NAME YOUR OWN LESSON ===
+Where a piece has a heading that refers to the lesson, it is THIS lesson —
+lesson {{ module_number }}, "{{ module_title }}". Every exercise set in one
+guide came back titled "Exercise Set for Lesson 2".
+
 Return ONLY valid JSON:
 {
-  "form": "one of: {{ forms }}",
+  "form": "explanation",
   "title": "what this piece of material is called, if it has a name",
   "say": "the words the teacher speaks, verbatim, in the order they are spoken. This is the substance — it must be long enough to fill the time above.",
+  "citation": {
+    "ref": "202:14",
+    "quote": "The design's exact words at that address, verbatim. Empty where these words are your own."
+  },
   "learner_does": "what the learners do while this happens",
   "attribution": "where these words come from: traditional, widely known, or written here for this lesson",
   "teacher_note": "anything the teacher must hold up, play or prepare while saying this"

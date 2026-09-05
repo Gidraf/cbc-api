@@ -21,6 +21,37 @@ logger = logging.getLogger("cbc-notes-renderer")
 
 _MATH_SPAN = re.compile(r"\$\$([\s\S]*?)\$\$|\$([^$\n]+?)\$")
 
+# What makes a `$…$` span mathematics rather than two prices in a sentence.
+# "if you have $50 and you spend $20" has a perfectly good `$…$` in it, and
+# typesetting it produced "50andyouspend20" in the middle of a Grade 9 lesson.
+_MATHISH = re.compile(r"[\\^_{}=<>+*/]|\\frac|\\times|\bcdot\b|[0-9]\s*[-−]\s*[0-9]")
+
+# A LaTeX command loose in the prose, with no dollars around it at all. The
+# model writes `-5^\text{°C}` inside an ordinary sentence, and a renderer that
+# only looks between dollars prints the backslash on the page.
+_BARE_LATEX = re.compile(
+    r"(?:[A-Za-z0-9()\[\]+\-−.,]+\s*)?"          # what the command applies to
+    r"(?:[\^_]\s*)?"                              # a superscript or subscript
+    r"\\(?:frac|sqrt|text|times|div|cdot|pm|leq|geq|neq|approx|circ|degree)"
+    r"(?:\s*\{[^{}]*\}){0,2}"                     # its arguments
+)
+
+
+def _is_maths(body: str) -> bool:
+    """Whether what sat between two dollars was mathematics.
+
+    Conservative on purpose. A false positive eats a sentence; a false negative
+    prints a dollar sign, which a reader can live with.
+    """
+    if not body or body != body.strip():
+        # LaTeX does not pad its delimiters with spaces. Currency in a sentence
+        # nearly always does: `$50 and you spend $` ends with one.
+        return False
+    if _MATHISH.search(body):
+        return True
+    # A bare symbol or number: `$x$`, `$-3$`, `$12$`.
+    return len(body) <= 12 and len(body.split()) == 1
+
 
 def _math(value: Any) -> str:
     """Text with its `$…$` spans marked for typesetting, everything else escaped.
@@ -35,12 +66,34 @@ def _math(value: Any) -> str:
     out: list[str] = []
     last = 0
     for match in _MATH_SPAN.finditer(text):
-        out.append(_esc(text[last:match.start()]))
         display = match.group(1) is not None
         body = match.group(1) if display else match.group(2)
+        if not display and not _is_maths(body):
+            continue  # two prices in a sentence, not an expression
+        out.append(_bare(text[last:match.start()]))
         tag = "div" if display else "span"
         out.append(f"<{tag} class='math' data-display='{str(display).lower()}'>"
                    f"{_esc(body)}</{tag}>")
+        last = match.end()
+    out.append(_bare(text[last:]))
+    return "".join(out)
+
+
+def _bare(text: str) -> str:
+    """Escaped prose, with any undelimited LaTeX in it typeset anyway.
+
+    The schema asks for `$…$`. Models write `-5^\text{°C}` in the middle of a
+    sentence about the weather, and that reached the page with the backslash
+    and the braces showing.
+    """
+    if "\\" not in text:
+        return _esc(text)
+    out: list[str] = []
+    last = 0
+    for match in _BARE_LATEX.finditer(text):
+        out.append(_esc(text[last:match.start()]))
+        out.append(f"<span class='math' data-display='false'>"
+                   f"{_esc(match.group(0).strip())}</span>")
         last = match.end()
     out.append(_esc(text[last:]))
     return "".join(out)
@@ -559,6 +612,27 @@ def _lesson(module: dict[str, Any], n: int,
 # The button on an empty plate. Everything it copies is already in the page as
 # a <details> block, so a reader with scripting off loses the convenience and
 # nothing else.
+# KaTeX writes the expression TWICE — once as MathML for a screen reader, once
+# as styled HTML for the eye — and relies on its stylesheet to hide the first.
+# On a server with no route to the CDN that stylesheet never arrives, both
+# copies show, and every expression on the page reads "−3−3". These few rules
+# are inlined so the page is correct with no network at all; the CDN sheet is
+# still linked, and improves the typesetting when it does load.
+_KATEX_CRITICAL = """
+.katex-mathml {
+  position: absolute; clip: rect(1px, 1px, 1px, 1px);
+  padding: 0; border: 0; height: 1px; width: 1px; overflow: hidden;
+}
+.katex { font-size: 1.05em; white-space: nowrap; }
+.katex .base { display: inline-block; }
+.katex .mfrac { display: inline-block; vertical-align: -0.5em; text-align: center; }
+.katex .mfrac > span { display: block; }
+.katex .frac-line { border-bottom: 1px solid currentColor; margin: 1px 0; }
+.katex .msupsub { display: inline-block; vertical-align: super; font-size: 0.75em; }
+.katex .sqrt > .root { font-size: 0.75em; }
+"""
+
+
 _KATEX = """
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"
@@ -674,7 +748,7 @@ def render_html(notes: dict[str, Any], *, grade: str = "", subject: str = "",
     out = [
         "<!doctype html><html lang='en'><head><meta charset='utf-8'>",
         f"<title>{_esc(title)}</title>",
-        f"<style>{PRINT_CSS}</style>{_KATEX}</head><body>",
+        f"<style>{PRINT_CSS}{_KATEX_CRITICAL}</style>{_KATEX}</head><body>",
         "<div class='sheet'>",
         "<div class='masthead'>",
         f"<h1>{_esc(title)}</h1>",
@@ -713,9 +787,85 @@ def render_html(notes: dict[str, Any], *, grade: str = "", subject: str = "",
 # ── the material: the words themselves ──────────────────────────────────────
 
 
+def _material_figures(plan: dict[str, Any], assets: dict[str, Any], *,
+                      grade: str = "", subject: str = "", strand: str = "",
+                      sub_strand: str = "") -> dict[Any, list[str]]:
+    """The pictures each lesson needs, keyed by lesson number.
+
+    Filled where the thing has been made, and a captioned plate carrying the
+    prompt to make it where it has not — the same production list the plan
+    carries, on the page the teacher actually holds.
+    """
+    from . import asset_requirements, figure_anchor
+
+    modules = [m for m in (plan.get("modules") or []) if isinstance(m, dict)]
+    if not modules:
+        return {}
+
+    out: dict[Any, list[str]] = {}
+    for n, module in enumerate(modules, start=1):
+        wanted = [r for r in asset_requirements.read({"modules": [module]}).items
+                  if r.kind in _PLATE]
+        if not wanted:
+            continue
+        number = module.get("module_number", n)
+        plates: list[str] = []
+        for i, req in enumerate(wanted, start=1):
+            brief = figure_anchor.brief_for(
+                req, grade_label=grade, subject=subject, strand=strand,
+                sub_strand=sub_strand,
+                lesson_title=str(module.get("title") or f"Lesson {n}"),
+            )
+            plates.append(_plate(req, f"{n}.{i}", assets, brief=brief))
+        out[number] = plates
+    return out
+
+
+def _citation(piece: dict[str, Any], *, grade: str = "", subject: str = "",
+              strand: str = "", sub_strand: str = "") -> str:
+    """Where in the KICD design this content comes from.
+
+    The page said "Where these words come from: written here for this lesson",
+    which tells a teacher challenged on a lesson precisely nothing. A citation
+    is an address they can turn to — the curriculum line, the page and line in
+    the design, and the design's own words at it.
+    """
+    citation = piece.get("citation")
+    if not isinstance(citation, dict):
+        citation = {}
+    ref = str(citation.get("ref") or "").strip()
+    quote = str(citation.get("quote") or "").strip()
+    attribution = str(piece.get("attribution") or "").strip()
+
+    if not (ref or quote or attribution):
+        return ""
+
+    where = " · ".join(x for x in (grade, subject, strand, sub_strand) if x)
+    out = ["<div class='aside citation'><h4>Where this comes from</h4>"]
+    if where:
+        out.append(f"<p class='curriculum'>{_esc(where)}</p>")
+    if ref:
+        out.append(f"<p class='ref'>KICD design, page {_esc(ref.split(':')[0])}"
+                   + (f", line {_esc(ref.split(':')[1])}" if ':' in ref else "")
+                   + "</p>")
+    if quote:
+        out.append(f"<blockquote>{_esc(quote)}</blockquote>")
+    if attribution and not quote:
+        # No design address: these words are the model's own, and the page
+        # should say so rather than implying the curriculum asked for them.
+        out.append(f"<p class='own'>Not quoted from the design — "
+                   f"{_esc(attribution)}</p>")
+    elif attribution:
+        out.append(f"<p class='own'>{_esc(attribution)}</p>")
+    out.append("</div>")
+    return "".join(out)
+
+
 def render_material_html(material: dict[str, Any], *, grade: str = "",
                          subject: str = "", strand: str = "",
-                         sub_strand: str = "", version: int = 0) -> str:
+                         sub_strand: str = "", version: int = 0,
+                         assets: dict[str, Any] | None = None,
+                         plan: dict[str, Any] | None = None) -> str:
     """The words, laid out to be read aloud from.
 
     Deliberately unlike the plan's document. The plan is scanned before a
@@ -730,14 +880,17 @@ def render_material_html(material: dict[str, Any], *, grade: str = "",
     meta = [p for p in (subject, grade, strand, sub_strand) if p]
     if version:
         meta.append(f"version {version}")
-    plan = material.get("from_plan") or {}
-    if isinstance(plan, dict) and plan.get("version"):
-        meta.append(f"from plan version {plan['version']}")
+    # NOT `plan`: that is the parameter holding the plan's CONTENT, and
+    # reassigning it here silently emptied it — every figure vanished from the
+    # material page while the plan's own page still showed them.
+    plan_ref = material.get("from_plan") or {}
+    if isinstance(plan_ref, dict) and plan_ref.get("version"):
+        meta.append(f"from plan version {plan_ref['version']}")
 
     out = [
         "<!doctype html><html lang='en'><head><meta charset='utf-8'>",
         f"<title>{_esc(title)}</title>",
-        f"<style>{PRINT_CSS}{_MATERIAL_CSS}</style>{_KATEX}</head><body>",
+        f"<style>{PRINT_CSS}{_MATERIAL_CSS}{_KATEX_CRITICAL}</style>{_KATEX}</head><body>",
         "<div class='sheet'>",
         "<div class='masthead'>",
         f"<h1>{_esc(title)}</h1>",
@@ -748,12 +901,20 @@ def render_material_html(material: dict[str, Any], *, grade: str = "",
     if not pieces:
         out.append("<p>No material has been written for this sub-strand yet.</p>")
 
+    # Figures belong on this page too. The material is what a teacher reads
+    # while holding up the picture, so a page with no place kept for it is a
+    # page that sends them back to the plan to find out what to hold up.
+    by_module = _material_figures(plan or {}, assets or {}, grade=grade,
+                                 subject=subject, strand=strand,
+                                 sub_strand=sub_strand)
+
     last_module = None
     for piece in pieces:
         number = piece.get("module_number")
         if number != last_module:
             out.append(f"<h2 class='lessonhead'>"
                        f"{_esc(piece.get('module_title') or f'Lesson {number}')}</h2>")
+            out += by_module.get(number, [])
             last_module = number
 
         out.append("<section class='piece'>")
@@ -785,11 +946,12 @@ def render_material_html(material: dict[str, Any], *, grade: str = "",
         # "The children" for every grade: a Grade 6 Arabic page told its
         # teacher what "the children" do. Neutral across the ladder.
         for key, label in (("learner_does", "The learners"),
-                           ("notes_for_the_teacher", "While you say it"),
-                           ("attribution", "Where these words come from")):
+                           ("notes_for_the_teacher", "While you say it")):
             if piece.get(key):
                 out.append(f"<div class='aside'><h4>{label}</h4>"
                            f"<p>{_math(piece[key])}</p></div>")
+        out.append(_citation(piece, grade=grade, subject=subject,
+                             strand=strand, sub_strand=sub_strand))
         out.append("</section>")
 
     out.append("<div class='foot'>Written from the lesson plan for this "
@@ -799,6 +961,28 @@ def render_material_html(material: dict[str, Any], *, grade: str = "",
 
 
 _MATERIAL_CSS = """
+/* Two columns, like the plan's document and like a textbook. It was one wide
+   column because this page is read aloud from — but a 190mm measure is 110
+   characters, which is where a reader loses their place returning to the left
+   edge, and losing your place is exactly what must not happen mid-sentence in
+   front of a class. */
+.sheet .piece, .sheet .lessonhead { break-inside: avoid; }
+.sheet { column-count: 2; column-gap: 9mm; column-rule: 0.4pt solid #ddd; }
+.sheet .masthead { column-span: all; }
+.sheet .foot { column-span: all; }
+.sheet .lessonhead { column-span: all; }
+
+/* Where this comes from — the curriculum line, the page and line in the KICD
+   design, and the design's own words. */
+.aside.citation .curriculum { font-size: 8pt; letter-spacing: 0.06em;
+  text-transform: uppercase; color: #555; margin: 0 0 3px; }
+.aside.citation .ref { font-size: 8.5pt; font-weight: 600; margin: 0 0 4px; }
+.aside.citation blockquote { margin: 0; padding-left: 8px;
+  border-left: 2px solid #999; font-style: italic; font-size: 9pt;
+  color: #333; }
+.aside.citation .own { font-size: 8.5pt; color: #666; margin: 4px 0 0;
+  font-style: italic; }
+
 /* Read ALOUD, off a page held in one hand. So: one column at a large size,
    ragged right, and no hyphenation — a word broken across a line is a word the
    teacher stumbles on in front of the class, which is the one place the

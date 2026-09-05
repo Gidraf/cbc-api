@@ -239,9 +239,36 @@ def test_an_instruction_nobody_fulfilled_is_marked_rather_than_left_blank():
 
 def test_where_the_words_came_from_is_on_the_page():
     """A teacher introducing a song should know whether it is one the children
-    may already know."""
-    assert "Where these words come from" in _material_html()
-    assert "Traditional; widely known" in _material_html()
+    may already know — and, when the words come from the design, be able to
+    turn to the page they came from."""
+    html = _material_html()
+
+    assert "Where this comes from" in html
+    assert "Traditional; widely known" in html
+    # The curriculum line, so the citation says WHICH grade and learning area.
+    assert "grade-pp1 · CRE · Our God" in html
+    # No design address for a traditional song, and the page says so rather
+    # than implying the curriculum asked for these exact words.
+    assert "Not quoted from the design" in html
+
+
+def test_a_citation_carries_the_design_address_and_its_words():
+    """"written here for this lesson" told a teacher challenged on a lesson
+    precisely nothing."""
+    html = notes_renderer.render_material_html(
+        {"material": [{
+            "module_number": 1, "module_title": "Lesson 1", "topic": "Integers",
+            "say": "An integer is a whole number.",
+            "citation": {"ref": "202:14",
+                         "quote": "carry out operations on integers"},
+        }]},
+        grade="grade-9", subject="Mathematics", strand="Numbers",
+        sub_strand="Integers",
+    )
+
+    assert "grade-9 · Mathematics · Numbers · Integers" in html
+    assert "page 202" in html and "line 14" in html
+    assert "carry out operations on integers" in html
 
 
 def test_a_piece_is_never_split_across_a_page_break():

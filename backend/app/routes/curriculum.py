@@ -5693,7 +5693,23 @@ def _render_document(artifact: Any) -> str:
         "version": artifact.version,
     }
     if artifact.kind == "material":
-        return notes_renderer.render_material_html(content, **common)
+        # The material's figures are named by the plan it was written from —
+        # the plan says which picture the lesson needs, the material is the
+        # words said beside it.
+        plan: dict[str, Any] = {}
+        parent = getattr(artifact, "parent_artifact_id", "") or ""
+        if parent:
+            try:
+                plan = artifact_registry.get(parent).content or {}
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Could not read plan %s for %s: %s",
+                               parent, artifact.artifact_id, exc)
+        return notes_renderer.render_material_html(
+            content, plan=plan,
+            assets=lesson_assets.for_notes(
+                plan, artifact.grade, artifact.subject, artifact.sub_strand_name),
+            **common,
+        )
 
     return notes_renderer.render_html(
         content,
