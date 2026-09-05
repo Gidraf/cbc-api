@@ -127,3 +127,86 @@ def what_is_missing(bundle: dict[str, Any] | None) -> list[str]:
     if not bundle.get("activities"):
         missing.append("activity")
     return missing
+
+
+# ── the whole grade at once ─────────────────────────────────────────────────
+
+_KIND_SLOT: dict[str, str] = {
+    "notes": "notes",
+    "diagram": "diagrams",
+    "activity": "activities",
+    "question": "questions",
+}
+
+
+def index_for_grade(grade: str, subject: str = "") -> dict[tuple[str, str], dict[str, Any]]:
+    """Every sub-strand's generated content for one grade, from the artifacts.
+
+    Keyed `(subject.lower(), sub_strand.lower())`, which is how the coverage
+    report indexes what it was handed.
+
+    Coverage read `substrand_resources` — the publish-bundle row — so a grade
+    whose every station had run reported NOTES 0/0, VISUALS 0/0, everything
+    0/0, and the material and diagram stations locked with "none exist yet for
+    this sub-strand". The board could not see its own work.
+
+    One query for the grade rather than one per sub-strand: a grade has
+    hundreds, and the coverage screen is not a place to make hundreds of round
+    trips.
+    """
+    from ..infra.db import fetch_all
+    from .grade_sql import clause
+
+    conditions = [clause("a.grade", "grade"), "a.kind IN :kinds"]
+    params: dict[str, Any] = {"grade": grade,
+                              "kinds": tuple(_KIND_SLOT)}
+    if subject:
+        conditions.append("LOWER(a.subject) = LOWER(:subject)")
+        params["subject"] = subject
+
+    try:
+        rows = fetch_all(
+            f"""
+            SELECT DISTINCT ON (a.artifact_key)
+                   a.subject, a.sub_strand_name, a.kind, a.content
+            FROM artifacts a
+            WHERE {' AND '.join(conditions)}
+            ORDER BY a.artifact_key, a.version DESC
+            """,
+            params,
+        ) or []
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Could not index artifacts for %s: %s", grade, exc)
+        return {}
+
+    index: dict[tuple[str, str], dict[str, Any]] = {}
+    for row in rows:
+        subject_key = str(row.get("subject") or "").strip().lower()
+        sub_strand = str(row.get("sub_strand_name") or "").strip()
+        if not subject_key or not sub_strand:
+            continue
+
+        key = (subject_key, sub_strand.lower())
+        bundle = index.setdefault(key, {
+            "notes": {}, "diagrams": [], "activities": [], "questions": [],
+            "curriculum": {"grade": grade, "subject": row.get("subject"),
+                           "sub_strand": sub_strand},
+            "source": "artifacts",
+        })
+
+        content = row.get("content")
+        if not isinstance(content, dict):
+            continue
+        kind = str(row.get("kind") or "")
+        if kind == "notes":
+            bundle["notes"] = content
+        elif kind == "diagram":
+            bundle["diagrams"] = (content.get("visuals")
+                                  or content.get("diagrams") or [])
+        elif kind == "activity":
+            bundle["activities"] = (content.get("activities")
+                                    or content.get("experiments") or [])
+        elif kind == "question":
+            bundle["questions"] = (content.get("questions")
+                                   or content.get("items") or [])
+    return index

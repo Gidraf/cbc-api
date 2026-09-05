@@ -907,21 +907,34 @@ def get_dataset_progress_report(
     grade_slug = validate_grade_dataset(grade)
     alt_grade = grade_slug.replace("grade-", "")
 
-    # 1. Fetch generated resources from substrand_resources
+    # 1. What has actually been generated, from the ARTIFACTS the stations file.
+    #
+    # This read `substrand_resources` — the row written by the explicit
+    # publish-bundle step and by the older pipeline. Nothing on the Content
+    # Factory board writes it. So a sub-strand whose lesson plan, material,
+    # diagrams and activities had all been generated, reviewed and filed
+    # reported NOTES 0/0, VISUALS 0/0, everything 0/0 — and because the station
+    # gates read the same numbers, Lesson material and Diagrams both locked
+    # with "none exist yet for this sub-strand" about content plainly there.
+    #
+    # The board could not see its own work.
+    from ..services import substrand_bundle
+
+    res_index: dict[tuple[str, str], dict] = substrand_bundle.index_for_grade(grade_slug)
+
+    # The published rows still count, for content filed before the stations
+    # existed — but they do not overwrite a newer artifact.
     res_query = """
         SELECT bundle_id, curriculum, notes, diagrams, activities, questions, status, updated_at
         FROM substrand_resources
         WHERE (LOWER(curriculum->>'grade') = LOWER(:grade) OR LOWER(curriculum->>'grade') = LOWER(:alt_grade))
     """
     res_rows = fetch_all(res_query, {"grade": grade_slug, "alt_grade": alt_grade})
-
-    # Index generated resources by (subject.lower(), substrand.lower()) and (subject.lower(), strand.lower(), substrand.lower())
-    res_index: dict[tuple[str, str], dict] = {}
     for r in res_rows:
         c = r.get("curriculum") or {}
         s_key = c.get("subject", "").strip().lower()
         ss_key = c.get("sub_strand", "").strip().lower()
-        if s_key and ss_key:
+        if s_key and ss_key and (s_key, ss_key) not in res_index:
             res_index[(s_key, ss_key)] = r
 
     # Media and approvals live in their own tables, and coverage was scoring

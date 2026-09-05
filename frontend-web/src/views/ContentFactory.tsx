@@ -172,9 +172,14 @@ function dimensionFor(report: Record<string, any>, id: string) {
   const found = report?.[id];
   if (found && typeof found === "object") return found;
   return {
-    generated_count: 0,
-    required_count: 0,
-    remaining_count: 0,
+    // `generated` and `required`, which is what the coverage service returns.
+    // These read `generated_count` / `required_count` — names the API has
+    // never sent — so every station rendered "0 of 0 produced" regardless of
+    // what had been made, and the gates that read the same numbers locked the
+    // stations below.
+    generated: 0,
+    required: 0,
+    remaining: 0,
     percentage: 0,
     estimated: true,
     unmeasured: true,
@@ -186,7 +191,7 @@ function dimensionFor(report: Record<string, any>, id: string) {
  *  Shaped exactly like a measured one so every station renders and reads zero,
  *  rather than the whole factory disappearing because coverage has not run. */
 function emptyReport(row: Record<string, any>) {
-  const dimension = { generated_count: 0, required_count: 0, remaining_count: 0,
+  const dimension = { generated: 0, required: 0, remaining: 0,
                       percentage: 0, estimated: true };
   return {
     sub_strand_name: String(row.sub_strand_name || ""),
@@ -195,7 +200,7 @@ function emptyReport(row: Record<string, any>) {
     approved_percentage: 0,
     production_ready: false,
     approved: false,
-    notes: { ...dimension, generated_hours: 0, required_hours: 0 },
+    notes: { ...dimension },
     visuals: { ...dimension },
     media: { ...dimension },
     simulations: { ...dimension },
@@ -798,8 +803,8 @@ export function ContentFactory() {
               <Grid min="150px" gap="var(--s3)">
                 {(["notes", "visuals", "media", "practicals", "questions", "slo_coverage"] as const).map((k) => {
                   const d: any = dimensionFor(selected.report, k);
-                  const gen = d.generated_count ?? d.generated_hours ?? 0;
-                  const req = d.required_count ?? d.required_hours ?? 0;
+                  const gen = d.generated ?? 0;
+                  const req = d.required ?? 0;
                   return (
                     <div key={k} style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
                       <Label>{k.replace(/_/g, " ")}</Label>
@@ -833,7 +838,7 @@ export function ContentFactory() {
               // approvers. Thin is a quality problem; absent is the only one
               // that should stop the work built on top of it.
               const gatePlanned = Boolean(
-                gate && (gate.planned || (gate.generated_count ?? gate.generated_hours ?? 0) > 0)
+                gate && (gate.planned || (gate.generated ?? 0) > 0)
               );
               const unlocked = overrides.includes(station.id);
               const locked = Boolean(gate) && !gatePlanned && !unlocked;
@@ -899,8 +904,7 @@ export function ContentFactory() {
                         "not counted in coverage yet"
                       ) : (
                         <>
-                          {dim.generated_count ?? dim.generated_hours ?? 0} of{" "}
-                          {dim.required_count ?? dim.required_hours ?? 0} produced
+                          {dim.generated ?? 0} of {dim.required ?? 0} produced
                           {dim.estimated ? " (requirement estimated)" : ""}
                         </>
                       )}
