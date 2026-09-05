@@ -1335,6 +1335,11 @@ function SavedStationWork({
   label: string;
 }) {
   const artifacts = useArtifacts({ grade, subject, kind, sub_strand: subStrand });
+  // "Read it as a book" was offered only on a version generated in THIS
+  // session, so material filed on an earlier visit — which is most of it —
+  // could be read only as JSON, or by opening the versions drawer and
+  // hunting. The saved version is the one an operator actually has.
+  const book = useNotesDocument();
   const rows: any[] = artifacts.data?.artifacts || [];
   if (!rows.length) return null;
 
@@ -1369,7 +1374,20 @@ function SavedStationWork({
         <span style={{ fontSize: "var(--text-sm)", color: "var(--ink-2)" }}>
           Open <em>Versions, review and approval</em> below to read or approve it.
         </span>
+        {["notes", "material"].includes(kind) && newest.artifact_id && (
+          <Button
+            size="sm"
+            variant="secondary"
+            disabled={book.isPending}
+            loading={book.isPending}
+            title="Two columns, figures and diagrams in place — exactly what prints"
+            onClick={() => book.mutateAsync(newest.artifact_id)}
+          >
+            Read it as a book
+          </Button>
+        )}
       </Stack>
+      {book.error && <ErrorNotice error={book.error} />}
 
       {measured.length > 0 && (
         <>

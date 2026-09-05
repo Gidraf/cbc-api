@@ -101,6 +101,53 @@ def _inherited_font(el: ET.Element, stack: list[float]) -> float:
     return size or (stack[-1] if stack else 16.0)
 
 
+def _text_boxes(el: ET.Element, dx: float, dy: float, font: float,
+                texts: list[tuple[Box, float, str]]) -> None:
+    """Every line a <text> puts on the page, as its own box.
+
+    SVG text positioning has three forms and a drawing mixes them: the parent's
+    own x/y, a <tspan> with absolute x/y, and a <tspan> carrying only `dy` and
+    inheriting x from the line before it.
+    """
+    anchor = (el.get("text-anchor") or "start").strip()
+    base_x, base_y = _number(el, "x") + dx, _number(el, "y") + dy
+
+    def place(body: str, x: float, y: float, size: float, how: str) -> None:
+        body = body.strip()
+        if not body:
+            return
+        width = len(body) * size * CHAR_WIDTH
+        if how == "middle":
+            x -= width / 2
+        elif how == "end":
+            x -= width
+        # y is the baseline: the glyphs sit above it.
+        texts.append((Box(x, y - size * 0.8, x + width, y + size * 0.2, body),
+                      size, body))
+
+    spans = [c for c in el if c.tag.split("}")[-1] == "tspan"]
+    if not spans:
+        place("".join(el.itertext()), base_x, base_y, font, anchor)
+        return
+
+    # Text sitting directly on the parent, before the first <tspan>.
+    place(el.text or "", base_x, base_y, font, anchor)
+
+    x, y = base_x, base_y
+    for span in spans:
+        size = _inherited_font(span, [font])
+        how = (span.get("text-anchor") or anchor).strip()
+        x = _number(span, "x") + dx if span.get("x") is not None else x
+        if span.get("y") is not None:
+            y = _number(span, "y") + dy
+        else:
+            y += _number(span, "dy", 0.0)
+        place("".join(span.itertext()), x, y, size, how)
+        # A line that only shifted by `dy` keeps the x it inherited, which is
+        # how the next line lands under this one rather than at the origin.
+        place(span.tail or "", x, y, font, how)
+
+
 def _walk(el: ET.Element, dx: float, dy: float, font: float,
           texts: list[tuple[Box, float, str]], shapes: list[Box],
           unmeasurable: list[str]) -> None:
@@ -113,18 +160,11 @@ def _walk(el: ET.Element, dx: float, dy: float, font: float,
     font = _inherited_font(el, [font])
 
     if tag == "text":
-        body = "".join(el.itertext()).strip()
-        if body:
-            x, y = _number(el, "x") + dx, _number(el, "y") + dy
-            width = len(body) * font * CHAR_WIDTH
-            anchor = (el.get("text-anchor") or "start").strip()
-            if anchor == "middle":
-                x -= width / 2
-            elif anchor == "end":
-                x -= width
-            # y is the baseline: the glyphs sit above it.
-            texts.append((Box(x, y - font * 0.8, x + width, y + font * 0.2, body),
-                          font, body))
+        # A <text> holding <tspan> lines is SEVERAL boxes, not one. Measuring
+        # only the parent collapsed every wrapped label onto the parent's own
+        # x/y — so the check passed drawings whose second and third lines ran
+        # off the canvas, which is precisely the wrapping the brief asks for.
+        _text_boxes(el, dx, dy, font, texts)
     elif tag == "circle":
         cx, cy, r = _number(el, "cx") + dx, _number(el, "cy") + dy, _number(el, "r")
         if r:

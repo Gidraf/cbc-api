@@ -325,3 +325,59 @@ def test_a_saved_key_is_never_sent_back() -> None:
     view = inspect.getsource(main.get_admin_config)
     assert "has_api_key=bool(" in view
     assert "decrypt_api_key" not in view
+
+
+def test_material_with_no_parent_still_finds_its_figures(monkeypatch) -> None:
+    """The figure list lives on the PLAN, and the material reaches it through
+    `parent_artifact_id`. Material filed without that link — generated before
+    the link existed, or unlocked by an operator rather than by the gate —
+    rendered with no pictures at all, next to a diagram station reporting
+    100/100. The plan for the sub-strand is one lookup away.
+    """
+    from app.routes import curriculum
+    from app.services import artifact_registry, lesson_assets
+
+    plan = {"modules": [{"title": "Lesson 1",
+                         "visuals": [{"diagram_title": "Number line"}]}]}
+    monkeypatch.setattr(artifact_registry, "search",
+                        lambda **k: [{"content": plan}] if k.get("kind") == "notes" else [])
+    seen: dict = {}
+
+    def _for_notes(source, *a, **k):
+        seen["plan"] = source
+        return {}
+
+    monkeypatch.setattr(lesson_assets, "for_notes", _for_notes)
+
+    material = _Artifact("material", {"material": [
+        {"module_number": 1, "module_title": "Lesson 1", "topic": "Integers",
+         "say": "An integer is a whole number."}]})
+    material.parent_artifact_id = ""
+
+    curriculum._render_document(material)
+
+    assert seen["plan"] == plan, "the sub-strand's own plan, found without a link"
+
+
+def test_a_parent_that_is_not_a_plan_is_not_treated_as_one(monkeypatch) -> None:
+    """A material regenerated from an earlier material carries THAT as its
+    parent. Reading a material as a plan finds no figures and stops looking."""
+    from app.routes import curriculum
+    from app.services import artifact_registry, lesson_assets
+
+    plan = {"modules": [{"title": "Lesson 1"}]}
+    monkeypatch.setattr(artifact_registry, "get",
+                        lambda _id: _Artifact("material", {"material": []}))
+    monkeypatch.setattr(artifact_registry, "search",
+                        lambda **k: [{"content": plan}] if k.get("kind") == "notes" else [])
+    seen: dict = {}
+    monkeypatch.setattr(lesson_assets, "for_notes",
+                        lambda source, *a, **k: seen.setdefault("plan", source) and {} or {})
+
+    material = _Artifact("material", {"material": [
+        {"module_number": 1, "module_title": "Lesson 1", "say": "Words."}]})
+    material.parent_artifact_id = "art_material_older"
+
+    curriculum._render_document(material)
+
+    assert seen["plan"] == plan

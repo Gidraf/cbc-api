@@ -193,7 +193,7 @@ def test_it_asks_for_a_picture_that_means_something_without_its_labels() -> None
     brief = _flowed()
 
     assert "CARRY THE MEANING" in brief
-    assert "look different from" in brief
+    assert "A learner covering every label must still be able to work out" in brief
 
 
 def test_colour_is_allowed_but_never_load_bearing() -> None:
@@ -238,3 +238,41 @@ def test_the_operator_is_told_what_the_drawing_does_on_the_page() -> None:
     assert '"layout": {' in source
     assert '"overlapping_labels"' in source
     assert '"findings"' in source
+
+
+def test_it_names_the_failure_it_keeps_getting_back() -> None:
+    """Twice now the model has returned four stacked rows, each a boxed word
+    beside an equation. "Each part must look like what it is" did not stop it;
+    naming the pattern might."""
+    brief = _flowed()
+
+    assert "Do not draw a stack of rows" in brief
+    assert "bordered table" in brief
+    assert "Show the thing HAPPENING, not the thing named" in brief
+
+
+def test_it_offers_a_repertoire_rather_than_asking_for_creativity() -> None:
+    """"Be creative" is not an instruction. A list of arrangements that suit
+    particular ideas is."""
+    brief = _flowed()
+
+    for arrangement in ("number line", "area model", "part-whole bar",
+                        "grouped counters", "cross-section", "cycle of arrows"):
+        assert arrangement in brief, arrangement
+    assert "Choose ONE and commit to it" in brief
+
+
+def test_it_forbids_the_leader_line_through_the_equation() -> None:
+    brief = _flowed()
+
+    assert "Never route a leader line THROUGH text" in brief
+    assert "between the characters of an expression" in brief
+
+
+def test_it_says_that_what_falls_outside_the_viewbox_is_gone() -> None:
+    """Including the second line of a wrapped label — the drawing that came
+    back clipped its last row and its own left-hand captions."""
+    brief = _flowed()
+
+    assert "Nothing may fall outside the viewBox" in brief
+    assert "second or third line of a wrapped label" in brief

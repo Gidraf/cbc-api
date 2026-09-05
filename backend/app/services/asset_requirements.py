@@ -201,7 +201,7 @@ def read(plan: dict[str, Any]) -> Requirements:
             number = i
         title = str(module.get("title") or f"Lesson {number}")
 
-        def add(text: str, topic: str, source: str) -> None:
+        def add(text: str, topic: str, source: str, kind: str = "") -> None:
             what = " ".join(str(text).split()).strip(" .,;")
             if len(what) < 4:
                 return
@@ -209,14 +209,31 @@ def read(plan: dict[str, Any]) -> Requirements:
             if key in seen:
                 return
             seen.add(key)
+            # `kind` is given when the plan's own structure already says what
+            # this is. Guessing from the wording classified "Basic Operations
+            # on Integers" as an object to bring to class, which reserves no
+            # plate — so the drawing that existed for it had nowhere to go.
             out.items.append(Requirement(
-                kind=_classify(what), what=what, module_number=number,
+                kind=kind or _classify(what), what=what, module_number=number,
                 module_title=title, topic=topic, source=source))
 
         # What the plan says the teacher must have ready. The plainest
         # statement of a requirement there is.
         for entry in (module.get("resources_needed") or []):
             add(str(entry), "", "resources_needed")
+
+        # The visuals the plan names outright. Requirements were read only
+        # from `resources_needed` and from the teaching text, so a lesson that
+        # planned a visual in the field built for planning visuals promised
+        # nothing the page would reserve a plate for — and a diagram that had
+        # been drawn, filed and scored 100/100 had nowhere on the page to go.
+        for visual in (module.get("visuals") or module.get("diagrams") or []):
+            if isinstance(visual, dict):
+                add(str(visual.get("diagram_title") or visual.get("title")
+                        or visual.get("caption") or ""), "", "visuals",
+                    kind="diagram")
+            elif isinstance(visual, str):
+                add(visual, "", "visuals", kind="diagram")
 
         # And what the teaching itself asks to be shown or heard, which the
         # resources list often misses — a segment saying "observe pictures of

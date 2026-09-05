@@ -186,3 +186,57 @@ def test_a_background_rectangle_cannot_absolve_the_whole_drawing() -> None:
       <text x="70" y="105" font-size="14">Across it</text>
     </svg>"""
     assert diagram_layout.measure(hidden).collisions == 1
+
+
+# ── wrapped labels ──────────────────────────────────────────────────────────
+
+
+def test_each_tspan_line_is_measured_where_it_actually_lands() -> None:
+    """The brief asks for <tspan> wrapping, and the first version of this check
+    read x/y off the parent <text> only — so a three-line label collapsed to
+    one box at the parent's own coordinates, and a drawing whose later lines
+    ran off the canvas passed. The check has to measure the thing it asked
+    for."""
+    wrapped = """<svg viewBox="0 0 340 200">
+      <rect x="12" y="12" width="316" height="140" fill="none" stroke="#111"/>
+      <text x="20" y="170" font-size="14">
+        <tspan x="20" dy="0">First line here</tspan>
+        <tspan x="20" dy="16">Second line runs off</tspan>
+        <tspan x="20" dy="16">Third line is gone</tspan>
+      </text>
+    </svg>"""
+    faults = " ".join(diagram_layout.measure(wrapped).findings)
+
+    assert "outside the 340×200 viewBox" in faults
+    assert "205" in faults, "it names where the last line actually ended up"
+
+
+def test_a_tspan_inherits_x_from_the_line_above_it() -> None:
+    """A <tspan> with only `dy` keeps the previous x. Resetting it to zero
+    reported every wrapped label as running off the left edge."""
+    wrapped = """<svg viewBox="0 0 340 200">
+      <text x="120" y="30" font-size="14">
+        <tspan x="120" dy="0">Line one</tspan>
+        <tspan dy="18">Line two</tspan>
+      </text>
+      <rect x="12" y="70" width="316" height="118" fill="none" stroke="#111"/>
+    </svg>"""
+    fit = diagram_layout.measure(wrapped)
+
+    assert fit.texts == 2, "two lines, measured as two"
+    assert not any("outside" in f for f in fit.findings), fit.findings
+    assert fit.ok, fit.findings
+
+
+def test_a_tspan_with_absolute_coordinates_is_placed_there() -> None:
+    over = """<svg viewBox="0 0 340 200">
+      <line x1="20" y1="100" x2="320" y2="100" stroke="#111" stroke-width="2"/>
+      <text x="20" y="40" font-size="14">
+        <tspan x="20" y="40">Clear of it</tspan>
+        <tspan x="20" y="104">Lying on it</tspan>
+      </text>
+    </svg>"""
+    fit = diagram_layout.measure(over)
+
+    assert fit.collisions == 1
+    assert '"Lying on it"' in " ".join(fit.findings)

@@ -5679,12 +5679,48 @@ def _svg_brief(visual: dict[str, Any], *, grade: str, subject: str,
         "and is how a textbook sets one. What is unreadable is a label",
         "crossing a panel's edge, or lying over a line, an arrow or a curve.",
         "",
-        "THE DRAWING MUST CARRY THE MEANING. If every part gets the same",
-        "generic motif and only the words beside it differ, you have written a",
-        "list, not drawn a diagram, and a learner who covers the labels learns",
-        "nothing. Each part must LOOK like what it is and look different from",
-        "the others. A question will hide one part and ask what it was, so the",
-        "shape has to be the evidence.",
+        "Never route a leader line THROUGH text, and never let one pass",
+        "between the characters of an expression: \"5 —— + 3 —— = 8\" is what",
+        "that produces, and it is not an expression any more. A leader line",
+        "starts at the edge of the label and stops at the edge of the part.",
+        "",
+        "Nothing may fall outside the viewBox — not a shape, and not the",
+        "second or third line of a wrapped label. Anything past 340 across or",
+        "200 down is cut off by the page and simply will not be there.",
+        "",
+        "THE DRAWING MUST CARRY THE MEANING. A learner covering every label",
+        "must still be able to work out what is going on. That is the test,",
+        "and it is the one these drawings keep failing:",
+        "",
+        "  - Do not draw a stack of rows, each holding one boxed phrase and",
+        "    one equation. That is a bordered table, and it teaches nothing a",
+        "    sentence would not. It is the single most common thing returned",
+        "    here and it is always wrong.",
+        "  - Do not give every part the same generic motif — two circles and a",
+        "    connecting line for all four of anything — with only the words",
+        "    changing. Repeating one shape says the parts are the same.",
+        "  - Show the thing HAPPENING, not the thing named. \"Subtraction\" in a",
+        "    box is a caption. Seven counters with two crossed through is",
+        "    subtraction. The picture should be the evidence a question asks",
+        "    about, because a question WILL hide one part and ask what it was.",
+        "",
+        "COMPOSE IT LIKE SOMEONE WHO DRAWS. Pick the arrangement the idea",
+        "actually has, rather than defaulting to a list. Some that earn their",
+        "space:",
+        "",
+        "  - a number line, when the idea is position, order or distance;",
+        "  - a rectangular array or an area model, for multiplication;",
+        "  - a part-whole bar, for fractions, ratio and sharing;",
+        "  - grouped counters, for repeated addition and division;",
+        "  - a labelled cross-section, for a structure with named parts;",
+        "  - a flow of boxes joined by arrows, for a process with an order;",
+        "  - two panels side by side, when the point is a contrast;",
+        "  - a cycle of arrows, when the process returns to its start.",
+        "",
+        "Choose ONE and commit to it. A drawing that is a number line should",
+        "be a good number line filling the canvas, not a small number line",
+        "next to three other things. Vary size deliberately: the thing the",
+        "lesson is about should be the biggest thing on the canvas.",
         "",
         "COLOUR, SPARINGLY. One accent colour plus black on white. Use the",
         "accent as a light fill (for example #d9e8f5, #fde9d0) behind a black",
@@ -6325,7 +6361,7 @@ def _render_document(artifact: Any) -> str:
     filed. The material is the words a teacher says aloud — it has no figures
     to fill, and passing it an asset map would be a parameter it ignores.
     """
-    from ..services import lesson_assets, notes_renderer
+    from ..services import artifact_registry, lesson_assets, notes_renderer
 
     content = artifact.content or {}
     common = {
@@ -6341,10 +6377,27 @@ def _render_document(artifact: Any) -> str:
         parent = getattr(artifact, "parent_artifact_id", "") or ""
         if parent:
             try:
-                plan = artifact_registry.get(parent).content or {}
+                found = artifact_registry.get(parent)
+                if found.kind == "notes":
+                    plan = found.content or {}
             except Exception as exc:  # noqa: BLE001
                 logger.warning("Could not read plan %s for %s: %s",
                                parent, artifact.artifact_id, exc)
+        if not plan:
+            # Material filed without a parent — generated before that link
+            # existed, or unlocked by an operator rather than by the gate —
+            # rendered with NO figures at all, because the figure list lives
+            # on the plan. The plan for this sub-strand is not hard to find,
+            # and a page with its pictures beats a page without them.
+            try:
+                newest = artifact_registry.search(
+                    grade=artifact.grade, subject=artifact.subject,
+                    sub_strand=artifact.sub_strand_name, kind="notes")
+                if newest:
+                    plan = (newest[0].get("content") or {})
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("No plan found for material %s: %s",
+                               artifact.artifact_id, exc)
         return notes_renderer.render_material_html(
             content, plan=plan,
             assets=lesson_assets.for_notes(
