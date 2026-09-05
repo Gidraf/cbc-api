@@ -458,6 +458,19 @@ Below that, the opposite failure is as bad: a four-year-old cannot follow a subo
 
 Every word must be true and must be sayable to this learner. Invent no scripture reference, no statistic and no source. Where a song or a story is widely known, write the words as they are commonly sung or told; where you would have to invent one, write an original and say so in `attribution`.
 
+=== WORK AN EXAMPLE THROUGH ===
+Where this piece teaches a procedure, `worked_examples` carries at least one
+example set and worked to its answer. A learner revising at home has your
+explanation and nothing to imitate without it.
+
+Each step carries its REASON, not a description of itself: "make the
+denominators the same so the parts are the same size", never "now we rewrite
+the fractions". Write every symbol in LaTeX between single dollars, and escape
+the backslash in JSON — \\\\frac, not \\frac, or it arrives as a tab.
+
+Where the piece teaches no procedure — a discussion, a song, a story — return
+an empty list rather than inventing one.
+
 === `form` IS ONE WORD ===
 Choose exactly ONE of: {{ forms }}. Write that single word. A `form` reading
 "one of: explanation, story, song, ..." is the menu copied back, and it prints
@@ -505,6 +518,12 @@ Return ONLY valid JSON:
     "ref": "<page:line in the design this content came from, or \"\" if these words are your own>",
     "quote": "<the design's words at that exact address, copied, or \"\" if these words are your own>"
   },
+  "worked_examples": [
+    {"statement": "<the example as a learner meets it, mathematics in $…$>",
+     "steps": [{"working": "<one line of the working, in $…$>",
+                "because": "<why this line follows from the one above>"}],
+     "answer": "<the answer, in $…$>"}
+  ],
   "learner_does": "what the learners do while this happens",
   "attribution": "where these words come from: traditional, widely known, or written here for this lesson",
   "teacher_note": "anything the teacher must hold up, play or prepare while saying this"

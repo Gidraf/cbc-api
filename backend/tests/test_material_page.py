@@ -236,3 +236,87 @@ def test_the_schema_no_longer_shows_a_copyable_page_number() -> None:
     assert '"202:14"' not in citation_block, "the example address was copied verbatim"
     assert "<page:line" in citation_block
     assert "NEVER COPY THE SHAPE ABOVE" in prompt
+
+
+# ── the material booklet is a booklet, not a script ─────────────────────────
+
+def test_the_material_page_carries_the_exercise_and_its_worked_solutions(monkeypatch) -> None:
+    """These were built for the plan's booklet and not for the material — so
+    the page a teacher actually hands out ended at the last thing they say and
+    offered nothing to work."""
+    from app.services import question_dna
+
+    monkeypatch.setattr(
+        question_dna.question_dna_service, "list_questions",
+        lambda **kw: [{"content": {"question_text": q, "max_marks": 2}} for q in
+                      (r"Determine $(-3) \times (-4) + 10$.", r"What is $7 + (-2)$?")])
+
+    html = render_material_html(
+        {"material": [{"module_number": 1, "topic": "Integers", "say": "words"}]},
+        grade="grade-9", subject="Mathematics", sub_strand="Integers")
+
+    assert "class='exercise'" in html
+    assert "class='solutions'" in html
+    assert html.count("class='solution'") == 2
+    assert "negative multiplied by a negative" in html
+
+
+def test_the_material_page_renders_a_worked_example() -> None:
+    """The EXAMPLE block existed only on the plan's booklet."""
+    html = render_material_html(
+        {"material": [{
+            "module_number": 1, "topic": "Fractions", "say": "words",
+            "worked_examples": [{
+                "statement": r"Work out $\frac{2}{3} + \frac{1}{4}$.",
+                "steps": [{"working": r"$= \frac{8}{12} + \frac{3}{12}$",
+                           "because": "Make the denominators the same."}],
+                "answer": r"$\frac{11}{12}$"}],
+        }]},
+        grade="grade-9", subject="Mathematics")
+
+    assert "class='example'" in html
+    assert "Example 1.1" in html
+    assert "Make the denominators the same" in html
+
+
+def test_the_exercise_and_solutions_span_the_sheet_rather_than_nesting() -> None:
+    """`.solutions` set its own two columns inside the sheet's two, giving four
+    at 84px each — narrow enough that `(-3) × (-4) + 10` overflowed and a
+    fraction bar stretched past its own numerator."""
+    html = render_material_html({"material": []}, grade="grade-9", subject="Mathematics")
+
+    assert ".sheet .exercise, .sheet .solutions { column-span: all; }" in html
+
+
+def test_long_working_is_never_clipped() -> None:
+    html = render_material_html({"material": []}, grade="grade-9", subject="Mathematics")
+
+    assert ".solution .math { overflow-x: auto; max-width: 100%; }" in html
+    assert "@media print { .solution .math { font-size: 0.9em;" in html
+
+
+def test_only_the_rule_that_matters_offline_is_inlined() -> None:
+    """The inlined layout rules fought the real stylesheet when it DID load,
+    stretching a fraction bar across the page. Only the MathML-hiding rule —
+    the one that fixed the duplication — belongs here."""
+    html = render_material_html({"material": []}, grade="grade-9", subject="Mathematics")
+
+    assert ".katex-mathml" in html
+    assert ".katex .mfrac" not in html
+    assert ".katex .frac-line" not in html
+
+
+def test_a_list_of_classroom_objects_does_not_reserve_a_figure() -> None:
+    """"number cards, charts, worksheets" printed a hatched plate captioned
+    with a stationery list and offered a prompt to draw it."""
+    from app.services.asset_requirements import _classify
+
+    for shopping in ("number cards, charts, worksheets",
+                     "number cards and worksheets",
+                     "counters and bottle tops"):
+        assert _classify(shopping) == "object", shopping
+
+    for real in ("a chart of the water cycle",
+                 "a number line diagram from -6 to +6",
+                 "a bar graph of rainfall in Kisumu"):
+        assert _classify(real) == "diagram", real

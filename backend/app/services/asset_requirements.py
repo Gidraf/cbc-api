@@ -126,8 +126,31 @@ class Requirements:
         }
 
 
+# A resources line is often a LIST — "number cards, charts, worksheets" — and
+# a list is a shopping list, not one figure. It reserved a plate on the page
+# captioned "number cards, charts, worksheets" and offered a prompt to draw it.
+_LIST = re.compile(r",|\band\b", re.I)
+
+# Things a teacher carries into the room. A "chart" among them is a piece of
+# card, not a diagram anybody generates.
+_CLASSROOM = re.compile(
+    r"\b(cards?|worksheets?|counters?|dice|beads?|sticks?|bottle tops?|"
+    r"stones?|straws?|rulers?|tape measures?|thermometers?|calculators?|"
+    r"charts?|manila|markers?|string)\b", re.I)
+
+
+def _is_a_shopping_list(text: str) -> bool:
+    """Two or more classroom objects named together: bring these, draw none."""
+    if not _LIST.search(text):
+        return False
+    named = len(_CLASSROOM.findall(text))
+    return named >= 2 or (named >= 1 and len(_LIST.findall(text)) >= 2)
+
+
 def _classify(text: str) -> str:
     """What kind of thing this is, or "object" if nobody generates it."""
+    if _is_a_shopping_list(text):
+        return "object"
     for kind, pattern in _PATTERNS:
         if pattern.search(text):
             # A song is audio; a song sheet is not. Where an object word is the

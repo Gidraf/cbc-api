@@ -295,6 +295,10 @@ div.math { display: block; text-align: center; margin: 6px 0; }
   letter-spacing: 0.06em; text-transform: uppercase; color: #0a7; }
 .solution .work { flex: 1 1 auto; min-width: 0; }
 .solution .line { margin: 2px 0; }
+/* A long expression must never be clipped: on screen it scrolls, and in print
+   it is set smaller rather than cut off mid-equation. */
+.solution .math { overflow-x: auto; max-width: 100%; }
+@media print { .solution .math { font-size: 0.9em; overflow: visible; } }
 .solution .why { margin: 0; font-size: 8pt; color: #555; font-style: italic;
   text-align: center; }
 .solution .ans { margin: 5px 0 0; padding-top: 4px; border-top: 0.4pt solid #ddd;
@@ -655,13 +659,6 @@ _KATEX_CRITICAL = """
   position: absolute; clip: rect(1px, 1px, 1px, 1px);
   padding: 0; border: 0; height: 1px; width: 1px; overflow: hidden;
 }
-.katex { font-size: 1.05em; white-space: nowrap; }
-.katex .base { display: inline-block; }
-.katex .mfrac { display: inline-block; vertical-align: -0.5em; text-align: center; }
-.katex .mfrac > span { display: block; }
-.katex .frac-line { border-bottom: 1px solid currentColor; margin: 1px 0; }
-.katex .msupsub { display: inline-block; vertical-align: super; font-size: 0.75em; }
-.katex .sqrt > .root { font-size: 0.75em; }
 """
 
 
@@ -1151,6 +1148,11 @@ def render_material_html(material: dict[str, Any], *, grade: str = "",
             out.append("<p class='missing'>No words were written for this part. "
                        "The teacher must supply them.</p>")
 
+        # The worked examples belong here as much as in the plan: this is the
+        # page the mathematics is actually on, and a learner with nothing to
+        # imitate has the explanation and no model of the working.
+        out.append(_worked_examples(piece, number or 1))
+
         # "The children" for every grade: a Grade 6 Arabic page told its
         # teacher what "the children" do. Neutral across the ladder.
         for key, label in (("learner_does", "The learners"),
@@ -1161,6 +1163,12 @@ def render_material_html(material: dict[str, Any], *, grade: str = "",
         out.append(_citation(piece, grade=grade, subject=subject,
                              strand=strand, sub_strand=sub_strand))
         out.append("</section>")
+
+    # The exercise set and its worked solutions belong on THIS page too. They
+    # were added to the plan's booklet and not to the material — so the page a
+    # teacher actually hands out, the one the mathematics is for, ended at the
+    # last thing the teacher says and offered nothing to work.
+    out.append(_exercises(grade, subject, strand, sub_strand))
 
     out.append("<div class='foot'>Written from the lesson plan for this "
                "sub-strand. Read it before you read it aloud.</div>")
@@ -1180,6 +1188,12 @@ _MATERIAL_CSS = """
 .sheet .foot { column-span: all; }
 .sheet .lessonhead { column-span: all; }
 
+/* The exercise and its solutions carry their OWN two columns. Nested inside
+   the sheet's two they became four, each 84px wide — narrow enough that
+   `(-3) × (-4) + 10` overflowed its column and a fraction bar stretched past
+   its numerator. They span the sheet and divide themselves. */
+.sheet .exercise, .sheet .solutions { column-span: all; }
+
 /* Where this comes from — the curriculum line, the page and line in the KICD
    design, and the design's own words. */
 .aside.citation .curriculum { font-size: 8pt; letter-spacing: 0.06em;
@@ -1198,7 +1212,12 @@ ol.practice > li { margin-bottom: 7px; break-inside: avoid; }
 details.answers { margin: 6px 0 0; border-top: 0.4pt solid #ddd; }
 details.answers > summary { font-size: 8pt; letter-spacing: 0.06em;
   text-transform: uppercase; color: #555; cursor: pointer; padding: 4px 0; }
-@media print { details.answers { display: none; } }
+@media print {
+  details.answers { display: block; }
+  details.answers > summary { list-style: none; }
+  details.answers > div { display: block !important; }
+}
+details.answers[open] > summary { color: #111; }
 
 /* Read ALOUD, off a page held in one hand. So: one column at a large size,
    ragged right, and no hyphenation — a word broken across a line is a word the
