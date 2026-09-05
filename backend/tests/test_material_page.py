@@ -63,7 +63,7 @@ MATERIAL = {"material": [{
     "instruction": "Define integers and give examples.",
     "say": r"An integer is a whole number. Thus $-2 < -1$.",
     "learner_does": "Learners listen.",
-    "citation": {"ref": "202:14", "quote": "carry out operations on integers"},
+    "citation": {"ref": "37:12", "quote": "carry out operations on integers"},
 }]}
 
 
@@ -125,7 +125,7 @@ def test_a_citation_says_which_page_of_which_design() -> None:
     html = _page()
 
     assert "grade-9 · Mathematics · Numbers · Integers" in html
-    assert "page 202" in html and "line 14" in html
+    assert "page 37" in html and "line 12" in html
     assert "carry out operations on integers" in html
 
 
@@ -163,3 +163,76 @@ def test_the_prompt_asks_for_shillings_and_a_real_citation() -> None:
     assert "MONEY IS IN SHILLINGS" in prompt
     assert '"citation"' in prompt and '"ref"' in prompt and '"quote"' in prompt
     assert "NAME YOUR OWN LESSON" in prompt
+
+
+# ── the schema's own words, handed back as values ───────────────────────────
+
+ECHOED = {"material": [{
+    "module_number": 1, "module_title": "Lesson 1", "topic": "Collaborative Practice",
+    "form": "one of: explanation, story, song, prayer, rhyme, dialogue",
+    "say": "Pair up with a partner.",
+    "citation": {"ref": "202:14",
+                 "quote": "The design's exact words at that address, verbatim. "
+                          "Empty where these words are your own."},
+}]}
+
+
+def test_a_fabricated_citation_never_reaches_the_page() -> None:
+    """Every citation in one guide read "page 202, line 14" and quoted the
+    prompt. It survives inspection precisely because it looks like a citation."""
+    html = render_material_html(ECHOED, grade="grade-9", subject="Mathematics",
+                                sub_strand="Integers")
+
+    assert "page 202" not in html
+    assert "exact words at that address" not in html
+    assert "KICD design, page" not in html, "no address at all is the right answer"
+
+
+def test_the_schema_menu_never_reaches_the_page_as_a_form() -> None:
+    html = render_material_html(ECHOED, grade="grade-9", subject="Mathematics")
+    assert "one of: explanation" not in html
+
+
+def test_a_real_citation_still_prints() -> None:
+    """The guard must not swallow a genuine reference."""
+    html = render_material_html(
+        {"material": [{"module_number": 1, "topic": "Integers", "say": "words",
+                       "citation": {"ref": "37:12",
+                                    "quote": "carry out operations on integers"}}]},
+        grade="grade-9", subject="Mathematics", sub_strand="Integers",
+    )
+
+    assert "page 37" in html and "line 12" in html
+    assert "carry out operations on integers" in html
+
+
+def test_an_address_with_nothing_quoted_at_it_is_dropped() -> None:
+    """A page number a reader cannot check is not a citation."""
+    from app.services.placeholder_echo import clean_citation
+
+    assert clean_citation({"ref": "37:12", "quote": ""}) == {"ref": "", "quote": ""}
+
+
+def test_the_station_reports_echoed_fields_and_fails_its_gate() -> None:
+    from app.services.lesson_material import MaterialReport, gate_of
+    from app.services.placeholder_echo import scan
+
+    report = MaterialReport(total=1, written=1)
+    report.echoed_schema = scan(ECHOED)
+
+    assert report.echoed_schema
+    assert not report.clean
+    assert gate_of(report)["passed"] is False
+    actions = " ".join(gate_of(report)["next_actions"])
+    assert "schema's own description" in actions
+
+
+def test_the_schema_no_longer_shows_a_copyable_page_number() -> None:
+    from app.services.langfuse_seed import SEED_AGENT_PROMPTS
+
+    prompt = SEED_AGENT_PROMPTS["material-generator"]
+    citation_block = prompt.split('"citation"')[1][:300]
+
+    assert '"202:14"' not in citation_block, "the example address was copied verbatim"
+    assert "<page:line" in citation_block
+    assert "NEVER COPY THE SHAPE ABOVE" in prompt

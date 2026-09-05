@@ -918,6 +918,110 @@ def _material_figures(plan: dict[str, Any], assets: dict[str, Any], *,
     return out
 
 
+# "1. Calculate -3 + 5. 2. What is 7 - 9? 3. Find the product of -4 and 3."
+# — an exercise set the model ran into one paragraph, which is how it printed:
+# a wall of prose a learner cannot work down.
+_NUMBERED_RUN = re.compile(r"(?:(?<=^)|(?<=[.?!\s]))(\d{1,2})[.)]\s+")
+
+
+def _numbered_items(text: str) -> list[str]:
+    """The numbered questions in a run of text, in order, or [].
+
+    Only where they are actually a SET — three or more, counting up. A single
+    "1." is a sentence that happens to start with a digit.
+
+    The markers cannot simply be taken in order: "Calculate -3 + 5. 2. What
+    is..." puts a "5." right before the "2.", because the answer to one
+    question ends the sentence before the next one starts. So the ascending
+    RUN is picked out of the candidates and the rest ignored.
+    """
+    marks = list(_NUMBERED_RUN.finditer(text))
+    if len(marks) < 3:
+        return []
+
+    run: list[Any] = []
+    expected = int(marks[0].group(1))
+    for mark in marks:
+        if int(mark.group(1)) == expected:
+            run.append(mark)
+            expected += 1
+    if len(run) < 3:
+        return []
+
+    items: list[str] = []
+    for i, mark in enumerate(run):
+        end = run[i + 1].start() if i + 1 < len(run) else len(text)
+        item = text[mark.end():end].strip()
+        if item:
+            items.append(item)
+    return items
+
+
+def _spoken(said: str) -> str:
+    """The words, with a run-on exercise set broken into a list.
+
+    A teacher reading aloud needs the prose; a learner working the questions
+    needs them one to a line, numbered, with room to answer beside them.
+    """
+    blocks: list[str] = []
+    for line in said.splitlines():
+        if not line.strip():
+            continue
+        items = _numbered_items(line)
+        if items:
+            blocks.append("<ol class='practice'>"
+                          + "".join(f"<li>{_math(i)}</li>" for i in items)
+                          + "</ol>")
+        else:
+            blocks.append(f"<p>{_math(line)}</p>")
+    return "".join(blocks)
+
+
+def _practice(said: str, piece: dict[str, Any]) -> str:
+    """Worked solutions for the questions this piece sets.
+
+    The material's own exercise sets had no working anywhere — a learner could
+    find out they were wrong and not where. These are computed by the solvers,
+    so a question the engine cannot work simply gets no solution rather than an
+    invented one.
+    """
+    from . import worked_solutions
+
+    questions: list[str] = []
+    for line in said.splitlines():
+        questions += _numbered_items(line)
+    if not questions:
+        return ""
+
+    solved = [s for s in worked_solutions.solve_all(questions) if s.solved]
+    if not solved:
+        return ""
+
+    out = ["<details class='answers'><summary>Worked answers</summary>"]
+    for solution in solved:
+        out.append("<div class='solution'>")
+        out.append("<div class='sn'>"
+                   + str(questions.index(solution.question) + 1)
+                   + ("<span class='ok'>checked</span>" if solution.verified else "")
+                   + "</div><div class='work'>")
+        for line in solution.lines:
+            out.append(f"<div class='math' data-display='true'>{_esc(line.latex)}</div>")
+            if line.because:
+                out.append(f"<p class='why'>{_esc(line.because)}</p>")
+        out.append(f"<p class='ans'><span>Answer</span>"
+                   f"<span class='math' data-display='false'>{_esc(solution.answer)}</span></p>")
+        out.append("</div></div>")
+    out.append("</details>")
+    return "".join(out)
+
+
+def _echoed(value: Any) -> bool:
+    """Whether this value is the schema's own description of the field."""
+    from . import placeholder_echo
+
+    return placeholder_echo.is_echo(value)
+
+
 def _citation(piece: dict[str, Any], *, grade: str = "", subject: str = "",
               strand: str = "", sub_strand: str = "") -> str:
     """Where in the KICD design this content comes from.
@@ -927,12 +1031,18 @@ def _citation(piece: dict[str, Any], *, grade: str = "", subject: str = "",
     is an address they can turn to — the curriculum line, the page and line in
     the design, and the design's own words at it.
     """
-    citation = piece.get("citation")
-    if not isinstance(citation, dict):
-        citation = {}
-    ref = str(citation.get("ref") or "").strip()
-    quote = str(citation.get("quote") or "").strip()
+    from . import placeholder_echo
+
+    # Anything copied from the schema is removed before it reaches the page. A
+    # citation reading "The design's exact words at that address, verbatim" at
+    # "page 202, line 14" is a fabricated reference, and it survives inspection
+    # precisely because it looks like a citation.
+    cleaned = placeholder_echo.clean_citation(piece.get("citation"))
+    ref = cleaned["ref"]
+    quote = cleaned["quote"]
     attribution = str(piece.get("attribution") or "").strip()
+    if placeholder_echo.is_echo(attribution):
+        attribution = ""
 
     if not (ref or quote or attribution):
         return ""
@@ -1018,8 +1128,9 @@ def render_material_html(material: dict[str, Any], *, grade: str = "",
         head = _esc(piece.get("topic") or "")
         if piece.get("minutes"):
             head += f" <span class='mins'>{_esc(piece['minutes'])} min</span>"
-        if piece.get("form"):
-            head += f" <span class='form'>{_esc(piece['form'])}</span>"
+        form = str(piece.get("form") or "")
+        if form and not _echoed(form):
+            head += f" <span class='form'>{_esc(form)}</span>"
         out.append(f"<h3>{head}</h3>")
 
         if piece.get("instruction"):
@@ -1034,8 +1145,8 @@ def render_material_html(material: dict[str, Any], *, grade: str = "",
             # `_math`, not `_esc`: a mathematics lesson's spoken words carry
             # LaTeX, and escaping it printed the dollars and the backslashes on
             # the page a teacher reads aloud from.
-            body = "".join(f"<p>{_math(line)}</p>" for line in said.splitlines() if line.strip())
-            out.append(f"<div class='say'>{body}</div>")
+            out.append(f"<div class='say'>{_spoken(said)}</div>")
+            out.append(_practice(said, piece))
         else:
             out.append("<p class='missing'>No words were written for this part. "
                        "The teacher must supply them.</p>")
@@ -1079,6 +1190,15 @@ _MATERIAL_CSS = """
   color: #333; }
 .aside.citation .own { font-size: 8.5pt; color: #666; margin: 4px 0 0;
   font-style: italic; }
+
+/* An exercise set, one question to a line with room to answer beside it —
+   rather than the wall of prose a run-on paragraph makes of it. */
+ol.practice { margin: 6px 0; padding-left: 22px; }
+ol.practice > li { margin-bottom: 7px; break-inside: avoid; }
+details.answers { margin: 6px 0 0; border-top: 0.4pt solid #ddd; }
+details.answers > summary { font-size: 8pt; letter-spacing: 0.06em;
+  text-transform: uppercase; color: #555; cursor: pointer; padding: 4px 0; }
+@media print { details.answers { display: none; } }
 
 /* Read ALOUD, off a page held in one hand. So: one column at a large size,
    ragged right, and no hyphenation — a word broken across a line is a word the

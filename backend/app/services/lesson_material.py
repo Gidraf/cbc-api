@@ -213,12 +213,17 @@ class MaterialReport:
     # A lesson that gives the learner nothing to work. Counted per LESSON, so
     # it is reported separately from the per-piece findings above.
     unexercised: list[dict[str, Any]] = field(default_factory=list)
+    # Fields that came back holding the schema's own description of them —
+    # a `form` reading "one of: explanation, story, ..." or a citation quoting
+    # the prompt at a page number the prompt invented.
+    echoed_schema: list[dict[str, Any]] = field(default_factory=list)
 
     @property
     def clean(self) -> bool:
         return (not self.thin and not self.echoed and not self.infantilised
                 and not self.unscripted and not self.announced
                 and not self.staged and not self.unexercised
+                and not self.echoed_schema
                 and self.written == self.total)
 
     @property
@@ -229,7 +234,8 @@ class MaterialReport:
         # from a piece count. It is a gate condition instead — see gate_of.
         good = (self.total - len(self.thin) - len(self.echoed)
                 - len(self.infantilised) - len(self.unscripted)
-                - len(self.announced) - len(self.staged))
+                - len(self.announced) - len(self.staged)
+                - len(self.echoed_schema))
         return round(max(0.0, good) / self.total * 100, 1)
 
     def to_dict(self) -> dict[str, Any]:
@@ -240,6 +246,7 @@ class MaterialReport:
                 "announced": self.announced,
                 "staged": self.staged,
                 "unexercised": self.unexercised,
+                "echoed_schema": self.echoed_schema,
                 "clean": self.clean, "score": self.score}
 
 
@@ -289,6 +296,11 @@ def gate_of(report: "MaterialReport") -> dict[str, Any]:
          "score": round(1 - len(report.unscripted) / report.total, 4) if report.total else 1.0,
          "comment": f"{len(report.unscripted)} scripted in English only"
                     if report.unscripted else "the language is in the script"},
+        {"aspect": "own_words", "method": "schema_description_returned_as_value",
+         "status": "fail" if report.echoed_schema else "pass",
+         "score": round(1 - len(report.echoed_schema) / report.total, 4) if report.total else 1.0,
+         "comment": f"{len(report.echoed_schema)} handed the schema's own wording back"
+                    if report.echoed_schema else "no field echoed its own description"},
         {"aspect": "form", "method": "opening_announces_the_lesson",
          "status": "fail" if report.announced else "pass",
          "score": round(1 - len(report.announced) / report.total, 4) if report.total else 1.0,
@@ -333,6 +345,14 @@ def gate_of(report: "MaterialReport") -> dict[str, Any]:
             f"{', '.join(item.get('phrases') or [])}. This learner is not four. "
             f"Address them as the register says — 'learners', not 'children' — "
             f"and drop the praise after every turn."
+        )
+    for item in report.echoed_schema[:3]:
+        actions.append(
+            f"\"{item.get('topic') or 'One piece'}\" returned the schema's own "
+            f"description instead of a value in: {', '.join(item.get('fields') or [])}. "
+            f"`form` is one word. `citation.ref` is the page and line this content "
+            f"actually came from, and `citation.quote` the design's words there — "
+            f"leave both empty rather than copying the example."
         )
     for item in report.announced[:3]:
         actions.append(
@@ -531,6 +551,9 @@ def check(material: dict[str, Any], plan: Plan, grade: str = "",
     # reading level. A Grade 9 page that announces itself in every section and
     # never asks the learner to work anything is pitched correctly and shaped
     # wrongly, and only these three notice that.
+    from . import placeholder_echo
+
+    report.echoed_schema = placeholder_echo.scan(material)
     report.announced = material_form.announced(material, grade)
     report.staged = material_form.staged(material, grade)
     report.unexercised = material_form.unexercised(material, grade)

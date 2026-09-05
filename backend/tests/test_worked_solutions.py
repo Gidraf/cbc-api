@@ -195,3 +195,55 @@ def test_no_solutions_section_when_nothing_could_be_worked(monkeypatch) -> None:
 def test_the_solutions_are_set_in_columns(monkeypatch) -> None:
     html = _booklet(monkeypatch, [r"What is $7 + (-2)$?"])
     assert ".solutions, .exercise > ol { column-count: 2;" in html
+
+
+# ── an exercise set the model ran into one paragraph ────────────────────────
+
+RUN_ON = ("Here are the problems to solve together: 1. Calculate -3 + 5. "
+          "2. What is 7 - 9? 3. Find the product of -4 and 3. "
+          "4. Divide -12 by 4. 5. If you have -6 and you add 8, what do you get?")
+
+
+def test_a_run_on_exercise_set_is_broken_into_questions() -> None:
+    """It printed as a wall of prose a learner cannot work down."""
+    from app.services.notes_renderer import _numbered_items
+
+    items = _numbered_items(RUN_ON)
+
+    assert len(items) == 5
+    assert items[0].startswith("Calculate -3 + 5")
+    assert items[4].startswith("If you have -6")
+
+
+def test_the_answer_ending_one_question_is_not_read_as_the_next_number() -> None:
+    """"Calculate -3 + 5. 2. What is..." puts a "5." immediately before the
+    "2.", because the sentence ends on a number."""
+    from app.services.notes_renderer import _numbered_items
+
+    assert len(_numbered_items(RUN_ON)) == 5, "not tripped up by the '5.'"
+
+
+@pytest.mark.parametrize("text", [
+    "A single sentence. 1. Not a set.",
+    "Read page 3. Then answer.",
+    "Integers include 2, -3 and 0.",
+])
+def test_prose_is_not_mistaken_for_an_exercise_set(text: str) -> None:
+    from app.services.notes_renderer import _numbered_items
+
+    assert _numbered_items(text) == []
+
+
+def test_the_material_page_lists_them_and_works_what_it_can() -> None:
+    from app.services.notes_renderer import render_material_html
+
+    html = render_material_html(
+        {"material": [{"module_number": 1, "topic": "Collaborative Practice",
+                       "form": "question_set", "say": RUN_ON}]},
+        grade="grade-9", subject="Mathematics", sub_strand="Integers")
+
+    assert "ol class='practice'" in html, "one question to a line"
+    assert html.count("class='solution'") == 4, "the four calculations are worked"
+    assert "Worked answers" in html
+    # The word problem is simply absent, not invented.
+    assert "you add 8" not in html.split("Worked answers")[1]

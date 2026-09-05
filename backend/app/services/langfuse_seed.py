@@ -474,6 +474,17 @@ you wrote, an example you invented, an explanation you composed to serve the
 outcome — leave `ref` and `quote` empty and say so in `attribution`. An
 unverifiable citation is worse than none, because it survives inspection.
 
+NEVER COPY THE SHAPE ABOVE. Anything in angle brackets describes what to write;
+it is not what to write. A guide came back with every citation reading
+
+    "ref": "202:14",
+    "quote": "The design's exact words at that address, verbatim."
+
+on every piece — one invented page number repeated through a whole sub-strand,
+printed under the heading "Where this comes from" as though a teacher could
+turn to it. An empty citation is correct and costs nothing. A copied one is a
+fabricated reference.
+
 === MONEY IS IN SHILLINGS ===
 Kenyan learners are taught in Kenyan money. Write "200 shillings" or "KES 200",
 never "$200". A dollar sign is also the delimiter this system typesets
@@ -491,8 +502,8 @@ Return ONLY valid JSON:
   "title": "what this piece of material is called, if it has a name",
   "say": "the words the teacher speaks, verbatim, in the order they are spoken. This is the substance — it must be long enough to fill the time above.",
   "citation": {
-    "ref": "202:14",
-    "quote": "The design's exact words at that address, verbatim. Empty where these words are your own."
+    "ref": "<page:line in the design this content came from, or \"\" if these words are your own>",
+    "quote": "<the design's words at that exact address, copied, or \"\" if these words are your own>"
   },
   "learner_does": "what the learners do while this happens",
   "attribution": "where these words come from: traditional, widely known, or written here for this lesson",

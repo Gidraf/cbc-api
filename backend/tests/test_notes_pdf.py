@@ -259,7 +259,7 @@ def test_a_citation_carries_the_design_address_and_its_words():
         {"material": [{
             "module_number": 1, "module_title": "Lesson 1", "topic": "Integers",
             "say": "An integer is a whole number.",
-            "citation": {"ref": "202:14",
+            "citation": {"ref": "37:12",
                          "quote": "carry out operations on integers"},
         }]},
         grade="grade-9", subject="Mathematics", strand="Numbers",
@@ -267,7 +267,7 @@ def test_a_citation_carries_the_design_address_and_its_words():
     )
 
     assert "grade-9 · Mathematics · Numbers · Integers" in html
-    assert "page 202" in html and "line 14" in html
+    assert "page 37" in html and "line 12" in html
     assert "carry out operations on integers" in html
 
 
