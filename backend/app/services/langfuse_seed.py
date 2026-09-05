@@ -753,9 +753,9 @@ Output MUST be a valid JSON object matching this schema:
       },
       "homework_or_follow_up": "What continues after the lesson, or an empty string where none is appropriate at this level.",
       "citations": [
-        {"claim": "What this lesson takes from the design.",
-         "ref": "202:14",
-         "quote": "The exact words at that address, verbatim from the source above."}
+        {"claim": "<what this lesson takes from the design>",
+         "ref": "<page:line, read off the design shown to you — NOT copied from here>",
+         "quote": "<the design's exact words at that address>"}
       ]
     }
   ],
@@ -1384,8 +1384,8 @@ Output MUST be a valid JSON object matching this schema:
             "strand": "{{ strand }}",
             "sub_strand": "{{ sub_strand }}",
             "slo_id": "{{ slo_id }}",
-            "guideline_quote": "The words of the KICD design this item assesses, verbatim.",
-            "guideline_reference": {"dataset_name": "{{ grade }}", "dataset_item_id": "itm_curriculum", "ref": "202:14"},
+            "guideline_quote": "<the words of the KICD design this item assesses, verbatim>",
+            "guideline_reference": {"dataset_name": "{{ grade }}", "dataset_item_id": "itm_curriculum", "ref": "<page:line read off the design shown to you — never copied from this shape>"},
             "kicd_alignment": "Which specific learning outcome this item assesses, which core competency and value it develops, and how answering it shows the learner has met the outcome the design set.",
             "parent_teacher_explanation": "Assesses structured inquiry and analytical problem-solving."
           }

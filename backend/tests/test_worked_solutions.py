@@ -247,3 +247,47 @@ def test_the_material_page_lists_them_and_works_what_it_can() -> None:
     assert "Worked answers" in html
     # The word problem is simply absent, not invented.
     assert "you add 8" not in html.split("Worked answers")[1]
+
+
+# ── the dossier a guide is written against ──────────────────────────────────
+
+def test_the_research_dossier_asks_for_this_grades_profile() -> None:
+    """A Grade 9 guide on Integers was handed a dossier describing "early
+    childhood mathematics education", "play-based learning", and case studies
+    about PP1 learners counting coloured blocks on a nature walk — inside its
+    own prompt, as the standard to write to. The guide came back as bingo, a
+    relay race and no mathematics.
+
+    Every caller of `classify_content_type` passed the grade except this one,
+    and it is the one that reaches the authoring prompt.
+    """
+    import inspect
+
+    import app.services.web_research as web_research
+
+    agent = next(o for o in vars(web_research).values()
+                 if inspect.isclass(o) and hasattr(o, "_extract_empirical_insights"))
+
+    source = inspect.getsource(agent._extract_empirical_insights)
+    assert "grade" in inspect.signature(agent._extract_empirical_insights).parameters
+    assert 'grade=grade or "all"' in source, "the profile lookup must be told the grade"
+
+    caller = inspect.getsource(agent.research_topic)
+    assert "citations, grade=grade" in caller, "and the grade must reach it"
+
+
+def test_no_station_looks_up_a_profile_without_a_grade() -> None:
+    """The whole class of bug: one caller out of thirteen defaulted to "all"."""
+    import pathlib
+    import re
+
+    root = pathlib.Path(__file__).resolve().parents[1] / "app"
+    offenders: list[str] = []
+    for path in root.rglob("*.py"):
+        for match in re.finditer(r"classify_content_type\(([^)]*)\)",
+                                 path.read_text(encoding="utf-8"), re.S):
+            args = match.group(1)
+            if "grade" not in args:
+                offenders.append(f"{path.name}: {args.strip()[:60]}")
+
+    assert not offenders, offenders

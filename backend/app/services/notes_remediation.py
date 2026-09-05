@@ -722,13 +722,25 @@ def run(
     else:
         report.stopped_because = "max_passes"
 
-    # Restore the best version. A pass that made the guide worse used to be the
-    # version that got saved. `notes` is mutated in place by the caller's
-    # reference, so the contents are swapped rather than the name rebound.
-    if best_score > score:
+    # Restore the best version, judged on what is ACTUALLY in `notes` rather
+    # than on a running tally.
+    #
+    # The comparison was `best_score > score`, and `score` had just been raised
+    # by `max(score, after)` on the way out — so after a pass that regenerated
+    # a guide from 88 down to 79.7, the two were equal, the restore was
+    # skipped, and the degraded guide was filed under the score it no longer
+    # had. `_inspect` is pure computation over the content, so asking it again
+    # here costs nothing and cannot drift from what the loop actually did.
+    #
+    # `notes` is mutated in place through the caller's reference, so the
+    # contents are swapped rather than the name rebound.
+    current, current_findings, _ = _inspect(notes, design_experiences)
+    if best_score > current:
         notes.clear()
         notes.update(best)
         score, findings = best_score, best_findings
+    else:
+        score, findings = current, current_findings
     report.best_pass = best_number
 
     report.score_after = score

@@ -48,8 +48,43 @@ def test_the_run_that_prompted_this_is_still_caught():
     coverage = notes_coverage.check(guide, _allocation())
 
     assert len(coverage.thin_modules) == 7
-    assert coverage.percentage == 0
     assert not coverage.complete
+    # Every module is roughly 40% of the floor, and the score says so. It used
+    # to say 0 — the same number a guide with nothing in it gets.
+    assert 35 <= coverage.percentage <= 45, coverage.percentage
+
+
+def test_depth_is_scored_by_how_much_there_is_not_all_or_nothing():
+    """A lesson one character under the floor scored the same as an empty one,
+    so six lessons at 85% of the target reported 0 on the heaviest measure in
+    the scheme — and the repair loop, expanding them, watched the number sit
+    still and concluded it was making no difference."""
+    from app.services.notes_coverage import MIN_BODY_CHARS
+
+    nearly = notes_coverage.check(_guide([MIN_BODY_CHARS - 1] * 7), _allocation())
+    empty = notes_coverage.check(_guide([0] * 7), _allocation())
+    deep = notes_coverage.check(_guide([MIN_BODY_CHARS + 200] * 7), _allocation())
+    half = notes_coverage.check(_guide([MIN_BODY_CHARS // 2] * 7), _allocation())
+
+    assert nearly.percentage >= 99, "one character short is not nothing"
+    assert empty.percentage == 0, "and nothing is still nothing"
+    assert deep.percentage == 100
+    assert 45 <= half.percentage <= 55
+
+    # The gradient the repair loop needs: more writing must move the number.
+    # `nearly` and `deep` both round to 100 — one character short of the floor
+    # is not meaningfully short — so the gradient is checked below the floor,
+    # which is where the loop actually works.
+    quarter = notes_coverage.check(_guide([MIN_BODY_CHARS // 4] * 7), _allocation())
+    assert quarter.percentage < half.percentage < nearly.percentage
+
+
+def test_a_missing_lesson_still_costs_a_whole_lesson():
+    """Partial credit for DEPTH must not become partial credit for absence."""
+    four_of_seven = notes_coverage.check(_guide([2000] * 4), _allocation())
+
+    assert four_of_seven.percentage == 57, four_of_seven.percentage
+    assert not four_of_seven.complete
 
 
 def test_a_thin_guide_is_sent_back_and_the_expansion_is_kept():

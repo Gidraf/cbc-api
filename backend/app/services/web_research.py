@@ -166,7 +166,7 @@ class WebResearchAgent:
 
         # 3. Add Domain-Grounded Empirical Kenyan & Academic Data
         empirical_data, academic_insights, kenyan_case_studies, safety_guidelines = self._extract_empirical_insights(
-            subject, strand, sub_strand, citations
+            subject, strand, sub_strand, citations, grade=grade
         )
 
         deliberation_trace.append(f"📊 Synthesized {len(empirical_data)} empirical data points and {len(kenyan_case_studies)} authentic Kenyan case studies.")
@@ -310,9 +310,22 @@ class WebResearchAgent:
         return []
 
     def _extract_empirical_insights(
-        self, subject: str, strand: str, sub_strand: str, citations: list[ResearchCitation]
+        self, subject: str, strand: str, sub_strand: str,
+        citations: list[ResearchCitation], grade: str = "",
     ) -> tuple[list[dict[str, Any]], list[str], list[dict[str, str]], list[str]]:
-        """Dynamically retrieves empirical insights, case studies, and safety protocols from PostgreSQL DB profile."""
+        """Empirical insights, case studies and safety protocols for THIS grade.
+
+        The grade was not passed, so the profile lookup fell back to "all" and
+        returned whichever profile existed for the subject. A Grade 9 guide on
+        Integers was therefore handed a dossier describing "early childhood
+        mathematics education", "play-based learning", and case studies about
+        PP1 learners counting coloured blocks on a nature walk — inside its own
+        prompt, as the pedagogical standard to write to.
+
+        The guide that came back was bingo, a relay race and no mathematics.
+        Every other caller of `classify_content_type` passes the grade; this
+        one did not, and it is the one that reaches the authoring prompt.
+        """
         empirical_data: list[dict[str, Any]] = []
         academic_insights: list[str] = []
         kenyan_case_studies: list[dict[str, str]] = []
@@ -320,7 +333,8 @@ class WebResearchAgent:
 
         try:
             from .content_type_classifier import classify_content_type
-            profile = classify_content_type(subject=subject, sub_strand=sub_strand)
+            profile = classify_content_type(subject=subject, grade=grade or "all",
+                                            sub_strand=sub_strand)
 
             if profile.empirical_insights:
                 empirical_data.extend(profile.empirical_insights)

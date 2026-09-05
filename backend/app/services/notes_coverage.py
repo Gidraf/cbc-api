@@ -84,10 +84,33 @@ class LessonCoverage:
 
     @property
     def percentage(self) -> int:
-        """How much of this sub-strand is planned AND deep enough to teach from."""
+        """How much of this sub-strand is planned AND deep enough to teach from.
+
+        A thin module counts for what it HAS, not zero. It used to be all or
+        nothing per module: a lesson of 1,499 characters against a 1,500 floor
+        scored exactly the same as one of 100, so six lessons averaging 1,270 —
+        85% of the way there — reported 0 on the heaviest-weighted measure in
+        the scheme, and dragged a whole guide to 62.
+
+        Worse than the unfairness: it gave the repair loop no gradient. The
+        loop expanded four modules by 1,272 characters between them and watched
+        coverage stay at 0, because nothing changes until every module crosses
+        the floor at once. Partial credit is what lets it tell "getting there"
+        from "no better".
+        """
         if self.modules_required <= 0:
             return 0
-        sound = self.modules_found - len(self.thin_modules)
+
+        short = {int(t.get("module") or 0): int(t.get("chars") or 0)
+                 for t in self.thin_modules}
+        sound = 0.0
+        for number in range(1, self.modules_found + 1):
+            chars = short.get(number)
+            if chars is None:
+                sound += 1.0                       # deep enough
+            else:
+                sound += min(1.0, chars / MIN_BODY_CHARS)
+
         return max(0, min(100, round(sound / self.modules_required * 100)))
 
     @property
