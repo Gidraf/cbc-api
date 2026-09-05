@@ -5589,6 +5589,12 @@ class DrawVisualRequest(BaseModel):
     custom_instructions: str = ""
 
 
+# A drawing that still fails after this many tries is filed with its findings
+# rather than retried for ever. Three, because the second attempt fixes most of
+# what the first got wrong and the third catches what the fix broke.
+_DRAW_ATTEMPTS = 3
+
+
 def _svg_brief(visual: dict[str, Any], *, grade: str, subject: str,
                strand: str, sub_strand: str) -> str:
     """The instruction to draw ONE planned visual.
@@ -5654,9 +5660,13 @@ def _svg_brief(visual: dict[str, Any], *, grade: str, subject: str,
         "SIZES, IN THOSE UNITS. The caption printed beside this figure is",
         "8.5pt. A label smaller than the caption cannot be read at all:",
         "",
-        "  - No text anywhere below `font-size=\"13\"`. Part labels 13–15. One",
-        "    title, if you need one, at 18. Nothing under 13, ever — that is",
-        "    the single most common way one of these comes back unusable.",
+        "  - No text anywhere below `font-size=\"13\"`. Part labels 13–15.",
+        "    Nothing under 13, ever — that is the single most common way one",
+        "    of these comes back unusable.",
+        "  - Do NOT put a title inside the drawing. The book prints the",
+        "    caption underneath it, so a title in the SVG says the same thing",
+        "    twice, takes a fifth of the canvas from the picture, and is one",
+        "    more thing for a label to collide with.",
         "  - A character is about 0.55 × the font-size wide. So a 13-unit",
         "    label may run about 44 characters before it crosses the margin.",
         "    Longer than that, break it across <tspan> lines 16 units apart —",
@@ -5823,7 +5833,7 @@ def factory_draw_visual(
     # labels overlap, here they are" moves them.
     svg, fit, response = "", None, None
     attempt = brief
-    for pass_no in range(2):
+    for pass_no in range(_DRAW_ATTEMPTS):
         try:
             # An SVG is not JSON. Asked for one and given one, the client used
             # to reject it as "the model did not return JSON".
@@ -5854,8 +5864,10 @@ def factory_draw_visual(
         # improvement.
         if fit is None or len(measured.findings) < len(fit.findings):
             svg, fit = candidate, measured
-        if measured.ok or pass_no:
+        if measured.ok or pass_no == _DRAW_ATTEMPTS - 1:
             break
+        # Always correct against the LATEST attempt, not the best one: the
+        # model is being asked to fix the drawing it just made.
         attempt = brief + diagram_layout.corrections(measured)
 
     # 1. Where the BOOK looks. Filed against the visual's own title, which is

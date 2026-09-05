@@ -164,6 +164,52 @@ def remove(asset_id: str) -> bool:
     return True
 
 
+def supersede(grade: str, subject: str, sub_strand: str, title: str, *,
+              keep: str) -> list[str]:
+    """Delete earlier drawings of the SAME picture, and their stored objects.
+
+    `asset_id` is a hash of the title, so redrawing the same figure replaces
+    it. But regenerating a diagram PLAN renames what it plans — "Number Line"
+    becomes "Representation of Integers on a Number Line" becomes "Visual
+    Representation of Integers on a Number Line" — and each new name filed a
+    new row beside the last. One number line printed as three plates, and
+    three copies of it sat in the bucket for ever.
+
+    A different picture keeps its own row: "Basic Operations on Integers"
+    scores zero against every one of those and is not touched.
+    """
+    from .lesson_assets import dedupe
+
+    gone: list[str] = []
+    try:
+        rows = list_for(grade, subject, sub_strand)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Could not look for older copies of %s: %s", title, exc)
+        return gone
+
+    # The same grouping the page uses, with the drawing just filed at the head
+    # so it is the survivor. Comparing each row against the new title one pair
+    # at a time missed the renamings that are linked only through a third —
+    # which is most of them, and the reason four plates appeared.
+    candidates = [{"kind": "diagram", "title": title, "asset_id": keep}]
+    for row in rows:
+        candidates.append({"kind": str(row.get("kind") or ""),
+                           "title": str(row.get("title") or row.get("what") or ""),
+                           "asset_id": str(row.get("asset_id") or "")})
+    survivors = {c["asset_id"] for c in dedupe(candidates)}
+
+    for candidate in candidates[1:]:
+        asset_id = candidate["asset_id"]
+        if (asset_id and asset_id != keep and asset_id not in survivors
+                and candidate["kind"] == "diagram"):
+            if remove(asset_id):
+                gone.append(asset_id)
+    if gone:
+        logger.info("Filed %r and replaced %d earlier copy/copies of it",
+                    title[:60], len(gone))
+    return gone
+
+
 def file_drawing(*, grade: str, subject: str, strand: str, sub_strand: str,
                  title: str, svg: str, alt_text: str = "",
                  source: str = "drawn", uploaded_by: str = "") -> dict[str, Any]:
@@ -196,11 +242,13 @@ def file_drawing(*, grade: str, subject: str, strand: str, sub_strand: str,
         title=title, alt_text=alt_text or title, content_type="image/svg+xml",
         size=len(svg), source=source, uploaded_by=uploaded_by,
     )
+    superseded = supersede(grade, subject, sub_strand, title, keep=asset_id)
     return {
         "asset_id": asset_id,
         "storage_url": storage_url,
         "stored_in_minio": bool(storage_url)
                            and not storage_url.startswith("local://"),
+        "superseded": superseded,
     }
 
 

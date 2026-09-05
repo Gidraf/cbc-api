@@ -65,6 +65,71 @@ def _score(wanted: str, candidate: str) -> float:
     return len(shared) / min(len(want), len(have))
 
 
+# Two figure titles describing the same picture. Regenerating a diagram plan
+# renames what it plans — "Number Line", then "Representation of Integers on a
+# Number Line", then "Visual Representation of Integers on a Number Line" —
+# and each new name filed a new asset beside the last, so one number line
+# printed as three plates. Measured on those real titles: they score 0.67 and
+# above against each other, and 0.00 against "Basic Operations on Integers",
+# which is a genuinely different picture and must keep its own plate.
+_SAME_SUBJECT = 0.6
+
+
+def same_subject(one: str, other: str) -> bool:
+    """Whether two figure titles are asking for the same picture."""
+    one, other = str(one or "").strip(), str(other or "").strip()
+    if not one or not other:
+        return False
+    if one.lower() == other.lower():
+        return True
+    return max(_score(one, other), _score(other, one)) >= _SAME_SUBJECT
+
+
+def dedupe(assets: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """One asset per picture, keeping the first of each group.
+
+    Callers pass them in preference order — newest first, a person's upload
+    ahead of a station's older attempt — so "the first" is the one to keep.
+    Only diagrams are collapsed: two photographs of the same thing are two
+    photographs, and a video is never a duplicate of a drawing.
+
+    Grouping is transitive, and it has to be. "Number Line" and "Visual
+    Representation of Integers" share no words at all; they are the same
+    picture only through "Representation of Integers on a Number Line", the
+    name a regeneration in between them produced. So every pair is compared
+    and the components are merged, rather than each title being tested against
+    whichever member of a group happened to arrive first.
+    """
+    diagrams = [i for i, a in enumerate(assets) if a.get("kind") == "diagram"]
+    parent = {i: i for i in diagrams}
+
+    def find(i: int) -> int:
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    for a in range(len(diagrams)):
+        for b in range(a + 1, len(diagrams)):
+            i, j = diagrams[a], diagrams[b]
+            if same_subject(str(assets[i].get("title") or ""),
+                            str(assets[j].get("title") or "")):
+                parent[find(j)] = find(i)
+
+    seen: set[int] = set()
+    kept: list[dict[str, Any]] = []
+    for i, asset in enumerate(assets):
+        if asset.get("kind") != "diagram":
+            kept.append(asset)
+            continue
+        root = find(i)
+        if root in seen:
+            continue
+        seen.add(root)
+        kept.append(asset)
+    return kept
+
+
 def collect(grade: str, subject: str, sub_strand: str = "") -> list[dict[str, Any]]:
     """Everything filed for this sub-strand that can appear on a page.
 
@@ -142,7 +207,10 @@ def collect(grade: str, subject: str, sub_strand: str = "") -> list[dict[str, An
     except Exception as exc:  # noqa: BLE001
         logger.warning("Could not collect media for %s/%s: %s", grade, subject, exc)
 
-    return found
+    # Newest and most deliberate first, then one per picture. Without this a
+    # sub-strand redrawn four times printed four plates of the same figure.
+    found.sort(key=lambda a: 0 if a.get("source") else 1)
+    return dedupe(found)
 
 
 def match(requirements: list[Any], available: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
@@ -265,7 +333,7 @@ def with_drawn(plan: dict[str, Any], grade: str, subject: str,
     added = 0
     for asset in drawn:
         title = str(asset.get("title") or "").strip()
-        if not title or title.lower() in named:
+        if not title or any(same_subject(title, seen) for seen in named):
             continue
         named.add(title.lower())
         at = _best_module(title, out)

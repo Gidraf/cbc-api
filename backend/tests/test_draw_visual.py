@@ -229,7 +229,7 @@ def test_a_drawing_is_measured_and_redrawn_against_what_was_measured() -> None:
 
     assert "diagram_layout.measure(candidate)" in source
     assert "diagram_layout.corrections(measured)" in source
-    assert "for pass_no in range(2)" in source, "one redraw, not a loop"
+    assert "range(_DRAW_ATTEMPTS)" in source, "a bounded number, not a loop"
     # And the better of the two is kept, not the later one.
     assert "len(measured.findings) < len(fit.findings)" in source
 
@@ -378,3 +378,24 @@ def test_the_edit_route_refiles_only_diagrams() -> None:
     assert "refile_diagram_artifact" in source
     # An edit that saved must not report itself failed because a bucket blinked.
     assert "except Exception" in source.split("refile_diagram_artifact")[1]
+
+
+def test_a_bad_drawing_gets_more_than_one_correction() -> None:
+    """The second attempt fixes most of what the first got wrong; the third
+    catches what the fix broke. Beyond that it is filed with its findings
+    rather than retried for ever."""
+    from app.routes import curriculum
+
+    assert curriculum._DRAW_ATTEMPTS == 3
+    source = inspect.getsource(curriculum.factory_draw_visual)
+    assert "for pass_no in range(_DRAW_ATTEMPTS)" in source
+    # Corrected against the drawing it just made, kept if it is the best one.
+    assert "attempt = brief + diagram_layout.corrections(measured)" in source
+    assert "len(measured.findings) < len(fit.findings)" in source
+
+
+def test_the_drawing_does_not_repeat_the_caption_the_book_prints() -> None:
+    brief = _flowed()
+
+    assert "Do NOT put a title inside the drawing" in brief
+    assert "takes a fifth of the canvas" in brief
