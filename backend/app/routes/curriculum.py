@@ -5461,8 +5461,23 @@ def factory_generate_material(
 
     target = _target_language(payload.subject)
 
-    written: list[dict[str, Any]] = []
+    # What a previous, interrupted run already paid for. A draft is written
+    # after every piece, so a timeout or a restart at piece 19 of 21 costs the
+    # one piece it died on rather than all nineteen.
+    from ..services import material_draft
+
+    draft_key = material_draft.key_for(payload.grade, payload.subject,
+                                       payload.sub_strand, plan_id)
+    written: list[dict[str, Any]] = material_draft.load(draft_key)
+    already = material_draft.done_indexes(written)
+    if already:
+        run_log.step("Resuming",
+                     f"{len(already)} piece(s) already written and kept from an "
+                     f"earlier run — those are not paid for twice", "ok")
+
     for i, directive in enumerate(plan.directives, start=1):
+        if (directive.module_number, directive.index) in already:
+            continue
         messages = [{"role": "user", "content": lesson_material.prompt_for(
             directive, register=register, faith=faith, language=language,
             notation=notation, target_language=target, grade=payload.grade,
@@ -5496,6 +5511,23 @@ def factory_generate_material(
             run_log.step(f"Wrote {i}/{len(plan.directives)}",
                          f"{directive.topic}: {len(str(piece['say']))} characters")
 
+        # Written down before the next call is made, not after the last one.
+        material_draft.save(
+            draft_key, written,
+            grade=payload.grade, subject=payload.subject, strand=payload.strand,
+            sub_strand=payload.sub_strand, plan_artifact_id=plan_id,
+            plan_version=plan_artifact.version, model=resolved.model,
+            llm_calls=len(written),
+        )
+
+    # The plan's own order, not the order the pieces happened to be written in:
+    # a resumed run appends after what it recovered, and a guide whose parts
+    # arrive out of order is not the guide the plan describes.
+    order = {(d.module_number, d.index): n
+             for n, d in enumerate(plan.directives)}
+    written.sort(key=lambda p: order.get((p.get("module_number"), p.get("index")),
+                                         len(order)))
+
     content = {
         "sub_strand": payload.sub_strand,
         "from_plan": {"artifact_id": plan_id, "version": plan_artifact.version},
@@ -5521,6 +5553,9 @@ def factory_generate_material(
                     "from_plan": plan_id},
         measured_from={"quality_gate": lesson_material.gate_of(report)},
     )
+    # The version is filed; the draft has done its job.
+    if versioned.get("artifact_id"):
+        material_draft.clear(draft_key)
     if payload.run_id:
         run_log.stop()
 
@@ -5531,6 +5566,49 @@ def factory_generate_material(
             "quality_gate": lesson_material.gate_of(report),
             "model": resolved.model,
             "artifact": versioned}
+
+
+@router.get("/factory/material-drafts")
+def factory_material_drafts(
+    grade: str = Query("", description="Narrow to one grade"),
+    subject: str = Query("", description="Narrow to one learning area"),
+    _: AuthContext = Depends(require_roles("admin", "operator", "reviewer")),
+) -> dict[str, Any]:
+    """Material runs that were interrupted, and what they already produced.
+
+    An interrupted run used to leave nothing at all — the pieces lived in
+    memory until the last one landed. They are now written down as they are
+    produced, and this is where an operator can see that a sub-strand has
+    nineteen pieces waiting rather than assuming the money is gone.
+
+    Running the station again resumes from these; it does not pay for them
+    twice.
+    """
+    from ..services import material_draft
+
+    rows = material_draft.pending(grade=grade, subject=subject)
+    return {
+        "count": len(rows),
+        "drafts": [
+            {
+                "draft_key": r.get("draft_key"),
+                "grade": r.get("grade"),
+                "subject": r.get("subject"),
+                "strand": r.get("strand"),
+                "sub_strand": r.get("sub_strand"),
+                "from_plan": r.get("plan_artifact_id"),
+                "plan_version": r.get("plan_version"),
+                "pieces_written": r.get("pieces_written"),
+                "model": r.get("model"),
+                "interrupted_at": str(r.get("updated_at") or ""),
+            }
+            for r in rows
+        ],
+        "note": (
+            "These are unfinished runs, not versions. Generate the material for "
+            "the same sub-strand and it carries on from what is here."
+        ),
+    }
 
 
 @router.get("/factory/plan-approval")

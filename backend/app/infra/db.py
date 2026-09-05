@@ -868,6 +868,28 @@ MIGRATIONS: list[tuple[str, str]] = [
         CREATE INDEX IF NOT EXISTS idx_math_simulations_source ON math_simulations(source_type, source_id);
         """,
     ),
+    (
+        "028_material_drafts",
+        """
+        CREATE TABLE IF NOT EXISTS material_drafts (
+            draft_key TEXT PRIMARY KEY,
+            grade TEXT NOT NULL DEFAULT '',
+            subject TEXT NOT NULL DEFAULT '',
+            strand TEXT NOT NULL DEFAULT '',
+            sub_strand TEXT NOT NULL DEFAULT '',
+            plan_artifact_id TEXT NOT NULL DEFAULT '',
+            plan_version INT NOT NULL DEFAULT 0,
+            pieces JSONB NOT NULL DEFAULT '[]'::jsonb,
+            model TEXT NOT NULL DEFAULT '',
+            llm_calls INT NOT NULL DEFAULT 0,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_material_drafts_scope
+            ON material_drafts(grade, subject, sub_strand);
+        """,
+    ),
 ]
 
 
