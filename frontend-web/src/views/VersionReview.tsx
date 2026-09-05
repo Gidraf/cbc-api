@@ -38,6 +38,7 @@ import {
   type ReviewVerdict,
   type ShapeFinding,
   type ShapeReport,
+  useDeleteVersion,
 } from "../lib/queries";
 
 /**
@@ -1141,6 +1142,8 @@ export function VersionReview({
 }) {
   const [picked, setPicked] = React.useState(artifactId || "");
   const [tab, setTab] = React.useState("content");
+  const [confirmingDelete, setConfirmingDelete] = React.useState(false);
+  const removeVersion = useDeleteVersion();
   // What the last review was actually shown. A 94% from a reviewer that was
   // never given the design is not a 94% about the curriculum, and the only way
   // to tell the two apart is to keep the inputs beside the score.
@@ -1274,6 +1277,47 @@ export function VersionReview({
                 title="The exact stored content, for a script or a diff"
                 getText={() => JSON.stringify(data.content, null, 2)}
               />
+              {/* Versions accumulate: nine of them for one sub-strand, most of
+                  them attempts nobody will read again. Deleting is a separate
+                  press behind a confirmation, because an approved version is
+                  what coverage counts and what a teacher is handed. */}
+              {confirmingDelete ? (
+                <>
+                  <Button
+                    size="sm"
+                    variant="danger"
+                    loading={removeVersion.isPending}
+                    onClick={() =>
+                      removeVersion
+                        .mutateAsync(data.artifact_id)
+                        .then(() => setConfirmingDelete(false))
+                    }
+                  >
+                    Delete version {data.version}
+                  </Button>
+                  <Button size="sm" variant="ghost" onClick={() => setConfirmingDelete(false)}>
+                    Keep it
+                  </Button>
+                  <span style={{ fontSize: "var(--text-sm)", color: "var(--ink-2)" }}>
+                    This version only. Nothing built from it is touched.
+                  </span>
+                </>
+              ) : (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  disabled={data.labels.includes("approved")}
+                  title={
+                    data.labels.includes("approved")
+                      ? "An approved version is what coverage counts. Take the label off first."
+                      : "Delete this version"
+                  }
+                  onClick={() => setConfirmingDelete(true)}
+                >
+                  Delete this version
+                </Button>
+              )}
+              {removeVersion.error && <ErrorNotice error={removeVersion.error} />}
             </Stack>
           <pre
             style={{

@@ -1362,6 +1362,84 @@ export function useEditVisualSvg() {
   });
 }
 
+/** Every drawing a sub-strand has, numbered as the BOOK numbers them.
+ *
+ * The console listed visuals per diagram artifact version; the page numbers
+ * its figures across the whole lesson. So `DIAGRAM 1.2` lived in a different
+ * version from `1.1`, behind version tabs all labelled the same, and there
+ * was no route to it. */
+export function useDiagramLibrary(v: { grade: string; subject: string; sub_strand: string }) {
+  const api = useApi();
+  return useQuery({
+    queryKey: ["diagram-library", v.grade, v.subject, v.sub_strand],
+    enabled: Boolean(v.grade && v.subject && v.sub_strand),
+    queryFn: () =>
+      api<{
+        count: number;
+        diagrams: Array<{
+          number: string; asset_id: string; title: string; alt: string;
+          svg: string; url: string; source: string; editable: boolean;
+          layout?: {
+            fits: boolean; labels: number; overlapping_labels: number;
+            findings: string[];
+          } | null;
+        }>;
+      }>(
+        `/api/v1/curriculum/factory/diagrams?grade=${encodeURIComponent(v.grade)}` +
+          `&subject=${encodeURIComponent(v.subject)}` +
+          `&sub_strand=${encodeURIComponent(v.sub_strand)}`
+      ),
+  });
+}
+
+/** Change one filed drawing — by hand, or mend it mechanically. */
+export function useEditDrawing() {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { asset_id: string; svg?: string; repair?: boolean }) =>
+      api<{
+        asset_id: string; changed: boolean; svg: string; repairs: string[];
+        message?: string; stored_in_minio?: boolean;
+        layout?: { fits: boolean; labels: number; overlapping_labels: number; findings: string[] };
+      }>(`/api/v1/curriculum/factory/diagrams/${encodeURIComponent(v.asset_id)}`, {
+        method: "POST",
+        body: JSON.stringify({ svg: v.svg || "", repair: Boolean(v.repair) }),
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["diagram-library"] }),
+  });
+}
+
+/** Take one drawing off the page for good — the row and its stored object. */
+export function useDeleteDrawing() {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (assetId: string) =>
+      api<{ removed: boolean }>(
+        `/api/v1/curriculum/factory/assets/${encodeURIComponent(assetId)}`,
+        { method: "DELETE" }
+      ),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["diagram-library"] }),
+  });
+}
+
+/** Delete one artifact VERSION. Admin only, and never the approved one. */
+export function useDeleteVersion() {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (artifactId: string) =>
+      api<any>(`/api/v1/artifacts/${encodeURIComponent(artifactId)}`, {
+        method: "DELETE",
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["artifacts"] });
+      qc.invalidateQueries({ queryKey: ["artifact"] });
+    },
+  });
+}
+
 /** Which model runs which station. */
 export function useStageBindings() {
   const api = useApi();

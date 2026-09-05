@@ -1,5 +1,6 @@
 import React from "react";
 import { useSearchParams } from "react-router-dom";
+import { DiagramLibrary } from "../ui/DiagramLibrary";
 import { Badge, Button, Card, CopyButton, EmptyState, ErrorNotice, Grid, Label, LoadingBlock, PageHeader, ProgressBar, QueryState, Select, Stack, Table, Td, Th, useToast } from "../ui/components";
 import { Link } from "react-router-dom";
 import { AutoRunPanel } from "./AutoRunPanel";
@@ -1106,6 +1107,18 @@ export function ContentFactory() {
                         />
                       </div>
                     </details>
+                  )}
+
+                  {/* The drawings themselves, numbered as the book numbers
+                      them. Listing visuals per artifact VERSION meant DIAGRAM
+                      1.2 sat behind a different version tab from 1.1 — every
+                      tab labelled "Integers" — and could not be reached. */}
+                  {station.id === "visuals" && selected && (
+                    <DiagramLibrary
+                      grade={effectiveGrade}
+                      subject={selected.subject}
+                      subStrand={selected.report.sub_strand_name}
+                    />
                   )}
                 </Card>
               );

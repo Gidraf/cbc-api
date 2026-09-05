@@ -5589,6 +5589,13 @@ class DrawVisualRequest(BaseModel):
     custom_instructions: str = ""
 
 
+class EditDrawingRequest(BaseModel):
+    """One filed drawing, changed by hand or mended mechanically."""
+
+    svg: str = ""
+    repair: bool = False
+
+
 class EditVisualSvgRequest(BaseModel):
     """One drawing, replaced by hand."""
 
@@ -6042,6 +6049,110 @@ def factory_edit_visual_svg(
             "findings": list(fit.findings),
             "repairs": [],
         },
+    }
+
+
+@router.get("/factory/diagrams")
+def factory_diagrams(
+    grade: str = Query(...),
+    subject: str = Query(...),
+    sub_strand: str = Query(...),
+    _: AuthContext = Depends(require_roles("admin", "operator", "reviewer")),
+) -> dict[str, Any]:
+    """Every drawing this sub-strand has, as the BOOK sees them.
+
+    The console listed visuals per diagram artifact version, and the book
+    numbers its figures across the whole lesson — so `DIAGRAM 1.2` on the page
+    lived in a different version from `1.1`, behind a row of version tabs all
+    labelled "Integers". There was no way to get to it.
+
+    This is the same deduplicated list the page renders from, numbered the
+    same way, so a figure seen on the page can be found and changed here.
+    """
+    from ..services import diagram_layout, lesson_assets
+
+    drawn = [a for a in lesson_assets.collect(grade, subject, sub_strand)
+             if a.get("kind") == "diagram" and (a.get("svg") or a.get("url"))]
+
+    out: list[dict[str, Any]] = []
+    for number, asset in enumerate(drawn, start=1):
+        svg = str(asset.get("svg") or "")
+        fit = diagram_layout.measure(svg) if svg else None
+        out.append({
+            "number": f"1.{number}",
+            "asset_id": asset.get("asset_id") or "",
+            "title": asset.get("title") or "",
+            "alt": asset.get("alt") or "",
+            "svg": svg,
+            "url": asset.get("url") or "",
+            "source": asset.get("source") or "",
+            "editable": bool(asset.get("asset_id")),
+            "layout": {
+                "fits": bool(fit and fit.ok),
+                "labels": fit.texts if fit else 0,
+                "overlapping_labels": fit.collisions if fit else 0,
+                "findings": list(fit.findings) if fit else [],
+            } if fit else None,
+        })
+    return {"grade": grade, "subject": subject, "sub_strand": sub_strand,
+            "count": len(out), "diagrams": out}
+
+
+@router.post("/factory/diagrams/{asset_id}")
+def factory_edit_drawing(
+    asset_id: str,
+    payload: EditDrawingRequest,
+    auth: AuthContext = Depends(require_roles("admin", "operator")),
+) -> dict[str, Any]:
+    """Change one filed drawing — by hand, or by mending it mechanically.
+
+    `repair` exists for the drawings already in the database. Trimming the
+    explanation off a label happens when a drawing is made; a figure filed
+    before that went in still prints "Addition — combines two integers" struck
+    through its own line-work, and redrawing it from scratch to fix a label is
+    a poor trade.
+    """
+    from ..services import asset_uploads, diagram_layout
+    from ..services.diagram_dedup import extract_and_sanitize_svg
+
+    row = next((r for r in asset_uploads.by_id(asset_id)), None)
+    if not row:
+        raise_api_error("NOT_FOUND", f"No drawing is filed as {asset_id}.")
+
+    svg = str(payload.svg or row.get("svg") or "")
+    if payload.svg:
+        svg = extract_and_sanitize_svg(payload.svg)
+        if not svg:
+            raise_api_error(
+                "VALIDATION_FAILED",
+                "That does not parse as an SVG. Paste the whole <svg> "
+                "element, including its closing tag.")
+
+    repairs: list[str] = []
+    if payload.repair and svg:
+        svg, repairs = diagram_layout.repair(svg)
+        if not repairs:
+            return {"asset_id": asset_id, "changed": False, "repairs": [],
+                    "message": "Nothing here could be mended mechanically.",
+                    "svg": svg}
+
+    fit = diagram_layout.measure(svg)
+    stored = asset_uploads.file_drawing(
+        grade=str(row.get("grade") or ""), subject=str(row.get("subject") or ""),
+        strand=str(row.get("strand") or ""),
+        sub_strand=str(row.get("sub_strand") or ""),
+        title=str(row.get("title") or row.get("what") or ""), svg=svg,
+        alt_text=str(row.get("alt_text") or ""),
+        source="repaired" if repairs else "hand-edited",
+        uploaded_by=getattr(auth, "subject", ""),
+    )
+    return {
+        "asset_id": stored["asset_id"], "changed": True, "svg": svg,
+        "repairs": repairs,
+        "stored_in_minio": stored["stored_in_minio"],
+        "layout": {"fits": fit.ok, "labels": fit.texts,
+                   "overlapping_labels": fit.collisions,
+                   "findings": list(fit.findings)},
     }
 
 

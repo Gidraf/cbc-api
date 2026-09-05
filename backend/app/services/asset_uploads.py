@@ -284,3 +284,20 @@ def refile_diagram_artifact(artifact: Any, *, edited_by: str = "") -> int:
         except Exception as exc:  # noqa: BLE001
             logger.warning("Could not re-file %s after an edit: %s", title, exc)
     return filed
+
+
+def by_id(asset_id: str) -> list[dict[str, Any]]:
+    """One filed asset, by its id — everything needed to re-file it."""
+    from ..infra.db import fetch_all
+
+    try:
+        return fetch_all(
+            """
+            SELECT asset_id, grade, subject, strand, sub_strand, kind, what,
+                   title, alt_text, storage_url, svg, source
+            FROM uploaded_assets WHERE asset_id = :id
+            """,
+            {"id": asset_id}) or []
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Could not read asset %s: %s", asset_id, exc)
+        return []

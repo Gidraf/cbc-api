@@ -189,6 +189,10 @@ def collect(grade: str, subject: str, sub_strand: str = "") -> list[dict[str, An
                 found.append({"kind": str(row.get("kind") or "diagram"),
                               "title": title, "url": url, "svg": svg,
                               "alt": str(row.get("alt_text") or title),
+                              # Carried so the console can offer to change or
+                              # delete this exact drawing. Without it every
+                              # figure on the page was anonymous.
+                              "asset_id": str(row.get("asset_id") or ""),
                               "source": str(row.get("source") or "upload")})
     except Exception as exc:  # noqa: BLE001
         logger.warning("Could not collect uploads for %s/%s: %s", grade, subject, exc)
