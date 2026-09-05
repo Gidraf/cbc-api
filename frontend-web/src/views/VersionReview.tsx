@@ -1149,9 +1149,13 @@ export function VersionReview({
   // to tell the two apart is to keep the inputs beside the score.
   const [lastInputs, setLastInputs] = React.useState<any>(null);
 
+  // A version deleted here is one the parent may still be naming. Re-picking
+  // it would put the screen straight back on the artifact that no longer
+  // exists, which is the loop this used to be stuck in.
+  const [deleted, setDeleted] = React.useState<string[]>([]);
   React.useEffect(() => {
-    if (artifactId) setPicked(artifactId);
-  }, [artifactId]);
+    if (artifactId && !deleted.includes(artifactId)) setPicked(artifactId);
+  }, [artifactId, deleted]);
 
   const artifact = useArtifact(picked);
   // The artifact names its own key, so the sibling versions come from the
@@ -1287,11 +1291,22 @@ export function VersionReview({
                     size="sm"
                     variant="danger"
                     loading={removeVersion.isPending}
-                    onClick={() =>
-                      removeVersion
-                        .mutateAsync(data.artifact_id)
-                        .then(() => setConfirmingDelete(false))
-                    }
+                    onClick={() => {
+                      // Where to look after this one is gone. Worked out
+                      // BEFORE the delete, because afterwards the sibling
+                      // list is refetched and this version is not in it.
+                      // Without this the screen went on asking for the
+                      // version it had just deleted and reported "No
+                      // artifact 'art_diagram_…'" — the delete had worked.
+                      const next =
+                        rows.find((v) => v.artifact_id !== data.artifact_id)?.artifact_id || "";
+                      removeVersion.mutateAsync(data.artifact_id).then(() => {
+                        setConfirmingDelete(false);
+                        setDeleted((was) => [...was, data.artifact_id]);
+                        if (next) select(next);
+                        else setPicked("");
+                      });
+                    }}
                   >
                     Delete version {data.version}
                   </Button>

@@ -595,6 +595,36 @@ def factory_generate_questions_batch(
         if isinstance(d, dict)
     ]
 
+    # Every drawing the sub-strand actually has, not only the visuals on the
+    # newest diagram version. The book numbers its figures across the whole
+    # lesson, and 1.1 and 1.2 routinely live in different artifact versions —
+    # so a question written about the second one had nothing to bind to and
+    # came back as "Q5 — diagram_based item ... has no diagram binding".
+    try:
+        from ..services import lesson_assets
+
+        known = {str(d.get("title") or d.get("diagram_title") or "").strip().lower()
+                 for d in diagrams_list}
+        for asset in lesson_assets.collect(payload.grade, payload.subject,
+                                           payload.sub_strand):
+            if asset.get("kind") != "diagram" or not asset.get("svg"):
+                continue
+            title = str(asset.get("title") or "").strip()
+            if not title or title.lower() in known:
+                continue
+            known.add(title.lower())
+            diagrams_list.append({
+                "asset_id": asset.get("asset_id") or "",
+                "diagram_title": title,
+                "alt_text": asset.get("alt") or title,
+                "svg_markup": asset.get("svg") or "",
+                "storage_url": asset.get("url") or "",
+            })
+    except Exception as exc:  # noqa: BLE001
+        # Questions from the bundle alone beat no questions at all.
+        logger.warning("Could not add filed drawings for %s/%s: %s",
+                       payload.grade, payload.sub_strand, exc)
+
     hour_title = ""
     if selected_mod:
         hour_title = str(selected_mod.get("hour_title") or selected_mod.get("heading") or "")

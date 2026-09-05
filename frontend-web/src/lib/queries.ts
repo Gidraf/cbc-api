@@ -1433,9 +1433,15 @@ export function useDeleteVersion() {
       api<any>(`/api/v1/artifacts/${encodeURIComponent(artifactId)}`, {
         method: "DELETE",
       }),
-    onSuccess: () => {
+    onSuccess: (_data, artifactId) => {
+      // REMOVED, not invalidated. Invalidating refetches it, and refetching a
+      // version that has just been deleted is a 404 the screen then reports
+      // as "No artifact 'art_diagram_…'" — while the delete had in fact
+      // worked. Nothing should ever ask for it again.
+      qc.removeQueries({ queryKey: keys.artifact(artifactId) });
       qc.invalidateQueries({ queryKey: ["artifacts"] });
-      qc.invalidateQueries({ queryKey: ["artifact"] });
+      qc.invalidateQueries({ queryKey: ["artifact-versions"] });
+      qc.invalidateQueries({ queryKey: ["coverage"] });
     },
   });
 }

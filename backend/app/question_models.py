@@ -110,7 +110,12 @@ class DiagramBinding(BaseModel):
     part_ids: list[str] = Field(default_factory=list)
     hide_layers: list[str] = Field(default_factory=list)
     storage_url: str = ""
-    binding_method: Literal["explicit", "semantic", "anchored", "authored", "unbound"] = "unbound"
+    # "only-one": the sub-strand had exactly one diagram, so there was nothing
+    # to choose between and the wording similarity did not matter. Recorded as
+    # its own method rather than dressed up as a semantic match, because a
+    # reviewer should be able to tell the two apart.
+    binding_method: Literal["explicit", "semantic", "anchored", "authored",
+                            "only-one", "unbound"] = "unbound"
     binding_confidence: float = Field(default=0.0, ge=0.0, le=1.0)
 
     # Occlusion. ``hide_part_ids`` blanks named parts rather than a whole layer,

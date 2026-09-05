@@ -172,6 +172,15 @@ def resolve_binding(
         return _build(best[1], "semantic", best[0], requested_parts, region_id)
 
     if question_type == "diagram_based":
+        # A sub-strand with exactly ONE diagram in it leaves nothing to choose
+        # between: a diagram question here is about that diagram, whatever the
+        # wording similarity came to. Refusing it threw away a written,
+        # answered question over a score of 0.27, and reported it to the
+        # operator as "has no diagram binding" — with one diagram sitting
+        # right there on the page.
+        if len(diagrams) == 1:
+            return _build(diagrams[0], "only-one", best[0] if best else 0.0,
+                          requested_parts, region_id)
         logger.info(
             "No diagram cleared the confidence floor for a diagram_based question "
             "(best %.3f of %d candidates); leaving unbound for validation to reject.",

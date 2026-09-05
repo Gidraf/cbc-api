@@ -173,3 +173,30 @@ def test_a_version_can_be_deleted_but_not_an_approved_one() -> None:
     assert 'disabled={data.labels.includes("approved")}' in review
     assert "Take the label off first" in review
     assert "confirmingDelete" in review, "a confirmation, not a single press"
+
+
+def test_deleting_a_version_does_not_leave_the_screen_asking_for_it() -> None:
+    """The delete worked and the screen reported
+
+        Could not load this — No artifact 'art_diagram_561a62b0198f0ead'.
+
+    because it went on holding the id it had just deleted: the mutation
+    invalidated that artifact's query, which refetched it, which 404'd.
+    """
+    queries = " ".join((FRONTEND / "src/lib/queries.ts").read_text().split())
+
+    deleting = queries.split("export function useDeleteVersion()")[1][:900]
+    assert "qc.removeQueries({ queryKey: keys.artifact(artifactId) })" in deleting
+    assert 'invalidateQueries({ queryKey: ["artifact"] })' not in deleting, \
+        "invalidating refetches the version that no longer exists"
+
+
+def test_the_screen_moves_to_a_surviving_version() -> None:
+    review = " ".join((FRONTEND / "src/views/VersionReview.tsx").read_text().split())
+
+    # Worked out BEFORE the delete: afterwards the sibling list no longer
+    # carries the version being removed.
+    assert "const next = rows.find((v) => v.artifact_id !== data.artifact_id)" in review
+    assert "if (next) select(next); else setPicked('')".replace("'", '"') in review
+    # And a parent still naming the deleted version must not re-select it.
+    assert "!deleted.includes(artifactId)" in review
