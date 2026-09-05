@@ -246,3 +246,82 @@ def test_material_typesets_its_mathematics() -> None:
     assert any(r"\times" in span for span in spans), spans
     outside = re.sub(r"<span class='math'[^>]*>.*?</span>", "", html)
     assert r"\times" not in outside, "no command escaped its span"
+
+
+# ── a failure that says what failed ─────────────────────────────────────────
+
+def test_an_api_error_reports_its_own_code_and_message() -> None:
+    """`ApiError` is a dataclass subclassing Exception, so it never called
+    `Exception.__init__` and `self.args` was empty. `str(exc)` returned "" —
+    and the job queue stores `str(exc)` in the column the console reads. Every
+    station failure raised through `raise_api_error` showed as
+
+        Diagrams failed after 2 attempts:
+
+    with the reason missing, for all forty codes.
+    """
+    from app.errors import ApiError
+
+    plain = ApiError(code="VALIDATION_FAILED",
+                     message="Diagrams need a lesson plan that met the depth floor.",
+                     status_code=422)
+
+    assert str(plain), "an exception that says nothing is not an exception"
+    assert "VALIDATION_FAILED" in str(plain)
+    assert "depth floor" in str(plain)
+
+
+def test_the_remedy_travels_with_the_message() -> None:
+    from app.errors import ApiError
+
+    with_remedy = ApiError(
+        code="MISSING_PARENT_CONTEXT", message="No approved lesson plan.",
+        status_code=422, remedy=[{"label": "Run the lesson plan station"}])
+
+    assert "Run the lesson plan station" in str(with_remedy)
+
+
+def test_every_error_code_produces_a_readable_string() -> None:
+    from app.errors import ERRORS, ApiError
+
+    for code, (status, _retryable) in ERRORS.items():
+        text = str(ApiError(code=code, message="something went wrong",
+                            status_code=status))
+        assert code in text, code
+        assert "something went wrong" in text, code
+
+
+def test_the_job_queue_records_what_it_is_given() -> None:
+    """The column the console reads is filled from `str(exc)`."""
+    import inspect
+
+    from app.services import job_queue
+
+    source = inspect.getsource(job_queue._execute)
+    assert 'str(exc)[:1000]' in source
+
+
+# ── keys without a redeploy ─────────────────────────────────────────────────
+
+def test_a_key_can_be_saved_and_survives_a_restart() -> None:
+    """Keys were environment variables: rotating one meant editing `.env`,
+    rebuilding the image and restarting. The encrypted store was always there;
+    only a way to reach it was missing."""
+    import inspect
+
+    from app import main
+
+    source = inspect.getsource(main.configure_provider)
+    assert "save_api_key" in source, "the key is encrypted, not stored raw"
+    assert "persist_provider" in source, "and written down, so a restart keeps it"
+
+
+def test_a_saved_key_is_never_sent_back() -> None:
+    """A screen that displays a key is a screen that leaks it."""
+    import inspect
+
+    from app import main
+
+    view = inspect.getsource(main.get_admin_config)
+    assert "has_api_key=bool(" in view
+    assert "decrypt_api_key" not in view

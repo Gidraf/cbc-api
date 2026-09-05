@@ -19,6 +19,30 @@ class ApiError(Exception):
     # nine stages. See services/remedies.py.
     remedy: list[dict] | None = None
 
+    def __str__(self) -> str:
+        """The code and the message, which is what a reader needs.
+
+        A dataclass never calls `Exception.__init__`, so `self.args` was empty
+        and `str(exc)` returned "". Everything that logs a caught exception —
+        the job queue's `error` column above all — recorded nothing at all, and
+        the console showed
+
+            Diagrams failed after 2 attempts:
+
+        with the reason missing, for every one of the forty codes below. The
+        message was always there; only this method was not.
+        """
+        text = f"{self.code}: {self.message}" if self.message else self.code
+        if self.remedy:
+            labels = [str(r.get("label")) for r in self.remedy if r.get("label")]
+            if labels:
+                text += f" — {'; '.join(labels)}"
+        return text
+
+    def __repr__(self) -> str:  # dataclass repr, kept for logs that want it
+        return (f"ApiError(code={self.code!r}, message={self.message!r}, "
+                f"status_code={self.status_code!r})")
+
 
 ERRORS = {
     # Authentication & Authorization

@@ -1255,6 +1255,47 @@ export type StageBinding = {
   configured: boolean;
 };
 
+export interface ProviderConfig {
+  provider: string;
+  base_url: string;
+  has_api_key: boolean;
+  ollama_models?: string[] | null;
+}
+
+/** The providers this service can call, and whether each has a key. */
+export function useProviders() {
+  const api = useApi();
+  return useQuery({
+    queryKey: ["admin-config"],
+    queryFn: () =>
+      api<{ providers: ProviderConfig[]; stage_bindings: unknown[] }>("/admin/config"),
+    staleTime: 30_000,
+  });
+}
+
+/** Save a key. It is encrypted and stored, so it survives a restart and needs
+ *  no redeploy — which is the whole point: keys were env vars, and changing one
+ *  meant rebuilding the container. */
+export function useSaveProviderKey() {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { provider: string; api_key?: string; base_url?: string; ollama_models?: string[] }) =>
+      api<ProviderConfig>(`/admin/providers/${encodeURIComponent(v.provider)}/config`, {
+        method: "PUT",
+        body: JSON.stringify({
+          api_key: v.api_key || null,
+          base_url: v.base_url || null,
+          ollama_models: v.ollama_models ?? null,
+        }),
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["admin-config"] });
+      qc.invalidateQueries({ queryKey: ["stage-bindings"] });
+    },
+  });
+}
+
 /** Which model runs which station. */
 export function useStageBindings() {
   const api = useApi();
