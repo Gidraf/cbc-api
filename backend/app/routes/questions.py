@@ -252,28 +252,29 @@ def factory_generate_questions_batch(
     # sub-strand name recurs across grades with escalating complexity. Matching on
     # subject and sub-strand alone would build Grade 4 questions from Grade 9 notes.
     grade_slug = normalize_grade(payload.grade)
-    alt_grade = grade_slug.replace("grade-", "")
-    clean_subj = payload.subject.lower().strip()
-    clean_ss = payload.sub_strand.lower().strip()
 
-    row = fetch_one(
-        """
-        SELECT * FROM substrand_resources
-        WHERE LOWER(curriculum->>'subject') = :subject
-          AND LOWER(curriculum->>'sub_strand') LIKE :ss
-          AND LOWER(curriculum->>'grade') IN (:grade, :alt_grade)
-        ORDER BY updated_at DESC
-        LIMIT 1
-        """,
-        {"subject": clean_subj, "ss": f"%{clean_ss}%", "grade": grade_slug, "alt_grade": alt_grade},
-    )
+    # Read the ARTIFACTS the stations file, then the older published row.
+    #
+    # This looked only at `substrand_resources`, which nothing on the board
+    # writes — it is filled by the explicit publish-bundle step and by the
+    # older pipeline. So a sub-strand whose lesson plan had been written,
+    # reviewed, scored and approved, with diagrams drawn and activities
+    # authored, had no row at all and questions refused with "No generated
+    # content found" about content that was plainly there.
+    from ..services import substrand_bundle
+
+    row = substrand_bundle.load(payload.grade, payload.subject, payload.sub_strand)
 
     if not row:
+        from ..services.remedies import missing_upstream
+
         raise_api_error(
             "SUBSTRAND_BUNDLE_NOT_FOUND",
             f"No generated content found for {payload.subject} · {payload.sub_strand} in "
-            f"{grade_label(grade_slug)}. Generate the notes, diagrams and activities first — "
-            f"questions must be grounded in this grade's own content.",
+            f"{grade_label(grade_slug)}. Questions are written from the lesson "
+            f"plan and what was made for it, so that content has to exist first.",
+            remedy=missing_upstream(payload.grade, payload.subject, "questions",
+                                    have={"ingest", "strands", "substrands"}),
         )
 
     notes_obj = row.get("notes") or {}
@@ -301,15 +302,21 @@ def factory_generate_questions_batch(
     selected_mod: dict[str, Any] | None = None
 
     # The blueprint's own SLOs — what coverage is measured against.
+    # Normalised on both sides rather than matched against two spellings: the
+    # same grade reaches this in four different forms, which is what
+    # `grade_sql.clause` exists for.
+    from ..services.grade_sql import clause as grade_clause
+
     blueprint_row = fetch_one(
-        """
+        f"""
         SELECT slos FROM curriculum_substrands
-        WHERE grade IN (:grade, :alt_grade)
+        WHERE {grade_clause("grade", "grade")}
           AND LOWER(subject) = LOWER(:subject)
           AND LOWER(sub_strand_name) LIKE :ss
         LIMIT 1
         """,
-        {"grade": grade_slug, "alt_grade": alt_grade, "subject": payload.subject.strip(), "ss": f"%{clean_ss}%"},
+        {"grade": grade_slug, "subject": payload.subject.strip(),
+         "ss": f"%{payload.sub_strand.lower().strip()}%"},
     )
     blueprint_slos = (blueprint_row or {}).get("slos") or []
 
