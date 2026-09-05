@@ -1296,6 +1296,32 @@ export function useSaveProviderKey() {
   });
 }
 
+/** Draw one planned visual: turn the station's brief into an actual SVG.
+ *
+ *  The diagram station PLANS — a title, a vivid prompt, a scene of addressable
+ *  parts — and nothing turned that into a picture, so the brief sat in an
+ *  artifact and the book kept a hatched rectangle beside it. */
+export function useDrawVisual() {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { artifact_id: string; index: number; custom_instructions?: string }) =>
+      api<{
+        title: string; svg: string; storage_url: string; model: string;
+        drawn: number; total: number;
+        new_artifact?: { artifact_id: string; version: number } | null;
+      }>("/api/v1/curriculum/factory/visuals/draw", {
+        method: "POST",
+        body: JSON.stringify(v),
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["artifacts"] });
+      qc.invalidateQueries({ queryKey: ["artifact"] });
+      qc.invalidateQueries({ queryKey: ["coverage"] });
+    },
+  });
+}
+
 /** Which model runs which station. */
 export function useStageBindings() {
   const api = useApi();

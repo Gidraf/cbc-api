@@ -1,6 +1,7 @@
 import React from "react";
 
 import { NotesReader } from "./NotesReader";
+import { DrawVisuals } from "../ui/DrawVisuals";
 import {
   Badge,
   Button,
@@ -1250,6 +1251,11 @@ export function VersionReview({
                 version={data.version}
                 artifactId={data.artifact_id}
               />
+            )}
+            {/* The station plans a visual; this draws it. Without it the brief
+                sat in the artifact and the book printed a hatched rectangle. */}
+            {data.kind === "diagram" && (
+              <DrawVisuals artifactId={data.artifact_id} content={data.content} />
             )}
             <Stack direction="row" gap="var(--s2)" style={{ flexWrap: "wrap", alignItems: "center" }}>
               <EditDraft

@@ -5581,6 +5581,210 @@ def factory_generate_material(
             "artifact": versioned}
 
 
+class DrawVisualRequest(BaseModel):
+    """Which planned visual to actually draw."""
+
+    artifact_id: str
+    index: int = 0
+    custom_instructions: str = ""
+
+
+def _svg_brief(visual: dict[str, Any], *, grade: str, subject: str,
+               strand: str, sub_strand: str) -> str:
+    """The instruction to draw ONE planned visual.
+
+    Built from what the planner already wrote — the title, the vivid prompt and
+    the scene's parts — rather than from the sub-strand name. The parts are the
+    point: this station exists so a question can say "the part labelled A", and
+    a drawing whose labels do not match the plan breaks every question written
+    against it.
+    """
+    title = str(visual.get("diagram_title") or visual.get("title") or "").strip()
+    prompt = str(visual.get("vivid_prompt") or visual.get("description") or "").strip()
+    accessibility = visual.get("accessibility") or {}
+    alt = str((accessibility or {}).get("alt_text") or "").strip()
+
+    parts = ((visual.get("scene") or {}).get("parts")
+             if isinstance(visual.get("scene"), dict) else None)
+    parts = [p for p in (parts or []) if isinstance(p, dict)]
+
+    lines = [
+        "Draw ONE diagram as a standalone SVG.",
+        "",
+        f"CURRICULUM: {' · '.join(x for x in (grade, subject, strand, sub_strand) if x)}",
+        *( [f"TITLE: {title}"] if title else [] ),
+        "",
+        "WHAT IT MUST SHOW:",
+        prompt or title or "(the plan gave no description)",
+    ]
+
+    if parts:
+        lines += [
+            "",
+            "EVERY ONE OF THESE PARTS MUST BE DRAWN AND LABELLED, spelled exactly "
+            "as written. Questions are written against these labels, so a label "
+            "that differs breaks the question that points at it:",
+        ]
+        for part in parts:
+            label = str(part.get("label") or "").strip()
+            function = str(part.get("function") or "").strip()
+            if label:
+                lines.append(f"  - {label}" + (f" — {function}" if function else ""))
+
+    if alt:
+        lines += ["", f"IT MUST MATCH THIS DESCRIPTION: {alt}"]
+
+    lines += [
+        "",
+        "HOW TO DRAW IT:",
+        "  - Line art. Black strokes on no background, so it prints on any paper.",
+        "  - A `viewBox` and no fixed width or height, so it scales to the page.",
+        "  - Text in the SVG's own <text> elements, never in an image. No",
+        "    external fonts, images, scripts or stylesheets — nothing that has",
+        "    to be fetched, because this is printed and read offline.",
+        "  - Labels large enough to survive a photocopy, and placed so they do",
+        "    not overlap the thing they name.",
+        "  - Give each labelled part `id=\"part-<label in lower case with",
+        "    hyphens>\"`, so a question can address one region of it.",
+        "",
+        "Return ONLY the <svg> element. No explanation, no markdown fence.",
+    ]
+    # Blank lines are the paragraph breaks; only a `None` is dropped.
+    return "\n".join(line for line in lines if line is not None)
+
+
+@router.post("/factory/visuals/draw")
+def factory_draw_visual(
+    payload: DrawVisualRequest,
+    auth: AuthContext = Depends(require_roles("admin", "operator")),
+) -> dict[str, Any]:
+    """Draw a planned visual, from the plan this station already wrote.
+
+    The diagram station PLANS: it writes a title, a vivid prompt and a scene of
+    addressable parts, so that questions can test one region. Nothing turned
+    that plan into a picture, so the brief sat in an artifact and the book kept
+    a hatched rectangle beside it.
+
+    The drawing is filed against the visual's own title, which is what the
+    renderer matches on — so the plate fills on the next render — and written
+    back onto the artifact so the station panel shows it too.
+    """
+    from ..services import artifact_registry, asset_uploads, diagram_gate
+    from ..services.diagram_dedup import extract_and_sanitize_svg
+    from ..services.llm_client import llm_client
+    from ..services.pipeline import pipeline_orchestrator
+
+    artifact = artifact_registry.get(payload.artifact_id)
+    if artifact.kind != "diagram":
+        raise_api_error(
+            "VALIDATION_FAILED",
+            f"'{artifact.kind}' is not a diagram plan. Draw from the diagram "
+            f"station's own version.",
+        )
+
+    content = artifact.content or {}
+    visuals = content.get("visuals") or content.get("diagrams") or []
+    visuals = [v for v in visuals if isinstance(v, dict)]
+    if not 0 <= payload.index < len(visuals):
+        raise_api_error(
+            "VALIDATION_FAILED",
+            f"This version plans {len(visuals)} visual(s); there is no "
+            f"number {payload.index}.",
+        )
+
+    visual = visuals[payload.index]
+    title = str(visual.get("diagram_title") or visual.get("title") or "").strip()
+    if not title:
+        raise_api_error(
+            "VALIDATION_FAILED",
+            "This visual has no title, so nothing can refer to the drawing. "
+            "Regenerate the plan first.",
+        )
+
+    brief = _svg_brief(visual, grade=artifact.grade, subject=artifact.subject,
+                       strand=artifact.strand_name,
+                       sub_strand=artifact.sub_strand_name)
+    if payload.custom_instructions:
+        brief += f"\n\nALSO: {payload.custom_instructions}"
+
+    resolved = pipeline_orchestrator.router.resolve_for_stage("diagram_generation")
+    try:
+        response = llm_client.generate(
+            resolved, [{"role": "user", "content": brief}], temperature=0.2)
+    except Exception as exc:  # noqa: BLE001
+        raise_api_error("DIAGRAM_GENERATION_FAILED", f"The model failed: {exc}")
+
+    raw = response.content
+    if isinstance(raw, dict):
+        raw = raw.get("svg") or raw.get("diagram_svg") or raw.get("content") or ""
+    svg = extract_and_sanitize_svg(str(raw or ""))
+    if not svg:
+        raise_api_error(
+            "DIAGRAM_GENERATION_FAILED",
+            "The model returned nothing that parses as an SVG. Try again, or "
+            "copy the brief and draw it elsewhere.",
+        )
+
+    # 1. Where the BOOK looks. Filed against the visual's own title, which is
+    #    what `lesson_assets` matches a requirement on.
+    from ..infra.storage import object_storage
+
+    asset_id = asset_uploads.asset_id_for(artifact.grade, artifact.subject,
+                                          artifact.sub_strand_name, "diagram", title)
+    storage_url = ""
+    try:
+        storage_url = object_storage.save_bytes(
+            f"assets/{artifact.grade}/{artifact.subject}/{asset_id}.svg".replace(" ", "-"),
+            svg.encode("utf-8"), "image/svg+xml")
+    except Exception as exc:  # noqa: BLE001
+        # The SVG is inlined on the page, so losing the stored copy costs the
+        # download and not the figure.
+        logger.warning("Could not store drawing %s: %s", asset_id, exc)
+
+    asset_uploads.record(
+        grade=artifact.grade, subject=artifact.subject, strand=artifact.strand_name,
+        sub_strand=artifact.sub_strand_name, kind="diagram", what=title,
+        storage_url=storage_url, svg=svg, title=title,
+        alt_text=str((visual.get("accessibility") or {}).get("alt_text") or title),
+        content_type="image/svg+xml", size=len(svg),
+        source=f"drawn:{resolved.model}", uploaded_by=getattr(auth, "subject", ""),
+    )
+
+    # 2. And onto the plan itself, so the station panel shows what it drew and
+    #    the gate can see the visual is no longer only a brief.
+    visual["diagram_svg"] = svg
+    visual["status"] = "drawn"
+    updated = {**content, "visuals": visuals}
+    filed: dict[str, Any] = {}
+    try:
+        filed = _record_artifact(
+            "diagram", artifact.grade, artifact.subject, updated,
+            strand=artifact.strand_name, sub_strand=artifact.sub_strand_name,
+            parent=artifact.artifact_id,
+            provenance={"source": "factory_draw_visual",
+                        "provider": resolved.provider, "model": resolved.model,
+                        "drew": title},
+            measured_from={"quality_gate": diagram_gate.gate_of(
+                diagram_gate.check(updated))},
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Drew %s but could not file the version: %s", title, exc)
+
+    drawn = sum(1 for v in visuals if v.get("diagram_svg"))
+    return {
+        "artifact_id": artifact.artifact_id,
+        "index": payload.index,
+        "title": title,
+        "svg": svg,
+        "storage_url": storage_url,
+        "model": resolved.model,
+        "usage": getattr(response, "usage", None),
+        "drawn": drawn,
+        "total": len(visuals),
+        "new_artifact": filed,
+    }
+
+
 @router.get("/factory/assets/requirements")
 def factory_asset_requirements(
     grade: str = Query(...),
