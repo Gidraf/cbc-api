@@ -274,6 +274,29 @@ h2, h3, h4 { break-after: avoid; }
   text-transform: uppercase; padding: 4px 10px; cursor: pointer;
   background: #111; color: #fff; border: none; border-radius: 3px;
 }
+/* ── the practical work ───────────────────────────────────────────────────
+   Read separately from the teaching: materials the night before, the steps at
+   the bench, the safety line before anything is handed out. */
+.activity { break-inside: avoid; border: 1px solid #111; border-radius: 3px;
+  padding: 8px 10px; margin: 10px 0; }
+.activity h4 { margin: 0 0 4px; font-size: 9pt; letter-spacing: 0.06em;
+  text-transform: uppercase; }
+.activity .intent { margin: 0 0 6px; font-style: italic; }
+.activity .hazard { border-left: 3px solid #111; background: #f4f4f4;
+  padding: 5px 8px; margin: 0 0 6px; font-size: 9pt; }
+.activity .hazard strong { display: block; font-size: 8pt; letter-spacing: 0.06em;
+  text-transform: uppercase; }
+.activity .hazard p { margin: 2px 0 0; }
+.activity .materials { margin: 0 0 6px; font-size: 9pt; }
+.activity .materials span, .activity .aside-line span {
+  font-size: 8pt; letter-spacing: 0.06em; text-transform: uppercase;
+  color: #555; margin-right: 6px; }
+.activity ol.procedure { margin: 0 0 6px; padding-left: 20px; }
+.activity ol.procedure > li { margin-bottom: 4px; }
+.activity .aside-line { margin: 0 0 4px; font-size: 9pt; }
+.figure figcaption .why { display: block; font-style: italic; color: #555;
+  margin-top: 2px; }
+
 /* ── worked examples ─────────────────────────────────────────────────────
    Set apart from the teaching prose, because a learner revising scans for
    them. Numbered per lesson so a teacher can say "look at Example 2.1". */
@@ -583,10 +606,91 @@ def _worked_examples(module: dict[str, Any], n: int) -> str:
     return "".join(out)
 
 
+def _activity(item: dict[str, Any], number: str) -> str:
+    """One practical activity, as the activity station wrote it.
+
+    Set apart from the teaching prose because a teacher preparing a lesson
+    reads it separately — materials the night before, the steps at the bench,
+    and the safety line before anything is handed out.
+    """
+    name = str(item.get("activity_name") or item.get("title") or "Activity")
+    out = [f"<div class='activity'><h4>Activity {_esc(number)} · {_esc(name)}</h4>"]
+
+    if item.get("objective"):
+        out.append(f"<p class='intent'>{_math(item['objective'])}</p>")
+
+    hazard = str(item.get("hazard_level") or "").strip().lower()
+    warnings = [w for w in (item.get("hazard_warnings")
+                            or item.get("safety_protocols") or []) if str(w).strip()]
+    if warnings or hazard in ("medium", "high"):
+        # First, not last. A safety line under the procedure is a safety line
+        # read after the thing it was meant to prevent.
+        out.append("<div class='hazard'><strong>Before you start</strong>"
+                   + "".join(f"<p>{_math(w)}</p>" for w in warnings) + "</div>")
+
+    materials = [m for m in (item.get("materials") or []) if str(m).strip()]
+    if materials:
+        out.append("<p class='materials'><span>Have ready</span>"
+                   + " · ".join(_esc(m) for m in materials) + "</p>")
+
+    steps = [st for st in (item.get("procedure_steps") or item.get("procedure") or [])
+             if str(st).strip()]
+    if steps:
+        out.append("<ol class='procedure'>"
+                   + "".join(f"<li>{_math(st)}</li>" for st in steps) + "</ol>")
+
+    if item.get("grouping_mode"):
+        out.append(f"<p class='aside-line'><span>Working</span>"
+                   f"{_esc(item['grouping_mode'])}</p>")
+
+    observables = [o for o in (item.get("assessment_observables") or [])
+                   if str(o).strip()]
+    if observables:
+        out.append("<div class='aside'><h4>What to watch for</h4><ul>"
+                   + "".join(f"<li>{_math(o)}</li>" for o in observables)
+                   + "</ul></div>")
+
+    adaptations = item.get("inclusion_adaptations") or []
+    if isinstance(adaptations, dict):
+        adaptations = [f"{k}: {v}" for k, v in adaptations.items() if v]
+    adaptations = [a for a in adaptations if str(a).strip()]
+    if adaptations:
+        out.append("<div class='aside'><h4>So everyone can do it</h4>"
+                   + "".join(f"<p>{_math(a)}</p>" for a in adaptations) + "</div>")
+
+    out.append("</div>")
+    return "".join(out)
+
+
+def _media_cue(item: dict[str, Any], number: str) -> str:
+    """A photograph or a clip: shown where it exists, cued where it does not."""
+    kind = str(item.get("kind") or "photo").lower()
+    label = "Video" if "video" in kind else "Picture"
+    title = str(item.get("title") or "")
+    url = str(item.get("storage_url") or "")
+
+    body = ""
+    if url and label == "Picture":
+        body = f"<img src='{_esc(url)}' alt='{_esc(item.get('alt_text') or title)}'>"
+    elif url:
+        body = (f"<div class='plate'><span>Play the clip at this point</span>"
+                f"<a href='{_esc(url)}'>{_esc(url)}</a></div>")
+    else:
+        body = ("<div class='plate'><span>"
+                + ("clip to be filmed" if label == "Video" else "picture to be made")
+                + "</span></div>")
+
+    caption = f"<b>{label} {_esc(number)}</b>{_math(title)}"
+    if item.get("purpose"):
+        caption += f"<span class='why'>{_math(item['purpose'])}</span>"
+    return f"<figure class='figure'>{body}<figcaption>{caption}</figcaption></figure>"
+
+
 def _lesson(module: dict[str, Any], n: int,
             assets: dict[str, str] | None = None, *,
             grade_label: str = "", subject: str = "",
-            strand: str = "", sub_strand: str = "") -> str:
+            strand: str = "", sub_strand: str = "",
+            extras: dict[str, Any] | None = None) -> str:
     title = str(module.get("title") or f"Lesson {n}")
     out = ["<section class='lesson'>"]
 
@@ -677,6 +781,14 @@ def _lesson(module: dict[str, Any], n: int,
     if module.get("homework_or_follow_up"):
         out.append(_aside("After the lesson",
                           f"<p>{_esc(module['homework_or_follow_up'])}</p>"))
+
+    # What the other stations made for THIS lesson. A guide was rendered from
+    # the lesson plan alone, so the activity KICD funded — written, reviewed
+    # and filed — was not in the book a teacher printed.
+    for i, item in enumerate((extras or {}).get("activities", []), start=1):
+        out.append(_activity(item, f"{n}.{i}"))
+    for i, item in enumerate((extras or {}).get("media", []), start=1):
+        out.append(_media_cue(item, f"{n}.{i}"))
 
     out.append("</div>")
     out.append("</section>")
@@ -900,12 +1012,42 @@ def render_html(notes: dict[str, Any], *, grade: str = "", subject: str = "",
 
     if not modules:
         out.append("<p>This guide holds no lessons.</p>")
+    # Everything the other stations filed for this sub-strand. Read once for
+    # the whole guide rather than per lesson: it is the same two queries either
+    # way, and a guide with six lessons made twelve of them.
+    from . import lesson_extras
+
+    extras = lesson_extras.gather(grade, subject, sub_strand)
+    by_lesson_activities = extras["activities_by_lesson"]
+    by_lesson_media = lesson_extras.by_lesson(extras["media"])
+
     for i, module in enumerate(modules, start=1):
+        number = module.get("module_number", i)
         # The curriculum reaches the figure briefs through here: a prompt that
         # does not name the grade and sub-strand is a prompt somebody has to
         # come back and ask about.
-        out.append(_lesson(module, i, assets, grade_label=grade, subject=subject,
-                           strand=strand, sub_strand=sub_strand))
+        out.append(_lesson(
+            module, i, assets, grade_label=grade, subject=subject,
+            strand=strand, sub_strand=sub_strand,
+            extras={
+                "activities": by_lesson_activities.get(number, []),
+                "media": by_lesson_media.get(number, []),
+            },
+        ))
+
+    # Anything filed against no particular lesson still belongs in the book.
+    loose_activities = by_lesson_activities.get(0, [])
+    loose_media = by_lesson_media.get(0, [])
+    if loose_activities or loose_media:
+        out.append("<section class='lesson'><div class='lesson-head'>"
+                   "<h2><span class='n'>Also</span>For this sub-strand</h2>"
+                   "<div class='slos'>Filed without a lesson number</div>"
+                   "</div><div class='body'>")
+        for i, item in enumerate(loose_activities, start=1):
+            out.append(_activity(item, str(i)))
+        for i, item in enumerate(loose_media, start=1):
+            out.append(_media_cue(item, str(i)))
+        out.append("</div></section>")
 
     out.append(_exercises(grade, subject, strand, sub_strand))
     out.append(

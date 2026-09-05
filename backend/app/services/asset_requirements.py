@@ -56,7 +56,14 @@ _PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
         # A WALL chart of children in church is a picture; a chart of the
         # water cycle is a diagram. The lookbehind is the whole difference.
         r"\b(diagrams?|flowcharts?|labelled|labeled|schematics?|maps?|graphs?|"
-        r"(?<!wall )charts?|table of)\b", re.I)),
+        r"(?<!wall )charts?|table of|histograms?|pictogra(?:ph|m)s?|"
+        # The figures a mathematics lesson asks for by name. "A number line
+        # from -6 to +6" is a drawing the page must keep space for, and it
+        # matched nothing here — so it was filed as an object to bring, like
+        # chalk. Counters, cards and blocks stay objects: those really are
+        # carried into the room.
+        r"number lines?|coordinate (?:grid|plane|axes)|number squares?|"
+        r"hundred squares?|clock faces?|nets? of (?:a|the)\b)\b", re.I)),
     # Plurals matter more than they look: "visual aid" with a trailing word
     # boundary does not match "visual aids", which is how every plan writes it,
     # and the requirement was then filed as an object to bring.

@@ -80,17 +80,27 @@ def collect(grade: str, subject: str, sub_strand: str = "") -> list[dict[str, An
         for row in artifact_registry.search(grade=grade, subject=subject,
                                             sub_strand=sub_strand, kind="diagram"):
             content = row.get("content") or {}
-            for diagram in (content.get("diagrams") or [content]):
+            # `visuals` is what the planner files and `diagrams` is what a
+            # single render files. This read only the second, so every diagram
+            # the station actually produced was invisible to the page and the
+            # plate stayed hatched next to a diagram that existed.
+            items = (content.get("visuals") or content.get("diagrams")
+                     or [content])
+            for diagram in items:
                 if not isinstance(diagram, dict):
                     continue
-                title = str(diagram.get("title") or diagram.get("caption")
-                            or diagram.get("what") or "").strip()
+                title = str(
+                    diagram.get("title") or diagram.get("diagram_title")
+                    or diagram.get("caption") or diagram.get("what") or ""
+                ).strip()
                 url = str(diagram.get("storage_url") or diagram.get("url") or "")
-                svg = ""
-                try:
-                    svg = diagram_svg.svg_for(diagram) or ""
-                except Exception as exc:  # noqa: BLE001
-                    logger.debug("No SVG for %s: %s", title[:60], exc)
+                # The generator's own key for the markup, before the stored one.
+                svg = str(diagram.get("diagram_svg") or diagram.get("svg") or "")
+                if not svg:
+                    try:
+                        svg = diagram_svg.svg_for(diagram) or ""
+                    except Exception as exc:  # noqa: BLE001
+                        logger.debug("No SVG for %s: %s", title[:60], exc)
                 if title and (url or svg):
                     found.append({"kind": "diagram", "title": title,
                                   "url": url, "svg": svg,
