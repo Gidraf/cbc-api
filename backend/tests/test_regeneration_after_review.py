@@ -13,6 +13,8 @@ Three separate faults, each enough on its own to make the button do nothing:
 """
 from __future__ import annotations
 
+import re
+
 from app.services.measured_findings import collect, provenance_for, stored
 
 
@@ -163,3 +165,84 @@ def test_the_preview_returns_the_content_the_station_produced() -> None:
     assert _regenerated_content({"strands": [1]}, "strand") == [1]
     # Unknown shapes come back whole rather than empty.
     assert _regenerated_content({"other": 1}, "notes") == {"other": 1}
+
+
+# ── rendering a document, whichever kind it is ──────────────────────────────
+
+class _Artifact:
+    """The bits of an artifact the document routes actually read."""
+
+    def __init__(self, kind: str, content: dict) -> None:
+        self.kind = kind
+        self.content = content
+        self.grade = "grade-9"
+        self.subject = "Mathematics"
+        self.strand_name = "Numbers"
+        self.sub_strand_name = "Integers"
+        self.version = 1
+        self.artifact_id = f"art_{kind}_test"
+        self.provenance = {}
+
+
+def test_both_kinds_render_without_a_type_error(monkeypatch) -> None:
+    """Every material page 500'd with
+
+        render_material_html() got an unexpected keyword argument 'assets'
+
+    because the routes chose a renderer and then passed one renderer's
+    arguments to both. The choice is made in one place now.
+    """
+    from app.routes import curriculum
+    from app.services import lesson_assets
+
+    monkeypatch.setattr(lesson_assets, "for_notes", lambda *a, **k: {})
+
+    material = _Artifact("material", {"material": [
+        {"module_number": 1, "module_title": "Lesson 1", "topic": "Integers",
+         "say": "An integer is a whole number."}]})
+    notes = _Artifact("notes", {"modules": [
+        {"title": "Lesson 1", "teacher_exposition": "An integer is a whole number."}]})
+
+    for artifact in (material, notes):
+        html = curriculum._render_document(artifact)
+        assert html.startswith("<!doctype html>"), artifact.kind
+        assert "integer" in html.lower(), artifact.kind
+
+
+def test_a_lesson_plan_is_given_the_pictures_and_the_material_is_not() -> None:
+    """Not a style choice: the plan keeps space for figures, the material is
+    the words said aloud. Passing material an asset map is a parameter it
+    ignores — and passing it as a keyword is what broke the page."""
+    import inspect
+
+    from app.routes import curriculum
+
+    source = inspect.getsource(curriculum._render_document)
+    material_branch = source.split('if artifact.kind == "material":')[1].split("return")[1]
+    assert "assets" not in material_branch.split("\n")[0]
+    assert "assets=" in source, "the plan still gets them"
+
+
+def test_material_typesets_its_mathematics() -> None:
+    """The words a teacher reads aloud carry LaTeX in a mathematics lesson, and
+    escaping it printed the dollars and backslashes on the page."""
+    from app.services.notes_renderer import render_material_html
+
+    html = render_material_html(
+        {"material": [{"module_number": 1, "module_title": "Lesson 1",
+                       "topic": "Integers",
+                       "say": r"We get $3 \times (-4) = -12$.",
+                       "learner_does": r"Work out $5 \times (-2)$."}]},
+        grade="grade-9", subject="Mathematics", sub_strand="Integers",
+    )
+
+    assert "$" not in html, "no raw delimiters reach the page"
+    assert html.count("class='math'") >= 2
+    assert "katex.min.js" in html
+
+    # The LaTeX itself stays — inside the span KaTeX typesets, never loose in
+    # the prose around it.
+    spans = re.findall(r"<span class='math'[^>]*>(.*?)</span>", html)
+    assert any(r"\times" in span for span in spans), spans
+    outside = re.sub(r"<span class='math'[^>]*>.*?</span>", "", html)
+    assert r"\times" not in outside, "no command escaped its span"

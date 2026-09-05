@@ -5669,33 +5669,37 @@ def factory_notes_html(
             f"'{artifact.kind}' does not render as a document. The lesson plan "
             f"and the material written from it do.",
         )
-    render = (notes_renderer.render_material_html if artifact.kind == "material"
-              else notes_renderer.render_html)
-    # Neither route ever passed the assets, so every figure printed as a
-    # hatched placeholder — including the ones whose diagram had already been
-    # generated, reviewed and filed. The production list said everything was
-    # outstanding.
-    return HTMLResponse(render(
-        artifact.content or {},
-        grade=artifact.grade, subject=artifact.subject,
-        strand=artifact.strand_name, sub_strand=artifact.sub_strand_name,
-        version=artifact.version,
-        assets=_assets_for(artifact),
-    ))
+    return HTMLResponse(_render_document(artifact))
 
 
-def _assets_for(artifact: Any) -> dict[str, Any]:
-    """The pictures already filed for this artifact's sub-strand.
+def _render_document(artifact: Any) -> str:
+    """One artifact as a document, by the renderer that suits its kind.
 
-    A figure the page keeps space for is filled where the thing exists and left
-    as a captioned plate where it does not — which is what makes the guide its
-    own production list. That only works if somebody looks.
+    Choosing the renderer and its arguments in ONE place, because doing it in
+    two produced a 500: both routes passed `assets=` to whichever renderer came
+    back, and only the plan's renderer takes it. Every material page 500'd
+    with `render_material_html() got an unexpected keyword argument 'assets'`.
+
+    A lesson plan keeps space for figures, so it is given the pictures already
+    filed. The material is the words a teacher says aloud — it has no figures
+    to fill, and passing it an asset map would be a parameter it ignores.
     """
-    from ..services import lesson_assets
+    from ..services import lesson_assets, notes_renderer
 
-    return lesson_assets.for_notes(
-        artifact.content or {}, artifact.grade, artifact.subject,
-        artifact.sub_strand_name,
+    content = artifact.content or {}
+    common = {
+        "grade": artifact.grade, "subject": artifact.subject,
+        "strand": artifact.strand_name, "sub_strand": artifact.sub_strand_name,
+        "version": artifact.version,
+    }
+    if artifact.kind == "material":
+        return notes_renderer.render_material_html(content, **common)
+
+    return notes_renderer.render_html(
+        content,
+        assets=lesson_assets.for_notes(
+            content, artifact.grade, artifact.subject, artifact.sub_strand_name),
+        **common,
     )
 
 
@@ -5725,15 +5729,7 @@ def factory_notes_pdf(
             f"inside one of those.",
         )
 
-    render = (notes_renderer.render_material_html if artifact.kind == "material"
-              else notes_renderer.render_html)
-    document = render(
-        artifact.content or {},
-        grade=artifact.grade, subject=artifact.subject,
-        strand=artifact.strand_name, sub_strand=artifact.sub_strand_name,
-        version=artifact.version,
-        assets=_assets_for(artifact),
-    )
+    document = _render_document(artifact)
     try:
         body = pdf.from_html(document)
     except pdf.PdfUnavailable as exc:

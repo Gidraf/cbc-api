@@ -765,14 +765,18 @@ def render_material_html(material: dict[str, Any], *, grade: str = "",
         out.append(f"<h3>{head}</h3>")
 
         if piece.get("instruction"):
-            out.append(f"<p class='directive'>{_esc(piece['instruction'])}</p>")
+            out.append(f"<p class='directive'>{_math(piece['instruction'])}</p>")
         if piece.get("title"):
-            out.append(f"<p class='piecetitle'>{_esc(piece['title'])}</p>")
+            out.append(f"<p class='piecetitle'>{_math(piece['title'])}</p>")
 
         said = str(piece.get("say") or "").strip()
         if said:
             # Line breaks are meaningful here: a verse is a verse.
-            body = "".join(f"<p>{_esc(line)}</p>" for line in said.splitlines() if line.strip())
+            #
+            # `_math`, not `_esc`: a mathematics lesson's spoken words carry
+            # LaTeX, and escaping it printed the dollars and the backslashes on
+            # the page a teacher reads aloud from.
+            body = "".join(f"<p>{_math(line)}</p>" for line in said.splitlines() if line.strip())
             out.append(f"<div class='say'>{body}</div>")
         else:
             out.append("<p class='missing'>No words were written for this part. "
@@ -785,7 +789,7 @@ def render_material_html(material: dict[str, Any], *, grade: str = "",
                            ("attribution", "Where these words come from")):
             if piece.get(key):
                 out.append(f"<div class='aside'><h4>{label}</h4>"
-                           f"<p>{_esc(piece[key])}</p></div>")
+                           f"<p>{_math(piece[key])}</p></div>")
         out.append("</section>")
 
     out.append("<div class='foot'>Written from the lesson plan for this "
