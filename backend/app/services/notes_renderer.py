@@ -79,23 +79,62 @@ def _math(value: Any) -> str:
     return "".join(out)
 
 
+# Markdown, applied AFTER escaping so a model cannot write markup that becomes
+# markup. The page was printing `**Addition**:` and `**Example**:` with the
+# asterisks showing, all down a Grade 9 lesson — the model writes Markdown
+# because that is how models write emphasis, and nothing here converted it.
+_MD_CODE = re.compile(r"`([^`\n]+)`")
+_MD_BOLD = re.compile(r"\*\*(?!\s)([^*\n]+?)(?<!\s)\*\*")
+_MD_BOLD_ALT = re.compile(r"__(?!\s)([^_\n]+?)(?<!\s)__")
+# One asterisk, but not one that is part of `**` — and not a bare `*` used as
+# a multiplication sign, which is why a space on either side disqualifies it.
+_MD_ITALIC = re.compile(r"(?<!\*)\*(?!\s|\*)([^*\n]+?)(?<![\s*])\*(?!\*)")
+_MD_ITALIC_ALT = re.compile(r"(?<![A-Za-z0-9_])_(?!\s)([^_\n]+?)(?<!\s)_(?![A-Za-z0-9_])")
+
+
+def _inline_markdown(escaped: str) -> str:
+    """Bold, italic and code, on text that is already HTML-escaped.
+
+    Code spans are lifted out before the other rules run and put back after.
+    Wrapping them first is not enough — the bold rule still matches inside the
+    tags, so "`**not bold**`" came back as code containing bold, which is the
+    one thing a code span is for preventing.
+    """
+    held: list[str] = []
+
+    def hold(match: re.Match[str]) -> str:
+        held.append(match.group(1))
+        return f"\x00code{len(held) - 1}\x00"
+
+    out = _MD_CODE.sub(hold, escaped)
+    out = _MD_BOLD.sub(r"<strong>\1</strong>", out)
+    out = _MD_BOLD_ALT.sub(r"<strong>\1</strong>", out)
+    out = _MD_ITALIC.sub(r"<em>\1</em>", out)
+    out = _MD_ITALIC_ALT.sub(r"<em>\1</em>", out)
+
+    for index, literal in enumerate(held):
+        out = out.replace(f"\x00code{index}\x00", f"<code>{literal}</code>")
+    return out
+
+
 def _bare(text: str) -> str:
-    """Escaped prose, with any undelimited LaTeX in it typeset anyway.
+    """Escaped prose, with its Markdown rendered and any loose LaTeX typeset.
 
     The schema asks for `$…$`. Models write `-5^\text{°C}` in the middle of a
     sentence about the weather, and that reached the page with the backslash
-    and the braces showing.
+    and the braces showing — and they write `**Addition**` for a heading,
+    which reached it with the asterisks showing.
     """
     if "\\" not in text:
-        return _esc(text)
+        return _inline_markdown(_esc(text))
     out: list[str] = []
     last = 0
     for match in _BARE_LATEX.finditer(text):
-        out.append(_esc(text[last:match.start()]))
+        out.append(_inline_markdown(_esc(text[last:match.start()])))
         out.append(f"<span class='math' data-display='false'>"
                    f"{_esc(match.group(0).strip())}</span>")
         last = match.end()
-    out.append(_esc(text[last:]))
+    out.append(_inline_markdown(_esc(text[last:])))
     return "".join(out)
 
 
@@ -954,23 +993,82 @@ def _numbered_items(text: str) -> list[str]:
     return items
 
 
+# Block-level Markdown. Models write it because that is how models write
+# structure, and every one of these reached the page as literal characters.
+_MD_HEADING = re.compile(r"^\s{0,3}(#{1,6})\s+(.+?)\s*#*\s*$")
+_MD_BULLET = re.compile(r"^\s{0,3}[-*\u2022]\s+(.+)$")
+_MD_RULE = re.compile(r"^\s{0,3}(?:-{3,}|\*{3,}|_{3,})\s*$")
+
+# A line that is nothing but a calculation — "-2 + 3 = 1.", "-4 × 2 = -8." —
+# written without dollars because the model was writing prose. Set as
+# mathematics rather than left in the paragraph font.
+_BARE_SUM = re.compile(r"^[-+(]?\s*\d[\d\s+\-*/×÷=().,]*\.?$")
+
+
+def _is_a_calculation(line: str) -> bool:
+    stripped = line.strip()
+    if not _BARE_SUM.match(stripped):
+        return False
+    # An operator AND an equals: "1." and "2024." are not calculations, and a
+    # bare list marker must never be swallowed as one.
+    return bool(re.search(r"[-+*/×÷]", stripped[1:])) and "=" in stripped
+
+
 def _spoken(said: str) -> str:
-    """The words, with a run-on exercise set broken into a list.
+    """The words, with their Markdown rendered and their structure kept.
 
     A teacher reading aloud needs the prose; a learner working the questions
-    needs them one to a line, numbered, with room to answer beside them.
+    needs them one to a line. And neither needs to read `**Example**:` with
+    the asterisks still on it, which is what a whole Grade 9 lesson printed.
     """
     blocks: list[str] = []
+    bullets: list[str] = []
+
+    def flush() -> None:
+        if bullets:
+            blocks.append("<ul class='points'>"
+                          + "".join(f"<li>{item}</li>" for item in bullets)
+                          + "</ul>")
+            bullets.clear()
+
     for line in said.splitlines():
         if not line.strip():
+            flush()
             continue
+
+        heading = _MD_HEADING.match(line)
+        if heading:
+            flush()
+            level = min(6, 3 + len(heading.group(1)))   # h4 and below: h1-h3 are the page's
+            blocks.append(f"<h{level} class='mdh'>{_math(heading.group(2))}</h{level}>")
+            continue
+
+        if _MD_RULE.match(line):
+            flush()
+            blocks.append("<hr class='mdr'>")
+            continue
+
+        bullet = _MD_BULLET.match(line)
+        if bullet:
+            bullets.append(_math(bullet.group(1)))
+            continue
+
+        flush()
         items = _numbered_items(line)
         if items:
             blocks.append("<ol class='practice'>"
                           + "".join(f"<li>{_math(i)}</li>" for i in items)
                           + "</ol>")
+        elif _is_a_calculation(line):
+            # Its own line, set as mathematics: this is a worked step, and in
+            # the paragraph font it reads as a sentence that happens to have
+            # numbers in it.
+            blocks.append(f"<div class='math' data-display='true'>"
+                          f"{_esc(line.strip().rstrip('.'))}</div>")
         else:
             blocks.append(f"<p>{_math(line)}</p>")
+
+    flush()
     return "".join(blocks)
 
 
@@ -1207,6 +1305,14 @@ _MATERIAL_CSS = """
 
 /* An exercise set, one question to a line with room to answer beside it —
    rather than the wall of prose a run-on paragraph makes of it. */
+/* Structure the model wrote in Markdown. */
+h4.mdh, h5.mdh, h6.mdh { margin: 10px 0 3px; font-size: 10pt; }
+ul.points { margin: 5px 0; padding-left: 20px; }
+ul.points > li { margin-bottom: 4px; }
+hr.mdr { border: 0; border-top: 0.4pt solid #ccc; margin: 8px 0; }
+code { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 0.92em;
+  background: #f4f4f4; padding: 0 3px; border-radius: 2px; }
+
 ol.practice { margin: 6px 0; padding-left: 22px; }
 ol.practice > li { margin-bottom: 7px; break-inside: avoid; }
 details.answers { margin: 6px 0 0; border-top: 0.4pt solid #ddd; }

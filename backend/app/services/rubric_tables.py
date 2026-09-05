@@ -43,11 +43,28 @@ _HEADING = re.compile(
 # the bare outcome, so the fallback is a line that reads like an indicator.
 _INDICATOR = re.compile(r"^\s*(Ability to\s+.+|Identify\s+the\s+.+)$", re.IGNORECASE)
 
-# How a rubric cell opens. These are assessment verbs, not subject vocabulary —
-# the same set works for "Identifies three qualities of God" and "Measures the
-# mass to the nearest gram". A cell is recognised by its verb because KICD's
+# How a rubric cell opens. A cell is recognised by its verb because KICD's
 # columns arrive as an unlabelled stream once the PDF is flattened.
+#
+# This list was written from the pre-primary and CRE designs — sings, retells,
+# dramatises, colours, cares, desires, respects — and never extended when the
+# system reached the rest of the curriculum. It held 53 verbs and not one of
+# them was arithmetic, so a Mathematics rubric table parsed to nothing:
+#
+#     Calculates the sum of two integers accurately.     not a cell
+#     Works out combined operations in the correct order. not a cell
+#     Solves problems involving integers correctly.       not a cell
+#
+# A row needs all four levels to be whole cells, so one unrecognised verb
+# discarded the row, and a sub-strand with no rows fell through to
+# `rubric_filler` — which wrote an honest replacement and labelled it
+# generated. Mathematics therefore had no KICD rubrics anywhere in the system,
+# and the measure that reports it read "no sub-strands in this result".
+#
+# The capitalisation check in `complete` is what rejects continuation
+# fragments, not the narrowness of this list, so extending it costs nothing.
 _CELL_VERBS = (
+    # Naming, telling, describing — the original set.
     "identifies", "names", "demonstrates", "tells", "mentions", "practices",
     "practise", "practises", "retells", "narrates", "describes", "shows",
     "lists", "explains", "colours", "colors", "draws", "performs",
@@ -57,15 +74,108 @@ _CELL_VERBS = (
     "compares", "arranges", "follows", "participates", "shares", "cares",
     "appreciates", "desires", "respects", "states", "expresses", "recognises",
     "recognizes", "partly", "attempts", "does",
+    # Mathematics. "works" carries "works out", which is how the designs
+    # phrase almost every computational outcome.
+    "calculates", "computes", "solves", "evaluates", "works", "adds",
+    "subtracts", "multiplies", "divides", "orders", "simplifies", "converts",
+    "rounds", "estimates", "substitutes", "expands", "factorises",
+    "factorizes", "plots", "graphs", "tabulates", "represents", "derives",
+    "interprets", "determines", "finds", "obtains",
+    # Science, agriculture and pre-technical: the same failure was waiting for
+    # every practical subject.
+    "investigates", "experiments", "predicts", "tests", "assembles",
+    "connects", "operates", "maintains", "designs", "sketches", "models",
+    "analyses", "analyzes", "justifies", "concludes", "infers", "constructs",
+    "collects", "prepares", "handles", "sets",
+    # General assessment language across the ladder.
+    "discusses", "explores", "distinguishes", "differentiates", "relates",
+    "summarises", "summarizes", "outlines", "defines", "illustrates",
+    "labels", "completes", "organises", "organizes",
+    # Named by measuring the fifty learning areas rather than guessed at:
+    # languages, creative arts, physical education, agriculture, home science,
+    # ICT and teacher education each had their own and none were here.
+    "pronounces", "spells", "listens", "recites", "articulates", "narrates",
+    "locates", "sequences", "maps", "traces",
+    "paints", "weaves", "moulds", "molds", "improvises", "decorates",
+    "sculpts", "prints", "dances", "acts", "plays",
+    "throws", "catches", "kicks", "dribbles", "executes", "jumps", "runs",
+    "swims", "balances",
+    "plants", "harvests", "mixes", "cuts", "joins", "stitches", "sews",
+    "cooks", "serves", "waters", "prunes", "feeds",
+    "types", "saves", "opens", "inserts", "formats", "installs",
+    "plans", "facilitates", "assesses", "reflects", "mentors", "evaluates",
+    "adapts", "differentiates",
 )
 # The PDF loses the space after the verb — "Identifiestwo", "Namesthree",
 # "Demonstratestwo" all appear in a single design — so the number is allowed to
 # be glued on.
-_CELL_START = re.compile(
+_KNOWN_VERB = re.compile(
     r"^(?:" + "|".join(_CELL_VERBS) + r")"
     r"(?:\s|one|two|three|four|five|not\b|$)",
     re.IGNORECASE,
 )
+
+# The list above will never be finished. Measured across the fifty learning
+# areas this system carries, a list built for CRE and then extended for
+# Mathematics still recognised 22 of 48 realistic cells: Creative Arts 1 of 6,
+# Physical Education 1 of 4, Agriculture 1 of 6, teacher education 0 of 4.
+# Weaves, dribbles, harvests, improvises, facilitates — every subject has its
+# own verbs and the next one added will have more.
+#
+# So recognise the GRAMMAR instead. KICD writes every rubric cell in the same
+# form, in every subject: a capitalised third-person singular present verb.
+#
+#     Identifies three qualities of God correctly.
+#     Weaves the basket neatly.
+#     Facilitates the discussion effectively.
+#
+# What must still be rejected is the PDF's wrapped continuations, and those
+# fail on other grounds: they open lower-case ("shows His love to them."), or
+# they are short noun phrases ("David and Goliath.", "Jesus Christ."). So the
+# structural rule asks for a capitalised word ending in -s AND enough words
+# after it to be a cell rather than a fragment.
+_THIRD_PERSON = re.compile(r"^[A-Z][a-z]+(?:es|s)\b")
+
+# Below this a capitalised phrase is a heading or a wrapped fragment, not a
+# rubric level. "Jesus Christ." and "David and Goliath." both die here.
+_MIN_CELL_WORDS = 4
+
+
+def _looks_like_a_cell(text: str) -> bool:
+    """Whether this reads as a rubric level in any subject.
+
+    The known verbs are the fast, precise path. The grammatical form is the
+    general one, and is what stops this from needing a new list every time the
+    curriculum reaches a subject nobody wrote verbs for.
+    """
+    stripped = (text or "").strip()
+    if not stripped or not stripped[:1].isupper():
+        # A cell opens capitalised in every design. `_KNOWN_VERB` is
+        # case-insensitive, so without this "shows His love to them." — a wrap
+        # continuation — matched on its own.
+        return False
+    if _KNOWN_VERB.match(stripped):
+        return True
+
+    words = stripped.split()
+    if len(words) < _MIN_CELL_WORDS or not _THIRD_PERSON.match(stripped):
+        return False
+    # "Integers and their properties." is a plural noun heading, not a level.
+    # A cell is a verb and its object; a heading is a noun joined to a noun.
+    # Only the structural path needs this — a KNOWN verb followed by "and"
+    # ("Adds and subtracts integers accurately.") took the fast path above.
+    return words[1].lower() not in {"and", "or", "&"}
+
+
+class _CellStart:
+    """Kept callable as `_CELL_START.match(...)` for the existing call sites."""
+
+    @staticmethod
+    def match(text: str) -> bool:
+        return _looks_like_a_cell(text)
+
+
+_CELL_START = _CellStart()
 _GLUED = re.compile(
     r"\b(" + "|".join(_CELL_VERBS) + r")(one|two|three|four|five)\b",
     re.IGNORECASE,
