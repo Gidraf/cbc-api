@@ -353,8 +353,13 @@ def _schema_block() -> str:
 # Kinds that are drawn FROM the plan rather than beside it. Judging one of
 # these on its own terms answers "is this a good diagram?" and never "is this a
 # diagram of THIS lesson?".
-DRAWN_FROM_PLAN = ("diagram", "photo_prompt", "video_prompt", "simulation",
-                   "activity", "experiment")
+# Material is drawn from the plan more directly than anything else here: one
+# piece per instruction, written to fulfil it. Leaving it out meant the
+# reviewer judged the words with no sight of what they were asked to be — so
+# "the instruction handed back instead of the song" was invisible to it, which
+# is the single most common defect in this artifact.
+DRAWN_FROM_PLAN = ("material", "diagram", "photo_prompt", "video_prompt",
+                   "simulation", "activity", "experiment")
 
 
 def _linkage_block(artifact: Any, plan: dict[str, Any] | None) -> str:

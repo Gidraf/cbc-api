@@ -493,11 +493,23 @@ def review_artifact(
     # joined to "is this a diagram of this lesson?".
     plan_content: dict[str, Any] | None = None
     if artifact.kind in review_layers.DRAWN_FROM_PLAN and artifact.sub_strand_name:
+        # THE plan this was written from, not the newest one for the
+        # sub-strand. Material carries its parent, and judging version 2 of the
+        # words against version 3 of the plan reports them for missing
+        # instructions they were never given.
+        parent = getattr(artifact, "parent_artifact_id", "") or ""
+        if not parent:
+            from_plan = (artifact.content or {}).get("from_plan")
+            if isinstance(from_plan, dict):
+                parent = str(from_plan.get("artifact_id") or "")
         try:
-            found = registry.search(artifact.grade, artifact.subject, "notes",
-                                    artifact.sub_strand_name, limit=1)
-            if found:
-                plan_content = registry.get(found[0]["artifact_id"]).content
+            if parent:
+                plan_content = registry.get(parent).content
+            else:
+                found = registry.search(artifact.grade, artifact.subject, "notes",
+                                        artifact.sub_strand_name, limit=1)
+                if found:
+                    plan_content = registry.get(found[0]["artifact_id"]).content
         except Exception as exc:  # noqa: BLE001
             logger.warning("Could not load the plan behind %s: %s",
                            artifact.artifact_id, exc)
@@ -608,6 +620,11 @@ _REGENERATORS: dict[str, dict[str, Any]] = {
                    "request": "FactoryGenerateSubstrandsRequest", "scope": "strand"},
     "notes": {"endpoint": "factory_generate_notes",
               "request": "FactoryGenerateNotesRequest", "scope": "sub_strand"},
+    # Material was reviewable and not regenerable, so a review of it had
+    # nowhere to go: eight pieces handed the instruction back, the gate said
+    # so, and "Review and refine" refused the kind.
+    "material": {"endpoint": "factory_generate_material",
+                 "request": "FactoryGenerateMaterialRequest", "scope": "sub_strand"},
     "diagram": {"endpoint": "factory_plan_visuals",
                 "request": "FactoryPlanVisualsRequest", "scope": "sub_strand"},
     "activity": {"endpoint": "factory_plan_activities",

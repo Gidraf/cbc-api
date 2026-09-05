@@ -1951,11 +1951,22 @@ def factory_plan_visuals(
     resp = llm_client.generate(resolved, context.messages, temperature=0.2)
     visuals_list = resp.content.get("visuals", []) if isinstance(resp.content, dict) else []
 
+    # The same shape every other station reports its gate in. Without it the
+    # review loop read no score at all and filed a good run as 0/100, "the
+    # gate failed but named nothing to fix" — because there was nothing to
+    # name.
+    from ..services import diagram_gate
+
+    content = {"visuals": visuals_list}
+    report = diagram_gate.check(content)
+    gate = diagram_gate.gate_of(report)
+
     versioned = _record_artifact(
-        "diagram", payload.grade, payload.subject, {"visuals": visuals_list},
+        "diagram", payload.grade, payload.subject, content,
         strand=payload.strand, sub_strand=payload.sub_strand,
         provenance={"source": "factory_plan_visuals",
                     "provider": resolved.provider, "model": resolved.model},
+        measured_from={"quality_gate": gate},
     )
 
     return {
@@ -1965,6 +1976,8 @@ def factory_plan_visuals(
         "model": resp.model,
         "content_type": ct_profile.to_dict(),
         "research_dossier": dossier.to_dict(),
+        "quality_gate": gate,
+        "coverage": report.to_dict(),
         "artifact": versioned,
     }
 
