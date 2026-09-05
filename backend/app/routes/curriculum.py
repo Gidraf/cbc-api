@@ -5568,6 +5568,256 @@ def factory_generate_material(
             "artifact": versioned}
 
 
+@router.get("/factory/assets/requirements")
+def factory_asset_requirements(
+    grade: str = Query(...),
+    subject: str = Query(...),
+    sub_strand: str = Query(...),
+    strand: str = Query(""),
+    _: AuthContext = Depends(require_roles("admin", "operator", "reviewer")),
+) -> dict[str, Any]:
+    """Every figure this sub-strand's plan asks for, and where each one stands.
+
+    One row per requirement: the brief that would produce it, whether anything
+    has filled it yet, and whether this system can generate it at all. Video
+    cannot — nothing here makes footage, and offering a button for it would be
+    offering to fail. Its brief is the deliverable; somebody films it.
+    """
+    from ..services import (
+        asset_requirements, asset_uploads, figure_anchor, lesson_assets,
+        remedies, stage_guard,
+    )
+
+    notes = stage_guard._filed_notes(grade, subject, sub_strand) or {}
+    if not notes:
+        raise_api_error(
+            "MISSING_PARENT_CONTEXT",
+            f"No lesson plan is filed for '{sub_strand}', and the figures a "
+            f"lesson needs are named by its plan.",
+            remedy=remedies.run_this_stage(grade, subject, "notes"),
+        )
+
+    wanted = asset_requirements.read(notes).items
+    filled = lesson_assets.match(wanted, lesson_assets.collect(grade, subject, sub_strand))
+
+    modules = {m.get("module_number", n): m
+               for n, m in enumerate(notes.get("modules") or [], start=1)
+               if isinstance(m, dict)}
+
+    rows: list[dict[str, Any]] = []
+    for req in wanted:
+        module = modules.get(req.module_number) or {}
+        have = filled.get(str(req.what).lower())
+        rows.append({
+            "kind": req.kind,
+            "what": req.what,
+            "lesson": req.module_number,
+            "lesson_title": str(module.get("title") or ""),
+            "topic": req.topic,
+            "asset_id": asset_uploads.asset_id_for(grade, subject, sub_strand,
+                                                   req.kind, req.what),
+            "filled": bool(have),
+            "storage_url": (have or {}).get("url", ""),
+            "source": (have or {}).get("source", ""),
+            "can_generate": asset_uploads.can_generate(req.kind),
+            "accepts": list(asset_uploads.ACCEPTS.get(req.kind, ())),
+            "brief": figure_anchor.brief_for(
+                req, grade_label=grade, subject=subject, strand=strand,
+                sub_strand=sub_strand,
+                lesson_title=str(module.get("title") or ""),
+            ),
+        })
+
+    return {
+        "sub_strand": sub_strand,
+        "total": len(rows),
+        "filled": sum(1 for r in rows if r["filled"]),
+        "requirements": rows,
+        "note": (
+            "A figure is filled by generating it where this system can, or by "
+            "uploading the file. Video is upload-only: the brief is what this "
+            "produces, and somebody films it."
+        ),
+    }
+
+
+@router.post("/factory/assets/upload")
+def factory_upload_asset(
+    grade: str = Form(...),
+    subject: str = Form(...),
+    sub_strand: str = Form(...),
+    kind: str = Form(...),
+    what: str = Form(..., description="The requirement this answers, verbatim"),
+    strand: str = Form(""),
+    alt_text: str = Form(""),
+    file: UploadFile = File(...),
+    auth: AuthContext = Depends(require_roles("admin", "operator")),
+) -> dict[str, Any]:
+    """Supply the file for a planned figure.
+
+    Filed against the requirement by name, so the page's plate fills with it
+    and a second upload for the same figure replaces the first rather than
+    leaving the renderer to choose.
+    """
+    from ..infra.storage import object_storage
+    from ..services import asset_uploads
+
+    accepts = asset_uploads.ACCEPTS.get(kind)
+    if not accepts:
+        raise_api_error(
+            "VALIDATION_FAILED",
+            f"'{kind}' is not a kind of figure a page keeps space for. "
+            f"Known: {', '.join(sorted(asset_uploads.ACCEPTS))}.",
+        )
+
+    content_type = (file.content_type or "").split(";")[0].strip().lower()
+    if content_type not in accepts:
+        raise_api_error(
+            "VALIDATION_FAILED",
+            f"'{content_type or 'unknown'}' cannot fill a {kind} plate. "
+            f"That plate takes: {', '.join(accepts)}.",
+        )
+
+    payload = file.file.read()
+    if not payload:
+        raise_api_error("VALIDATION_FAILED", "The file is empty.")
+    if len(payload) > asset_uploads.MAX_BYTES:
+        raise_api_error(
+            "VALIDATION_FAILED",
+            f"{len(payload) // (1024 * 1024)}MB is larger than the "
+            f"{asset_uploads.MAX_BYTES // (1024 * 1024)}MB limit.",
+        )
+
+    asset_id = asset_uploads.asset_id_for(grade, subject, sub_strand, kind, what)
+    suffix = (file.filename or "").rsplit(".", 1)[-1].lower() or "bin"
+    object_key = f"assets/{grade}/{subject}/{asset_id}.{suffix}".replace(" ", "-")
+
+    try:
+        storage_url = object_storage.save_bytes(object_key, payload, content_type)
+    except Exception as exc:  # noqa: BLE001
+        raise_api_error("STORAGE_UPLOAD_FAILED",
+                        f"Could not store the file: {exc}")
+
+    # An SVG is inlined on the page rather than fetched, so the print works
+    # with no network. Everything else is referenced by URL.
+    svg = payload.decode("utf-8", "replace") if content_type == "image/svg+xml" else ""
+
+    recorded = asset_uploads.record(
+        grade=grade, subject=subject, strand=strand, sub_strand=sub_strand,
+        kind=kind, what=what, storage_url=storage_url, svg=svg,
+        alt_text=alt_text, content_type=content_type, size=len(payload),
+        source="upload", uploaded_by=getattr(auth, "subject", ""),
+    )
+    return {**recorded, "bytes": len(payload), "content_type": content_type}
+
+
+class GenerateAssetRequest(BaseModel):
+    grade: str
+    subject: str
+    sub_strand: str
+    kind: str
+    what: str
+    strand: str = ""
+    brief: str = ""
+    custom_instructions: str = ""
+
+
+@router.post("/factory/assets/generate")
+def factory_generate_asset(
+    payload: GenerateAssetRequest,
+    auth: AuthContext = Depends(require_roles("admin", "operator")),
+) -> dict[str, Any]:
+    """Draw one planned figure now, from the brief the page already carries.
+
+    Only for the kinds this system can actually produce. A video request is
+    refused rather than attempted: nothing here makes footage, and a button
+    that fails is worse than no button — it costs a call to learn what the
+    capability list already knew.
+    """
+    from ..services import asset_uploads, diagram_dedup
+    from ..services.llm_client import llm_client
+    from ..services.pipeline import pipeline_orchestrator
+
+    if not asset_uploads.can_generate(payload.kind):
+        raise_api_error(
+            "VALIDATION_FAILED",
+            f"Nothing here generates {payload.kind}. Its brief is what this "
+            f"station produces — upload the file when you have it.",
+        )
+
+    brief = payload.brief.strip()
+    if not brief:
+        raise_api_error(
+            "VALIDATION_FAILED",
+            "Generating a figure needs the brief that describes it. Read the "
+            "requirements for this sub-strand first.",
+        )
+
+    resolved = pipeline_orchestrator.router.resolve_for_stage("diagram_generation")
+    instruction = (
+        f"{brief}\n\n"
+        "Return ONE standalone SVG and nothing else — no explanation, no "
+        "markdown fence. It must carry its own viewBox, use no external fonts "
+        "or images, and read correctly in black and white on a photocopy."
+    )
+    if payload.custom_instructions:
+        instruction += f"\n\nALSO: {payload.custom_instructions}"
+
+    try:
+        response = llm_client.generate(
+            resolved, [{"role": "user", "content": instruction}], temperature=0.2)
+    except Exception as exc:  # noqa: BLE001
+        raise_api_error("DIAGRAM_GENERATION_FAILED", f"The model failed: {exc}")
+
+    raw = response.content
+    if isinstance(raw, dict):
+        raw = raw.get("svg") or raw.get("content") or ""
+    svg = diagram_dedup.extract_and_sanitize_svg(str(raw or ""))
+    if not svg:
+        raise_api_error(
+            "DIAGRAM_GENERATION_FAILED",
+            "The model returned nothing that parses as an SVG. Try again, or "
+            "copy the brief and draw it elsewhere.",
+        )
+
+    from ..infra.storage import object_storage
+
+    asset_id = asset_uploads.asset_id_for(payload.grade, payload.subject,
+                                          payload.sub_strand, payload.kind,
+                                          payload.what)
+    key = f"assets/{payload.grade}/{payload.subject}/{asset_id}.svg".replace(" ", "-")
+    storage_url = ""
+    try:
+        storage_url = object_storage.save_bytes(key, svg.encode("utf-8"),
+                                                "image/svg+xml")
+    except Exception as exc:  # noqa: BLE001
+        # The SVG is kept on the row regardless: it is inlined on the page, so
+        # a storage failure costs the download, not the figure.
+        logger.warning("Could not store generated asset %s: %s", asset_id, exc)
+
+    recorded = asset_uploads.record(
+        grade=payload.grade, subject=payload.subject, strand=payload.strand,
+        sub_strand=payload.sub_strand, kind=payload.kind, what=payload.what,
+        storage_url=storage_url, svg=svg, content_type="image/svg+xml",
+        size=len(svg), source=f"generated:{resolved.model}",
+        uploaded_by=getattr(auth, "subject", ""),
+    )
+    return {**recorded, "svg": svg, "model": resolved.model,
+            "usage": getattr(response, "usage", None)}
+
+
+@router.delete("/factory/assets/{asset_id}")
+def factory_remove_asset(
+    asset_id: str,
+    _: AuthContext = Depends(require_roles("admin", "operator")),
+) -> dict[str, Any]:
+    """Take a supplied file back off a figure, so the plate returns."""
+    from ..services import asset_uploads
+
+    removed = asset_uploads.remove(asset_id)
+    return {"asset_id": asset_id, "removed": removed}
+
+
 @router.get("/factory/material-drafts")
 def factory_material_drafts(
     grade: str = Query("", description="Narrow to one grade"),

@@ -1,5 +1,6 @@
 import React from "react";
 import { MathBlock } from "./MathBlock";
+import { canSpeak, pauseSpeech, resumeSpeech, speak, stopSpeech, type SpeakHandle } from "../lib/speech";
 
 export interface SimulationStep {
   index: number;
@@ -8,6 +9,8 @@ export interface SimulationStep {
   plain: string;
   narration: string;
   audio_url?: string | null;
+  // "recorded" when a person read it aloud, otherwise the synthesiser.
+  audio_source?: string;
   svg_highlight?: string;
   animation_type?: string;
 }
@@ -33,6 +36,10 @@ export function SimulationPlayer({ track, compact = false, onClose }: Simulation
   const [isPlaying, setIsPlaying] = React.useState(false);
   const audioRef = React.useRef<HTMLAudioElement | null>(null);
   const timerRef = React.useRef<any>(null);
+  const speechRef = React.useRef<SpeakHandle | null>(null);
+  // Which of the three tiers is actually carrying this step, so the player can
+  // say so rather than leaving a silent step looking broken.
+  const [voicing, setVoicing] = React.useState<"file" | "device" | "silent">("silent");
 
   const steps = track?.steps || [];
   const currentStep = steps[currentStepIdx] || null;
@@ -48,6 +55,11 @@ export function SimulationPlayer({ track, compact = false, onClose }: Simulation
       if (timerRef.current) {
         clearTimeout(timerRef.current);
       }
+      // A walkthrough closed mid-sentence must not keep talking over whatever
+      // the operator opens next.
+      speechRef.current?.cancel();
+      speechRef.current = null;
+      stopSpeech();
     };
   }, [track]);
 
@@ -70,27 +82,57 @@ export function SimulationPlayer({ track, compact = false, onClose }: Simulation
     if (timerRef.current) {
       clearTimeout(timerRef.current);
     }
+    speechRef.current?.cancel();
+    speechRef.current = null;
 
     if (!isPlaying || !currentStep) return;
 
+    const onTimer = () => {
+      setVoicing("silent");
+      timerRef.current = setTimeout(advanceStep, currentStep.duration_ms || 4000);
+    };
+
+    // Three tiers, best first.
+    //
+    //   a synthesised file  — the voice somebody chose and paid for
+    //   this device's voice — free, instant, offline, and it needs no storage
+    //   a timer             — silence, advancing on an estimate of the words
+    //
+    // The middle one is where nearly every walkthrough sits: narration costs a
+    // call per step to synthesise, so most steps have no file and used to be
+    // read in silence. Every tier ends the same way — when the words finish,
+    // the step advances — so the timing follows the narration rather than
+    // guessing at its length.
     if (currentStep.audio_url) {
       const audio = new Audio(currentStep.audio_url);
       audioRef.current = audio;
-      audio.play().catch((err) => {
-        console.warn("Audio play failed, falling back to timer:", err);
-        // Fallback to step duration timer if audio cannot autoplay
-        timerRef.current = setTimeout(advanceStep, currentStep.duration_ms || 4000);
+      setVoicing("file");
+      audio.onended = advanceStep;
+      audio.onerror = () => speakStep();
+      audio.play().catch(() => {
+        // Autoplay refused, or the file is gone. The device can still read it.
+        speakStep();
       });
+      return;
+    }
 
-      audio.onended = () => {
-        advanceStep();
-      };
-      audio.onerror = () => {
-        timerRef.current = setTimeout(advanceStep, currentStep.duration_ms || 4000);
-      };
-    } else {
-      // No audio available: advance using duration_ms timer
-      timerRef.current = setTimeout(advanceStep, currentStep.duration_ms || 4000);
+    speakStep();
+
+    function speakStep() {
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current = null;
+      }
+      const words = (currentStep?.narration || "").trim();
+      if (!canSpeak() || !words) {
+        onTimer();
+        return;
+      }
+      setVoicing("device");
+      speechRef.current = speak(words, {
+        onEnd: advanceStep,
+        onError: () => onTimer(),
+      });
     }
   }, [isPlaying, currentStepIdx, currentStep, advanceStep]);
 
@@ -106,6 +148,10 @@ export function SimulationPlayer({ track, compact = false, onClose }: Simulation
     if (currentStepIdx >= totalSteps - 1 && !isPlaying) {
       setCurrentStepIdx(0);
     }
+    // Pause has to stop the speaking too, or the narration carries on over a
+    // paused walkthrough and finishes by advancing it.
+    if (isPlaying) pauseSpeech();
+    else resumeSpeech();
     setIsPlaying(!isPlaying);
   };
 
@@ -241,8 +287,25 @@ export function SimulationPlayer({ track, compact = false, onClose }: Simulation
             lineHeight: 1.5,
           }}
         >
-          <span style={{ fontSize: "16px", marginTop: "1px" }}>
-            {currentStep.audio_url ? "🔊" : "💬"}
+          <span
+            style={{ fontSize: "16px", marginTop: "1px" }}
+            title={
+              voicing === "file" && currentStep.audio_source === "recorded"
+                ? "A teacher's own recording"
+                : voicing === "file"
+                ? "Narrated by a speech synthesiser"
+                : voicing === "device"
+                ? "Read aloud by this device — no recording needed"
+                : "No voice on this device; the step advances on its own timing"
+            }
+          >
+            {voicing === "file"
+              ? currentStep.audio_source === "recorded"
+                ? "🎙"
+                : "🔊"
+              : voicing === "device"
+              ? "🗣"
+              : "💬"}
           </span>
           <div style={{ flex: 1 }}>
             <strong>Teacher Explanation:</strong> {currentStep.narration}

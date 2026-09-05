@@ -54,7 +54,8 @@ def run_audio_job(payload: dict[str, Any]) -> dict[str, Any]:
         return {"status": "skipped", "reason": "no simulation_id"}
 
     row = fetch_one(
-        "SELECT track FROM math_simulations WHERE simulation_id = :sid",
+        "SELECT track, curriculum_link FROM math_simulations "
+        "WHERE simulation_id = :sid",
         {"sid": simulation_id},
     )
     if not row:
@@ -62,6 +63,8 @@ def run_audio_job(payload: dict[str, Any]) -> dict[str, Any]:
 
     track = row.get("track") or {}
     steps = track.get("steps") or []
+    link = row.get("curriculum_link") or {}
+    subject = str(link.get("subject") or "") if isinstance(link, dict) else ""
     if not steps:
         return {"status": "skipped", "reason": "no steps"}
 
@@ -71,8 +74,12 @@ def run_audio_job(payload: dict[str, Any]) -> dict[str, Any]:
         if step.get("audio_url"):
             continue
         try:
+            # The learning area chooses the voice: a Kiswahili lesson narrated
+            # by an English voice is the same defect as a Kiswahili lesson
+            # scripted in English.
             url = tts_service.synthesize_step_audio(
-                step.get("narration") or "", simulation_id, int(step.get("index", 0))
+                step.get("narration") or "", simulation_id,
+                int(step.get("index", 0)), subject=subject,
             )
         except Exception as exc:  # noqa: BLE001
             logger.warning("Narration failed for %s step %s: %s",

@@ -98,6 +98,26 @@ def collect(grade: str, subject: str, sub_strand: str = "") -> list[dict[str, An
     except Exception as exc:  # noqa: BLE001
         logger.warning("Could not collect diagrams for %s/%s: %s", grade, subject, exc)
 
+    # Anything a person supplied for a planned figure, and anything generated
+    # on demand for one. Listed FIRST so that a file somebody chose beats a
+    # station's older attempt at the same picture: an upload is a decision.
+    try:
+        from . import asset_uploads
+
+        for row in asset_uploads.list_for(grade, subject, sub_strand):
+            title = str(row.get("what") or row.get("title") or "").strip()
+            if not title:
+                continue
+            url = str(row.get("storage_url") or "")
+            svg = str(row.get("svg") or "")
+            if url or svg:
+                found.append({"kind": str(row.get("kind") or "diagram"),
+                              "title": title, "url": url, "svg": svg,
+                              "alt": str(row.get("alt_text") or title),
+                              "source": str(row.get("source") or "upload")})
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Could not collect uploads for %s/%s: %s", grade, subject, exc)
+
     # Photographs, video and audio.
     try:
         from . import media_registry
@@ -132,6 +152,12 @@ def match(requirements: list[Any], available: list[dict[str, Any]]) -> dict[str,
         for a, asset in enumerate(available):
             # A video never fills a slot kept for a diagram.
             if kind and asset.get("kind") and kind != asset["kind"]:
+                continue
+            # An upload was filed against a requirement by name, so an exact
+            # match on `what` is a decision a person made and outranks the
+            # word-overlap score below.
+            if asset.get("source") == "upload" and asset.get("title") == wanted:
+                pairs.append((1.0, r, a))
                 continue
             score = _score(wanted, asset.get("title", ""))
             if score >= _FLOOR:

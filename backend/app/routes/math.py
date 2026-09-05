@@ -3,11 +3,12 @@ from __future__ import annotations
 import logging
 from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, File, Query, UploadFile
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
 from ..errors import raise_api_error
+from ..settings import settings
 from ..services.auth import AuthContext, require_roles
 from ..services.math_engine import (
     CurriculumContext,
@@ -66,7 +67,10 @@ class SimulateRequest(BaseModel):
     sub_strand: str = ""
     strand: str = ""
     title: str = ""
-    enable_tts: bool = True
+    # Off by default: the player reads each step with the device's own voice,
+    # which costs nothing and syncs to the words. Set it to ask for a
+    # synthesised recording as well.
+    enable_tts: bool | None = None
 
 
 class GenerateQuestionRequest(BaseModel):
@@ -188,7 +192,8 @@ def create_simulation(
         solution_trace=trace,
         curriculum_link=curr_link,
         title=payload.title or f"Solution: {payload.problem[:40]}",
-        enable_tts=payload.enable_tts,
+        enable_tts=(settings.tts_synthesise if payload.enable_tts is None
+                    else payload.enable_tts),
     )
     return track.to_dict()
 
@@ -235,6 +240,93 @@ def render_graph(
     else:
         svg = render_graph_svg(spec)
     return {"svg": svg}
+
+
+@router.post("/walkthrough/{simulation_id}/step/{step_index}/audio")
+def upload_step_audio(
+    simulation_id: str,
+    step_index: int,
+    file: UploadFile = File(..., description="The recording for this step"),
+    auth: AuthContext = Depends(require_roles("admin", "operator")),
+) -> dict[str, Any]:
+    """A person's own voice for one step of a walkthrough.
+
+    No synthesiser is as good as a teacher, and for the lessons that matter
+    most the answer is not a better engine — it is somebody reading the step
+    aloud once. This stores the recording at exactly the key the synthesiser
+    would use, and the synthesiser returns any file already at that key before
+    it calls an engine. So a recorded step is never overwritten, never
+    re-synthesised, and never costs anything again.
+    """
+    from ..infra.db import execute, fetch_one, to_json
+    from ..infra.storage import object_storage
+
+    allowed = ("audio/mpeg", "audio/mp3", "audio/mp4", "audio/ogg",
+               "audio/wav", "audio/x-wav", "audio/webm")
+    content_type = (file.content_type or "").split(";")[0].strip().lower()
+    if content_type not in allowed:
+        raise_api_error(
+            "VALIDATION_FAILED",
+            f"'{content_type or 'unknown'}' is not audio. This takes: "
+            f"{', '.join(sorted(set(allowed)))}.",
+        )
+
+    payload = file.file.read()
+    if not payload:
+        raise_api_error("VALIDATION_FAILED", "The recording is empty.")
+    if len(payload) > 15 * 1024 * 1024:
+        raise_api_error("VALIDATION_FAILED",
+                        "A single step's recording should not exceed 15MB.")
+
+    row = fetch_one(
+        "SELECT track FROM math_simulations WHERE simulation_id = :sid",
+        {"sid": simulation_id},
+    )
+    if not row:
+        raise_api_error("NOT_FOUND", f"No walkthrough {simulation_id}.")
+
+    track = row.get("track") or {}
+    steps = track.get("steps") or []
+    target = next((s for s in steps if int(s.get("index", -1)) == step_index), None)
+    if target is None:
+        raise_api_error(
+            "NOT_FOUND",
+            f"Walkthrough {simulation_id} has no step {step_index}. It has "
+            f"{len(steps)}.",
+        )
+
+    # The synthesiser's own key, so this file simply IS the step's audio.
+    object_key = f"simulations/{simulation_id}/step_{step_index}.mp3"
+    try:
+        url = object_storage.save_bytes(object_key, payload, content_type)
+    except Exception as exc:  # noqa: BLE001
+        raise_api_error("STORAGE_UPLOAD_FAILED", f"Could not store it: {exc}")
+
+    target["audio_url"] = url
+    target["audio_source"] = "recorded"
+    target["recorded_by"] = getattr(auth, "subject", "")
+    track["steps"] = steps
+
+    voiced = sum(1 for s in steps if s.get("audio_url"))
+    execute(
+        """
+        UPDATE math_simulations
+           SET track = CAST(:track AS jsonb), audio_status = :status, updated_at = NOW()
+         WHERE simulation_id = :sid
+        """,
+        {"track": to_json(track), "sid": simulation_id,
+         "status": "ready" if voiced == len(steps) else "partial"},
+    )
+
+    return {
+        "simulation_id": simulation_id,
+        "step": step_index,
+        "audio_url": url,
+        "audio_source": "recorded",
+        "bytes": len(payload),
+        "steps_voiced": voiced,
+        "steps_total": len(steps),
+    }
 
 
 @router.get("/walkthrough/{simulation_id}")

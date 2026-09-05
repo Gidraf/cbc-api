@@ -890,6 +890,32 @@ MIGRATIONS: list[tuple[str, str]] = [
             ON material_drafts(grade, subject, sub_strand);
         """,
     ),
+    (
+        "029_uploaded_assets",
+        """
+        CREATE TABLE IF NOT EXISTS uploaded_assets (
+            asset_id TEXT PRIMARY KEY,
+            grade TEXT NOT NULL DEFAULT '',
+            subject TEXT NOT NULL DEFAULT '',
+            strand TEXT NOT NULL DEFAULT '',
+            sub_strand TEXT NOT NULL DEFAULT '',
+            kind TEXT NOT NULL DEFAULT 'diagram',
+            what TEXT NOT NULL DEFAULT '',
+            title TEXT NOT NULL DEFAULT '',
+            alt_text TEXT NOT NULL DEFAULT '',
+            storage_url TEXT NOT NULL DEFAULT '',
+            svg TEXT NOT NULL DEFAULT '',
+            content_type TEXT NOT NULL DEFAULT '',
+            bytes INT NOT NULL DEFAULT 0,
+            source TEXT NOT NULL DEFAULT 'upload',
+            uploaded_by TEXT NOT NULL DEFAULT '',
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_uploaded_assets_scope
+            ON uploaded_assets(grade, subject, sub_strand, kind);
+        """,
+    ),
 ]
 
 

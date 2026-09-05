@@ -37,6 +37,20 @@ class Settings:
     design_agent_enabled: bool = os.getenv("DESIGN_AGENT", "1") not in ("0", "false", "False")
     tts_voice: str = os.getenv("TTS_VOICE", "alloy")
     tts_speed: float = float(os.getenv("TTS_SPEED", "1.0"))
+    # Synthesising narration costs a provider call per step and a file per step
+    # to store. The browser playing the walkthrough can already speak, for
+    # nothing, offline, and in time with the steps — so a recording is now
+    # something you ask for rather than something every run pays for.
+    #
+    # Turn it on where the voice matters more than the cost: a class with no
+    # device voices installed, or a lesson going out as a video.
+    # `edge` is free, needs no key, and has Kenyan voices — so narration is on
+    # by default. `openai` for anyone who prefers those voices and has a key;
+    # `none` to leave every step to the browser's own voice.
+    tts_engine: str = os.getenv("TTS_ENGINE", "edge")
+    # Only for TTS_ENGINE=piper: the path to a downloaded .onnx voice.
+    piper_model: str = os.getenv("PIPER_MODEL", "")
+    tts_synthesise: bool = os.getenv("TTS_SYNTHESISE", "1") not in ("0", "false", "False", "")
 
     # Langfuse Integration
     langfuse_host: str = os.getenv("LANGFUSE_HOST", "http://localhost:3001")
