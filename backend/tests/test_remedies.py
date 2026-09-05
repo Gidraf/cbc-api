@@ -20,15 +20,23 @@ FRONTEND = Path(__file__).resolve().parents[2] / "frontend-web"
 
 def test_several_missing_stages_are_one_remedy_in_order() -> None:
     """Not several remedies: they are not alternatives, and a list of buttons
-    invites pressing the last one — which is the one furthest from possible."""
+    invites pressing the last one — which is the one furthest from possible.
+
+    The route is what the stage DECLARES it is built from, not everything that
+    sits before it on the board. `content_lineage` says a diagram is built from
+    the strand, the sub-strand and the lesson plan; the lesson material sits
+    between them on the board and has nothing to do with it. Listing it sent an
+    operator to run a station whose output the diagram station never reads.
+    """
     remedy = remedies.missing_upstream(
         "grade-3", "Mathematics", "diagram", have={"ingest", "strands"}
     )
 
     assert remedy.kind == "run"
-    assert [s["stage"] for s in remedy.steps] == ["substrands", "notes", "material"]
+    assert [s["stage"] for s in remedy.steps] == ["substrands", "notes"]
+    assert "material" not in [s["stage"] for s in remedy.steps]
     assert remedy.sequential is True
-    assert "3 stages" in remedy.label
+    assert "2 stages" in remedy.label
     assert "running them together fails all but the first" in remedy.why
 
 

@@ -46,6 +46,34 @@ def _artifact(kind: str, title: str, content: Any = None, parents: list[Artifact
     return Artifact(kind=kind, id=ident, title=title, content=body, hour=hour)
 
 
+def _filed_notes(grade: str, subject: str, sub_strand: str) -> dict[str, Any] | None:
+    """The newest lesson plan filed for this sub-strand, or None.
+
+    Read through `artifact_registry`, which normalises the grade on both sides
+    — the same lookup `plan_status` above already does, so a stage that refuses
+    and the banner that explains the refusal cannot disagree about whether a
+    plan exists.
+    """
+    from . import artifact_registry
+
+    try:
+        found = artifact_registry.search(grade, subject, "notes", sub_strand, limit=1)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Could not look for filed notes for %s/%s/%s: %s",
+                       grade, subject, sub_strand, exc)
+        return None
+    if not found:
+        return None
+    try:
+        artifact = artifact_registry.get(str(found[0].get("artifact_id") or ""))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Could not read filed notes %s: %s",
+                       found[0].get("artifact_id"), exc)
+        return None
+    content = getattr(artifact, "content", None)
+    return content if isinstance(content, dict) else None
+
+
 def _hours_from(notes_content: Any) -> list[Artifact]:
     """Each hour module in a notes payload as its own artefact."""
     from .document_index import parse_pages  # noqa: F401  (kept local, cheap)
@@ -149,6 +177,17 @@ def require_context(
     )
 
     hours = _hours_from(notes_content)
+    if not hours and sub_strand:
+        # Nothing was passed in, so look for the notes that are FILED.
+        #
+        # This guard only ever read the request body. A station queued from the
+        # board sends no `notes_content` — the board queues a sub-strand, not a
+        # payload — so the guard refused with "notes is missing" for a
+        # sub-strand whose lesson plan was written, reviewed, scored and filed.
+        # The station itself has a database fallback, twenty lines further
+        # down, which never ran because the guard had already raised.
+        hours = _hours_from(_filed_notes(grade, subject, sub_strand))
+
     for hour in hours:
         if substrand_artifact:
             hour.parents = [substrand_artifact.id]

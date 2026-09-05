@@ -28,16 +28,31 @@ did something else.
 """
 from __future__ import annotations
 
+import logging
+
 from dataclasses import dataclass, field
 from typing import Any
 
 # The stages that must be finished before another can start, in order. Read off
 # the same chain the board draws, so a remedy cannot propose a route the board
 # would not.
+logger = logging.getLogger("cbc-remedies")
+
 CHAIN: tuple[str, ...] = (
     "ingest", "strands", "substrands", "notes", "material",
     "diagram", "media", "simulation", "activity", "questions",
 )
+
+# The lineage layer and the board name the same work differently, and five of
+# the seven names disagree. Mapping them here is what stops a stage that is not
+# on the board from being treated as if it came after everything on it.
+LINEAGE_STAGE: dict[str, str] = {
+    "asset_plan": "diagram",   # planning a sub-strand's visuals IS the diagram stage
+    "hour_note": "notes",
+    "substrand": "substrands",
+    "question": "questions",
+    "strand": "strands",
+}
 
 LABELS: dict[str, str] = {
     "ingest": "Read the design",
@@ -89,6 +104,35 @@ class Remedy:
         return out
 
 
+# Which board stage produces each lineage layer. `content_lineage` states what
+# every stage may see; this turns those layers back into the stations an
+# operator would actually run.
+_LAYER_STAGE: dict[str, str] = {
+    "design_pages": "ingest",
+    "strand": "strands",
+    "substrand": "substrands",
+    "hour_note": "notes",
+    "notes": "notes",
+    "assets": "diagram",
+}
+
+
+def _declared_prerequisites(stage: str) -> set[str] | None:
+    """The stations a stage is built from, or None where nothing is declared."""
+    try:
+        from .content_lineage import OPTIONAL_LAYERS, STAGE_LAYERS
+    except Exception:  # noqa: BLE001
+        return None
+
+    layers = STAGE_LAYERS.get(stage)
+    if not layers:
+        return None
+    return {
+        _LAYER_STAGE[layer] for layer in layers
+        if layer not in OPTIONAL_LAYERS and layer in _LAYER_STAGE
+    }
+
+
 def missing_upstream(grade: str, subject: str, stage: str, *, have: set[str] | None = None) -> Remedy:
     """Everything that has to run before `stage` can, in the order it must run.
 
@@ -99,11 +143,44 @@ def missing_upstream(grade: str, subject: str, stage: str, *, have: set[str] | N
     """
     have = have or set()
     try:
-        upto = CHAIN.index(stage)
+        upto = CHAIN.index(LINEAGE_STAGE.get(stage, stage))
     except ValueError:
-        upto = len(CHAIN)
-    needed = [s for s in CHAIN[:upto] if s not in have]
+        # An unknown stage used to fall through to `len(CHAIN)`, which listed
+        # the ENTIRE pipeline as prerequisites. Five of the seven lineage stage
+        # names are spelled differently from the board's — `asset_plan`,
+        # `substrand`, `question` — so the diagram planner, which needs a
+        # lesson plan and nothing else, told the operator to "run the 7 stages
+        # this needs".
+        #
+        # Naming nothing is better than naming everything: a remedy that
+        # proposes eight stages for a missing plan is a remedy nobody follows.
+        logger.warning("No place in the chain for stage %r; no route offered.", stage)
+        return Remedy(
+            kind="open", label="Check what this stage needs",
+            why=(f"'{stage}' is not a stage on the board, so the route to it "
+                 f"cannot be worked out here."),
+            grade=grade, subject=subject, stage=stage,
+        )
+    # What this stage DECLARES it needs, not everything that happens to sit
+    # before it on the board. The diagram planner needs a lesson plan; it does
+    # not need the lesson material, and listing material as a prerequisite
+    # sends an operator to run a station that will not help.
+    declared = _declared_prerequisites(stage)
+    if declared is not None:
+        needed = [s for s in CHAIN[:upto] if s in declared and s not in have]
+    else:
+        needed = [s for s in CHAIN[:upto] if s not in have]
+
     steps = [{"stage": s, "label": LABELS.get(s, s)} for s in needed]
+    if not steps:
+        # Everything it needs is already there. Saying "run the 0 stages this
+        # needs" reads as a bug, and is one.
+        return Remedy(
+            kind="run", label=f"Run {LABELS.get(LINEAGE_STAGE.get(stage, stage), stage).lower()}",
+            why="Everything it is built from is already in place.",
+            grade=grade, subject=subject, stage=stage,
+            steps=[], sequential=False,
+        )
     if len(steps) == 1:
         label = f"Run {steps[0]['label'].lower()}"
         why = f"{LABELS.get(stage, stage)} is built from it, so it has to exist first."
