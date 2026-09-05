@@ -5636,14 +5636,69 @@ def _svg_brief(visual: dict[str, Any], *, grade: str, subject: str,
 
     lines += [
         "",
-        "HOW TO DRAW IT:",
-        "  - Line art. Black strokes on no background, so it prints on any paper.",
-        "  - A `viewBox` and no fixed width or height, so it scales to the page.",
-        "  - Text in the SVG's own <text> elements, never in an image. No",
+        "THE SPACE IT HAS TO FIT. This is not a picture on a screen. It is a",
+        "figure in a two-column textbook page, and the page is already set:",
+        "",
+        "  - The figure is 85mm wide. Always. The book sets A4 at 210mm with",
+        "    16mm margins and two columns 8mm apart, so one column is 85mm and",
+        "    your drawing is scaled to exactly that width.",
+        "  - The page reserves 50mm of height for it. A drawing of another",
+        "    shape reflows the column around it.",
+        "  - Therefore: `viewBox=\"0 0 340 200\"`, and NO width or height",
+        "    attribute. Those 340 × 200 units ARE the 85mm × 50mm. Work in",
+        "    them. One unit is a quarter of a millimetre on paper.",
+        "  - Keep a 12-unit margin clear on every side, then USE the rest of",
+        "    the canvas. A drawing crowded into one corner is not smaller than",
+        "    the page — it is scaled to the same 85mm and merely thinner.",
+        "",
+        "SIZES, IN THOSE UNITS. The caption printed beside this figure is",
+        "8.5pt. A label smaller than the caption cannot be read at all:",
+        "",
+        "  - No text anywhere below `font-size=\"13\"`. Part labels 13–15. One",
+        "    title, if you need one, at 18. Nothing under 13, ever — that is",
+        "    the single most common way one of these comes back unusable.",
+        "  - A character is about 0.55 × the font-size wide. So a 13-unit",
+        "    label may run about 44 characters before it crosses the margin.",
+        "    Longer than that, break it across <tspan> lines 16 units apart —",
+        "    or shorten it. Labels name a part; they do not define it. Write",
+        "    \"Numerator\", not \"Numerator — the number above the line\".",
+        "  - Stroke widths 1.5 to 2.5. Thinner disappears in a photocopy.",
+        "  - font-family=\"Helvetica, Arial, sans-serif\" on every <text>, which",
+        "    is the sans the book's own captions and labels are set in.",
+        "",
+        "NOTHING MAY OVERLAP ANYTHING. At 85mm a label lying across line-work",
+        "is a smudge, not a word. Before you place each <text>, work out the",
+        "box it occupies — x to x + 0.55 × font-size × (number of characters),",
+        "and font-size tall above the baseline y — and put it where no shape",
+        "and no other label already is. If a part is too small to hold its own",
+        "name, set the label out in the clear margin and run a thin leader",
+        "line (stroke-width 1) from the text to the part. That is how an atlas",
+        "does it, and it is why an atlas is readable.",
+        "",
+        "A label set INSIDE a panel — a titled box, a tinted region — is fine,",
+        "and is how a textbook sets one. What is unreadable is a label",
+        "crossing a panel's edge, or lying over a line, an arrow or a curve.",
+        "",
+        "THE DRAWING MUST CARRY THE MEANING. If every part gets the same",
+        "generic motif and only the words beside it differ, you have written a",
+        "list, not drawn a diagram, and a learner who covers the labels learns",
+        "nothing. Each part must LOOK like what it is and look different from",
+        "the others. A question will hide one part and ask what it was, so the",
+        "shape has to be the evidence.",
+        "",
+        "COLOUR, SPARINGLY. One accent colour plus black on white. Use the",
+        "accent as a light fill (for example #d9e8f5, #fde9d0) behind a black",
+        "outline, never as the only thing distinguishing two parts — half the",
+        "copies of this page are photocopied in grey, and a distinction that",
+        "survives only in colour is lost in them. No background rectangle",
+        "behind the whole drawing; the page is already white.",
+        "",
+        "  - Text in the SVG's own <text> elements, never inside an image. No",
         "    external fonts, images, scripts or stylesheets — nothing that has",
         "    to be fetched, because this is printed and read offline.",
-        "  - Labels large enough to survive a photocopy, and placed so they do",
-        "    not overlap the thing they name.",
+        "  - Position parts at plain coordinates, or with translate() only. A",
+        "    rotate() or matrix() cannot be checked for overlap, and will be",
+        "    rejected.",
         "  - Wrap each labelled part and its <text> in a <g> carrying BOTH",
         "    `data-part-id=\"part-<label in lower case with hyphens>\"` and",
         "    the same value as `id`. A question occludes a part by that",
@@ -5672,7 +5727,8 @@ def factory_draw_visual(
     renderer matches on — so the plate fills on the next render — and written
     back onto the artifact so the station panel shows it too.
     """
-    from ..services import artifact_registry, asset_uploads, diagram_gate
+    from ..services import (artifact_registry, asset_uploads, diagram_gate,
+                            diagram_layout)
     from ..services.diagram_dedup import extract_and_sanitize_svg
     from ..services.llm_client import llm_client
     from ..services.pipeline import pipeline_orchestrator
@@ -5711,25 +5767,49 @@ def factory_draw_visual(
         brief += f"\n\nALSO: {payload.custom_instructions}"
 
     resolved = pipeline_orchestrator.router.resolve_for_stage("diagram_generation")
-    try:
-        # An SVG is not JSON. Asked for one and given one, the client used to
-        # reject it as "the model did not return JSON".
-        response = llm_client.generate(
-            resolved, [{"role": "user", "content": brief}], temperature=0.2,
-            expect="text")
-    except Exception as exc:  # noqa: BLE001
-        raise_api_error("DIAGRAM_GENERATION_FAILED", f"The model failed: {exc}")
 
-    raw = response.content
-    if isinstance(raw, dict):
-        raw = raw.get("svg") or raw.get("diagram_svg") or raw.get("content") or ""
-    svg = extract_and_sanitize_svg(str(raw or ""))
-    if not svg:
-        raise_api_error(
-            "DIAGRAM_GENERATION_FAILED",
-            "The model returned nothing that parses as an SVG. Try again, or "
-            "copy the brief and draw it elsewhere.",
-        )
+    # Draw, MEASURE, and redraw once against what the measurement found. The
+    # first drawing this station produced was 4:3 with labels lying across the
+    # line-work at a size that resolves to 2mm in the column — all of it plain
+    # geometry, none of it visible in a thumbnail. A model told "labels must
+    # not overlap" writes overlapping labels anyway; a model told "these four
+    # labels overlap, here they are" moves them.
+    svg, fit, response = "", None, None
+    attempt = brief
+    for pass_no in range(2):
+        try:
+            # An SVG is not JSON. Asked for one and given one, the client used
+            # to reject it as "the model did not return JSON".
+            response = llm_client.generate(
+                resolved, [{"role": "user", "content": attempt}], temperature=0.2,
+                expect="text")
+        except Exception as exc:  # noqa: BLE001
+            if svg:
+                break  # the first drawing stands; a failed retry is not a loss
+            raise_api_error("DIAGRAM_GENERATION_FAILED", f"The model failed: {exc}")
+
+        raw = response.content
+        if isinstance(raw, dict):
+            raw = raw.get("svg") or raw.get("diagram_svg") or raw.get("content") or ""
+        candidate = extract_and_sanitize_svg(str(raw or ""))
+        if not candidate:
+            if svg:
+                break
+            raise_api_error(
+                "DIAGRAM_GENERATION_FAILED",
+                "The model returned nothing that parses as an SVG. Try again, "
+                "or copy the brief and draw it elsewhere.",
+            )
+
+        measured = diagram_layout.measure(candidate)
+        # Keep whichever attempt reads better on the page, not whichever came
+        # last: a redraw that fixes the overlap and breaks the scale is not an
+        # improvement.
+        if fit is None or len(measured.findings) < len(fit.findings):
+            svg, fit = candidate, measured
+        if measured.ok or pass_no:
+            break
+        attempt = brief + diagram_layout.corrections(measured)
 
     # 1. Where the BOOK looks. Filed against the visual's own title, which is
     #    what `lesson_assets` matches a requirement on.
@@ -5788,6 +5868,15 @@ def factory_draw_visual(
         "drawn": drawn,
         "total": len(visuals),
         "new_artifact": filed,
+        # What the drawing does on the page, measured rather than eyeballed. An
+        # operator seeing a thumbnail cannot tell that a label prints at 2mm.
+        "layout": {
+            "fits": bool(fit and fit.ok),
+            "aspect": round(fit.aspect, 2) if fit else 0,
+            "labels": fit.texts if fit else 0,
+            "overlapping_labels": fit.collisions if fit else 0,
+            "findings": list(fit.findings) if fit else [],
+        },
     }
 
 

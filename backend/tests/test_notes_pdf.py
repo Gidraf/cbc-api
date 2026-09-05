@@ -347,7 +347,7 @@ def test_a_picture_nobody_has_made_yet_still_takes_up_its_space() -> None:
     assert "class='plate'" in html
     # At the size it will occupy, or the teacher finds out at the copier that
     # the page has no room for it.
-    assert "height: 46mm" in html
+    assert "height: 50mm" in html
 
 
 def test_the_page_carries_its_own_navigation() -> None:

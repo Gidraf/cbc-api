@@ -1308,8 +1308,15 @@ export function useDrawVisual() {
     mutationFn: (v: { artifact_id: string; index: number; custom_instructions?: string }) =>
       api<{
         title: string; svg: string; storage_url: string; model: string;
-        drawn: number; total: number;
+        index: number; drawn: number; total: number;
         new_artifact?: { artifact_id: string; version: number } | null;
+        /** What the drawing does in the book's 85mm column, measured server
+         *  side. A picture that reads fine in this panel can print with its
+         *  labels at 2mm, so the panel does not get to be the judge. */
+        layout?: {
+          fits: boolean; aspect: number; labels: number;
+          overlapping_labels: number; findings: string[];
+        };
       }>("/api/v1/curriculum/factory/visuals/draw", {
         method: "POST",
         body: JSON.stringify(v),

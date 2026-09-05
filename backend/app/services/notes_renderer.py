@@ -249,7 +249,9 @@ h2, h3, h4 { break-after: avoid; }
   /* The empty plate. A teacher photocopying this needs to SEE the space the
      picture will occupy, or they discover at the copier that the page has no
      room for it. */
-  height: 46mm; border-bottom: 1px solid #111;
+  /* 50mm, because the column is 85mm and a drawing built to the brief is
+     340 × 200 — so a plate that fills does not reflow the column around it. */
+  height: 50mm; border-bottom: 1px solid #111;
   background:
     repeating-linear-gradient(45deg, #fafafa 0 6px, #f0f0f0 6px 12px);
   display: flex; flex-direction: column; align-items: center;

@@ -152,3 +152,45 @@ def test_the_material_gate_findings_reach_a_regeneration() -> None:
     assert found, "the gate's findings are filed with the version"
     assert "handed the instruction back" in directives
     assert "nothing to work" in directives
+
+
+# ── a title that names the kind of picture rather than its subject ───────────
+
+
+def test_a_visual_titled_charts_is_not_a_planned_visual() -> None:
+    """The book prints the title verbatim as the figure's caption, and it is
+    all the drawing step is handed. A plan whose visual was called "charts"
+    put the word "charts" under the figure and produced four identical
+    circles captioned as four different operations."""
+    from app.services import diagram_gate
+
+    report = diagram_gate.check({"visuals": [{
+        "diagram_title": "charts",
+        "vivid_prompt": "x" * 60,
+        "accessibility": {"alt_text": "something long enough to pass"},
+        "scene": {"parts": [{"label": "A", "function": "does a thing"}]},
+    }]})
+
+    assert [w["title"] for w in report.uncaptioned] == ["charts"]
+    assert not report.clean
+    gate = diagram_gate.gate_of(report)
+    assert any("names a KIND of picture" in a for a in gate["next_actions"])
+    assert any("Adding integers on a number line" in a for a in gate["next_actions"])
+
+
+def test_a_title_that_names_its_subject_passes() -> None:
+    """Narrow on purpose. "Bar chart of Grade 9 attendance" contains a category
+    word and is a perfectly good caption; a check that rejected it would be
+    turned off within a week."""
+    from app.services import diagram_gate
+
+    for title in ("Digestive system", "Bar chart of Grade 9 attendance",
+                  "The water cycle", "Number line from -5 to 5"):
+        report = diagram_gate.check({"visuals": [{
+            "diagram_title": title,
+            "vivid_prompt": "x" * 60,
+            "accessibility": {"alt_text": "something long enough to pass"},
+            "scene": {"parts": [{"label": "A", "function": "does a thing"}]},
+        }]})
+        assert report.uncaptioned == [], title
+        assert report.clean, title

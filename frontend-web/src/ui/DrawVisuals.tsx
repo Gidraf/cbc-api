@@ -58,6 +58,10 @@ export function DrawVisuals({
         const title = visual.diagram_title || visual.title || `Visual ${index + 1}`;
         const parts = visual?.scene?.parts;
         const svg: string = visual.diagram_svg || "";
+        // Only the drawing just returned carries a measurement; a visual read
+        // back from a stored version has none, and shows the picture alone.
+        const fit =
+          draw.data?.index === index ? draw.data.layout : undefined;
         const isBusy = busy === index && draw.isPending;
 
         return (
@@ -100,17 +104,49 @@ export function DrawVisuals({
             )}
 
             {svg && (
-              // The station's own output, shown as it will print. It has been
-              // sanitised server-side before it was ever stored.
-              <div
-                style={{
-                  marginTop: "var(--s3)",
-                  padding: "var(--s3)",
-                  background: "#fff",
-                  borderRadius: "var(--radius-sm)",
-                }}
-                dangerouslySetInnerHTML={{ __html: svg }}
-              />
+              // The station's own output, shown AT THE SIZE IT PRINTS. This
+              // panel used to stretch the drawing across its full width, and
+              // a reviewer looking at a 700px picture cannot see that its
+              // labels resolve to 2mm in the book. The book's figure is 85mm
+              // — one column of a two-column A4 page — so the preview is
+              // 85mm, with the plate's reserved height marked beside it.
+              <div style={{ marginTop: "var(--s3)" }}>
+                <div style={{ fontSize: "var(--text-xs)", color: "var(--ink-2)", marginBottom: "var(--s1)" }}>
+                  Actual size in the book — 85mm column
+                </div>
+                <div
+                  style={{
+                    width: "85mm",
+                    maxWidth: "100%",
+                    padding: 0,
+                    background: "#fff",
+                    border: "1px solid var(--line)",
+                    borderRadius: "var(--radius-sm)",
+                  }}
+                  dangerouslySetInnerHTML={{ __html: svg }}
+                />
+                {fit && !fit.fits && (
+                  // Measured server-side against that same column. The model
+                  // is asked to redraw once; what survives is reported rather
+                  // than filed quietly.
+                  <div
+                    style={{
+                      marginTop: "var(--s2)",
+                      padding: "var(--s2)",
+                      fontSize: "var(--text-sm)",
+                      background: "var(--warn-bg, #fff8e6)",
+                      borderRadius: "var(--radius-sm)",
+                    }}
+                  >
+                    <strong>This drawing does not fit the page</strong>
+                    <ul style={{ margin: "var(--s1) 0 0", paddingLeft: "1.2em" }}>
+                      {(fit.findings || []).map((f: string, i: number) => (
+                        <li key={i}>{f}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
             )}
           </div>
         );

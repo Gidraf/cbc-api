@@ -13,6 +13,8 @@ not pretend to answer it.
 """
 from __future__ import annotations
 
+import re
+
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -35,11 +37,17 @@ class DiagramReport:
     unaddressable: list[dict[str, Any]] = field(default_factory=list)
     # Parts with no function: a label with no meaning cannot be asked about.
     unexplained: list[dict[str, Any]] = field(default_factory=list)
+    # Titled with the KIND of thing rather than the thing. A plan whose visual
+    # is called "charts" put the word "charts" in the book's caption, and gave
+    # the drawing step nothing to draw — which is how four identical circles
+    # came back captioned as four different operations.
+    uncaptioned: list[dict[str, Any]] = field(default_factory=list)
 
     @property
     def clean(self) -> bool:
         return not (self.untitled or self.unbriefed or self.inaccessible
-                    or self.unaddressable or self.unexplained)
+                    or self.unaddressable or self.unexplained
+                    or self.uncaptioned)
 
     @property
     def score(self) -> float:
@@ -47,16 +55,42 @@ class DiagramReport:
             return 0.0
         faults = (len(self.untitled) + len(self.unbriefed)
                   + len(self.inaccessible) + len(self.unaddressable)
-                  + len(self.unexplained))
-        # Five checks per visual, so a visual failing one is not a total loss.
-        return round(max(0.0, 1 - faults / (self.total * 5)) * 100, 1)
+                  + len(self.unexplained) + len(self.uncaptioned))
+        # Six checks per visual, so a visual failing one is not a total loss.
+        return round(max(0.0, 1 - faults / (self.total * 6)) * 100, 1)
 
     def to_dict(self) -> dict[str, Any]:
         return {"total": self.total, "untitled": self.untitled,
                 "unbriefed": self.unbriefed, "inaccessible": self.inaccessible,
                 "unaddressable": self.unaddressable,
                 "unexplained": self.unexplained,
+                "uncaptioned": self.uncaptioned,
                 "clean": self.clean, "score": self.score}
+
+
+# The words that name the ARTEFACT rather than its subject. This is not a list
+# of bad topics — it is the closed grammatical class of words a figure caption
+# can never usefully consist of, because every figure on every page is one of
+# them. "Photosynthesis" is a subject; "diagram" is what you have drawn it as.
+_CATEGORY = {
+    "chart", "charts", "diagram", "diagrams", "figure", "figures",
+    "graph", "graphs", "illustration", "illustrations", "image", "images",
+    "picture", "pictures", "drawing", "drawings", "map", "maps",
+    "model", "models", "table", "tables", "visual", "visuals",
+    "sketch", "sketches", "plot", "plots",
+}
+
+
+def _is_a_category(title: str) -> bool:
+    """True when the title is only the word for what kind of picture it is.
+
+    Deliberately narrow: it fires on "charts" and on "a diagram", and not on
+    "Digestive system" or "Bar chart of Grade 9 attendance", because a title
+    that carries any word outside this class is naming something.
+    """
+    words = [w for w in re.findall(r"[a-z]+", title.lower())
+             if w not in ("a", "an", "the", "of", "and", "for")]
+    return bool(words) and all(w in _CATEGORY for w in words)
 
 
 def _title(visual: dict[str, Any]) -> str:
@@ -78,6 +112,8 @@ def check(content: Any) -> DiagramReport:
 
         if not title:
             report.untitled.append(where)
+        elif _is_a_category(title):
+            report.uncaptioned.append(where)
 
         brief = str(visual.get("vivid_prompt") or visual.get("brief")
                     or visual.get("description") or "").strip()
@@ -139,6 +175,9 @@ def gate_of(report: DiagramReport) -> dict[str, Any]:
         measure("addressable", "scene_parts_present", report.unaddressable,
                 "{n} have no addressable parts, so no question can point into them",
                 "every visual has parts a question can point at"),
+        measure("specific", "title_names_the_subject", report.uncaptioned,
+                "{n} are titled with the kind of picture, not its subject",
+                "every title names what the figure shows"),
         measure("explained", "part_function_present", report.unexplained,
                 "{n} have parts with a label but no function",
                 "every part says what it does"),
@@ -160,6 +199,13 @@ def gate_of(report: DiagramReport) -> dict[str, Any]:
         actions.append(
             f"\"{item['title']}\" has no alt text. Describe what a learner who "
             f"cannot see it needs to know."
+        )
+    for item in report.uncaptioned[:3]:
+        actions.append(
+            f"\"{item['title']}\" names a KIND of picture, not a subject. It is "
+            f"printed verbatim as the figure's caption, and it is all the "
+            f"drawing step is given to draw. Title it with what this figure "
+            f"shows — \"Adding integers on a number line\", not \"charts\"."
         )
     for item in report.unexplained[:2]:
         actions.append(

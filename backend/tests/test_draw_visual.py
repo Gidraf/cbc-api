@@ -30,6 +30,13 @@ def _brief() -> str:
                       strand="Numbers", sub_strand="Integers")
 
 
+def _flowed() -> str:
+    """The brief with its line wrapping collapsed. A rule spanning two lines
+    is the same rule, and an assertion that breaks when a sentence rewraps is
+    testing the margin rather than the instruction."""
+    return " ".join(_brief().split())
+
+
 def test_the_brief_is_built_from_the_plan_not_the_substrand_name() -> None:
     brief = _brief()
 
@@ -142,3 +149,92 @@ def test_the_console_offers_it_on_a_diagram_version() -> None:
     assert "<DrawVisuals" in panel
     assert "Draw it" in button and "Draw again" in button
     assert "brief only" in button, "and says which are still only a brief"
+
+
+# ── the brief has to describe the page, not "a diagram" ─────────────────────
+
+
+def test_the_brief_carries_the_column_the_figure_actually_lands_in() -> None:
+    """The first drawing came back 800×600 with 20-unit labels, because the
+    brief said "scales to the page" and left the model to guess what the page
+    was. The page is not a guess: the sheet is 210mm with 16mm margins and two
+    columns 8mm apart, so a figure is 85mm wide, and the plate reserves the
+    50mm that a 340 × 200 drawing occupies at that width."""
+    brief = _flowed()
+
+    assert "85mm" in brief
+    assert "50mm" in brief
+    assert 'viewBox="0 0 340 200"' in brief
+    assert "NO width or height attribute" in brief
+
+
+def test_it_gives_the_sizes_in_the_units_it_asked_the_model_to_work_in() -> None:
+    """"Large enough to survive a photocopy" is not a number, and produced
+    font-size 20 in an 800-wide viewBox — 2.1mm on paper."""
+    brief = _flowed()
+
+    assert 'font-size="13"' in brief
+    assert "0.55" in brief, "the model needs the advance width to place labels"
+    assert "44 characters" in brief
+    assert "<tspan>" in brief
+
+
+def test_it_forbids_the_overlap_in_the_terms_the_model_can_check() -> None:
+    brief = _flowed()
+
+    assert "NOTHING MAY OVERLAP ANYTHING" in brief
+    assert "leader line" in brief
+    assert "the box it occupies" in brief
+
+
+def test_it_asks_for_a_picture_that_means_something_without_its_labels() -> None:
+    """Four operations drawn as four identical circle-line-circle motifs is a
+    list with a caption, and a question that hides one part tests nothing."""
+    brief = _flowed()
+
+    assert "CARRY THE MEANING" in brief
+    assert "look different from" in brief
+
+
+def test_colour_is_allowed_but_never_load_bearing() -> None:
+    """The plan asks for colour; the page is photocopied in grey. Both are
+    true, so colour may decorate and may not distinguish."""
+    brief = _flowed()
+
+    assert "One accent colour plus black on white" in brief
+    assert "photocopied in grey" in brief
+    assert "never as the only thing distinguishing" in brief
+
+
+def test_the_occlusion_contract_survived_the_rewrite() -> None:
+    """Every diagram question depends on this attribute. Rewriting the brief
+    around it is exactly when it gets dropped."""
+    brief = _flowed()
+
+    assert 'data-part-id="part-<label in lower case with hyphens>"' in brief
+    assert "the same value as `id`" in brief
+
+
+def test_a_drawing_is_measured_and_redrawn_against_what_was_measured() -> None:
+    """A model told "labels must not overlap" writes overlapping labels
+    anyway. A model told which four labels overlap moves them."""
+    from app.routes import curriculum
+
+    source = inspect.getsource(curriculum.factory_draw_visual)
+
+    assert "diagram_layout.measure(candidate)" in source
+    assert "diagram_layout.corrections(measured)" in source
+    assert "for pass_no in range(2)" in source, "one redraw, not a loop"
+    # And the better of the two is kept, not the later one.
+    assert "len(measured.findings) < len(fit.findings)" in source
+
+
+def test_the_operator_is_told_what_the_drawing_does_on_the_page() -> None:
+    """A thumbnail cannot show that a label prints at 2mm."""
+    from app.routes import curriculum
+
+    source = inspect.getsource(curriculum.factory_draw_visual)
+
+    assert '"layout": {' in source
+    assert '"overlapping_labels"' in source
+    assert '"findings"' in source
