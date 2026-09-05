@@ -904,6 +904,94 @@ function Comments({ artifactId, comments }: { artifactId: string; comments: any[
  *
  * A review that says what is wrong and then leaves a person to copy it into a
  * custom-instructions box is a review most of whose value is lost in transit. */
+/** The corrected version, before it becomes one.
+ *
+ * A regeneration used to file as version N+1 the instant it finished, so the
+ * only way to find out whether the findings had actually been fixed was to
+ * file a version and read it — and a run that came back worse still sat at the
+ * top of the version list afterwards. This shows the output first and files it
+ * only when somebody has looked.
+ */
+function RegenerationPreview({
+  data,
+  busy,
+  subStrand,
+  onKeep,
+  onDiscard,
+}: {
+  data: any;
+  busy: boolean;
+  subStrand: string;
+  onKeep: () => void;
+  onDiscard: () => void;
+}) {
+  const addressed = data?.addressed || {};
+  const acted: string[] = [
+    ...(addressed.issues || []).map((i: any) =>
+      typeof i === "string" ? i : `${i.where ? i.where + ": " : ""}${i.what || ""}`
+    ),
+    ...(addressed.measured || []),
+    ...(addressed.human_comments || []),
+  ].filter(Boolean);
+
+  return (
+    <div
+      style={{
+        border: "1px solid var(--accent)",
+        borderRadius: "var(--radius-sm)",
+        background: "var(--surface-2)",
+        padding: "var(--s3)",
+      }}
+    >
+      <Stack direction="row" gap="var(--s2)" style={{ alignItems: "center", flexWrap: "wrap" }}>
+        <Badge tone="warn">not saved</Badge>
+        <strong style={{ fontSize: "var(--text-sm)" }}>
+          Corrected from version {data.from_version}
+        </strong>
+        <span style={{ fontSize: "var(--text-sm)", color: "var(--ink-2)" }}>
+          Read it, then keep it or throw it away. Nothing has been filed.
+        </span>
+      </Stack>
+
+      {acted.length > 0 && (
+        <>
+          <div
+            style={{
+              marginTop: "var(--s3)",
+              fontSize: "var(--text-sm)",
+              color: "var(--ink-2)",
+            }}
+          >
+            It was told to fix {acted.length} finding{acted.length === 1 ? "" : "s"}:
+          </div>
+          <ul style={{ margin: "var(--s1) 0 0", paddingLeft: "1.1rem", fontSize: "var(--text-sm)" }}>
+            {acted.slice(0, 8).map((item, i) => (
+              <li key={i} style={{ marginBottom: "3px" }}>
+                {item}
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+
+      <div style={{ marginTop: "var(--s3)" }}>
+        <NotesReader notes={data.content} subStrand={subStrand} />
+      </div>
+
+      <Stack direction="row" gap="var(--s2)" style={{ marginTop: "var(--s3)" }}>
+        <Button disabled={busy} loading={busy} onClick={onKeep}>
+          {busy ? "Saving…" : "Keep this version"}
+        </Button>
+        <Button variant="secondary" size="sm" disabled={busy} onClick={onDiscard}>
+          Throw it away
+        </Button>
+        <CopyButton getText={() => String(data.directives || "")} label="Copy what it was told" />
+      </Stack>
+    </div>
+  );
+}
+
+
 function Revise({ artifactId, onDone }: { artifactId: string; onDone: (id: string) => void }) {
   const directives = useRevisionDirectives(artifactId);
   const actions = useArtifactActions(artifactId);
@@ -966,8 +1054,24 @@ function Revise({ artifactId, onDone }: { artifactId: string; onDone: (id: strin
             />
           ) : (
             <Stack direction="row" gap="var(--s2)">
+              {/* The default is a preview: write the corrected version, show
+                  it, and file nothing until it has been read. A regeneration
+                  that came back worse used to land as version N+1 regardless. */}
               <Button
                 disabled={actions.regenerate.isPending}
+                onClick={() =>
+                  actions.regenerate.mutate({ extra_instructions: extra, preview: true })
+                }
+              >
+                {actions.regenerate.isPending
+                  ? "Regenerating…"
+                  : `Regenerate addressing ${found.issues.length} defect(s)`}
+              </Button>
+              <Button
+                variant="secondary"
+                size="sm"
+                disabled={actions.regenerate.isPending}
+                title="Write the corrected version and file it straight away, without reading it first."
                 onClick={() =>
                   actions.regenerate.mutate(
                     { extra_instructions: extra },
@@ -979,18 +1083,39 @@ function Revise({ artifactId, onDone }: { artifactId: string; onDone: (id: strin
                   )
                 }
               >
-                {actions.regenerate.isPending
-                  ? "Regenerating…"
-                  : `Regenerate addressing ${found.issues.length} defect(s)`}
+                Regenerate and file
               </Button>
             </Stack>
           )}
           {actions.regenerate.error && <ErrorNotice error={actions.regenerate.error} />}
-          {actions.regenerate.data && (
+
+          {actions.regenerate.data?.preview && (
+            <RegenerationPreview
+              data={actions.regenerate.data}
+              busy={actions.regenerate.isPending}
+              subStrand={readable(found.kind)}
+              onKeep={() =>
+                actions.regenerate.mutate(
+                  { extra_instructions: extra },
+                  {
+                    onSuccess: (res: any) => {
+                      if (res?.new_artifact?.artifact_id) onDone(res.new_artifact.artifact_id);
+                    },
+                  }
+                )
+              }
+              onDiscard={() => actions.regenerate.reset()}
+            />
+          )}
+
+          {actions.regenerate.data && !actions.regenerate.data.preview && (
             <p style={{ color: "var(--ink-3)", fontSize: "var(--text-sm)" }}>
               Version {actions.regenerate.data.new_artifact?.version} filed from version{" "}
               {actions.regenerate.data.from_version}. Its review will read the diff
               rather than the whole thing again.
+              {actions.regenerate.data.kept_because
+                ? ` (${actions.regenerate.data.kept_because})`
+                : ""}
             </p>
           )}
         </>

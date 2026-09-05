@@ -1497,6 +1497,16 @@ def factory_generate_notes(
         strand=payload.strand, sub_strand=payload.sub_strand,
         provenance={"source": "factory_generate_notes",
                     "provider": resolved.provider, "model": resolved.model},
+        # What the checks found, filed WITH the version. These are the findings
+        # the console draws under the guide; without them a regeneration has
+        # only the reviewers' opinions and reports nothing to fix.
+        measured_from={
+            "quality_gate": gate_result.to_dict(),
+            "lesson_coverage": lesson_plan.to_dict(),
+            "fabrication": fabrication.to_dict(),
+            "repetition": repetition,
+            "integrity": integrity,
+        },
     )
 
     if payload.run_id:
@@ -5509,6 +5519,7 @@ def factory_generate_material(
         provenance={"source": "factory_generate_material",
                     "provider": resolved.provider, "model": resolved.model,
                     "from_plan": plan_id},
+        measured_from={"quality_gate": lesson_material.gate_of(report)},
     )
     if payload.run_id:
         run_log.stop()
@@ -7217,12 +7228,24 @@ def _record_artifact(
     kind: str, grade: str, subject: str, content: dict[str, Any], *,
     strand: str = "", sub_strand: str = "", title: str = "",
     provenance: dict[str, Any] | None = None, parent: str = "",
+    measured_from: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """File one generation as a version, and never fail the generation for it.
 
     Recording is bookkeeping: if it breaks, the operator should still get the
     content they asked for, with a warning rather than a 500.
+
+    `measured_from` is the generation result. Everything a machine found about
+    this content — the gate's failing criteria, the contradictions, the
+    repetitions, the lessons that came back thin — used to live only in the
+    HTTP response and vanish with it, so a regeneration was told "every
+    reviewer passed this version with no issues raised" while the operator was
+    looking straight at "contradicts itself".
     """
+    if measured_from is not None:
+        from ..services import measured_findings
+
+        provenance = measured_findings.provenance_for(measured_from, provenance)
     try:
         artifact = artifact_registry.create_version(
             kind, grade, subject, content, strand=strand, sub_strand=sub_strand,

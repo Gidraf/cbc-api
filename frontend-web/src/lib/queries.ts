@@ -594,18 +594,32 @@ export function useArtifactActions(artifactId: string) {
       },
     }),
     regenerate: useMutation({
-      mutationFn: (v: { extra_instructions?: string } = {}) =>
+      // `preview: true` writes the corrected version and shows it WITHOUT
+      // filing it, so a run that came back worse never occupies the top of the
+      // version list.
+      mutationFn: (v: { extra_instructions?: string; preview?: boolean } = {}) =>
         api<{
           status: string;
+          preview?: boolean;
+          kept_because?: string;
           from_version: number;
           new_artifact: { artifact_id: string; version: number } | null;
-          addressed: { issues: any[]; weak_dimensions: any[]; human_comments: string[] };
+          content?: any;
+          addressed: {
+            issues: any[];
+            weak_dimensions: any[];
+            human_comments: string[];
+            measured?: string[];
+          };
           directives: string;
         }>("/api/v1/artifacts/regenerate", {
           method: "POST",
           body: JSON.stringify({ artifact_id: artifactId, ...v }),
         }),
-      onSuccess: () => {
+      onSuccess: (data) => {
+        // A preview filed nothing, so there is nothing for the lists to
+        // re-read — and refreshing here would wipe the preview off the screen.
+        if (data?.preview) return;
         refresh();
         qc.invalidateQueries({ queryKey: ["artifacts"] });
         qc.invalidateQueries({ queryKey: ["progress"] });

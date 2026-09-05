@@ -64,6 +64,12 @@ class CommentRequest(BaseModel):
 class RegenerateRequest(BaseModel):
     artifact_id: str
     extra_instructions: str = ""
+    # Write the corrected version and show it, WITHOUT filing it. A
+    # regeneration used to land as version N+1 the moment it finished, so the
+    # only way to see whether the findings had actually been fixed was to file
+    # a version and look — and a run that came back worse still occupied the
+    # top of the version list.
+    preview: bool = False
 
 
 class ReviewRequest(BaseModel):
@@ -613,6 +619,31 @@ _REGENERATORS: dict[str, dict[str, Any]] = {
 }
 
 
+_CONTENT_KEY: dict[str, str] = {
+    "notes": "notes",
+    "material": "material",
+    "strand": "strands",
+    "sub_strand": "sub_strands",
+    "diagram": "diagrams",
+    "activity": "activities",
+    "photo_prompt": "media",
+    "video_prompt": "media",
+}
+
+
+def _regenerated_content(result: Any, kind: str) -> Any:
+    """The content a station produced, whatever it called it."""
+    if not isinstance(result, dict):
+        return result
+    key = _CONTENT_KEY.get(kind)
+    if key and key in result:
+        return result[key]
+    for candidate in ("content", "notes", "material"):
+        if candidate in result:
+            return result[candidate]
+    return result
+
+
 @router.post("/regenerate")
 def regenerate_artifact(
     payload: RegenerateRequest,
@@ -640,17 +671,23 @@ def regenerate_artifact(
         )
 
     reviews = review_layers.reviews_for(artifact.artifact_id)
-    if not reviews:
+    measured = _measured_defects(artifact)
+
+    # A review is one source of findings, not the only one. The station's own
+    # checks run at generation time and are filed with the version, so an
+    # unreviewed guide that contradicts itself can be regenerated on the
+    # strength of that alone — which is what the operator is looking at when
+    # they press the button.
+    if not reviews and not measured:
         raise_api_error(
             "VALIDATION_FAILED",
-            "This version has not been reviewed, so there are no findings to "
-            "regenerate from. Run a review first, or regenerate from the station "
-            "to start fresh.",
+            "Nothing has found anything wrong with this version — no review has "
+            "run and its own checks came back clean. Run a review first, or "
+            "regenerate from the station to start fresh.",
         )
 
     revision = build_directives(
-        reviews, registry.comments_for(artifact.artifact_id),
-        measured=_measured_defects(artifact),
+        reviews, registry.comments_for(artifact.artifact_id), measured=measured,
     )
     if not revision["directives"]:
         raise_api_error(
@@ -693,9 +730,48 @@ def regenerate_artifact(
     allowed = set(model_cls.model_fields)
     result = handler(model_cls(**{k: v for k, v in common.items() if k in allowed}), auth)
 
+    filed = result.get("artifact") if isinstance(result, dict) else None
+
+    if payload.preview:
+        # Every station files as it generates, so the cheapest correct preview
+        # is to let it file and then withdraw it. The alternative — a
+        # no-file path through each station — is nine code paths that would
+        # drift from the nine that matter.
+        withdrawn = ""
+        if isinstance(filed, dict) and filed.get("artifact_id"):
+            withdrawn = str(filed["artifact_id"])
+            try:
+                registry.delete_version(withdrawn)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Could not withdraw preview %s: %s", withdrawn, exc)
+                return {
+                    "status": "regenerated",
+                    "preview": False,
+                    "kept_because": "the preview could not be withdrawn, so it "
+                                    "was left filed rather than lost",
+                    "from_artifact_id": artifact.artifact_id,
+                    "new_artifact": filed,
+                    "directives": instructions,
+                    "result": result,
+                }
+        return {
+            "status": "preview",
+            "preview": True,
+            "from_artifact_id": artifact.artifact_id,
+            "from_version": artifact.version,
+            "content": _regenerated_content(result, artifact.kind),
+            "addressed": {
+                "issues": revision["issues"],
+                "weak_dimensions": revision["weak_dimensions"],
+                "human_comments": revision["human_comments"],
+                "measured": revision.get("measured") or [],
+            },
+            "directives": instructions,
+            "result": result,
+        }
+
     # The generator files its own version; attribute it to this one so the diff
     # review has a parent to compare against.
-    filed = result.get("artifact") if isinstance(result, dict) else None
     if isinstance(filed, dict) and filed.get("artifact_id"):
         from ..infra.db import execute, to_json
 
@@ -729,7 +805,6 @@ def regenerate_artifact(
     }
 
 
-@router.get("/{artifact_id}/revision-directives")
 class RefineRequest(BaseModel):
     artifact_id: str
     # Reviewing and approving from one vendor is one opinion asked twice, and
@@ -803,17 +878,33 @@ def _measured_defects(artifact: Any) -> list[str]:
     comparison — a lesson that is a copy of the lesson four pages earlier reads
     perfectly well where it sits.
     """
-    from ..services import redundancy_check
+    from ..services import measured_findings, redundancy_check
+
+    # What the station's own checks found when this version was filed: the
+    # gate's failing criteria, the contradictions, the lessons that came back
+    # thin. An operator reading "contradicts itself" on screen and pressing
+    # regenerate used to be told "every reviewer passed this version with no
+    # issues raised", because none of it was ever carried onto the artifact.
+    found = list(measured_findings.stored(artifact))
 
     try:
         report = redundancy_check.inspect(getattr(artifact, "content", None) or {})
+        found += report.get("findings") or []
     except Exception as exc:  # noqa: BLE001
         logger.warning("Could not compare the lessons in %s: %s",
                        getattr(artifact, "artifact_id", "?"), exc)
-        return []
-    return report.get("findings") or []
+
+    seen: set[str] = set()
+    unique: list[str] = []
+    for item in found:
+        key = str(item).strip().lower()
+        if key and key not in seen:
+            seen.add(key)
+            unique.append(item)
+    return unique
 
 
+@router.get("/{artifact_id}/revision-directives")
 def read_revision_directives(
     artifact_id: str,
     _: AuthContext = Depends(require_roles("admin", "operator", "reviewer")),
