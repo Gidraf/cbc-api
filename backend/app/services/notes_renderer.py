@@ -267,10 +267,42 @@ div.math { display: block; text-align: center; margin: 6px 0; }
 .exercise .from { margin: 0 0 8px; font-size: 8pt; color: #555;
   letter-spacing: 0.04em; text-transform: uppercase; }
 .exercise ol { margin: 0; padding-left: 20px; }
+.exercise > ol > li { break-inside: avoid; }
 .exercise ol > li { margin-bottom: 7px; }
 .exercise ol.options { margin: 4px 0 0; padding-left: 18px; font-size: 9pt; }
 .exercise .marks { font-size: 8pt; color: #555; }
 .exercise.none p { font-size: 9pt; color: #555; font-style: italic; }
+
+/* ── worked solutions ─────────────────────────────────────────────────────
+   Set like a mathematics textbook: the working centred and given room, the
+   reason for each line small beside it, and the whole thing numbered against
+   the exercise so a learner can find their own question. */
+.solutions { margin-top: 14px; padding-top: 10px; border-top: 1px solid #111; }
+/* Two columns, like the answer section at the back of a textbook. A single
+   673px row with a 20px number on the left and the working centred in the
+   remaining 614px leaves the two unrelatable — the eye cannot carry a number
+   that far to its working. */
+.solutions, .exercise > ol { column-count: 2; column-gap: 9mm; }
+.solutions h3, .solutions > .from, .solutions > .unworked { column-span: all; }
+.solutions h3 { margin: 0 0 2px; font-size: 11pt; }
+.solution { display: flex; gap: 8px; break-inside: avoid;
+  page-break-inside: avoid; -webkit-column-break-inside: avoid;
+  padding: 7px 0; border-bottom: 0.4pt solid #eee; }
+.solution:last-of-type { border-bottom: 0; }
+.solution .sn { flex: 0 0 20px; font-weight: 700; font-size: 10pt;
+  padding-top: 2px; }
+.solution .sn .ok { display: block; font-size: 6.5pt; font-weight: 600;
+  letter-spacing: 0.06em; text-transform: uppercase; color: #0a7; }
+.solution .work { flex: 1 1 auto; min-width: 0; }
+.solution .line { margin: 2px 0; }
+.solution .why { margin: 0; font-size: 8pt; color: #555; font-style: italic;
+  text-align: center; }
+.solution .ans { margin: 5px 0 0; padding-top: 4px; border-top: 0.4pt solid #ddd;
+  text-align: center; }
+.solution .ans span:first-child { font-size: 7.5pt; letter-spacing: 0.08em;
+  text-transform: uppercase; color: #666; margin-right: 7px; }
+.solutions .unworked { margin: 8px 0 0; font-size: 8.5pt; color: #666;
+  font-style: italic; }
 
 .seg .learners { margin: 4px 0 0; font-size: 9pt; color: #333; }
 .seg .learners span { font-size: 8pt; letter-spacing: 0.06em;
@@ -705,11 +737,13 @@ def _exercises(grade: str, subject: str, strand: str, sub_strand: str,
     out = ["<div class='exercise'><h3>Exercise</h3>",
            "<p class='from'>From the question bank for this sub-strand.</p>",
            "<ol>"]
+    asked: list[str] = []
     for row in rows:
         content = row.get("content") or {}
         text = str(content.get("question_text") or content.get("text") or "").strip()
         if not text:
             continue
+        asked.append(text)
         marks = content.get("max_marks") or content.get("marks")
         tail = ""
         if marks:
@@ -723,6 +757,69 @@ def _exercises(grade: str, subject: str, strand: str, sub_strand: str,
                        + "</ol>")
         out.append("</li>")
     out.append("</ol></div>")
+    out.append(_solutions(asked))
+    return "".join(out)
+
+
+def _solutions(questions: list[str]) -> str:
+    """The worked solutions, computed by the maths engine.
+
+    A textbook ends with the working, not just the answers — a learner who got
+    it wrong needs the line where their own working diverged. Every line here
+    is computed by a deterministic solver and every reason is the rule that
+    produced it, so nothing on this page is a model's opinion about arithmetic.
+
+    Exercises the engine cannot work are LISTED as unworked rather than left
+    out, because a numbered gap in a solutions section is what sends a learner
+    hunting for a page that does not exist.
+    """
+    from . import worked_solutions
+
+    if not questions:
+        return ""
+
+    solved = worked_solutions.solve_all(questions)
+    if not any(s.solved for s in solved):
+        return ""
+
+    out = ["<div class='solutions'>",
+           "<h3>Worked solutions</h3>",
+           "<p class='from'>Every line below is computed and checked, not "
+           "written out. Follow it against your own working and find the line "
+           "where they part.</p>"]
+
+    unworked: list[int] = []
+    for n, solution in enumerate(solved, start=1):
+        if not solution.solved:
+            unworked.append(n)
+            continue
+        out.append("<div class='solution'>")
+        out.append(f"<div class='sn'>{n}"
+                   + ("<span class='ok' title='checked by the maths engine'>"
+                      "checked</span>" if solution.verified else "")
+                   + "</div>")
+        out.append("<div class='work'>")
+        out.append(f"<div class='math' data-display='true'>{_esc(solution.statement)}</div>")
+        for line in solution.lines:
+            out.append("<div class='line'>")
+            out.append(f"<div class='math' data-display='true'>{_esc(line.latex)}</div>")
+            if line.because:
+                out.append(f"<p class='why'>{_esc(line.because)}</p>")
+            out.append("</div>")
+        out.append(f"<p class='ans'><span>Answer</span>"
+                   f"<span class='math' data-display='false'>"
+                   f"{_esc(solution.answer)}</span></p>")
+        out.append("</div></div>")
+
+    if unworked:
+        numbers = ", ".join(str(n) for n in unworked)
+        out.append(
+            f"<p class='unworked'>Question{'s' if len(unworked) > 1 else ''} "
+            f"{_esc(numbers)} {'are' if len(unworked) > 1 else 'is'} not a "
+            f"calculation this engine works — mark "
+            f"{'them' if len(unworked) > 1 else 'it'} by hand.</p>")
+
+    out.append("</div>")
     return "".join(out)
 
 

@@ -37,6 +37,7 @@ from .financial import (
     solve_simple_interest,
 )
 from .fractions import solve_fraction_operation
+from .integers import NotArithmetic, arithmetic_in, solve_integer_expression
 from .geometry import (
     solve_circle_properties,
     solve_coordinate_distance_midpoint,
@@ -77,6 +78,9 @@ from .trigonometry import (
 
 __all__ = [
     # Arithmetic
+    "solve_integer_expression",
+    "arithmetic_in",
+    "NotArithmetic",
     "prime_factorization",
     "solve_gcd_lcm",
     "solve_rounding",
@@ -251,6 +255,17 @@ def solve_problem(problem: str, domain: str = "auto") -> SolutionTrace:
         try:
             return solve_linear_equation(eq_clean)
         except Exception:
+            pass
+
+    # 10. A plain calculation. Last, so a fraction, an equation or an area is
+    #     still worked by the solver that knows its formula — this takes only
+    #     what nothing else claimed. Without it the whole Integers sub-strand
+    #     had no worked solutions at all.
+    expression = arithmetic_in(clean)
+    if expression:
+        try:
+            return solve_integer_expression(expression)
+        except NotArithmetic:
             pass
 
     # Nothing matched. Say so — do not invent a step.
