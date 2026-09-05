@@ -13,9 +13,37 @@ from __future__ import annotations
 
 import html
 import logging
+import re
 from typing import Any
 
 logger = logging.getLogger("cbc-notes-renderer")
+
+
+_MATH_SPAN = re.compile(r"\$\$([\s\S]*?)\$\$|\$([^$\n]+?)\$")
+
+
+def _math(value: Any) -> str:
+    """Text with its `$…$` spans marked for typesetting, everything else escaped.
+
+    The guide is authored with LaTeX in it — `$\\frac{2}{3}$` — and the page
+    printed that verbatim, dollars and backslashes, because nothing here ever
+    looked for it. Escaping happens per SEGMENT rather than over the whole
+    string: escaping first would turn the maths into entities, and typesetting
+    first would trust prose we did not write.
+    """
+    text = str(value or "")
+    out: list[str] = []
+    last = 0
+    for match in _MATH_SPAN.finditer(text):
+        out.append(_esc(text[last:match.start()]))
+        display = match.group(1) is not None
+        body = match.group(1) if display else match.group(2)
+        tag = "div" if display else "span"
+        out.append(f"<{tag} class='math' data-display='{str(display).lower()}'>"
+                   f"{_esc(body)}</{tag}>")
+        last = match.end()
+    out.append(_esc(text[last:]))
+    return "".join(out)
 
 
 def _esc(value: Any) -> str:
@@ -132,7 +160,8 @@ h2, h3, h4 { break-after: avoid; }
   height: 46mm; border-bottom: 1px solid #111;
   background:
     repeating-linear-gradient(45deg, #fafafa 0 6px, #f0f0f0 6px 12px);
-  display: flex; align-items: center; justify-content: center;
+  display: flex; flex-direction: column; align-items: center;
+  justify-content: center; gap: 10px;
   text-align: center; padding: 8px;
 }
 .figure .plate span { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
@@ -145,6 +174,66 @@ h2, h3, h4 { break-after: avoid; }
 .figure figcaption b { letter-spacing: 0.06em; text-transform: uppercase;
                        font-size: 7.5pt; color: #444; display: block;
                        margin-bottom: 2px; }
+/* The brief for a figure nobody has drawn yet. On screen it is a disclosure;
+   on paper it prints in full, because the person commissioning the drawing is
+   often working from the printout. */
+.figure .plate button.copy-brief {
+  font: inherit; font-size: 8pt; letter-spacing: 0.04em;
+  text-transform: uppercase; padding: 4px 10px; cursor: pointer;
+  background: #111; color: #fff; border: none; border-radius: 3px;
+}
+/* ── worked examples ─────────────────────────────────────────────────────
+   Set apart from the teaching prose, because a learner revising scans for
+   them. Numbered per lesson so a teacher can say "look at Example 2.1". */
+.examples { break-inside: avoid; margin: 10px 0 14px; }
+.example { border-left: 3px solid #111; padding: 8px 0 8px 10px; margin-bottom: 10px; }
+.example h4 { margin: 0 0 5px; font-size: 8.5pt; letter-spacing: 0.08em;
+  text-transform: uppercase; }
+.example .statement { margin: 0 0 6px; font-weight: 600; }
+.example ol.working { margin: 0 0 6px; padding-left: 18px; }
+.example ol.working li { margin-bottom: 4px; }
+.example ol.working .w { display: block; }
+.example ol.working .why { display: block; font-size: 8.5pt; color: #444;
+  font-style: italic; }
+.example .answer { margin: 0; padding-top: 5px; border-top: 1px solid #ddd; }
+.example .answer span { font-size: 8pt; letter-spacing: 0.08em;
+  text-transform: uppercase; margin-right: 8px; }
+
+/* Maths that has not been typeset yet still has to be readable — a reader
+   offline sees the source rather than a blank. */
+.math { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 0.95em; }
+.math.katex-done, .katex { font-family: inherit; }
+div.math { display: block; text-align: center; margin: 6px 0; }
+
+/* ── the exercise set ────────────────────────────────────────────────────
+   Drawn from the question bank, so what a learner practises on is what was
+   reviewed and approved. */
+.exercise { break-inside: avoid; margin-top: 16px; padding-top: 10px;
+  border-top: 2px solid #111; }
+.exercise h3 { margin: 0 0 2px; font-size: 11pt; }
+.exercise .from { margin: 0 0 8px; font-size: 8pt; color: #555;
+  letter-spacing: 0.04em; text-transform: uppercase; }
+.exercise ol { margin: 0; padding-left: 20px; }
+.exercise ol > li { margin-bottom: 7px; }
+.exercise ol.options { margin: 4px 0 0; padding-left: 18px; font-size: 9pt; }
+.exercise .marks { font-size: 8pt; color: #555; }
+.exercise.none p { font-size: 9pt; color: #555; font-style: italic; }
+
+.seg .learners { margin: 4px 0 0; font-size: 9pt; color: #333; }
+.seg .learners span { font-size: 8pt; letter-spacing: 0.06em;
+  text-transform: uppercase; color: #666; margin-right: 6px; }
+
+.figure .brief { font-size: 8pt; border-top: 1px solid #ddd; }
+.figure .brief summary { padding: 5px 8px; cursor: pointer; letter-spacing: 0.04em;
+  text-transform: uppercase; }
+.figure .brief pre { white-space: pre-wrap; margin: 0; padding: 0 8px 8px;
+  font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 7.5pt;
+  line-height: 1.45; }
+@media print {
+  .figure .plate button.copy-brief { display: none; }
+  .figure .brief[open] pre, .figure .brief pre { display: block; }
+}
+
 /* A video or a recording has no plate to show — it has a cue. */
 .figure.cue .plate { height: 20mm;
   background: repeating-linear-gradient(90deg, #f7f7f7 0 8px, #efefef 8px 16px); }
@@ -194,6 +283,50 @@ _PLATE: dict[str, tuple[str, str]] = {
 }
 
 
+def _plate(req: Any, label_no: str, assets: dict[str, str], *,
+           brief: str = "") -> str:
+    """One figure: the picture if it exists, the brief for it if it does not.
+
+    An empty plate used to say "diagram to be placed here" and stop. Whoever
+    read that then had to reconstruct what the diagram was for before they
+    could commission it — from a page that already knows the grade, the
+    sub-strand, the lesson and the sentence the figure sits beside. So the
+    plate carries the prompt, and a button that copies it.
+    """
+    label, empty = _PLATE.get(req.kind, ("Figure", "to be placed here"))
+    found = assets.get(str(req.what).lower())
+    cue = " cue" if req.kind in ("video", "audio") else ""
+
+    if found:
+        # `assets` used to map a description straight to a URL. It now carries
+        # the matched asset, so an SVG can be inlined rather than fetched —
+        # which is what makes the printed page work with no network.
+        if isinstance(found, dict):
+            svg = str(found.get("svg") or "")
+            url = str(found.get("url") or "")
+            alt = str(found.get("alt") or req.what)
+            body = svg if svg else f"<img src='{_esc(url)}' alt='{_esc(alt)}'>"
+        else:
+            body = f"<img src='{_esc(found)}' alt='{_esc(req.what)}'>"
+    else:
+        body = (
+            f"<div class='plate'><span>{_esc(empty)}</span>"
+            f"<button type='button' class='copy-brief' "
+            f"data-brief='{_esc(brief)}'>Copy the prompt</button>"
+            f"</div>"
+        )
+        if brief:
+            # Kept in the page so it survives printing and works with no
+            # JavaScript — the button is a convenience, not the only route.
+            body += (f"<details class='brief'><summary>What this figure must show"
+                     f"</summary><pre>{_esc(brief)}</pre></details>")
+
+    where = f" · {_esc(req.topic)}" if req.topic else ""
+    return (f"<figure class='figure{cue}{'' if found else ' empty'}'>{body}"
+            f"<figcaption><b>{label} {label_no}{where}</b>{_esc(req.what)}</figcaption>"
+            f"</figure>")
+
+
 def _figures(module: dict[str, Any], n: int, assets: dict[str, str] | None = None) -> str:
     """The pictures this lesson asks for, as places on the page.
 
@@ -206,36 +339,126 @@ def _figures(module: dict[str, Any], n: int, assets: dict[str, str] | None = Non
     An empty plate is not a defect to hide. It is the production list: it says
     which picture is still to be made, in the lesson that needs it.
     """
-    from . import asset_requirements
+    return "".join(html for _, html in _placed(module, n, assets).get(0, []))
+
+
+def _placed(module: dict[str, Any], n: int, assets: dict[str, str] | None = None,
+            *, grade_label: str = "", subject: str = "", strand: str = "",
+            sub_strand: str = "") -> dict[int, list[tuple[int, str]]]:
+    """Every figure this lesson asks for, keyed by the segment it belongs to.
+
+    Segment 0 means nothing in the teaching text named it, and it renders at
+    the top of the lesson as figures always used to. Everything else sits
+    beside the paragraph that calls for it — because a page that says "as shown
+    below" and shows it three hundred words earlier has broken its own promise.
+    """
+    from . import asset_requirements, figure_anchor
 
     wanted = [r for r in asset_requirements.read({"modules": [module]}).items
               if r.kind in _PLATE]
     if not wanted:
-        return ""
+        return {}
 
     assets = assets or {}
-    out = []
-    for i, req in enumerate(wanted, start=1):
-        label, empty = _PLATE[req.kind]
-        found = assets.get(req.what.lower())
-        cue = " cue" if req.kind in ("video", "audio") else ""
-        plate = (f"<img src='{_esc(found)}' alt='{_esc(req.what)}'>" if found
-                 else f"<div class='plate'><span>{_esc(empty)}</span></div>")
-        where = f" · {_esc(req.topic)}" if req.topic else ""
-        out.append(
-            f"<figure class='figure{cue}'>{plate}"
-            f"<figcaption><b>{label} {n}.{i}{where}</b>{_esc(req.what)}</figcaption>"
-            f"</figure>"
+    segments = _segments(module)
+    anchors = figure_anchor.anchor(wanted, segments)
+    lesson_title = str(module.get("title") or f"Lesson {n}")
+
+    out: dict[int, list[tuple[int, str]]] = {}
+    for i, item in enumerate(anchors, start=1):
+        seg_index = item.segment_index
+        nearby = ""
+        if 1 <= seg_index <= len(segments):
+            nearby = str(segments[seg_index - 1].get("body") or "")
+        brief = figure_anchor.brief_for(
+            item.requirement, grade_label=grade_label, subject=subject,
+            strand=strand, sub_strand=sub_strand, lesson_title=lesson_title,
+            nearby_text=nearby,
         )
-    return "".join(out)
+        html = _plate(item.requirement, f"{n}.{i}", assets, brief=brief)
+        out.setdefault(seg_index, []).append((i, html))
+    return out
 
 
 def _aside(title: str, body: str) -> str:
     return f"<div class='aside'><h4>{_esc(title)}</h4>{body}</div>" if body else ""
 
 
+def _segments(module: dict[str, Any]) -> list[dict[str, Any]]:
+    """The teaching text, in the order it happens.
+
+    The renderer read `exposition_segments`. The schema has never produced
+    that: a guide comes back with `lesson_flow` — Introduction, Development,
+    Conclusion — and a single `teacher_exposition` blob. So the segment path
+    was dead code for every real guide, every figure fell into the "nothing
+    named it" bucket, and the whole lesson rendered as one column of prose.
+    """
+    explicit = [seg for seg in (module.get("exposition_segments") or [])
+                if isinstance(seg, dict)]
+    if explicit:
+        return explicit
+
+    out: list[dict[str, Any]] = []
+    for phase in (module.get("lesson_flow") or []):
+        if not isinstance(phase, dict):
+            continue
+        body = " ".join(x for x in (
+            str(phase.get("what_the_teacher_does") or "").strip(),
+        ) if x)
+        out.append({
+            "topic": str(phase.get("phase") or "").strip() or "Part",
+            "minutes": phase.get("minutes"),
+            "body": body,
+            "learners": str(phase.get("what_learners_do") or "").strip(),
+        })
+    if out:
+        return out
+
+    if module.get("teacher_exposition"):
+        return [{"topic": "", "body": str(module["teacher_exposition"])}]
+    return []
+
+
+def _worked_examples(module: dict[str, Any], n: int) -> str:
+    """The examples, set and worked, with their mathematics typeset.
+
+    A guide that explains a procedure and shows none of it worked leaves the
+    learner with nothing to imitate — and "the teacher demonstrates on the
+    board" is a board nobody kept.
+    """
+    examples = [e for e in (module.get("worked_examples") or []) if isinstance(e, dict)]
+    if not examples:
+        return ""
+
+    out = ["<div class='examples'>"]
+    for i, example in enumerate(examples, start=1):
+        out.append("<div class='example'>")
+        out.append(f"<h4>Example {n}.{i}</h4>")
+        if example.get("statement"):
+            out.append(f"<p class='statement'>{_math(example['statement'])}</p>")
+
+        steps = [st for st in (example.get("steps") or []) if isinstance(st, dict)]
+        if steps:
+            out.append("<ol class='working'>")
+            for step in steps:
+                line = f"<span class='w'>{_math(step.get('working'))}</span>"
+                if step.get("because"):
+                    line += f"<span class='why'>{_math(step['because'])}</span>"
+                out.append(f"<li>{line}</li>")
+            out.append("</ol>")
+
+        if example.get("answer"):
+            out.append(f"<p class='answer'><span>Answer</span>"
+                       f"{_math(example['answer'])}</p>")
+        out.append("</div>")
+    out.append("</div>")
+    return "".join(out)
+
+
 def _lesson(module: dict[str, Any], n: int,
-            assets: dict[str, str] | None = None) -> str:
+            assets: dict[str, str] | None = None, *,
+            grade_label: str = "", subject: str = "",
+            strand: str = "", sub_strand: str = "") -> str:
     title = str(module.get("title") or f"Lesson {n}")
     out = ["<section class='lesson'>"]
 
@@ -257,22 +480,36 @@ def _lesson(module: dict[str, Any], n: int,
     # Everything below runs in two columns, and the figures flow with the
     # teaching that asks for them rather than being collected at the end.
     out.append("<div class='body'>")
-    out.append(_figures(module, n, assets))
+    placed = _placed(module, n, assets, grade_label=grade_label, subject=subject,
+                     strand=strand, sub_strand=sub_strand)
+    # Figures no segment claimed lead the lesson, as they always did.
+    out += [html for _, html in placed.get(0, [])]
 
-    segments = [s for s in (module.get("exposition_segments") or [])
-                if isinstance(s, dict)]
+    segments = _segments(module)
     if segments:
         for i, seg in enumerate(segments, start=1):
             mins = (f" <span class='mins'>{_esc(seg.get('minutes'))} min</span>"
                     if seg.get("minutes") else "")
             out.append("<div class='seg'>")
             out.append(f"<h3>{i}. {_esc(seg.get('topic') or f'Part {i}')}{mins}</h3>")
-            out.append(f"<p>{_esc(seg.get('body'))}</p>")
+            # `_math`, not `_esc`: the guide is authored with LaTeX in it, and
+            # escaping it printed the dollars and backslashes on the page.
+            out.append(f"<p>{_math(seg.get('body'))}</p>")
+            # The figure this paragraph promised, immediately under it.
+            out += [html for _, html in placed.get(i, [])]
+            if seg.get("learners"):
+                out.append(f"<p class='learners'><span>The learners</span>"
+                           f"{_math(seg['learners'])}</p>")
             if seg.get("bridge"):
-                out.append(f"<p class='bridge'>{_esc(seg['bridge'])}</p>")
+                out.append(f"<p class='bridge'>{_math(seg['bridge'])}</p>")
             out.append("</div>")
     elif module.get("teacher_exposition"):
-        out.append(f"<p>{_esc(module['teacher_exposition'])}</p>")
+        out.append(f"<p>{_math(module['teacher_exposition'])}</p>")
+
+    # Worked examples sit under the teaching that explains them, before the
+    # asides — a learner looking for something to imitate finds it in the flow
+    # of the lesson, not in a box at the end.
+    out.append(_worked_examples(module, n))
 
     questions = [q for q in (module.get("key_questions") or []) if str(q).strip()]
     if questions:
@@ -318,6 +555,103 @@ def _lesson(module: dict[str, Any], n: int,
     return "".join(out)
 
 
+
+# The button on an empty plate. Everything it copies is already in the page as
+# a <details> block, so a reader with scripting off loses the convenience and
+# nothing else.
+_KATEX = """
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"
+  onload="document.querySelectorAll('.math').forEach(function (el) {
+    try {
+      katex.render(el.textContent, el, {
+        displayMode: el.dataset.display === 'true', throwOnError: false
+      });
+      el.classList.add('katex-done');
+    } catch (err) {}
+  });"></script>
+"""
+
+
+_COPY_SCRIPT = """<script>
+document.addEventListener('click', function (event) {
+  var button = event.target.closest('.copy-brief');
+  if (!button) return;
+  var brief = button.getAttribute('data-brief') || '';
+  var done = function () {
+    var was = button.textContent;
+    button.textContent = 'Copied';
+    setTimeout(function () { button.textContent = was; }, 1600);
+  };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(brief).then(done, function () {});
+    return;
+  }
+  var area = document.createElement('textarea');
+  area.value = brief;
+  area.style.position = 'fixed';
+  area.style.opacity = '0';
+  document.body.appendChild(area);
+  area.select();
+  try { document.execCommand('copy'); done(); } catch (err) {}
+  document.body.removeChild(area);
+});
+</script>"""
+
+def _exercises(grade: str, subject: str, strand: str, sub_strand: str,
+               limit: int = 8) -> str:
+    """The practice set, taken from the questions this system has approved.
+
+    A textbook ends its topic with exercises. Writing fresh ones into the guide
+    would mean two pools of questions for the same sub-strand — one reviewed,
+    versioned and searchable, and one buried in a lesson plan — which is how a
+    learner ends up practising on an item that was rejected.
+
+    So the page draws from the bank: approved items only, easiest first, and it
+    says plainly when the bank has nothing yet rather than inventing filler.
+    """
+    try:
+        from .question_dna import question_dna_service
+
+        rows = question_dna_service.list_questions(
+            grade=grade, subject=subject, strand=strand, sub_strand=sub_strand,
+            status="approved", limit=limit, order="curriculum",
+        ) or []
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Could not read the question bank for %s/%s: %s",
+                       grade, subject, exc)
+        return ""
+
+    if not rows:
+        return ("<div class='exercise none'><h3>Exercise</h3>"
+                "<p>No approved questions have been generated for this "
+                "sub-strand yet. Run the questions station, and they will "
+                "appear here.</p></div>")
+
+    out = ["<div class='exercise'><h3>Exercise</h3>",
+           "<p class='from'>From the question bank for this sub-strand.</p>",
+           "<ol>"]
+    for row in rows:
+        content = row.get("content") or {}
+        text = str(content.get("question_text") or content.get("text") or "").strip()
+        if not text:
+            continue
+        marks = content.get("max_marks") or content.get("marks")
+        tail = ""
+        if marks:
+            word = "mark" if str(marks).strip() in ("1", "1.0") else "marks"
+            tail = f" <span class='marks'>({_esc(marks)} {word})</span>"
+        out.append(f"<li>{_math(text)}{tail}")
+        options = [o for o in (content.get("options") or []) if str(o).strip()]
+        if options:
+            out.append("<ol class='options' type='a'>"
+                       + "".join(f"<li>{_math(o)}</li>" for o in options)
+                       + "</ol>")
+        out.append("</li>")
+    out.append("</ol></div>")
+    return "".join(out)
+
+
 def render_html(notes: dict[str, Any], *, grade: str = "", subject: str = "",
                 strand: str = "", sub_strand: str = "", version: int = 0,
                 assets: dict[str, str] | None = None) -> str:
@@ -340,7 +674,7 @@ def render_html(notes: dict[str, Any], *, grade: str = "", subject: str = "",
     out = [
         "<!doctype html><html lang='en'><head><meta charset='utf-8'>",
         f"<title>{_esc(title)}</title>",
-        f"<style>{PRINT_CSS}</style></head><body>",
+        f"<style>{PRINT_CSS}</style>{_KATEX}</head><body>",
         "<div class='sheet'>",
         "<div class='masthead'>",
         f"<h1>{_esc(title)}</h1>",
@@ -360,12 +694,18 @@ def render_html(notes: dict[str, Any], *, grade: str = "", subject: str = "",
     if not modules:
         out.append("<p>This guide holds no lessons.</p>")
     for i, module in enumerate(modules, start=1):
-        out.append(_lesson(module, i, assets))
+        # The curriculum reaches the figure briefs through here: a prompt that
+        # does not name the grade and sub-strand is a prompt somebody has to
+        # come back and ask about.
+        out.append(_lesson(module, i, assets, grade_label=grade, subject=subject,
+                           strand=strand, sub_strand=sub_strand))
 
+    out.append(_exercises(grade, subject, strand, sub_strand))
     out.append(
         "<div class='foot'>Generated from the KICD curriculum design. "
         "Check it before you teach from it.</div>"
     )
+    out.append(_COPY_SCRIPT)
     out.append("</div></body></html>")
     return "".join(out)
 
@@ -397,7 +737,7 @@ def render_material_html(material: dict[str, Any], *, grade: str = "",
     out = [
         "<!doctype html><html lang='en'><head><meta charset='utf-8'>",
         f"<title>{_esc(title)}</title>",
-        f"<style>{PRINT_CSS}{_MATERIAL_CSS}</style></head><body>",
+        f"<style>{PRINT_CSS}{_MATERIAL_CSS}</style>{_KATEX}</head><body>",
         "<div class='sheet'>",
         "<div class='masthead'>",
         f"<h1>{_esc(title)}</h1>",

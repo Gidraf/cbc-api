@@ -11,6 +11,7 @@ import httpx
 from ..config import Provider
 from ..errors import raise_api_error
 from ..services.cost_tracker import TokenUsage
+from ..services.json_latex import repair as repair_latex_json
 from ..services.provider_router import ResolvedModelConfig
 from ..services.retry import retry_llm
 
@@ -333,18 +334,32 @@ class LlmClient:
             if match:
                 cleaned = match.group(1)
 
+        # LaTeX before parsing, always — not as a fallback after a failure.
+        # `"$3 \times 4$"` is VALID JSON that silently means `$3 <TAB>imes 4$`,
+        # so a repair that only ran on JSONDecodeError would never fire for it:
+        # the corruption sails through and prints as "3 imes 4" in a lesson.
+        repaired = repair_latex_json(cleaned)
+
+        try:
+            return json.loads(repaired)
+        except json.JSONDecodeError:
+            pass
+
+        # The repair only ever adds backslashes inside strings, but a model can
+        # produce something it makes worse. Try the original before giving up.
         try:
             return json.loads(cleaned)
         except json.JSONDecodeError:
             pass
 
         # Last resort: the outermost object in whatever came back.
-        start, end = cleaned.find("{"), cleaned.rfind("}")
-        if start != -1 and end > start:
-            try:
-                return json.loads(cleaned[start:end + 1])
-            except json.JSONDecodeError:
-                pass
+        for candidate in (repaired, cleaned):
+            start, end = candidate.find("{"), candidate.rfind("}")
+            if start != -1 and end > start:
+                try:
+                    return json.loads(candidate[start:end + 1])
+                except json.JSONDecodeError:
+                    continue
 
         logger.error("JSON parsing failed on LLM output: %s", cleaned[:300])
         raise_api_error(

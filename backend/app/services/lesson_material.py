@@ -29,6 +29,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
+from . import material_form
+
 logger = logging.getLogger("cbc-lesson-material")
 
 # What a segment's material can be. Named so the generator commits to a form
@@ -148,7 +150,8 @@ AGENT = "material-generator"
 
 def prompt_for(directive: Directive, *, register: str, faith: str,
                sub_strand: str, slos: list[str], language: str = "",
-               notation: str = "", target_language: str = "") -> str:
+               notation: str = "", target_language: str = "",
+               grade: str = "") -> str:
     """What to ask for, for ONE directive.
 
     One directive per call rather than a whole guide per call, because the
@@ -163,6 +166,7 @@ def prompt_for(directive: Directive, *, register: str, faith: str,
     child hears verbatim. The assembly stays here because it is per directive;
     only the words are editable.
     """
+    from . import material_form
     from .langfuse_context import langfuse_context_service
 
     template = langfuse_context_service.get_agent_prompt(AGENT)
@@ -177,6 +181,9 @@ def prompt_for(directive: Directive, *, register: str, faith: str,
         ("minutes", minutes),
         ("instruction", directive.instruction),
         ("level_register", register),
+        # What SHAPE the page takes, which the register alone never said. A
+        # Grade 9 learner reads a textbook page; a PP1 child is read to.
+        ("material_form", material_form.block_for(grade)),
         ("notation", notation),
         ("target_language", target_language),
         ("language_block", language),
@@ -186,6 +193,7 @@ def prompt_for(directive: Directive, *, register: str, faith: str,
     ):
         template = template.replace("{{ " + slot + " }}", value or "")
     return template
+
 
 @dataclass(slots=True)
 class MaterialReport:
@@ -197,20 +205,31 @@ class MaterialReport:
     infantilised: list[dict[str, Any]] = field(default_factory=list)
     # A language lesson scripted in English.
     unscripted: list[dict[str, Any]] = field(default_factory=list)
-    # Written to an older learner as if to an infant.
-    infantilised: list[dict[str, Any]] = field(default_factory=list)
+    # A page for a reader that opens by announcing the lesson — "Today, we are
+    # going to explore..." — in every section.
+    announced: list[dict[str, Any]] = field(default_factory=list)
+    # A page that scripts a class discussion, inventing the learners' replies.
+    staged: list[dict[str, Any]] = field(default_factory=list)
+    # A lesson that gives the learner nothing to work. Counted per LESSON, so
+    # it is reported separately from the per-piece findings above.
+    unexercised: list[dict[str, Any]] = field(default_factory=list)
 
     @property
     def clean(self) -> bool:
         return (not self.thin and not self.echoed and not self.infantilised
-                and not self.unscripted and self.written == self.total)
+                and not self.unscripted and not self.announced
+                and not self.staged and not self.unexercised
+                and self.written == self.total)
 
     @property
     def score(self) -> float:
         if not self.total:
             return 100.0
+        # `unexercised` is per lesson, not per piece, so it is not subtracted
+        # from a piece count. It is a gate condition instead — see gate_of.
         good = (self.total - len(self.thin) - len(self.echoed)
-                - len(self.infantilised) - len(self.unscripted))
+                - len(self.infantilised) - len(self.unscripted)
+                - len(self.announced) - len(self.staged))
         return round(max(0.0, good) / self.total * 100, 1)
 
     def to_dict(self) -> dict[str, Any]:
@@ -218,13 +237,10 @@ class MaterialReport:
                 "thin": self.thin, "echoed": self.echoed,
                 "infantilised": self.infantilised,
                 "unscripted": self.unscripted,
+                "announced": self.announced,
+                "staged": self.staged,
+                "unexercised": self.unexercised,
                 "clean": self.clean, "score": self.score}
-
-
-# What this station has to reach before its output moves on. Lower than the
-# plan's gate on purpose: the plan is judged on whether a teacher could teach
-# from it, and the material on whether each instruction actually got words.
-PASS_SCORE = 90.0
 
 
 # What this station has to reach before its output moves on. Lower than the
@@ -247,7 +263,11 @@ def gate_of(report: "MaterialReport") -> dict[str, Any]:
     loop has a failure it cannot regenerate against, which is the same call
     again at the same price.
     """
-    passed = report.score >= PASS_SCORE and report.written == report.total
+    # `unexercised` is a gate condition rather than a score penalty: it is
+    # counted per lesson, and a Grade 9 page with no practice on it fails
+    # whatever the per-piece score says.
+    passed = (report.score >= PASS_SCORE and report.written == report.total
+              and not report.unexercised)
 
     feedback = [
         {"aspect": "instructions_fulfilled", "method": "written_vs_asked",
@@ -269,6 +289,21 @@ def gate_of(report: "MaterialReport") -> dict[str, Any]:
          "score": round(1 - len(report.unscripted) / report.total, 4) if report.total else 1.0,
          "comment": f"{len(report.unscripted)} scripted in English only"
                     if report.unscripted else "the language is in the script"},
+        {"aspect": "form", "method": "opening_announces_the_lesson",
+         "status": "fail" if report.announced else "pass",
+         "score": round(1 - len(report.announced) / report.total, 4) if report.total else 1.0,
+         "comment": f"{len(report.announced)} of {report.total} open by announcing the lesson"
+                    if report.announced else "no section announces itself"},
+        {"aspect": "page_not_transcript", "method": "invented_learner_replies",
+         "status": "fail" if report.staged else "pass",
+         "score": round(1 - len(report.staged) / report.total, 4) if report.total else 1.0,
+         "comment": f"{len(report.staged)} script a class discussion onto the page"
+                    if report.staged else "written as a page, not a transcript"},
+        {"aspect": "practice", "method": "numbered_questions_per_lesson",
+         "status": "fail" if report.unexercised else "pass",
+         "score": 0.0 if report.unexercised else 1.0,
+         "comment": f"{len(report.unexercised)} lesson(s) give the learner nothing to work"
+                    if report.unexercised else "every lesson has practice"},
         {"aspect": "not_an_echo", "method": "overlap_with_the_instruction",
          "status": "fail" if report.echoed else "pass",
          "score": round(1 - len(report.echoed) / report.total, 4) if report.total else 1.0,
@@ -298,6 +333,26 @@ def gate_of(report: "MaterialReport") -> dict[str, Any]:
             f"{', '.join(item.get('phrases') or [])}. This learner is not four. "
             f"Address them as the register says — 'learners', not 'children' — "
             f"and drop the praise after every turn."
+        )
+    for item in report.announced[:3]:
+        actions.append(
+            f"\"{item.get('topic') or 'One section'}\" opens by announcing the "
+            f"lesson: \"{(item.get('opening') or '')[:60]}…\". A textbook page "
+            f"states the thing; it does not say it is about to. Begin with the "
+            f"heading and the definition."
+        )
+    for item in report.staged[:3]:
+        actions.append(
+            f"\"{item.get('topic') or 'One section'}\" scripts a class "
+            f"discussion and invents the learners' answers. This is a page they "
+            f"read on their own — cut the questions to the room and the replies "
+            f"nobody gave."
+        )
+    for item in report.unexercised[:3]:
+        actions.append(
+            f"Lesson {item.get('lesson')} gives the learner nothing to work: "
+            f"{item.get('numbered_questions', 0)} numbered questions. Add an "
+            f"exercise set of at least five, the later ones harder than the first."
         )
     for item in report.thin[:4]:
         actions.append(
@@ -472,4 +527,11 @@ def check(material: dict[str, Any], plan: Plan, grade: str = "",
     # beside three in the wrong one is still a lesson that lurches.
     report.infantilised = nursery_register(material, grade)
     report.unscripted = unscripted_language(material, subject)
+    # The FORM the band calls for, which is not the same question as the
+    # reading level. A Grade 9 page that announces itself in every section and
+    # never asks the learner to work anything is pitched correctly and shaped
+    # wrongly, and only these three notice that.
+    report.announced = material_form.announced(material, grade)
+    report.staged = material_form.staged(material, grade)
+    report.unexercised = material_form.unexercised(material, grade)
     return report

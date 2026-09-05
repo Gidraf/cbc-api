@@ -64,8 +64,13 @@ def test_no_service_assembles_a_prompt_out_of_string_literals() -> None:
     """The shape to catch: a long multi-line string that instructs a model,
     built where nobody can edit it."""
     offenders: list[str] = []
+    # `=== ` anchored to a line start: that is how a prompt writes a section
+    # header. Unanchored it also matched JavaScript strict equality — a
+    # `display === 'true'` inside the notes renderer's KaTeX loader was
+    # reported as an unseeded prompt.
     instruction = re.compile(
-        r"you are (a|an|the|writing)|return only valid json|=== ", re.I)
+        r"you are (a|an|the|writing)|return only valid json|^=== ",
+        re.I | re.M)
 
     for path in (APP / "services").rglob("*.py"):
         # These ARE the prompt store: their text is seeded to Langfuse, so it

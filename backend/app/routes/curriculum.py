@@ -47,6 +47,7 @@ from ..services.faith_scope import prompt_block as faith_prompt_block
 from ..services.grade_scope import notes_for as grade_scope_notes
 from ..services import notation, prompt_fragments
 from ..services.target_language import block_for as target_language_block
+from ..services.material_form import block_for as _material_form_block
 from ..services.level_register import (
     language_block,
     register_block,
@@ -1062,6 +1063,10 @@ def factory_generate_notes(
                     payload.grade,
                     notes=grade_scope_notes(payload.grade, payload.subject),
                 ),
+        # The register says who the learner is; this says what the page IS. A
+        # Grade 9 plan that directs a spoken teacher script forces the material
+        # station to write one, however well the register is stated.
+        "material_form": _material_form_block(payload.grade),
         "language_register": language_block(payload.grade),
             # How this subject writes what it cannot write in words. Empty for
             # most subjects — a CRE guide carrying two pages about balancing
@@ -5450,7 +5455,7 @@ def factory_generate_material(
     for i, directive in enumerate(plan.directives, start=1):
         messages = [{"role": "user", "content": lesson_material.prompt_for(
             directive, register=register, faith=faith, language=language,
-            notation=notation, target_language=target,
+            notation=notation, target_language=target, grade=payload.grade,
             sub_strand=payload.sub_strand, slos=slos)}]
         if payload.custom_instructions:
             messages.append({"role": "user",
@@ -5655,12 +5660,32 @@ def factory_notes_html(
         )
     render = (notes_renderer.render_material_html if artifact.kind == "material"
               else notes_renderer.render_html)
+    # Neither route ever passed the assets, so every figure printed as a
+    # hatched placeholder — including the ones whose diagram had already been
+    # generated, reviewed and filed. The production list said everything was
+    # outstanding.
     return HTMLResponse(render(
         artifact.content or {},
         grade=artifact.grade, subject=artifact.subject,
         strand=artifact.strand_name, sub_strand=artifact.sub_strand_name,
         version=artifact.version,
+        assets=_assets_for(artifact),
     ))
+
+
+def _assets_for(artifact: Any) -> dict[str, Any]:
+    """The pictures already filed for this artifact's sub-strand.
+
+    A figure the page keeps space for is filled where the thing exists and left
+    as a captioned plate where it does not — which is what makes the guide its
+    own production list. That only works if somebody looks.
+    """
+    from ..services import lesson_assets
+
+    return lesson_assets.for_notes(
+        artifact.content or {}, artifact.grade, artifact.subject,
+        artifact.sub_strand_name,
+    )
 
 
 @router.get("/factory/notes.pdf")
@@ -5696,6 +5721,7 @@ def factory_notes_pdf(
         grade=artifact.grade, subject=artifact.subject,
         strand=artifact.strand_name, sub_strand=artifact.sub_strand_name,
         version=artifact.version,
+        assets=_assets_for(artifact),
     )
     try:
         body = pdf.from_html(document)

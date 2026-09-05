@@ -2,6 +2,7 @@ import { FormEvent, useMemo, useState, useEffect } from "react";
 import { API_BASE_URL, AUTH_EXPIRED_EVENT, fetchJson } from "./api";
 import { MathBlock, MathText } from "./ui/MathBlock";
 import { SimulationPlayer, SimulationTrack } from "./ui/SimulationPlayer";
+import { WorkedExamples } from "./ui/WorkedExamples";
 import { PrintPreviewModal } from "./ui/PrintPreviewModal";
 
 type Role = "admin" | "operator" | "reviewer" | "developer";
@@ -5242,27 +5243,7 @@ export function App() {
                             </div>
 
                             {/* Worked Case Study Examples */}
-                            {stationNotes.worked_examples?.length > 0 && (
-                              <div style={{ padding: "14px", background: "#f8fafc", borderRadius: "8px", border: "1px solid #cbd5e1" }}>
-                                <strong style={{ fontSize: "13.5px", color: "#334155" }}>💼 Authentic Worked Case Studies:</strong>
-                                {stationNotes.worked_examples.map((we: any, idx: number) => (
-                                  <div key={idx} style={{ fontSize: "12px", marginTop: "8px", padding: "10px 12px", background: "#fff", borderRadius: "6px", border: "1px solid #e2e8f0" }}>
-                                    <div style={{ color: "#0f172a" }}><strong>Scenario:</strong> {we.scenario}</div>
-                                    <div style={{ marginTop: "4px", color: "#0369a1" }}><strong>Resolution Steps:</strong> {Array.isArray(we.solution_steps) ? we.solution_steps.join(" ➔ ") : we.solution_steps}</div>
-                                    {(we.explanation || we.solution_explanation) && (
-                                      <div style={{ marginTop: "4px", color: "#475569", fontStyle: "italic" }}>
-                                        <strong>Rationale:</strong> {we.explanation || we.solution_explanation}
-                                      </div>
-                                    )}
-                                    {we.research_source && (
-                                      <div style={{ marginTop: "4px", color: "#64748b", fontSize: "11px" }}>
-                                        📚 <strong>Source:</strong> {we.research_source}
-                                      </div>
-                                    )}
-                                  </div>
-                                ))}
-                              </div>
-                            )}
+                            <WorkedExamples examples={stationNotes.worked_examples} />
 
                             {/* Key Inquiry Questions */}
                             {stationNotes.key_inquiry_questions?.length > 0 && (
@@ -7112,11 +7093,14 @@ export function App() {
 
                           {/* Worked Examples / Real-World Kenyan Applications */}
                           {hMod?.worked_examples && (
-                            <div style={{ marginTop: "12px", padding: "12px 16px", background: "#f0fdf4", borderRadius: "8px", border: "1px solid #bbf7d0", fontSize: "13px" }}>
-                              <strong style={{ color: "#166534" }}>🌱 Real-World Application / Worked Example:</strong>
-                              <div style={{ color: "#14532d", marginTop: "4px", lineHeight: "1.6" }}>
-                                {typeof hMod.worked_examples === "string" ? hMod.worked_examples : JSON.stringify(hMod.worked_examples)}
-                              </div>
+                            <div style={{ marginTop: "12px" }}>
+                              {typeof hMod.worked_examples === "string" ? (
+                                <div style={{ padding: "12px 16px", background: "#f0fdf4", borderRadius: "8px", border: "1px solid #bbf7d0", fontSize: "13px", color: "#14532d", lineHeight: "1.6" }}>
+                                  <MathText text={hMod.worked_examples} />
+                                </div>
+                              ) : (
+                                <WorkedExamples examples={hMod.worked_examples} lesson={hMod.hour_number || hMod.module_number} />
+                              )}
                             </div>
                           )}
 

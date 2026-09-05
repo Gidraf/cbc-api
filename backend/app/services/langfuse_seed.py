@@ -436,6 +436,7 @@ Do not repeat the instruction back. Do not describe the material. Produce it.
 
 === WHO IS LISTENING ===
 {{ level_register }}
+{{ material_form }}
 
 {{ notation }}
 
@@ -483,6 +484,24 @@ Do not confuse the two. Thin notes for young learners is the most common way thi
 guide fails.
 
 {{ level_register }}
+{{ material_form }}
+
+=== WORKED EXAMPLES ===
+Every lesson that teaches a procedure carries worked examples. A learner
+revising at home has the teacher's explanation and nothing to imitate without
+them, and "the teacher demonstrates on the board" is a board nobody kept.
+
+  *   Set the example the way a learner meets it, then work it THROUGH. Each
+      step carries its reason: "we make the denominators the same so the parts
+      are the same size", not "now we rewrite the fractions".
+  *   Write every symbol in LaTeX, between single dollars, so it typesets on
+      the page and in print: $\\frac{2}{3}$, $3 \\times (-4) = -12$, $x^2$.
+      ESCAPE THE BACKSLASH — write \\\\frac in JSON, not \\frac, or it
+      arrives as a tab and prints as "rac".
+  *   Numbers, quantities and units belong in the example, not around it. An
+      example with no numbers in it is a description of an example.
+  *   Where the learning area has no procedures to work — a discussion, a song,
+      a story — return an empty list rather than inventing one.
 
 {{ notation }}
 
@@ -646,6 +665,14 @@ Output MUST be a valid JSON object matching this schema:
       "slos_covered": ["<the SLO(s) this lesson serves>"],
       "learning_intent": "What the learner will be able to do at the end of this one lesson.",
       "teacher_exposition": "The substantive content for this lesson, in full. What the teacher needs to know and be able to explain, at the depth described above.",
+      "worked_examples": [
+        {"statement": "The example as it is set, in the words a learner reads. Mathematics in LaTeX between single dollars: Work out $\\frac{2}{3} + \\frac{1}{4}$.",
+         "steps": [
+           {"working": "$\\frac{2}{3} + \\frac{1}{4} = \\frac{8}{12} + \\frac{3}{12}$",
+            "because": "Why this step happens — the reason, not a description of the symbols."}
+         ],
+         "answer": "$\\frac{11}{12}$"}
+      ],
       "lesson_flow": [
         {"phase": "Introduction", "minutes": 0, "what_the_teacher_does": "...", "what_learners_do": "..."},
         {"phase": "Development", "minutes": 0, "what_the_teacher_does": "...", "what_learners_do": "..."},
