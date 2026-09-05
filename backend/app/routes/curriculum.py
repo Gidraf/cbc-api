@@ -5712,8 +5712,11 @@ def factory_draw_visual(
 
     resolved = pipeline_orchestrator.router.resolve_for_stage("diagram_generation")
     try:
+        # An SVG is not JSON. Asked for one and given one, the client used to
+        # reject it as "the model did not return JSON".
         response = llm_client.generate(
-            resolved, [{"role": "user", "content": brief}], temperature=0.2)
+            resolved, [{"role": "user", "content": brief}], temperature=0.2,
+            expect="text")
     except Exception as exc:  # noqa: BLE001
         raise_api_error("DIAGRAM_GENERATION_FAILED", f"The model failed: {exc}")
 
@@ -5985,7 +5988,8 @@ def factory_generate_asset(
 
     try:
         response = llm_client.generate(
-            resolved, [{"role": "user", "content": instruction}], temperature=0.2)
+            resolved, [{"role": "user", "content": instruction}], temperature=0.2,
+            expect="text")
     except Exception as exc:  # noqa: BLE001
         raise_api_error("DIAGRAM_GENERATION_FAILED", f"The model failed: {exc}")
 

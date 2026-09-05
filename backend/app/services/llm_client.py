@@ -45,6 +45,20 @@ def _model_remedy(config: "ResolvedModelConfig"):
     )
 
 
+def _strip_fence(text: str) -> str:
+    """Raw text, with the markdown fence a model wraps things in removed.
+
+    Asked for an SVG and nothing else, a model still answers "```svg\n<svg …"
+    often enough that stripping it here is the difference between a station
+    that works and one that fails on the model's habits.
+    """
+    cleaned = (text or "").strip()
+    cleaned = re.sub(r"<think(?:ing)?>.*?</think(?:ing)?>", "", cleaned,
+                     flags=re.DOTALL | re.IGNORECASE).strip()
+    fenced = re.search(r"```[a-zA-Z]*\s*(.*?)\s*```", cleaned, re.DOTALL)
+    return fenced.group(1).strip() if fenced else cleaned
+
+
 class LlmClient:
     def __init__(self, timeout_seconds: float = 120.0) -> None:
         self.timeout = timeout_seconds
@@ -56,9 +70,25 @@ class LlmClient:
         messages: list[dict[str, str]],
         temperature: float = 0.2,
         top_p: float = 0.9,
+        expect: str = "json",
     ) -> LlmResponse:
-        """Calls the configured LLM provider, parses JSON response, and extracts token usage.
-        
+        """Call the provider and return what it said, parsed or raw.
+
+        `expect="json"` is the default because almost everything here asks for
+        a structured object.
+
+        `expect="text"` exists because not everything does. A station asking
+        for an SVG — "Return ONLY the <svg> element" — got a perfectly good SVG
+        back and this method rejected it with
+
+            SCHEMA_VALIDATION_FAILED: The model did not return JSON.
+            It began: '<svg viewBox="0 0 800 600" ...'
+
+        The model had done exactly as it was told. Wrapping the SVG in JSON
+        instead would mean escaping a whole document's worth of quotes and
+        backslashes through a parser we have already had to repair once for
+        exactly that reason.
+
         Raises precise ApiError on failure — never returns fallback data.
         """
         provider = config.provider
@@ -79,7 +109,8 @@ class LlmClient:
 
         _meter(usage, config.model, config.provider)
 
-        content = self._extract_and_parse_json(raw_text)
+        content = (self._extract_and_parse_json(raw_text)
+                   if expect != "text" else _strip_fence(raw_text))
         return LlmResponse(
             content=content,
             usage=usage,
