@@ -1309,6 +1309,11 @@ export function useDrawVisual() {
       api<{
         title: string; svg: string; storage_url: string; model: string;
         index: number; drawn: number; total: number;
+        asset_id?: string;
+        /** Whether the SVG actually reached the bucket. A save that cannot
+         *  reach MinIO does not raise — it returns a `local://` URL — so a
+         *  drawing could report itself stored with nothing in the bucket. */
+        stored_in_minio?: boolean;
         new_artifact?: { artifact_id: string; version: number } | null;
         /** What the drawing does in the book's 85mm column, measured server
          *  side. A picture that reads fine in this panel can print with its

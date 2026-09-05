@@ -128,11 +128,111 @@ def list_for(grade: str, subject: str, sub_strand: str = "") -> list[dict[str, A
 
 
 def remove(asset_id: str) -> bool:
-    from ..infra.db import execute
+    """Take the row out, and the stored object with it.
+
+    Removing only the row left the SVG in MinIO for ever: nothing referred to
+    it, nothing listed it, and nothing would ever delete it.
+    """
+    from ..infra.db import execute, fetch_all
+    from ..infra.storage import object_storage
+
+    stored = ""
+    try:
+        rows = fetch_all(
+            "SELECT storage_url FROM uploaded_assets WHERE asset_id = :id",
+            {"id": asset_id})
+        stored = str((rows or [{}])[0].get("storage_url") or "")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Could not read asset %s before removing it: %s",
+                       asset_id, exc)
 
     try:
         execute("DELETE FROM uploaded_assets WHERE asset_id = :id", {"id": asset_id})
-        return True
     except Exception as exc:  # noqa: BLE001
         logger.warning("Could not remove asset %s: %s", asset_id, exc)
         return False
+
+    # The row is the record; the object is a copy of it. Failing to delete the
+    # copy is worth a log, not a failed delete — the figure is already gone
+    # from every page that read it.
+    if stored:
+        try:
+            object_storage.remove_object(object_storage.object_name_of(stored))
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Removed %s but left its object behind: %s",
+                           asset_id, exc)
+    return True
+
+
+def file_drawing(*, grade: str, subject: str, strand: str, sub_strand: str,
+                 title: str, svg: str, alt_text: str = "",
+                 source: str = "drawn", uploaded_by: str = "") -> dict[str, Any]:
+    """Store one drawn SVG where the book reads it, and say what happened.
+
+    Drawing filed the SVG here; editing the artifact did not. So an operator
+    who fixed a drawing by hand got a new artifact version and a book that
+    went on printing the old picture — because this row is what the page
+    matches on, and it still held the drawing from before the edit.
+
+    `save_bytes` does not raise when MinIO is unreachable: it logs and returns
+    a `local://` URL. The page is fine either way, since the SVG is inlined
+    from the row — but the caller is told which happened rather than being
+    left to assume the bucket has it.
+    """
+    from ..infra.storage import object_storage
+
+    asset_id = asset_id_for(grade, subject, sub_strand, "diagram", title)
+    storage_url = ""
+    try:
+        storage_url = object_storage.save_bytes(
+            f"assets/{grade}/{subject}/{asset_id}.svg".replace(" ", "-"),
+            svg.encode("utf-8"), "image/svg+xml")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Could not store drawing %s: %s", asset_id, exc)
+
+    record(
+        grade=grade, subject=subject, strand=strand, sub_strand=sub_strand,
+        kind="diagram", what=title, storage_url=storage_url, svg=svg,
+        title=title, alt_text=alt_text or title, content_type="image/svg+xml",
+        size=len(svg), source=source, uploaded_by=uploaded_by,
+    )
+    return {
+        "asset_id": asset_id,
+        "storage_url": storage_url,
+        "stored_in_minio": bool(storage_url)
+                           and not storage_url.startswith("local://"),
+    }
+
+
+def refile_diagram_artifact(artifact: Any, *, edited_by: str = "") -> int:
+    """Re-file every drawing an edited diagram version carries.
+
+    Editing is how an operator fixes a drawing by hand. Without this the fix
+    lands in a new artifact version and the book keeps printing the old one.
+    Failures are logged, never raised: an edit that saved must not report
+    itself as failed because a bucket was briefly unreachable.
+    """
+    content = getattr(artifact, "content", None) or {}
+    visuals = content.get("visuals") or content.get("diagrams") or []
+    filed = 0
+    for visual in visuals:
+        if not isinstance(visual, dict):
+            continue
+        svg = str(visual.get("diagram_svg") or visual.get("svg") or "").strip()
+        title = str(visual.get("diagram_title") or visual.get("title") or "").strip()
+        if not (svg and title):
+            continue
+        try:
+            file_drawing(
+                grade=getattr(artifact, "grade", ""),
+                subject=getattr(artifact, "subject", ""),
+                strand=getattr(artifact, "strand_name", ""),
+                sub_strand=getattr(artifact, "sub_strand_name", ""),
+                title=title, svg=svg,
+                alt_text=str((visual.get("accessibility") or {}).get("alt_text") or ""),
+                source="edited", uploaded_by=edited_by,
+            )
+            filed += 1
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Could not re-file %s after an edit: %s", title, exc)
+    return filed

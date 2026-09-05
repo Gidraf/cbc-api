@@ -149,7 +149,7 @@ def edit_artifact(
     Editing in place would make an approved version mean whatever it was last
     edited into, which is exactly what versioning exists to prevent.
     """
-    from ..services import content_shape
+    from ..services import asset_uploads, content_shape
 
     current = registry.get(artifact_id)
     shape = content_shape.compare(current.content or {}, payload.content or {})
@@ -173,6 +173,18 @@ def edit_artifact(
         except Exception as exc:  # noqa: BLE001
             logger.warning("Could not record the shape change on %s: %s",
                            filed.get("artifact_id"), exc)
+    # A hand-fixed drawing has to reach the page, not just the version. The
+    # book matches on the stored asset, and that still held the drawing from
+    # before the edit — so the fix showed in the JSON and nowhere else.
+    if current.kind == "diagram":
+        try:
+            asset_uploads.refile_diagram_artifact(
+                registry.get(filed["artifact_id"]),
+                edited_by=getattr(auth, "subject", ""))
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Edited %s but could not re-file its drawings: %s",
+                           filed.get("artifact_id"), exc)
+
     return {**filed, "shape": shape.to_dict()}
 
 

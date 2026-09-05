@@ -163,6 +163,25 @@ class ObjectStorage:
     def save_dna_certificate(self, dna_id: str, cert_payload: dict[str, Any]) -> str:
         return self.save_json(f"dna/{dna_id}.json", cert_payload)
 
+    def remove_object(self, object_name: str) -> bool:
+        """Delete one stored object.
+
+        Deleting a drawing removed its row and left the SVG in the bucket, so
+        the storage filled with drawings nothing referred to and a redraw of
+        the same figure could not reuse its object name cleanly.
+
+        A missing object counts as removed: the caller wants it gone, and it
+        is gone.
+        """
+        if not object_name:
+            return False
+        try:
+            self._get_client().remove_object(settings.minio_bucket, object_name)
+            return True
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("MinIO remove failed for '%s': %s", object_name, exc)
+            return False
+
     def object_exists(self, object_name: str) -> bool:
         try:
             self.ensure_bucket()

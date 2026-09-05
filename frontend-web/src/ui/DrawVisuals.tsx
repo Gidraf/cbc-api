@@ -111,9 +111,16 @@ export function DrawVisuals({
               // — one column of a two-column A4 page — so the preview is
               // 85mm, with the plate's reserved height marked beside it.
               <div style={{ marginTop: "var(--s3)" }}>
-                <div style={{ fontSize: "var(--text-xs)", color: "var(--ink-2)", marginBottom: "var(--s1)" }}>
-                  Actual size in the book — 85mm column
-                </div>
+                <Stack direction="row" gap="var(--s2)" style={{ alignItems: "center", marginBottom: "var(--s1)" }}>
+                  <span style={{ fontSize: "var(--text-xs)", color: "var(--ink-2)" }}>
+                    Actual size in the book — 85mm column
+                  </span>
+                  {fit && (
+                    <Badge tone={draw.data?.stored_in_minio ? "ok" : "warn"}>
+                      {draw.data?.stored_in_minio ? "stored" : "not in storage"}
+                    </Badge>
+                  )}
+                </Stack>
                 <div
                   style={{
                     width: "85mm",

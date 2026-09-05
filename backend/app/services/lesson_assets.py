@@ -199,3 +199,83 @@ def for_notes(notes: dict[str, Any], grade: str, subject: str,
     except Exception as exc:  # noqa: BLE001
         logger.warning("Could not build the asset map: %s", exc)
         return {}
+
+
+def _best_module(title: str, modules: list[dict[str, Any]]) -> int:
+    """Which lesson a drawing belongs beside, by what it is about.
+
+    Falls back to the first lesson: a picture printed in the wrong lesson is a
+    smaller failure than a picture the book never prints.
+    """
+    best, best_at = 0.0, 0
+    for i, module in enumerate(modules):
+        against = " ".join(str(module.get(k) or "") for k in
+                           ("title", "topic", "teacher_exposition"))
+        score = _score(title, against)
+        if score > best:
+            best, best_at = score, i
+    return best_at
+
+
+def with_drawn(plan: dict[str, Any], grade: str, subject: str,
+               sub_strand: str = "") -> dict[str, Any]:
+    """The plan, plus a visual entry for every diagram actually filed for it.
+
+    A plate is reserved for what the PLAN asks for. So a diagram that had been
+    planned by the diagram station, drawn, sanitised, stored in MinIO and
+    scored 100/100 still printed as a hatched rectangle, because the lesson
+    plan had happened to phrase its request as "charts" — and nothing binds
+    "charts" to "Basic Operations on Integers".
+
+    Whether the plan found the words for it is not the question. The drawing
+    exists, it was made for this sub-strand, and the book should carry it. So
+    anything filed and not already named by the plan is attached to the lesson
+    it is about, and from there fills a plate like any other figure.
+    """
+    if not isinstance(plan, dict):
+        return plan
+
+    try:
+        drawn = [a for a in collect(grade, subject, sub_strand)
+                 if a.get("kind") == "diagram" and (a.get("svg") or a.get("url"))]
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Could not read what has been drawn for %s/%s: %s",
+                       grade, sub_strand, exc)
+        return plan
+    if not drawn:
+        return plan
+
+    modules = plan.get("modules")
+    if not isinstance(modules, list) or not modules:
+        return plan
+    modules = [m if isinstance(m, dict) else {} for m in modules]
+
+    # What the plan already names, so a drawing is not attached twice and
+    # printed twice.
+    named: set[str] = set()
+    for module in modules:
+        for visual in (module.get("visuals") or module.get("diagrams") or []):
+            if isinstance(visual, dict):
+                named.add(str(visual.get("diagram_title") or visual.get("title")
+                              or "").strip().lower())
+            elif isinstance(visual, str):
+                named.add(visual.strip().lower())
+
+    out = [dict(m) for m in modules]
+    added = 0
+    for asset in drawn:
+        title = str(asset.get("title") or "").strip()
+        if not title or title.lower() in named:
+            continue
+        named.add(title.lower())
+        at = _best_module(title, out)
+        visuals = list(out[at].get("visuals") or [])
+        visuals.append({"diagram_title": title,
+                        "accessibility": {"alt_text": str(asset.get("alt") or title)},
+                        "source": "drawn"})
+        out[at]["visuals"] = visuals
+        added += 1
+
+    if not added:
+        return plan
+    return {**plan, "modules": out}

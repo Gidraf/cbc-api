@@ -5688,6 +5688,17 @@ def _svg_brief(visual: dict[str, Any], *, grade: str, subject: str,
         "second or third line of a wrapped label. Anything past 340 across or",
         "200 down is cut off by the page and simply will not be there.",
         "",
+        "The edges are where this goes wrong, every time. A label centred on",
+        "the last tick of a number line is half off the canvas; so is a",
+        "left-hand caption starting at x=0 once it is centred. So:",
+        "",
+        "  - a label at the left edge starts at x=12 with the default anchor;",
+        "  - a label at the right edge uses text-anchor=\"end\" at x=328;",
+        "  - a centred label needs 0.55 × font-size × characters ÷ 2 of clear",
+        "    space on BOTH sides of its x, or it must move inward;",
+        "  - the first and last ticks of a scale go at x=30 and x=310, not at",
+        "    12 and 328, so their labels have somewhere to sit.",
+        "",
         "THE DRAWING MUST CARRY THE MEANING. A learner covering every label",
         "must still be able to work out what is going on. That is the test,",
         "and it is the one these drawings keep failing:",
@@ -5849,28 +5860,18 @@ def factory_draw_visual(
 
     # 1. Where the BOOK looks. Filed against the visual's own title, which is
     #    what `lesson_assets` matches a requirement on.
-    from ..infra.storage import object_storage
-
-    asset_id = asset_uploads.asset_id_for(artifact.grade, artifact.subject,
-                                          artifact.sub_strand_name, "diagram", title)
-    storage_url = ""
-    try:
-        storage_url = object_storage.save_bytes(
-            f"assets/{artifact.grade}/{artifact.subject}/{asset_id}.svg".replace(" ", "-"),
-            svg.encode("utf-8"), "image/svg+xml")
-    except Exception as exc:  # noqa: BLE001
-        # The SVG is inlined on the page, so losing the stored copy costs the
-        # download and not the figure.
-        logger.warning("Could not store drawing %s: %s", asset_id, exc)
-
-    asset_uploads.record(
-        grade=artifact.grade, subject=artifact.subject, strand=artifact.strand_name,
-        sub_strand=artifact.sub_strand_name, kind="diagram", what=title,
-        storage_url=storage_url, svg=svg, title=title,
+    # The same filing an edit does, so a drawing and a hand-fixed drawing end
+    # up in exactly one place and the book cannot show a stale one.
+    stored = asset_uploads.file_drawing(
+        grade=artifact.grade, subject=artifact.subject,
+        strand=artifact.strand_name, sub_strand=artifact.sub_strand_name,
+        title=title, svg=svg,
         alt_text=str((visual.get("accessibility") or {}).get("alt_text") or title),
-        content_type="image/svg+xml", size=len(svg),
         source=f"drawn:{resolved.model}", uploaded_by=getattr(auth, "subject", ""),
     )
+    asset_id = stored["asset_id"]
+    storage_url = stored["storage_url"]
+    in_minio = stored["stored_in_minio"]
 
     # 2. And onto the plan itself, so the station panel shows what it drew and
     #    the gate can see the visual is no longer only a brief.
@@ -5899,6 +5900,8 @@ def factory_draw_visual(
         "title": title,
         "svg": svg,
         "storage_url": storage_url,
+        "asset_id": asset_id,
+        "stored_in_minio": in_minio,
         "model": resolved.model,
         "usage": getattr(response, "usage", None),
         "drawn": drawn,
@@ -6398,6 +6401,11 @@ def _render_document(artifact: Any) -> str:
             except Exception as exc:  # noqa: BLE001
                 logger.warning("No plan found for material %s: %s",
                                artifact.artifact_id, exc)
+        # Everything drawn for this sub-strand gets a place, whether or not
+        # the plan found the words to ask for it. Read fresh on every request,
+        # so drawing, redrawing or deleting one shows on the next refresh.
+        plan = lesson_assets.with_drawn(
+            plan, artifact.grade, artifact.subject, artifact.sub_strand_name)
         return notes_renderer.render_material_html(
             content, plan=plan,
             assets=lesson_assets.for_notes(
@@ -6405,6 +6413,8 @@ def _render_document(artifact: Any) -> str:
             **common,
         )
 
+    content = lesson_assets.with_drawn(
+        content, artifact.grade, artifact.subject, artifact.sub_strand_name)
     return notes_renderer.render_html(
         content,
         assets=lesson_assets.for_notes(

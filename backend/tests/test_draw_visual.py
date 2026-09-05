@@ -79,14 +79,19 @@ def test_a_visual_with_no_parts_still_gets_a_brief() -> None:
 
 def test_the_drawing_is_filed_where_the_book_looks() -> None:
     """Against the visual's own title, which is what `lesson_assets` matches a
-    requirement on — so the plate fills on the next render."""
+    requirement on — so the plate fills on the next render.
+
+    Drawing and hand-editing file through the SAME function: an edit that
+    filed anywhere else left the book printing the drawing from before it."""
     from app.routes import curriculum
+    from app.services import asset_uploads
 
-    source = inspect.getsource(curriculum.factory_draw_visual)
+    assert "asset_uploads.file_drawing(" in inspect.getsource(
+        curriculum.factory_draw_visual)
 
-    assert "asset_uploads.record(" in source
-    assert 'kind="diagram"' in source
-    assert "what=title" in source
+    filing = inspect.getsource(asset_uploads.file_drawing)
+    assert 'kind="diagram"' in filing
+    assert "what=title" in filing
 
 
 def test_the_svg_is_sanitised_before_it_is_stored() -> None:
@@ -123,12 +128,12 @@ def test_an_index_that_does_not_exist_says_how_many_do() -> None:
 def test_a_storage_failure_does_not_lose_the_drawing() -> None:
     """The SVG is inlined on the page, so losing the stored copy costs the
     download and not the figure."""
-    from app.routes import curriculum
+    from app.services import asset_uploads
 
-    source = inspect.getsource(curriculum.factory_draw_visual)
+    source = inspect.getsource(asset_uploads.file_drawing)
     stored = source.split("object_storage.save_bytes")[1]
     assert "except Exception" in stored
-    assert "asset_uploads.record" in stored, "recorded regardless"
+    assert "record(" in stored, "recorded regardless"
 
 
 def test_the_route_exists() -> None:
@@ -276,3 +281,100 @@ def test_it_says_that_what_falls_outside_the_viewbox_is_gone() -> None:
 
     assert "Nothing may fall outside the viewBox" in brief
     assert "second or third line of a wrapped label" in brief
+
+
+# ── what actually reaches storage ───────────────────────────────────────────
+
+
+def test_a_drawing_that_never_reached_minio_says_so() -> None:
+    """`save_bytes` does not raise when MinIO is unreachable — it logs and
+    returns a `local://` URL. So the route reported every drawing as stored,
+    served it from the database row, and left the bucket empty."""
+    from app.routes import curriculum
+    from app.services import asset_uploads
+
+    assert 'startswith("local://")' in inspect.getsource(
+        asset_uploads.file_drawing)
+
+    route = inspect.getsource(curriculum.factory_draw_visual)
+    assert '"stored_in_minio": in_minio' in route
+    assert '"asset_id": asset_id' in route, "so it can be deleted again"
+
+
+def test_deleting_an_asset_takes_its_object_out_of_the_bucket(monkeypatch) -> None:
+    """Removing the row left the SVG in MinIO for ever: nothing referred to
+    it, nothing listed it, nothing would ever delete it."""
+    from app.infra import db, storage
+    from app.services import asset_uploads
+
+    monkeypatch.setattr(db, "fetch_all", lambda *a, **k: [
+        {"storage_url": "http://minio:9000/cbc-assets/assets/grade-9/x.svg"}])
+    monkeypatch.setattr(db, "execute", lambda *a, **k: None)
+    gone: list[str] = []
+    monkeypatch.setattr(storage.object_storage, "remove_object",
+                        lambda name: gone.append(name) or True)
+
+    assert asset_uploads.remove("asset_abc") is True
+    assert gone == ["assets/grade-9/x.svg"]
+
+
+def test_a_bucket_that_will_not_delete_does_not_fail_the_delete(monkeypatch) -> None:
+    """The row is the record; the object is a copy. The figure is already gone
+    from every page that reads it."""
+    from app.infra import db, storage
+    from app.services import asset_uploads
+
+    monkeypatch.setattr(db, "fetch_all", lambda *a, **k: [
+        {"storage_url": "http://minio:9000/cbc-assets/assets/x.svg"}])
+    monkeypatch.setattr(db, "execute", lambda *a, **k: None)
+
+    def _boom(_name):
+        raise RuntimeError("minio is down")
+
+    monkeypatch.setattr(storage.object_storage, "remove_object", _boom)
+
+    assert asset_uploads.remove("asset_abc") is True
+
+
+def test_it_says_where_the_edge_labels_go() -> None:
+    """A number line came back with its "10" and its right-hand caption cut
+    off by the canvas edge — a label centred on the last tick is half outside
+    it. The rule is an anchor and a coordinate, not "keep a margin"."""
+    brief = _flowed()
+
+    assert 'text-anchor="end" at x=328' in brief
+    assert "a label at the left edge starts at x=12" in brief
+    assert "first and last ticks of a scale go at x=30 and x=310" in brief
+
+
+def test_editing_a_drawing_by_hand_reaches_the_book(monkeypatch) -> None:
+    """An edit files a new artifact version. The book matches on the stored
+    asset, which still held the drawing from before the edit — so a hand fix
+    showed in the JSON and nowhere else."""
+    from app.services import asset_uploads
+
+    filed: list[tuple[str, str]] = []
+    monkeypatch.setattr(asset_uploads, "file_drawing",
+                        lambda **k: filed.append((k["title"], k["svg"])) or {})
+
+    class _Version:
+        content = {"visuals": [
+            {"diagram_title": "Number line", "diagram_svg": "<svg>fixed</svg>"},
+            {"diagram_title": "Never drawn"},
+        ]}
+        grade, subject = "grade-9", "Mathematics"
+        strand_name, sub_strand_name = "Numbers", "Integers"
+
+    assert asset_uploads.refile_diagram_artifact(_Version()) == 1
+    assert filed == [("Number line", "<svg>fixed</svg>")]
+
+
+def test_the_edit_route_refiles_only_diagrams() -> None:
+    from app.routes import artifacts
+
+    source = inspect.getsource(artifacts.edit_artifact)
+
+    assert 'if current.kind == "diagram":' in source
+    assert "refile_diagram_artifact" in source
+    # An edit that saved must not report itself failed because a bucket blinked.
+    assert "except Exception" in source.split("refile_diagram_artifact")[1]

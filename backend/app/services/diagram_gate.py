@@ -68,29 +68,16 @@ class DiagramReport:
                 "clean": self.clean, "score": self.score}
 
 
-# The words that name the ARTEFACT rather than its subject. This is not a list
-# of bad topics — it is the closed grammatical class of words a figure caption
-# can never usefully consist of, because every figure on every page is one of
-# them. "Photosynthesis" is a subject; "diagram" is what you have drawn it as.
-_CATEGORY = {
-    "chart", "charts", "diagram", "diagrams", "figure", "figures",
-    "graph", "graphs", "illustration", "illustrations", "image", "images",
-    "picture", "pictures", "drawing", "drawings", "map", "maps",
-    "model", "models", "table", "tables", "visual", "visuals",
-    "sketch", "sketches", "plot", "plots",
-}
-
-
 def _is_a_category(title: str) -> bool:
-    """True when the title is only the word for what kind of picture it is.
+    """A title that is only the word for what kind of picture it is.
 
-    Deliberately narrow: it fires on "charts" and on "a diagram", and not on
-    "Digestive system" or "Bar chart of Grade 9 attendance", because a title
-    that carries any word outside this class is naming something.
+    The same rule the page uses to decide whether a requirement names a figure
+    anyone can produce — kept in one place, because a title the gate accepts
+    and the page discards is a diagram that passes review and never prints.
     """
-    words = [w for w in re.findall(r"[a-z]+", title.lower())
-             if w not in ("a", "an", "the", "of", "and", "for")]
-    return bool(words) and all(w in _CATEGORY for w in words)
+    from .asset_requirements import names_only_a_category
+
+    return names_only_a_category(title)
 
 
 def _title(visual: dict[str, Any]) -> str:

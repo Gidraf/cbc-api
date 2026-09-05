@@ -186,6 +186,29 @@ _ASKS = re.compile(
     re.I)
 
 
+# Words that name the ARTEFACT rather than its subject. Not a list of bad
+# topics — it is the closed class of words a figure caption can never usefully
+# consist of, because every figure on every page is one of them.
+CATEGORY_WORDS = {
+    "chart", "charts", "diagram", "diagrams", "figure", "figures",
+    "graph", "graphs", "illustration", "illustrations", "image", "images",
+    "picture", "pictures", "drawing", "drawings", "map", "maps",
+    "model", "models", "table", "tables", "visual", "visuals",
+    "sketch", "sketches", "plot", "plots",
+}
+
+
+def names_only_a_category(text: str) -> bool:
+    """True when the text says only what KIND of thing it is.
+
+    Narrow by design: it fires on "charts" and "a diagram", not on "Digestive
+    system" or "Bar chart of Grade 9 attendance".
+    """
+    words = [w for w in re.findall(r"[a-z]+", str(text).lower())
+             if w not in ("a", "an", "the", "of", "and", "for", "some")]
+    return bool(words) and all(w in CATEGORY_WORDS for w in words)
+
+
 def read(plan: dict[str, Any]) -> Requirements:
     """Every asset the plan asks for, per lesson, in the plan's own words."""
     out = Requirements()
@@ -204,6 +227,12 @@ def read(plan: dict[str, Any]) -> Requirements:
         def add(text: str, topic: str, source: str, kind: str = "") -> None:
             what = " ".join(str(text).split()).strip(" .,;")
             if len(what) < 4:
+                return
+            # "charts" is not a figure anybody can produce. It reserved a
+            # plate captioned `DIAGRAM 1.1 · charts` beside a real drawing
+            # that had nowhere to go, and told whoever had to make it nothing
+            # at all. A requirement has to name its subject.
+            if names_only_a_category(what):
                 return
             key = (number, what.lower())
             if key in seen:
