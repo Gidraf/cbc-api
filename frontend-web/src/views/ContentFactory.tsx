@@ -1012,6 +1012,16 @@ export function ContentFactory() {
                       <ReviewCycles report={job.data.result.review_cycles} />
                     )}
 
+                  {lastResult?.station !== station.id && selected && (
+                    <SavedStationWork
+                      grade={effectiveGrade}
+                      subject={selected.subject}
+                      subStrand={selected.report.sub_strand_name}
+                      kind={STATION_KIND[station.id] || station.id}
+                      label={station.label}
+                    />
+                  )}
+
                   {lastResult?.station === station.id && (
                     <>
                       <Stack direction="row" justify="flex-end" gap="var(--s2)" style={{ marginTop: "var(--s2)" }}>
@@ -1301,6 +1311,83 @@ function RunTimeline({
   );
 }
 
+
+/** What this station has already filed, shown when there is no live run.
+ *
+ *  A station's panel rendered the RESULT of the run that had just happened,
+ *  and `lastResult` is cleared whenever the sub-strand changes. So generating
+ *  the lesson material and then navigating away emptied the panel, and the
+ *  work looked lost — it was filed the whole time, versioned and reviewable,
+ *  two clicks away under "Versions".
+ *
+ *  Notes already had this fallback. No other station did. */
+function SavedStationWork({
+  grade,
+  subject,
+  subStrand,
+  kind,
+  label,
+}: {
+  grade: string;
+  subject: string;
+  subStrand: string;
+  kind: string;
+  label: string;
+}) {
+  const artifacts = useArtifacts({ grade, subject, kind, sub_strand: subStrand });
+  const rows: any[] = artifacts.data?.artifacts || [];
+  if (!rows.length) return null;
+
+  const newest = rows[0];
+  const provenance = newest.provenance || {};
+  const score = provenance.gate_score;
+  const passed = provenance.gate_passed;
+  const measured: string[] = Array.isArray(provenance.measured) ? provenance.measured : [];
+
+  return (
+    <div
+      style={{
+        marginTop: "var(--s3)",
+        border: "1px solid var(--line)",
+        borderRadius: "var(--radius-sm)",
+        padding: "var(--s3)",
+      }}
+    >
+      <Stack direction="row" gap="var(--s2)" style={{ alignItems: "center", flexWrap: "wrap" }}>
+        <Badge tone="ok">saved</Badge>
+        <strong style={{ fontSize: "var(--text-sm)" }}>
+          {label} · version {newest.version}
+        </strong>
+        {typeof score === "number" && (
+          <Badge tone={passed ? "ok" : "warn"}>{score}/100</Badge>
+        )}
+        {rows.length > 1 && (
+          <span style={{ fontSize: "var(--text-sm)", color: "var(--ink-2)" }}>
+            {rows.length} versions
+          </span>
+        )}
+        <span style={{ fontSize: "var(--text-sm)", color: "var(--ink-2)" }}>
+          Open <em>Versions, review and approval</em> below to read or approve it.
+        </span>
+      </Stack>
+
+      {measured.length > 0 && (
+        <>
+          <div style={{ marginTop: "var(--s2)", fontSize: "var(--text-sm)", color: "var(--ink-2)" }}>
+            What the checks found when it was filed:
+          </div>
+          <ul style={{ margin: "var(--s1) 0 0", paddingLeft: "1.1rem", fontSize: "var(--text-sm)" }}>
+            {measured.slice(0, 5).map((finding, i) => (
+              <li key={i} style={{ marginBottom: "3px" }}>
+                {finding}
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+    </div>
+  );
+}
 
 function StationResult({ result }: { result: any }) {
   const gate = result?.quality_gate;

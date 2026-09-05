@@ -423,7 +423,11 @@ def search(
     return fetch_all(
         f"""
         SELECT a.artifact_id, a.artifact_key, a.kind, a.version, a.grade, a.subject,
-               a.strand_name, a.sub_strand_name, a.title, a.status, a.created_at
+               a.strand_name, a.sub_strand_name, a.title, a.status, a.created_at,
+               -- The gate score this version was filed with. Without it the
+               -- console has to fetch every version separately to say whether
+               -- the work that is saved was any good.
+               a.provenance
         FROM artifacts a {join}
         WHERE {' AND '.join(conditions)}
         ORDER BY a.updated_at DESC
