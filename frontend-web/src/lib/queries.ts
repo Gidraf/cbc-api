@@ -1320,7 +1320,7 @@ export function useDrawVisual() {
          *  labels at 2mm, so the panel does not get to be the judge. */
         layout?: {
           fits: boolean; aspect: number; labels: number;
-          overlapping_labels: number; findings: string[];
+          overlapping_labels: number; findings: string[]; repairs?: string[];
         };
       }>("/api/v1/curriculum/factory/visuals/draw", {
         method: "POST",
@@ -1330,6 +1330,34 @@ export function useDrawVisual() {
       qc.invalidateQueries({ queryKey: ["artifacts"] });
       qc.invalidateQueries({ queryKey: ["artifact"] });
       qc.invalidateQueries({ queryKey: ["coverage"] });
+    },
+  });
+}
+
+/** Replace ONE drawing by hand.
+ *
+ * A plan with four visuals offered no way to touch the second: the only
+ * editor was the whole artifact as JSON, where each SVG is a single enormous
+ * line among the briefs. */
+export function useEditVisualSvg() {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { artifact_id: string; index: number; svg: string }) =>
+      api<{
+        title: string; svg: string; index: number; asset_id?: string;
+        stored_in_minio?: boolean;
+        layout?: {
+          fits: boolean; aspect: number; labels: number;
+          overlapping_labels: number; findings: string[]; repairs?: string[];
+        };
+      }>("/api/v1/curriculum/factory/visuals/svg", {
+        method: "POST",
+        body: JSON.stringify(v),
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["artifacts"] });
+      qc.invalidateQueries({ queryKey: ["artifact"] });
     },
   });
 }

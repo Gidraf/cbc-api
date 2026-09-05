@@ -5589,6 +5589,14 @@ class DrawVisualRequest(BaseModel):
     custom_instructions: str = ""
 
 
+class EditVisualSvgRequest(BaseModel):
+    """One drawing, replaced by hand."""
+
+    artifact_id: str
+    index: int = 0
+    svg: str
+
+
 # A drawing that still fails after this many tries is filed with its findings
 # rather than retried for ever. Three, because the second attempt fixes most of
 # what the first got wrong and the third catches what the fix broke.
@@ -5870,6 +5878,16 @@ def factory_draw_visual(
         # model is being asked to fix the drawing it just made.
         attempt = brief + diagram_layout.corrections(measured)
 
+    # Asked three times, each time told exactly what was measured on the last
+    # attempt, the labels still came back as "-10 — represents the smallest
+    # value shown" lying across their neighbours. A fourth ask is not a
+    # strategy, so what can be fixed mechanically is.
+    repairs: list[str] = []
+    if fit and not fit.ok:
+        mended, repairs = diagram_layout.repair(svg)
+        if repairs:
+            svg, fit = mended, diagram_layout.measure(mended)
+
     # 1. Where the BOOK looks. Filed against the visual's own title, which is
     #    what `lesson_assets` matches a requirement on.
     # The same filing an edit does, so a drawing and a hand-fixed drawing end
@@ -5927,6 +5945,102 @@ def factory_draw_visual(
             "labels": fit.texts if fit else 0,
             "overlapping_labels": fit.collisions if fit else 0,
             "findings": list(fit.findings) if fit else [],
+            "repairs": repairs,
+        },
+    }
+
+
+@router.post("/factory/visuals/svg")
+def factory_edit_visual_svg(
+    payload: EditVisualSvgRequest,
+    auth: AuthContext = Depends(require_roles("admin", "operator")),
+) -> dict[str, Any]:
+    """Replace ONE drawing by hand, without editing the artifact's JSON.
+
+    A plan with four visuals in it offered no way to touch the second: the
+    only editor was the whole artifact as JSON, where the SVG is a single
+    enormous line among the briefs. So a drawing that was nearly right was
+    redrawn from scratch instead of nudged.
+
+    It files a new version like any other edit, and re-files the asset, so the
+    book shows the change on the next refresh rather than on the next redraw.
+    """
+    from ..services import artifact_registry, asset_uploads, diagram_gate, diagram_layout
+    from ..services.diagram_dedup import extract_and_sanitize_svg
+
+    artifact = artifact_registry.get(payload.artifact_id)
+    if artifact.kind != "diagram":
+        raise_api_error(
+            "VALIDATION_FAILED",
+            f"'{artifact.kind}' is not a diagram plan; there is no drawing on "
+            f"it to replace.")
+
+    content = artifact.content or {}
+    visuals = [v for v in (content.get("visuals") or content.get("diagrams") or [])
+               if isinstance(v, dict)]
+    if not 0 <= payload.index < len(visuals):
+        raise_api_error(
+            "VALIDATION_FAILED",
+            f"This version plans {len(visuals)} visual(s); there is no "
+            f"number {payload.index}.")
+
+    svg = extract_and_sanitize_svg(payload.svg or "")
+    if not svg:
+        raise_api_error(
+            "VALIDATION_FAILED",
+            "That does not parse as an SVG. Paste the whole <svg> element, "
+            "including its closing tag.")
+
+    visual = visuals[payload.index]
+    title = str(visual.get("diagram_title") or visual.get("title") or "").strip()
+    if not title:
+        raise_api_error("VALIDATION_FAILED",
+                        "This visual has no title, so nothing can refer to it.")
+
+    fit = diagram_layout.measure(svg)
+    visual["diagram_svg"] = svg
+    visual["status"] = "edited"
+    updated = {**content, "visuals": visuals}
+
+    stored = asset_uploads.file_drawing(
+        grade=artifact.grade, subject=artifact.subject,
+        strand=artifact.strand_name, sub_strand=artifact.sub_strand_name,
+        title=title, svg=svg,
+        alt_text=str((visual.get("accessibility") or {}).get("alt_text") or title),
+        source="hand-edited", uploaded_by=getattr(auth, "subject", ""),
+    )
+
+    filed: dict[str, Any] = {}
+    try:
+        filed = _record_artifact(
+            "diagram", artifact.grade, artifact.subject, updated,
+            strand=artifact.strand_name, sub_strand=artifact.sub_strand_name,
+            parent=artifact.artifact_id,
+            provenance={"source": "factory_edit_visual_svg",
+                        "edited_by": getattr(auth, "subject", ""),
+                        "edited": title},
+            measured_from={"quality_gate": diagram_gate.gate_of(
+                diagram_gate.check(updated))},
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Edited %s but could not file the version: %s", title, exc)
+
+    return {
+        "artifact_id": artifact.artifact_id,
+        "index": payload.index,
+        "title": title,
+        "svg": svg,
+        "asset_id": stored["asset_id"],
+        "storage_url": stored["storage_url"],
+        "stored_in_minio": stored["stored_in_minio"],
+        "new_artifact": filed,
+        "layout": {
+            "fits": fit.ok,
+            "aspect": round(fit.aspect, 2),
+            "labels": fit.texts,
+            "overlapping_labels": fit.collisions,
+            "findings": list(fit.findings),
+            "repairs": [],
         },
     }
 

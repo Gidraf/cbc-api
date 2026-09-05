@@ -11,7 +11,11 @@ import inspect
 
 import pytest
 
+from pathlib import Path
+
 from app.routes.curriculum import _svg_brief
+
+FRONTEND = Path(__file__).resolve().parents[2] / "frontend-web"
 
 VISUAL = {
     "diagram_title": "Number line from -10 to 10",
@@ -399,3 +403,42 @@ def test_the_drawing_does_not_repeat_the_caption_the_book_prints() -> None:
 
     assert "Do NOT put a title inside the drawing" in brief
     assert "takes a fifth of the canvas" in brief
+
+
+# ── editing one drawing out of several ──────────────────────────────────────
+
+
+def test_one_drawing_can_be_replaced_without_touching_the_others() -> None:
+    """A plan with four visuals offered no way to touch the second: the only
+    editor was the whole artifact as JSON, where each SVG is one enormous line
+    among the briefs. So a drawing that was nearly right was redrawn from
+    scratch rather than nudged."""
+    from app.routes import curriculum
+
+    source = inspect.getsource(curriculum.factory_edit_visual_svg)
+
+    assert "extract_and_sanitize_svg" in source, "a pasted SVG is not trusted"
+    assert "asset_uploads.file_drawing(" in source, "so the book shows it"
+    assert "_record_artifact(" in source, "an edit is a new version, not an overwrite"
+    assert "diagram_layout.measure(svg)" in source, "measured like a drawn one"
+
+
+def test_editing_an_index_that_does_not_exist_says_how_many_do() -> None:
+    from app.routes import curriculum
+
+    source = inspect.getsource(curriculum.factory_edit_visual_svg)
+
+    assert "there is no " in source
+    assert "is not a diagram plan" in source
+
+
+def test_the_console_lists_every_planned_diagram_by_its_number() -> None:
+    """"I don't have a way to edit 1.2" — the row and the plate now carry the
+    same number."""
+    panel = " ".join((FRONTEND / "src/ui/DrawVisuals.tsx").read_text().split())
+
+    assert "DIAGRAM 1.{index + 1}" in panel
+    assert "Edit this one" in panel
+    assert "useEditVisualSvg" in panel
+    # And a repair the operator never asked for is reported.
+    assert "Adjusted before filing" in panel

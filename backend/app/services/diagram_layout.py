@@ -328,3 +328,100 @@ def corrections(fit: Fit) -> str:
     return ("\n\nYOUR PREVIOUS ATTEMPT WAS REJECTED. Every one of these was "
             "measured on the drawing you returned; fix all of them:\n"
             + "\n".join(f"  {i}. {f}" for i, f in enumerate(fit.findings, 1)))
+
+
+# A label and the sentence explaining it, joined by a dash. Every failing
+# drawing this station has produced has had them: "Addition — combines two
+# integers", "-10 — represents the smallest value shown", "Negative Integers —
+# indicates numbers less than zero". The head is the label; the tail is the
+# part's FUNCTION, which the plan already carries and the book already prints
+# in the caption. On the drawing it is what overflows the canvas and lies
+# across the neighbouring label.
+_EXPLAINED = re.compile(
+    r"^\s*(?P<head>.{1,24}?)\s*[—–-]{1,2}\s+(?P<tail>\S+(?:\s+\S+){2,})\s*$")
+
+# `<text>` and `<tspan>` holding nothing but words — no nested markup to lose.
+_LEAF_TEXT = re.compile(r"(<(text|tspan)\b[^>]*>)([^<>]*)(</\2>)")
+
+
+def trim_labels(svg: str) -> tuple[str, list[str]]:
+    """Cut the explanation off each label, keeping the label.
+
+    Told three times over that a label names a part and does not define it,
+    the model writes the definition anyway. Asking again is not a strategy:
+    the description belongs in the caption, so it is simply removed from the
+    drawing, and what is left is the name a question can point at.
+
+    Nothing else is touched — the match is applied to the text of leaf
+    elements only, in place, so no attribute, path or namespace is rewritten.
+    """
+    trimmed: list[str] = []
+
+    def cut(match: re.Match[str]) -> str:
+        body = match.group(3)
+        found = _EXPLAINED.match(body)
+        if not found:
+            return match.group(0)
+        head = found.group("head").strip(" :;,")
+        if not head:
+            return match.group(0)
+        trimmed.append(" ".join(body.split()))
+        return f"{match.group(1)}{head}{match.group(4)}"
+
+    return _LEAF_TEXT.sub(cut, svg), trimmed
+
+
+_FONT_ATTR = re.compile(r'font-size\s*=\s*"(\d+(?:\.\d+)?)"')
+
+
+def enlarge_labels(svg: str, view_width: float) -> tuple[str, int]:
+    """Raise anything under the legible floor up to it.
+
+    Only ever makes text bigger, so it cannot push a label off the canvas it
+    already fitted — but it can make two labels touch, which is why the caller
+    measures the result rather than trusting it.
+    """
+    floor = MIN_FONT_FRACTION * view_width
+    raised = 0
+
+    def up(match: re.Match[str]) -> str:
+        size = float(match.group(1))
+        if size >= floor:
+            return match.group(0)
+        nonlocal raised
+        raised += 1
+        return f'font-size="{floor:.0f}"'
+
+    return _FONT_ATTR.sub(up, svg), raised
+
+
+def repair(svg: str) -> tuple[str, list[str]]:
+    """Fix mechanically what the model would not fix when asked.
+
+    Three attempts, each told exactly what was measured on the last, and the
+    labels still came back as "-10 — represents the smallest value shown"
+    lying across their neighbours. At that point asking a fourth time is not a
+    strategy. Both repairs are safe and reversible in the sense that matters:
+    each is measured, and one is kept only if the drawing reads better with it
+    than without.
+    """
+    best, notes = svg, []
+    score = len(measure(svg).findings)
+    if not score:
+        return svg, notes
+
+    trimmed, cut = trim_labels(svg)
+    if cut and len(measure(trimmed).findings) <= score:
+        best, score = trimmed, len(measure(trimmed).findings)
+        notes.append(f"Cut the explanation off {len(cut)} label(s); the caption "
+                     f"carries it.")
+
+    view = [float(n) for n in re.findall(r"-?[\d.]+",
+                                         re.search(r'viewBox\s*=\s*"([^"]*)"', best).group(1))] \
+        if re.search(r'viewBox\s*=\s*"([^"]*)"', best) else []
+    if len(view) == 4 and view[2]:
+        bigger, raised = enlarge_labels(best, view[2])
+        if raised and len(measure(bigger).findings) <= score:
+            best = bigger
+            notes.append(f"Raised {raised} label(s) to the legible floor.")
+    return best, notes

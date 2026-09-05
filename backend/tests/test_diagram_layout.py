@@ -240,3 +240,89 @@ def test_a_tspan_with_absolute_coordinates_is_placed_there() -> None:
 
     assert fit.collisions == 1
     assert '"Lying on it"' in " ".join(fit.findings)
+
+
+# ── repairing what the model would not fix when asked ───────────────────────
+
+EXPLAINED = """<svg viewBox="0 0 340 200">
+  <rect x="4" y="4" width="332" height="192" fill="#d9e8f5"/>
+  <line x1="20" y1="110" x2="320" y2="110" stroke="#111" stroke-width="2"/>
+  <text x="40" y="95" font-size="13" text-anchor="middle">-10</text>
+  <text x="40" y="130" font-size="11">-10 — represents the smallest value shown</text>
+  <text x="130" y="95" font-size="13" text-anchor="middle">0</text>
+  <text x="130" y="130" font-size="11">0 — represents the neutral point</text>
+  <text x="220" y="95" font-size="13" text-anchor="middle">5</text>
+  <text x="220" y="130" font-size="11">5 — represents a positive integer</text>
+</svg>"""
+
+
+def test_the_explanation_comes_off_the_label() -> None:
+    """Every failing drawing this station has produced carried them:
+    "Addition — combines two integers", "-10 — represents the smallest value
+    shown". The head is the label; the tail is the part's FUNCTION, which the
+    plan already holds and the book already prints in the caption. On the
+    drawing it is the thing that overflows and collides."""
+    out, cut = diagram_layout.trim_labels(EXPLAINED)
+
+    assert len(cut) == 3
+    assert ">-10<" in out and "represents the smallest" not in out
+    assert ">0<" in out and ">5<" in out
+
+
+def test_a_label_that_is_only_a_name_is_left_alone() -> None:
+    for body in ("<svg><text>Numerator</text></svg>",
+                 "<svg><text>5 + 3 = 8</text></svg>",
+                 "<svg><text>Number line</text></svg>",
+                 # A dash inside a range is not an explanation.
+                 "<svg><text>-10 to 10</text></svg>"):
+        assert diagram_layout.trim_labels(body)[1] == [], body
+
+
+def test_a_short_tail_is_not_an_explanation() -> None:
+    """"Zero — the origin" is a label with an apposition, not a sentence."""
+    assert diagram_layout.trim_labels("<svg><text>Zero — the origin</text></svg>")[1] == []
+
+
+def test_repair_fixes_the_drawing_that_three_attempts_could_not() -> None:
+    before = diagram_layout.measure(EXPLAINED)
+    assert before.collisions == 3 and not before.ok
+
+    fixed, notes = diagram_layout.repair(EXPLAINED)
+    after = diagram_layout.measure(fixed)
+
+    assert after.ok, after.findings
+    assert after.collisions == 0
+    assert any("Cut the explanation" in n for n in notes)
+    assert any("legible floor" in n for n in notes)
+
+
+def test_a_repair_that_does_not_help_is_not_kept() -> None:
+    """Each change is measured; one is applied only if the drawing reads at
+    least as well with it."""
+    good = """<svg viewBox="0 0 340 200">
+      <rect x="12" y="12" width="316" height="120" fill="none" stroke="#111"/>
+      <text x="12" y="180" font-size="14">Numerator</text>
+    </svg>"""
+    fixed, notes = diagram_layout.repair(good)
+
+    assert fixed == good and notes == []
+
+
+def test_enlarging_never_shrinks_anything() -> None:
+    out, raised = diagram_layout.enlarge_labels(
+        '<svg><text font-size="30">Big</text><text font-size="8">Small</text></svg>', 340)
+
+    assert raised == 1
+    assert 'font-size="30"' in out and 'font-size="12"' in out
+
+
+def test_the_route_repairs_before_it_files() -> None:
+    import inspect
+
+    from app.routes import curriculum
+
+    source = inspect.getsource(curriculum.factory_draw_visual)
+    filing = source.split("Where the BOOK looks")[0]
+
+    assert "diagram_layout.repair(svg)" in filing, "repaired before it is stored"
+    assert '"repairs": repairs' in source, "and the operator is told what was done"
