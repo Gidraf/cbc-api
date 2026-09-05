@@ -277,6 +277,22 @@ def _derive_regions(parts: list[dict[str, Any]], viewbox: list[float]) -> list[d
 # ─────────────────────────────────────────────────────────────────────────────
 
 
+def _part_id_of(elem: Any) -> str | None:
+    """Which part this element belongs to, however the drawing marked it.
+
+    `data-part-id` is what this engine has always written. A model asked for an
+    SVG writes `id="part-stigma"` instead, because that is ordinary SVG — and
+    a drawing whose parts cannot be found is a drawing no question can occlude,
+    so every diagram question against it silently showed the learner the
+    marking copy.
+    """
+    marked = elem.get("data-part-id")
+    if marked:
+        return marked
+    identifier = elem.get("id") or ""
+    return identifier if identifier.startswith("part-") else None
+
+
 def render_svg(
     svg_markup: str,
     scene: dict[str, Any] | None = None,
@@ -319,7 +335,8 @@ def render_svg(
         # ElementTree has no parent pointers, so walk parents explicitly.
         for parent in list(root.iter()):
             for child in list(parent):
-                if child.get("data-layer") in hide or child.get("data-part-id") in hide_parts:
+                if (child.get("data-layer") in hide
+                        or _part_id_of(child) in hide_parts):
                     parent.remove(child)
 
     if slots:
@@ -327,7 +344,7 @@ def render_svg(
 
     if highlight:
         for elem in root.iter():
-            if elem.get("data-part-id") in highlight:
+            if _part_id_of(elem) in highlight:
                 elem.set("stroke", "#B45309")
                 elem.set("stroke-width", str(max(2.0, _float(elem.get("stroke-width"), 1.0) * 2)))
 
