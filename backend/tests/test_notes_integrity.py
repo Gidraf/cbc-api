@@ -212,3 +212,82 @@ def test_the_notes_station_reports_what_it_was_grounded_in():
     source = inspect.getsource(curriculum.factory_generate_notes)
     assert '"grounded": bool(source_text)' in source
     assert '"source_material_length": len(source_text or "")' in source
+
+
+# ── an experience that is taught but not declared ───────────────────────────
+
+DESIGN_GAMES = ["play games involving numbers and operations by picking "
+                "integers and performing all basic operations"]
+
+
+def _lesson(topic: str, body: str, declared: list[str] | None = None) -> dict:
+    return {"modules": [{
+        "title": "Applying Integers to Real-Life Situations",
+        "exposition_segments": [{"topic": topic, "body": body}],
+        "learning_experiences_used": declared or [],
+    }]}
+
+
+def test_a_lesson_that_teaches_it_is_not_reported_as_ignoring_it() -> None:
+    """The Grade 9 Integers guide taught Integer Bingo and Integer War, and the
+    gate reported "no lesson uses it" — because the check reads a DECLARED
+    field, not the lesson. Saying the wrong thing trains an operator to
+    distrust the number rather than act on it."""
+    from app.services.notes_integrity import check_learning_experiences
+
+    notes = _lesson(
+        "Creative Games with Integers",
+        "Introduce a game that involves integers, such as 'Integer Bingo' or "
+        "'Integer War' using number cards. Learners pick integers and perform "
+        "all the basic operations on them.")
+
+    findings = check_learning_experiences(notes, DESIGN_GAMES)
+
+    assert len(findings) == 1
+    assert "teaches it, but does not name it" in findings[0]
+    assert "no lesson uses it" not in findings[0]
+    # And it says which lesson, so the fix is one edit rather than a search.
+    assert "Applying Integers to Real-Life Situations" in findings[0]
+
+
+def test_an_experience_nothing_teaches_is_still_reported_plainly() -> None:
+    from app.services.notes_integrity import check_learning_experiences
+
+    notes = _lesson("Thermometers", "Read a thermometer and record the value.")
+
+    findings = check_learning_experiences(notes, DESIGN_GAMES)
+
+    assert "no lesson uses it" in findings[0]
+    assert "it is the lesson KICD published" in findings[0]
+
+
+def test_declaring_it_reports_nothing_at_all() -> None:
+    from app.services.notes_integrity import check_learning_experiences
+
+    notes = _lesson("Creative Games with Integers", "Play Integer Bingo.",
+                    declared=DESIGN_GAMES)
+
+    assert check_learning_experiences(notes, DESIGN_GAMES) == []
+
+
+def test_a_lesson_merely_about_the_same_topic_does_not_count() -> None:
+    """Sharing the subject is not teaching the activity. A threshold low enough
+    to accept that would make the check say nothing useful."""
+    from app.services.notes_integrity import check_learning_experiences
+
+    notes = _lesson("Integers", "Integers are whole numbers used in operations.")
+
+    findings = check_learning_experiences(notes, DESIGN_GAMES)
+
+    assert "no lesson uses it" in findings[0]
+
+
+def test_matching_survives_rewording() -> None:
+    """"games" and "game", "performing" and "perform" are the same word here."""
+    from app.services.notes_integrity import _teaches
+
+    assert _teaches(
+        "play games involving numbers and operations by picking integers",
+        {"title": "Games", "teacher_exposition":
+         "Learners play a game where they pick an integer and perform a number "
+         "operation on it."})

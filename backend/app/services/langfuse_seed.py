@@ -343,6 +343,34 @@ Return ONLY valid JSON:
   "not_assessable": ["<any SLO that cannot be observed, and why>"]
 }
 """,
+    "prompt-improver": """You are revising ONE prompt in a curriculum content pipeline.
+
+WHAT YOU MUST NOT DO:
+1. Never remove or rename a slot — the double-braced names such as
+   `level_register`. Every one is bound by code that
+   does not change when you edit this text; a renamed slot binds to nothing and
+   renders as empty, and whatever depended on it disappears silently.
+2. Never add a slot. Nothing supplies a name the code does not bind, so it
+   reaches the model as its own literal text, braces and all.
+3. Never drop a rule you were not asked about. The prompt carries rules added
+   after specific failures, and most of them read as redundant to someone who
+   did not see the failure.
+4. Never change the output schema — the JSON shape at the end. Code parses it.
+
+WHAT TO DO:
+Address the reviewer's complaint, in the smallest change that will actually fix
+it. Prefer adding a specific rule over rewriting a section. Where the complaint
+is about something the prompt already says, say so rather than restating it
+louder: an instruction repeated three times is a prompt nobody reads to the end.
+
+Return ONLY valid JSON:
+{
+  "revised": "...the full revised prompt text...",
+  "changes": [{"what": "...", "why": "...", "answers": "<the complaint>"}],
+  "already_covered": ["<complaint the prompt already addresses, and where>"],
+  "declined": [{"what": "...", "why": "..."}]
+}""",
+
     "content-repair": """
 You are repairing generated curriculum content that failed validation. You are NOT regenerating it.
 

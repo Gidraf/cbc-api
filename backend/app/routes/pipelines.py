@@ -433,6 +433,136 @@ def edit_fragment(
     return {"fragment": fragment.to_dict(), "saved": True}
 
 
+class ProposeRequest(BaseModel):
+    """A prompt, and what reviewers said about what it produced."""
+
+    agent: str
+    notes: list[str] = []
+    # Which configured providers to ask. Two disagree usefully: one adds a
+    # rule where the other rewrites a section, and the difference tells a
+    # reviewer whether the complaint was a missing instruction or a badly
+    # worded one.
+    providers: list[str] = []
+
+
+@router.get("/prompts/{agent}")
+def read_prompt(
+    agent: str,
+    _: AuthContext = Depends(require_roles("admin", "operator", "developer")),
+) -> dict[str, Any]:
+    """The text CURRENTLY SERVING for one agent, and what is wrong with it."""
+    from ..services import prompt_bindings, prompt_validators
+    from ..services.langfuse_context import langfuse_context_service
+
+    text = langfuse_context_service.get_agent_prompt(agent)
+    if not text:
+        raise_api_error("NOT_FOUND", f"No prompt is serving as '{agent}'.")
+
+    report = prompt_validators.validate(agent, text)
+    return {
+        "agent": agent,
+        "text": text,
+        "variables": sorted(report.variables),
+        "bound": sorted(prompt_bindings.bindings_for(agent)),
+        "errors": [f.message for f in report.errors],
+        "warnings": [f.message for f in report.warnings],
+    }
+
+
+@router.post("/prompts/propose")
+def propose_prompt_change(
+    payload: ProposeRequest,
+    _: AuthContext = Depends(require_roles("admin", "operator")),
+) -> dict[str, Any]:
+    """Turn a reviewer's complaint about the OUTPUT into a change to the PROMPT.
+
+    A reviewer writes "this explains which key on the calculator is the minus
+    sign". That is a defect in the prompt, not in the guide — every future
+    guide does it again. The route from that sentence to the prompt ran through
+    somebody who knew which of twenty-two prompts to open.
+
+    It proposes and stops. A prompt is the behaviour of every generator
+    downstream of it, and a model rewriting one on a single complaint is how a
+    system loses a rule nobody remembers adding.
+    """
+    from ..services import prompt_improver
+    from ..services.pipeline import pipeline_orchestrator
+
+    router_ = pipeline_orchestrator.router
+    models: list[Any] = []
+    # `resolve_for_stage` takes the provider override — the same door the
+    # layered review uses to get a second opinion from a different vendor,
+    # which is exactly what this is.
+    for provider in payload.providers or []:
+        try:
+            models.append(router_.resolve_for_stage(
+                "question_generation", provider=provider))
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Cannot ask %s: %s", provider, exc)
+    if not models:
+        models = [router_.resolve_for_stage("question_generation")]
+
+    proposals = prompt_improver.propose(payload.agent, payload.notes, models=models)
+    return {
+        "agent": payload.agent,
+        "asked": [str(getattr(m, "model", "")) for m in models],
+        "proposals": [p.to_dict() for p in proposals],
+        "note": ("Nothing has been changed. Read the difference, then save the "
+                 "one you want — or edit it first."),
+    }
+
+
+class SavePromptRequest(BaseModel):
+    """One prompt, rewritten, going live without a deploy."""
+
+    text: str
+    confirm: str = ""
+
+
+@router.post("/prompts/{agent}")
+def save_prompt(
+    agent: str,
+    payload: SavePromptRequest,
+    auth: AuthContext = Depends(require_roles("admin", "operator")),
+) -> dict[str, Any]:
+    """Save one prompt to Langfuse, where the pipeline reads it from.
+
+    No deploy: every generator fetches its prompt at run time, so this takes
+    effect on the next run. That is also why it is gated — without `confirm`
+    it reports what would change and writes nothing.
+
+    A revision that fails validation is written but NOT promoted: the text is
+    saved and readable, and production keeps serving the last version known to
+    bind. Refusing the write outright would lose the editing; promoting it
+    would ship a prompt whose slots no longer bind.
+    """
+    from ..services import prompt_improver, prompt_sync
+    from ..services.langfuse_context import langfuse_context_service
+
+    before = langfuse_context_service.get_agent_prompt(agent)
+    if not before:
+        raise_api_error("NOT_FOUND", f"No prompt is serving as '{agent}'.")
+
+    valid, problems = prompt_improver.validate(agent, before, payload.text)
+    plan = {
+        "agent": agent, "valid": valid, "problems": problems,
+        "diff": prompt_improver._diff(before, payload.text),
+        "will_promote": valid,
+    }
+    if payload.confirm.strip().upper() != "APPLY":
+        return {**plan, "written": False,
+                "says": "Nothing written. Send confirm=APPLY to save it."}
+
+    written = prompt_sync.push_one(agent, payload.text, promote=valid)
+    return {
+        **plan, "written": True, "result": written,
+        "says": ("Saved and serving from the next run."
+                 if valid else
+                 "Saved, but NOT promoted: it would not bind. Production is "
+                 "still serving the previous version. " + " ".join(problems)),
+    }
+
+
 @router.get("/prompts/export")
 def export_prompts(
     _: AuthContext = Depends(require_roles("admin", "operator", "developer")),

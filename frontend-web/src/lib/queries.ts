@@ -1638,6 +1638,58 @@ export function useFitCheck() {
   });
 }
 
+/** The prompt CURRENTLY SERVING for one agent. */
+export function usePrompt(agent: string) {
+  const api = useApi();
+  return useQuery({
+    queryKey: ["prompt", agent],
+    enabled: Boolean(agent),
+    queryFn: () =>
+      api<{
+        agent: string; text: string; variables: string[]; bound: string[];
+        errors: string[]; warnings: string[];
+      }>(`/api/v1/pipelines/prompts/${encodeURIComponent(agent)}`),
+  });
+}
+
+/** Ask one or more models how to change the prompt, given what reviewers said. */
+export function useProposePrompt() {
+  const api = useApi();
+  return useMutation({
+    mutationFn: (v: { agent: string; notes: string[]; providers?: string[] }) =>
+      api<{
+        agent: string; asked: string[]; note: string;
+        proposals: Array<{
+          model: string; revised: string; diff: string; valid: boolean;
+          problems: string[]; error: string;
+          changes: Array<{ what: string; why: string; answers: string }>;
+          already_covered: string[];
+          declined: Array<{ what: string; why: string }>;
+        }>;
+      }>("/api/v1/pipelines/prompts/propose", {
+        method: "POST",
+        body: JSON.stringify({ providers: [], ...v }),
+      }),
+  });
+}
+
+/** Save one prompt to Langfuse — live on the next run, no deploy. */
+export function useSavePrompt() {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { agent: string; text: string; confirm?: string }) =>
+      api<{
+        agent: string; valid: boolean; problems: string[]; diff: string;
+        written: boolean; will_promote: boolean; says: string;
+      }>(`/api/v1/pipelines/prompts/${encodeURIComponent(v.agent)}`, {
+        method: "POST",
+        body: JSON.stringify({ text: v.text, confirm: v.confirm || "" }),
+      }),
+    onSuccess: (_d, v) => qc.invalidateQueries({ queryKey: ["prompt", v.agent] }),
+  });
+}
+
 /** Which model runs which station. */
 export function useStageBindings() {
   const api = useApi();

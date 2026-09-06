@@ -47,9 +47,16 @@ def test_no_prompt_hardcodes_an_agriculture_example(agent: str) -> None:
     assert not found, f"{agent} still hardcodes: {found}"
 
 
+# Prompts that write or judge CONTENT know who it is for. Two do neither:
+# `curriculum-extractor` runs before the grade is known, and `prompt-improver`
+# edits a prompt rather than authoring anything — giving it a learner register
+# and a faith scope would be describing an audience it does not have.
+NOT_ABOUT_A_LEARNER = {"curriculum-extractor", "prompt-improver"}
+
+
 @pytest.mark.parametrize(
     "agent",
-    [a for a in sorted(SEED_AGENT_PROMPTS) if a != "curriculum-extractor"],
+    [a for a in sorted(SEED_AGENT_PROMPTS) if a not in NOT_ABOUT_A_LEARNER],
 )
 def test_every_authoring_and_review_prompt_receives_the_level_register(agent: str) -> None:
     """The extractor runs before the grade is known; everything else knows it."""
@@ -226,7 +233,7 @@ def test_a_successful_seed_reports_the_versions_it_wrote(monkeypatch) -> None:
 
 @pytest.mark.parametrize(
     "agent",
-    [a for a in sorted(SEED_AGENT_PROMPTS) if a != "curriculum-extractor"],
+    [a for a in sorted(SEED_AGENT_PROMPTS) if a not in NOT_ABOUT_A_LEARNER],
 )
 def test_every_prompt_carries_the_faith_scope_slot(agent: str) -> None:
     """CRE, HRE and IRE must never share a prompt. The slot is empty for every

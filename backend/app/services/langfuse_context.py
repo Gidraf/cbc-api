@@ -672,6 +672,10 @@ class LangfuseContextService:
         "activity-generator": "generate/activities",
         "question-generator": "generate/questions",
         "diagram-question-agent": "generate/diagram-questions",
+        # The improver's own instructions. Seeded like everything
+        # else, so the tool for editing prompts without a deploy is
+        # not itself a prompt that needs one.
+        "prompt-improver": "meta/prompt-improver",
         "math-equation-extractor": "extract/equations",
         "math-narrator": "generate/step-narration",
         "content-repair": "generate/repair",

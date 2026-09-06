@@ -3,6 +3,7 @@ import { useSearchParams } from "react-router-dom";
 import { DiagramLibrary } from "../ui/DiagramLibrary";
 import { QuestionPipeline } from "../ui/QuestionPipeline";
 import { QuestionStream } from "../ui/QuestionStream";
+import { PromptWorkshop } from "../ui/PromptWorkshop";
 import { ReviewerNote } from "../ui/ReviewerNote";
 import { TeacherProfile } from "../ui/TeacherProfile";
 import { Badge, Button, Card, CopyButton, EmptyState, ErrorNotice, Grid, Label, LoadingBlock, PageHeader, ProgressBar, QueryState, Select, Stack, Table, Td, Th, useToast } from "../ui/components";
@@ -99,6 +100,18 @@ const STATIONS = [
 
 /** Which artifact kind each station files. A station that does not version its
  *  output yet is absent rather than mapped to a guess. */
+/** The prompt each station runs on. A reviewer complaining about a guide is
+ *  complaining about the prompt that wrote it, and had no way to get there. */
+const STATION_AGENT: Record<string, string> = {
+  notes: "note-generator",
+  material: "material-generator",
+  visuals: "diagram-generator",
+  media: "media-prompt-generator",
+  simulations: "simulation-generator",
+  practicals: "activity-generator",
+  questions: "question-generator",
+};
+
 const STATION_ARTIFACT_KIND: Record<string, string | undefined> = {
   notes: "notes",
   visuals: "diagram",
@@ -1033,6 +1046,7 @@ export function ContentFactory() {
                       subStrand={selected.report.sub_strand_name}
                       kind={STATION_KIND[station.id] || station.id}
                       label={station.label}
+                      agent={STATION_AGENT[station.id]}
                     />
                   )}
 
@@ -1458,12 +1472,14 @@ function SavedStationWork({
   subStrand,
   kind,
   label,
+  agent,
 }: {
   grade: string;
   subject: string;
   subStrand: string;
   kind: string;
   label: string;
+  agent?: string;
 }) {
   const artifacts = useArtifacts({ grade, subject, kind, sub_strand: subStrand });
   // "Read it as a book" was offered only on a version generated in THIS
@@ -1531,6 +1547,19 @@ function SavedStationWork({
           to go and find the versions drawer to write a note about it. */}
       {newest.artifact_id && (
         <ReviewerNote artifactId={newest.artifact_id} kind={kind} />
+      )}
+
+      {/* The prompt that wrote it. A complaint about a guide is a complaint
+          about its prompt — every future guide repeats it — and the route from
+          one to the other ran through somebody who knew which of twenty-two
+          prompts to open. */}
+      {agent && (
+        <details style={{ marginTop: "var(--s3)" }}>
+          <summary style={{ cursor: "pointer", fontSize: "var(--text-sm)", fontWeight: 550 }}>
+            Fix the prompt behind this
+          </summary>
+          <PromptWorkshop agent={agent} artifactId={newest.artifact_id} />
+        </details>
       )}
 
       {measured.length > 0 && (

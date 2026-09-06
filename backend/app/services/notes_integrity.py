@@ -139,6 +139,61 @@ def check_slo_map(notes: dict[str, Any]) -> list[str]:
     return findings
 
 
+# Words that carry no meaning for matching an experience to a lesson.
+_EMPTY_WORDS = frozenset({
+    "the", "and", "a", "an", "of", "to", "in", "on", "by", "for", "with",
+    "from", "at", "as", "or", "is", "are", "be", "it", "its", "this", "that",
+    "their", "them", "they", "will", "can", "using", "use", "used", "all",
+    "different", "various", "such", "e", "g", "eg", "involving", "involves",
+})
+
+
+def _stems(text: str) -> set[str]:
+    """Content words, crudely stemmed, for comparing prose to prose.
+
+    Crude on purpose: "games" and "game", "performing" and "perform" are the
+    same word for this, and anything cleverer needs a stemmer this repository
+    does not carry.
+    """
+    words = re.findall(r"[a-z]+", str(text or "").lower())
+    out: set[str] = set()
+    for word in words:
+        if word in _EMPTY_WORDS or len(word) < 3:
+            continue
+        for suffix in ("ing", "ies", "ed", "es", "s"):
+            if len(word) > len(suffix) + 2 and word.endswith(suffix):
+                word = word[: -len(suffix)]
+                break
+        out.add(word)
+    return out
+
+
+def _lesson_text(module: dict[str, Any]) -> str:
+    """Everything a lesson actually says, for checking what it teaches."""
+    parts = [str(module.get(k) or "") for k in
+             ("title", "teacher_exposition", "learner_activity", "summary")]
+    for segment in (module.get("exposition_segments") or []):
+        if isinstance(segment, dict):
+            parts += [str(segment.get("topic") or ""), str(segment.get("body") or "")]
+    for key in ("resources_needed", "key_inquiry_questions"):
+        parts += [str(v) for v in (module.get(key) or [])]
+    return " ".join(parts)
+
+
+# How much of an experience's own vocabulary a lesson must share before it
+# counts as teaching it. Two thirds: high enough that a lesson merely about the
+# same topic does not qualify, low enough to survive rewording.
+_TAUGHT = 0.6
+
+
+def _teaches(experience: str, module: dict[str, Any]) -> bool:
+    wanted = _stems(experience)
+    if len(wanted) < 2:
+        return False
+    shared = wanted & _stems(_lesson_text(module))
+    return len(shared) / len(wanted) >= _TAUGHT
+
+
 def check_learning_experiences(notes: dict[str, Any],
                                design_experiences: list[str]) -> list[str]:
     """Does every cited experience actually come from the design's list?"""
@@ -173,6 +228,20 @@ def check_learning_experiences(notes: dict[str, Any],
                    for u in (m.get("learning_experiences_used") or []))
     ]
     for experience in unused:
+        # Before saying no lesson uses it, read the lessons. This check tests a
+        # DECLARED field, and a guide that teaches Integer Bingo and Integer
+        # War without declaring the experience was reported as not teaching it
+        # at all — which is untrue, and trains an operator to distrust the
+        # number rather than act on it.
+        taught_in = [_label(m, i) for i, m in enumerate(_modules(notes))
+                     if _teaches(experience, m)]
+        if taught_in:
+            findings.append(
+                f"The design suggests \"{experience}\". "
+                f"{taught_in[0]} teaches it, but does not name it under "
+                f"`learning_experiences_used` — so nothing downstream can tell "
+                f"that the design's own activity was covered. Declare it.")
+            continue
         findings.append(
             f"The design suggests \"{experience}\" and no lesson uses it. "
             f"Teach it, or name it in `gaps` — it is the lesson KICD "
