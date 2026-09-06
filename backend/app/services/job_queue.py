@@ -34,6 +34,9 @@ from typing import Any, Callable
 logger = logging.getLogger("cbc-jobs")
 
 QUEUED, RUNNING, DONE, FAILED, CANCELLED = "queued", "running", "done", "failed", "cancelled"
+# Neither a failure nor a run: this job's own sub-strand is being built by
+# another worker, so it goes back rather than running beside itself.
+WAITING = "waiting_for_scope"
 TERMINAL = frozenset({DONE, FAILED, CANCELLED})
 
 # A job that has crashed twice will crash a third time; retrying past this
@@ -47,7 +50,9 @@ IDLE_SECONDS = 3.0
 # the routes at import time so this module stays free of route imports.
 _HANDLERS: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {}
 
-_worker: threading.Thread | None = None
+# Several, since a job whose sub-strand is busy is not claimable and workers
+# therefore build different sub-strands rather than racing on one.
+_workers: list[threading.Thread] = []
 _stop = threading.Event()
 _celery_checked_at: float = 0.0
 _celery_ok: bool = False
@@ -313,19 +318,65 @@ def cancel(job_id: str = "", batch_id: str = "") -> int:
     return int((row or {}).get("n") or 0)
 
 
+# What may run beside what.
+#
+# Two jobs for the SAME sub-strand must never overlap. The stations are a
+# chain — the material is written from the notes, the diagrams are drawn
+# against them, the questions come from all of it — so a material job that
+# starts while its own notes job is still running writes from whatever was
+# filed last time, or from nothing.
+#
+# Two jobs for DIFFERENT sub-strands share nothing, and they are the whole
+# opportunity: a grade has hundreds, each spends its time waiting on a provider
+# rather than on this machine, and running them one at a time is why a grade
+# takes an afternoon.
+_FREE_SCOPE = """
+    NOT EXISTS (
+        SELECT 1 FROM jobs busy
+        WHERE busy.status = 'running'
+          AND busy.job_id <> jobs.job_id
+          AND LOWER(COALESCE(busy.grade, '')) = LOWER(COALESCE(jobs.grade, ''))
+          AND LOWER(COALESCE(busy.subject, '')) = LOWER(COALESCE(jobs.subject, ''))
+          AND LOWER(COALESCE(busy.sub_strand, '')) = LOWER(COALESCE(jobs.sub_strand, ''))
+    )
+"""
+
+
+def scope_is_busy(job_id: str) -> bool:
+    """Whether another job for this one's own sub-strand is already running.
+
+    Used by the Celery path, which is handed a job id and never sees the queue,
+    so it cannot skip past a blocked job the way the poller does.
+    """
+    from ..infra.db import fetch_one
+
+    row = fetch_one(
+        "SELECT 1 AS busy FROM jobs WHERE job_id = :job_id AND NOT (%s)"
+        % _FREE_SCOPE,
+        {"job_id": job_id},
+    )
+    return bool(row)
+
+
 def _claim() -> dict[str, Any] | None:
-    """Take the oldest queued job, atomically, so two workers cannot share one."""
+    """Take the oldest claimable job, atomically, so two workers cannot share one.
+
+    "Claimable" is not simply "queued": a job whose sub-strand already has one
+    running is skipped and the next one taken, so several workers make progress
+    without two of them building the same sub-strand at once.
+    """
     from ..infra.db import fetch_one
 
     return fetch_one(
         """
         UPDATE jobs SET status = 'running', attempts = attempts + 1, started_at = NOW()
         WHERE job_id = (
-            SELECT job_id FROM jobs WHERE status = 'queued'
+            SELECT job_id FROM jobs
+            WHERE status = 'queued' AND %s
             ORDER BY created_at ASC FOR UPDATE SKIP LOCKED LIMIT 1
         )
         RETURNING *
-        """
+        """ % _FREE_SCOPE
     )
 
 
@@ -349,7 +400,17 @@ def _claim_by_id(job_id: str) -> dict[str, Any] | None:
 
 
 def run_job_by_id(job_id: str) -> dict[str, Any]:
-    """Run the job Celery was handed. Returns what happened."""
+    """Run the job Celery was handed. Returns what happened.
+
+    Celery is given a job id and never sees the queue, so it cannot skip past a
+    blocked job the way the poller does. With concurrency above one it would
+    otherwise start the material for a sub-strand whose notes are still being
+    written. Told to wait, the task re-dispatches itself.
+    """
+    if scope_is_busy(job_id):
+        logger.info("Job %s waits: its sub-strand is already being built.", job_id)
+        return {"job_id": job_id, "status": WAITING}
+
     job = _claim_by_id(job_id)
     if not job:
         # Already running, already finished, or cancelled while it waited.
@@ -518,16 +579,41 @@ def _loop() -> None:
             _stop.wait(IDLE_SECONDS)
 
 
-def start_worker() -> bool:
-    """Start the single background worker, if it is not already running."""
-    global _worker
+def worker_count() -> int:
+    """How many in-process workers to run.
 
-    if _worker is not None and _worker.is_alive():
+    One by default, which is what this was. Raising it is safe because a job
+    whose sub-strand is already being built is not claimable — so N workers
+    build N DIFFERENT sub-strands, and never the same one twice.
+
+    Capped: these threads wait on a provider, not on this machine, so the
+    ceiling is the provider's rate limit and the wallet, not the core count.
+    Twelve is well past the point where either becomes the binding constraint.
+    """
+    import os
+
+    try:
+        wanted = int(os.getenv("JOB_WORKERS", "1"))
+    except ValueError:
+        wanted = 1
+    return max(1, min(12, wanted))
+
+
+def start_worker() -> bool:
+    """Start the background workers, if they are not already running."""
+    global _workers
+
+    alive = [w for w in _workers if w.is_alive()]
+    if alive:
         return False
     _stop.clear()
-    _worker = threading.Thread(target=_loop, name="cbc-job-worker", daemon=True)
-    _worker.start()
-    logger.info("Job worker started (sequential, %d kinds).", len(_HANDLERS))
+    _workers = []
+    for n in range(worker_count()):
+        thread = threading.Thread(target=_loop, name=f"cbc-job-worker-{n + 1}",
+                                  daemon=True)
+        thread.start()
+        _workers.append(thread)
+    logger.info("Job worker(s) started: %d, %d kinds.", len(_workers), len(_HANDLERS))
     return True
 
 
@@ -536,7 +622,7 @@ def stop_worker() -> None:
 
 
 def worker_running() -> bool:
-    return _worker is not None and _worker.is_alive()
+    return any(w.is_alive() for w in _workers)
 
 
 def _celery_reachable() -> bool:

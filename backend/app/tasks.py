@@ -42,4 +42,11 @@ def run_job(self, job_id: str) -> dict:
     if outcome.get("status") == job_queue.QUEUED:
         run_job.apply_async((job_id,), countdown=30)
 
+    # Its sub-strand is being built by another worker. Not a failure and not an
+    # attempt — it never ran — so it comes back shortly rather than being
+    # retried or lost. Short, because the thing it waits for is one station,
+    # not a whole grade.
+    if outcome.get("status") == job_queue.WAITING:
+        run_job.apply_async((job_id,), countdown=15)
+
     return outcome

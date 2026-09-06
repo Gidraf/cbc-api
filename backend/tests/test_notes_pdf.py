@@ -387,3 +387,53 @@ def test_the_console_offers_the_book_not_only_the_download() -> None:
     )
     assert "Open as a book" in reader
     assert "useNotesDocument" in reader
+
+
+# ── where composed words come from ──────────────────────────────────────────
+
+
+def test_composed_material_names_the_plan_it_was_written_from() -> None:
+    """"Not quoted from the design — written here for this lesson" is only half
+    an answer to a buyer asking where the content comes from.
+
+    It is also the RIGHT half: the KICD design carries outcomes and suggested
+    experiences, not teaching prose, so material composed from a lesson plan
+    has no design quote to give and never will. Inventing one is the failure
+    `placeholder_echo` exists to prevent. What it does have is the plan, and
+    that is an address a person can turn to.
+    """
+    import re
+
+    from app.services.notes_renderer import render_material_html
+
+    material = {"from_plan": {"version": 2}, "material": [
+        {"module_number": 1, "module_title": "Basic Operations on Integers",
+         "topic": "Introduction to Integers", "say": "Integers are whole numbers.",
+         "attribution": "written here for this lesson"}]}
+
+    html = render_material_html(material, grade="grade-9", subject="Mathematics",
+                                strand="Numbers", sub_strand="Integers")
+    said = [" ".join(m.group(1).split())
+            for m in re.finditer(r"<p class='own'>(.*?)</p>", html, re.S)]
+
+    assert "Not quoted from the design — written here for this lesson" in said
+    assert any("Basic Operations on Integers · Introduction to Integers" in s
+               and "plan version 2" in s for s in said)
+
+
+def test_a_quoted_citation_is_left_exactly_as_it_was() -> None:
+    """Where the design DOES carry the words, the quote is the answer and the
+    plan address would only get in front of it."""
+    from app.services.notes_renderer import render_material_html
+
+    material = {"from_plan": {"version": 2}, "material": [
+        {"module_number": 1, "module_title": "Lesson 1", "topic": "A",
+         "say": "Words.",
+         "citation": {"ref": "12:4", "quote": "perform basic operations on integers"}}]}
+
+    html = render_material_html(material, grade="grade-9", subject="Mathematics",
+                                sub_strand="Integers")
+
+    assert "perform basic operations on integers" in html
+    assert "Not quoted from the design" not in html
+    assert "which cites the design" not in html

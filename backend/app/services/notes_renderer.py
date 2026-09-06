@@ -1273,7 +1273,8 @@ def _echoed(value: Any) -> bool:
 
 
 def _citation(piece: dict[str, Any], *, grade: str = "", subject: str = "",
-              strand: str = "", sub_strand: str = "") -> str:
+              strand: str = "", sub_strand: str = "",
+              plan_address: str = "") -> str:
     """Where in the KICD design this content comes from.
 
     The page said "Where these words come from: written here for this lesson",
@@ -1310,8 +1311,17 @@ def _citation(piece: dict[str, Any], *, grade: str = "", subject: str = "",
     if attribution and not quote:
         # No design address: these words are the model's own, and the page
         # should say so rather than implying the curriculum asked for them.
+        #
+        # But "written here for this lesson" is only half an answer to a buyer
+        # asking where the content comes from. The KICD design carries outcomes
+        # and suggested experiences, not teaching prose — so material composed
+        # from a lesson plan HAS no design quote to give, and never will. What
+        # it does have is the plan, and that is an address a person can turn to.
         out.append(f"<p class='own'>Not quoted from the design — "
                    f"{_esc(attribution)}</p>")
+        if plan_address:
+            out.append(f"<p class='own'>Written from {_esc(plan_address)}, "
+                       f"which cites the design.</p>")
     elif attribution:
         out.append(f"<p class='own'>{_esc(attribution)}</p>")
     out.append("</div>")
@@ -1341,8 +1351,10 @@ def render_material_html(material: dict[str, Any], *, grade: str = "",
     # reassigning it here silently emptied it — every figure vanished from the
     # material page while the plan's own page still showed them.
     plan_ref = material.get("from_plan") or {}
+    plan_version = ""
     if isinstance(plan_ref, dict) and plan_ref.get("version"):
-        meta.append(f"from plan version {plan_ref['version']}")
+        plan_version = str(plan_ref["version"])
+        meta.append(f"from plan version {plan_version}")
 
     out = [
         "<!doctype html><html lang='en'><head><meta charset='utf-8'>",
@@ -1419,8 +1431,18 @@ def render_material_html(material: dict[str, Any], *, grade: str = "",
             if piece.get(key):
                 out.append(f"<div class='aside'><h4>{label}</h4>"
                            f"<p>{_math(piece[key])}</p></div>")
+        # The lesson and section this was written from, so "where does this
+        # come from" has an answer even where the design carries no prose to
+        # quote.
+        plan_ref = piece.get("module_title") or f"Lesson {piece.get('module_number') or ''}"
+        topic = str(piece.get("topic") or "").strip()
+        address = " · ".join(x for x in (str(plan_ref).strip(), topic) if x)
+        if plan_version:
+            address = f"{address} (plan version {plan_version})" if address else \
+                f"plan version {plan_version}"
         out.append(_citation(piece, grade=grade, subject=subject,
-                             strand=strand, sub_strand=sub_strand))
+                             strand=strand, sub_strand=sub_strand,
+                             plan_address=address))
         out.append("</section>")
 
     # The exercise set and its worked solutions belong on THIS page too. They
