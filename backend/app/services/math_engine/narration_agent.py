@@ -17,9 +17,9 @@ def _prompt(agent: str, *, grade: str, subject: str = "Mathematics", **slots: st
     in the system an operator could not read or change without a deploy.
     """
     from ..langfuse_context import langfuse_context_service
-    from ..level_register import register_block
+    from ..level_register import language_block, register_block, teacher_block
     from ..faith_scope import prompt_block as faith_block
-    from ..notation import block_for as notation_block
+    from ..notation import for_prompt as notation_block
 
     template = langfuse_context_service.get_agent_prompt(agent)
     filled = {
@@ -28,6 +28,15 @@ def _prompt(agent: str, *, grade: str, subject: str = "Mathematics", **slots: st
         # The same two blocks every other generator gets, so a walkthrough for
         # Grade 3 is not narrated in the register of a Grade 9 lesson.
         "level_register": register_block(grade),
+        # Who READS the walkthrough, and how the words must sound. Added with
+        # the same blocks every other generator gets: a narration written for
+        # a Grade 3 teacher and one written for a Grade 11 specialist are not
+        # the same text, and only the learner half of that was ever stated.
+        "teacher_band": teacher_block(grade),
+        "language_register": language_block(grade),
+        # `for_prompt`, not `block_for`: the house conventions — BODMAS rather
+        # than PEMDAS, shillings rather than dollars — belong in a spoken
+        # mathematics walkthrough more than anywhere else.
         "notation": notation_block(subject, grade=grade),
         "faith_scope": faith_block(subject),
         **slots,

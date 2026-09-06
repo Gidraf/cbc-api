@@ -635,6 +635,21 @@ def factory_generate_questions_batch(
             "strand": payload.strand,
             "sub_strand": payload.sub_strand,
             "slo_id": payload.slo_id or f"{payload.grade}-{payload.subject[:4].upper()}-01",
+            # The OUTCOMES, not only their identifier. The prompt had the ID
+            # and never the text, so every question was written against a
+            # string — which is what the gate means by "no SLO text on the
+            # curriculum link", and why slo congruence never scored.
+            "slos": blueprint_slos,
+            "notes_summary": str((notes_obj or {}).get("summary")
+                                 or (notes_obj or {}).get("intro") or "")[:2_000],
+            "diagram_concept": ", ".join(
+                str(d.get("diagram_title") or d.get("title") or "")
+                for d in (diagrams_obj if isinstance(diagrams_obj, list) else [])[:6]
+                if isinstance(d, dict)),
+            "experiments_generated": [
+                str(e.get("title") or e.get("activity_name") or "")
+                for e in ((activities_obj or {}).get("experiments") or [])
+                if isinstance(e, dict)],
             "difficulty": payload.difficulty,
             "level_register": register_block(
                     payload.grade,
@@ -849,6 +864,33 @@ def factory_generate_questions_batch(
 
     structure = question_structure.check_all(normalized_questions)
     held = {v["question_id"] for v in structure["verdicts"] if v["blocked"]}
+
+    # Repair before discarding. Each held item was generated and paid for, and
+    # is usually wrong in exactly one nameable way — two options, a structured
+    # item with one part, marks with no scheme to award them against. At 500 a
+    # day the difference between repairing and regenerating is the difference
+    # between recovering the work and buying it twice.
+    repair: dict[str, Any] = {}
+    if held:
+        from ..services import content_repair
+
+        try:
+            mended = content_repair.repair_questions(
+                normalized_questions, structure["verdicts"],
+                grade=payload.grade, subject=payload.subject,
+                design_extract=notes_text[:4_000], resolved=resolved)
+            repair = mended.to_dict()
+            if mended.repaired:
+                by_id = {str(m.get("question_id") or ""): m for m in mended.repaired}
+                normalized_questions = [by_id.get(str(q.get("question_id") or ""), q)
+                                        for q in normalized_questions]
+                # Re-measured, because the gate below reports what is FILED and
+                # a repaired item is a different item.
+                structure = question_structure.check_all(normalized_questions)
+                held = {v["question_id"] for v in structure["verdicts"] if v["blocked"]}
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Repair pass failed for %s: %s", payload.sub_strand, exc)
+
     if held:
         for verdict in structure["verdicts"]:
             if verdict["blocked"]:
@@ -914,6 +956,7 @@ def factory_generate_questions_batch(
 
     return {
         "saved": len(saved),
+        "repair": repair,
         "sub_strand": payload.sub_strand,
         "grade": grade_slug,
         "requested_count": payload.batch_count,

@@ -91,7 +91,13 @@ class Scoped:
             target = self.grade or self.grade_json
             if not target:
                 return "", {}
-            parts.append(f"({target} = :grade OR {target} = :alt_grade)")
+            # Normalised on both sides, matching the artifact clause above.
+            # A bare `=` is case-sensitive, so a row filed as "Grade-9"
+            # survived a delete of "grade-9": nothing removed, success
+            # reported, and the content back on the next read.
+            parts.append(
+                f"(REPLACE(LOWER({target}), 'grade-', '') "
+                f"= REPLACE(LOWER(:grade), 'grade-', ''))")
             params["grade"] = grade
             params["alt_grade"] = grade.replace("grade-", "")
 
@@ -123,6 +129,19 @@ DERIVED: tuple[Scoped, ...] = (
     Scoped("substrand_media", "photo and video briefs",
            grade="grade", subject="subject",
            strand="strand_name", sub_strand="sub_strand_name"),
+    # Drawn and uploaded figures. Deleting a sub-strand and leaving these
+    # behind meant the next plan for it picked them straight back up: the book
+    # attaches whatever is filed for a sub-strand, whether or not anything
+    # currently asks for it.
+    Scoped("uploaded_assets", "drawn diagrams and uploaded figures",
+           grade="grade", subject="subject",
+           strand="strand", sub_strand="sub_strand"),
+    Scoped("material_drafts", "unfinished lesson-material runs",
+           grade="grade", subject="subject",
+           strand="strand", sub_strand="sub_strand"),
+    Scoped("question_events", "generation, review and approval events",
+           grade="grade", subject="subject",
+           strand="strand", sub_strand="sub_strand"),
     Scoped("substrand_resources", "notes, diagrams, activities",
            grade_json="curriculum->>'grade'", subject_json="curriculum->>'subject'",
            strand_json="curriculum->>'strand'",

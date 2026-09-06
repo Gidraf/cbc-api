@@ -67,7 +67,14 @@ class Target:
 
         if grade:
             if self.grade_column:
-                clauses.append(f"({self.grade_column} = :grade OR {self.grade_column} = :alt_grade)")
+                # Normalised on BOTH sides, the way the artifact clause two
+                # branches up already does it. A bare `=` here is
+                # case-sensitive, so a row filed as "Grade-9" survived a reset
+                # of "grade-9" — deleted nothing, reported success, and the
+                # content reappeared the moment anything read the table again.
+                clauses.append(
+                    f"(REPLACE(LOWER({self.grade_column}), 'grade-', '') "
+                    f"= REPLACE(LOWER(:grade), 'grade-', ''))")
             elif self.grade_json:
                 clauses.append(
                     f"(LOWER({self.grade_json}) = LOWER(:grade) "
@@ -104,6 +111,22 @@ DERIVED: tuple[Target, ...] = (
     Target("artifacts", "every generated version",
            grade_column="grade", subject_column="subject"),
     Target("substrand_media", "photo and video briefs and assets",
+           grade_column="grade", subject_column="subject"),
+    # Drawn and uploaded figures. Left out of this list, a cleared grade kept
+    # every diagram it had ever drawn — and because the book attaches whatever
+    # is filed for a sub-strand to the next plan, they came back the moment the
+    # strands were regenerated. "I clear it and I get them back" was exactly
+    # this table.
+    Target("uploaded_assets", "drawn diagrams and uploaded figures",
+           grade_column="grade", subject_column="subject"),
+    # Interrupted material runs. A resumed run reads these, so a cleared grade
+    # that kept them would resume from pieces written for content that is gone.
+    Target("material_drafts", "unfinished lesson-material runs",
+           grade_column="grade", subject_column="subject"),
+    # What was written, read and signed for each day, and the daily plan.
+    Target("question_events", "generation, review and approval events",
+           grade_column="grade", subject_column="subject"),
+    Target("question_targets", "the daily generate/review/approve plan",
            grade_column="grade", subject_column="subject"),
     Target("substrand_resources", "generated notes, diagrams, activities, questions",
            grade_json="curriculum->>'grade'", subject_json="curriculum->>'subject'"),

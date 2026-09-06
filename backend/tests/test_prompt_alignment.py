@@ -42,11 +42,9 @@ def test_no_prompt_asks_for_a_variable_nothing_binds() -> None:
 # prompt should ask for it or the code should stop computing it, and that is a
 # judgement about the content. The list may SHRINK freely; anything new fails,
 # which is the point.
-KNOWN_DEAD: dict[str, set[str]] = {
-    "question-generator": {"diagram_concept", "experiments_generated",
-                           "notes_summary", "slos"},
-    "substrand-generator": {"master_context"},
-}
+# Now empty. Every entry has been resolved — each one either became a slot the
+# prompt asks for, or a binding the code stopped computing.
+KNOWN_DEAD: dict[str, set[str]] = {}
 
 
 def test_no_new_variable_is_computed_and_thrown_away() -> None:
@@ -105,7 +103,26 @@ def test_the_report_says_what_to_do_about_it() -> None:
     says = prompt_bindings.alignment_report()["says"]
 
     assert says
-    assert "agree" in says or "does nothing" in says or "renders empty" in says
+    assert ("agree" in says or "does nothing" in says or "renders empty" in says
+            or "called by nothing" in says)
+
+
+# Prompts that are seeded and called by nothing. `content-repair` came off
+# this list when the question path started repairing what the structure gate
+# blocked instead of discarding it. The two left need a decision about WHERE
+# they sit in the pipeline, which is a design question rather than a defect.
+KNOWN_UNCALLED = {"layer-reviewer", "slo-aligner"}
+
+
+def test_no_new_prompt_is_seeded_and_left_uncalled() -> None:
+    """A prompt nothing calls is a prompt nobody maintains, and it reads as
+    working machinery to the next person."""
+    never = set(prompt_bindings.alignment_report()["never_called"])
+
+    assert not (never - KNOWN_UNCALLED), (
+        f"seeded and called by nothing: {sorted(never - KNOWN_UNCALLED)}")
+    assert not (KNOWN_UNCALLED - never), (
+        f"now called — take them off the list: {sorted(KNOWN_UNCALLED - never)}")
 
 
 def test_the_reviewer_panel_is_shown_what_it_audits() -> None:

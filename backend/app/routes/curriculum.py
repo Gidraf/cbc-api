@@ -2732,6 +2732,11 @@ def factory_generate_questions(
         grade_slug=payload.grade,
         subject=payload.subject,
         template_vars={
+            # The outcomes themselves, not only their identifier.
+            "slos": _blueprint_for(payload.grade, payload.subject, payload.sub_strand).get("slos", []),
+            "notes_summary": payload.notes_summary or notes_str[:2_000],
+            "diagram_concept": payload.diagram_title or diagram_str,
+            "experiments_generated": act_str,
             "level": getattr(payload, "level", None) or grade_level(payload.grade),
             "notes_title": getattr(payload, "notes_title", "") or payload.sub_strand,
             "subject_code": payload.subject_code,
@@ -4181,13 +4186,19 @@ def factory_generate_substrands(
             # learning area, contradicting the strand actually being asked about.
             focus_strand=payload.strand_name,
             template_vars={
-                "master_context": master_context,
+                # No `master_context` here, deliberately. This station's own
+                # prompt says "EXTRACTION, not design — transcribing what KICD
+                # wrote", and the master context is generative guidance. It was
+                # computed and passed and the prompt never referenced it; the
+                # fix is to stop passing it rather than to start using it,
+                # because using it would invite exactly the invention the
+                # station is written to avoid.
                 "level_register": register_block(
                     payload.grade,
                     notes=grade_scope_notes(payload.grade, payload.subject),
                 ),
-        "teacher_band": teacher_block(payload.grade),
-        "language_register": language_block(payload.grade),
+                "teacher_band": teacher_block(payload.grade),
+                "language_register": language_block(payload.grade),
             # How this subject writes what it cannot write in words. Empty for
             # most subjects — a CRE guide carrying two pages about balancing
             # equations spends a page of prompt on something it never uses, and

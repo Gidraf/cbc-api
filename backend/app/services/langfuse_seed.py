@@ -1341,6 +1341,17 @@ Sub-strand: {{ sub_strand }}
 SLO ID: {{ slo_id }}
 Difficulty Target: {{ difficulty }}
 
+=== WHAT THE LEARNER MUST BE ABLE TO DO ===
+These are the sub-strand's specific learning outcomes, in the design's own
+words. The SLO ID above is a label; these are the thing itself:
+{{ slos }}
+
+Every question must test one of the outcomes above, and `curriculum.slo_id`
+must name the one it tests. A question written against the identifier alone is
+written against a string, and whether it assesses the outcome cannot be
+checked by anyone — which is what "no SLO text on the curriculum link" means
+when the quality gate reports it.
+
 === WHO THIS IS FOR ===
 {{ level_register }}
 
@@ -1357,11 +1368,18 @@ Difficulty Target: {{ difficulty }}
 {{ content_type_directives }}
 
 === LAYER 1: GENERATED MASTER LESSON NOTES ===
+{{ notes_summary }}
+
 {{ notes_content }}
 
 === LAYER 2: DIAGRAM REFERENCE ===
 Diagram ID: {{ diagram_id }}
+Concept drawn: {{ diagram_concept }}
 {{ diagram_info }}
+
+The practicals that have already been produced for this sub-strand, which a
+question may refer to by name:
+{{ experiments_generated }}
 
 === LAYER 3: PRACTICAL ACTIVITIES & EXPERIMENTS ===
 {{ activity_info }}

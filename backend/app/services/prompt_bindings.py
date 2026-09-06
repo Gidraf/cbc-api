@@ -32,10 +32,30 @@ _AUTO_INJECTED = frozenset({"grade", "subject", "subject_context"})
 # Keys that appear in the same function but are not template variables: the
 # shape of a chat message, and the shape of a model call. Crediting a whole
 # function catches the bindings a closure hides, and picks these up with them.
+# Slots a shared helper fills for every agent it serves. `_prompt` in the
+# narration agent binds these itself, so the call sites pass only what varies —
+# and reading the call sites alone reported the shared half as unbound.
+_HELPER_BOUND = frozenset({
+    "level_register", "teacher_band", "language_register", "notation",
+    "faith_scope",
+})
+
+# Names that appear in the same function but are not template variables.
+#
+# Crediting a whole function is what lets the scanner see a binding hidden in a
+# closure, and it picks these up with them: the shape of a chat message, the
+# arguments of a model call, and the keys of a RESULT dict the function builds
+# on its way out. That is the trade — a wider read that needs a short list of
+# things it is known to over-report, rather than a narrow read that reports
+# working code as broken.
 _NOT_TEMPLATE_VARS = frozenset({
     "role", "content", "type", "text", "name", "model", "provider",
     "temperature", "max_tokens", "messages", "stream", "id", "index",
     "status", "error", "prompt", "response",
+    # Call arguments that are not slots.
+    "indent", "top_p", "ensure_ascii", "default", "timeout", "key",
+    # Fields of what the narration agent RETURNS, not of what it is asked.
+    "concept", "source_text", "latex",
 })
 
 
@@ -170,8 +190,11 @@ def _string_constants(tree: ast.AST) -> dict[str, str]:
 
 def _agents_named_in(function: ast.AST, constants: dict[str, str] | None = None) -> set[str]:
     """Agent names this function fetches a prompt for."""
+    # `_prompt(...)` is the narration agent's own thin wrapper. Leaving it out
+    # reported both maths agents as seeded and called by nothing, while they
+    # run on every mathematics sub-strand.
     fetchers = ("_get_rendered_langfuse_prompt", "get_prompt", "get_agent_prompt",
-                "fetch_prompt", "compile_prompt")
+                "fetch_prompt", "compile_prompt", "_prompt")
     out: set[str] = set()
     for node in ast.walk(function):
         if not isinstance(node, ast.Call) or not node.args:
@@ -208,6 +231,9 @@ def _names_bound_in(function: ast.AST) -> set[str]:
                 and isinstance(node.args[0].value, str)):
             out |= set(_re.findall(r"\{\{\s*([a-z_][a-z0-9_]*)\s*\}\}",
                                    node.args[0].value))
+        # Keyword arguments on a call: `_prompt("math-narrator", latex=…)`.
+        if isinstance(node, ast.Call):
+            out |= {k.arg for k in node.keywords if k.arg}
         if isinstance(node, ast.Dict):
             out |= _keys_of(node)
         elif isinstance(node, ast.Tuple) and node.elts:
@@ -234,7 +260,35 @@ def all_bindings() -> dict[str, frozenset[str]]:
             for agent, variables in _scan(tree).items():
                 merged.setdefault(agent, set()).update(variables)
 
+    # Agents reached through a shared helper get whatever that helper binds for
+    # every one of them. `_prompt` in the narration agent fills the register,
+    # the teacher band, the language register, the notation and the faith scope
+    # itself, so its call sites pass only what varies — and reading the call
+    # sites alone reported the shared half as supplied by nobody.
+    for agent in _helper_served(root):
+        merged.setdefault(agent, set()).update(_HELPER_BOUND)
+
     return {agent: frozenset(v) for agent, v in merged.items()}
+
+
+@functools.lru_cache(maxsize=1)
+def _helper_served(root: pathlib.Path | None = None) -> frozenset[str]:
+    """Agents fetched through `_prompt`, the narration agent's own wrapper."""
+    import re
+
+    root = root or _repo_root()
+    found: set[str] = set()
+    for folder in _SOURCES:
+        for path in (root / folder).rglob("*.py"):
+            try:
+                # Anchored: `_prompt(` is a suffix of `compile_prompt(`, and
+                # without the boundary this credited half the system with slots
+                # the narration helper binds for two agents.
+                found |= set(re.findall(r'(?<![A-Za-z_])_prompt\(\s*"([a-z0-9-]+)"',
+                                        path.read_text(encoding="utf-8")))
+            except OSError:  # noqa: PERF203
+                continue
+    return frozenset(found)
 
 
 @functools.lru_cache(maxsize=1)
@@ -338,7 +392,7 @@ def alignment_report() -> dict[str, Any]:
             continue  # never called; a different problem, reported below
         text = prompt if isinstance(prompt, str) else str(prompt)
         missing = sorted(set(placeholder.findall(text))
-                         - set(bindings[agent]) - _AUTO_INJECTED)
+                         - set(bindings[agent]) - _AUTO_INJECTED - _HELPER_BOUND)
         if missing:
             unsupplied[agent] = missing
 
