@@ -155,6 +155,7 @@ def index_for_grade(grade: str, subject: str = "") -> dict[tuple[str, str], dict
     trips.
     """
     from ..infra.db import fetch_all
+    from . import scope_key
     from .grade_sql import clause
 
     conditions = [clause("a.grade", "grade"), "a.kind IN :kinds"]
@@ -186,7 +187,7 @@ def index_for_grade(grade: str, subject: str = "") -> dict[tuple[str, str], dict
         if not subject_key or not sub_strand:
             continue
 
-        key = (subject_key, sub_strand.lower())
+        key = scope_key.key(row.get("subject"), sub_strand)
         bundle = index.setdefault(key, {
             "notes": {}, "diagrams": [], "activities": [], "questions": [],
             "curriculum": {"grade": grade, "subject": row.get("subject"),

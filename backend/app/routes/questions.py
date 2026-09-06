@@ -5,6 +5,7 @@ import logging
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, Query
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
 from ..errors import raise_api_error
@@ -107,6 +108,192 @@ class QuestionExportExamRequest(BaseModel):
 class QuestionUpdateRequest(BaseModel):
     content: dict[str, Any]
     review_audit: dict[str, Any] | None = None
+
+
+class TargetRequest(BaseModel):
+    """What a scope is meant to produce in a day."""
+
+    grade: str
+    subject: str
+    strand: str = ""
+    generate_per_day: int = 500
+    review_per_day: int = 250
+    approve_per_day: int = 50
+    active: bool = True
+
+
+@router.get("/throughput")
+def question_throughput_board(
+    grade: str = Query(...),
+    subject: str = Query(...),
+    strand: str = Query(""),
+    on: str = Query("", description="A day, ISO. Defaults to today."),
+    days: int = Query(14, ge=1, le=90),
+    _: AuthContext = Depends(require_roles("admin", "operator", "reviewer")),
+) -> dict[str, Any]:
+    """Today against its target, and the fortnight behind it.
+
+    A day's numbers on their own say nothing. Whether the queue between
+    generating and reviewing is GROWING is the question this exists to answer,
+    because the number that kills this operation is not "we generated 400
+    today" — it is "3,000 items are waiting and nobody noticed".
+    """
+    from ..services import question_throughput
+
+    from ..services import production_coverage
+
+    today = question_throughput.progress(grade, subject, strand, on=on or None)
+    # A day's throughput says nothing about how much of the CURRICULUM is done.
+    # 500 questions written is a good day and still 3% of a grade, and an
+    # operator watching only the funnel cannot tell those apart.
+    try:
+        produced = production_coverage.report(grade, subject).to_dict()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Could not measure production for %s/%s: %s",
+                       grade, subject, exc)
+        produced = {}
+    return {
+        **today.to_dict(),
+        "history": question_throughput.history(grade, subject, strand, days=days),
+        "coverage": produced,
+    }
+
+
+@router.post("/throughput/target")
+def set_question_target(
+    payload: TargetRequest,
+    _: AuthContext = Depends(require_roles("admin", "operator")),
+) -> dict[str, Any]:
+    """Set the day's plan for one scope.
+
+    A target on a grade and subject covers every strand in it until a strand is
+    given its own — otherwise adding a strand silently drops it out of the plan.
+    """
+    from ..services import question_throughput
+
+    return question_throughput.set_target(
+        payload.grade, payload.subject, payload.strand,
+        generate_per_day=payload.generate_per_day,
+        review_per_day=payload.review_per_day,
+        approve_per_day=payload.approve_per_day,
+        active=payload.active)
+
+
+@router.post("/{question_id}/passed")
+def record_question_step(
+    question_id: str,
+    event: str = Query(..., description="reviewed | approved | rejected"),
+    grade: str = Query(""),
+    subject: str = Query(""),
+    strand: str = Query(""),
+    sub_strand: str = Query(""),
+    note: str = Query(""),
+    auth: AuthContext = Depends(require_roles("admin", "operator", "reviewer")),
+) -> dict[str, Any]:
+    """Mark one item as read, signed for, or sent back.
+
+    Counted as its own event rather than written over a status column: an item
+    generated, reviewed, rejected and regenerated in one day shows as one
+    generation on a status column, and the reviewer's day disappears.
+    """
+    from ..services import question_throughput
+
+    allowed = (question_throughput.REVIEWED, question_throughput.APPROVED,
+               question_throughput.REJECTED)
+    if event not in allowed:
+        raise_api_error("VALIDATION_FAILED",
+                        f"'{event}' is not a step. Known: {', '.join(allowed)}.")
+
+    written = question_throughput.record(
+        event, question_id=question_id, grade=grade, subject=subject,
+        strand=strand, sub_strand=sub_strand,
+        actor=getattr(auth, "subject", ""), detail={"note": note} if note else {})
+    return {"question_id": question_id, "event": event, "recorded": written}
+
+
+@router.get("/structure")
+def question_structure_report(
+    grade: str = Query(...),
+    subject: str = Query(...),
+    sub_strand: str = Query(""),
+    strand: str = Query(""),
+    limit: int = Query(200, ge=1, le=500),
+    _: AuthContext = Depends(require_roles("admin", "operator", "reviewer")),
+) -> dict[str, Any]:
+    """Every filed item against the shape its own type promises."""
+    from ..services import question_structure
+
+    items = question_dna_service.list_questions(
+        grade=grade, subject=subject, strand=strand or None,
+        sub_strand=sub_strand or None, limit=limit)
+    return question_structure.check_all(items)
+
+
+@router.get("/paper.html", response_class=HTMLResponse)
+def questions_paper_html(
+    grade: str = Query(...),
+    subject: str = Query(...),
+    sub_strand: str = Query(""),
+    strand: str = Query(""),
+    status: str = Query(""),
+    answers: bool = Query(False, description="The marking scheme rather than the paper"),
+    limit: int = Query(200, ge=1, le=500),
+    _: AuthContext = Depends(require_roles("admin", "operator", "reviewer", "developer")),
+):
+    """A question set as a document — the paper, or the marking scheme.
+
+    Questions lived in the console as JSON, so judging one meant reading a
+    field at a time and nobody ever saw what a learner would be handed: where
+    the LaTeX typesets or prints its own backslashes, where a diagram question
+    has its figure beside it or does not.
+
+    `answers=false` is the paper and carries no answer anywhere on it.
+    """
+    from ..services import question_paper
+
+    items = question_dna_service.list_questions(
+        grade=grade, subject=subject, strand=strand or None,
+        sub_strand=sub_strand or None, status=status or None, limit=limit)
+
+    return HTMLResponse(question_paper.render_html(
+        items, grade=grade, subject=subject, strand=strand,
+        sub_strand=sub_strand, answers=answers))
+
+
+@router.get("/paper.pdf")
+def questions_paper_pdf(
+    grade: str = Query(...),
+    subject: str = Query(...),
+    sub_strand: str = Query(""),
+    strand: str = Query(""),
+    status: str = Query(""),
+    answers: bool = Query(False),
+    limit: int = Query(200, ge=1, le=500),
+    _: AuthContext = Depends(require_roles("admin", "operator", "reviewer")),
+) -> Any:
+    """The same document as a file, for a classroom with no screen in it."""
+    from fastapi import Response
+
+    from ..services import pdf, question_paper
+
+    items = question_dna_service.list_questions(
+        grade=grade, subject=subject, strand=strand or None,
+        sub_strand=sub_strand or None, status=status or None, limit=limit)
+    document = question_paper.render_html(
+        items, grade=grade, subject=subject, strand=strand,
+        sub_strand=sub_strand, answers=answers)
+    try:
+        body = pdf.from_html(document)
+    except pdf.PdfUnavailable as exc:
+        raise_api_error("MODEL_ENDPOINT_UNAVAILABLE", str(exc))
+
+    stem = "-".join(part.lower().replace(" ", "-") for part in
+                    (grade, subject, sub_strand or strand,
+                     "marking-scheme" if answers else "paper") if part)
+    return Response(
+        content=body, media_type="application/pdf",
+        headers={"Content-Disposition": f'inline; filename="{stem or "paper"}.pdf"'},
+    )
 
 
 @router.get("")
@@ -649,6 +836,44 @@ def factory_generate_questions_batch(
     )
 
     normalized_questions = [item.to_public_dict(include_answers=True) for item in batch.items]
+
+    # 4b. The STRUCTURE gate. An item can be well written, correctly cited and
+    #     curriculum-aligned and still be unusable — two options, a
+    #     "structured" question with one part, four marks for a calculation
+    #     with no scheme to award them against. A review queue of 250 items a
+    #     day is only worth having if the malformed ones never reach a person,
+    #     so they are held here with the reason and the fix.
+    from ..services import question_structure, question_throughput
+
+    structure = question_structure.check_all(normalized_questions)
+    held = {v["question_id"] for v in structure["verdicts"] if v["blocked"]}
+    if held:
+        for verdict in structure["verdicts"]:
+            if verdict["blocked"]:
+                batch.rejected.append({
+                    "question_id": verdict["question_id"],
+                    "reason": "; ".join(f["says"] for f in verdict["findings"]
+                                        if f["severity"] == question_structure.BLOCKS),
+                    "fix": "; ".join(f["fix"] for f in verdict["findings"]
+                                     if f["severity"] == question_structure.BLOCKS),
+                    "stage": "structure",
+                })
+        normalized_questions = [q for q in normalized_questions
+                                if str(q.get("question_id") or "") not in held]
+
+    # 4c. Counted per ITEM, not per run: the target is written in questions,
+    #     and a run of 4 would otherwise look like a run of 400.
+    question_throughput.record_batch(
+        question_throughput.GENERATED, normalized_questions,
+        grade=payload.grade, subject=payload.subject, strand=payload.strand,
+        sub_strand=payload.sub_strand,
+        detail={"model": resolved.model})
+    if held:
+        question_throughput.record_batch(
+            question_throughput.BLOCKED,
+            [{"question_id": qid} for qid in held],
+            grade=payload.grade, subject=payload.subject, strand=payload.strand,
+            sub_strand=payload.sub_strand, detail={"gate": "structure"})
 
     # 5. Quality gate over the validated items
     gate_result = quality_gate_service.run_layer_gate(

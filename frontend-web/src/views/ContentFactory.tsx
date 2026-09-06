@@ -1,6 +1,7 @@
 import React from "react";
 import { useSearchParams } from "react-router-dom";
 import { DiagramLibrary } from "../ui/DiagramLibrary";
+import { QuestionPipeline } from "../ui/QuestionPipeline";
 import { Badge, Button, Card, CopyButton, EmptyState, ErrorNotice, Grid, Label, LoadingBlock, PageHeader, ProgressBar, QueryState, Select, Stack, Table, Td, Th, useToast } from "../ui/components";
 import { Link } from "react-router-dom";
 import { AutoRunPanel } from "./AutoRunPanel";
@@ -12,7 +13,7 @@ import { QueuePanel } from "./QueuePanel";
 import { ResetPanel } from "./ResetPanel";
 import { VersionReview } from "./VersionReview";
 import { stationToText } from "../lib/serialize";
-import { useArtifact, useArtifacts, useDesigns, useExportBundle, useInspect, profileFor, useProfiles, gradeOptionLabel, subjectOptionLabel, useApi, useGrades, useProgress, useQueuedJob, useSavedSubstrands, useStoredStructure, useSubjects, STATION_KIND, useNotesDocument } from "../lib/queries";
+import { useArtifact, useArtifacts, useDesigns, useExportBundle, useInspect, profileFor, useProfiles, gradeOptionLabel, subjectOptionLabel, useApi, useGrades, useProgress, useQueuedJob, useSavedSubstrands, useStoredStructure, useSubjects, STATION_KIND, useNotesDocument, useQuestionPaper } from "../lib/queries";
 import { useQueryClient } from "@tanstack/react-query";
 
 /**
@@ -359,6 +360,11 @@ export function ContentFactory() {
   // after that plan was regenerated into something else.
   const [overrides, setOverrides] = React.useState<string[]>([]);
   const book = useNotesDocument();
+  const paper = useQuestionPaper();
+  // Per station, how many to produce per sub-strand. Empty means the station's
+  // own default, which is what it always used.
+  const [counts, setCounts] = React.useState<Record<string, number>>({});
+  const [wantAnswers, setWantAnswers] = React.useState(false);
 
   function setParam(patch: Record<string, string>) {
     const next = new URLSearchParams(params);
@@ -472,6 +478,10 @@ export function ContentFactory() {
             strand: selected.strand,
             sub_strands: [substrand],
             kinds: [kind],
+            // How many to produce per sub-strand. Every station had its own
+            // hardcoded default and no way to change it here, so "generate 50
+            // questions for this strand" meant editing the request by hand.
+            ...(counts[kind] ? { counts: { [kind]: counts[kind] } } : {}),
           }),
         }
       );
@@ -1107,6 +1117,99 @@ export function ContentFactory() {
                         />
                       </div>
                     </details>
+                  )}
+
+                  {/* How many this station should produce per sub-strand.
+                      Shown only where the number means something: notes are
+                      one per allocated hour, not a quantity to choose. */}
+                  {["visuals", "practicals", "questions"].includes(station.id) && selected && (
+                    <Stack direction="row" gap="var(--s2)" style={{ alignItems: "center", marginTop: "var(--s2)", flexWrap: "wrap" }}>
+                      <label style={{ fontSize: "var(--text-sm)", color: "var(--ink-2)" }}>
+                        How many per sub-strand
+                      </label>
+                      <input
+                        type="number"
+                        min={1}
+                        max={500}
+                        placeholder="default"
+                        value={counts[station.id] ?? ""}
+                        onChange={(e) =>
+                          setCounts({
+                            ...counts,
+                            [station.id]: Number(e.target.value) || 0,
+                          })
+                        }
+                        style={{
+                          width: 84, padding: "4px 7px",
+                          borderRadius: "var(--radius-sm)",
+                          border: "1px solid var(--line)",
+                          background: "var(--surface-2)", color: "var(--ink-1)",
+                        }}
+                      />
+                      <span style={{ fontSize: "var(--text-sm)", color: "var(--ink-2)" }}>
+                        {counts[station.id]
+                          ? `${counts[station.id]} per sub-strand on the next run.`
+                          : "Blank uses this station's own default."}
+                      </span>
+                    </Stack>
+                  )}
+
+                  {/* The funnel, not a list. Three separate daily rates and
+                      the queues between them — because the number that kills
+                      this is not "we generated 400 today", it is "3,000 are
+                      waiting to be read and nobody noticed". */}
+                  {station.id === "questions" && selected && (
+                    <QuestionPipeline
+                      grade={effectiveGrade}
+                      subject={selected.subject}
+                      strand={selected.strand}
+                      subStrand={selected.report.sub_strand_name}
+                    />
+                  )}
+
+                  {/* A question set is read as a paper, not as JSON. Two
+                      documents, because a paper with the answers on it cannot
+                      be handed to a class. */}
+                  {station.id === "questions" && selected && (
+                    <Stack direction="row" gap="var(--s2)" style={{ marginTop: "var(--s3)", flexWrap: "wrap" }}>
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        loading={paper.isPending && !wantAnswers}
+                        disabled={paper.isPending}
+                        title="What a learner is handed. No answers anywhere on it."
+                        onClick={() => {
+                          setWantAnswers(false);
+                          paper.mutate({
+                            grade: effectiveGrade, subject: selected.subject,
+                            strand: selected.strand,
+                            sub_strand: selected.report.sub_strand_name,
+                            answers: false,
+                          });
+                        }}
+                      >
+                        Read the paper
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        loading={paper.isPending && wantAnswers}
+                        disabled={paper.isPending}
+                        title="The same items with their worked solutions, step by step"
+                        onClick={() => {
+                          setWantAnswers(true);
+                          paper.mutate({
+                            grade: effectiveGrade, subject: selected.subject,
+                            strand: selected.strand,
+                            sub_strand: selected.report.sub_strand_name,
+                            answers: true,
+                          });
+                        }}
+                      >
+                        Read the marking scheme
+                      </Button>
+                      {paper.error && <ErrorNotice error={paper.error} />}
+                    </Stack>
                   )}
 
                   {/* The drawings themselves, numbered as the book numbers

@@ -223,6 +223,55 @@ def check_edit_shape(
     }
 
 
+class ReviewerNoteRequest(BaseModel):
+    """What a person read, and what they want done about it."""
+
+    body: str
+    action: str = "rewrite"
+
+
+@router.post("/{artifact_id}/reviewer-note")
+def add_reviewer_note(
+    artifact_id: str,
+    payload: ReviewerNoteRequest,
+    auth: AuthContext = Depends(require_roles("admin", "operator", "reviewer")),
+) -> dict[str, Any]:
+    """A reviewer's own words, and what has to be rebuilt because of them.
+
+    A model reviewer scores dimensions. A person reads the thing and knows why
+    it is wrong — and until now that had nowhere to go but a conversation, so a
+    systematic fault had to be described to whoever runs the console rather
+    than to the pipeline.
+
+    Nothing is deleted and nothing regenerates on its own: regeneration costs
+    money and takes a station out of service. What this does is make the
+    consequence visible — the plan is marked for a rewrite, and everything
+    built from it is marked stale, with the reviewer's reason on each one.
+    """
+    from ..services import review_feedback
+
+    return review_feedback.submit(
+        artifact_id, payload.body, action=payload.action,
+        author=getattr(auth, "subject", "")).to_dict()
+
+
+@router.get("/{artifact_id}/reviewer-notes")
+def list_reviewer_notes(
+    artifact_id: str,
+    _: AuthContext = Depends(require_roles("admin", "operator", "reviewer", "developer")),
+) -> dict[str, Any]:
+    """The notes a regeneration of this version has to answer.
+
+    A regeneration that does not read them repeats the fault the reviewer
+    described, and the next reviewer writes the same note again.
+    """
+    from ..services import review_feedback
+
+    notes = review_feedback.directives_for(artifact_id)
+    return {"artifact_id": artifact_id, "count": len(notes), "notes": notes,
+            "instruction": review_feedback.as_instruction(notes)}
+
+
 @router.delete("/{artifact_id}")
 def delete_artifact(
     artifact_id: str,

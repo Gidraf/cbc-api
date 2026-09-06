@@ -617,6 +617,9 @@ class FactoryPlanActivitiesRequest(BaseModel):
     subject: str
     strand: str
     sub_strand: str
+    # How many to plan. A sub-strand's design says how many experiments it
+    # needs; where it does not, this is what the station is asked for.
+    min_activities: int = 4
     notes_title: str = ""
     notes_content: dict[str, Any] | None = None
     diagram_info: dict[str, Any] | None = None
@@ -1871,6 +1874,11 @@ def factory_plan_visuals(
             "faith_scope": faith_prompt_block(payload.subject),
             "content_type_directives": ct_profile.format_for_prompt(),
             "notes_content": notes_str or payload.notes_title or payload.sub_strand,
+            # `min_visuals` was a field on the request that reached no prompt,
+            # so setting it did nothing at all and the station always planned
+            # whatever it felt like. A sub-strand with eight hours in it needs
+            # more figures than one with two.
+            "min_visuals": str(max(1, int(getattr(payload, "min_visuals", 0) or 5))),
         },
     )
 
@@ -1904,6 +1912,13 @@ def factory_plan_visuals(
             # and the question asked about it then does not match the picture
             # printed beside it.
             f"{geometry_spec}\n\n"
+            # The count is stated in the prompt itself rather than only as a
+            # template variable, because the template lives in Langfuse and a
+            # variable it does not reference silently does nothing — which is
+            # what `min_visuals` did for its whole life as a field.
+            f"PRODUCE AT LEAST {max(1, int(getattr(payload, 'min_visuals', 0) or 5))} "
+            f"visuals for this sub-strand in total, spread across its lessons "
+            f"rather than piled onto one.\n\n"
             f"WHERE THE PLAN ASKS FOR NOTHING in a lesson, work from that "
             f"lesson's own topics and produce 1-3 visuals for it. Every visual "
             f"must be traceable to a topic in the notes above: set "
@@ -2426,6 +2441,9 @@ def factory_plan_activities(
             # those examples and asked to be authentic will be authentic about
             # soil.
             f"{activity_brief}\n\n"
+            f"PRODUCE AT LEAST {max(1, int(getattr(payload, 'min_activities', 0) or 4))} "
+            f"practicals for this sub-strand in total, spread across its "
+            f"lessons rather than piled onto one.\n\n"
             f"WHAT COUNTS AS A PRACTICAL IS SET BY THE LEARNER, NOT BY THE "
             f"SUBJECT. The register above says what this age can do with their "
             f"hands: at pre-primary that is singing games, role-play, "
@@ -3454,6 +3472,11 @@ class QueueWorkRequest(BaseModel):
     # Empty means every sub-strand stored for this subject.
     sub_strands: list[str] = []
     custom_instructions: str = ""
+    # How many to produce per sub-strand, per station: {"questions": 50,
+    # "visuals": 8}. Every station had its own hardcoded default and no way to
+    # change it from the console, so "generate 50 questions for this strand"
+    # meant editing the request by hand.
+    counts: dict[str, int] = {}
 
 
 class QueueSubstrandsRequest(BaseModel):
@@ -4518,6 +4541,16 @@ def _run_queued(job: dict[str, Any]) -> dict[str, Any]:
     }
     allowed = set(model_cls.model_fields)
 
+    # One count from the console, whatever this station calls its own. Without
+    # this the number typed on the board reached the questions station and no
+    # other, because each had invented a different field name for it.
+    count = payload.get("count")
+    if count:
+        for field_name in ("min_visuals", "min_activities", "batch_count", "count"):
+            if field_name in allowed:
+                fields[field_name] = int(count)
+                break
+
     def produce(instructions: str) -> dict[str, Any]:
         """One generation. The station saves and versions its own output, so
         every cycle is on the record rather than only the one that passed."""
@@ -4608,7 +4641,8 @@ def _run_queued_questions(job: dict[str, Any]) -> dict[str, Any]:
         "strand": job.get("strand") or "",
         "sub_strand": job.get("sub_strand") or "",
         "custom_instructions": payload.get("custom_instructions") or "",
-        "batch_count": int(payload.get("batch_count") or 5),
+        # One name from the console, whatever the station calls it.
+        "batch_count": int(payload.get("count") or payload.get("batch_count") or 5),
     }
     allowed = set(QuestionBatchGenerateRequest.model_fields)
 
@@ -5198,7 +5232,9 @@ def factory_queue_work(
         for row in targets:
             job = job_queue.enqueue(
                 kind, payload.grade, payload.subject,
-                {"custom_instructions": payload.custom_instructions},
+                {"custom_instructions": payload.custom_instructions,
+                 **({"count": int(payload.counts[kind])}
+                    if payload.counts.get(kind) else {})},
                 strand=str(row.get("strand_name") or ""),
                 sub_strand=str(row.get("sub_strand_name") or ""),
                 batch_id=batch_id, queued_by=getattr(auth, "subject", ""),

@@ -88,6 +88,20 @@ function StageCell({ stage, onOpen }: { stage: BoardStage; onOpen: () => void })
         {stage.failed > 0 && ` · ${stage.failed} failed`}
         {stage.running > 0 && ` · ${stage.running} running`}
       </div>
+      {/* "3 of 3 sub-strands" and "12 of 84 diagrams" are both true and only
+          one of them is progress. The tile counts sub-strands touched; this
+          line counts what the CURRICULUM asked for, and says what is left. */}
+      {stage.coverage && stage.coverage.required > 0 && (
+        <div
+          title={stage.coverage.says}
+          style={{ fontSize: "0.7rem", color: "var(--ink-3)", marginTop: 2 }}
+        >
+          {stage.coverage.remaining > 0
+            ? `${stage.coverage.remaining} left of ${stage.coverage.required}`
+            : `all ${stage.coverage.required} produced`}
+          {stage.coverage.estimated && " ·  est."}
+        </div>
+      )}
       {/* The bar is the only thing scannable across a row of ten stages. */}
       <div
         style={{
@@ -100,7 +114,9 @@ function StageCell({ stage, onOpen }: { stage: BoardStage; onOpen: () => void })
       >
         <div
           style={{
-            width: `${stage.percentage}%`,
+            width: `${stage.coverage && stage.coverage.required > 0
+              ? stage.coverage.percentage
+              : stage.percentage}%`,
             height: "100%",
             background: `var(--${tone === "neutral" ? "ink-3" : tone})`,
           }}

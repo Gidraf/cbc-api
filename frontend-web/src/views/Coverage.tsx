@@ -69,11 +69,35 @@ export function Coverage() {
   // PP1 sections landing under grade-pp2 was a real bug and this screen
   // reported it as an empty grade for days.
   const elsewhere = report?.found_under_other_grades ?? [];
+  // Work filed under a name the design does not use scores nothing, unlocks
+  // nothing, and used to say nothing. A grade reading 0% with every station
+  // run is this, and it was indistinguishable from a grade nobody had touched.
+  const unmatched = report?.unmatched_generations ?? [];
   const approvedPct = (report as any)?.approved_grade_percentage;
   const gradeLabel =
     report?.grade_label ||
     (grades.data || []).find((g) => (g.slug || g.name) === grade)?.label ||
     "Grade";
+
+  const unmatchedBanner = unmatched.length ? (
+    <div
+      style={{
+        margin: "var(--s3) 0",
+        padding: "var(--s3)",
+        borderRadius: "var(--radius-sm)",
+        background: "var(--warn-bg, #fff8e6)",
+        fontSize: "var(--text-sm)",
+        lineHeight: 1.5,
+      }}
+    >
+      <strong>Some generated work is not being counted.</strong>
+      {unmatched.map((line, i) => (
+        <div key={i} style={{ marginTop: i === 0 ? 6 : 2, whiteSpace: "pre-wrap" }}>
+          {line}
+        </div>
+      ))}
+    </div>
+  ) : null;
 
   return (
     <>
@@ -113,6 +137,8 @@ export function Coverage() {
           </>
         }
       />
+
+      {unmatchedBanner}
 
       <QueryState query={grades} label="Loading grades" rows={3} />
       {grades.data?.length === 0 && (

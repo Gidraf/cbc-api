@@ -2,6 +2,7 @@ import React from "react";
 
 import { NotesReader } from "./NotesReader";
 import { DrawVisuals } from "../ui/DrawVisuals";
+import { ReviewerNote } from "../ui/ReviewerNote";
 import {
   Badge,
   Button,
@@ -1264,6 +1265,11 @@ export function VersionReview({
             {data.kind === "diagram" && (
               <DrawVisuals artifactId={data.artifact_id} content={data.content} />
             )}
+            {/* What a person read, and what has to be rebuilt because of
+                it. A model reviewer scores dimensions; a person knows why it
+                is wrong, and that had nowhere to go but a conversation. */}
+            <ReviewerNote artifactId={data.artifact_id} kind={data.kind} />
+
             <Stack direction="row" gap="var(--s2)" style={{ flexWrap: "wrap", alignItems: "center" }}>
               <EditDraft
                 artifactId={data.artifact_id}

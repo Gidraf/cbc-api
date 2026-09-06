@@ -918,7 +918,7 @@ def get_dataset_progress_report(
     # with "none exist yet for this sub-strand" about content plainly there.
     #
     # The board could not see its own work.
-    from ..services import substrand_bundle
+    from ..services import scope_key, substrand_bundle
 
     res_index: dict[tuple[str, str], dict] = substrand_bundle.index_for_grade(grade_slug)
 
@@ -932,15 +932,15 @@ def get_dataset_progress_report(
     res_rows = fetch_all(res_query, {"grade": grade_slug, "alt_grade": alt_grade})
     for r in res_rows:
         c = r.get("curriculum") or {}
-        s_key = c.get("subject", "").strip().lower()
-        ss_key = c.get("sub_strand", "").strip().lower()
-        if s_key and ss_key and (s_key, ss_key) not in res_index:
-            res_index[(s_key, ss_key)] = r
+        legacy = scope_key.key(c.get("subject"), c.get("sub_strand"))
+        if all(legacy) and legacy not in res_index:
+            res_index[legacy] = r
 
     # Media and approvals live in their own tables, and coverage was scoring
     # neither — so a sub-strand with a full photo and video plan scored the same
     # as one with none, and one whose every artifact was an unreviewed draft
     # scored the same as one signed off. What is not measured does not get made.
+    matched_scopes: set[tuple[str, str]] = set()
     media_index: dict[tuple[str, str], list[dict]] = {}
     try:
         for row in fetch_all(
@@ -950,8 +950,7 @@ def get_dataset_progress_report(
             """,
             {"grade": grade_slug, "alt_grade": alt_grade},
         ) or []:
-            key = (str(row.get("subject") or "").strip().lower(),
-                   str(row.get("sub_strand_name") or "").strip().lower())
+            key = scope_key.key(row.get("subject"), row.get("sub_strand_name"))
             media_index.setdefault(key, []).append({"status": row.get("status")})
     except Exception as exc:  # noqa: BLE001
         logger.debug("Media not counted in coverage: %s", exc)
@@ -971,8 +970,7 @@ def get_dataset_progress_report(
             """,
             {"grade": grade_slug, "alt_grade": alt_grade},
         ) or []:
-            key = (str(row.get("subject") or "").strip().lower(),
-                   str(row.get("sub_strand_name") or "").strip().lower())
+            key = scope_key.key(row.get("subject"), row.get("sub_strand_name"))
             approval_index[key] = {
                 "total": int(row.get("total") or 0),
                 "approved": int(row.get("approved") or 0),
@@ -1090,7 +1088,11 @@ def get_dataset_progress_report(
 
         subjects_tree.setdefault(s_name, {}).setdefault(st_name, [])
 
-        scope = (s_name.lower(), ss_name.lower())
+        # Built by the SAME function that keyed the index. Keying the two
+        # sides of this join by hand — one stripping whitespace, the other not
+        # — is what made a grade with every station run report 0%.
+        scope = scope_key.key(s_name, ss_name)
+        matched_scopes.add(scope)
         gen_res = res_index.get(scope)
         # Media and approvals are joined in here rather than inside coverage, so
         # the scorer stays a pure function of what it is handed.
@@ -1346,6 +1348,12 @@ def get_dataset_progress_report(
         "remaining_substrands": max(0, len(all_substrands) - production_ready_count),
         "production_ready_substrands": production_ready_count,
         "is_all_production_ready": bool(all_substrands) and production_ready_count == len(all_substrands),
+        # Work that matched no sub-strand in the design. This is the diagnosis
+        # that was missing: a mismatch produced no error, just a sub-strand
+        # whose every station had run reporting 0% — and nothing anywhere said
+        # the work existed under a name the design does not use.
+        "unmatched_generations": scope_key.report_misses(
+            matched_scopes, set(res_index) | set(media_index)),
         "measurement_confidence": {
             "substrands_with_estimated_requirements": estimated_count,
             "substrands_measured_from_blueprint": len(all_substrands) - estimated_count,

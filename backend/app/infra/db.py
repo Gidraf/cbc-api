@@ -916,6 +916,50 @@ MIGRATIONS: list[tuple[str, str]] = [
             ON uploaded_assets(grade, subject, sub_strand, kind);
         """,
     ),
+    (
+        "030_question_throughput",
+        """
+        -- What a day is supposed to produce, per scope. Selling this content
+        -- means knowing whether today's work happened, not whether the
+        -- generator can be run.
+        CREATE TABLE IF NOT EXISTS question_targets (
+            target_id TEXT PRIMARY KEY,
+            grade TEXT NOT NULL DEFAULT '',
+            subject TEXT NOT NULL DEFAULT '',
+            strand TEXT NOT NULL DEFAULT '',
+            generate_per_day INT NOT NULL DEFAULT 500,
+            review_per_day INT NOT NULL DEFAULT 250,
+            approve_per_day INT NOT NULL DEFAULT 50,
+            active BOOLEAN NOT NULL DEFAULT TRUE,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_question_targets_scope
+            ON question_targets(grade, subject, strand);
+
+        -- One row per thing that happened to a question, so progress against
+        -- a target is counted from events rather than inferred from a status
+        -- column that only ever holds the latest one.
+        CREATE TABLE IF NOT EXISTS question_events (
+            event_id BIGSERIAL PRIMARY KEY,
+            question_id TEXT NOT NULL DEFAULT '',
+            grade TEXT NOT NULL DEFAULT '',
+            subject TEXT NOT NULL DEFAULT '',
+            strand TEXT NOT NULL DEFAULT '',
+            sub_strand TEXT NOT NULL DEFAULT '',
+            event TEXT NOT NULL,
+            actor TEXT NOT NULL DEFAULT '',
+            detail JSONB NOT NULL DEFAULT '{}'::jsonb,
+            happened_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_question_events_day
+            ON question_events(grade, subject, strand, event, happened_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_question_events_question
+            ON question_events(question_id, happened_at DESC);
+        """,
+    ),
 ]
 
 

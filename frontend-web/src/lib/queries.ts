@@ -159,6 +159,11 @@ export type ProgressReport = {
   total_substrands?: number;
   completed_substrands?: number;
   production_ready_substrands?: number;
+  /** Generated work that matched no sub-strand in the design. A mismatch
+   *  produces no error — just a sub-strand whose every station has run and
+   *  which reports 0%, with nothing anywhere saying the work exists under a
+   *  name the design does not use. */
+  unmatched_generations?: string[];
   measurement_confidence: {
     substrands_with_estimated_requirements: number;
     substrands_measured_from_blueprint: number;
@@ -1446,6 +1451,146 @@ export function useDeleteVersion() {
   });
 }
 
+/** A question set as a document — the paper, or the marking scheme.
+ *
+ * Questions lived here as JSON, so nobody ever saw what a learner would
+ * actually be handed. */
+export function useQuestionPaper() {
+  const { token } = useAuth();
+  return useMutation({
+    mutationFn: async (v: {
+      grade: string; subject: string; sub_strand: string; strand?: string;
+      answers?: boolean;
+    }) => {
+      const query = new URLSearchParams({
+        grade: v.grade, subject: v.subject, sub_strand: v.sub_strand,
+        strand: v.strand || "", answers: String(Boolean(v.answers)),
+      });
+      const { blob } = await fetchBlob(
+        `/api/v1/questions/paper.html?${query.toString()}`,
+        { bearerToken: token }
+      );
+      const url = URL.createObjectURL(
+        new Blob([await blob.text()], { type: "text/html" })
+      );
+      window.open(url, "_blank", "noopener");
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+      return url;
+    },
+  });
+}
+
+/** Today against its target, and the fortnight behind it. */
+export function useQuestionThroughput(v: { grade: string; subject: string; strand?: string }) {
+  const api = useApi();
+  return useQuery({
+    queryKey: ["question-throughput", v.grade, v.subject, v.strand || ""],
+    enabled: Boolean(v.grade && v.subject),
+    refetchInterval: 60_000,
+    queryFn: () =>
+      api<{
+        grade: string; subject: string; strand: string; on: string;
+        stages: Array<{ stage: string; done: number; target: number; share: number; short_by: number }>;
+        awaiting_review: number;
+        awaiting_approval: number;
+        blocked_today: number;
+        warnings: string[];
+        target: {
+          generate_per_day: number; review_per_day: number;
+          approve_per_day: number; active: boolean;
+        };
+        history: Array<{ on: string; generated: number; reviewed: number; approved: number; blocked: number }>;
+        /** How much of the CURRICULUM is done. 500 questions written is a good
+         *  day and still 3% of a grade, and the funnel alone cannot tell those
+         *  two apart. */
+        coverage?: {
+          grade: string; subject: string; substrands: number; measured: number;
+          percentage: number;
+          dimensions: Record<string, {
+            generated: number; required: number; remaining: number;
+            percentage: number; estimated: boolean; says: string;
+          }>;
+          unmatched_generations?: string[];
+        };
+      }>(
+        `/api/v1/questions/throughput?grade=${encodeURIComponent(v.grade)}` +
+          `&subject=${encodeURIComponent(v.subject)}&strand=${encodeURIComponent(v.strand || "")}`
+      ),
+  });
+}
+
+/** Set the day's plan for one scope. */
+export function useSetQuestionTarget() {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: {
+      grade: string; subject: string; strand?: string;
+      generate_per_day: number; review_per_day: number; approve_per_day: number;
+    }) =>
+      api<any>("/api/v1/questions/throughput/target", {
+        method: "POST",
+        body: JSON.stringify({ strand: "", ...v }),
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["question-throughput"] }),
+  });
+}
+
+/** Every filed item against the shape its own type promises. */
+export function useQuestionStructure(v: { grade: string; subject: string; sub_strand?: string }) {
+  const api = useApi();
+  return useQuery({
+    queryKey: ["question-structure", v.grade, v.subject, v.sub_strand || ""],
+    enabled: Boolean(v.grade && v.subject),
+    queryFn: () =>
+      api<{
+        total: number; clean: number; blocked: number; passed: number; score: number;
+        by_finding: Record<string, number>;
+        verdicts: Array<{
+          question_id: string; question_type: string; blocked: boolean; score: number;
+          findings: Array<{ code: string; severity: string; says: string; fix: string }>;
+        }>;
+      }>(
+        `/api/v1/questions/structure?grade=${encodeURIComponent(v.grade)}` +
+          `&subject=${encodeURIComponent(v.subject)}&sub_strand=${encodeURIComponent(v.sub_strand || "")}`
+      ),
+  });
+}
+
+/** A reviewer's own words, and what has to be rebuilt because of them. */
+export function useReviewerNote() {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { artifact_id: string; body: string; action?: string }) =>
+      api<{
+        artifact_id: string; kind: string; action: string; says: string;
+        stale_count: number;
+        stale: Array<{ artifact_id: string; kind: string; version: number }>;
+      }>(`/api/v1/artifacts/${encodeURIComponent(v.artifact_id)}/reviewer-note`, {
+        method: "POST",
+        body: JSON.stringify({ body: v.body, action: v.action || "rewrite" }),
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["artifact"] });
+      qc.invalidateQueries({ queryKey: ["reviewer-notes"] });
+    },
+  });
+}
+
+/** The notes a regeneration of this version has to answer. */
+export function useReviewerNotes(artifactId: string) {
+  const api = useApi();
+  return useQuery({
+    queryKey: ["reviewer-notes", artifactId],
+    enabled: Boolean(artifactId),
+    queryFn: () =>
+      api<{ count: number; notes: string[]; instruction: string }>(
+        `/api/v1/artifacts/${encodeURIComponent(artifactId)}/reviewer-notes`
+      ),
+  });
+}
+
 /** Which model runs which station. */
 export function useStageBindings() {
   const api = useApi();
@@ -2372,6 +2517,13 @@ export type BoardStage = {
   status: string;
   expected: number;
   built: number;
+  /** What this stage owes the CURRICULUM, as against how many sub-strands it
+   *  has touched. "3 of 3 sub-strands" and "12 of 84 diagrams" are both true
+   *  and only one of them is progress. */
+  coverage?: {
+    generated: number; required: number; remaining: number;
+    percentage: number; estimated: boolean; says: string;
+  };
   reviewed: number;
   approved: number;
   running: number;

@@ -83,6 +83,10 @@ class Stage:
     # makes you go and find the lesson plan has told you where to click, which
     # is not the same as letting you click it.
     remedy: list[dict[str, Any]] = field(default_factory=list)
+    # What this stage owes the CURRICULUM, as against how many sub-strands it
+    # has touched. "3 of 3 sub-strands" and "12 of 84 diagrams" are both true
+    # and only one of them is progress, so the board carries both.
+    coverage: dict[str, Any] = field(default_factory=dict)
 
     @property
     def percentage(self) -> int:
@@ -107,6 +111,7 @@ class Stage:
         return {
             "stage": self.stage, "label": self.label, "status": self.status,
             "expected": self.expected, "built": self.built,
+            "coverage": self.coverage,
             "reviewed": self.reviewed, "approved": self.approved,
             "running": self.running, "failed": self.failed,
             "percentage": self.percentage,
@@ -507,12 +512,28 @@ def branch(grade: str, subject: str,
     expected = _expected(grade, subject)
     dataset = dataset_state(grade)
 
+    # Measured once for the branch, not per stage: it is one pass over the
+    # blueprint and one over the artifacts, and doing it per tile would be
+    # seven of each.
+    from . import production_coverage
+
+    try:
+        produced = production_coverage.report(grade, subject)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Could not measure production for %s/%s: %s",
+                       grade, subject, exc)
+        produced = None
+
     out = Branch(subject=subject)
     for policy in policies:
         name = policy.stage
         stage = Stage(stage=name, label=STAGE_LABEL.get(name, name),
                       policy=policy.to_dict(),
                       expected=int(expected.get(name, 0)))
+        if produced is not None:
+            dimension = produced.for_stage(name)
+            if dimension is not None:
+                stage.coverage = dimension.to_dict()
 
         kind = STAGE_KIND.get(name)
         if kind:
