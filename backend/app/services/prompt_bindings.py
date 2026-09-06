@@ -48,6 +48,21 @@ _HELPER_BOUND = frozenset({
 # on its way out. That is the trade — a wider read that needs a short list of
 # things it is known to over-report, rather than a narrow read that reports
 # working code as broken.
+# `content_fit.check` fetches both of these from one `shared` dict and adds
+# the slot each one needs. Written down here because it is a fact about that
+# function, not something a scanner should be asked to work out.
+_ALSO_BOUND: dict[str, frozenset[str]] = {
+    # `domain_directives` is here rather than in `_HELPER_BOUND` because
+    # `content_fit` binds it and the narration helper does not — putting it in
+    # the shared set credited the two maths agents with a variable their
+    # prompts never ask for.
+    "slo-aligner": frozenset({"content_to_align", "grade", "subject", "strand",
+                              "sub_strand", "slos", "domain_directives"}),
+    "layer-reviewer": frozenset({"content_to_review", "layer_name", "slos",
+                                 "content_type_directives", "grade", "subject",
+                                 "strand", "sub_strand", "domain_directives"}),
+}
+
 _NOT_TEMPLATE_VARS = frozenset({
     "role", "content", "type", "text", "name", "model", "provider",
     "temperature", "max_tokens", "messages", "stream", "id", "index",
@@ -164,7 +179,11 @@ def _scan(tree: ast.AST) -> dict[str, set[str]]:
             continue
         named = {a for a in _agents_named_in(function, constants) if a}
         if len(named) != 1:
-            continue          # ambiguous: crediting either one would be a guess
+            # Several agents from one function: crediting every key it builds
+            # to every one of them buried the real findings under hundreds of
+            # false ones. Declared in `_ALSO_BOUND` instead, where the
+            # relationship can be read.
+            continue
         agent = named.pop()
         found.setdefault(agent, set()).update(_names_bound_in(function))
 
@@ -194,7 +213,8 @@ def _agents_named_in(function: ast.AST, constants: dict[str, str] | None = None)
     # reported both maths agents as seeded and called by nothing, while they
     # run on every mathematics sub-strand.
     fetchers = ("_get_rendered_langfuse_prompt", "get_prompt", "get_agent_prompt",
-                "fetch_prompt", "compile_prompt", "_prompt")
+                "fetch_prompt", "compile_prompt", "_prompt", "_ask")
+    # `_ask` is `content_fit`'s own wrapper, the same shape as `_prompt`.
     out: set[str] = set()
     for node in ast.walk(function):
         if not isinstance(node, ast.Call) or not node.args:
@@ -268,6 +288,14 @@ def all_bindings() -> dict[str, frozenset[str]]:
     for agent in _helper_served(root):
         merged.setdefault(agent, set()).update(_HELPER_BOUND)
 
+    # Agents whose variables are built once and split between them. Declared
+    # rather than inferred: a function naming two agents binds a shared dict
+    # plus a slot or two of its own, and no rule that guesses which is which
+    # got it right without burying the real findings.
+    for agent, extra in _ALSO_BOUND.items():
+        if agent in merged or extra:
+            merged.setdefault(agent, set()).update(_HELPER_BOUND | extra)
+
     return {agent: frozenset(v) for agent, v in merged.items()}
 
 
@@ -284,7 +312,8 @@ def _helper_served(root: pathlib.Path | None = None) -> frozenset[str]:
                 # Anchored: `_prompt(` is a suffix of `compile_prompt(`, and
                 # without the boundary this credited half the system with slots
                 # the narration helper binds for two agents.
-                found |= set(re.findall(r'(?<![A-Za-z_])_prompt\(\s*"([a-z0-9-]+)"',
+                found |= set(re.findall(
+                    r'(?<![A-Za-z_])(?:_prompt|_ask)\(\s*"([a-z0-9-]+)"',
                                         path.read_text(encoding="utf-8")))
             except OSError:  # noqa: PERF203
                 continue

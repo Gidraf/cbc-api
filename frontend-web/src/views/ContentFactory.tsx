@@ -2,6 +2,9 @@ import React from "react";
 import { useSearchParams } from "react-router-dom";
 import { DiagramLibrary } from "../ui/DiagramLibrary";
 import { QuestionPipeline } from "../ui/QuestionPipeline";
+import { QuestionStream } from "../ui/QuestionStream";
+import { ReviewerNote } from "../ui/ReviewerNote";
+import { TeacherProfile } from "../ui/TeacherProfile";
 import { Badge, Button, Card, CopyButton, EmptyState, ErrorNotice, Grid, Label, LoadingBlock, PageHeader, ProgressBar, QueryState, Select, Stack, Table, Td, Th, useToast } from "../ui/components";
 import { Link } from "react-router-dom";
 import { AutoRunPanel } from "./AutoRunPanel";
@@ -1154,6 +1157,18 @@ export function ContentFactory() {
                     </Stack>
                   )}
 
+                  {/* Watch them land. A run of 50 takes minutes and produced
+                      nothing readable until it finished; each item is now
+                      listed as it arrives and saved as it lands. */}
+                  {station.id === "questions" && selected && (
+                    <QuestionStream
+                      grade={effectiveGrade}
+                      subject={selected.subject}
+                      strand={selected.strand}
+                      subStrand={selected.report.sub_strand_name}
+                    />
+                  )}
+
                   {/* The funnel, not a list. Three separate daily rates and
                       the queues between them — because the number that kills
                       this is not "we generated 400 today", it is "3,000 are
@@ -1504,6 +1519,19 @@ function SavedStationWork({
         )}
       </Stack>
       {book.error && <ErrorNotice error={book.error} />}
+
+      {/* Who it was written for, and whether it landed. Mounted here rather
+          than only in the versions drawer: this is the screen an operator is
+          on when they read a guide and decide it is wrong. */}
+      {["notes", "material"].includes(kind) && newest.artifact_id && (
+        <TeacherProfile grade={grade} subject={subject} artifactId={newest.artifact_id} />
+      )}
+
+      {/* And somewhere to say so. A reviewer who has just read the guide had
+          to go and find the versions drawer to write a note about it. */}
+      {newest.artifact_id && (
+        <ReviewerNote artifactId={newest.artifact_id} kind={kind} />
+      )}
 
       {measured.length > 0 && (
         <>

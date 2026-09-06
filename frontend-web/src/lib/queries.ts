@@ -1591,6 +1591,53 @@ export function useReviewerNotes(artifactId: string) {
   });
 }
 
+/** Who this grade's guides are written FOR, on both sides. */
+export function useTeacherProfile(grade: string, subject?: string) {
+  const api = useApi();
+  return useQuery({
+    queryKey: ["teacher-profile", grade, subject || ""],
+    enabled: Boolean(grade),
+    queryFn: () =>
+      api<{
+        grade: string; level: string;
+        learner: {
+          audience: string; typical_ages: string; literacy: string;
+          can: string[]; cannot: string[]; builds_on: string; prepares_for: string;
+        };
+        teacher: {
+          known: boolean; trained_as: string; assumed: string[];
+          spell_out: string[]; never: string;
+        };
+      }>(
+        `/api/v1/curriculum/factory/teacher-profile?grade=${encodeURIComponent(grade)}` +
+          `&subject=${encodeURIComponent(subject || "")}`
+      ),
+  });
+}
+
+/** Does this content serve the outcomes, and is it pitched at the right person? */
+export function useFitCheck() {
+  const api = useApi();
+  return useMutation({
+    mutationFn: (v: { artifact_id: string }) =>
+      api<{
+        coverage_percentage: number;
+        covered: Array<{ slo: string; covered: boolean; strength?: string }>;
+        uncovered: string[];
+        unattached: string[];
+        level_score: number;
+        level_status: string;
+        level_feedback: Array<{ aspect: string; score: number; status: string; comment: string }>;
+        risk_flags: string[];
+        errors: string[];
+        says: string;
+      }>("/api/v1/curriculum/factory/fit-check", {
+        method: "POST",
+        body: JSON.stringify(v),
+      }),
+  });
+}
+
 /** Which model runs which station. */
 export function useStageBindings() {
   const api = useApi();

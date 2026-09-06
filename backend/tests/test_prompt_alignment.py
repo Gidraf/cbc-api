@@ -111,7 +111,10 @@ def test_the_report_says_what_to_do_about_it() -> None:
 # this list when the question path started repairing what the structure gate
 # blocked instead of discarding it. The two left need a decision about WHERE
 # they sit in the pipeline, which is a design question rather than a defect.
-KNOWN_UNCALLED = {"layer-reviewer", "slo-aligner"}
+# Empty. Both were wired into the fit check: `slo-aligner` measures which
+# outcomes the content actually serves, and `layer-reviewer` whether it is
+# pitched for the learner it names and the teacher who reads it.
+KNOWN_UNCALLED: set[str] = set()
 
 
 def test_no_new_prompt_is_seeded_and_left_uncalled() -> None:

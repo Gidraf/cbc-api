@@ -5705,7 +5705,7 @@ def _blueprint_for(grade: str, subject: str, sub_strand: str) -> dict[str, Any]:
     try:
         rows = fetch_all(
             f"""
-            SELECT required_diagrams, experiments, prompt_context
+            SELECT required_diagrams, experiments, slos, prompt_context
             FROM curriculum_substrands
             WHERE {clause("grade", "grade")}
               AND LOWER(subject) = LOWER(:subject)
@@ -5725,6 +5725,10 @@ def _blueprint_for(grade: str, subject: str, sub_strand: str) -> dict[str, Any]:
     return {
         "required_diagrams": row.get("required_diagrams") or [],
         "experiments": row.get("experiments") or [],
+        # The outcomes themselves. Without these the fit check has nothing to
+        # measure coverage against, and the question generator writes against
+        # an identifier.
+        "slos": row.get("slos") or [],
         "safety_hazard_criteria": context.get("safety_hazard_criteria") or [],
     }
 
@@ -6169,6 +6173,95 @@ def factory_edit_visual_svg(
             "repairs": [],
         },
     }
+
+
+@router.get("/factory/teacher-profile")
+def factory_teacher_profile(
+    grade: str = Query(...),
+    subject: str = Query(""),
+    _: AuthContext = Depends(require_roles("admin", "operator", "reviewer")),
+) -> dict[str, Any]:
+    """Who this grade's guides are written FOR, on both sides.
+
+    The learner register has always been visible in the prompt inspector; the
+    reader was not described anywhere, and a guide is written for a teacher.
+    Shown in the factory so an operator can see what the generators were told
+    before judging what they produced.
+    """
+    from ..services.level_register import register_for_grade, teacher_band
+
+    band = teacher_band(grade)
+    register = register_for_grade(grade)
+    return {
+        "grade": grade,
+        "level": register.level,
+        "learner": {
+            "audience": register.audience,
+            "typical_ages": register.typical_ages,
+            "literacy": register.literacy,
+            "can": list(register.can),
+            "cannot": list(register.cannot),
+            "builds_on": register.builds_on,
+            "prepares_for": register.prepares_for,
+        },
+        "teacher": {
+            "known": bool(band),
+            "trained_as": band.trained_as if band else "",
+            "assumed": list(band.assumed) if band else [],
+            "spell_out": list(band.spell_out) if band else [],
+            "never": band.never if band else "",
+        },
+    }
+
+
+class FitCheckRequest(BaseModel):
+    """Content to weigh against its outcomes and its audience."""
+
+    artifact_id: str = ""
+    grade: str = ""
+    subject: str = ""
+    strand: str = ""
+    sub_strand: str = ""
+
+
+@router.post("/factory/fit-check")
+def factory_fit_check(
+    payload: FitCheckRequest,
+    _: AuthContext = Depends(require_roles("admin", "operator", "reviewer")),
+) -> dict[str, Any]:
+    """Does this content serve the outcomes, and is it pitched at the right person?
+
+    Two questions the mechanical gates cannot answer. Counts say how much was
+    produced; only outcome coverage says whether the curriculum was taught —
+    ten questions all testing one outcome look identical to ten covering the
+    sub-strand until somebody checks. And a Grade 9 guide that explains which
+    key on a calculator is the minus sign is correct for its learner and wrong
+    for its reader.
+    """
+    from ..services import artifact_registry, content_fit
+
+    grade, subject = payload.grade, payload.subject
+    strand, sub_strand = payload.strand, payload.sub_strand
+    content: Any = None
+
+    if payload.artifact_id:
+        artifact = artifact_registry.get(payload.artifact_id)
+        content = artifact.content
+        grade = grade or artifact.grade
+        subject = subject or artifact.subject
+        strand = strand or artifact.strand_name
+        sub_strand = sub_strand or artifact.sub_strand_name
+    if content is None:
+        raise_api_error("VALIDATION_FAILED",
+                        "Give an artifact_id: there is nothing to weigh without it.")
+
+    blueprint = _blueprint_for(grade, subject, sub_strand)
+    fit = content_fit.check(
+        content, grade=grade, subject=subject, strand=strand,
+        sub_strand=sub_strand, slos=blueprint.get("slos") or [],
+        layer_name=getattr(artifact, "kind", "content"))
+    return {"artifact_id": payload.artifact_id, "grade": grade,
+            "sub_strand": sub_strand, **fit.to_dict()}
 
 
 @router.get("/factory/diagrams")

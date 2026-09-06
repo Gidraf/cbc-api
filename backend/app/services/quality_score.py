@@ -188,7 +188,17 @@ def score(result: dict[str, Any], kind: str = "") -> ItemScore:
             f"{from_design} of {len(subs)} sub-strands carry a rubric read from "
             f"the design rather than written from their outcomes")
     else:
-        add("rubrics", None, "no sub-strands in this result")
+        # NOT a missing rubric. KICD publishes its four-level rubric tables per
+        # SUB-STRAND, so they are read and measured at the sub-strand stage; a
+        # lesson plan carries "how you know it worked" per lesson instead, and
+        # has no `sub_strands` key to look in.
+        #
+        # Saying "no sub-strands in this result" read as "this content has no
+        # rubrics", on a Mathematics guide, for a system that had a real
+        # missing-rubric bug earlier. It says where they live instead.
+        add("rubrics", None,
+            "not measured here — KICD rubrics are published per sub-strand and "
+            "are scored on the sub-strands stage, not on a lesson plan")
 
     # ── claims the design does not support ──────────────────────────────────
     fabrication = result.get("fabrication")

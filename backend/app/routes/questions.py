@@ -5,7 +5,7 @@ import logging
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, Query
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, StreamingResponse
 from pydantic import BaseModel
 
 from ..errors import raise_api_error
@@ -120,6 +120,114 @@ class TargetRequest(BaseModel):
     review_per_day: int = 250
     approve_per_day: int = 50
     active: bool = True
+
+
+# How many items to ask for in one call while streaming. Small on purpose: a
+# single call for fifty degrades — the structure gate catches more faults per
+# item the larger the batch — and nothing can be shown to a reviewer until the
+# whole call returns. Eight is about fifteen seconds of waiting per instalment.
+STREAM_CHUNK = 8
+
+
+@router.get("/factory/generate-stream")
+def factory_generate_questions_stream(
+    grade: str = Query(...),
+    subject: str = Query(...),
+    strand: str = Query(...),
+    sub_strand: str = Query(...),
+    batch_count: int = Query(20, ge=1, le=500),
+    difficulty: float = Query(0.65),
+    slo_id: str = Query(""),
+    custom_instructions: str = Query(""),
+    auth: AuthContext = Depends(require_roles("admin", "operator", "reviewer")),
+):
+    """Generate a batch, sending each instalment as it lands.
+
+    Not token streaming. A batch is one JSON object, so streaming its tokens
+    would send a reviewer half-written braces — the useful unit is a finished,
+    structure-checked question. So the run is broken into small calls and each
+    one's items are emitted as they complete.
+
+    Three things follow from that, and all of them are why it is worth doing:
+    a reviewer can start reading after fifteen seconds rather than after ten
+    minutes; a provider failure at item forty keeps the first thirty-nine; and
+    the items are better, because a single call asked for fifty produces worse
+    ones than six calls asked for eight.
+    """
+    import json as _json
+
+    def instalments():
+        produced = 0
+        sent_ids: set[str] = set()
+        yield _sse("start", {"target": batch_count, "sub_strand": sub_strand})
+
+        while produced < batch_count:
+            want = min(STREAM_CHUNK, batch_count - produced)
+            try:
+                result = factory_generate_questions_batch(
+                    QuestionBatchGenerateRequest(
+                        grade=grade, subject=subject, strand=strand,
+                        sub_strand=sub_strand, batch_count=want,
+                        difficulty=difficulty,
+                        slo_id=slo_id or None,
+                        custom_instructions=custom_instructions,
+                    ),
+                    auth,
+                )
+            except Exception as exc:  # noqa: BLE001
+                # What has already been sent is already saved. The stream ends
+                # with the reason rather than with silence.
+                logger.warning("Stream stopped after %d item(s): %s", produced, exc)
+                yield _sse("error", {"produced": produced, "reason": str(exc)[:300]})
+                return
+
+            items = result.get("questions") or []
+            fresh = [q for q in items
+                     if str(q.get("question_id") or "") not in sent_ids]
+            for item in fresh:
+                sent_ids.add(str(item.get("question_id") or ""))
+                produced += 1
+                yield _sse("question", {"n": produced, "question": item})
+
+            yield _sse("progress", {
+                "produced": produced, "target": batch_count,
+                "rejected": result.get("rejected") or [],
+                "repair": result.get("repair") or {},
+                "gate": (result.get("quality_gate") or {}).get("overall_score"),
+            })
+
+            # A chunk that produced nothing new will not produce anything on
+            # the next pass either, and looping on it spends money to stand
+            # still.
+            if not fresh:
+                yield _sse("error", {
+                    "produced": produced,
+                    "reason": "The last instalment returned no new items. "
+                              "Stopping rather than asking again for the same "
+                              "thing.",
+                })
+                return
+
+        yield _sse("done", {"produced": produced})
+
+    return StreamingResponse(
+        instalments(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            # Nginx buffers a response body by default, which holds every
+            # instalment until the whole run finishes — exactly what this
+            # exists to avoid.
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )
+
+
+def _sse(event: str, data: dict[str, Any]) -> str:
+    import json as _json
+
+    return f"event: {event}\ndata: {_json.dumps(data, default=str)}\n\n"
 
 
 @router.get("/throughput")

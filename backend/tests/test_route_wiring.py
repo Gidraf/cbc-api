@@ -108,7 +108,19 @@ def test_no_function_reads_a_local_before_it_is_assigned(path) -> None:
                     if isinstance(inner, ast.Name):
                         looped.add(inner.id)
 
-        bound: dict[str, int] = {a.arg: function.lineno for a in function.args.args}
+        # EVERY parameter, not only the positional ones. Reading
+        # `function.args.args` alone treated every keyword-only parameter as
+        # unbound, so a function taking `*, resolved=None` and testing it with
+        # `if resolved is None` was reported as reading a local before it was
+        # assigned — correct code, flagged, which is how a guard gets ignored.
+        arguments = function.args
+        bound: dict[str, int] = {
+            a.arg: function.lineno
+            for a in (list(getattr(arguments, "posonlyargs", []))
+                      + list(arguments.args)
+                      + list(arguments.kwonlyargs)
+                      + [a for a in (arguments.vararg, arguments.kwarg) if a])
+        }
         # The EARLIEST binding, not the first one visited: the walk is not in
         # source order, so `row = ...` reassigned later was recorded as the
         # first binding and every earlier read looked premature.

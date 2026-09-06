@@ -82,8 +82,8 @@ function StagePick({
       aria-pressed={on}
       title={
         on
-          ? `${label} — ${state}. Will run unattended. Click to keep it for yourself.`
-          : `${label} — ${state}. You will run this one. Click to hand it to the run.`
+          ? `${label} — ${state}. Included in the unattended run. Click to leave it out, and start it yourself.`
+          : `${label} — ${state}. Left out of the unattended run; nothing here starts it. Click to include it.`
       }
       style={{
         flex: "0 0 9.5rem",
@@ -103,7 +103,15 @@ function StagePick({
       }}
     >
       <div style={{ fontSize: "var(--text-sm)", fontWeight: 550 }}>{label}</div>
-      <div className="mono" style={{ fontSize: "0.75rem", color: "var(--ink-3)" }}>
+      <div
+        className="mono"
+        style={{ fontSize: "0.75rem", color: "var(--ink-3)" }}
+        title={
+          stage?.expected
+            ? `${stage.built} of ${stage.expected} built so far`
+            : "Nothing built here yet"
+        }
+      >
         {stage
           ? (stage.expected ? `${stage.built}/${stage.expected}` : stage.built || "—") +
             (stage.failed > 0 ? ` · ${stage.failed} failed` : "") +
@@ -127,8 +135,13 @@ function StagePick({
           }}
         />
       </div>
+      {/* WHETHER IT IS AUTOMATIC, not whether it has run. "You run this" was
+          read as "you have run this" — on a card whose count says "—" — so it
+          says what it decides instead: this stage is in the unattended run, or
+          it is not. The counts above are the only thing on this card that
+          reports what has happened. */}
       <div style={{ fontSize: "0.7rem", color: on ? "var(--accent)" : "var(--ink-3)" }}>
-        {on ? "▶ runs unattended" : "✋ you run this"}
+        {on ? "▶ in the auto run" : "✋ not in the auto run"}
       </div>
     </button>
   );
