@@ -157,8 +157,11 @@ def test_every_station_that_says_who_it_writes_for_also_says_how_to_write_it():
     source = (pathlib.Path(__file__).resolve().parents[1]
               / "app/routes/curriculum.py").read_text()
 
+    # `for_prompt` is `block_for` plus the house conventions every subject
+    # writes to — BODMAS not PEMDAS, shillings not dollars. `block_for` keeps
+    # its own meaning, which `check()` depends on.
     assert source.count('"language_register": language_block(') == \
-        source.count('"notation": notation.block_for(')
+        source.count('"notation": notation.for_prompt(')
 
 
 def test_the_question_station_gets_the_same_notation_as_the_lesson():
@@ -168,14 +171,14 @@ def test_the_question_station_gets_the_same_notation_as_the_lesson():
     source = (pathlib.Path(__file__).resolve().parents[1]
               / "app/routes/questions.py").read_text()
 
-    assert '"notation": notation.block_for(' in source
+    assert '"notation": notation.for_prompt(' in source
 
 
 def test_the_reviewers_hold_the_same_rule_they_are_judging_against():
     source = (pathlib.Path(__file__).resolve().parents[1]
               / "app/services/pipeline.py").read_text()
 
-    assert '"notation": notation.block_for(' in source
+    assert '"notation": notation.for_prompt(' in source
 
 
 def test_the_geometry_spec_reaches_the_station_that_draws_figures():

@@ -30,6 +30,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from . import material_form
+from .level_register import teacher_block
 
 logger = logging.getLogger("cbc-lesson-material")
 
@@ -181,12 +182,16 @@ def prompt_for(directive: Directive, *, register: str, faith: str,
         ("minutes", minutes),
         ("instruction", directive.instruction),
         ("level_register", register),
+        # Who READS this page. Everything above says who the learner is,
+        # and a guide is written for a teacher — so a Grade 9 lesson
+        # explained which key on a calculator is the minus sign.
+        ("teacher_band", teacher_block(grade)),
         # What SHAPE the page takes, which the register alone never said. A
         # Grade 9 learner reads a textbook page; a PP1 child is read to.
         ("material_form", material_form.block_for(grade)),
         ("notation", notation),
         ("target_language", target_language),
-        ("language_block", language),
+        ("language_register", language),
         ("faith_scope", faith),
         ("slos", outcomes),
         ("forms", ", ".join(FORMS)),

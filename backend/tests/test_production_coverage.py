@@ -164,3 +164,31 @@ def test_the_stage_tile_shows_what_is_left() -> None:
     assert "stage.coverage.remaining" in tiles
     assert "title={stage.coverage.says}" in tiles
     assert "stage.coverage.percentage" in tiles, "the bar means the curriculum"
+
+
+def test_each_substrand_carries_its_own_numbers(filed) -> None:
+    """The sub-strand chooser had a second computation of its own and read 0%
+    for the one sub-strand the coverage panel on the same screen showed as the
+    only one with anything filed. Two numbers about the same thing, on the same
+    page, disagreeing."""
+    rows = {r.name: r for r in pc.report("grade-9", "Mathematics").per_substrand}
+
+    assert set(rows) == {"Integers", "Indices"}
+    assert rows["Integers"].filed is True
+    assert rows["Integers"].percentage > 0, "it has notes, diagrams and questions"
+    assert rows["Indices"].filed is False
+    assert rows["Indices"].percentage == 0
+
+
+def test_a_substrand_row_is_weighted_the_same_way_the_grade_is() -> None:
+    row = pc.SubStrand(dimensions={"notes": pc.Dimension(8, 10),
+                                   "visuals": pc.Dimension(2, 20)})
+
+    assert row.percentage == 33, "averaging would say 85, as it does for a grade"
+
+
+def test_the_rows_travel_on_the_report(filed) -> None:
+    out = pc.report("grade-9", "Mathematics").to_dict()
+
+    assert len(out["substrand_rows"]) == 2
+    assert out["substrand_rows"][0]["dimensions"]["notes"]["says"]

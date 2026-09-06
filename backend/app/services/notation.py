@@ -127,6 +127,45 @@ Rules that make it constructible:
     labels the answer has asked nothing."""
 
 
+# What every Kenyan classroom takes for granted, and a model trained mostly on
+# American material does not. These are not style preferences: a Grade 9 guide
+# that teaches PEMDAS is teaching an acronym no Kenyan learner has been taught
+# and no Kenyan paper will use, and one that prices a market stall in dollars
+# is describing somebody else's country.
+#
+# Short on purpose. Every irrelevant instruction makes the relevant ones harder
+# to find, and this one goes to every subject.
+HOUSE_BLOCK = """=== HOW THIS IS WRITTEN IN KENYA ===
+  - The order of operations is BODMAS — Brackets, Of/Orders, Division,
+    Multiplication, Addition, Subtraction. Never PEMDAS, and never the word
+    "parentheses": they are brackets.
+  - Money is Kenya shillings. Write "KSh 250" or "250 shillings", never "$250".
+    Amounts should be ones a learner recognises from a shop or a fare.
+  - Metric throughout: metres, kilograms, litres, degrees Celsius.
+  - Places, names and situations are Kenyan — a matatu fare, a shamba, a
+    posho mill, Nakuru, Kisumu, a school water tank. Not a mall, a dime, or a
+    football field measured in yards.
+  - British spelling: metre, litre, colour, practise (verb), analyse."""
+
+
+def house_block() -> str:
+    """The conventions every subject writes to, whatever it teaches."""
+    return HOUSE_BLOCK
+
+
+def for_prompt(subject: str, *, grade: str = "") -> str:
+    """What a generator is told about how to write, house rules included.
+
+    Kept separate from `block_for`, which answers a different question: what
+    NOTATION this subject uses, and for CRE the answer is still nothing. That
+    emptiness is load-bearing — `check()` uses it to decide whether a subject
+    is scored on notation at all, and giving every subject a block would start
+    marking a CRE guide on its use of LaTeX.
+    """
+    subject_notation = block_for(subject, grade=grade)
+    return f"{HOUSE_BLOCK}\n\n{subject_notation}" if subject_notation else HOUSE_BLOCK
+
+
 def block_for(subject: str, *, grade: str = "") -> str:
     """The notation rules this subject needs, or nothing.
 

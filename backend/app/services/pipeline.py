@@ -15,7 +15,7 @@ from ..services.cost_tracker import CostResult, calculate_cost, format_cost_summ
 from ..services.diagram_dedup import diagram_deduplicator
 from ..services.faith_scope import prompt_block as faith_prompt_block
 from ..services import notation, prompt_fragments
-from ..services.level_register import register_block
+from ..services.level_register import language_block, register_block, teacher_block
 from ..services.langfuse_context import langfuse_context_service
 from ..services.llm_client import LlmResponse, llm_client
 from ..services.metrics import metrics_service
@@ -25,6 +25,23 @@ from ..services.targets import target_service
 from ..services.validation import validate_grade_dataset, validate_question_batch
 
 logger = logging.getLogger("cbc-pipeline")
+
+
+def _capped(items: Any, what: str, limit: int = 60) -> Any:
+    """At most `limit` items, and a note saying how many were left out.
+
+    A reviewer handed three hundred questions reads the first few dozen and
+    returns a verdict phrased as though it read them all. Truncating silently
+    would do the same thing while looking complete, so what was dropped is
+    stated where the reviewer can see it.
+    """
+    if not isinstance(items, list) or len(items) <= limit:
+        return items
+    logger.info("Reviewer shown %d of %d %s; the rest were not sent.",
+                limit, len(items), what)
+    return items[:limit] + [
+        {"_note": f"{len(items) - limit} further {what} were not shown. "
+                  f"This review covers the {limit} above only."}]
 
 
 class PipelineService:
@@ -596,12 +613,18 @@ class PipelineService:
                 # The prompt asks for {{ content_to_review }} and was never given
                 # it, so the panel judged a title, two counts and a safety list —
                 # never the content — and reported a verdict on the package.
+                # The questions and the practicals are named separately below,
+                # under the protocols that audit them. Repeating them inside
+                # this blob as well would pay for them twice on every review,
+                # so the bundle keeps what nothing else names.
                 "content_to_review": json.dumps(
                     {
                         "notes": notes_output,
                         "diagrams": diagrams_output,
-                        "activities": activities_output,
-                        "questions": questions_output,
+                        "activities": {
+                            k: v for k, v in (activities_output or {}).items()
+                            if k not in ("experiments", "safety_guidelines")
+                        },
                     },
                     ensure_ascii=False, default=str,
                 )[:60_000],
@@ -609,10 +632,12 @@ class PipelineService:
                 # pre-primary defect from a senior-secondary one, and one with no
                 # faith scope cannot tell CRE content from IRE content.
                 "level_register": register_block(grade_slug),
+                "teacher_band": teacher_block(grade_slug),
+                "language_register": language_block(grade_slug),
                 # The reviewers and approvers judge notation too: a guide that
                 # writes "45 degrees" where its subject writes $45^\\circ$ is
                 # wrong in a way only somebody holding the same rule can see.
-                "notation": notation.block_for(subject or ""),
+                "notation": notation.for_prompt(subject or ""),
                 # The reviewers judge against the same domain rules the
                 # generator was given, or they are judging against their own
                 # recollection of what a map needs.
@@ -620,9 +645,15 @@ class PipelineService:
                     subject or "", "notes", grade_slug),
                 "faith_scope": faith_prompt_block(subject),
                 "notes_title": notes_output.get("title", ""),
-                "experiments": activities_output.get("experiments", []),
-                "safety_guidelines": activities_output.get("safety_guidelines", []),
-                "questions": questions_output.get("questions", []),
+                # Capped, because a reviewer given more than it can hold
+                # attends to the beginning and reports on the whole. The cap
+                # being hit is itself worth knowing, so it is logged.
+                "experiments": _capped(activities_output.get("experiments", []),
+                                       "experiments"),
+                "safety_guidelines": _capped(
+                    activities_output.get("safety_guidelines", []), "safety guidance"),
+                "questions": _capped(questions_output.get("questions", []),
+                                     "questions"),
                 "curriculum_reference": request.curriculum.model_dump(),
                 "safety_hazard_criteria": (blueprint.get("prompt_context") or {}).get("safety_hazard_criteria", []),
             },
@@ -641,29 +672,59 @@ class PipelineService:
         reviewer_output: dict,
     ) -> LlmResponse:
         """Executes dual-agent consensus deliberation before human approval, dynamically loading prompt directives from Langfuse."""
+        # THE BUNDLE. Both prompts said "evaluate the complete CBC educational
+        # bundle" and neither was ever given one: the deliberation ran on a
+        # title, two counts, a status and a hazard flag — five scalar facts —
+        # and returned `ready_for_human_review: true`. The last gate before a
+        # person signs had never seen a word of the content it was approving.
+        bundle = json.dumps(
+            {
+                "notes": notes_output,
+                "activities": {
+                    k: v for k, v in (activities_output or {}).items()
+                    if k != "experiments"
+                },
+                "experiments": _capped(
+                    activities_output.get("experiments", []), "experiments"),
+                "questions": _capped(
+                    questions_output.get("questions", []), "questions"),
+            },
+            ensure_ascii=False, default=str,
+        )[:60_000]
+
         vars_dict = {
             "sub_strand": request.curriculum.sub_strand,
             "subject": subject,
             "grade": grade_slug,
             "level": request.curriculum.level,
             "notes_title": notes_output.get("title", ""),
+            "content_to_review": bundle,
             "experiments_count": len(activities_output.get("experiments", [])),
             "questions_count": len(questions_output.get("questions", [])),
             "reviewer_status": reviewer_output.get("status", "unknown"),
+            # What the reviewer actually SAID, not only its verdict. An
+            # approver told "needs_revision" and not why cannot tell a wording
+            # note from a safety failure.
+            "reviewer_findings": json.dumps(
+                reviewer_output.get("feedback")
+                or reviewer_output.get("risk_flags") or [],
+                ensure_ascii=False, default=str)[:8_000],
             "has_hazards": reviewer_output.get("has_hazardous_procedures", False),
             # Both approver prompts ask for these and neither was given them, so
             # the slots rendered empty and the deliberation ran without knowing
             # the learner's age or the learning area's faith.
             "level_register": register_block(grade_slug),
-                # The reviewers and approvers judge notation too: a guide that
-                # writes "45 degrees" where its subject writes $45^\\circ$ is
-                # wrong in a way only somebody holding the same rule can see.
-                "notation": notation.block_for(subject or ""),
-                # The reviewers judge against the same domain rules the
-                # generator was given, or they are judging against their own
-                # recollection of what a map needs.
-                "domain_directives": prompt_fragments.compose(
-                    subject or "", "notes", grade_slug),
+            "teacher_band": teacher_block(grade_slug),
+            "language_register": language_block(grade_slug),
+            # The reviewers and approvers judge notation too: a guide that
+            # writes "45 degrees" where its subject writes $45^\\circ$ is
+            # wrong in a way only somebody holding the same rule can see.
+            "notation": notation.for_prompt(subject or ""),
+            # The reviewers judge against the same domain rules the
+            # generator was given, or they are judging against their own
+            # recollection of what a map needs.
+            "domain_directives": prompt_fragments.compose(
+                subject or "", "notes", grade_slug),
             "faith_scope": faith_prompt_block(subject),
         }
 
@@ -673,31 +734,60 @@ class PipelineService:
 
         master_ctx = langfuse_context_service.get_master_context()
 
-        deliberation_messages = [
-            {
-                "role": "system",
-                "content": f"{master_ctx}\n\n## Multi-Agent Approver Directives (from Langfuse)\nAuditor 1 Directive:\n{prompt1_text}\n\nAuditor 2 Directive:\n{prompt2_text}",
-            },
-            {
-                "role": "user",
-                "content": (
-                    f"Deliberate on the generated educational package for Sub-strand '{request.curriculum.sub_strand}' ({subject}, {grade_slug}).\n"
-                    f"Notes Title: {notes_output.get('title')}\n"
-                    f"Experiments Count: {len(activities_output.get('experiments', []))}\n"
-                    f"Questions Count: {len(questions_output.get('questions', []))}\n"
-                    f"Reviewer Quality Status: {reviewer_output.get('status')}\n"
-                    f"Hazard Flags: {reviewer_output.get('has_hazardous_procedures', False)}\n\n"
+        # TWO CALLS, not one. Both directives used to go into a single system
+        # message and one model answered as both auditors, so "Auditor 2
+        # cross-examines Auditor 1" was one model writing agreement with
+        # itself. A second opinion that can see the first one's reasoning as it
+        # forms is not a second opinion.
+        first = llm_client.generate(
+            resolved,
+            [
+                {"role": "system", "content": f"{master_ctx}\n\n{prompt1_text}"},
+                {"role": "user", "content": (
+                    f"The bundle for '{request.curriculum.sub_strand}' "
+                    f"({subject}, {grade_slug}).\n\n{bundle}\n\n"
+                    f"The quality reviewer returned '{reviewer_output.get('status')}' "
+                    f"with hazard flag "
+                    f"{reviewer_output.get('has_hazardous_procedures', False)}.\n"
+                    f"Its findings:\n{vars_dict['reviewer_findings']}"
+                )},
+            ],
+            temperature=0.1,
+        )
+        first_text = str(getattr(first, "content", "") or "")
+
+        second = llm_client.generate(
+            resolved,
+            [
+                {"role": "system", "content": f"{master_ctx}\n\n{prompt2_text}"},
+                {"role": "user", "content": (
+                    f"The bundle for '{request.curriculum.sub_strand}' "
+                    f"({subject}, {grade_slug}).\n\n{bundle}\n\n"
+                    f"AUDITOR 1 RETURNED THIS. Cross-examine it against the "
+                    f"bundle above — agreeing with it is a finding only if the "
+                    f"content supports it:\n{first_text[:12_000]}\n\n"
                     "Respond with a JSON object containing:\n"
-                    "- 'auditor_1_assessment': text\n"
+                    "- 'auditor_1_assessment': Auditor 1's verdict, as given\n"
                     "- 'auditor_2_cross_examination': text\n"
                     "- 'safety_consensus': 'verified_safe' | 'hazard_detected'\n"
                     "- 'consensus': 'approved_for_human' | 'requires_revision'\n"
                     "- 'readiness_score': float (0.0 to 1.0)\n"
                     "- 'summary_for_human_approver': text"
-                ),
-            },
-        ]
-        return llm_client.generate(resolved, deliberation_messages, temperature=0.1)
+                )},
+            ],
+            temperature=0.1,
+        )
+
+        # The stage records one cost and one response, so the two calls are
+        # reported as the one deliberation they are.
+        for attribute in ("usage", "cost_usd", "total_cost_usd"):
+            a, b = getattr(first, attribute, None), getattr(second, attribute, None)
+            if isinstance(a, (int, float)) and isinstance(b, (int, float)):
+                try:
+                    setattr(second, attribute, a + b)
+                except Exception:  # noqa: BLE001
+                    pass
+        return second
 
 
 from ..state import runtime_state

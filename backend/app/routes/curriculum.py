@@ -51,6 +51,7 @@ from ..services.material_form import block_for as _material_form_block
 from ..services.level_register import (
     language_block,
     register_block,
+    teacher_block,
     register_for_grade as level_register_for,
 )
 
@@ -1066,17 +1067,18 @@ def factory_generate_notes(
                     payload.grade,
                     notes=grade_scope_notes(payload.grade, payload.subject),
                 ),
+        "teacher_band": teacher_block(payload.grade),
+        "language_register": language_block(payload.grade),
         # The register says who the learner is; this says what the page IS. A
         # Grade 9 plan that directs a spoken teacher script forces the material
         # station to write one, however well the register is stated.
         "material_form": _material_form_block(payload.grade),
-        "language_register": language_block(payload.grade),
             # How this subject writes what it cannot write in words. Empty for
             # most subjects — a CRE guide carrying two pages about balancing
             # equations spends a page of prompt on something it never uses, and
             # every irrelevant instruction makes the relevant ones harder to
             # find.
-            "notation": notation.block_for(payload.subject, grade=payload.grade),
+            "notation": notation.for_prompt(payload.subject, grade=payload.grade),
             # What THIS subject needs that no other does: maps and scale for
             # Geography, equations that balance for Chemistry, sol-fa for
             # Music, a cutting list for Carpentry. Empty for most pairings,
@@ -1580,6 +1582,11 @@ def factory_generate_diagram(
         grade_slug=payload.grade,
         subject=payload.subject,
         template_vars={
+            "notes_title": payload.sub_strand,
+            # 0 = planning them all. The pipeline draws one and passes its number.
+            "diagram_index": 0,
+            "diagrams_required": _blueprint_for(payload.grade, payload.subject, payload.sub_strand).get("required_diagrams", []),
+            "diagram_total": len(_blueprint_for(payload.grade, payload.subject, payload.sub_strand).get("required_diagrams", [])),
             "slo_id": payload.slo_id if getattr(payload, "slo_id", None) else f"{payload.grade}-{payload.subject[:3].upper()}-01",
             "strand": payload.strand,
             "sub_strand": payload.sub_strand,
@@ -1588,13 +1595,14 @@ def factory_generate_diagram(
                     payload.grade,
                     notes=grade_scope_notes(payload.grade, payload.subject),
                 ),
-            "language_register": language_block(payload.grade),
+        "teacher_band": teacher_block(payload.grade),
+        "language_register": language_block(payload.grade),
             # How this subject writes what it cannot write in words. Empty for
             # most subjects — a CRE guide carrying two pages about balancing
             # equations spends a page of prompt on something it never uses, and
             # every irrelevant instruction makes the relevant ones harder to
             # find.
-            "notation": notation.block_for(payload.subject, grade=payload.grade),
+            "notation": notation.for_prompt(payload.subject, grade=payload.grade),
             # What THIS subject needs that no other does: maps and scale for
             # Geography, equations that balance for Chemistry, sol-fa for
             # Music, a cutting list for Carpentry. Empty for most pairings,
@@ -1716,6 +1724,9 @@ def factory_generate_activity(
         grade_slug=payload.grade,
         subject=payload.subject,
         template_vars={
+            "notes_title": payload.sub_strand,
+            "target_experiments": _blueprint_for(payload.grade, payload.subject, payload.sub_strand).get("experiments", []),
+            "safety_hazard_criteria": _blueprint_for(payload.grade, payload.subject, payload.sub_strand).get("safety_hazard_criteria", []),
             "level": getattr(payload, "level", None) or grade_level(payload.grade),
             "slo_id": payload.slo_id if getattr(payload, "slo_id", None) else f"{payload.grade}-{payload.subject[:3].upper()}-01",
             "strand": payload.strand,
@@ -1724,13 +1735,14 @@ def factory_generate_activity(
                     payload.grade,
                     notes=grade_scope_notes(payload.grade, payload.subject),
                 ),
-            "language_register": language_block(payload.grade),
+        "teacher_band": teacher_block(payload.grade),
+        "language_register": language_block(payload.grade),
             # How this subject writes what it cannot write in words. Empty for
             # most subjects — a CRE guide carrying two pages about balancing
             # equations spends a page of prompt on something it never uses, and
             # every irrelevant instruction makes the relevant ones harder to
             # find.
-            "notation": notation.block_for(payload.subject, grade=payload.grade),
+            "notation": notation.for_prompt(payload.subject, grade=payload.grade),
             # What THIS subject needs that no other does: maps and scale for
             # Geography, equations that balance for Chemistry, sol-fa for
             # Music, a cutting list for Carpentry. Empty for most pairings,
@@ -1849,6 +1861,11 @@ def factory_plan_visuals(
         grade_slug=payload.grade,
         subject=payload.subject,
         template_vars={
+            "notes_title": str((notes_dict or {}).get("title") or payload.sub_strand),
+            # 0 = planning them all. The pipeline draws one and passes its number.
+            "diagram_index": 0,
+            "diagrams_required": _blueprint_for(payload.grade, payload.subject, payload.sub_strand).get("required_diagrams", []),
+            "diagram_total": len(_blueprint_for(payload.grade, payload.subject, payload.sub_strand).get("required_diagrams", [])),
             "slo_id": payload.slo_id if getattr(payload, "slo_id", None) else f"{payload.grade}-{payload.subject[:3].upper()}-01",
             "concept": getattr(payload, "concept", "") or payload.sub_strand,
             "strand": payload.strand,
@@ -1857,13 +1874,14 @@ def factory_plan_visuals(
                     payload.grade,
                     notes=grade_scope_notes(payload.grade, payload.subject),
                 ),
-            "language_register": language_block(payload.grade),
+        "teacher_band": teacher_block(payload.grade),
+        "language_register": language_block(payload.grade),
             # How this subject writes what it cannot write in words. Empty for
             # most subjects — a CRE guide carrying two pages about balancing
             # equations spends a page of prompt on something it never uses, and
             # every irrelevant instruction makes the relevant ones harder to
             # find.
-            "notation": notation.block_for(payload.subject, grade=payload.grade),
+            "notation": notation.for_prompt(payload.subject, grade=payload.grade),
             # What THIS subject needs that no other does: maps and scale for
             # Geography, equations that balance for Chemistry, sol-fa for
             # Music, a cutting list for Carpentry. Empty for most pairings,
@@ -1874,11 +1892,6 @@ def factory_plan_visuals(
             "faith_scope": faith_prompt_block(payload.subject),
             "content_type_directives": ct_profile.format_for_prompt(),
             "notes_content": notes_str or payload.notes_title or payload.sub_strand,
-            # `min_visuals` was a field on the request that reached no prompt,
-            # so setting it did nothing at all and the station always planned
-            # whatever it felt like. A sub-strand with eight hours in it needs
-            # more figures than one with two.
-            "min_visuals": str(max(1, int(getattr(payload, "min_visuals", 0) or 5))),
         },
     )
 
@@ -2065,6 +2078,11 @@ def factory_generate_single_visual(
         grade_slug=payload.grade,
         subject=payload.subject,
         template_vars={
+            "notes_title": payload.sub_strand,
+            # 0 = planning them all. The pipeline draws one and passes its number.
+            "diagram_index": 0,
+            "diagrams_required": _blueprint_for(payload.grade, payload.subject, payload.sub_strand).get("required_diagrams", []),
+            "diagram_total": len(_blueprint_for(payload.grade, payload.subject, payload.sub_strand).get("required_diagrams", [])),
             "slo_id": payload.slo_id if getattr(payload, "slo_id", None) else f"{payload.grade}-{payload.subject[:3].upper()}-01",
             "strand": payload.strand,
             "sub_strand": payload.sub_strand,
@@ -2073,13 +2091,14 @@ def factory_generate_single_visual(
                     payload.grade,
                     notes=grade_scope_notes(payload.grade, payload.subject),
                 ),
-            "language_register": language_block(payload.grade),
+        "teacher_band": teacher_block(payload.grade),
+        "language_register": language_block(payload.grade),
             # How this subject writes what it cannot write in words. Empty for
             # most subjects — a CRE guide carrying two pages about balancing
             # equations spends a page of prompt on something it never uses, and
             # every irrelevant instruction makes the relevant ones harder to
             # find.
-            "notation": notation.block_for(payload.subject, grade=payload.grade),
+            "notation": notation.for_prompt(payload.subject, grade=payload.grade),
             # What THIS subject needs that no other does: maps and scale for
             # Geography, equations that balance for Chemistry, sol-fa for
             # Music, a cutting list for Carpentry. Empty for most pairings,
@@ -2391,6 +2410,9 @@ def factory_plan_activities(
         grade_slug=payload.grade,
         subject=payload.subject,
         template_vars={
+            "notes_title": str((notes_dict or {}).get("title") or payload.sub_strand),
+            "target_experiments": _blueprint_for(payload.grade, payload.subject, payload.sub_strand).get("experiments", []),
+            "safety_hazard_criteria": _blueprint_for(payload.grade, payload.subject, payload.sub_strand).get("safety_hazard_criteria", []),
             "level": getattr(payload, "level", None) or grade_level(payload.grade),
             "slo_id": payload.slo_id if getattr(payload, "slo_id", None) else f"{payload.grade}-{payload.subject[:3].upper()}-01",
             "strand": payload.strand,
@@ -2399,13 +2421,14 @@ def factory_plan_activities(
                     payload.grade,
                     notes=grade_scope_notes(payload.grade, payload.subject),
                 ),
-            "language_register": language_block(payload.grade),
+        "teacher_band": teacher_block(payload.grade),
+        "language_register": language_block(payload.grade),
             # How this subject writes what it cannot write in words. Empty for
             # most subjects — a CRE guide carrying two pages about balancing
             # equations spends a page of prompt on something it never uses, and
             # every irrelevant instruction makes the relevant ones harder to
             # find.
-            "notation": notation.block_for(payload.subject, grade=payload.grade),
+            "notation": notation.for_prompt(payload.subject, grade=payload.grade),
             # What THIS subject needs that no other does: maps and scale for
             # Geography, equations that balance for Chemistry, sol-fa for
             # Music, a cutting list for Carpentry. Empty for most pairings,
@@ -2573,6 +2596,9 @@ def factory_generate_single_activity(
         grade_slug=payload.grade,
         subject=payload.subject,
         template_vars={
+            "notes_title": payload.sub_strand,
+            "target_experiments": _blueprint_for(payload.grade, payload.subject, payload.sub_strand).get("experiments", []),
+            "safety_hazard_criteria": _blueprint_for(payload.grade, payload.subject, payload.sub_strand).get("safety_hazard_criteria", []),
             "level": getattr(payload, "level", None) or grade_level(payload.grade),
             "slo_id": payload.slo_id if getattr(payload, "slo_id", None) else f"{payload.grade}-{payload.subject[:3].upper()}-01",
             "diagram_info": getattr(payload, "diagram_info", "") or "",
@@ -2582,13 +2608,14 @@ def factory_generate_single_activity(
                     payload.grade,
                     notes=grade_scope_notes(payload.grade, payload.subject),
                 ),
-            "language_register": language_block(payload.grade),
+        "teacher_band": teacher_block(payload.grade),
+        "language_register": language_block(payload.grade),
             # How this subject writes what it cannot write in words. Empty for
             # most subjects — a CRE guide carrying two pages about balancing
             # equations spends a page of prompt on something it never uses, and
             # every irrelevant instruction makes the relevant ones harder to
             # find.
-            "notation": notation.block_for(payload.subject, grade=payload.grade),
+            "notation": notation.for_prompt(payload.subject, grade=payload.grade),
             # What THIS subject needs that no other does: maps and scale for
             # Geography, equations that balance for Chemistry, sol-fa for
             # Music, a cutting list for Carpentry. Empty for most pairings,
@@ -2716,13 +2743,14 @@ def factory_generate_questions(
                     payload.grade,
                     notes=grade_scope_notes(payload.grade, payload.subject),
                 ),
-            "language_register": language_block(payload.grade),
+        "teacher_band": teacher_block(payload.grade),
+        "language_register": language_block(payload.grade),
             # How this subject writes what it cannot write in words. Empty for
             # most subjects — a CRE guide carrying two pages about balancing
             # equations spends a page of prompt on something it never uses, and
             # every irrelevant instruction makes the relevant ones harder to
             # find.
-            "notation": notation.block_for(payload.subject, grade=payload.grade),
+            "notation": notation.for_prompt(payload.subject, grade=payload.grade),
             # What THIS subject needs that no other does: maps and scale for
             # Geography, equations that balance for Chemistry, sol-fa for
             # Music, a cutting list for Carpentry. Empty for most pairings,
@@ -3845,13 +3873,14 @@ def factory_generate_strands(
                 payload.grade,
                 notes=grade_scope_notes(payload.grade, payload.subject),
             ),
-            "language_register": language_block(payload.grade),
+        "teacher_band": teacher_block(payload.grade),
+        "language_register": language_block(payload.grade),
             # How this subject writes what it cannot write in words. Empty for
             # most subjects — a CRE guide carrying two pages about balancing
             # equations spends a page of prompt on something it never uses, and
             # every irrelevant instruction makes the relevant ones harder to
             # find.
-            "notation": notation.block_for(payload.subject, grade=payload.grade),
+            "notation": notation.for_prompt(payload.subject, grade=payload.grade),
             # What THIS subject needs that no other does: maps and scale for
             # Geography, equations that balance for Chemistry, sol-fa for
             # Music, a cutting list for Carpentry. Empty for most pairings,
@@ -3983,13 +4012,14 @@ def _rubric_writer(payload: Any, resolved: Any, design_block: str) -> Any:
                     payload.grade,
                     notes=grade_scope_notes(payload.grade, payload.subject),
                 ),
-                "language_register": language_block(payload.grade),
+        "teacher_band": teacher_block(payload.grade),
+        "language_register": language_block(payload.grade),
             # How this subject writes what it cannot write in words. Empty for
             # most subjects — a CRE guide carrying two pages about balancing
             # equations spends a page of prompt on something it never uses, and
             # every irrelevant instruction makes the relevant ones harder to
             # find.
-            "notation": notation.block_for(payload.subject, grade=payload.grade),
+            "notation": notation.for_prompt(payload.subject, grade=payload.grade),
             # What THIS subject needs that no other does: maps and scale for
             # Geography, equations that balance for Chemistry, sol-fa for
             # Music, a cutting list for Carpentry. Empty for most pairings,
@@ -4156,13 +4186,14 @@ def factory_generate_substrands(
                     payload.grade,
                     notes=grade_scope_notes(payload.grade, payload.subject),
                 ),
-                "language_register": language_block(payload.grade),
+        "teacher_band": teacher_block(payload.grade),
+        "language_register": language_block(payload.grade),
             # How this subject writes what it cannot write in words. Empty for
             # most subjects — a CRE guide carrying two pages about balancing
             # equations spends a page of prompt on something it never uses, and
             # every irrelevant instruction makes the relevant ones harder to
             # find.
-            "notation": notation.block_for(payload.subject, grade=payload.grade),
+            "notation": notation.for_prompt(payload.subject, grade=payload.grade),
             # What THIS subject needs that no other does: maps and scale for
             # Geography, equations that balance for Chemistry, sol-fa for
             # Music, a cutting list for Carpentry. Empty for most pairings,
@@ -4324,8 +4355,9 @@ def _scope_chunk_reader(grade: str, subject: str, resolved: Any) -> Any:
             "grade": grade,
             "subject": subject,
             "level_register": register_block(grade),
+            "teacher_band": teacher_block(grade),
             "language_register": language_block(grade),
-            "notation": notation.block_for(subject, grade=grade),
+            "notation": notation.for_prompt(subject, grade=grade),
             "domain_directives": prompt_fragments.compose(subject, "structure", grade),
             "faith_scope": faith_prompt_block(subject),
             "page_range": chunk.page_range,
@@ -5644,6 +5676,46 @@ class EditVisualSvgRequest(BaseModel):
 # rather than retried for ever. Three, because the second attempt fixes most of
 # what the first got wrong and the third catches what the fix broke.
 _DRAW_ATTEMPTS = 3
+
+
+def _blueprint_for(grade: str, subject: str, sub_strand: str) -> dict[str, Any]:
+    """The design's own row for this sub-strand: what it requires, and what it
+    says is hazardous.
+
+    The pipeline hands these to the asset stations and the routes did not, so
+    one station planned to the design when the worker ran it and invented from
+    the notes when the console ran it. Failures are swallowed: planning from
+    the notes alone is worse than planning from the design, and both beat a
+    station that will not run.
+    """
+    from ..infra.db import fetch_all
+    from ..services.grade_sql import clause
+
+    try:
+        rows = fetch_all(
+            f"""
+            SELECT required_diagrams, experiments, prompt_context
+            FROM curriculum_substrands
+            WHERE {clause("grade", "grade")}
+              AND LOWER(subject) = LOWER(:subject)
+              AND LOWER(sub_strand_name) = LOWER(:sub_strand)
+            LIMIT 1
+            """,
+            {"grade": grade, "subject": subject, "sub_strand": sub_strand}) or []
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("No blueprint for %s/%s: %s", grade, sub_strand, exc)
+        return {}
+    if not rows:
+        return {}
+    row = rows[0]
+    context = row.get("prompt_context")
+    if not isinstance(context, dict):
+        context = {}
+    return {
+        "required_diagrams": row.get("required_diagrams") or [],
+        "experiments": row.get("experiments") or [],
+        "safety_hazard_criteria": context.get("safety_hazard_criteria") or [],
+    }
 
 
 def _svg_brief(visual: dict[str, Any], *, grade: str, subject: str,
@@ -7867,13 +7939,14 @@ def factory_generate_media_prompts(
                 payload.grade,
                 notes=grade_scope_notes(payload.grade, payload.subject),
             ),
-            "language_register": language_block(payload.grade),
+        "teacher_band": teacher_block(payload.grade),
+        "language_register": language_block(payload.grade),
             # How this subject writes what it cannot write in words. Empty for
             # most subjects — a CRE guide carrying two pages about balancing
             # equations spends a page of prompt on something it never uses, and
             # every irrelevant instruction makes the relevant ones harder to
             # find.
-            "notation": notation.block_for(payload.subject, grade=payload.grade),
+            "notation": notation.for_prompt(payload.subject, grade=payload.grade),
             # What THIS subject needs that no other does: maps and scale for
             # Geography, equations that balance for Chemistry, sol-fa for
             # Music, a cutting list for Carpentry. Empty for most pairings,
@@ -8023,13 +8096,14 @@ def factory_generate_simulations(
             "level_register": register_block(
                 payload.grade, notes=grade_scope_notes(payload.grade, payload.subject)
             ),
-            "language_register": language_block(payload.grade),
+        "teacher_band": teacher_block(payload.grade),
+        "language_register": language_block(payload.grade),
             # How this subject writes what it cannot write in words. Empty for
             # most subjects — a CRE guide carrying two pages about balancing
             # equations spends a page of prompt on something it never uses, and
             # every irrelevant instruction makes the relevant ones harder to
             # find.
-            "notation": notation.block_for(payload.subject, grade=payload.grade),
+            "notation": notation.for_prompt(payload.subject, grade=payload.grade),
             # What THIS subject needs that no other does: maps and scale for
             # Geography, equations that balance for Chemistry, sol-fa for
             # Music, a cutting list for Carpentry. Empty for most pairings,

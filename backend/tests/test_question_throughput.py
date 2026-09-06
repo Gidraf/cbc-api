@@ -232,3 +232,37 @@ def test_the_gate_is_visible_where_the_work_is_planned() -> None:
     assert "Structure of what is filed" in panel
     assert "would be held" in panel
     assert "QuestionPipeline" in factory
+
+
+def test_a_day_is_bounded_in_python_not_cast_in_sql() -> None:
+    """`:on::date` is read by SQLAlchemy as a bind parameter named `o`
+    followed by the literal `n::date`. The query asked for a parameter nothing
+    supplied, raised, was swallowed by the guard, and every count came back
+    zero — so the board showed "Written 0 / 500" beside "22 waiting", which is
+    impossible."""
+    import re
+
+    from sqlalchemy import text
+
+    for fn in (th._counts_today, th.history):
+        sql = re.search(r'f"""(.*?)"""', inspect.getsource(fn), re.S).group(1)
+        sql = re.sub(r"\{[^}]*\}", "a = :grade", sql)
+        binds = set(text(sql)._bindparams)
+        assert "o" not in binds, f"{fn.__name__} still casts a date in SQL"
+
+
+def test_generated_questions_are_saved_not_only_returned() -> None:
+    """Persistence lived only in `/factory/approve-batch`, a separate call
+    nothing made automatically. A run could produce four good items, report
+    them on screen and leave the bank empty — which is why coverage read
+    "questions 0 / 345" after a successful run."""
+    from app.routes import questions
+
+    source = inspect.getsource(questions)
+
+    assert "question_dna_service.save_batch_questions(" in source
+    assert 'status="draft"' in source, "filed and countable, but not approved"
+    assert '"saved": len(saved)' in source, "and the operator is told it was filed"
+    # Losing the file is bad; losing the run as well is worse.
+    saving = source.split("5b. SAVED")[1][:1200]
+    assert "except Exception" in saving

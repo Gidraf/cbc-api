@@ -65,6 +65,10 @@ that says "learners will explore fractions" contains none.
 Grade: {{ grade }}
 Learning area: {{ subject }}
 {{ level_register }}
+
+{{ language_register }}
+
+{{ teacher_band }}
 {{ faith_scope }}
 
 Write every formula the way a learner at THIS level would meet it. A Grade 4
@@ -106,6 +110,10 @@ while looking at the step. Nobody reads it.
 Grade: {{ grade }}
 Learning area: {{ subject }}
 {{ level_register }}
+
+{{ language_register }}
+
+{{ teacher_band }}
 {{ faith_scope }}
 
 Say numbers the way this level writes them:
@@ -277,6 +285,10 @@ You are a KICD assessment specialist writing the suggested assessment rubric for
 === WHO THIS IS FOR ===
 {{ level_register }}
 
+{{ language_register }}
+
+{{ teacher_band }}
+
 {{ notation }}
 
 {{ domain_directives }}
@@ -337,6 +349,10 @@ You are repairing generated curriculum content that failed validation. You are N
 === WHO THIS IS FOR ===
 {{ level_register }}
 
+{{ language_register }}
+
+{{ teacher_band }}
+
 {{ notation }}
 
 {{ domain_directives }}
@@ -375,6 +391,10 @@ You are mapping generated content back to the Specific Learning Outcomes it is s
 
 === WHO THIS IS FOR ===
 {{ level_register }}
+
+{{ language_register }}
+
+{{ teacher_band }}
 
 {{ notation }}
 
@@ -436,13 +456,17 @@ Do not repeat the instruction back. Do not describe the material. Produce it.
 
 === WHO IS LISTENING ===
 {{ level_register }}
+
+{{ language_register }}
+
+{{ teacher_band }}
 {{ material_form }}
 
 {{ notation }}
 
 {{ target_language }}
 
-{{ language_block }}
+{{ language_register }}
 
 {{ faith_scope }}
 
@@ -545,6 +569,10 @@ Do not confuse the two. Thin notes for young learners is the most common way thi
 guide fails.
 
 {{ level_register }}
+
+{{ language_register }}
+
+{{ teacher_band }}
 {{ material_form }}
 
 === WORKED EXAMPLES ===
@@ -799,6 +827,10 @@ behaviour, including the physics, the ranges and what counts as correct.
 === WHO THIS IS FOR ===
 {{ level_register }}
 
+{{ language_register }}
+
+{{ teacher_band }}
+
 {{ notation }}
 
 {{ domain_directives }}
@@ -941,6 +973,10 @@ have not looked hard enough at what the learner has to picture in their head.
 
 === WHO THIS IS FOR ===
 {{ level_register }}
+
+{{ language_register }}
+
+{{ teacher_band }}
 
 {{ notation }}
 
@@ -1104,6 +1140,10 @@ Concept: {{ concept }}
 === WHO THIS IS FOR ===
 {{ level_register }}
 
+{{ language_register }}
+
+{{ teacher_band }}
+
 {{ notation }}
 
 {{ domain_directives }}
@@ -1115,11 +1155,23 @@ Concept: {{ concept }}
 === LAYER 1: GENERATED MASTER LESSON NOTES ===
 {{ notes_content }}
 
+=== WHICH FIGURE THIS IS (lesson plan: {{ notes_title }}) ===
+Figure {{ diagram_index }} of {{ diagram_total }}. The design asks this
+sub-strand for all of these:
+{{ diagrams_required }}
+
+Where the figure number above is 0 you are PLANNING all {{ diagram_total }} of
+them at once, and every one on that list needs an entry.
+
+Where it is 1 or more you are drawing that ONE figure — the one named as
+Concept above. The others are being drawn separately, and a figure that covers
+two of them leaves a gap where the second should have been.
+
 Output MUST be a valid JSON object matching this schema:
 {
   "diagram_id": "diag_{{ slo_id }}",
   "diagram_title": "Descriptive Scientific / Story Diagram Title",
-  "diagram_svg": "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 800 500' width='100%' height='100%' role='img' aria-label='Pedagogical diagram'>...</svg>",
+  "diagram_svg": "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 340 200' role='img' aria-label='Pedagogical diagram'>...</svg>",
   "diagram_json": {
     "type": "vector_schema",
     "primitives": []
@@ -1129,7 +1181,12 @@ Output MUST be a valid JSON object matching this schema:
     "tactile_description": "Raised-line tactile diagram instructions and braille label guidance for visually impaired learners"
   }
 }
-Ensure SVG uses viewBox='0 0 800 500', high-contrast WCAG 2.1 AA accessible colors, readable system fonts, clear callout leader lines, and semantic XML markup.
+GEOMETRY. This figure is printed 85mm wide — one column of a two-column A4
+page — and nothing else. So: viewBox='0 0 340 200', and NO width or height
+attribute; those 340 units ARE the 85mm. No text below font-size 13, which is
+the smallest that survives the reduction. Nothing may fall outside the viewBox,
+and no label may lie across a shape or another label. High-contrast WCAG 2.1 AA
+colours, readable system fonts, clear leader lines, semantic XML markup.
 Return ONLY valid JSON.
 """,
     "activity-generator": """
@@ -1147,6 +1204,10 @@ SLO ID: {{ slo_id }}
 === WHO THIS IS FOR ===
 {{ level_register }}
 
+{{ language_register }}
+
+{{ teacher_band }}
+
 {{ notation }}
 
 {{ domain_directives }}
@@ -1160,6 +1221,23 @@ SLO ID: {{ slo_id }}
 
 === LAYER 2: DIAGRAM CONTEXT ===
 {{ diagram_info }}
+
+=== WHAT THE DESIGN ASKS FOR (lesson plan: {{ notes_title }}) ===
+The curriculum design names these practicals for this sub-strand:
+{{ target_experiments }}
+
+Produce what is named above. Where the design names nothing, work from the
+lesson notes. Do NOT invent a practical the design does not ask for and the
+notes never mention: it will be planned, reviewed on its own terms, approved,
+and printed beside a lesson it belongs to no part of.
+
+=== HAZARDS THIS SUB-STRAND'S OWN DESIGN FLAGS ===
+{{ safety_hazard_criteria }}
+
+Every hazard listed above that your procedure can reach MUST appear in
+`safety_protocols.hazard_warnings`, in the words a teacher will act on. A
+safety section written without this list is written from a general idea of what
+is dangerous, and the specific thing this topic does is what gets missed.
 
 Subject Dataset Context:
 {{ subject_context }}
@@ -1204,6 +1282,10 @@ Grade: {{ grade }}   Subject: {{ subject }}
 Strand: {{ strand }} / {{ sub_strand }}
 
 {{ level_register }}
+
+{{ language_register }}
+
+{{ teacher_band }}
 
 {{ notation }}
 
@@ -1261,6 +1343,10 @@ Difficulty Target: {{ difficulty }}
 
 === WHO THIS IS FOR ===
 {{ level_register }}
+
+{{ language_register }}
+
+{{ teacher_band }}
 
 {{ notation }}
 
@@ -1421,6 +1507,10 @@ Perform an exhaustive quality, content-type alignment, and safety review on the 
 === WHO THIS IS FOR ===
 {{ level_register }}
 
+{{ language_register }}
+
+{{ teacher_band }}
+
 {{ notation }}
 
 {{ domain_directives }}
@@ -1479,6 +1569,10 @@ Perform an exhaustive, multi-aspect quality and safety audit on the generated CB
 === WHO THIS IS FOR ===
 {{ level_register }}
 
+{{ language_register }}
+
+{{ teacher_band }}
+
 {{ notation }}
 
 {{ domain_directives }}
@@ -1486,6 +1580,8 @@ Perform an exhaustive, multi-aspect quality and safety audit on the generated CB
 Judge the content against THIS audience. Content correctly pitched for this level
 must never be marked down for lacking depth, apparatus, or a national-development
 framing that the level does not call for.
+
+Sub-strand: {{ notes_title }}
 
 Content to Review:
 {{ content_to_review }}
@@ -1495,11 +1591,29 @@ Curriculum SLO Reference:
 
 CRITICAL REVIEW & QUALITY AUDIT PROTOCOLS:
 1. VISUAL-SEMANTIC ALIGNMENT & DIAGRAM SOLVABILITY (ZERO MISMATCH TOLERANCE):
+   THE QUESTIONS, in full:
+{{ questions }}
+   - Work through the list above item by item. A verdict reached by sampling a
+     60,000-character bundle is a verdict on whichever items happened to be
+     read, and the mismatch this protocol exists to catch is in exactly one of
+     them.
    - For every diagram-based question, verify that the attached visual graphic directly and accurately depicts the exact concept, apparatus, or physical structures queried in the stem.
    - If a question asks learners to label or evaluate specific morphological, anatomical, or chemical features (e.g. 'soil profile strata', 'titration setup') but the attached graphic displays an unrelated flowchart (e.g. 'GDP/employment contributions') or generic graphic, you MUST FLAG 'VISUAL_SEMANTIC_MISMATCH', set score < 0.60, and set status to 'needs_revision'.
 2. AUTHENTIC SCENARIO CONTEXT & SITUATED DEPTH:
    - Reject shallow stimulus placeholders (e.g. 'Refer to the diagram below'). Every question must be situated in a concrete setting the learner would recognise, as set out in CONTEXT FOR EXAMPLES above — for a young child that is self, family, home, neighbourhood or school. Do NOT require a farm, county or national-development framing where the level and subject do not call for one; correct age-appropriate content must not be marked down for lacking it.
 3. CRITICAL SAFETY & HAZARD AUDIT:
+   THE PRACTICALS, in full:
+{{ experiments }}
+
+   The safety guidance already written for them:
+{{ safety_guidelines }}
+
+   What this sub-strand's own design flags as hazardous:
+{{ safety_hazard_criteria }}
+
+   - Judge every practical above against those two lists. A hazard the design
+     itself named and the guidance does not cover is the one failure here that
+     cannot be argued about.
    - Scan practical experiments and activities for dangerous, toxic, or hazardous procedures.
    - If any toxic chemicals, fire hazards without supervision, or dangerous activities are present without explicit PPE, REJECT IMMEDIATELY.
    - Confirm that hygiene protocols (handwashing after soil/animal handling) are explicitly mandated.
@@ -1534,8 +1648,27 @@ You are Primary Approver Agent (Auditor 1) in the dual-agent deliberation panel.
 Evaluate the complete CBC educational bundle for sub-strand '{{ sub_strand }}'.
 Review pedagogical depth, constructivist alignment, SVG diagram clarity, visual-to-question semantic consistency, experiment safety protocols, and question validity.
 
+=== WHAT YOU ARE APPROVING ===
+Lesson plan: {{ notes_title }} ({{ level }})
+{{ questions_count }} question(s), {{ experiments_count }} practical(s).
+The quality reviewer returned: {{ reviewer_status }}. Hazard flag: {{ has_hazards }}.
+
+Its findings, which you are not bound by but must answer:
+{{ reviewer_findings }}
+
+THE BUNDLE ITSELF:
+{{ content_to_review }}
+
+Judge the content above. A verdict that repeats the counts or the reviewer's
+status without a finding of your own from the bundle is not an audit, and the
+signature that follows yours is a person's.
+
 === WHO THIS IS FOR ===
 {{ level_register }}
+
+{{ language_register }}
+
+{{ teacher_band }}
 
 {{ notation }}
 
@@ -1564,8 +1697,28 @@ You are Senior Quality Approver Agent (Auditor 2) in the dual-agent deliberation
 Cross-examine Auditor 1's findings on the CBC educational bundle for '{{ sub_strand }}'.
 Check for consensus, risk flags, visual-semantic contradictions, safety verifications, and KICD compliance.
 
+=== WHAT YOU ARE CROSS-EXAMINING ===
+Lesson plan: {{ notes_title }} ({{ level }})
+{{ questions_count }} question(s), {{ experiments_count }} practical(s).
+The quality reviewer returned: {{ reviewer_status }}. Hazard flag: {{ has_hazards }}.
+
+Its findings:
+{{ reviewer_findings }}
+
+THE BUNDLE ITSELF:
+{{ content_to_review }}
+
+Auditor 1's verdict is given in the message that follows. Check it AGAINST the
+bundle above rather than against its own reasoning: agreement is a finding only
+where the content supports it, and a disagreement you can point at in the
+bundle is worth more than a consensus you cannot.
+
 === WHO THIS IS FOR ===
 {{ level_register }}
+
+{{ language_register }}
+
+{{ teacher_band }}
 
 {{ notation }}
 
@@ -1596,6 +1749,10 @@ have had.
 
 === WHO THIS IS FOR ===
 {{ level_register }}
+
+{{ language_register }}
+
+{{ teacher_band }}
 
 {{ notation }}
 
@@ -1667,6 +1824,10 @@ Ensure all fields are filled with comprehensive, actionable pedagogical directiv
 === WHO THIS PROFILE IS FOR ===
 {{ level_register }}
 
+{{ language_register }}
+
+{{ teacher_band }}
+
 {{ notation }}
 
 {{ faith_scope }}
@@ -1693,6 +1854,10 @@ Learning area / subject: {{ subject }}
 
 === WHO THIS IS FOR ===
 {{ level_register }}
+
+{{ language_register }}
+
+{{ teacher_band }}
 
 {{ notation }}
 
@@ -1754,6 +1919,10 @@ syllabus could contain.
 
 === WHO THIS IS FOR ===
 {{ level_register }}
+
+{{ language_register }}
+
+{{ teacher_band }}
 
 {{ notation }}
 

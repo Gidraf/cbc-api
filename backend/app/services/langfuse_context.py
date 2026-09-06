@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from types import SimpleNamespace
 import logging
 import re
 import time
@@ -498,9 +499,66 @@ class LangfuseContextService:
             "strands": [],
         }
 
+    def _fetch_foldered(self, name: str, label: str = "production") -> Any:
+        """A prompt whose name contains a slash, fetched over REST.
+
+        The SDK does not URL-encode the name, so every foldered prompt —
+        `generate/lesson-plan`, `extract/curriculum`, all of them — comes back
+        404 and the caller falls back to the flat name. The fallback is by
+        design and logs at DEBUG, so the migration to foldered prompts looked
+        complete while production went on reading `note-generator` v79 and
+        never once read `generate/lesson-plan` v5.
+
+        Verified against a live instance: the same name percent-encoded returns
+        the prompt.
+        """
+        import base64
+        import json as _json
+        import urllib.parse
+        import urllib.request
+
+        if not (settings.langfuse_public_key and settings.langfuse_secret_key):
+            return None
+        host = (settings.langfuse_host or "").rstrip("/")
+        if not host:
+            return None
+
+        token = base64.b64encode(
+            f"{settings.langfuse_public_key}:{settings.langfuse_secret_key}".encode()
+        ).decode()
+        url = (f"{host}/api/public/v2/prompts/"
+               f"{urllib.parse.quote(name, safe='')}?label={urllib.parse.quote(label)}")
+        request = urllib.request.Request(url, headers={"Authorization": f"Basic {token}"})
+        with urllib.request.urlopen(request, timeout=20) as response:
+            payload = _json.load(response)
+
+        # The shape the callers expect: something with `.prompt` and `.version`.
+        return SimpleNamespace(
+            prompt=payload.get("prompt"),
+            version=payload.get("version"),
+            name=payload.get("name") or name,
+            labels=payload.get("labels") or [],
+            config=payload.get("config") or {},
+        )
+
     def get_prompt(self, name: str, label: str | None = None, version: int | None = None) -> Any:
         """Fetches a prompt object from Langfuse SDK with fallback label cascade and seed defaults."""
         from .langfuse_seed import SEED_AGENT_PROMPTS, SEED_MASTER_CONTEXT
+
+        # A slash in the name defeats the SDK. Tried first and separately, so a
+        # foldered prompt that EXISTS is never silently replaced by the flat
+        # one it was migrated from.
+        if "/" in name and self._client:
+            for candidate in [label, settings.langfuse_env, "production", "latest"]:
+                if not candidate:
+                    continue
+                try:
+                    found = self._fetch_foldered(name, candidate)
+                except Exception as exc:  # noqa: BLE001
+                    logger.debug("Foldered prompt %s@%s: %s", name, candidate, exc)
+                    continue
+                if found is not None and getattr(found, "prompt", None):
+                    return found
 
         if self._client:
             labels_to_try = [label, settings.langfuse_env, "production", "latest", "prod", "staging", "dev"] if label else [settings.langfuse_env, "production", "latest", "prod", "staging", "dev"]

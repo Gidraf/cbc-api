@@ -11,7 +11,7 @@ from pydantic import BaseModel
 from ..errors import raise_api_error
 from ..services import notation, prompt_fragments
 from ..services.auth import AuthContext, require_roles
-from ..services.level_register import register_block
+from ..services.level_register import language_block, register_block, teacher_block
 from ..services.faith_scope import prompt_block as faith_prompt_block
 from ..services.grade_scope import notes_for as grade_scope_notes
 from ..services.grade_order import grade_label, grade_level, grade_ordinal, normalize_grade
@@ -640,11 +640,13 @@ def factory_generate_questions_batch(
                     payload.grade,
                     notes=grade_scope_notes(payload.grade, payload.subject),
                 ),
+        "teacher_band": teacher_block(payload.grade),
+        "language_register": language_block(payload.grade),
             # A question whose answer is "3/4" and a marking scheme expecting
             # "$\\frac{3}{4}$" are the same answer written two ways, and one of
             # them is marked wrong. The notation has to be the same in the
             # question as it was in the lesson.
-            "notation": notation.block_for(payload.subject, grade=payload.grade),
+            "notation": notation.for_prompt(payload.subject, grade=payload.grade),
             # What this subject needs that no other does — a balanced equation
             # for Chemistry, a scaled map for Geography, sol-fa for Music.
             "domain_directives": prompt_fragments.compose(
@@ -884,7 +886,34 @@ def factory_generate_questions_batch(
         custom_instructions=payload.custom_instructions,
     )
 
+    # 5b. SAVED, with the gate's own verdict filed beside the items.
+    #
+    #     Generation returned its items in the response and wrote them
+    #     nowhere: persistence lived only in `/factory/approve-batch`, a
+    #     separate call nothing made automatically. So a run could produce four
+    #     good items, report them on screen, and leave the question bank empty —
+    #     which is why coverage read "questions 0 / 345" and the paper printed
+    #     "this set has no questions in it" after a successful run.
+    #
+    #     Saved as `draft`: filed, countable and readable, but not approved.
+    #     Approval is a person's signature and this is not it.
+    saved: list[dict[str, Any]] = []
+    if normalized_questions:
+        try:
+            saved = question_dna_service.save_batch_questions(
+                grade=payload.grade, subject=payload.subject,
+                strand=payload.strand, sub_strand=payload.sub_strand,
+                questions=normalized_questions, status="draft",
+                gate_result=gate_result.to_dict() if hasattr(gate_result, "to_dict") else None,
+            )
+        except Exception as exc:  # noqa: BLE001
+            # The items are in the response either way; losing the file is bad
+            # and losing the run as well is worse.
+            logger.warning("Generated %d item(s) for %s but could not save them: %s",
+                           len(normalized_questions), payload.sub_strand, exc)
+
     return {
+        "saved": len(saved),
         "sub_strand": payload.sub_strand,
         "grade": grade_slug,
         "requested_count": payload.batch_count,

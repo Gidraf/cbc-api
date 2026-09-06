@@ -24,7 +24,12 @@ _MATH_SPAN = re.compile(r"\$\$([\s\S]*?)\$\$|\$([^$\n]+?)\$")
 # What makes a `$…$` span mathematics rather than two prices in a sentence.
 # "if you have $50 and you spend $20" has a perfectly good `$…$` in it, and
 # typesetting it produced "50andyouspend20" in the middle of a Grade 9 lesson.
-_MATHISH = re.compile(r"[\\^_{}=<>+*/]|\\frac|\\times|\bcdot\b|[0-9]\s*[-−]\s*[0-9]")
+_MATHISH = re.compile(
+    r"[\\^_{}=<>+*/×÷]|\\frac|\\times|\bcdot\b"
+    # A subtraction. The bracket matters: `3 - (-5)` is arithmetic, and a
+    # pattern demanding a digit straight after the operator fell through it and
+    # printed `$3 - (-5)$` on the page, dollars and all.
+    r"|[0-9]\s*[-−]\s*[-−(\s]*[0-9]")
 
 # A LaTeX command loose in the prose, with no dollars around it at all. The
 # model writes `-5^\text{°C}` inside an ordinary sentence, and a renderer that
@@ -572,7 +577,13 @@ def _segments(module: dict[str, Any]) -> list[dict[str, Any]]:
     return []
 
 
-def _worked_examples(module: dict[str, Any], n: int) -> str:
+def count_examples(module: dict[str, Any]) -> int:
+    """How many worked examples a piece carries, for the running number."""
+    return len([e for e in (module.get("worked_examples") or [])
+                if isinstance(e, dict)])
+
+
+def _worked_examples(module: dict[str, Any], n: int, start: int = 1) -> str:
     """The examples, set and worked, with their mathematics typeset.
 
     A guide that explains a procedure and shows none of it worked leaves the
@@ -584,7 +595,7 @@ def _worked_examples(module: dict[str, Any], n: int) -> str:
         return ""
 
     out = ["<div class='examples'>"]
-    for i, example in enumerate(examples, start=1):
+    for i, example in enumerate(examples, start=start):
         out.append("<div class='example'>")
         out.append(f"<h4>Example {n}.{i}</h4>")
         if example.get("statement"):
@@ -1355,6 +1366,10 @@ def render_material_html(material: dict[str, Any], *, grade: str = "",
                                  sub_strand=sub_strand)
 
     last_module = None
+    # Examples are numbered across a LESSON, not within a segment. Restarting
+    # at .1 in each segment gave one lesson two "Example 1.1"s, and a teacher
+    # saying "look at Example 1.1" was then pointing at either of two things.
+    example_no = 1
     for piece in pieces:
         number = piece.get("module_number")
         if number != last_module:
@@ -1362,6 +1377,7 @@ def render_material_html(material: dict[str, Any], *, grade: str = "",
                        f"{_esc(piece.get('module_title') or f'Lesson {number}')}</h2>")
             out += by_module.get(number, [])
             last_module = number
+            example_no = 1
 
         out.append("<section class='piece'>")
         head = _esc(piece.get("topic") or "")
@@ -1393,7 +1409,8 @@ def render_material_html(material: dict[str, Any], *, grade: str = "",
         # The worked examples belong here as much as in the plan: this is the
         # page the mathematics is actually on, and a learner with nothing to
         # imitate has the explanation and no model of the working.
-        out.append(_worked_examples(piece, number or 1))
+        out.append(_worked_examples(piece, number or 1, start=example_no))
+        example_no += count_examples(piece)
 
         # "The children" for every grade: a Grade 6 Arabic page told its
         # teacher what "the children" do. Neutral across the ladder.

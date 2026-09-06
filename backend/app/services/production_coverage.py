@@ -68,6 +68,38 @@ class Dimension:
 
 
 @dataclass
+class SubStrand:
+    """One sub-strand's own numbers, so a table and a board agree.
+
+    The sub-strand chooser had its own percentage from a second computation,
+    and read 0% for a sub-strand the coverage panel on the same screen showed
+    as the only one with anything filed. Two numbers about the same thing, on
+    the same page, disagreeing.
+    """
+    subject: str = ""
+    strand: str = ""
+    name: str = ""
+    dimensions: dict[str, Dimension] = field(default_factory=dict)
+
+    @property
+    def percentage(self) -> int:
+        required = sum(d.required for d in self.dimensions.values())
+        if not required:
+            return 0
+        done = sum(min(d.generated, d.required) for d in self.dimensions.values())
+        return min(100, round(done / required * 100))
+
+    @property
+    def filed(self) -> bool:
+        return any(d.generated for d in self.dimensions.values())
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"subject": self.subject, "strand": self.strand, "name": self.name,
+                "percentage": self.percentage, "filed": self.filed,
+                "dimensions": {k: v.to_dict() for k, v in self.dimensions.items()}}
+
+
+@dataclass
 class Report:
     grade: str = ""
     subject: str = ""
@@ -75,6 +107,7 @@ class Report:
     measured: int = 0
     dimensions: dict[str, Dimension] = field(default_factory=dict)
     unmatched: list[str] = field(default_factory=list)
+    per_substrand: list[SubStrand] = field(default_factory=list)
 
     @property
     def percentage(self) -> int:
@@ -98,7 +131,8 @@ class Report:
                 "substrands": self.substrands, "measured": self.measured,
                 "percentage": self.percentage,
                 "dimensions": {k: v.to_dict() for k, v in self.dimensions.items()},
-                "unmatched_generations": self.unmatched}
+                "unmatched_generations": self.unmatched,
+                "substrand_rows": [r.to_dict() for r in self.per_substrand]}
 
 
 def _blueprints(grade: str, subject: str) -> list[dict[str, Any]]:
@@ -171,6 +205,11 @@ def report(grade: str, subject: str = "") -> Report:
             out.measured += 1
         counted = _counted(bundle)
 
+        row_out = SubStrand(subject=str(row.get("subject") or ""),
+                            strand=str(row.get("strand_name") or ""),
+                            name=str(row.get("sub_strand_name") or ""))
+        out.per_substrand.append(row_out)
+
         for name, needed, estimated in (
             ("notes", requirement.hours, requirement.estimated["hours"]),
             ("visuals", requirement.visuals, requirement.estimated["visuals"]),
@@ -181,6 +220,9 @@ def report(grade: str, subject: str = "") -> Report:
             dimension.required += needed
             dimension.generated += counted.get(name, 0)
             dimension.estimated = dimension.estimated or estimated
+            row_out.dimensions[name] = Dimension(
+                generated=counted.get(name, 0), required=needed,
+                estimated=estimated)
 
     # Work filed under a name the design does not use is invisible: it scores
     # nothing, unlocks nothing, and used to say nothing.

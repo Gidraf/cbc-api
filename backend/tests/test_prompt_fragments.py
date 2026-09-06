@@ -246,7 +246,7 @@ def test_every_station_that_states_the_notation_also_states_the_domain():
     source = (pathlib.Path(__file__).resolve().parents[1]
               / "app/routes/curriculum.py").read_text()
 
-    assert source.count('"notation": notation.block_for(') == \
+    assert source.count('"notation": notation.for_prompt(') == \
         source.count('"domain_directives": prompt_fragments.compose(')
 
 

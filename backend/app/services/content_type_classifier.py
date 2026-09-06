@@ -448,7 +448,11 @@ def ai_improve_profile(profile_data: dict[str, Any], instructions: str = "") -> 
     from .langfuse_context import langfuse_context_service
 
     from .faith_scope import prompt_block as _faith_block
-    from .level_register import register_block as _register_block
+    from .level_register import (
+        language_block as _language_block,
+        register_block as _register_block,
+        teacher_block as _teacher_block,
+    )
     from .notation import block_for as _notation_block
 
     system_prompt = langfuse_context_service.get_agent_prompt("profile-generator")
@@ -459,6 +463,8 @@ def ai_improve_profile(profile_data: dict[str, Any], instructions: str = "") -> 
     subject = str(profile_data.get("subject") or profile_data.get("content_type") or "")
     for slot, value in (
         ("level_register", _register_block(grade) if grade else ""),
+        ("teacher_band", _teacher_block(grade) if grade else ""),
+        ("language_register", _language_block(grade) if grade else ""),
         ("faith_scope", _faith_block(subject) if subject else ""),
         ("notation", _notation_block(subject, grade=grade) if subject else ""),
     ):

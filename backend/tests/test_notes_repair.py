@@ -616,3 +616,50 @@ def test_every_reviewer_is_told_to_check_the_claims():
         system = review_layers.build_messages(artifact, layer)[0]["content"]
         assert "CHECK EVERY CLAIM AGAINST THE DESIGN" in system, layer
         assert "survives inspection" in system, layer
+
+
+# ── from a Grade 9 Integers guide a reviewer read ───────────────────────────
+
+
+def test_a_bracketed_negative_is_arithmetic() -> None:
+    """`$3 - (-5)$` printed its own dollars on the page. The pattern demanded
+    a digit straight after the operator, and a bracketed negative fell through
+    it — which is most of what an integers lesson is about."""
+    from app.services.notes_renderer import _math
+
+    for body in ("Calculate $3 - (-5)$",
+                 r"For example $12 \div (-4) = -3$",
+                 "so $8 - (-2)$ is ten",
+                 "and $(-20) ÷ (-5)$ gives four"):
+        assert "class='math'" in _math(body), body
+
+
+def test_money_in_a_sentence_is_still_not_mathematics() -> None:
+    """The reason the pattern was tight in the first place. A false positive
+    eats a sentence; a false negative prints a dollar."""
+    from app.services.notes_renderer import _math
+
+    assert "class='math'" not in _math("It costs $50 and you spend $30 on fare")
+
+
+def test_examples_are_numbered_across_a_lesson_not_within_a_segment() -> None:
+    """One lesson carried two "Example 1.1"s — once under Addition and again
+    under Multiplication. A teacher saying "look at Example 1.1" was pointing
+    at either of two things."""
+    import re
+
+    from app.services.notes_renderer import render_material_html
+
+    material = {"material": [
+        {"module_number": 1, "module_title": "Lesson 1", "topic": "Addition",
+         "say": "x", "worked_examples": [{"statement": "a"}, {"statement": "b"}]},
+        {"module_number": 1, "module_title": "Lesson 1", "topic": "Multiplication",
+         "say": "y", "worked_examples": [{"statement": "c"}]},
+        {"module_number": 2, "module_title": "Lesson 2", "topic": "Order",
+         "say": "z", "worked_examples": [{"statement": "d"}]},
+    ]}
+    html = render_material_html(material, grade="grade-9", subject="Mathematics",
+                                sub_strand="Integers")
+    numbers = re.findall(r"<h4>Example (\d+\.\d+)</h4>", html)
+
+    assert numbers == ["1.1", "1.2", "1.3", "2.1"]

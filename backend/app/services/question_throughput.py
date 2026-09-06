@@ -25,7 +25,9 @@ import hashlib
 import json
 import logging
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, date as _date, timedelta as _timedelta
+
+_day = _timedelta(days=1)
 from typing import Any
 
 logger = logging.getLogger("cbc-question-throughput")
@@ -261,9 +263,16 @@ def get_target(grade: str, subject: str, strand: str = "") -> Target:
 def _counts_today(grade: str, subject: str, strand: str, on: str) -> dict[str, int]:
     from ..infra.db import fetch_all
 
+    # The day's boundaries are computed HERE, not cast in SQL. `:on::date` is
+    # read by SQLAlchemy as a bind parameter named `o` followed by the literal
+    # `n::date` — so the query asked for a parameter nothing supplies, raised,
+    # was swallowed by the guard below, and every count came back zero. The
+    # board read "Written 0 / 500" beside "22 waiting", which is impossible.
+    start = _date.fromisoformat(on)
     conditions = ["LOWER(grade) = LOWER(:grade)", "LOWER(subject) = LOWER(:subject)",
-                  "happened_at >= :on::date", "happened_at < (:on::date + 1)"]
-    params: dict[str, Any] = {"grade": grade, "subject": subject, "on": on}
+                  "happened_at >= :start", "happened_at < :end"]
+    params: dict[str, Any] = {"grade": grade, "subject": subject,
+                              "start": start, "end": start + _day}
     if strand:
         conditions.append("LOWER(strand) = LOWER(:strand)")
         params["strand"] = strand
@@ -342,9 +351,10 @@ def history(grade: str, subject: str, strand: str = "", days: int = 14) -> list[
     """
     from ..infra.db import fetch_all
 
+    since = _date.today() - _timedelta(days=int(days))
     conditions = ["LOWER(grade) = LOWER(:grade)", "LOWER(subject) = LOWER(:subject)",
-                  "happened_at >= (CURRENT_DATE - CAST(:days AS INT))"]
-    params: dict[str, Any] = {"grade": grade, "subject": subject, "days": int(days)}
+                  "happened_at >= :since"]
+    params: dict[str, Any] = {"grade": grade, "subject": subject, "since": since}
     if strand:
         conditions.append("LOWER(strand) = LOWER(:strand)")
         params["strand"] = strand

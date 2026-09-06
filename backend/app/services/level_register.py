@@ -521,3 +521,169 @@ def language_block(grade: str) -> str:
         "however true it is."
     )
     return "\n".join(lines)
+
+
+# ── who is READING the guide ────────────────────────────────────────────────
+#
+# Everything above describes the LEARNER. Nothing described the teacher, and a
+# guide is written for a teacher — so a Grade 9 lesson spent 20 minutes
+# explaining which key on a calculator is the minus sign, at the same level of
+# detail a PP1 guide explains how to hold up a picture. Both were "correct" for
+# their learner and only one was written for a professional.
+#
+# What separates the bands is not competence — a PP1 teacher is not less able —
+# but what the WORK requires spelling out. A pre-primary teacher is managing
+# thirty four-year-olds through a song and needs the words and the actions; a
+# senior-school teacher knows their subject and needs the syllabus boundary and
+# the misconception, not the method.
+
+
+@dataclass(slots=True)
+class TeacherBand:
+    """What the person holding this guide does not need to be told."""
+
+    level: str
+    trained_as: str
+    assumed: list[str] = field(default_factory=list)
+    spell_out: list[str] = field(default_factory=list)
+    # The single sentence that most often goes wrong for this band.
+    never: str = ""
+
+    def format_for_prompt(self) -> str:
+        lines = [
+            "=== WHO IS READING THIS GUIDE ===",
+            f"A {self.trained_as}. Write for a colleague, not for a novice.",
+            "",
+            "Assume, and never explain:",
+            *[f"  - {item}" for item in self.assumed],
+            "",
+            "Spell out, because it is genuinely specific to this lesson:",
+            *[f"  - {item}" for item in self.spell_out],
+        ]
+        if self.never:
+            lines += ["", f"NEVER: {self.never}"]
+        return "\n".join(lines)
+
+
+_TEACHER_BANDS: dict[str, TeacherBand] = {
+    "Pre-Primary": TeacherBand(
+        level="Pre-Primary",
+        trained_as="trained ECDE teacher managing about thirty four- to "
+                   "five-year-olds at once",
+        assumed=[
+            "classroom routine, transitions and behaviour management",
+            "how to lead a song, a game or a circle",
+            "how to hold up an object so a class can see it",
+        ],
+        spell_out=[
+            "the exact words to say, because they are said aloud verbatim",
+            "the actions that go with them, and when",
+            "what the children do at each step, and how long it lasts",
+            "which concrete objects are needed, and a locally available "
+            "substitute for each",
+        ],
+        never="Do not explain what a song is, how to sit children on a mat, or "
+              "how to hold a picture.",
+    ),
+    "Lower Primary": TeacherBand(
+        level="Lower Primary",
+        trained_as="trained primary teacher",
+        assumed=[
+            "classroom routine, grouping and behaviour management",
+            "how to demonstrate at the board and check understanding",
+            "how to use counters, number lines and simple apparatus",
+        ],
+        spell_out=[
+            "the words for anything said aloud verbatim",
+            "the worked example, fully, with every step shown",
+            "the common wrong answer at this age, and what it tells you",
+            "the materials, with a locally available substitute for each",
+        ],
+        never="Do not explain how to form a group, mark a book, or use a number "
+              "line.",
+    ),
+    "Upper Primary": TeacherBand(
+        level="Upper Primary",
+        trained_as="trained primary teacher who knows this subject",
+        assumed=[
+            "the subject content of this and every earlier grade",
+            "group work, demonstration and questioning technique",
+            "ordinary classroom and laboratory apparatus",
+        ],
+        spell_out=[
+            "the worked examples, in full, with the reasoning at each step",
+            "the misconception this topic reliably produces",
+            "where this sits against the previous and next grade",
+            "any apparatus or reagent needing a safety note",
+        ],
+        never="Do not explain the four operations, how to run group work, or "
+              "how to use a ruler, protractor or balance.",
+    ),
+    "Junior School": TeacherBand(
+        level="Junior School",
+        trained_as="subject-trained junior-school teacher",
+        assumed=[
+            "the subject to well beyond this grade",
+            "every operation, rule and procedure taught in earlier grades",
+            "how to run a practical, a discussion and an investigation",
+            "how to use a scientific calculator, a spreadsheet and a projector",
+        ],
+        spell_out=[
+            "the syllabus BOUNDARY — what this grade does and does not cover",
+            "the worked examples at this grade's difficulty, not an easier one",
+            "the misconception this topic reliably produces, and how it shows "
+            "in a learner's working",
+            "safety, where reagents, heat, mains power or tools are involved",
+        ],
+        never="Do not re-teach earlier grades, define terms the syllabus "
+              "assumes, or explain which key on a calculator is the minus sign.",
+    ),
+    "Senior School": TeacherBand(
+        level="Senior School",
+        trained_as="subject specialist teaching a chosen pathway",
+        assumed=[
+            "the subject to degree level, and the whole school syllabus",
+            "laboratory, workshop and fieldwork practice",
+            "assessment technique and examiner expectations",
+        ],
+        spell_out=[
+            "the syllabus boundary, and where the pathway takes it next",
+            "the examinable form of the answer, and what earns each mark",
+            "the misconception that survives into this grade",
+            "safety and regulatory limits where they apply",
+        ],
+        never="Do not re-teach junior-school content, restate definitions, or "
+              "explain standard laboratory procedure.",
+    ),
+}
+
+# Trainee teachers are ADULTS being taught to teach. The guide is their course
+# material, so the thing to spell out is the pedagogy itself — the opposite of
+# every band above.
+_TEACHER_BANDS["Tertiary"] = TeacherBand(
+    level="Tertiary",
+    trained_as="tutor teaching adult trainee teachers",
+    assumed=["the subject content itself", "adult classroom management"],
+    spell_out=[
+        "the pedagogical reasoning — why this method, for this age",
+        "what a trainee typically gets wrong when they first teach it",
+        "how the trainee will be assessed on it",
+    ],
+    never="Do not write as though the reader were a child.",
+)
+
+
+def teacher_band(grade: str | None) -> TeacherBand | None:
+    """The band of the person who will read this guide."""
+    register = register_for_grade(grade)
+    return _TEACHER_BANDS.get(register.level)
+
+
+def teacher_block(grade: str | None) -> str:
+    """Prompt-ready. Empty when the level is unknown, rather than guessing.
+
+    Guessing here is worse than silence: told the wrong band, a generator
+    writes a Grade 11 guide that explains what a variable is.
+    """
+    band = teacher_band(grade)
+    return band.format_for_prompt() if band else ""

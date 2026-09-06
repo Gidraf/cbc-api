@@ -76,7 +76,7 @@ def build_agent_prompt(
 
     from .langfuse_context import langfuse_context_service
     from .faith_scope import prompt_block as faith_block
-    from .level_register import register_block
+    from .level_register import language_block, register_block, teacher_block
     from .notation import block_for as notation_block
 
     grade = str(ctx.get("grade", ""))
@@ -91,6 +91,8 @@ def build_agent_prompt(
         # who is answering them, so a Grade 2 diagram and a Grade 11 one were
         # asked about in the same words.
         ("level_register", register_block(grade) if grade else ""),
+        ("teacher_band", teacher_block(grade) if grade else ""),
+        ("language_register", language_block(grade) if grade else ""),
         ("notation", notation_block(subject, grade=grade) if subject else ""),
         # A diagram question in CRE must not reach for another faith's imagery.
         ("faith_scope", faith_block(subject) if subject else ""),
