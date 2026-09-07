@@ -58,6 +58,17 @@ def _is_maths(body: str) -> bool:
     return len(body) <= 12 and len(body.split()) == 1
 
 
+def _inline_math(value: Any) -> str:
+    """`_math`, with display spans forced inline.
+
+    For the words AROUND a calculation — a step's reason, a caption. Display
+    maths there takes a centred line of its own, so "First, adding $$-5$$ and
+    $$8$$ gives $$3$$" printed as a staircase of numbers down the page with a
+    word between each. The author's intent was a sentence; this renders one.
+    """
+    return _math(re.sub(r"\$\$([^$]+?)\$\$", r"$\1$", str(value or "")))
+
+
 def _math(value: Any) -> str:
     """Text with its `$…$` spans marked for typesetting, everything else escaped.
 
@@ -607,7 +618,9 @@ def _worked_examples(module: dict[str, Any], n: int, start: int = 1) -> str:
             for step in steps:
                 line = f"<span class='w'>{_math(step.get('working'))}</span>"
                 if step.get("because"):
-                    line += f"<span class='why'>{_math(step['because'])}</span>"
+                    # Inline, always. A reason is a sentence.
+                    line += (f"<span class='why'>"
+                             f"{_inline_math(step['because'])}</span>")
                 out.append(f"<li>{line}</li>")
             out.append("</ol>")
 

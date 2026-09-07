@@ -19,8 +19,14 @@ import pytest
 from app.services import example_check
 
 
-def _kinds(example: dict, grade: str = "grade-9") -> list[str]:
-    return [f.kind for f in example_check.check([example], grade=grade).findings]
+# Layout is checked separately, below. The fixtures in this file are cut down
+# to the one fault each test is about — a two-line example with no `because`
+# is a shape defect in a real guide and is noise in a test about sign errors.
+def _kinds(example: dict, grade: str = "grade-9",
+           subject: str = "Mathematics") -> list[str]:
+    return [f.kind for f in
+            example_check.check([example], grade=grade, subject=subject).findings
+            if f.kind != "solution_not_uniform"]
 
 
 # ── the three the reviewer found ────────────────────────────────────────────
@@ -125,10 +131,14 @@ def test_the_one_simple_example_a_lesson_needs_is_not_condemned() -> None:
     """
     findings = example_check.check([
         {"statement": "Work out the product of -4 and 6",
-         "steps": [{"working": "-4 × 6 = -24"}], "answer": "-24"},
+         "steps": [{"working": "-4 × 6 = -24",
+                    "because": "a negative times a positive is negative"}],
+         "answer": "-24"},
         {"statement": "Evaluate -15 ÷ 3 - (-2) × (-4) + 6",
-         "steps": [{"working": "-5 - 8 + 6 = -7"}], "answer": "-7"},
-    ], grade="grade-9").findings
+         "steps": [{"working": "-5 - 8 + 6 = -7",
+                    "because": "divide and multiply before adding"}],
+         "answer": "-7"},
+    ], grade="grade-9", subject="Mathematics").findings
 
     assert [f.kind for f in findings] == []
 
@@ -381,3 +391,93 @@ def test_a_genuinely_signed_context_is_left_alone(example: dict) -> None:
                                  subject="Mathematics")
 
     assert not [f for f in report.findings if f.kind == "impossible_negative"]
+
+
+# ── every worked example checked, step by step, against the engine ──────────
+
+
+def test_a_wrong_step_is_named_where_it_happens() -> None:
+    """A Grade 9 guide wrote "-(-2) x (-4) = 2 x 4 = 8". The term is -8: the
+    minus was distributed onto one factor and the sign flipped twice. Every
+    step after it inherited the error, so naming the total is not enough."""
+    report = example_check.check([{
+        "statement": "(-15 / 3 - (-2) * (-4) + 6) / (-2 * 3 + (-4))",
+        "steps": [{"working": "-15 / 3 = -5", "because": "a negative over a positive"},
+                  {"working": "-((-2) * (-4)) = 8", "because": "two negatives"},
+                  {"working": "-5 + 8 + 6 = 9", "because": "adding the results"}],
+        "answer": "-9/10"}], grade="grade-9", subject="Mathematics")
+
+    wrong = [f for f in report.findings if f.kind == "step_is_wrong"]
+    assert wrong and "step 2" in wrong[0].says
+    assert "is -8" in wrong[0].says
+
+
+def test_an_answer_that_stops_at_the_numerator_is_caught() -> None:
+    """The same expression in another lesson worked the numerator correctly to
+    -7, wrote the denominator down, and reported -7 as the value of the
+    fraction. Every step was right and the answer was wrong."""
+    report = example_check.check([{
+        "statement": "(-15 / 3 - (-2) * (-4) + 6) / (-2 * 3 + (-4))",
+        "steps": [{"working": "-15 / 3 = -5", "because": "divide"},
+                  {"working": "(-2) * (-4) = 8", "because": "two negatives"},
+                  {"working": "-5 - 8 = -13", "because": "subtract"},
+                  {"working": "-13 + 6 = -7", "because": "add"}],
+        "answer": "-7"}], grade="grade-9", subject="Mathematics")
+
+    assert [f.kind for f in report.findings if f.kind == "answer_disagrees"]
+
+
+def test_a_correct_example_is_left_alone() -> None:
+    report = example_check.check([{
+        "statement": "(-15 / 3 - (-2) * (-4) + 6) / (-2 * 3 + (-4))",
+        "steps": [{"working": "-15 / 3 = -5", "because": "divide first"},
+                  {"working": "(-2) * (-4) = 8", "because": "two negatives give a positive"},
+                  {"working": "-5 - 8 + 6 = -7", "because": "combine the numerator"},
+                  {"working": "-2 * 3 + (-4) = -10", "because": "the denominator"}],
+        "answer": "7/10"}], grade="grade-9", subject="Mathematics")
+
+    assert not [f for f in report.findings
+                if f.kind in ("step_is_wrong", "answer_disagrees")]
+
+
+# ── one shape, every example ────────────────────────────────────────────────
+
+
+def test_an_example_with_no_answer_is_reported() -> None:
+    report = example_check.check(
+        [{"statement": "Evaluate -15 ÷ 3 - (-2) × (-4) + 6",
+          "steps": [{"working": "-5 - 8 + 6 = -7", "because": "combine"}]}],
+        grade="grade-9", subject="Mathematics")
+
+    said = [f.says for f in report.findings if f.kind == "solution_not_uniform"]
+    assert said and "final answer" in said[0]
+
+
+def test_a_step_with_no_reason_is_reported() -> None:
+    report = example_check.check(
+        [{"statement": "Evaluate -15 ÷ 3 - (-2) × (-4) + 6",
+          "steps": [{"working": "-5 - 8 + 6 = -7"}], "answer": "-7"}],
+        grade="grade-9", subject="Mathematics")
+
+    assert any("no reason given" in f.says for f in report.findings)
+
+
+def test_display_maths_inside_a_sentence_is_reported() -> None:
+    """"First, adding $$-5$$ and $$8$$ gives $$3$$" prints as prose and centred
+    numbers alternating down the page, one line each."""
+    report = example_check.check(
+        [{"statement": "Evaluate -15 ÷ 3 + 6",
+          "steps": [{"working": "-5 + 6 = 1",
+                     "because": "First, adding $$-5$$ and $$6$$ gives $$1$$."}],
+          "answer": "1"}], grade="grade-9", subject="Mathematics")
+
+    assert any("staircase" in f.says for f in report.findings)
+
+
+def test_the_renderer_will_not_build_a_staircase_even_if_one_is_authored() -> None:
+    from app.services.notes_renderer import _inline_math, _math
+
+    sentence = "First, adding $$-5$$ and $$8$$ gives $$3$$."
+
+    assert _math(sentence).count("data-display='true'") == 3
+    assert _inline_math(sentence).count("data-display='true'") == 0

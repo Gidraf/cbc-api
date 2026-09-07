@@ -298,7 +298,8 @@ def test_the_material_gate_fails_on_a_set_below_the_grade() -> None:
         {"statement": "Work out -7 + 3", "steps": [{"working": "-7 + 3 = -4"}]},
     ]}]}, grade="grade-9")
 
-    assert [f.kind for f in report.findings] == ["below_the_grade"]
+    # Layout findings are a separate concern; this test is about difficulty.
+    assert "below_the_grade" in [f.kind for f in report.findings]
 
 
 def test_the_batch_verdict_does_not_discard_the_items() -> None:

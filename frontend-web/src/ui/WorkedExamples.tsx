@@ -40,7 +40,13 @@ function steps(example: WorkedExample): Array<{ working: string; because: string
     );
   }
   const legacy = example.solution_steps;
-  if (Array.isArray(legacy)) return legacy.map((s) => ({ working: String(s), because: "" }));
+  // `String(s)` on a hole in the array prints the word "undefined" into the
+  // page, under a heading that says Answer. A step nobody wrote is a step that
+  // does not appear.
+  if (Array.isArray(legacy))
+    return legacy
+      .filter((s) => s !== null && s !== undefined && String(s).trim() !== "")
+      .map((s) => ({ working: String(s), because: "" }));
   if (typeof legacy === "string" && legacy.trim())
     return [{ working: legacy, because: "" }];
   return [];
@@ -110,6 +116,18 @@ export function WorkedExamples({ examples, lesson }: { examples: any; lesson?: n
               </ol>
             )}
 
+            {/* An example with no answer is not an example. Saying so on the
+                page is the only way anybody finds out — it used to render as
+                nothing at all, or as the word "undefined". */}
+            {!example.answer && rows.length > 0 && (
+              <div style={{ marginTop: "8px", paddingTop: "6px",
+                            borderTop: "1px solid #e2e8f0", color: "#b45309",
+                            fontSize: "11.5px" }}>
+                This example stops without an answer. Regenerate it — a learner
+                cannot check their own working against nothing.
+              </div>
+            )}
+
             {example.answer && (
               <div
                 style={{
@@ -130,7 +148,7 @@ export function WorkedExamples({ examples, lesson }: { examples: any; lesson?: n
                 >
                   Answer
                 </span>
-                <MathText text={example.answer} />
+                <MathText text={String(example.answer)} />
               </div>
             )}
 

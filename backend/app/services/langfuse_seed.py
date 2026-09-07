@@ -527,6 +527,31 @@ the backslash in JSON — \\\\frac, not \\frac, or it arrives as a tab.
 Where the piece teaches no procedure — a discussion, a song, a story — return
 an empty list rather than inventing one.
 
+EVERY WORKED EXAMPLE TAKES THE SAME SHAPE, so a learner meets one format and
+never has to work out how to read the page:
+
+  statement  the task, written out in full
+  steps      numbered, each with `working` (one equation) and `because` (why
+             that step, not what it did)
+  answer     ONE final answer, on its own
+
+CARRY THE WORKING TO THE END OF THE EXPRESSION. A fraction's answer is the
+whole fraction, not its numerator. A guide worked
+$\\dfrac{-15 \\div 3 - (-2)\\times(-4) + 6}{-2 \\times 3 + (-4)}$ correctly to
+$-7$ in the numerator, wrote the denominator $-10$ down on the next line, and
+then gave $-7$ as the answer. Every step was right and the answer was wrong.
+
+CHECK EVERY STEP'S SIGN BEFORE YOU WRITE THE NEXT ONE. In the same guide,
+$-(-2)\\times(-4)$ was worked as $2 \\times 4 = 8$: the minus was moved onto
+one factor and the sign flipped twice. It is $-8$. Every step after it
+inherited the error, and a learner imitating the guide makes the same mistake
+in the same place.
+
+INSIDE A SENTENCE, USE SINGLE DOLLARS. `$$…$$` takes a centred line of its own,
+so a reason reading "First, adding $$-5$$ and $$8$$ gives $$3$$" prints as a
+staircase of numbers down the page with a word between each. Display maths
+belongs on the working line, never in the words explaining it.
+
 THE HARDEST EXAMPLE HERE MUST REACH THE GRADE. An easy first example is right
 and often necessary — a lesson introducing a rule needs one. What is wrong is a
 set whose HARDEST example is at that level: a learner who can already do the

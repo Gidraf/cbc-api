@@ -233,6 +233,135 @@ def _duplicates(examples: list[Any], grade: str, subject: str) -> list[Finding]:
     return findings
 
 
+# ── the arithmetic, against the engine, step by step ─────────────────────────
+#
+# `worked_solutions.check` has existed for the whole of this work and was
+# called from nowhere. It solves the EXERCISES a guide sets and never checked
+# the guide's own worked examples, which is where two errors reached a page:
+#
+#   "-(-2) x (-4) = 2 x 4 = 8"      the term is -8; the minus was distributed
+#                                   onto one factor and the sign flipped twice
+#   "(-15/3 - (-2)(-4) + 6) / (-2(3) + (-4))  =  -7"
+#                                   -7 is the NUMERATOR. The denominator was
+#                                   worked out, written down, and never used.
+#
+# The same expression appeared in two lessons of one guide with two different
+# answers, and neither was right. Every step is now solved on its own, because
+# a fault at step 2 is worth naming at step 2 rather than as a wrong total.
+
+_EQUATION = re.compile(r"^(?P<lhs>[^=]{2,120}?)\s*=\s*(?P<rhs>[^=]{1,60})$")
+
+# Enough to catch a guide, bounded so a 500-item batch cannot spend a minute
+# in the solver.
+_MAX_CHECKED_EXAMPLES = 40
+_MAX_CHECKED_STEPS = 12
+
+
+def _arithmetic_faults(examples: list[Any]) -> list[Finding]:
+    from . import worked_solutions
+
+    findings: list[Finding] = []
+    for index, example in enumerate(examples[:_MAX_CHECKED_EXAMPLES] or [],
+                                    start=1):
+        if not isinstance(example, dict):
+            continue
+
+        # Each step's own equation. A wrong step is worth naming where it is.
+        steps = [s for s in (example.get("steps") or []) if isinstance(s, dict)]
+        for number, step in enumerate(steps[:_MAX_CHECKED_STEPS], start=1):
+            match = _EQUATION.match(str(step.get("working") or "").strip())
+            if not match:
+                continue
+            verdict = worked_solutions.check(match.group("lhs"),
+                                             match.group("rhs"))
+            if verdict["checked"] and verdict["agrees"] is False:
+                findings.append(Finding(
+                    "step_is_wrong",
+                    f"Example {index}, step {number}: "
+                    f"\"{match.group('lhs').strip()}\" is "
+                    f"{verdict['engine_answer']}, and the step says "
+                    f"{match.group('rhs').strip()}.",
+                    "Work the step again. Every step after this one inherits "
+                    "it, and a learner imitating the guide will make the same "
+                    "mistake in the same place."))
+
+        # And the answer, against the WHOLE statement — which is the only thing
+        # that catches an answer that solves part of the question.
+        statement = str(example.get("statement") or "")
+        answer = str(example.get("answer") or "")
+        verdict = worked_solutions.check(statement, answer)
+        if verdict["checked"] and verdict["agrees"] is False:
+            findings.append(Finding(
+                "answer_disagrees",
+                f"Example {index} answers {answer.strip()}; the engine makes "
+                f"it {verdict['engine_answer']}. If the steps are right, the "
+                f"answer has stopped short of the whole expression — a "
+                f"numerator reported as the value of a fraction is the "
+                f"commonest form of this.",
+                "Carry the working through to the end of the expression and "
+                "state that as the answer."))
+    return findings
+
+
+# The shape every worked example takes, so a learner meets one format.
+_SHAPE_RULES: tuple[tuple[str, str], ...] = (
+    ("statement", "the task it works, written out"),
+    ("steps", "numbered steps"),
+    ("answer", "a final answer on its own line"),
+)
+
+
+def _shape_faults(examples: list[Any]) -> list[Finding]:
+    """Whether every example is laid out the same way.
+
+    A guide whose examples are each formatted differently is a guide a learner
+    has to re-learn how to read on every page, and it is the difference between
+    a booklet somebody prints and one somebody sells. The rule is deliberately
+    plain: a task, numbered steps that each say WHY, and one final answer.
+    """
+    findings: list[Finding] = []
+    for index, example in enumerate(examples or [], start=1):
+        if not isinstance(example, dict):
+            continue
+        missing = [what for key, what in _SHAPE_RULES if not example.get(key)]
+        if missing:
+            findings.append(Finding(
+                "solution_not_uniform",
+                f"Example {index} has no " + ", and no ".join(missing) + ".",
+                "Every worked example takes the same shape: the task, "
+                "numbered steps, and one final answer."))
+            continue
+        steps = [s for s in (example.get("steps") or []) if isinstance(s, dict)]
+
+        # Display maths inside a sentence breaks the sentence. A reason reading
+        # "First, adding $$-5$$ and $$8$$ gives $$3$$" prints as prose and
+        # centred numbers alternating down the page, one line each — which is
+        # what a Grade 9 guide did to every reason in Example 5.1.
+        staircase = [n for n, st in enumerate(steps, start=1)
+                     if "$$" in str(st.get("because") or "")]
+        if staircase:
+            findings.append(Finding(
+                "solution_not_uniform",
+                f"Example {index} puts display maths inside the reason for "
+                f"step(s) {', '.join(str(n) for n in staircase[:6])}. Each "
+                f"expression takes a centred line of its own, so the sentence "
+                f"prints as a staircase of numbers down the page.",
+                "Use single dollars inside a sentence. Display maths belongs "
+                "on the working line, not in the words explaining it."))
+
+        unreasoned = [n for n, s in enumerate(steps, start=1)
+                      if not str(s.get("because") or "").strip()]
+        if unreasoned:
+            findings.append(Finding(
+                "solution_not_uniform",
+                f"Example {index} has {len(unreasoned)} step(s) with no reason "
+                f"given: {', '.join(str(n) for n in unreasoned[:6])}.",
+                "Each step says WHY it is taken, not what it did. \"Make the "
+                "denominators the same so the parts are the same size\", never "
+                "\"now we rewrite the fractions\"."))
+    return findings
+
+
 # Quantities that CANNOT be negative, and the words that name them.
 #
 # A reviewer found two of these in one guide: "in a survey, if more people
@@ -392,6 +521,8 @@ def check(examples: list[Any], *, grade: str = "", subject: str | None = None,
     report.findings += _duplicates(examples, grade, subject or "")
     report.findings += _mangled(examples)
     report.findings += _impossible_negative(examples)
+    report.findings += _shape_faults(examples)
+    report.findings += _arithmetic_faults(examples)
     return report
 
 
