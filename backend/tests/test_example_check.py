@@ -481,3 +481,71 @@ def test_the_renderer_will_not_build_a_staircase_even_if_one_is_authored() -> No
 
     assert _math(sentence).count("data-display='true'") == 3
     assert _inline_math(sentence).count("data-display='true'") == 0
+
+
+# ── every question a guide sets, it answers ─────────────────────────────────
+
+
+def test_a_quiz_with_no_key_fails_the_material_gate() -> None:
+    """These notes are read by machine to build question papers, so an
+    unanswered question becomes an unanswerable item on a paper somebody
+    sits."""
+    from app.services import lesson_material
+
+    report = lesson_material.MaterialReport(total=1, written=1)
+    lesson_material._check_exercises({
+        "module_number": 6, "title": "Integer Quiz",
+        "say": "\n".join([
+            "1. Evaluate: 5+(-3).",
+            "2. Calculate: -7+4-(-2).",
+            "3. Solve the expression: (-3)*(-2)+5-8.",
+        ]),
+        "exercises": [{"question": "5+(-3)", "answer": "2"}]}, report)
+
+    assert report.unanswered
+    assert report.unanswered[0]["asked"] == 3
+    assert report.unanswered[0]["answered"] == 1
+    assert not lesson_material.gate_of(report)["passed"]
+
+
+def test_a_marking_key_the_engine_disagrees_with_fails_the_gate() -> None:
+    """A key nobody checked teaches its mistake to every learner who marks
+    their own work against it."""
+    from app.services import lesson_material
+
+    report = lesson_material.MaterialReport(total=1, written=1)
+    lesson_material._check_exercises({
+        "module_number": 6, "say": "1. Calculate -7+4-(-2).",
+        "exercises": [{"question": "-7+4-(-2)", "answer": "5"}]}, report)
+
+    assert report.wrong_answers
+    assert report.wrong_answers[0]["engine"] == "-1"
+    gate = lesson_material.gate_of(report)
+    assert not gate["passed"]
+    assert any("Work it again" in a for a in gate["next_actions"])
+
+
+def test_a_word_problem_answer_is_kept_rather_than_refused() -> None:
+    """The engine cannot check "a hiker descends 300 m", and that answer is
+    still an answer. Refusing it would mean a guide could only set the
+    questions a solver happens to parse."""
+    from app.services import lesson_material
+
+    report = lesson_material.MaterialReport(total=1, written=1)
+    lesson_material._check_exercises({
+        "module_number": 6,
+        "say": "1. A hiker descends 300 m then ascends 150 m. What changed?",
+        "exercises": [{"question": "A hiker descends 300 m then ascends 150 m. "
+                                   "What changed?", "answer": "-150 m"}]}, report)
+
+    assert not report.unanswered and not report.wrong_answers
+
+
+def test_the_generator_is_told_to_answer_what_it_sets() -> None:
+    from app.services.langfuse_seed import SEED_AGENT_PROMPTS
+
+    prompt = SEED_AGENT_PROMPTS["material-generator"]
+
+    assert "ANY QUESTION YOU SET, YOU ANSWER" in prompt
+    assert '"exercises"' in prompt
+    assert "Word problems included" in prompt

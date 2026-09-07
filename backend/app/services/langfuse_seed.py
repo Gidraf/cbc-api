@@ -547,6 +547,17 @@ one factor and the sign flipped twice. It is $-8$. Every step after it
 inherited the error, and a learner imitating the guide makes the same mistake
 in the same place.
 
+ANY QUESTION YOU SET, YOU ANSWER. If this piece asks learners to work
+something out — a quiz, a practice list, "evaluate the following" — every one
+of those questions goes in `exercises` WITH its answer. A guide that sets
+fifteen quiz questions and gives no key is a guide the teacher cannot mark
+from, and these questions are read by machine to build question papers: an
+unanswered one becomes an unanswerable item on a paper somebody sits.
+
+Word problems included. The maths engine can check `$-7 + 4 - (-2)$` and it
+cannot check "a hiker descends 300 m and then ascends 150 m" — so that one's
+answer has to come from you, and it has to be right.
+
 INSIDE A SENTENCE, USE SINGLE DOLLARS. `$$…$$` takes a centred line of its own,
 so a reason reading "First, adding $$-5$$ and $$8$$ gives $$3$$" prints as a
 staircase of numbers down the page with a word between each. Display maths
@@ -611,6 +622,11 @@ Return ONLY valid JSON:
      "steps": [{"working": "<one line of the working, in $…$>",
                 "because": "<why this line follows from the one above>"}],
      "answer": "<the answer, in $…$>"}
+  ],
+  "exercises": [
+    {"question": "<one question exactly as the learner meets it, mathematics in $…$>",
+     "answer": "<the answer, worked to the end>",
+     "working": "<the steps, or \"\" where the answer needs none>"}
   ],
   "learner_does": "what the learners do while this happens",
   "attribution": "where these words come from: traditional, widely known, or written here for this lesson",

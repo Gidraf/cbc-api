@@ -52,3 +52,67 @@ def test_the_engine_catches_the_answer_that_reached_the_page() -> None:
 
     assert verdict["checked"] and verdict["agrees"] is False
     assert verdict["engine_answer"] == "-7"
+
+
+# ── a quiz written one question per line still gets a key ───────────────────
+
+
+def test_a_quiz_written_one_question_per_line_is_found() -> None:
+    """Asking each LINE for a run of three questions is a question a
+    one-question line can never answer, so a quiz written the way every quiz is
+    written — one per line, fifteen of them — produced no answers at all, and
+    said nothing about it."""
+    from app.services.notes_renderer import _numbered_items
+
+    quiz = "\n".join([
+        "1. Evaluate: 5+(-3).",
+        "2. Calculate: -7+4-(-2).",
+        "3. Solve the expression: (-3)*(-2)+5-8.",
+        "4. What is the result of -12*3+15*(-2)?",
+    ])
+
+    assert [_numbered_items(line) for line in quiz.splitlines()] == [[], [], [], []]
+    assert len(_numbered_items(quiz)) == 4
+
+
+def test_the_key_prefers_the_answers_the_guide_itself_gives() -> None:
+    """The engine can work `-7 + 4 - (-2)` and cannot work "a hiker descends
+    300 m"; a set that is half word problems gets half a key from the solver
+    alone, and half a key sends a learner hunting for a page that does not
+    exist."""
+    from app.services.notes_renderer import _practice
+
+    piece = {
+        "say": "1. Evaluate 5+(-3).\n2. A hiker descends 300 m. What changed?",
+        "exercises": [
+            {"question": "5+(-3)", "answer": "2", "working": "5 - 3 = 2"},
+            {"question": "A hiker descends 300 m. What changed?",
+             "answer": "-300 m"},
+        ],
+    }
+    html = _practice(piece["say"], piece)
+
+    assert "checked" in html
+    assert "not checked by the engine" in html, "a word problem is still answered"
+
+
+def test_an_answer_the_engine_disagrees_with_says_so_in_the_key() -> None:
+    from app.services.notes_renderer import _practice
+
+    html = _practice("1. Calculate -7+4-(-2).", {
+        "exercises": [{"question": "-7+4-(-2)", "answer": "5"}]})
+
+    assert "the engine makes it -1" in html
+
+
+def test_questions_the_engine_cannot_work_are_listed_as_unworked() -> None:
+    """A numbered gap in an answer key is what sends a learner hunting."""
+    from app.services.notes_renderer import _practice
+
+    html = _practice("\n".join([
+        "1. Evaluate 5+(-3).",
+        "2. Evaluate -7+4-(-2).",
+        "3. A hiker descends 300 metres and then ascends 150 metres.",
+    ]), {})
+
+    assert "could not be worked by the maths engine" in html

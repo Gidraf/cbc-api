@@ -1270,6 +1270,38 @@ def _spoken(said: str) -> str:
     return "".join(blocks)
 
 
+def _authored_key(exercises: list[dict[str, Any]]) -> str:
+    """The answers the guide itself gives, each checked where it can be.
+
+    A word problem's answer cannot be verified by the engine and is still an
+    answer; it is marked as the guide's rather than the engine's, so a person
+    reading the key knows which ones nobody has checked.
+    """
+    from . import worked_solutions
+
+    out = ["<details class='answers'><summary>Worked answers</summary>"]
+    for number, exercise in enumerate(exercises, start=1):
+        question = str(exercise.get("question") or "")
+        answer = str(exercise.get("answer") or "")
+        verdict = worked_solutions.check(question, answer)
+        if verdict["checked"] and verdict["agrees"]:
+            mark = "<span class='ok'>checked</span>"
+        elif verdict["checked"]:
+            mark = ("<span class='warn'>the engine makes it "
+                    f"{_esc(verdict['engine_answer'])}</span>")
+        else:
+            mark = "<span class='warn'>not checked by the engine</span>"
+        out.append(f"<div class='solution'><div class='sn'>{number}{mark}</div>"
+                   f"<div class='work'>")
+        working = str(exercise.get("working") or "").strip()
+        if working:
+            out.append(f"<p class='why'>{_inline_math(working)}</p>")
+        out.append(f"<p class='ans'><span>Answer</span>{_math(answer)}</p>"
+                   f"</div></div>")
+    out.append("</details>")
+    return "".join(out)
+
+
 def _practice(said: str, piece: dict[str, Any]) -> str:
     """Worked solutions for the questions this piece sets.
 
@@ -1280,17 +1312,46 @@ def _practice(said: str, piece: dict[str, Any]) -> str:
     """
     from . import worked_solutions
 
-    questions: list[str] = []
-    for line in said.splitlines():
-        questions += _numbered_items(line)
+    # The piece's OWN answers first. The engine can work `$-7 + 4 - (-2)$` and
+    # cannot work "a hiker descends 300 m then ascends 150 m", so a set that is
+    # half word problems gets half a key from the solver alone — and half a key
+    # is what sends a learner hunting for a page that does not exist.
+    authored = [e for e in (piece.get("exercises") or [])
+                if isinstance(e, dict) and str(e.get("answer") or "").strip()]
+    if authored:
+        return _authored_key(authored)
+
+    # The WHOLE block first, then line by line.
+    #
+    # Asking each line on its own for a run of three questions is a question a
+    # one-question line can never answer, so a quiz written the way every quiz
+    # is written — one question per line, fifteen of them — produced no
+    # answers at all, silently. The per-line pass is kept for the other shape,
+    # where a paragraph holds "1. ... 2. ... 3. ..." inline.
+    questions = _numbered_items(said)
+    if not questions:
+        for line in said.splitlines():
+            questions += _numbered_items(line)
     if not questions:
         return ""
 
-    solved = [s for s in worked_solutions.solve_all(questions) if s.solved]
+    worked = worked_solutions.solve_all(questions)
+    solved = [s for s in worked if s.solved]
     if not solved:
         return ""
 
+    # A numbered gap in an answer key is what sends a learner hunting for a
+    # page that does not exist, so an unworked question is LISTED as unworked.
+    unworked = [questions.index(s.question) + 1 for s in worked if not s.solved]
     out = ["<details class='answers'><summary>Worked answers</summary>"]
+    if unworked:
+        out.append(
+            "<p class='from'>Question"
+            + ("s " if len(unworked) > 1 else " ")
+            + ", ".join(str(n) for n in unworked)
+            + " could not be worked by the maths engine — they are set in "
+            + "words. Their answers have to be written and checked by a "
+            + "person before this set is used.</p>")
     for solution in solved:
         out.append("<div class='solution'>")
         out.append("<div class='sn'>"

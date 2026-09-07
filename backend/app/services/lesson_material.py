@@ -215,6 +215,10 @@ class MaterialReport:
     written: int = 0
     thin: list[dict[str, Any]] = field(default_factory=list)
     echoed: list[dict[str, Any]] = field(default_factory=list)
+    # Questions the piece sets and never answers.
+    unanswered: list[dict[str, Any]] = field(default_factory=list)
+    # An answer the maths engine disagrees with.
+    wrong_answers: list[dict[str, Any]] = field(default_factory=list)
     # Written to an older learner as if to an infant.
     infantilised: list[dict[str, Any]] = field(default_factory=list)
     # A language lesson scripted in English.
@@ -276,6 +280,44 @@ class MaterialReport:
 PASS_SCORE = 90.0
 
 
+def _check_exercises(piece: dict[str, Any], report: "MaterialReport") -> None:
+    """Every question this piece sets, against the answer it gives for it."""
+    from .notes_renderer import _numbered_items
+
+    said = str(piece.get("say") or "")
+    asked = _numbered_items(said)
+    if not asked:
+        for line in said.splitlines():
+            asked += _numbered_items(line)
+
+    exercises = [e for e in (piece.get("exercises") or []) if isinstance(e, dict)]
+    answered = [e for e in exercises if str(e.get("answer") or "").strip()]
+    where = {"lesson": piece.get("module_number"),
+             "topic": piece.get("title") or piece.get("topic") or ""}
+
+    if asked and len(answered) < len(asked):
+        report.unanswered.append({
+            **where, "asked": len(asked), "answered": len(answered),
+            "first_unanswered": asked[len(answered)][:160] if
+            len(answered) < len(asked) else "",
+        })
+
+    # And the ones that ARE answered, against the engine. A marking key nobody
+    # checked is a marking key that teaches the mistake to every learner who
+    # marks their own work against it.
+    from . import worked_solutions
+
+    for index, exercise in enumerate(answered[:40], start=1):
+        question = str(exercise.get("question") or "")
+        answer = str(exercise.get("answer") or "")
+        verdict = worked_solutions.check(question, answer)
+        if verdict["checked"] and verdict["agrees"] is False:
+            report.wrong_answers.append({
+                **where, "number": index, "question": question[:160],
+                "given": answer[:60], "engine": verdict["engine_answer"][:60],
+            })
+
+
 def gate_of(report: "MaterialReport") -> dict[str, Any]:
     """The material check, in the shape every other station reports.
 
@@ -294,7 +336,8 @@ def gate_of(report: "MaterialReport") -> dict[str, Any]:
     # counted per lesson, and a Grade 9 page with no practice on it fails
     # whatever the per-piece score says.
     passed = (report.score >= PASS_SCORE and report.written == report.total
-              and not report.unexercised and not report.miscast)
+              and not report.unexercised and not report.miscast
+              and not report.unanswered and not report.wrong_answers)
 
     feedback = [
         # The arithmetic being right is not the same as it answering the
@@ -308,6 +351,28 @@ def gate_of(report: "MaterialReport") -> dict[str, Any]:
                      f"what their words ask for"
                      if report.miscast else
                      "every worked example matches its own description")},
+        # A quiz with no key. These notes are read by machine to build
+        # question papers, so an unanswered question becomes an unanswerable
+        # item on a paper somebody sits.
+        {"aspect": "every_question_set_is_answered",
+         "method": "questions_in_the_text_vs_answers_given",
+         "status": "fail" if report.unanswered else "pass",
+         "score": 0.0 if report.unanswered else 1.0,
+         "comment": (
+             f"{sum(u['asked'] - u['answered'] for u in report.unanswered)} "
+             f"question(s) are set with no answer given"
+             if report.unanswered else
+             "every question this material sets has an answer")},
+        # And a key nobody checked teaches its mistake to every learner who
+        # marks their own work against it.
+        {"aspect": "the_answers_given_are_right",
+         "method": "answer_against_the_maths_engine",
+         "status": "fail" if report.wrong_answers else "pass",
+         "score": 0.0 if report.wrong_answers else 1.0,
+         "comment": (f"{len(report.wrong_answers)} answer(s) the maths engine "
+                     f"disagrees with"
+                     if report.wrong_answers else
+                     "every checkable answer agrees with the maths engine")},
         {"aspect": "instructions_fulfilled", "method": "written_vs_asked",
          "status": "pass" if report.written == report.total else "fail",
          "score": round(report.written / report.total, 4) if report.total else 1.0,
@@ -402,6 +467,22 @@ def gate_of(report: "MaterialReport") -> dict[str, Any]:
             f"discussion and invents the learners' answers. This is a page they "
             f"read on their own — cut the questions to the room and the replies "
             f"nobody gave."
+        )
+    # Named before anything about length or register: a wrong marking key is
+    # taught to every learner who marks their own work against it, and an
+    # unanswered question becomes an unanswerable item on a paper.
+    for item in report.wrong_answers[:4]:
+        actions.append(
+            f"Lesson {item.get('lesson')}: the answer given for \""
+            f"{item.get('question', '')}\" is {item.get('given')}, and the "
+            f"maths engine makes it {item.get('engine')}. Work it again."
+        )
+    for item in report.unanswered[:4]:
+        actions.append(
+            f"Lesson {item.get('lesson')} sets {item.get('asked')} question(s) "
+            f"and answers {item.get('answered')} of them. Put every question in "
+            f"`exercises` with its answer — starting with \""
+            f"{item.get('first_unanswered', '')}\"."
         )
     for item in report.unexercised[:3]:
         actions.append(
@@ -547,6 +628,14 @@ def check(material: dict[str, Any], plan: Plan, grade: str = "",
             report.miscast.append(finding.to_dict())
     except Exception as exc:  # noqa: BLE001
         logger.warning("Could not check the worked examples: %s", exc)
+
+    # Anything the material SETS, it must answer — and the answers it gives
+    # are checked. These notes are read by machine to build question papers, so
+    # an unanswered question becomes an unanswerable item on a paper somebody
+    # sits, and a wrong answer becomes a wrong marking key.
+    for piece in pieces:
+        if isinstance(piece, dict):
+            _check_exercises(piece, report)
 
     by_key = {}
     for piece in pieces:
