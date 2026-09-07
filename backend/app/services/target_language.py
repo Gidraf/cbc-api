@@ -89,6 +89,20 @@ def for_subject(subject: str) -> TargetLanguage | None:
     return None
 
 
+# A signed language has no script, so "write out the song" is an instruction
+# nobody can follow. Seeded because the description of a sign is a thing a KSL
+# teacher would correct, and correcting it should not need a deploy.
+_SIGNED_BLOCK = """=== THIS LEARNING AREA IS A LANGUAGE, AND IT IS SIGNED ===
+{{ language }} has no written script. Do not 'write out' a sign.
+Every sign the learner produces is described so a teacher can make it: the handshape, where on the body it is made, how it moves, and the facial expression that carries the grammar. Then its meaning.
+Shape: {{ example }}
+"""
+
+
+def seed_prompts() -> dict[str, str]:
+    return {"language-signed": _SIGNED_BLOCK}
+
+
 def block_for(subject: str) -> str:
     """The instruction to put in a prompt, or "" for a non-language area."""
     language = for_subject(subject)
@@ -96,14 +110,10 @@ def block_for(subject: str) -> str:
         return ""
 
     if not language.pattern and "signed" in language.script:
-        return (
-            "=== THIS LEARNING AREA IS A LANGUAGE, AND IT IS SIGNED ===\n"
-            f"{language.name} has no written script. Do not 'write out' a sign.\n"
-            "Every sign the learner produces is described so a teacher can make "
-            "it: the handshape, where on the body it is made, how it moves, and "
-            "the facial expression that carries the grammar. Then its meaning.\n"
-            f"Shape: {language.example}\n"
-        )
+        from .prompt_store import render
+
+        return render("language-signed", _SIGNED_BLOCK,
+                      language=language.name, example=language.example)
 
     return "\n".join([
         "=== THIS LEARNING AREA IS A LANGUAGE. SCRIPT IT IN THAT LANGUAGE ===",

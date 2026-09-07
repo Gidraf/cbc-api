@@ -3146,3 +3146,80 @@ export function useStagePolicies() {
     }),
   };
 }
+
+/**
+ * What of a KICD design the questions actually cover, element by element.
+ *
+ * Production coverage counts what was made. This names what is MISSING, which
+ * is the only version of the number somebody selling the content can act on.
+ */
+export type DesignCoverageElement = {
+  kind: string; ref: string; text: string; covered: boolean;
+  covered_by: string[]; count: number; how: string;
+};
+export type DesignCoverageDimension = {
+  name: string; stated: boolean; status: "covered" | "partial" | "not_stated";
+  total: number; covered: number; percent: number; weight: number; note: string;
+  gaps: DesignCoverageElement[]; elements: DesignCoverageElement[];
+};
+export type DesignCoverage = {
+  grade: string; subject: string; percent: number; sub_strands: number;
+  gap_count: number;
+  by_dimension: Array<{
+    name: string; weight: number; sub_strands_stating_it: number;
+    total: number; covered: number; percent: number; status: string;
+  }>;
+  worst: Array<{
+    sub_strand: string; strand: string; percent: number; gaps: number;
+    questions: number; worst_dimension: string;
+  }>;
+  detail: Array<{
+    grade: string; subject: string; strand: string; sub_strand: string;
+    lesson_hours: string; questions: number; percent: number; gap_count: number;
+    dimensions: DesignCoverageDimension[];
+  }>;
+};
+
+export function useDesignCoverage(v: {
+  grade: string; subject: string; strand?: string; sub_strand?: string;
+  status?: string;
+}) {
+  const api = useApi();
+  return useQuery({
+    queryKey: ["design-coverage", v.grade, v.subject, v.strand || "",
+               v.sub_strand || "", v.status || ""],
+    enabled: Boolean(v.grade && v.subject),
+    queryFn: () =>
+      api<DesignCoverage>(
+        `/api/v1/curriculum/factory/design-coverage?grade=${encodeURIComponent(v.grade)}` +
+          `&subject=${encodeURIComponent(v.subject)}` +
+          (v.strand ? `&strand=${encodeURIComponent(v.strand)}` : "") +
+          (v.sub_strand ? `&sub_strand=${encodeURIComponent(v.sub_strand)}` : "") +
+          (v.status ? `&status=${encodeURIComponent(v.status)}` : ""),
+      ),
+  });
+}
+
+/** Every sub-strand's extracted demand profile, for a scope. */
+export function useDemandProfiles(v: { grade: string; subject: string }) {
+  const api = useApi();
+  return useQuery({
+    queryKey: ["demand-profiles", v.grade, v.subject],
+    enabled: Boolean(v.grade || v.subject),
+    queryFn: () =>
+      api<{
+        count: number;
+        profiles: Array<{
+          grade: string; subject: string; strand: string; sub_strand: string;
+          lesson_hours: string; top: number; top_name: string; distinct: number;
+          mix: Array<{ rank: number; share: number; name: string }>;
+          operations: number; kinds: number; depth: number; numeric: boolean;
+          exemplar_question: string; exemplar_answer: string; marks: string;
+          because: string; design_quote: string;
+        }>;
+      }>(
+        `/api/v1/curriculum/factory/demand-profiles?grade=${encodeURIComponent(v.grade)}` +
+          `&subject=${encodeURIComponent(v.subject)}`,
+      ),
+  });
+}

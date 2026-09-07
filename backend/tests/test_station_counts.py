@@ -8,6 +8,8 @@ felt like.
 """
 from __future__ import annotations
 
+from app.services.langfuse_seed import SEED_PROMPT_BLOCKS
+
 import inspect
 from pathlib import Path
 
@@ -42,7 +44,11 @@ def test_the_questions_station_reads_the_same_count() -> None:
 def test_the_visual_count_reaches_the_prompt_not_only_the_template() -> None:
     """A template variable the Langfuse prompt does not reference silently
     does nothing, which is what `min_visuals` did for its whole life."""
-    source = inspect.getsource(curriculum.factory_plan_visuals)
+    # The instruction text moved into the prompt store; the route
+    # renders it. Checking both is checking that the rule exists AND
+    # still reaches the station that needs it.
+    source = (inspect.getsource(curriculum.factory_plan_visuals)
+              + SEED_PROMPT_BLOCKS["substrand-notes-context"])
 
     assert "PRODUCE AT LEAST" in source
     assert "min_visuals" in source
@@ -52,7 +58,11 @@ def test_the_visual_count_reaches_the_prompt_not_only_the_template() -> None:
 def test_practicals_got_the_same_control() -> None:
     assert "min_activities" in curriculum.FactoryPlanActivitiesRequest.model_fields
 
-    source = inspect.getsource(curriculum.factory_plan_activities)
+    # The instruction text moved into the prompt store; the route
+    # renders it. Checking both is checking that the rule exists AND
+    # still reaches the station that needs it.
+    source = (inspect.getsource(curriculum.factory_plan_activities)
+              + SEED_PROMPT_BLOCKS["notes-plan-context"])
     assert "PRODUCE AT LEAST" in source
     assert "min_activities" in source
 

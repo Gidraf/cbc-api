@@ -255,3 +255,61 @@ def test_a_refused_profile_does_not_fail_the_substrand_run() -> None:
     body = inspect.getsource(curriculum._profile_substrands)
     assert "except Exception" in body
     assert "refused.append(" in body
+
+
+# ── the batch is sized by the matrix ────────────────────────────────────────
+
+
+def test_a_batch_is_split_across_the_rungs_by_number() -> None:
+    """"Spread across the ladder" is advice. "Four at understand, three at
+    apply, three at analyse" is an instruction, and it is the instruction the
+    gate then measures."""
+    plan = dp.plan_for(10, "grade-9", None)
+
+    assert sum(n for _rank, n in plan) == 10
+    assert len(plan) >= 3
+
+
+def test_the_parts_always_add_up_to_the_batch() -> None:
+    """Rounding each share on its own gives 9 or 11 questions for a batch of
+    10, and the batch count is the one number the operator actually set."""
+    for count in (1, 3, 7, 10, 47, 250, 500):
+        assert sum(n for _r, n in dp.plan_for(count, "grade-9", None)) == count
+
+
+def test_the_sub_strands_own_mix_is_preferred_over_an_even_spread() -> None:
+    profile, _ = _validate(mix=[{"rank": 2, "share": 0.5},
+                                {"rank": 3, "share": 0.2},
+                                {"rank": 4, "share": 0.3}])
+    plan = dict(dp.plan_for(10, "grade-9", profile))
+
+    assert plan == {2: 5, 3: 2, 4: 3}
+
+
+def test_the_youngest_get_no_batch_plan() -> None:
+    assert dp.plan_for(10, "grade-pp1", None) == []
+
+
+def test_nothing_is_planned_for_a_batch_of_none() -> None:
+    assert dp.plan_for(0, "grade-9", None) == []
+
+
+def test_the_plan_reaches_the_prompt_with_the_verbs_to_use() -> None:
+    block = dp.for_prompt("grade-9", "Mathematics", "Numbers", "Integers",
+                          count=10, lesson_hours="6 lessons")
+
+    assert "WHAT THIS BATCH OF 10 MUST CONTAIN" in block
+    assert "at rung 4 (analyse)" in block
+    assert "6 lessons" in block
+    assert "analyze" not in block, "recognised, never suggested"
+
+
+def test_the_question_station_passes_its_batch_count() -> None:
+    """Otherwise the plan is computed for a batch nobody asked for."""
+    import inspect
+
+    from app.routes import questions
+
+    source = inspect.getsource(questions)
+    assert "count=payload.batch_count" in source
+    assert "lesson_hours=str((notes_obj or {}).get(\"allocated_hours\")" in source

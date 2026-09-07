@@ -34,6 +34,20 @@ STAGING_LABELS = ["latest", "staging", "dev"]
 # the behaviour a failed deploy should have.
 PRODUCTION_LABELS = ["production", "prod"]
 
+# Modules that hold prompt text of their own and expose `seed_prompts()`.
+# Order is not significant; names must not collide, and there is a test.
+PUBLISHING_MODULES: tuple[str, ...] = (
+    "level_register",          # who the learner is, and who reads the guide
+    "faith_scope",             # what may be pictured, per faith area
+    "prompt_fragments",        # one domain block per subject, plus notation
+    "content_type_classifier", # the profile agent's role
+    "review_layers",           # two reviewer rules
+    "target_language",         # how a language area is written
+    "citation_evidence",       # what a reviewer may conclude about citations
+    "command_words",           # the demand ladder, as the gate measures it
+    "demand_profile",          # this sub-strand's own demand, as read
+)
+
 
 @dataclass(slots=True)
 class SyncReport:
@@ -124,37 +138,15 @@ def _all_prompts() -> dict[str, str]:
         if foldered:
             prompts[foldered] = text
 
-    # Who the learner is at each level, and what the teacher reading the guide
-    # can be assumed to know. Both are professional judgements a head of
-    # department may want to correct — "you cannot assume a Grade 7 teacher can
-    # run an investigation" is not a code change — and both needed a deploy.
-    from .level_register import seed_prompts as register_seed_prompts
+    # Every module that publishes prompt text of its own. A module is added
+    # here once; the alternative was an import and an update() per module in
+    # this function, and a module whose `seed_prompts` nobody remembered to
+    # wire up published nothing while looking exactly like one that did.
+    from importlib import import_module
 
-    prompts.update(register_seed_prompts())
-
-    # Each domain fragment as its own prompt, under `fragment/<name>`.
-    # Education is wide, and a prompt that must serve every subject is a prompt
-    # nobody improves: change the paragraph about balancing equations and you
-    # have edited the prompt that writes a PP1 singing lesson. Separate, small
-    # and individually editable is the only way somebody who knows chemistry
-    # will touch the chemistry.
-    # What may be pictured in each faith area. The most community-sensitive
-    # text there is, and the one an engineer is least qualified to write.
-    from .faith_scope import seed_prompts as faith_seed_prompts
-
-    prompts.update(faith_seed_prompts())
-
-    # Instruction text that lives beside the code that assembles it, seeded so
-    # the WORDS can be improved without a deploy while the assembly stays put.
-    from .content_type_classifier import seed_prompts as ct_seed_prompts
-    from .review_layers import seed_prompts as review_seed_prompts
-
-    prompts.update(ct_seed_prompts())
-    prompts.update(review_seed_prompts())
-
-    from .prompt_fragments import seed_prompts
-
-    prompts.update(seed_prompts())
+    for module_name in PUBLISHING_MODULES:
+        module = import_module(f".{module_name}", __package__)
+        prompts.update(module.seed_prompts())
     return prompts
 
 

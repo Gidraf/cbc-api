@@ -117,16 +117,27 @@ def _instruction_literals(root: pathlib.Path) -> list[str]:
                     and isinstance(body[0].value.value, str):
                 docs.add(id(body[0].value))
         for node in ast.walk(tree):
-            if not isinstance(node, ast.Constant) or not isinstance(node.value, str):
+            # An F-STRING is measured whole. This is where thirteen prompts
+            # hid, including the 6,000-character directive that generates every
+            # question: an f-string is a JoinedStr of many short Constants, so
+            # a 6,000-character instruction built from forty 90-character
+            # pieces passed a scan that measured each piece on its own.
+            if isinstance(node, ast.JoinedStr):
+                text = "".join(v.value for v in node.values
+                               if isinstance(v, ast.Constant))
+            elif isinstance(node, ast.Constant) and isinstance(node.value, str) \
+                    and id(node) not in docs:
+                text = node.value
+            else:
                 continue
-            if id(node) in docs or len(node.value) <= 200:
+            if len(text) <= 200:
                 continue
             # Seeded text is published text, whatever file it is written in.
-            if node.value.strip() in published:
+            if text.strip() in published:
                 continue
-            if instruction.search(node.value):
+            if instruction.search(text):
                 found.append(f"{path.relative_to(APP.parent)}:{node.lineno}  "
-                             f"{node.value[:60]!r}")
+                             f"{text[:60]!r}")
     return found
 
 

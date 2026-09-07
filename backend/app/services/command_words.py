@@ -302,19 +302,32 @@ def block_for(grade: str | None) -> str:
     floor = floor_for(grade)
     if floor is None:
         return ""
+    from .prompt_store import render
+
     lines = [f"  {r.rank}. {r.name.upper()} — {', '.join(_suggestable(r, 6))}"
              f"\n     asks for {r.asks_for}" for r in LADDER]
     want = _BY_RANK[floor.top]
-    return (
-        "=== WHAT THE TASK ASKS FOR ===\n"
-        "Every question, activity and experiment is ranked by its command "
-        "word:\n"
-        + "\n".join(lines)
-        + f"\n\nAT THIS LEVEL at least one task must reach rung {floor.top} "
-        f"({want.name}), and the set must spread across at least "
-        f"{floor.distinct} rung"
-        f"{'' if floor.distinct == 1 else 's'}.\n"
-        f"{floor.because[0].upper()}{floor.because[1:]}.\n"
-        "Keep the easy openers — a set needs them. What is wrong is a set "
-        "whose HARDEST task never leaves the bottom of the ladder."
+    return render(
+        "command-ladder", _LADDER_BLOCK,
+        ladder="\n".join(lines),
+        top=floor.top, top_name=want.name,
+        distinct=floor.distinct,
+        rungs="rung" if floor.distinct == 1 else "rungs",
+        because=f"{floor.because[0].upper()}{floor.because[1:]}",
     )
+
+
+# The ladder itself is DATA — the rungs and their verbs are what the gate
+# measures, so they are rendered rather than retyped here. What is editable is
+# the instruction wrapped around them.
+_LADDER_BLOCK = """=== WHAT THE TASK ASKS FOR ===
+Every question, activity and experiment is ranked by its command word:
+{{ ladder }}
+
+AT THIS LEVEL at least one task must reach rung {{ top }} ({{ top_name }}), and the set must spread across at least {{ distinct }} {{ rungs }}.
+{{ because }}.
+Keep the easy openers — a set needs them. What is wrong is a set whose HARDEST task never leaves the bottom of the ladder."""
+
+
+def seed_prompts() -> dict[str, str]:
+    return {"command-ladder": _LADDER_BLOCK}

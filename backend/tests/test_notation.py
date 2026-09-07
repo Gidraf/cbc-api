@@ -8,6 +8,8 @@ answer written three ways, and a scheme expecting one fails the other two.
 """
 from __future__ import annotations
 
+from app.services.langfuse_seed import SEED_PROMPT_BLOCKS
+
 import pathlib
 
 from app.services import notation
@@ -186,9 +188,14 @@ def test_the_geometry_spec_reaches_the_station_that_draws_figures():
 
     from app.routes import curriculum
 
-    source = inspect.getsource(curriculum.factory_plan_visuals)
+    # The instruction text moved into the prompt store; the route
+    # renders it. Checking both is checking that the rule exists AND
+    # still reaches the station that needs it.
+    source = (inspect.getsource(curriculum.factory_plan_visuals)
+              + SEED_PROMPT_BLOCKS["substrand-notes-context"])
     assert "notation.geometry_block(payload.subject)" in source
-    assert "{geometry_spec}" in source
+    assert "geometry_spec=geometry_spec," in source
+    assert "{{ geometry_spec }}" in source
 
 
 def test_every_seeded_prompt_that_states_the_register_has_a_slot_for_notation():

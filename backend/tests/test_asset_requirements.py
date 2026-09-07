@@ -11,6 +11,8 @@ actually asked for was guaranteed to exist.
 """
 from __future__ import annotations
 
+from app.services.langfuse_seed import SEED_PROMPT_BLOCKS
+
 import pathlib
 
 from app.services import asset_requirements as ar
@@ -155,9 +157,15 @@ def test_the_visuals_station_is_given_what_the_plan_asked_for():
 
     from app.routes import curriculum
 
-    source = inspect.getsource(curriculum.factory_plan_visuals)
+    # The instruction text moved into the prompt store; the route
+    # renders it. Checking both is checking that the rule exists AND
+    # still reaches the station that needs it.
+    source = (inspect.getsource(curriculum.factory_plan_visuals)
+              + SEED_PROMPT_BLOCKS["substrand-notes-context"])
     assert "asset_requirements.read(" in source
-    assert "{asset_brief}" in source
+    # Bound as a named slot now, and named in the template it fills.
+    assert "asset_brief=asset_brief," in source
+    assert "{{ asset_brief }}" in source
 
 
 def test_a_lesson_the_plan_asks_nothing_for_still_gets_visuals():
@@ -166,7 +174,11 @@ def test_a_lesson_the_plan_asks_nothing_for_still_gets_visuals():
 
     from app.routes import curriculum
 
-    source = inspect.getsource(curriculum.factory_plan_visuals)
+    # The instruction text moved into the prompt store; the route
+    # renders it. Checking both is checking that the rule exists AND
+    # still reaches the station that needs it.
+    source = (inspect.getsource(curriculum.factory_plan_visuals)
+              + SEED_PROMPT_BLOCKS["substrand-notes-context"])
     assert "WHERE THE PLAN ASKS FOR NOTHING" in source
 
 

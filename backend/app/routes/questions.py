@@ -9,12 +9,14 @@ from fastapi.responses import HTMLResponse, StreamingResponse
 from pydantic import BaseModel
 
 from ..errors import raise_api_error
-from ..services import demand_profile, notation, prompt_fragments
+from ..services import (demand_profile, notation, prompt_fragments,
+                        prompt_store)
 from ..services.auth import AuthContext, require_roles
 from ..services.level_register import language_block, register_block, teacher_block
 from ..services.faith_scope import prompt_block as faith_prompt_block
 from ..services.grade_scope import notes_for as grade_scope_notes
 from ..services.grade_order import grade_label, grade_level, grade_ordinal, normalize_grade
+from ..services.langfuse_seed import SEED_PROMPT_BLOCKS
 from ..services.question_dna import question_dna_service
 from ..services import diagram_svg
 
@@ -669,19 +671,14 @@ def factory_generate_questions_batch(
                 break
         if target_diag_obj:
             parent_anchor_directive = (
-                f"\n=== 🎯 TARGET PARENT ANCHOR: SPECIFIC VECTOR DIAGRAM (MANDATORY FOCUS) ===\n"
-                f"Asset ID: {target_diag_obj.get('asset_id')}\n"
-                f"Title: {target_diag_obj.get('title')}\n"
-                f"Hour Module: {target_diag_obj.get('hour_title', 'All')}\n"
-                f"Micro-Concept: {target_diag_obj.get('micro_concept')}\n"
-                f"Visual Specification: {target_diag_obj.get('vivid_prompt') or target_diag_obj.get('description')}\n"
-                # A truncated slice of raw SVG cannot tell a model which part_id
-                # to name. The parts catalogue can, and is far shorter.
-                f"{describe_scene_for_prompt(target_diag_obj.get('scene_document') or {})}\n"
-                f"CRITICAL RULE: ALL GENERATED QUESTIONS MUST DIRECTLY TEST THIS ATTACHED DIAGRAM ({target_diag_obj.get('title')}). "
-                f"Set 'diagram_ref': '{target_diag_obj.get('asset_id')}'. Include sub-questions asking to label specific parts, explain flow arrows, or deduce conclusions from this exact graphic.\n"
-                f"To ask about specific parts, set 'diagram_part_ids' to part_id values from the catalogue above — "
-                f"never invent one. To ask about a section only, set 'diagram_region_id' to a region_id listed above.\n"
+                prompt_store.render(
+                    "anchor-diagram", SEED_PROMPT_BLOCKS["anchor-diagram"],
+                    describe_scene_for_prompt_target_diag_obj_ge=describe_scene_for_prompt(target_diag_obj.get('scene_document') or {}),
+                    target_diag_obj_get_asset_id=target_diag_obj.get('asset_id'),
+                    target_diag_obj_get_hour_title_all=target_diag_obj.get('hour_title', 'All'),
+                    target_diag_obj_get_micro_concept=target_diag_obj.get('micro_concept'),
+                    target_diag_obj_get_title=target_diag_obj.get('title'),
+                    target_diag_obj_get_vivid_prompt_or_target_d=target_diag_obj.get('vivid_prompt') or target_diag_obj.get('description'))
             )
 
     elif payload.target_experiment_id:
@@ -691,16 +688,15 @@ def factory_generate_questions_batch(
                 break
         if target_exp_obj:
             parent_anchor_directive = (
-                f"\n=== 🧪 TARGET PARENT ANCHOR: SPECIFIC PRACTICAL EXPERIMENT / CSL PROTOCOL ===\n"
-                f"Activity ID: {target_exp_obj.get('activity_id')}\n"
-                f"Title: {target_exp_obj.get('activity_name')}\n"
-                f"Hour Module: {target_exp_obj.get('hour_title', 'All')}\n"
-                f"Objective: {target_exp_obj.get('objective')}\n"
-                f"Apparatus & Materials: {target_exp_obj.get('materials')}\n"
-                f"Procedure Steps: {target_exp_obj.get('procedure_steps')}\n"
-                f"Safety Protocols: {target_exp_obj.get('safety_hazards_to_check')}\n"
-                f"CRITICAL RULE: ALL GENERATED QUESTIONS MUST DIRECTLY TEST THIS PRACTICAL INVESTIGATION. "
-                f"Provide empirical observed data tables and multi-part questions (a)-(d) evaluating data analysis, scientific mechanisms, and farmer remediation recommendations.\n"
+                prompt_store.render(
+                    "anchor-experiment", SEED_PROMPT_BLOCKS["anchor-experiment"],
+                    target_exp_obj_get_activity_id=target_exp_obj.get('activity_id'),
+                    target_exp_obj_get_activity_name=target_exp_obj.get('activity_name'),
+                    target_exp_obj_get_hour_title_all=target_exp_obj.get('hour_title', 'All'),
+                    target_exp_obj_get_materials=target_exp_obj.get('materials'),
+                    target_exp_obj_get_objective=target_exp_obj.get('objective'),
+                    target_exp_obj_get_procedure_steps=target_exp_obj.get('procedure_steps'),
+                    target_exp_obj_get_safety_hazards_to_check=target_exp_obj.get('safety_hazards_to_check'))
             )
 
     elif payload.target_hour:
@@ -724,13 +720,13 @@ def factory_generate_questions_batch(
             h_title = selected_mod.get("hour_title") or selected_mod.get("heading") or f"Hour {hour_idx}"
             h_body = selected_mod.get("full_lecture_notes") or selected_mod.get("detailed_exposition") or selected_mod.get("content") or ""
             parent_anchor_directive = (
-                f"\n=== ⏰ TARGET PARENT ANCHOR: LESSON HOUR MODULE {hour_idx} ({h_title}) ===\n"
-                f"Hour Title: {h_title}\n"
-                f"Hour Lesson Notes Content:\n{h_body[:2500]}\n\n"
-                f"Hour {hour_idx} Visual Assets / Diagrams Available:\n{h_diags_str or 'None'}\n\n"
-                f"Hour {hour_idx} Practical Activities / Lab Experiments Available:\n{h_acts_str or 'None'}\n\n"
-                f"CRITICAL RULE: ALL GENERATED QUESTIONS MUST DIRECTLY TEST THE CONCEPTS, DIAGRAMS, AND EXPERIMENTS TAUGHT IN THIS SPECIFIC HOUR {hour_idx}.\n"
-                f"If testing a diagram or experiment from this hour, set 'diagram_ref' to that asset's ID and evaluate its specific mechanisms and data.\n"
+                prompt_store.render(
+                    "anchor-hour-module", SEED_PROMPT_BLOCKS["anchor-hour-module"],
+                    h_acts_str_or_none=h_acts_str or 'None',
+                    h_body_2500=h_body[:2500],
+                    h_diags_str_or_none=h_diags_str or 'None',
+                    h_title=h_title,
+                    hour_idx=hour_idx)
             )
 
     # 3. Assemble Langfuse Context
@@ -781,7 +777,8 @@ def factory_generate_questions_batch(
             # worked task at the top of the range.
             "demand_profile": demand_profile.for_prompt(
                 payload.grade, payload.subject, payload.strand,
-                payload.sub_strand),
+                payload.sub_strand, count=payload.batch_count,
+                lesson_hours=str((notes_obj or {}).get("allocated_hours") or "")),
             "faith_scope": faith_prompt_block(payload.subject),
             "content_type_directives": ct_profile.format_for_prompt(),
             "notes_content": notes_text[:3000] or payload.sub_strand,
@@ -797,84 +794,28 @@ def factory_generate_questions_batch(
     context.messages.append({
         "role": "user",
         "content": (
-            f"{ct_profile.format_for_prompt()}\n\n"
-            f"{dossier.formatted_context}\n\n"
-            f"=== 🎯 HIGH-THROUGHPUT QUESTIONS FACTORY ASSESSMENT DIRECTIVE ===\n"
-            f"Subject: {payload.subject} ({payload.grade}) [Content Type: {ct_profile.content_type.upper()}]\n"
-            f"Strand: {payload.strand} ➔ Sub-strand: {payload.sub_strand}\n"
-            f"Target Batch Count: EXACTLY {payload.batch_count} DIVERSE ASSESSMENT ITEMS\n"
-            f"Mandated Question Typologies: {types_str}\n"
-            f"Cognitive Bloom Progression: {blooms_str}\n"
-            f"Difficulty Index: {payload.difficulty} (0.10 to 0.99)\n\n"
-            f"{parent_anchor_directive}\n\n"
-            f"=== 📖 GROUND TRUTH KNOWLEDGE BASE (FROM SAVED FOUNDATION LAYERS) ===\n"
-            f"LAYER 1 MASTER LESSON NOTES & CITATIONS:\n{notes_text[:4000]}\n\n"
-            f"LAYER 2 DIAGRAMS & VISUAL REPOSITORIES:\n{diagrams_text[:2000]}\n\n"
-            f"LAYER 3 EXPERIMENTS, LAB PRACTICUMS & SAFETY:\n{experiments_text[:2000]}\n\n"
-            f"CRITICAL ASSESSMENT DESIGN RULES (ZERO HALLUCINATION & FULL DNA):\n"
-            f"1. YOU MUST GENERATE EXACTLY {payload.batch_count} INDEPENDENT, COMPLETE QUESTIONS.\n"
-            f"2. Cover a balanced mix of requested typologies with maximum academic rigor:\n"
-            f"   - 'multiple_choice': 4 plausible distractors, correct flag, and deep distractor diagnostic rationale for every option.\n"
-            f"   - 'diagram_based': Questions directly referencing apparatus, anatomical/physical parts, or flowcharts from Layer 2. Set 'diagram_ref' to the matching diagram asset ID or title. Provide structured questions that test labeling, interpretation of flow arrows, functional roles of components, and troubleshooting abnormal readings.\n"
-            f"   - 'experiment_based': MUST NOT be generic or superficial (e.g., NEVER just say 'evaluate your experiment').\n"
-            f"     MUST formulate an AUTHENTIC, RIGOROUS LABORATORY PRACTICUM / FIELDWORK INVESTIGATION:\n"
-            f"     * Explicit Experimental Context & Setup: Describe the full investigation as Kenyan learners would actually conduct it, situated in {ct_profile.scenario_seed()}. Draw the apparatus, materials and procedure from this subject's own practice as described in the content-type directives above.\n"
-            f"     * Practical Protocol & Empirical Data Table: Provide step-by-step apparatus setup (e.g., 10g dried soil, 50ml distilled water, Universal Indicator / calibrated pH meter, 0.1M HCl titrant) and an observed readings table (initial pH, drops of acid added, final pH, buffer capacity, precipitation).\n"
-            f"     * Structured Multi-Part Inquiries ('structured_parts'):\n"
-            f"       - Part (a): Data Analysis & Interpretation (evaluate differences and calculate values from observed data).\n"
-            f"       - Part (b): Scientific Mechanisms & Principles (explain chemical buffering, ion exchange, or biological reactions).\n"
-            f"       - Part (c): Application & Community Relevance (concrete recommendations an informed practitioner in this subject would make for a Kenyan community, using the verified subject data supplied above).\n"
-            f"       - Part (d): Experimental Controls & Safety Protocols (controlled variables, safety PPE precautions for handling reagents, and sources of experimental error).\n"
-            f"     * Exhaustive Model Answer & Scoring Keys: Provide a multi-paragraph model answer covering all scenarios thoroughly, and a detailed point-by-point marking scheme with M1, A1, B1 marks.\n"
-            f"   - 'structured_scenario': Real-world scenario-based problems set in authentic Kenyan counties with sub-parts (a), (b), (c) and marks per part.\n"
-            f"   - 'quantitative_calculation': Mathematical / statistical calculations (e.g. GDP contribution percentage, agricultural lime buffer tonnage, soil loss equation) with full formula steps.\n"
-            f"   - 'extended_essay': Synthesis, environmental critique, or ASTGS 2019-2029 policy evaluation.\n"
-            f"   - 'assertion_reason': Statement (A) and Reason (R) causality diagnostics.\n"
-            f"3. IN-TEXT RESEARCH CITATIONS: Every question's 'provenance_citation' MUST cite a source from the Permitted Citation Sources list in the directives above. Do not cite sources belonging to other subjects.\n"
-            f"4. Include comprehensive Step-by-Step 'marking_scheme' and 4-Level 'kicd_rubric' (Exceeding, Meeting, Approaching, Below Expectation) for every item.\n\n"
-            f"RETURN JSON FORMAT MATCHING:\n"
-            f"{{\n"
-            f'  "sub_strand": "{payload.sub_strand}",\n'
-            f'  "batch_count": {payload.batch_count},\n'
-            f'  "questions": [\n'
-            f'    {{\n'
-            f'      "question_id": "Q1",\n'
-            f'      "universal_id": "{payload.grade[:3].upper()}-{payload.subject[:4].upper()}-01",\n'
-            f'      "question_type": "multiple_choice | diagram_based | experiment_based | structured_scenario | quantitative_calculation | extended_essay | assertion_reason",\n'
-            f'      "bloom_level": "Recall | Understanding | Application | Analysis | Evaluation | Creation",\n'
-            f'      "difficulty_index": {payload.difficulty},\n'
-            f'      "max_marks": 5,\n'
-            f'      "estimated_time_mins": 5,\n'
-            f'      "micro_concept": "<specific sub-topic or competency tested>",\n'
-            f'      "target_slo": "<specific learning outcome>",\n'
-            f'      "stimulus_context": "<authentic Kenyan scenario appropriate to THIS subject, with any data table the question needs>",\n'
-            f'      "question_text": "<clear, rigorous question prompt detailing instructions and inquiry>",\n'
-            f'      "diagram_ref": "diag_01",\n'
-            f'      "options": [\n'
-            f'        {{"id": "A", "text": "...", "is_correct": false, "distractor_rationale": "Why plausible but incorrect..."}},\n'
-            f'        {{"id": "B", "text": "...", "is_correct": true, "distractor_rationale": "Correct answer mechanism..."}},\n'
-            f'        {{"id": "C", "text": "...", "is_correct": false, "distractor_rationale": "..."}},\n'
-            f'        {{"id": "D", "text": "...", "is_correct": false, "distractor_rationale": "..."}}\n'
-            f'      ],\n'
-            f'      "correct_answer": "B",\n'
-            f'      "structured_parts": [\n'
-            f'        {{"part_id": "(a)", "sub_question": "...", "marks": 2, "model_answer": "..."}},\n'
-            f'        {{"part_id": "(b)", "sub_question": "...", "marks": 3, "model_answer": "..."}},\n'
-            f'        {{"part_id": "(c)", "sub_question": "...", "marks": 2, "model_answer": "..."}}\n'
-            f'      ],\n'
-            f'      "model_answer": "<exhaustive multi-paragraph model response with scientific explanation covering all scenarios>",\n'
-            f'      "marking_scheme": "<step-by-step scoring keys: M1 for method, A1 for accuracy, B1 for explanation>",\n'
-            f'      "kicd_rubric": {{\n'
-            f'        "exceeding": "Demonstrates exhaustive mastery and links concept to macro-environmental systems.",\n'
-            f'        "meeting": "Accurately demonstrates expected competence with correct technical explanations.",\n'
-            f'        "approaching": "Partially demonstrates concept with minor inaccuracies or incomplete rationale.",\n'
-            f'        "below": "Fails to demonstrate concept and requires structured instructional remediation."\n'
-            f'      }},\n'
-            f'      "provenance_citation": "{ct_profile.example_citation()} — Linked to Layer 1 Lesson Notes"\n'
-            f'    }}\n'
-            f'  ]\n'
-            f"}}\n\n"
-            f"ADDITIONAL DIRECTIVES: {payload.custom_instructions}"
+            prompt_store.render(
+                "questions-factory-directive", SEED_PROMPT_BLOCKS["questions-factory-directive"],
+                batch_count=payload.batch_count,
+                blooms_str=blooms_str,
+                ct_profile_content_type_upper=ct_profile.content_type.upper(),
+                ct_profile_example_citation=ct_profile.example_citation(),
+                ct_profile_format_for_prompt=ct_profile.format_for_prompt(),
+                ct_profile_scenario_seed=ct_profile.scenario_seed(),
+                custom_instructions=payload.custom_instructions,
+                diagrams_text_2000=diagrams_text[:2000],
+                difficulty=payload.difficulty,
+                dossier_formatted_context=dossier.formatted_context,
+                experiments_text_2000=experiments_text[:2000],
+                grade=payload.grade,
+                grade_3_upper=payload.grade[:3].upper(),
+                notes_text_4000=notes_text[:4000],
+                parent_anchor_directive=parent_anchor_directive,
+                strand=payload.strand,
+                sub_strand=payload.sub_strand,
+                subject=payload.subject,
+                subject_4_upper=payload.subject[:4].upper(),
+                types_str=types_str)
         ),
     })
 

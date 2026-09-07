@@ -1,6 +1,7 @@
 import React from "react";
 import { useSearchParams } from "react-router-dom";
 import { DiagramLibrary } from "../ui/DiagramLibrary";
+import { DesignCoverage } from "../ui/DesignCoverage";
 import { QuestionPipeline } from "../ui/QuestionPipeline";
 import { QuestionStream } from "../ui/QuestionStream";
 import { PromptWorkshop } from "../ui/PromptWorkshop";
@@ -1193,6 +1194,20 @@ export function ContentFactory() {
                       subject={selected.subject}
                       strand={selected.strand}
                       subStrand={selected.report.sub_strand_name}
+                    />
+                  )}
+
+                  {/* And the other half of the same question: not how many
+                      were written, but what of the DESIGN still has nothing
+                      against it. A sub-strand reads 100% produced with three
+                      of its five outcomes never assessed, because ten
+                      questions on outcome one look exactly like ten spread
+                      across five. */}
+                  {station.id === "questions" && selected && (
+                    <DesignCoverage
+                      grade={effectiveGrade}
+                      subject={selected.subject}
+                      strand={selected.strand}
                     />
                   )}
 

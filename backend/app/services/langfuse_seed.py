@@ -2289,6 +2289,492 @@ if __name__ == "__main__":
 # joins already states both, and repeating them puts the same instruction in
 # front of the model twice.
 SEED_PROMPT_BLOCKS: dict[str, str] = {
+    "activity-task-directive": """{{ ct_profile_format_for_prompt }}
+
+{{ dossier_formatted_context }}
+
+=== LAYER 1 & 2 UPSTREAM CONTEXT ===
+Notes: {{ notes_str_1000 }}
+Diagram: {{ diagram_str }}
+
+ACTIVITY & PRACTICAL TASK DIRECTIVE:
+Generate hands-on constructivist tasks, apparatus lists, step-by-step procedures, and safety mitigations matching {{ ct_profile_activity_type }}.
+ADDITIONAL INSTRUCTIONS: {{ custom_instructions }}""",
+    "anchor-experiment": """
+=== 🧪 TARGET PARENT ANCHOR: SPECIFIC PRACTICAL EXPERIMENT / CSL PROTOCOL ===
+Activity ID: {{ target_exp_obj_get_activity_id }}
+Title: {{ target_exp_obj_get_activity_name }}
+Hour Module: {{ target_exp_obj_get_hour_title_all }}
+Objective: {{ target_exp_obj_get_objective }}
+Apparatus & Materials: {{ target_exp_obj_get_materials }}
+Procedure Steps: {{ target_exp_obj_get_procedure_steps }}
+Safety Protocols: {{ target_exp_obj_get_safety_hazards_to_check }}
+CRITICAL RULE: ALL GENERATED QUESTIONS MUST DIRECTLY TEST THIS PRACTICAL INVESTIGATION. Provide empirical observed data tables and multi-part questions (a)-(d) evaluating data analysis, scientific mechanisms, and farmer remediation recommendations.
+""",
+    "anchor-hour-module": """
+=== ⏰ TARGET PARENT ANCHOR: LESSON HOUR MODULE {{ hour_idx }} ({{ h_title }}) ===
+Hour Title: {{ h_title }}
+Hour Lesson Notes Content:
+{{ h_body_2500 }}
+
+Hour {{ hour_idx }} Visual Assets / Diagrams Available:
+{{ h_diags_str_or_none }}
+
+Hour {{ hour_idx }} Practical Activities / Lab Experiments Available:
+{{ h_acts_str_or_none }}
+
+CRITICAL RULE: ALL GENERATED QUESTIONS MUST DIRECTLY TEST THE CONCEPTS, DIAGRAMS, AND EXPERIMENTS TAUGHT IN THIS SPECIFIC HOUR {{ hour_idx }}.
+If testing a diagram or experiment from this hour, set 'diagram_ref' to that asset's ID and evaluate its specific mechanisms and data.
+""",
+    "anchor-diagram": """
+=== 🎯 TARGET PARENT ANCHOR: SPECIFIC VECTOR DIAGRAM (MANDATORY FOCUS) ===
+Asset ID: {{ target_diag_obj_get_asset_id }}
+Title: {{ target_diag_obj_get_title }}
+Hour Module: {{ target_diag_obj_get_hour_title_all }}
+Micro-Concept: {{ target_diag_obj_get_micro_concept }}
+Visual Specification: {{ target_diag_obj_get_vivid_prompt_or_target_d }}
+{{ describe_scene_for_prompt_target_diag_obj_ge }}
+CRITICAL RULE: ALL GENERATED QUESTIONS MUST DIRECTLY TEST THIS ATTACHED DIAGRAM ({{ target_diag_obj_get_title }}). Set 'diagram_ref': '{{ target_diag_obj_get_asset_id }}'. Include sub-questions asking to label specific parts, explain flow arrows, or deduce conclusions from this exact graphic.
+To ask about specific parts, set 'diagram_part_ids' to part_id values from the catalogue above — never invent one. To ask about a section only, set 'diagram_region_id' to a region_id listed above.
+""",
+    "visual-design-directive": """{{ ct_profile_format_for_prompt }}
+
+{{ dossier_formatted_context }}
+
+=== LAYER 1 NOTES CONTEXT ===
+{{ notes_summary_str }}
+
+VECTOR SVG DESIGN DIRECTIVE:
+Generate a professional, high-contrast, responsive SVG vector illustration for '{{ concept_name }}' aligned with {{ ct_profile_diagram_type }}.
+
+STRICT SVG SYNTAX RULES:
+1. Root element MUST be: <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 500" width="100%" height="100%"> ... </svg>
+2. All CSS styles MUST be enclosed inside <defs><style type="text/css"><![CDATA[ ... ]]></style></defs>. NEVER write naked CSS rules directly in the SVG body.
+3. All text MUST be inside <text x="..." y="..." font-family="system-ui, -apple-system, sans-serif" font-size="14" fill="#1e293b" text-anchor="middle">...</text> elements. NEVER write raw text outside of <text> tags.
+4. Use high-contrast modern colors (e.g. #f0fdf4 backgrounds, #16a34a / #0284c7 borders, #0f172a text), rounded corners (rx="8"), clean connector arrows (<line marker-end="url(#arrowhead)"/>), and clear step boxes.
+5. Return a valid JSON object matching:
+{
+  "diagram_id": "diag_01",
+  "diagram_title": "{{ concept_name }}",
+  "diagram_svg": "<svg ...>...</svg>",
+  "accessibility": {"alt_text": "...", "tactile_description": "..."}
+}
+
+ADDITIONAL INSTRUCTIONS: {{ custom_instructions }}""",
+    "activity-refinement": """{{ ct_profile_format_for_prompt }}
+
+{{ dossier_formatted_context }}
+
+{{ specific_hour_notes }}
+
+=== PRACTICAL ACTIVITY REFINEMENT DIRECTIVE ===
+Activity Name: {{ name }} (Hour {{ hour_idx_or_all }})
+Type: {{ item_get_activity_type_laboratory_experiment }}
+Initial Objective: {{ item_get_objective }}
+
+Generate an exhaustive, publication-grade practical lesson module with:
+1. Detailed step-by-step instructions with safety checkpoints specifically aligned with Hour {{ hour_idx_or_all }}
+2. Multi-scene Video Storyboard (scene number, camera shot, visual actions, exact spoken voiceover, on-screen text, AI video prompt)
+3. Vivid Action Image Prompt for realistic instructional photo cards
+4. 4-tier KICD Assessment Rubric
+
+Return JSON matching:
+{
+  "activity_id": "{{ item_get_activity_id_act_01 }}",
+  "activity_name": "{{ name }}",
+  "hour_index": {{ hour_idx_or_1 }},
+  "activity_type": "{{ item_get_activity_type_laboratory_experiment_2 }}",
+  "objective": "...",
+  "materials": ["..."],
+  "procedure_steps": ["1. ...", "2. ..."],
+  "video_storyboard": {
+    "video_title": "...",
+    "target_duration": "90-120s",
+    "overview": "...",
+    "scenes": [
+      { "scene_number": 1, "shot_type": "...", "visual_action": "...", "voiceover_narration": "...", "on_screen_text": "...", "ai_video_prompt": "..." }
+    ]
+  },
+  "visual_action_image_prompt": "...",
+  "safety_hazards_to_check": ["..."],
+  "assessment_rubric": {"exceeding": "...", "meeting": "...", "approaching": "...", "below": "..."},
+  "status": "generated"
+}
+
+ADDITIONAL INSTRUCTIONS: {{ custom_instructions }}""",
+    "photoreal-image-spec": """{{ ct_profile_format_for_prompt }}
+
+{{ dossier_formatted_context }}
+
+{{ specific_hour_notes }}
+
+=== SPECIFICATION FOR PHOTOREALISTIC IMAGE SPECIFICATION ===
+Title: {{ title }} (Hour {{ hour_idx_or_all }})
+Construction Prompt / Scene Description:
+{{ construction_spec_or_vivid_desc }}
+
+AI IMAGE GENERATION PROMPT DIRECTIVE:
+Generate an ultra-detailed, 4K photorealistic prompt for AI image generation models (Imagen 3, Midjourney v6, Flux) depicting authentic Kenyan learners, teachers, crops, tools, and environments specifically illustrating the concept from Hour {{ hour_idx_or_all }}.
+Also create a clean SVG preview schematic illustrating the scene layout.
+
+Return JSON:
+{
+  "diagram_id": "{{ item_get_asset_id_vis_1 }}",
+  "diagram_title": "{{ title }}",
+  "hour_index": {{ hour_idx_or_1 }},
+  "image_prompt": "<ultra-detailed 150-word photorealistic prompt with camera angle, lighting, 8k resolution, Kenyan setting>",
+  "negative_prompt": "blurry, low quality, distorted anatomy, western setting, unrealistic tools",
+  "aspect_ratio": "16:9",
+  "composition_guide": "<camera angle, golden hour lighting, 50mm lens, depth of field>",
+  "diagram_svg": "<svg xmlns=\\"http://www.w3.org/2000/svg\\" viewBox=\\"0 0 800 500\\"><rect width=\\"100%\\" height=\\"100%\\" fill=\\"#0f172a\\"/><text x=\\"400\\" y=\\"250\\" text-anchor=\\"middle\\" font-family=\\"system-ui\\" font-size=\\"18\\" fill=\\"#38bdf8\\">📸 Photorealistic Scene: {{ title }}</text></svg>",
+  "accessibility": {"alt_text": "...", "tactile_description": "..."}
+}
+
+ADDITIONAL INSTRUCTIONS: {{ custom_instructions }}""",
+    "svg-synthesis-brief": """{{ ct_profile_format_for_prompt }}
+
+{{ dossier_formatted_context }}
+
+{{ specific_hour_notes }}
+
+=== STAGE 2: SYNTHESIZE VECTOR SVG ASSET FROM CONSTRUCTION PROMPT ===
+Title: {{ title }} (Hour {{ hour_idx_or_all }})
+Type: {{ asset_type }}
+EXPLICIT CONSTRUCTION BLUEPRINT & SCENE ELEMENTS (MANDATORY TO FOLLOW):
+{{ construction_spec_or_vivid_desc }}
+
+VECTOR SVG CODE DIRECTIVE:
+Generate a crisp, responsive, high-contrast standalone SVG specifically illustrating the concept '{{ title }}' from Hour {{ hour_idx_or_all }}.
+CRITICAL: Follow the exact layout, shapes, leader lines, colors, and text annotations described in the Construction Blueprint above. Draw the thing THIS sub-strand is actually about, at the level of detail its own design asks for. The examples of what to draw belong to the subject's own domain block above, not here: a list of agricultural systems shown to every subject steers a Music lesson toward soil strata. Never fall back to a generic flowchart because the concept is hard to picture — a flowchart of an idea that is not a process teaches nothing.
+
+STRICT RULES:
+1. Root MUST be <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 500" width="100%" height="100%">
+2. All styles enclosed inside <defs><style type="text/css"><![CDATA[ ... ]]></style><marker id="arrowhead" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto"><polygon points="0 0, 10 3.5, 0 7" fill="#0284c7" /></marker></defs>
+3. All text inside <text x="..." y="..." font-family="system-ui, -apple-system, sans-serif" font-size="13" text-anchor="middle" fill="#0f172a">...</text>
+4. Return JSON: { "diagram_id": "{{ item_get_asset_id_vis_1 }}", "diagram_title": "{{ title }}", "hour_index": {{ hour_idx_or_1 }}, "diagram_svg": "<svg...>...</svg>", "accessibility": { "alt_text": "...", "tactile_description": "..." } }
+
+ADDITIONAL INSTRUCTIONS: {{ custom_instructions }}""",
+    "video-storyboard-spec": """{{ ct_profile_format_for_prompt }}
+
+{{ dossier_formatted_context }}
+
+{{ specific_hour_notes }}
+
+=== SPECIFICATION FOR VIDEO SIMULATION STORYBOARD ===
+Title: {{ title }} (Hour {{ hour_idx_or_all }})
+Construction Prompt / Scene Description:
+{{ construction_spec_or_vivid_desc }}
+
+VIDEO SIMULATION SCRIPT DIRECTIVE:
+Generate a multi-scene educational video simulation storyboard (60-90s) detailing the concept progression.
+
+Return JSON:
+{
+  "diagram_id": "{{ item_get_asset_id_vis_1 }}",
+  "diagram_title": "{{ title }}",
+  "hour_index": {{ hour_idx_or_1 }},
+  "video_storyboard": {
+    "video_title": "{{ title }}",
+    "target_duration": "75s",
+    "overview": "...",
+    "scenes": [
+      {"scene_number": 1, "time_range": "0:00-0:15", "shot_type": "Wide Establishing Shot", "visual_action": "...", "voiceover_narration": "...", "on_screen_text": "...", "ai_video_prompt": "..."},
+      {"scene_number": 2, "time_range": "0:15-0:40", "shot_type": "Close-up Action Shot", "visual_action": "...", "voiceover_narration": "...", "on_screen_text": "...", "ai_video_prompt": "..."},
+      {"scene_number": 3, "time_range": "0:40-1:05", "shot_type": "Medium Angle Result", "visual_action": "...", "voiceover_narration": "...", "on_screen_text": "...", "ai_video_prompt": "..."},
+      {"scene_number": 4, "time_range": "1:05-1:15", "shot_type": "Summary Infographic Overlay", "visual_action": "...", "voiceover_narration": "...", "on_screen_text": "...", "ai_video_prompt": "..."}
+    ]
+  },
+  "diagram_svg": "<svg xmlns=\\"http://www.w3.org/2000/svg\\" viewBox=\\"0 0 800 500\\"><rect width=\\"100%\\" height=\\"100%\\" fill=\\"#1e1b4b\\"/><text x=\\"400\\" y=\\"250\\" text-anchor=\\"middle\\" font-family=\\"system-ui\\" font-size=\\"18\\" fill=\\"#c084fc\\">🎥 Video Storyboard: {{ title }}</text></svg>",
+  "accessibility": {"alt_text": "...", "tactile_description": "..."}
+}
+
+ADDITIONAL INSTRUCTIONS: {{ custom_instructions }}""",
+    "strand-guidance-context": """{{ ct_profile_format_for_prompt }}
+
+{{ dossier_formatted_context }}
+
+=== PARENT STRAND GUIDANCE CONTEXT ===
+Parent Strand Scope: {{ strand }}
+Active Sub-strand: {{ sub_strand }}
+Target SLO: {{ slo_id_or_f_payload_grade_payload_subject_co }}
+
+=== UPSTREAM GENERATED CONTENT LAYERS ===
+Layer 1 Lesson Notes: {{ notes_str_1600 }}
+Layer 2 Technical Diagram: {{ diagram_str }}
+Layer 3 Practical Activities: {{ act_str_1000 }}
+
+GRANULAR ASSESSMENT DESIGN DIRECTIVE:
+Generate a rigorous set of 4-6 criterion-referenced assessment items testing THIS SUB-STRAND ({{ sub_strand }}).
+Break down the sub-strand into granular Micro-Concepts / Specific Learning Objectives and assign each question to a specific micro-concept.
+Include:
+1. Multiple Choice Questions (MCQ) with 4 options, plausible distractors, and diagnostic explanations for each distractor.
+2. Structured / Inquiry-Based Questions with realistic Kenyan scenarios, step-by-step marking schemes, and 4-level KICD rubrics (Exceeding, Meeting, Approaching, Below Expectation).
+3. Bloom's Cognitive Progression (Recall/Understanding -> Practical Application -> Critical Problem Solving/Evaluation).
+
+Return JSON format:
+{
+  "sub_strand": "{{ sub_strand }}",
+  "questions": [
+    {
+      "question_id": "Q1",
+      "micro_concept": "<specific sub-topic or skill tested>",
+      "target_slo": "<specific SLO from sub-strand>",
+      "bloom_level": "Application | Critical Thinking | Recall",
+      "question_type": "multiple_choice | structured",
+      "question_text": "<rich scenario-based question>",
+      "options": {"A": "...", "B": "...", "C": "...", "D": "..."},
+      "correct_answer": "B",
+      "distractor_explanations": {"A": "why wrong", "C": "why wrong", "D": "why wrong"},
+      "marking_scheme": "<step-by-step points>",
+      "kicd_rubric": {"exceeding": "...", "meeting": "...", "approaching": "...", "below": "..."}
+    }
+  ]
+}
+
+ADDITIONAL INSTRUCTIONS: {{ custom_instructions }}""",
+    "diagram-construction-brief": """{{ ct_profile_format_for_prompt }}
+
+{{ dossier_formatted_context }}
+
+{{ specific_hour_notes }}
+
+=== 🎯 STAGE 1: GENERATE COMPREHENSIVE DIAGRAM CONSTRUCTION PROMPT & CONTEXT GROUNDING ===
+Target Concept Title: {{ title }} (Parent Hour {{ hour_idx_or_1 }})
+Existing Meta: {{ vivid_desc }}
+
+DIRECTIVE:
+Analyze the Layer 1 Lesson Notes for Hour {{ hour_idx_or_1 }} and syllabus requirements. Generate an exhaustive, scientifically rigorous Visual Construction Specification and Multi-Modal Prompt Package before any rendering occurs.
+
+Specify in detail:
+1. 'context_grounding': Excerpt and pedagogical rationale from Hour {{ hour_idx_or_1 }} notes explaining why this visual is required.
+2. 'vivid_prompt' (Vector SVG Construction Blueprint): Exact visual layout, viewBox coordinates (800x500), background tones, shape coordinates, color palette (hex codes), callout boxes, leader lines, text labels, and scientific mechanism flow.
+3. 'image_prompt' (4K Photorealistic Prompt): 150-word photorealistic prompt describing authentic Kenyan field/lab environment, lighting, camera angle, and subject actions for Midjourney/Imagen.
+4. 'video_storyboard': 4-scene video script breakdown with camera shots and voiceover.
+5. 'accessibility': Alt-text and tactile description for visually impaired learners.
+
+Return JSON:
+{
+  "diagram_id": "{{ item_get_asset_id_vis_1 }}",
+  "diagram_title": "{{ title }}",
+  "hour_index": {{ hour_idx_or_1 }},
+  "micro_concept": "{{ item_get_micro_concept_title }}",
+  "pedagogical_purpose": "...",
+  "context_grounding": "...",
+  "vivid_prompt": "...",
+  "image_prompt": "...",
+  "negative_prompt": "blurry, low quality, distorted anatomy, western setting, unrealistic tools",
+  "aspect_ratio": "16:9",
+  "composition_guide": "...",
+  "video_storyboard": {
+    "video_title": "{{ title }}",
+    "target_duration": "75s",
+    "scenes": [
+      {"scene_number": 1, "time_range": "0:00-0:15", "shot_type": "Wide Establishing Shot", "visual_action": "...", "voiceover_narration": "...", "on_screen_text": "...", "ai_video_prompt": "..."}
+    ]
+  },
+  "accessibility": {"alt_text": "...", "tactile_description": "..."}
+}
+
+ADDITIONAL INSTRUCTIONS: {{ custom_instructions }}""",
+    "substrand-notes-context": """{{ ct_profile_format_for_prompt }}
+
+{{ dossier_formatted_context }}
+
+=== LAYER 1 MASTER LESSON NOTES CONTEXT (MANDATORY 4-HOUR SOURCE OF TRUTH) ===
+{{ notes_str }}
+
+{{ asset_brief }}
+
+{{ geometry_spec }}
+
+PRODUCE AT LEAST {{ max_1_int_getattr_payload_min_visuals_0_or_5 }} visuals for this sub-strand in total, spread across its lessons rather than piled onto one.
+
+WHERE THE PLAN ASKS FOR NOTHING in a lesson, work from that lesson's own topics and produce 1-3 visuals for it. Every visual must be traceable to a topic in the notes above: set 'hour_index' and 'hour_title' to the lesson it belongs to, and do not produce a visual for a lesson that is not listed.
+
+For EACH visual asset provide:
+- asset_id (e.g. vis_01, vis_02, vis_03, vis_04, vis_05, vis_06, vis_07, vis_08)
+- hour_index (1 | 2 | 3 | 4 - the specific hour module in the lesson notes this visual illustrates)
+- hour_title (e.g. 'Hour 1: ...' or 'Hour 2: ...')
+- title (a specific, descriptive name for what the visual depicts in this subject)
+- asset_type ('technical_svg' | 'realistic_image' | 'apparatus_schematic' | 'process_flowchart' | 'infographic_chart' | 'video_storyboard')
+- micro_concept (the specific sub-topic tested)
+- pedagogical_purpose (why this visual is essential for learner mastery and exam assessment)
+- vivid_prompt (exhaustive, vivid visual scene description: layout, perspective, objects, lighting, color palette, labels, callouts for AI image/SVG generation)
+- accessibility: { 'alt_text': '...', 'tactile_description': '...' }
+- scene: the addressable parts of the visual. For EACH labelled part give
+    'label' (exactly as it appears in the drawing), 'function' (what that part does,
+    in one sentence a learner of this grade would be marked correct for),
+    'assessable' (true if a learner could reasonably be asked to name or explain it),
+    and 'occludable' (false only if hiding it would make the figure unreadable).
+
+Return JSON format:
+{
+  "sub_strand": "{{ sub_strand }}",
+  "visuals": [
+    {
+      "asset_id": "vis_01",
+      "hour_index": 1,
+      "hour_title": "Hour 1: ...",
+      "title": "...",
+      "asset_type": "technical_svg",
+      "micro_concept": "...",
+      "pedagogical_purpose": "...",
+      "vivid_prompt": "...",
+      "accessibility": {"alt_text": "...", "tactile_description": "..."},
+      "scene": {"parts": [
+        {"label": "Stigma", "function": "receives pollen during pollination", "assessable": true, "occludable": true}
+      ]},
+      "status": "planned"
+    }
+  ]
+}
+
+ADDITIONAL INSTRUCTIONS: {{ custom_instructions }}""",
+    "notes-plan-context": """{{ ct_profile_format_for_prompt }}
+
+{{ dossier_formatted_context }}
+
+=== LAYER 1 MASTER LESSON NOTES CONTEXT (MANDATORY 4-HOUR SOURCE OF TRUTH) ===
+{{ notes_str }}
+
+{{ activity_brief }}
+
+PRODUCE AT LEAST {{ max_1_int_getattr_payload_min_activities_0_o }} practicals for this sub-strand in total, spread across its lessons rather than piled onto one.
+
+WHAT COUNTS AS A PRACTICAL IS SET BY THE LEARNER, NOT BY THE SUBJECT. The register above says what this age can do with their hands: at pre-primary that is singing games, role-play, modelling and nature walks, and there are no laboratory practicals at all. Produce one practical per lesson, drawn from what THAT lesson teaches, and set 'hour_index' and 'hour_title' to it.
+
+For EACH activity include:
+- activity_id (e.g. act_01, act_02, act_03, act_04)
+- hour_index (1 | 2 | 3 | 4 - the specific hour module in the lesson notes this practical task belongs to)
+- hour_title (e.g. 'Hour 1: ...' or 'Hour 2: ...')
+- activity_name (engaging, descriptive title)
+- activity_type ('laboratory_experiment' | 'field_investigation' | 'csl_project' | 'classroom_game')
+- objective (measurable inquiry goal aligned with SLOs)
+- materials (list of low-cost local materials and safety apparatus)
+- procedure_steps (numbered step-by-step guide with safety checkpoints)
+- video_storyboard: {
+    'video_title': '...', 'target_duration': '90-120s', 'overview': '...',
+    'scenes': [
+      { 'scene_number': 1, 'shot_type': 'Close-up / Wide shot', 'visual_action': 'Detailed on-screen action description...', 'voiceover_narration': 'Exact spoken narration...', 'on_screen_text': 'Callouts/labels...', 'ai_video_prompt': 'Prompt for video generator AI...' }
+    ]
+  }
+- visual_action_image_prompt (vivid prompt for generating action photo illustration of students conducting the activity)
+- safety_hazards_to_check (mandatory hazard checklist & PPE)
+- assessment_rubric: { 'exceeding': '...', 'meeting': '...', 'approaching': '...', 'below': '...' }
+
+Return JSON format:
+{
+  "sub_strand": "{{ sub_strand }}",
+  "activities": [
+    {
+      "activity_id": "act_01",
+      "hour_index": 1,
+      "hour_title": "Hour 1: ...",
+      "activity_name": "...",
+      "activity_type": "laboratory_experiment",
+      "objective": "...",
+      "materials": ["..."],
+      "procedure_steps": ["1. ...", "2. ..."],
+      "video_storyboard": {"video_title": "...", "target_duration": "90s", "scenes": []},
+      "visual_action_image_prompt": "...",
+      "safety_hazards_to_check": ["..."],
+      "assessment_rubric": {"exceeding": "...", "meeting": "...", "approaching": "...", "below": "..."},
+      "status": "planned"
+    }
+  ]
+}
+
+"ADDITIONAL INSTRUCTIONS: {{ custom_instructions }}""",
+    "questions-factory-directive": """{{ ct_profile_format_for_prompt }}
+
+{{ dossier_formatted_context }}
+
+=== 🎯 HIGH-THROUGHPUT QUESTIONS FACTORY ASSESSMENT DIRECTIVE ===
+Subject: {{ subject }} ({{ grade }}) [Content Type: {{ ct_profile_content_type_upper }}]
+Strand: {{ strand }} ➔ Sub-strand: {{ sub_strand }}
+Target Batch Count: EXACTLY {{ batch_count }} DIVERSE ASSESSMENT ITEMS
+Mandated Question Typologies: {{ types_str }}
+Cognitive Bloom Progression: {{ blooms_str }}
+Difficulty Index: {{ difficulty }} (0.10 to 0.99)
+
+{{ parent_anchor_directive }}
+
+=== 📖 GROUND TRUTH KNOWLEDGE BASE (FROM SAVED FOUNDATION LAYERS) ===
+LAYER 1 MASTER LESSON NOTES & CITATIONS:
+{{ notes_text_4000 }}
+
+LAYER 2 DIAGRAMS & VISUAL REPOSITORIES:
+{{ diagrams_text_2000 }}
+
+LAYER 3 EXPERIMENTS, LAB PRACTICUMS & SAFETY:
+{{ experiments_text_2000 }}
+
+CRITICAL ASSESSMENT DESIGN RULES (ZERO HALLUCINATION & FULL DNA):
+1. YOU MUST GENERATE EXACTLY {{ batch_count }} INDEPENDENT, COMPLETE QUESTIONS.
+2. Cover a balanced mix of requested typologies with maximum academic rigor:
+   - 'multiple_choice': 4 plausible distractors, correct flag, and deep distractor diagnostic rationale for every option.
+   - 'diagram_based': Questions directly referencing apparatus, anatomical/physical parts, or flowcharts from Layer 2. Set 'diagram_ref' to the matching diagram asset ID or title. Provide structured questions that test labeling, interpretation of flow arrows, functional roles of components, and troubleshooting abnormal readings.
+   - 'experiment_based': MUST NOT be generic or superficial (e.g., NEVER just say 'evaluate your experiment').
+     MUST formulate an AUTHENTIC, RIGOROUS LABORATORY PRACTICUM / FIELDWORK INVESTIGATION:
+     * Explicit Experimental Context & Setup: Describe the full investigation as Kenyan learners would actually conduct it, situated in {{ ct_profile_scenario_seed }}. Draw the apparatus, materials and procedure from this subject's own practice as described in the content-type directives above.
+     * Practical Protocol & Empirical Data Table: Provide step-by-step apparatus setup (e.g., 10g dried soil, 50ml distilled water, Universal Indicator / calibrated pH meter, 0.1M HCl titrant) and an observed readings table (initial pH, drops of acid added, final pH, buffer capacity, precipitation).
+     * Structured Multi-Part Inquiries ('structured_parts'):
+       - Part (a): Data Analysis & Interpretation (evaluate differences and calculate values from observed data).
+       - Part (b): Scientific Mechanisms & Principles (explain chemical buffering, ion exchange, or biological reactions).
+       - Part (c): Application & Community Relevance (concrete recommendations an informed practitioner in this subject would make for a Kenyan community, using the verified subject data supplied above).
+       - Part (d): Controls and safety, WHERE THE SUB-STRAND HAS A PRACTICAL — controlled variables, the precautions its own apparatus needs, and sources of error. Omit this part entirely for a sub-strand with no practical work; a safety part on a poetry question is a part nobody can answer.
+     * Exhaustive Model Answer & Scoring Keys: Provide a multi-paragraph model answer covering all scenarios thoroughly, and a detailed point-by-point marking scheme with M1, A1, B1 marks.
+   - 'structured_scenario': Real-world scenario-based problems set in authentic Kenyan counties with sub-parts (a), (b), (c) and marks per part.
+   - 'quantitative_calculation': a calculation THIS sub-strand's own design asks for, with the formula stated, the substitution shown and the unit on the answer. Take the quantity from the sub-strand in front of you, never from another subject.
+   - 'extended_essay': synthesis, critique or evaluation of something this sub-strand actually covers, with a rubric that says what each band earns.
+   - 'assertion_reason': Statement (A) and Reason (R) causality diagnostics.
+3. IN-TEXT RESEARCH CITATIONS: Every question's 'provenance_citation' MUST cite a source from the Permitted Citation Sources list in the directives above. Do not cite sources belonging to other subjects.
+4. Include comprehensive Step-by-Step 'marking_scheme' and 4-Level 'kicd_rubric' (Exceeding, Meeting, Approaching, Below Expectation) for every item.
+
+RETURN JSON FORMAT MATCHING:
+{
+  "sub_strand": "{{ sub_strand }}",
+  "batch_count": {{ batch_count }},
+  "questions": [
+    {
+      "question_id": "Q1",
+      "universal_id": "{{ grade_3_upper }}-{{ subject_4_upper }}-01",
+      "question_type": "multiple_choice | diagram_based | experiment_based | structured_scenario | quantitative_calculation | extended_essay | assertion_reason",
+      "bloom_level": "Recall | Understanding | Application | Analysis | Evaluation | Creation",
+      "difficulty_index": {{ difficulty }},
+      "max_marks": 5,
+      "estimated_time_mins": 5,
+      "micro_concept": "<specific sub-topic or competency tested>",
+      "target_slo": "<specific learning outcome>",
+      "stimulus_context": "<authentic Kenyan scenario appropriate to THIS subject, with any data table the question needs>",
+      "question_text": "<clear, rigorous question prompt detailing instructions and inquiry>",
+      "diagram_ref": "diag_01",
+      "options": [
+        {"id": "A", "text": "...", "is_correct": false, "distractor_rationale": "Why plausible but incorrect..."},
+        {"id": "B", "text": "...", "is_correct": true, "distractor_rationale": "Correct answer mechanism..."},
+        {"id": "C", "text": "...", "is_correct": false, "distractor_rationale": "..."},
+        {"id": "D", "text": "...", "is_correct": false, "distractor_rationale": "..."}
+      ],
+      "correct_answer": "B",
+      "structured_parts": [
+        {"part_id": "(a)", "sub_question": "...", "marks": 2, "model_answer": "..."},
+        {"part_id": "(b)", "sub_question": "...", "marks": 3, "model_answer": "..."},
+        {"part_id": "(c)", "sub_question": "...", "marks": 2, "model_answer": "..."}
+      ],
+      "model_answer": "<exhaustive multi-paragraph model response with scientific explanation covering all scenarios>",
+      "marking_scheme": "<step-by-step scoring keys: M1 for method, A1 for accuracy, B1 for explanation>",
+      "kicd_rubric": {
+        "exceeding": "Demonstrates exhaustive mastery and links concept to macro-environmental systems.",
+        "meeting": "Accurately demonstrates expected competence with correct technical explanations.",
+        "approaching": "Partially demonstrates concept with minor inaccuracies or incomplete rationale.",
+        "below": "Fails to demonstrate concept and requires structured instructional remediation."
+      },
+      "provenance_citation": "{{ ct_profile_example_citation }} — Linked to Layer 1 Lesson Notes"
+    }
+  ]
+}
+
+ADDITIONAL DIRECTIVES: {{ custom_instructions }}""",
     "chunk-strands": """You are reading PART of the curriculum design - pages {{ page_range }} of it.
 Extract ONLY the strands that appear on these pages. Do not infer strands from elsewhere in the subject, and do not invent any.
 Every line below is prefixed with its page:line address; cite those addresses in 'source_quote' so a reviewer can find each strand.

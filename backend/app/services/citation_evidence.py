@@ -246,17 +246,27 @@ def resolve(content: Any, design_text: str) -> dict[str, Any]:
     }
 
 
+# What a reviewer may and may not conclude when the design could not be read.
+# Reporting a citation as fabricated because nothing was available to check it
+# against is the failure this block exists to prevent.
+_UNRESOLVED_BLOCK = """=== CITATIONS: NOT RESOLVED ===
+{{ reason }}
+You therefore CANNOT judge whether an address is real. Do not guess, and do not report a citation as fabricated — say under factual_correctness that citations could not be checked in this run.
+"""
+
+
+def seed_prompts() -> dict[str, str]:
+    return {"citations-unresolved": _UNRESOLVED_BLOCK}
+
+
 def render(evidence: dict[str, Any]) -> str:
     """The block a reviewer reads instead of guessing."""
     if not evidence.get("checked"):
-        return (
-            "=== CITATIONS: NOT RESOLVED ===\n"
-            f"{evidence.get('reason', 'No design document was available.')}\n"
-            "You therefore CANNOT judge whether an address is real. Do not "
-            "guess, and do not report a citation as fabricated — say under "
-            "factual_correctness that citations could not be checked in this "
-            "run.\n"
-        )
+        from .prompt_store import render
+
+        return render("citations-unresolved", _UNRESOLVED_BLOCK,
+                      reason=evidence.get("reason",
+                                          "No design document was available."))
 
     lines = [
         "=== CITATIONS IN THIS ARTIFACT, ALREADY RESOLVED ===",

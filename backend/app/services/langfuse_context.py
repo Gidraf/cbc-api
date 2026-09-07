@@ -672,6 +672,20 @@ class LangfuseContextService:
         # assembled as an f-string in the route, which made the longest
         # single instruction in the system the one nobody could edit.
         "note-plan-rules": "generate/lesson-plan-rules",
+        "activity-task-directive": "generate/activity-tasks",
+        "anchor-experiment": "generate/anchor-experiment",
+        "anchor-hour-module": "generate/anchor-hour-module",
+        "anchor-diagram": "generate/anchor-diagram",
+        "visual-design-directive": "generate/visual-design",
+        "activity-refinement": "generate/activity-refinement",
+        "photoreal-image-spec": "generate/photo-spec",
+        "svg-synthesis-brief": "generate/svg-synthesis",
+        "video-storyboard-spec": "generate/video-storyboard",
+        "strand-guidance-context": "structure/strand-guidance",
+        "diagram-construction-brief": "generate/diagram-brief",
+        "substrand-notes-context": "generate/lesson-plan-context",
+        "notes-plan-context": "generate/lesson-plan-anchors",
+        "questions-factory-directive": "generate/questions-directive",
         # Reading one CHUNK of a design too long to send whole. The
         # instruction that keeps a chunk read from inventing what is on
         # the next page, and it lived in the route.

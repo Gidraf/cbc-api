@@ -1545,19 +1545,14 @@ def factory_generate_diagram(
     context.messages.append({
         "role": "user",
         "content": (
-            f"{ct_profile.format_for_prompt()}\n\n"
-            f"{dossier.formatted_context}\n\n"
-            f"=== LAYER 1 NOTES CONTEXT ===\n{notes_summary_str}\n\n"
-            f"VECTOR SVG DESIGN DIRECTIVE:\n"
-            f"Generate a professional, high-contrast, responsive SVG vector illustration for '{concept_name}' aligned with {ct_profile.diagram_type}.\n\n"
-            f"STRICT SVG SYNTAX RULES:\n"
-            f"1. Root element MUST be: <svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 800 500\" width=\"100%\" height=\"100%\"> ... </svg>\n"
-            f"2. All CSS styles MUST be enclosed inside <defs><style type=\"text/css\"><![CDATA[ ... ]]></style></defs>. NEVER write naked CSS rules directly in the SVG body.\n"
-            f"3. All text MUST be inside <text x=\"...\" y=\"...\" font-family=\"system-ui, -apple-system, sans-serif\" font-size=\"14\" fill=\"#1e293b\" text-anchor=\"middle\">...</text> elements. NEVER write raw text outside of <text> tags.\n"
-            f"4. Use high-contrast modern colors (e.g. #f0fdf4 backgrounds, #16a34a / #0284c7 borders, #0f172a text), rounded corners (rx=\"8\"), clean connector arrows (<line marker-end=\"url(#arrowhead)\"/>), and clear step boxes.\n"
-            f"5. Return a valid JSON object matching:\n"
-            f'{{\n  "diagram_id": "diag_01",\n  "diagram_title": "{concept_name}",\n  "diagram_svg": "<svg ...>...</svg>",\n  "accessibility": {{"alt_text": "...", "tactile_description": "..."}}\n}}\n\n'
-            f"ADDITIONAL INSTRUCTIONS: {payload.custom_instructions}"
+            prompt_store.render(
+                "visual-design-directive", SEED_PROMPT_BLOCKS["visual-design-directive"],
+                concept_name=concept_name,
+                ct_profile_diagram_type=ct_profile.diagram_type,
+                ct_profile_format_for_prompt=ct_profile.format_for_prompt(),
+                custom_instructions=payload.custom_instructions,
+                dossier_formatted_context=dossier.formatted_context,
+                notes_summary_str=notes_summary_str)
         ),
     })
 
@@ -1693,12 +1688,14 @@ def factory_generate_activity(
     context.messages.append({
         "role": "user",
         "content": (
-            f"{ct_profile.format_for_prompt()}\n\n"
-            f"{dossier.formatted_context}\n\n"
-            f"=== LAYER 1 & 2 UPSTREAM CONTEXT ===\nNotes: {notes_str[:1000]}\nDiagram: {diagram_str}\n\n"
-            f"ACTIVITY & PRACTICAL TASK DIRECTIVE:\n"
-            f"Generate hands-on constructivist tasks, apparatus lists, step-by-step procedures, and safety mitigations matching {ct_profile.activity_type}.\n"
-            f"ADDITIONAL INSTRUCTIONS: {payload.custom_instructions}"
+            prompt_store.render(
+                "activity-task-directive", SEED_PROMPT_BLOCKS["activity-task-directive"],
+                ct_profile_activity_type=ct_profile.activity_type,
+                ct_profile_format_for_prompt=ct_profile.format_for_prompt(),
+                custom_instructions=payload.custom_instructions,
+                diagram_str=diagram_str,
+                dossier_formatted_context=dossier.formatted_context,
+                notes_str_1000=notes_str[:1000])
         ),
     })
 
@@ -1849,70 +1846,16 @@ def factory_plan_visuals(
     context.messages.append({
         "role": "user",
         "content": (
-            f"{ct_profile.format_for_prompt()}\n\n"
-            f"{dossier.formatted_context}\n\n"
-            f"=== LAYER 1 MASTER LESSON NOTES CONTEXT (MANDATORY 4-HOUR SOURCE OF TRUTH) ===\n{notes_str}\n\n"
-            # What the PLAN asks for, rather than four hardcoded examples.
-            #
-            # This block used to name "Soil Erosion types, Contour Bunds,
-            # Gabions" and "Soil Profile Horizon Strata O-A-B-C, pH Titration"
-            # as its examples — for every subject, including a PP1 lesson about
-            # God. A reviewer later flagged a soil-profile schematic on that
-            # lesson as an invention. It was not an invention: it was this
-            # prompt's own example, followed faithfully.
-            f"{asset_brief}\n\n"
-            # A figure described in prose cannot be drawn twice the same way,
-            # and the question asked about it then does not match the picture
-            # printed beside it.
-            f"{geometry_spec}\n\n"
-            # The count is stated in the prompt itself rather than only as a
-            # template variable, because the template lives in Langfuse and a
-            # variable it does not reference silently does nothing — which is
-            # what `min_visuals` did for its whole life as a field.
-            f"PRODUCE AT LEAST {max(1, int(getattr(payload, 'min_visuals', 0) or 5))} "
-            f"visuals for this sub-strand in total, spread across its lessons "
-            f"rather than piled onto one.\n\n"
-            f"WHERE THE PLAN ASKS FOR NOTHING in a lesson, work from that "
-            f"lesson's own topics and produce 1-3 visuals for it. Every visual "
-            f"must be traceable to a topic in the notes above: set "
-            f"'hour_index' and 'hour_title' to the lesson it belongs to, and "
-            f"do not produce a visual for a lesson that is not listed.\n\n"
-            f"For EACH visual asset provide:\n"
-            f"- asset_id (e.g. vis_01, vis_02, vis_03, vis_04, vis_05, vis_06, vis_07, vis_08)\n"
-            f"- hour_index (1 | 2 | 3 | 4 - the specific hour module in the lesson notes this visual illustrates)\n"
-            f"- hour_title (e.g. 'Hour 1: ...' or 'Hour 2: ...')\n"
-            f"- title (a specific, descriptive name for what the visual depicts in this subject)\n"
-            f"- asset_type ('technical_svg' | 'realistic_image' | 'apparatus_schematic' | 'process_flowchart' | 'infographic_chart' | 'video_storyboard')\n"
-            f"- micro_concept (the specific sub-topic tested)\n"
-            f"- pedagogical_purpose (why this visual is essential for learner mastery and exam assessment)\n"
-            f"- vivid_prompt (exhaustive, vivid visual scene description: layout, perspective, objects, lighting, color palette, labels, callouts for AI image/SVG generation)\n"
-            f"- accessibility: {{ 'alt_text': '...', 'tactile_description': '...' }}\n"
-            # Part functions are what let a question ask "state the function of the
-            # part labelled B" and be marked automatically. Without them every
-            # diagram question collapses to bare recall of a label.
-            f"- scene: the addressable parts of the visual. For EACH labelled part give\n"
-            f"    'label' (exactly as it appears in the drawing), 'function' (what that part does,\n"
-            f"    in one sentence a learner of this grade would be marked correct for),\n"
-            f"    'assessable' (true if a learner could reasonably be asked to name or explain it),\n"
-            f"    and 'occludable' (false only if hiding it would make the figure unreadable).\n\n"
-            f"Return JSON format:\n"
-            f'{{\n  "sub_strand": "{payload.sub_strand}",\n  "visuals": [\n'
-            f'    {{\n'
-            f'      "asset_id": "vis_01",\n'
-            f'      "hour_index": 1,\n'
-            f'      "hour_title": "Hour 1: ...",\n'
-            f'      "title": "...",\n'
-            f'      "asset_type": "technical_svg",\n'
-            f'      "micro_concept": "...",\n'
-            f'      "pedagogical_purpose": "...",\n'
-            f'      "vivid_prompt": "...",\n'
-            f'      "accessibility": {{"alt_text": "...", "tactile_description": "..."}},\n'
-            f'      "scene": {{"parts": [\n'
-            f'        {{"label": "Stigma", "function": "receives pollen during pollination", "assessable": true, "occludable": true}}\n'
-            f'      ]}},\n'
-            f'      "status": "planned"\n'
-            f'    }}\n  ]\n}}\n\n'
-            f"ADDITIONAL INSTRUCTIONS: {payload.custom_instructions}"
+            prompt_store.render(
+                "substrand-notes-context", SEED_PROMPT_BLOCKS["substrand-notes-context"],
+                asset_brief=asset_brief,
+                ct_profile_format_for_prompt=ct_profile.format_for_prompt(),
+                custom_instructions=payload.custom_instructions,
+                dossier_formatted_context=dossier.formatted_context,
+                geometry_spec=geometry_spec,
+                max_1_int_getattr_payload_min_visuals_0_or_5=max(1, int(getattr(payload, 'min_visuals', 0) or 5)),
+                notes_str=notes_str,
+                sub_strand=payload.sub_strand)
         ),
     })
 
@@ -2065,105 +2008,51 @@ def factory_generate_single_visual(
         context.messages.append({
             "role": "user",
             "content": (
-                f"{ct_profile.format_for_prompt()}\n\n"
-                f"{dossier.formatted_context}\n\n"
-                f"{specific_hour_notes}\n\n"
-                f"=== 🎯 STAGE 1: GENERATE COMPREHENSIVE DIAGRAM CONSTRUCTION PROMPT & CONTEXT GROUNDING ===\n"
-                f"Target Concept Title: {title} (Parent Hour {hour_idx or 1})\n"
-                f"Existing Meta: {vivid_desc}\n\n"
-                f"DIRECTIVE:\n"
-                f"Analyze the Layer 1 Lesson Notes for Hour {hour_idx or 1} and syllabus requirements. Generate an exhaustive, scientifically rigorous Visual Construction Specification and Multi-Modal Prompt Package before any rendering occurs.\n\n"
-                f"Specify in detail:\n"
-                f"1. 'context_grounding': Excerpt and pedagogical rationale from Hour {hour_idx or 1} notes explaining why this visual is required.\n"
-                f"2. 'vivid_prompt' (Vector SVG Construction Blueprint): Exact visual layout, viewBox coordinates (800x500), background tones, shape coordinates, color palette (hex codes), callout boxes, leader lines, text labels, and scientific mechanism flow.\n"
-                f"3. 'image_prompt' (4K Photorealistic Prompt): 150-word photorealistic prompt describing authentic Kenyan field/lab environment, lighting, camera angle, and subject actions for Midjourney/Imagen.\n"
-                f"4. 'video_storyboard': 4-scene video script breakdown with camera shots and voiceover.\n"
-                f"5. 'accessibility': Alt-text and tactile description for visually impaired learners.\n\n"
-                f"Return JSON:\n"
-                f"{{\n"
-                f'  "diagram_id": "{item.get("asset_id", "vis_1")}",\n'
-                f'  "diagram_title": "{title}",\n'
-                f'  "hour_index": {hour_idx or 1},\n'
-                f'  "micro_concept": "{item.get("micro_concept", title)}",\n'
-                f'  "pedagogical_purpose": "...",\n'
-                f'  "context_grounding": "...",\n'
-                f'  "vivid_prompt": "...",\n'
-                f'  "image_prompt": "...",\n'
-                f'  "negative_prompt": "blurry, low quality, distorted anatomy, western setting, unrealistic tools",\n'
-                f'  "aspect_ratio": "16:9",\n'
-                f'  "composition_guide": "...",\n'
-                f'  "video_storyboard": {{\n'
-                f'    "video_title": "{title}",\n'
-                f'    "target_duration": "75s",\n'
-                f'    "scenes": [\n'
-                f'      {{"scene_number": 1, "time_range": "0:00-0:15", "shot_type": "Wide Establishing Shot", "visual_action": "...", "voiceover_narration": "...", "on_screen_text": "...", "ai_video_prompt": "..."}}\n'
-                f'    ]\n'
-                f'  }},\n'
-                f'  "accessibility": {{"alt_text": "...", "tactile_description": "..."}}\n'
-                f"}}\n\n"
-                f"ADDITIONAL INSTRUCTIONS: {payload.custom_instructions}"
+                prompt_store.render(
+                    "diagram-construction-brief", SEED_PROMPT_BLOCKS["diagram-construction-brief"],
+                    ct_profile_format_for_prompt=ct_profile.format_for_prompt(),
+                    custom_instructions=payload.custom_instructions,
+                    dossier_formatted_context=dossier.formatted_context,
+                    hour_idx_or_1=hour_idx or 1,
+                    item_get_asset_id_vis_1=item.get("asset_id", "vis_1"),
+                    item_get_micro_concept_title=item.get("micro_concept", title),
+                    specific_hour_notes=specific_hour_notes,
+                    title=title,
+                    vivid_desc=vivid_desc)
             ),
         })
     elif mode == "photo_spec":
         context.messages.append({
             "role": "user",
             "content": (
-                f"{ct_profile.format_for_prompt()}\n\n"
-                f"{dossier.formatted_context}\n\n"
-                f"{specific_hour_notes}\n\n"
-                f"=== SPECIFICATION FOR PHOTOREALISTIC IMAGE SPECIFICATION ===\n"
-                f"Title: {title} (Hour {hour_idx or 'All'})\n"
-                f"Construction Prompt / Scene Description:\n{construction_spec or vivid_desc}\n\n"
-                f"AI IMAGE GENERATION PROMPT DIRECTIVE:\n"
-                f"Generate an ultra-detailed, 4K photorealistic prompt for AI image generation models (Imagen 3, Midjourney v6, Flux) depicting authentic Kenyan learners, teachers, crops, tools, and environments specifically illustrating the concept from Hour {hour_idx or 'All'}.\n"
-                f"Also create a clean SVG preview schematic illustrating the scene layout.\n\n"
-                f"Return JSON:\n"
-                f"{{\n"
-                f'  "diagram_id": "{item.get("asset_id", "vis_1")}",\n'
-                f'  "diagram_title": "{title}",\n'
-                f'  "hour_index": {hour_idx or 1},\n'
-                f'  "image_prompt": "<ultra-detailed 150-word photorealistic prompt with camera angle, lighting, 8k resolution, Kenyan setting>",\n'
-                f'  "negative_prompt": "blurry, low quality, distorted anatomy, western setting, unrealistic tools",\n'
-                f'  "aspect_ratio": "16:9",\n'
-                f'  "composition_guide": "<camera angle, golden hour lighting, 50mm lens, depth of field>",\n'
-                f'  "diagram_svg": "<svg xmlns=\\"http://www.w3.org/2000/svg\\" viewBox=\\"0 0 800 500\\"><rect width=\\"100%\\" height=\\"100%\\" fill=\\"#0f172a\\"/><text x=\\"400\\" y=\\"250\\" text-anchor=\\"middle\\" font-family=\\"system-ui\\" font-size=\\"18\\" fill=\\"#38bdf8\\">📸 Photorealistic Scene: {title}</text></svg>",\n'
-                f'  "accessibility": {{"alt_text": "...", "tactile_description": "..."}}\n'
-                f"}}\n\n"
-                f"ADDITIONAL INSTRUCTIONS: {payload.custom_instructions}"
+                prompt_store.render(
+                    "photoreal-image-spec", SEED_PROMPT_BLOCKS["photoreal-image-spec"],
+                    construction_spec_or_vivid_desc=construction_spec or vivid_desc,
+                    ct_profile_format_for_prompt=ct_profile.format_for_prompt(),
+                    custom_instructions=payload.custom_instructions,
+                    dossier_formatted_context=dossier.formatted_context,
+                    hour_idx_or_1=hour_idx or 1,
+                    hour_idx_or_all=hour_idx or 'All',
+                    item_get_asset_id_vis_1=item.get("asset_id", "vis_1"),
+                    specific_hour_notes=specific_hour_notes,
+                    title=title)
             ),
         })
     elif mode == "video_storyboard":
         context.messages.append({
             "role": "user",
             "content": (
-                f"{ct_profile.format_for_prompt()}\n\n"
-                f"{dossier.formatted_context}\n\n"
-                f"{specific_hour_notes}\n\n"
-                f"=== SPECIFICATION FOR VIDEO SIMULATION STORYBOARD ===\n"
-                f"Title: {title} (Hour {hour_idx or 'All'})\n"
-                f"Construction Prompt / Scene Description:\n{construction_spec or vivid_desc}\n\n"
-                f"VIDEO SIMULATION SCRIPT DIRECTIVE:\n"
-                f"Generate a multi-scene educational video simulation storyboard (60-90s) detailing the concept progression.\n\n"
-                f"Return JSON:\n"
-                f"{{\n"
-                f'  "diagram_id": "{item.get("asset_id", "vis_1")}",\n'
-                f'  "diagram_title": "{title}",\n'
-                f'  "hour_index": {hour_idx or 1},\n'
-                f'  "video_storyboard": {{\n'
-                f'    "video_title": "{title}",\n'
-                f'    "target_duration": "75s",\n'
-                f'    "overview": "...",\n'
-                f'    "scenes": [\n'
-                f'      {{"scene_number": 1, "time_range": "0:00-0:15", "shot_type": "Wide Establishing Shot", "visual_action": "...", "voiceover_narration": "...", "on_screen_text": "...", "ai_video_prompt": "..."}},\n'
-                f'      {{"scene_number": 2, "time_range": "0:15-0:40", "shot_type": "Close-up Action Shot", "visual_action": "...", "voiceover_narration": "...", "on_screen_text": "...", "ai_video_prompt": "..."}},\n'
-                f'      {{"scene_number": 3, "time_range": "0:40-1:05", "shot_type": "Medium Angle Result", "visual_action": "...", "voiceover_narration": "...", "on_screen_text": "...", "ai_video_prompt": "..."}},\n'
-                f'      {{"scene_number": 4, "time_range": "1:05-1:15", "shot_type": "Summary Infographic Overlay", "visual_action": "...", "voiceover_narration": "...", "on_screen_text": "...", "ai_video_prompt": "..."}}\n'
-                f'    ]\n'
-                f'  }},\n'
-                f'  "diagram_svg": "<svg xmlns=\\"http://www.w3.org/2000/svg\\" viewBox=\\"0 0 800 500\\"><rect width=\\"100%\\" height=\\"100%\\" fill=\\"#1e1b4b\\"/><text x=\\"400\\" y=\\"250\\" text-anchor=\\"middle\\" font-family=\\"system-ui\\" font-size=\\"18\\" fill=\\"#c084fc\\">🎥 Video Storyboard: {title}</text></svg>",\n'
-                f'  "accessibility": {{"alt_text": "...", "tactile_description": "..."}}\n'
-                f"}}\n\n"
-                f"ADDITIONAL INSTRUCTIONS: {payload.custom_instructions}"
+                prompt_store.render(
+                    "video-storyboard-spec", SEED_PROMPT_BLOCKS["video-storyboard-spec"],
+                    construction_spec_or_vivid_desc=construction_spec or vivid_desc,
+                    ct_profile_format_for_prompt=ct_profile.format_for_prompt(),
+                    custom_instructions=payload.custom_instructions,
+                    dossier_formatted_context=dossier.formatted_context,
+                    hour_idx_or_1=hour_idx or 1,
+                    hour_idx_or_all=hour_idx or 'All',
+                    item_get_asset_id_vis_1=item.get("asset_id", "vis_1"),
+                    specific_hour_notes=specific_hour_notes,
+                    title=title)
             ),
         })
     else:
@@ -2171,22 +2060,18 @@ def factory_generate_single_visual(
         context.messages.append({
             "role": "user",
             "content": (
-                f"{ct_profile.format_for_prompt()}\n\n"
-                f"{dossier.formatted_context}\n\n"
-                f"{specific_hour_notes}\n\n"
-                f"=== STAGE 2: SYNTHESIZE VECTOR SVG ASSET FROM CONSTRUCTION PROMPT ===\n"
-                f"Title: {title} (Hour {hour_idx or 'All'})\n"
-                f"Type: {asset_type}\n"
-                f"EXPLICIT CONSTRUCTION BLUEPRINT & SCENE ELEMENTS (MANDATORY TO FOLLOW):\n{construction_spec or vivid_desc}\n\n"
-                f"VECTOR SVG CODE DIRECTIVE:\n"
-                f"Generate a crisp, responsive, high-contrast standalone SVG specifically illustrating the concept '{title}' from Hour {hour_idx or 'All'}.\n"
-                f"CRITICAL: Follow the exact layout, shapes, leader lines, colors, and text annotations described in the Construction Blueprint above. Draw the actual scientific, morphological, or agricultural system (e.g. soil strata layers, agroforestry tree-crop canopies, water swale contours, or lab apparatus). DO NOT generate a generic macroeconomic flowchart unless this is Hour 1 overview.\n\n"
-                f"STRICT RULES:\n"
-                f"1. Root MUST be <svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 800 500\" width=\"100%\" height=\"100%\">\n"
-                f"2. All styles enclosed inside <defs><style type=\"text/css\"><![CDATA[ ... ]]></style><marker id=\"arrowhead\" markerWidth=\"10\" markerHeight=\"7\" refX=\"10\" refY=\"3.5\" orient=\"auto\"><polygon points=\"0 0, 10 3.5, 0 7\" fill=\"#0284c7\" /></marker></defs>\n"
-                f"3. All text inside <text x=\"...\" y=\"...\" font-family=\"system-ui, -apple-system, sans-serif\" font-size=\"13\" text-anchor=\"middle\" fill=\"#0f172a\">...</text>\n"
-                f"4. Return JSON: {{ \"diagram_id\": \"{item.get('asset_id', 'vis_1')}\", \"diagram_title\": \"{title}\", \"hour_index\": {hour_idx or 1}, \"diagram_svg\": \"<svg...>...</svg>\", \"accessibility\": {{ \"alt_text\": \"...\", \"tactile_description\": \"...\" }} }}\n\n"
-                f"ADDITIONAL INSTRUCTIONS: {payload.custom_instructions}"
+                prompt_store.render(
+                    "svg-synthesis-brief", SEED_PROMPT_BLOCKS["svg-synthesis-brief"],
+                    asset_type=asset_type,
+                    construction_spec_or_vivid_desc=construction_spec or vivid_desc,
+                    ct_profile_format_for_prompt=ct_profile.format_for_prompt(),
+                    custom_instructions=payload.custom_instructions,
+                    dossier_formatted_context=dossier.formatted_context,
+                    hour_idx_or_1=hour_idx or 1,
+                    hour_idx_or_all=hour_idx or 'All',
+                    item_get_asset_id_vis_1=item.get('asset_id', 'vis_1'),
+                    specific_hour_notes=specific_hour_notes,
+                    title=title)
             ),
         })
 
@@ -2408,61 +2293,15 @@ def factory_plan_activities(
     context.messages.append({
         "role": "user",
         "content": (
-            f"{ct_profile.format_for_prompt()}\n\n"
-            f"{dossier.formatted_context}\n\n"
-            f"=== LAYER 1 MASTER LESSON NOTES CONTEXT (MANDATORY 4-HOUR SOURCE OF TRUTH) ===\n{notes_str}\n\n"
-            # The same hardcoded soil-science lesson the visuals prompt
-            # carried: "Agroforestry layout", "contour terracing", "Soil pH
-            # Titration & Buffer Capacity" — offered as the examples for every
-            # subject, including a PP1 lesson taught by singing. A station given
-            # those examples and asked to be authentic will be authentic about
-            # soil.
-            f"{activity_brief}\n\n"
-            f"PRODUCE AT LEAST {max(1, int(getattr(payload, 'min_activities', 0) or 4))} "
-            f"practicals for this sub-strand in total, spread across its "
-            f"lessons rather than piled onto one.\n\n"
-            f"WHAT COUNTS AS A PRACTICAL IS SET BY THE LEARNER, NOT BY THE "
-            f"SUBJECT. The register above says what this age can do with their "
-            f"hands: at pre-primary that is singing games, role-play, "
-            f"modelling and nature walks, and there are no laboratory "
-            f"practicals at all. Produce one practical per lesson, drawn from "
-            f"what THAT lesson teaches, and set 'hour_index' and 'hour_title' "
-            f"to it.\n\n"
-            f"For EACH activity include:\n"
-            f"- activity_id (e.g. act_01, act_02, act_03, act_04)\n"
-            f"- hour_index (1 | 2 | 3 | 4 - the specific hour module in the lesson notes this practical task belongs to)\n"
-            f"- hour_title (e.g. 'Hour 1: ...' or 'Hour 2: ...')\n"
-            f"- activity_name (engaging, descriptive title)\n"
-            f"- activity_type ('laboratory_experiment' | 'field_investigation' | 'csl_project' | 'classroom_game')\n"
-            f"- objective (measurable inquiry goal aligned with SLOs)\n"
-            f"- materials (list of low-cost local materials and safety apparatus)\n"
-            f"- procedure_steps (numbered step-by-step guide with safety checkpoints)\n"
-            f"- video_storyboard: {{\n"
-            f"    'video_title': '...', 'target_duration': '90-120s', 'overview': '...',\n"
-            f"    'scenes': [\n"
-            f"      {{ 'scene_number': 1, 'shot_type': 'Close-up / Wide shot', 'visual_action': 'Detailed on-screen action description...', 'voiceover_narration': 'Exact spoken narration...', 'on_screen_text': 'Callouts/labels...', 'ai_video_prompt': 'Prompt for video generator AI...' }}\n"
-            f"    ]\n"
-            f"  }}\n"
-            f"- visual_action_image_prompt (vivid prompt for generating action photo illustration of students conducting the activity)\n"
-            f"- safety_hazards_to_check (mandatory hazard checklist & PPE)\n"
-            f"- assessment_rubric: {{ 'exceeding': '...', 'meeting': '...', 'approaching': '...', 'below': '...' }}\n\n"
-            f"Return JSON format:\n"
-            f'{{\n  "sub_strand": "{payload.sub_strand}",\n  "activities": [\n'
-            f'    {{\n'
-            f'      "activity_id": "act_01",\n'
-            f'      "hour_index": 1,\n'
-            f'      "hour_title": "Hour 1: ...",\n'
-            f'      "activity_name": "...",\n'
-            f'      "activity_type": "laboratory_experiment",\n'
-            f'      "objective": "...",\n'
-            f'      "materials": ["..."],\n'
-            f'      "procedure_steps": ["1. ...", "2. ..."],\n'
-            f'      "video_storyboard": {{"video_title": "...", "target_duration": "90s", "scenes": []}},\n'
-            f'      "visual_action_image_prompt": "...",\n'
-            f'      "safety_hazards_to_check": ["..."],\n'
-            f'      "assessment_rubric": {{"exceeding": "...", "meeting": "...", "approaching": "...", "below": "..."}},\n'
-            f'      "status": "planned"\n'
-            f'    }}\n  ]\n}}\n\n"ADDITIONAL INSTRUCTIONS: {payload.custom_instructions}'
+            prompt_store.render(
+                "notes-plan-context", SEED_PROMPT_BLOCKS["notes-plan-context"],
+                activity_brief=activity_brief,
+                ct_profile_format_for_prompt=ct_profile.format_for_prompt(),
+                custom_instructions=payload.custom_instructions,
+                dossier_formatted_context=dossier.formatted_context,
+                max_1_int_getattr_payload_min_activities_0_o=max(1, int(getattr(payload, 'min_activities', 0) or 4)),
+                notes_str=notes_str,
+                sub_strand=payload.sub_strand)
         ),
     })
 
@@ -2593,41 +2432,19 @@ def factory_generate_single_activity(
     context.messages.append({
         "role": "user",
         "content": (
-            f"{ct_profile.format_for_prompt()}\n\n"
-            f"{dossier.formatted_context}\n\n"
-            f"{specific_hour_notes}\n\n"
-            f"=== PRACTICAL ACTIVITY REFINEMENT DIRECTIVE ===\n"
-            f"Activity Name: {name} (Hour {hour_idx or 'All'})\n"
-            f"Type: {item.get('activity_type', 'laboratory_experiment')}\n"
-            f"Initial Objective: {item.get('objective', '')}\n\n"
-            f"Generate an exhaustive, publication-grade practical lesson module with:\n"
-            f"1. Detailed step-by-step instructions with safety checkpoints specifically aligned with Hour {hour_idx or 'All'}\n"
-            f"2. Multi-scene Video Storyboard (scene number, camera shot, visual actions, exact spoken voiceover, on-screen text, AI video prompt)\n"
-            f"3. Vivid Action Image Prompt for realistic instructional photo cards\n"
-            f"4. 4-tier KICD Assessment Rubric\n\n"
-            f"Return JSON matching:\n"
-            f"{{\n"
-            f'  "activity_id": "{item.get("activity_id", "act_01")}",\n'
-            f'  "activity_name": "{name}",\n'
-            f'  "hour_index": {hour_idx or 1},\n'
-            f'  "activity_type": "{item.get("activity_type", "laboratory_experiment")}",\n'
-            f'  "objective": "...",\n'
-            f'  "materials": ["..."],\n'
-            f'  "procedure_steps": ["1. ...", "2. ..."],\n'
-            f'  "video_storyboard": {{\n'
-            f'    "video_title": "...",\n'
-            f'    "target_duration": "90-120s",\n'
-            f'    "overview": "...",\n'
-            f'    "scenes": [\n'
-            f'      {{ "scene_number": 1, "shot_type": "...", "visual_action": "...", "voiceover_narration": "...", "on_screen_text": "...", "ai_video_prompt": "..." }}\n'
-            f'    ]\n'
-            f'  }},\n'
-            f'  "visual_action_image_prompt": "...",\n'
-            f'  "safety_hazards_to_check": ["..."],\n'
-            f'  "assessment_rubric": {{"exceeding": "...", "meeting": "...", "approaching": "...", "below": "..."}},\n'
-            f'  "status": "generated"\n'
-            f"}}\n\n"
-            f"ADDITIONAL INSTRUCTIONS: {payload.custom_instructions}"
+            prompt_store.render(
+                "activity-refinement", SEED_PROMPT_BLOCKS["activity-refinement"],
+                ct_profile_format_for_prompt=ct_profile.format_for_prompt(),
+                custom_instructions=payload.custom_instructions,
+                dossier_formatted_context=dossier.formatted_context,
+                hour_idx_or_1=hour_idx or 1,
+                hour_idx_or_all=hour_idx or 'All',
+                item_get_activity_id_act_01=item.get("activity_id", "act_01"),
+                item_get_activity_type_laboratory_experiment=item.get('activity_type', 'laboratory_experiment'),
+                item_get_activity_type_laboratory_experiment_2=item.get("activity_type", "laboratory_experiment"),
+                item_get_objective=item.get('objective', ''),
+                name=name,
+                specific_hour_notes=specific_hour_notes)
         ),
     })
 
@@ -2743,43 +2560,17 @@ def factory_generate_questions(
     context.messages.append({
         "role": "user",
         "content": (
-            f"{ct_profile.format_for_prompt()}\n\n"
-            f"{dossier.formatted_context}\n\n"
-            f"=== PARENT STRAND GUIDANCE CONTEXT ===\n"
-            f"Parent Strand Scope: {payload.strand}\n"
-            f"Active Sub-strand: {payload.sub_strand}\n"
-            f"Target SLO: {payload.slo_id or f'{payload.grade}-{payload.subject_code}-01'}\n\n"
-            f"=== UPSTREAM GENERATED CONTENT LAYERS ===\n"
-            f"Layer 1 Lesson Notes: {notes_str[:1600]}\n"
-            f"Layer 2 Technical Diagram: {diagram_str}\n"
-            f"Layer 3 Practical Activities: {act_str[:1000]}\n\n"
-            f"GRANULAR ASSESSMENT DESIGN DIRECTIVE:\n"
-            f"Generate a rigorous set of 4-6 criterion-referenced assessment items testing THIS SUB-STRAND ({payload.sub_strand}).\n"
-            f"Break down the sub-strand into granular Micro-Concepts / Specific Learning Objectives and assign each question to a specific micro-concept.\n"
-            f"Include:\n"
-            f"1. Multiple Choice Questions (MCQ) with 4 options, plausible distractors, and diagnostic explanations for each distractor.\n"
-            f"2. Structured / Inquiry-Based Questions with realistic Kenyan scenarios, step-by-step marking schemes, and 4-level KICD rubrics (Exceeding, Meeting, Approaching, Below Expectation).\n"
-            f"3. Bloom's Cognitive Progression (Recall/Understanding -> Practical Application -> Critical Problem Solving/Evaluation).\n\n"
-            f"Return JSON format:\n"
-            f"{{\n"
-            f'  "sub_strand": "{payload.sub_strand}",\n'
-            f'  "questions": [\n'
-            f'    {{\n'
-            f'      "question_id": "Q1",\n'
-            f'      "micro_concept": "<specific sub-topic or skill tested>",\n'
-            f'      "target_slo": "<specific SLO from sub-strand>",\n'
-            f'      "bloom_level": "Application | Critical Thinking | Recall",\n'
-            f'      "question_type": "multiple_choice | structured",\n'
-            f'      "question_text": "<rich scenario-based question>",\n'
-            f'      "options": {{"A": "...", "B": "...", "C": "...", "D": "..."}},\n'
-            f'      "correct_answer": "B",\n'
-            f'      "distractor_explanations": {{"A": "why wrong", "C": "why wrong", "D": "why wrong"}},\n'
-            f'      "marking_scheme": "<step-by-step points>",\n'
-            f'      "kicd_rubric": {{"exceeding": "...", "meeting": "...", "approaching": "...", "below": "..."}}\n'
-            f'    }}\n'
-            f'  ]\n'
-            f"}}\n\n"
-            f"ADDITIONAL INSTRUCTIONS: {payload.custom_instructions}"
+            prompt_store.render(
+                "strand-guidance-context", SEED_PROMPT_BLOCKS["strand-guidance-context"],
+                act_str_1000=act_str[:1000],
+                ct_profile_format_for_prompt=ct_profile.format_for_prompt(),
+                custom_instructions=payload.custom_instructions,
+                diagram_str=diagram_str,
+                dossier_formatted_context=dossier.formatted_context,
+                notes_str_1600=notes_str[:1600],
+                slo_id_or_f_payload_grade_payload_subject_co=payload.slo_id or f'{payload.grade}-{payload.subject_code}-01',
+                strand=payload.strand,
+                sub_strand=payload.sub_strand)
         ),
     })
 
@@ -6278,6 +6069,29 @@ def factory_fit_check(
         layer_name=getattr(artifact, "kind", "content"))
     return {"artifact_id": payload.artifact_id, "grade": grade,
             "sub_strand": sub_strand, **fit.to_dict()}
+
+
+@router.get("/factory/design-coverage")
+def factory_design_coverage(
+    grade: str = Query(...),
+    subject: str = Query(...),
+    strand: str = Query(""),
+    sub_strand: str = Query(""),
+    status: str = Query("", description="'approved' for what a buyer receives"),
+    _: AuthContext = Depends(require_roles("admin", "operator", "reviewer")),
+) -> dict[str, Any]:
+    """What of this design is covered by the questions, element by element.
+
+    Production coverage counts what was made. This names what is MISSING: the
+    outcome with no question against it, the inquiry question nothing answers,
+    the rung of the ladder the whole set never reaches. A sub-strand can read
+    100% produced with three of its five outcomes never assessed, because ten
+    questions on one outcome look exactly like ten spread across five.
+    """
+    from ..services import design_coverage
+
+    return design_coverage.for_scope(
+        grade, subject, strand, sub_strand, status=status).to_dict()
 
 
 @router.get("/factory/demand-profiles")

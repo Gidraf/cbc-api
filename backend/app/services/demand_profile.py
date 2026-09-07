@@ -261,48 +261,64 @@ def block_for(grade: str | None, subject: str = "",
 
     floor = task_demand.floor_for(grade, subject or None)
     if floor:
-        parts.append(
-            "=== HOW HARD THE ARITHMETIC HAS TO BE ===\n"
-            f"At least {floor.operations} operations of at least {floor.kinds} "
-            f"different kinds, with brackets or a fraction bar deciding the "
-            f"order. {floor.because[0].upper()}{floor.because[1:]}.\n"
-            f"The shape to aim at: {floor.exemplar}\n"
-            "An easy opener is fine. A set whose HARDEST item is one operation "
-            "has not reached the grade anywhere.")
+        from .prompt_store import render
+
+        parts.append(render(
+            "arithmetic-floor", _ARITHMETIC_BLOCK,
+            operations=floor.operations, kinds=floor.kinds,
+            because=f"{floor.because[0].upper()}{floor.because[1:]}",
+            exemplar=floor.exemplar))
 
     if profile:
         parts.append(_profile_block(profile))
     return "\n\n".join(p for p in parts if p and p.strip())
 
 
+_ARITHMETIC_BLOCK = """=== HOW HARD THE ARITHMETIC HAS TO BE ===
+At least {{ operations }} operations of at least {{ kinds }} different kinds, with brackets or a fraction bar deciding the order. {{ because }}.
+The shape to aim at: {{ exemplar }}
+An easy opener is fine. A set whose HARDEST item is one operation has not reached the grade anywhere."""
+
+_PROFILE_BLOCK = """=== THIS SUB-STRAND'S OWN DEMAND, FROM ITS DESIGN ===
+Sub-strand: {{ sub_strand }}{{ hours }}
+Highest command word required: {{ top_name }}.
+Spread the set across at least {{ distinct }} rungs: {{ mix }}.
+{{ extras }}
+ONE TASK AT THE TOP OF THE RANGE, AND ITS ANSWER — write to this standard, do not copy it:
+  Q: {{ exemplar_question }}
+  A: {{ exemplar_answer }}"""
+
+
+def seed_prompts() -> dict[str, str]:
+    return {"arithmetic-floor": _ARITHMETIC_BLOCK,
+            "profile-demand": _PROFILE_BLOCK,
+            "batch-plan": _BATCH_BLOCK}
+
+
 def _profile_block(profile: Profile) -> str:
+    from .prompt_store import render
+
     mix = ", ".join(f"{_rung_name(m.rank)} {round(m.share * 100)}%"
                     for m in profile.mix) or "not stated"
-    lines = [
-        "=== THIS SUB-STRAND'S OWN DEMAND, FROM ITS DESIGN ===",
-        f"Sub-strand: {profile.sub_strand or '(unnamed)'}"
-        + (f"  ({profile.lesson_hours})" if profile.lesson_hours else ""),
-        f"Highest command word required: {_rung_name(profile.top)}.",
-        f"Spread the set across at least {profile.distinct} rungs: {mix}.",
-    ]
+    extras: list[str] = []
     if profile.numeric:
-        lines.append(
-            f"Arithmetic: at least {profile.operations} operations of "
-            f"{profile.kinds} kinds, bracket depth {profile.depth}.")
+        extras.append(f"Arithmetic: at least {profile.operations} operations of "
+                      f"{profile.kinds} kinds, bracket depth {profile.depth}.")
     if profile.marks:
-        lines.append(f"Marks a task at the top of this range carries: {profile.marks}.")
+        extras.append(f"Marks a task at the top of this range carries: "
+                      f"{profile.marks}.")
     if profile.because:
-        lines.append(f"Why: {profile.because}")
+        extras.append(f"Why: {profile.because}")
     if profile.design_quote:
-        lines.append(f"The design's own words: \"{profile.design_quote}\"")
-    lines += [
-        "",
-        "ONE TASK AT THE TOP OF THE RANGE, AND ITS ANSWER — write to this "
-        "standard, do not copy it:",
-        f"  Q: {profile.exemplar_question}",
-        f"  A: {profile.exemplar_answer}",
-    ]
-    return "\n".join(lines)
+        extras.append(f"The design's own words: \"{profile.design_quote}\"")
+    return render(
+        "profile-demand", _PROFILE_BLOCK,
+        sub_strand=profile.sub_strand or "(unnamed)",
+        hours=f"  ({profile.lesson_hours})" if profile.lesson_hours else "",
+        top_name=_rung_name(profile.top), distinct=profile.distinct, mix=mix,
+        extras="\n".join(extras) + ("\n" if extras else ""),
+        exemplar_question=profile.exemplar_question,
+        exemplar_answer=profile.exemplar_answer)
 
 
 # ── storage ──────────────────────────────────────────────────────────────────
@@ -452,8 +468,43 @@ def listing(grade: str = "", subject: str = "", limit: int = 500) -> list[dict[s
     return [_from_row(row).to_dict() for row in rows]
 
 
+def plan_for(count: int, grade: str, profile: Profile | None) -> list[tuple[int, int]]:
+    """How many of a batch of `count` sit on each rung.
+
+    A number the generator can be held to. "Spread across the ladder" is
+    advice; "four at understand, three at apply, three at analyse" is an
+    instruction, and it is the instruction the gate then measures.
+
+    From the sub-strand's own mix where there is one. Where there is not, the
+    band floor is spread evenly from the floor's own top rung downwards — never
+    below rung 1 and never above the ladder.
+    """
+    if count <= 0:
+        return []
+    if profile and profile.mix:
+        shares = [(m.rank, m.share) for m in profile.mix]
+    else:
+        floor = command_words.floor_for(grade)
+        if floor is None:
+            return []
+        ranks = list(range(max(1, floor.top - floor.distinct + 1), floor.top + 1))
+        shares = [(r, 1 / len(ranks)) for r in ranks]
+
+    # Largest remainder, so the parts add up to the whole. Rounding each share
+    # on its own gives 9 or 11 questions for a batch of 10, and the batch count
+    # is the one number the operator actually set.
+    raw = [(rank, share * count) for rank, share in shares]
+    out = [(rank, int(value)) for rank, value in raw]
+    short = count - sum(n for _r, n in out)
+    order = sorted(range(len(raw)), key=lambda i: -(raw[i][1] - int(raw[i][1])))
+    for i in order[:short]:
+        out[i] = (out[i][0], out[i][1] + 1)
+    return [(rank, n) for rank, n in out if n]
+
+
 def for_prompt(grade: str, subject: str, strand: str = "",
-               sub_strand: str = "") -> str:
+               sub_strand: str = "", count: int = 0,
+               lesson_hours: str = "") -> str:
     """The block every authoring station is given. Never raises, never blank
     where a band floor exists — a station that cannot reach the database is
     told the band rule rather than nothing at all."""
@@ -463,7 +514,39 @@ def for_prompt(grade: str, subject: str, strand: str = "",
             profile = load(grade, subject, strand, sub_strand)
         except Exception as exc:  # noqa: BLE001
             logger.debug("No stored profile for %s/%s (%s)", subject, sub_strand, exc)
-    return block_for(grade, subject, profile)
+
+    block = block_for(grade, subject, profile)
+    plan = plan_for(count, grade, profile)
+    if plan:
+        from .prompt_store import render
+
+        rows = "\n".join(
+            f"  - {n} at rung {rank} ({_rung_name(rank)}): "
+            f"{', '.join(_verbs_for(rank))}" for rank, n in plan)
+        hours = lesson_hours or (profile.lesson_hours if profile else "")
+        block += "\n\n" + render(
+            "batch-plan", _BATCH_BLOCK, count=count, rows=rows,
+            hours=(f"The design funds {hours} for this sub-strand; the marks "
+                   f"and the length of these items should fit that."
+                   if hours else ""))
+    return block
+
+
+def _verbs_for(rank: int) -> list[str]:
+    """House spellings only — the ladder recognises "analyze", it never
+    suggests it."""
+    for rung in command_words.LADDER:
+        if rung.rank == rank:
+            return command_words._suggestable(rung)
+    return []
+
+
+_BATCH_BLOCK = """=== WHAT THIS BATCH OF {{ count }} MUST CONTAIN ===
+Not "a range of difficulty" — these counts:
+{{ rows }}
+
+Write the command word into the stem. A question that asks for an analysis without using an analysis verb is marked as though it asked for a description, because that is what the marker reads.
+{{ hours }}"""
 
 
 # ── generation ───────────────────────────────────────────────────────────────
