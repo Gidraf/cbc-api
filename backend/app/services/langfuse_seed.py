@@ -492,6 +492,8 @@ Do not repeat the instruction back. Do not describe the material. Produce it.
 
 {{ notation }}
 
+{{ domain_directives }}
+
 {{ target_language }}
 
 {{ language_register }}
@@ -522,6 +524,13 @@ the backslash in JSON — \\\\frac, not \\frac, or it arrives as a tab.
 
 Where the piece teaches no procedure — a discussion, a song, a story — return
 an empty list rather than inventing one.
+
+THE HARDEST EXAMPLE HERE MUST REACH THE GRADE. An easy first example is right
+and often necessary — a lesson introducing a rule needs one. What is wrong is a
+set whose HARDEST example is at that level: a learner who can already do the
+easy one is given nothing, and a parent reading it decides the book is for a
+younger child. Write the easy one, then write one that would appear on the
+grade's own paper.
 
 === `form` IS ONE WORD ===
 Choose exactly ONE of: {{ forms }}. Write that single word. A `form` reading

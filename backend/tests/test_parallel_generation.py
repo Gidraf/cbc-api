@@ -142,3 +142,83 @@ def test_starting_twice_does_not_double_the_workers() -> None:
 
     assert "alive = [w for w in _workers if w.is_alive()]" in source
     assert "return False" in source
+
+
+# ── retrying only what could possibly work ──────────────────────────────────
+
+
+def test_a_permanent_failure_is_not_retried() -> None:
+    """`is_retryable_api_error` existed and nothing used it: every decorator
+    asked tenacity to retry bare `Exception`, so a wrong model name, an
+    exhausted quota and a refused prompt each burned three attempts and two
+    backoffs before failing exactly as they were always going to.
+
+    At one worker that is a slow failure. At eight it is eight workers spending
+    money to reach the same answer, and a rate limit hit by the retries of
+    calls that were never going to succeed."""
+    from app.errors import ApiError, raise_api_error
+    from app.services.retry import retry_llm
+
+    for code in ("LLM_INVALID_MODEL", "LLM_CREDIT_EXHAUSTED",
+                 "MODEL_CREDENTIAL_MISSING", "LLM_CONTENT_FILTER"):
+        calls = {"n": 0}
+
+        @retry_llm
+        def _call():
+            calls["n"] += 1
+            raise_api_error(code, "no")
+
+        with pytest.raises(ApiError):
+            _call()
+        assert calls["n"] == 1, f"{code} was retried"
+
+
+def test_a_transient_failure_is_still_retried() -> None:
+    from app.errors import ApiError, raise_api_error
+    from app.services.retry import retry_llm
+
+    for code in ("LLM_RATE_LIMITED", "LLM_PROVIDER_TIMEOUT",
+                 "LLM_PROVIDER_ERROR", "MODEL_ENDPOINT_UNAVAILABLE"):
+        calls = {"n": 0}
+
+        @retry_llm
+        def _call():
+            calls["n"] += 1
+            raise_api_error(code, "later")
+
+        with pytest.raises(ApiError):
+            _call()
+        assert calls["n"] == 3, f"{code} gave up too early"
+
+
+def test_httpx_transport_errors_are_retried() -> None:
+    """httpx's connect and read timeouts inherit from NONE of the builtin
+    network errors, so a policy checking only those would have stopped
+    retrying every real network failure in this codebase while claiming to
+    retry transient ones."""
+    import httpx
+
+    from app.services.retry import is_retryable_api_error
+
+    for error in (httpx.ConnectError("x"), httpx.ReadTimeout("x"),
+                  httpx.ConnectTimeout("x"), httpx.RemoteProtocolError("x")):
+        assert is_retryable_api_error(error), type(error).__name__
+
+
+def test_a_plain_bug_is_not_retried() -> None:
+    """Retrying a KeyError three times wastes money and hides the bug."""
+    from app.services.retry import is_retryable_api_error
+
+    assert not is_retryable_api_error(KeyError("typo"))
+    assert not is_retryable_api_error(ValueError("bug"))
+
+
+def test_every_decorator_reads_the_same_policy() -> None:
+    import inspect
+
+    from app.services import retry as module
+
+    source = inspect.getsource(module)
+
+    assert source.count("retry=retry_if_exception(is_retryable_api_error)") == 3
+    assert "retry_if_exception_type" not in source

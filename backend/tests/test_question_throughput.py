@@ -155,7 +155,10 @@ def test_the_structure_gate_holds_items_before_a_person_sees_them() -> None:
     from app.routes import questions
 
     source = inspect.getsource(questions)
-    assert "question_structure.check_all(normalized_questions)" in source
+    # The grade goes with it: whether a batch is pitched at the grade at all
+    # is the one judgement no per-item rule can make.
+    assert "question_structure.check_all(" in source
+    assert "normalized_questions, grade=payload.grade)" in source
     assert 'v["blocked"]' in source
     # Held with the reason AND the fix — a queue of rejections nobody can act
     # on is a queue nobody works.

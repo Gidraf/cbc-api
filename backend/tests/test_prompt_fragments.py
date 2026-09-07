@@ -256,3 +256,38 @@ def test_the_reviewers_hold_the_same_domain_rules_the_generator_was_given():
               / "app/services/pipeline.py").read_text()
 
     assert '"domain_directives": prompt_fragments.compose(' in source
+
+
+def test_every_station_named_actually_receives_its_fragments():
+    """A station listed in STATIONS and composed for nowhere is a set of rules
+    that is written, tested, seeded and never sent.
+
+    `material` was exactly that. The count above compares two dict-literal
+    shapes, and the material station passes its blocks as named arguments, so
+    the one station that writes the worked examples received no domain block at
+    all — including the rule saying how demanding a Grade 9 example has to be.
+    """
+    app = pathlib.Path(__file__).resolve().parents[1] / "app"
+    source = "\n".join(path.read_text(encoding="utf-8")
+                       for path in app.rglob("*.py"))
+
+    missing = [station for station in pf.STATIONS
+               if f'"{station}"' not in source.split("prompt_fragments.compose(")[0]
+               and not any(f'"{station}"' in chunk[:120]
+                           for chunk in source.split("prompt_fragments.compose(")[1:])]
+
+    assert not missing, (
+        "these stations are named but never composed for, so their fragments "
+        f"are never sent: {missing}")
+
+
+def test_the_material_station_is_given_the_difficulty_rule():
+    """The station whose output the reviewer judged."""
+    from app.services import lesson_material
+
+    body = pathlib.Path(lesson_material.__file__).read_text()
+    assert '("domain_directives", domain)' in body
+
+    from app.services.langfuse_seed import SEED_AGENT_PROMPTS
+    assert "{{ domain_directives }}" in SEED_AGENT_PROMPTS["material-generator"], \
+        "the slot has to exist in the prompt or the binding replaces nothing"

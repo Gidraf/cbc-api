@@ -5552,6 +5552,7 @@ def factory_generate_material(
     from ..services.target_language import block_for as _target_language
 
     target = _target_language(payload.subject)
+    domain = prompt_fragments.compose(payload.subject, "material", payload.grade)
 
     # What a previous, interrupted run already paid for. A draft is written
     # after every piece, so a timeout or a restart at piece 19 of 21 costs the
@@ -5572,8 +5573,8 @@ def factory_generate_material(
             continue
         messages = [{"role": "user", "content": lesson_material.prompt_for(
             directive, register=register, faith=faith, language=language,
-            notation=notation, target_language=target, grade=payload.grade,
-            sub_strand=payload.sub_strand, slos=slos)}]
+            notation=notation, target_language=target, domain=domain,
+            grade=payload.grade, sub_strand=payload.sub_strand, slos=slos)}]
         if payload.custom_instructions:
             messages.append({"role": "user",
                              "content": payload.custom_instructions})

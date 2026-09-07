@@ -135,5 +135,6 @@ def test_the_question_route_repairs_before_it_discards() -> None:
     # And re-measures, because the gate reports what is FILED and a repaired
     # item is a different item.
     repair_block = source.split("content_repair.repair_questions(")[1][:900]
-    assert "question_structure.check_all(normalized_questions)" in repair_block
+    assert "question_structure.check_all(" in repair_block
+    assert "normalized_questions, grade=payload.grade)" in repair_block
     assert "except Exception" in repair_block, "a failed repair is not a failed run"

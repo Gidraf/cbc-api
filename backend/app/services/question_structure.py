@@ -289,11 +289,16 @@ def check(question: dict[str, Any]) -> Verdict:
     return verdict
 
 
-def check_all(questions: list[Any]) -> dict[str, Any]:
+def check_all(questions: list[Any], *, grade: str = "") -> dict[str, Any]:
     """A batch, and whether it is fit to enter a review queue.
 
     Volume is the point of this: 500 items a day is only worth generating if
     the malformed ones never reach a person.
+
+    `grade` adds the one judgement that cannot be made item by item: whether
+    the batch is pitched at the grade at all. A paper may contain an easy
+    opener — every real paper does — but a Grade 9 paper whose hardest item is
+    one addition is not a Grade 9 paper, and no per-item rule can see that.
     """
     verdicts = [check(q if isinstance(q, dict) else {}) for q in (questions or [])]
     blocked = [v for v in verdicts if v.blocked]
@@ -305,12 +310,29 @@ def check_all(questions: list[Any]) -> dict[str, Any]:
         for finding in verdict.findings:
             counts[finding.code] = counts.get(finding.code, 0) + 1
 
+    # The batch judgement. It is deliberately NOT a verdict in the list: no
+    # single question is at fault, so attaching it to one would send a reviewer
+    # to an item that is perfectly fine. It counts as a finding and it blocks
+    # the batch, and it stays a property of the batch.
+    demand: dict[str, Any] = {}
+    batch_blocked = False
+    if grade:
+        from . import task_demand
+
+        report = task_demand.check_set(questions or [], grade)
+        demand = report.to_dict()
+        if report.below:
+            batch_blocked = True
+            counts["batch_below_the_grade"] = 1
+
     return {
+        "batch_blocked": batch_blocked,
         "total": len(verdicts),
         "clean": len(clean),
         "blocked": len(blocked),
         "passed": len(verdicts) - len(blocked),
         "score": round(sum(v.score for v in verdicts) / total, 1),
         "by_finding": dict(sorted(counts.items(), key=lambda kv: -kv[1])),
+        "demand": demand,
         "verdicts": [v.to_dict() for v in verdicts],
     }

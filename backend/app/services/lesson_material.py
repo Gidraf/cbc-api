@@ -152,7 +152,7 @@ AGENT = "material-generator"
 def prompt_for(directive: Directive, *, register: str, faith: str,
                sub_strand: str, slos: list[str], language: str = "",
                notation: str = "", target_language: str = "",
-               grade: str = "") -> str:
+               domain: str = "", grade: str = "") -> str:
     """What to ask for, for ONE directive.
 
     One directive per call rather than a whole guide per call, because the
@@ -190,6 +190,12 @@ def prompt_for(directive: Directive, *, register: str, faith: str,
         # Grade 9 learner reads a textbook page; a PP1 child is read to.
         ("material_form", material_form.block_for(grade)),
         ("notation", notation),
+        # What THIS subject needs that no other does — including how demanding
+        # a maths item has to be at this grade. The station that writes the
+        # worked examples was the one station receiving no domain block at all,
+        # so the rule about difficulty reached every generator except the one
+        # that produces the thing being judged.
+        ("domain_directives", domain),
         ("target_language", target_language),
         ("language_register", language),
         ("faith_scope", faith),
@@ -218,6 +224,12 @@ class MaterialReport:
     # A lesson that gives the learner nothing to work. Counted per LESSON, so
     # it is reported separately from the per-piece findings above.
     unexercised: list[dict[str, Any]] = field(default_factory=list)
+    # Worked examples whose arithmetic is right and whose MODELLING is not: a
+    # temperature falling from 5°C to -3°C written as 5 + (-3) = 2, a hiker
+    # "climbing" from 200 m to 50 m, a rule stated for every case that fails on
+    # the second case. The maths engine verified all three sums; the sentence
+    # around each one was the fault, and nothing looked at it.
+    miscast: list[dict[str, Any]] = field(default_factory=list)
     # Fields that came back holding the schema's own description of them —
     # a `form` reading "one of: explanation, story, ..." or a citation quoting
     # the prompt at a page number the prompt invented.
@@ -279,9 +291,20 @@ def gate_of(report: "MaterialReport") -> dict[str, Any]:
     # counted per lesson, and a Grade 9 page with no practice on it fails
     # whatever the per-piece score says.
     passed = (report.score >= PASS_SCORE and report.written == report.total
-              and not report.unexercised)
+              and not report.unexercised and not report.miscast)
 
     feedback = [
+        # The arithmetic being right is not the same as it answering the
+        # question the words ask. A guide printed "the temperature drops from
+        # 5°C to -3°C, so 5 + (-3) = 2" — a correct sum, and a fall of 8.
+        {"aspect": "examples_model_what_they_describe",
+         "method": "expression_against_its_own_wording",
+         "status": "fail" if report.miscast else "pass",
+         "score": 0.0 if report.miscast else 1.0,
+         "comment": (f"{len(report.miscast)} worked example(s) do not compute "
+                     f"what their words ask for"
+                     if report.miscast else
+                     "every worked example matches its own description")},
         {"aspect": "instructions_fulfilled", "method": "written_vs_asked",
          "status": "pass" if report.written == report.total else "fail",
          "score": round(report.written / report.total, 4) if report.total else 1.0,
@@ -331,6 +354,10 @@ def gate_of(report: "MaterialReport") -> dict[str, Any]:
     # Named per piece, so a regeneration knows WHICH song to write rather than
     # being told the average was low.
     actions = []
+    # First, because it is the one a buyer notices and cannot forgive: a sum
+    # that is arithmetically correct and answers a different question.
+    for item in report.miscast[:5]:
+        actions.append(f"{item.get('says')} {item.get('fix') or ''}".strip())
     for item in report.echoed[:4]:
         actions.append(
             f"\"{item.get('title') or item.get('directive') or 'One piece'}\" gave the "
@@ -506,6 +533,15 @@ def check(material: dict[str, Any], plan: Plan, grade: str = "",
     pieces = material.get("material") if isinstance(material, dict) else None
     if not isinstance(pieces, list):
         return report
+
+    # The worked examples, against the words around their arithmetic.
+    try:
+        from . import example_check
+
+        for finding in example_check.check_material(material, grade=grade).findings:
+            report.miscast.append(finding.to_dict())
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Could not check the worked examples: %s", exc)
 
     by_key = {}
     for piece in pieces:

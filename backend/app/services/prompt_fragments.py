@@ -416,6 +416,109 @@ activity that needs a set of bibs is an activity most classes will skip.
 SAY HOW EVERYONE GETS A TURN. A game where the fastest child holds the ball for
 ten minutes has taught thirty-nine children to wait.""",
     ),
+    Fragment(
+        name="maths-demand-upper",
+        kicd=(
+            "The Upper Primary Mathematics designs assess the four operations TOGETHER — 'work out combined operations on whole numbers' — and their rubrics separate a learner who applies the order of operations from one who works left to right. A single-operation item cannot tell those two apart, so it cannot be marked against the design's own rubric."
+        ),
+        title="How hard an Upper Primary maths item has to be",
+        subjects=("mathemat",),
+        stations=("notes", "material", "questions", "activity"),
+        from_grade="grade-4",
+        to_grade="grade-6",
+        why="A guide whose hardest line is one addition cannot show whether "
+            "a learner knows the order of operations, which is the thing the "
+            "grade is actually assessed on.",
+        body=r"""=== HOW DEMANDING AN ITEM MUST BE ===
+Count what you have written before you keep it. At this level an item works
+with AT LEAST:
+  - 2 operations,
+  - 2 DIFFERENT kinds of operation, so that the order of operations decides
+    the answer.
+
+  Acceptable:  $1\,250 - 3 \times 240$
+  Too easy:    $250 + 300$   (one operation; order never arises)
+
+An easy opener is allowed and often right. What is not allowed is a whole set
+whose hardest item is one operation — that set cannot separate a learner who
+applies the order of operations from one who works left to right, which is
+what the rubric marks.""",
+    ),
+    Fragment(
+        name="maths-demand-junior",
+        kicd=(
+            "The Junior School Mathematics designs put integers under 'operations on integers' and assess them as COMBINED operations on directed numbers — the outcome names addition, subtraction, multiplication and division of integers together, and the assessment rubric's highest level is 'applies combined operations on integers accurately'. Combined is the word the design uses, so combined is what an item has to be."
+        ),
+        title="How hard a Junior School maths item has to be",
+        subjects=("mathemat",),
+        stations=("notes", "material", "questions", "activity"),
+        from_grade="grade-7",
+        to_grade="grade-9",
+        why="A reviewer opened a Grade 9 integers guide and its hardest line "
+            "was 7 - 4 = 3. Nothing in it was wrong and nobody would buy it. "
+            "Fourteen-year-olds are assessed on combined operations with "
+            "brackets and signs, not on one addition.",
+        body=r"""=== HOW DEMANDING AN ITEM MUST BE ===
+This is Junior School. The learners are 12 to 15. Count what you have written
+before you keep it — an item at this level works with AT LEAST:
+  - 2 operations, and normally 3 or 4,
+  - 2 DIFFERENT kinds of operation, so BODMAS decides the answer,
+  - something BRACKETED, or a fraction bar, so precedence has to be read
+    rather than assumed,
+  - negative numbers where the sub-strand is about directed numbers.
+
+This is the shape a real Grade 9 evaluation item has:
+
+  Evaluate without using a calculator:
+  $$\dfrac{-15 \div 3 - (-2) \times (-4) + 6}{-2 \times 3 + (-4)}$$
+
+It is not harder because the numbers are bigger. It is harder because of its
+SHAPE: four operations, brackets, two negatives multiplied together, and a
+fraction bar that is a pair of brackets the learner has to supply.
+
+THESE ARE TOO EASY AT THIS LEVEL, whatever sentence is wrapped around them:
+  $5 + (-3)$      $7 - 4$      $-7 + 3$      $200 + (-50)$
+Each is one operation. Each is Grade 4 arithmetic. A parent who opens the
+booklet at one of them does not read the next page.
+
+AN EASY FIRST EXAMPLE IS FINE. A lesson introducing the sign rule needs
+$-4 \times 6 = -24$ in it. What is not fine is a set whose HARDEST item is at
+that level: that set has not reached the grade anywhere.
+
+MAKE THEM WORK, NOT JUST COMPUTE. Prefer items that ask the learner to
+evaluate a combined expression, decide which of two expressions is larger,
+substitute directed numbers into a formula, or work backwards from an answer
+to a missing term. "Work out 5 + (-3)" asks for a keystroke.""",
+    ),
+    Fragment(
+        name="maths-demand-senior",
+        kicd=(
+            "Senior School Mathematics designs assess indices, surds, brackets and fractions within a single expression, and the pathway papers mark method as well as answer. An item that resolves in one operation carries no method to mark."
+        ),
+        title="How hard a Senior School maths item has to be",
+        subjects=("mathemat",),
+        stations=("notes", "material", "questions", "activity"),
+        from_grade="grade-10",
+        why="At this level the item has to carry marks for method. An "
+            "expression that resolves in one step has no method in it to mark.",
+        body=r"""=== HOW DEMANDING AN ITEM MUST BE ===
+Count what you have written before you keep it. At this level an item works
+with AT LEAST:
+  - 3 operations,
+  - 3 DIFFERENT kinds of operation, drawn from indices, roots, the four
+    operations and fractions,
+  - brackets or a fraction bar deciding the order.
+
+  The shape to aim at:
+  $$\dfrac{2^{3} - \sqrt{49}}{(-3)(4) + 15} + \dfrac{1}{4}$$
+
+EVERY ITEM MUST CARRY METHOD MARKS. If the whole answer is one line, there is
+nothing to award part marks against, and the paper cannot discriminate between
+a learner who understands the method and one who guessed.
+
+An easy opener is allowed. A set whose hardest item is a single operation is
+not a Senior School set.""",
+    ),
 )
 
 _BY_NAME = {f.name: f for f in FRAGMENTS}

@@ -334,7 +334,7 @@ def question_structure_report(
     items = question_dna_service.list_questions(
         grade=grade, subject=subject, strand=strand or None,
         sub_strand=sub_strand or None, limit=limit)
-    return question_structure.check_all(items)
+    return question_structure.check_all(items, grade=grade)
 
 
 @router.get("/paper.html", response_class=HTMLResponse)
@@ -970,7 +970,8 @@ def factory_generate_questions_batch(
     #     so they are held here with the reason and the fix.
     from ..services import question_structure, question_throughput
 
-    structure = question_structure.check_all(normalized_questions)
+    structure = question_structure.check_all(
+        normalized_questions, grade=payload.grade)
     held = {v["question_id"] for v in structure["verdicts"] if v["blocked"]}
 
     # Repair before discarding. Each held item was generated and paid for, and
@@ -994,7 +995,8 @@ def factory_generate_questions_batch(
                                         for q in normalized_questions]
                 # Re-measured, because the gate below reports what is FILED and
                 # a repaired item is a different item.
-                structure = question_structure.check_all(normalized_questions)
+                structure = question_structure.check_all(
+                    normalized_questions, grade=payload.grade)
                 held = {v["question_id"] for v in structure["verdicts"] if v["blocked"]}
         except Exception as exc:  # noqa: BLE001
             logger.warning("Repair pass failed for %s: %s", payload.sub_strand, exc)
@@ -1012,6 +1014,29 @@ def factory_generate_questions_batch(
                 })
         normalized_questions = [q for q in normalized_questions
                                 if str(q.get("question_id") or "") not in held]
+
+    # 4b-ii. The BATCH judgement: whether this set is pitched at the grade at
+    #     all. No per-item rule can see it — every item can be well formed and
+    #     the whole paper still be four years too easy, which is exactly what a
+    #     reviewer found in Grade 9 integers ("this is Grade 3/4 Math").
+    #
+    #     It does not discard anything. Every item was generated and paid for,
+    #     an easy opener is legitimate, and a set that is merely thin needs
+    #     MORE items rather than fewer. It is filed against the batch with the
+    #     shape the grade's own paper uses, and the items stay drafts — which
+    #     is what `draft` is for: filed, countable, and not signed off.
+    if structure.get("batch_blocked"):
+        demand = structure.get("demand") or {}
+        batch.rejected.append({
+            "question_id": "",
+            "reason": demand.get("says") or "",
+            "fix": demand.get("fix") or "",
+            "stage": "demand",
+        })
+        question_throughput.record_batch(
+            question_throughput.BLOCKED, [{"question_id": "batch"}],
+            grade=payload.grade, subject=payload.subject, strand=payload.strand,
+            sub_strand=payload.sub_strand, detail={"gate": "demand"})
 
     # 4c. Counted per ITEM, not per run: the target is written in questions,
     #     and a run of 4 would otherwise look like a run of 400.
