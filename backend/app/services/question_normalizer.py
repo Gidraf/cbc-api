@@ -25,6 +25,40 @@ from ..question_models import (
 from .grade_order import grade_ordinal, grade_level, normalize_grade
 from .ids import mint_question_id, mint_universal_id, subject_code
 
+def _serves(raw: dict[str, Any], design_row: dict[str, Any] | None,
+            item_slo: str) -> list[str]:
+    """Which design elements this question records that it serves.
+
+    Validated against the design's own numbered list, and an invented ref is
+    DISCARDED rather than filed. A coverage report is read as a statement of
+    fact — one element reading covered because a question claimed a ref that
+    does not exist is the most expensive error it could make, and it would be
+    invisible, because a fabricated ref looks exactly like a real one.
+
+    With no design row there is nothing to validate against, so nothing is
+    kept: a claim nobody can check is not evidence.
+    """
+    from .design_elements import valid_serves
+
+    claimed = raw.get("serves") or raw.get("serves_refs") or []
+    if isinstance(claimed, str):
+        claimed = [claimed]
+    if not design_row:
+        return []
+    keep, invented = valid_serves(claimed, design_row)
+    if invented:
+        logger.info("Discarded %d invented design ref(s) on %s: %s",
+                    len(invented), raw.get("question_id") or "?",
+                    ", ".join(invented[:5]))
+    # The outcome a question names in `target_slo` is a ref like any other, and
+    # it was already being recorded separately. Folding it in means a question
+    # filed before `serves` existed still reports what it serves.
+    if item_slo and item_slo not in keep:
+        allowed, _ = valid_serves([item_slo], design_row)
+        keep += allowed
+    return keep
+
+
 logger = logging.getLogger("cbc-question-normalizer")
 
 _TYPE_ALIASES = {
@@ -149,6 +183,7 @@ class QuestionNormalizer:
         diagram_resolver: Any = None,
         target_hour: int | None = None,
         target_hour_title: str = "",
+        design_row: dict[str, Any] | None = None,
     ) -> QuestionBatch:
         batch = QuestionBatch(sub_strand=sub_strand)
         grade_slug = normalize_grade(grade)
@@ -179,6 +214,7 @@ class QuestionNormalizer:
                     diagram_resolver=diagram_resolver,
                     target_hour=target_hour,
                     target_hour_title=target_hour_title,
+                    design_row=design_row or {},
                 )
             except ValidationError as exc:
                 reasons = "; ".join(
@@ -221,6 +257,7 @@ class QuestionNormalizer:
         diagram_resolver: Any,
         target_hour: int | None,
         target_hour_title: str,
+        design_row: dict[str, Any] | None = None,
     ) -> QuestionItem:
         q_type = _canonical_type(raw.get("question_type"))
         item_slo = str(raw.get("target_slo") or slo_id or "").strip()
@@ -270,6 +307,7 @@ class QuestionNormalizer:
             sub_strand=sub_strand,
             slo_id=item_slo,
             slo_text=str(raw.get("target_slo_text") or "").strip(),
+            serves=_serves(raw, design_row, item_slo),
         )
 
         pedagogy = QuestionPedagogy(

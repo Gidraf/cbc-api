@@ -114,6 +114,12 @@ class SubStrandCoverage:
     sub_strand: str = ""
     lesson_hours: str = ""
     questions: int = 0
+    # Questions that record no design element at all. Not a defect on its own —
+    # a question filed before the generator recorded refs has none, and so does
+    # one an author wrote by hand. It matters because coverage counted from
+    # recorded refs cannot see them, and a scope where most items are untagged
+    # is a scope whose coverage report is mostly the fallback guess.
+    untagged: int = 0
     dimensions: list[Dimension] = field(default_factory=list)
 
     @property
@@ -144,8 +150,8 @@ class SubStrandCoverage:
         return {
             "grade": self.grade, "subject": self.subject, "strand": self.strand,
             "sub_strand": self.sub_strand, "lesson_hours": self.lesson_hours,
-            "questions": self.questions, "percent": self.percent,
-            "gap_count": self.gap_count,
+            "questions": self.questions, "untagged": self.untagged,
+            "percent": self.percent, "gap_count": self.gap_count,
             "dimensions": [d.to_dict() for d in self.dimensions],
         }
 
@@ -205,6 +211,8 @@ class Report:
             "grade": self.grade, "subject": self.subject,
             "percent": self.percent,
             "sub_strands": len(self.sub_strands),
+            "questions": sum(s.questions for s in self.sub_strands),
+            "untagged": sum(s.untagged for s in self.sub_strands),
             "gap_count": sum(s.gap_count for s in self.sub_strands),
             "by_dimension": self.by_dimension(),
             "worst": self.worst(),
@@ -286,47 +294,69 @@ def _text_of(item: Any, *keys: str) -> str:
     return str(item)
 
 
-def _outcomes(row: dict[str, Any], questions: list[dict[str, Any]]) -> Dimension:
-    """Each specific learning outcome, and the questions that assess it.
+def _served_refs(question: dict[str, Any]) -> set[str]:
+    """What this question RECORDED that it serves.
 
-    Matched on the recorded `slo_id` FIRST, because the question schema carries
-    one and a recorded link is worth more than any amount of word overlap. The
-    text match is the fallback for questions generated before that field was
-    filled, and for outcomes whose id nothing used.
+    Written by the generator against the design's own numbered list, so it is
+    exact. Everything else in this module is a guess by comparison.
     """
-    dim = Dimension("outcomes")
-    for i, slo in enumerate(_listed(row, "slos"), start=1):
-        text = _text_of(slo, "slo", "outcome", "text", "description")
-        ref = str(slo.get("slo_id") or slo.get("id") or f"SLO {i}") \
-            if isinstance(slo, dict) else f"SLO {i}"
-        element = Element("outcome", ref, text)
-        for question in questions:
-            link = question.get("curriculum_link") or question.get("curriculum") or {}
-            recorded = str(link.get("slo_id") or question.get("slo_id") or "")
-            if (recorded and recorded.strip().lower() == ref.strip().lower()) \
-                    or _mentions(_question_text(question), text):
-                element.covered_by.append(_ref(question))
-        element.how = "a question that assesses it"
-        dim.elements.append(element)
-    return dim
+    link = question.get("curriculum_link") or question.get("curriculum") or {}
+    claimed = link.get("serves") or question.get("serves") or []
+    if isinstance(claimed, str):
+        claimed = [claimed]
+    return {str(c).strip() for c in claimed if str(c).strip()}
 
 
-def _named(row: dict[str, Any], key: str, name: str, kind: str,
-           questions: list[dict[str, Any]], field_name: str = "") -> Dimension:
-    """A dimension whose elements are named strings in the design."""
+def _covers(question: dict[str, Any], element: Any, *,
+            field_name: str = "") -> tuple[bool, str]:
+    """Whether this question covers this element, and on what evidence.
+
+    Three ways, best first. A RECORDED ref is exact and is what the generator
+    now writes. A recorded slo_id is the older form of the same thing, kept
+    because every question filed before this existed carries one. Word overlap
+    is the fallback, and it is reported as such — a coverage report that cannot
+    say which of its numbers are measured and which are guessed is a report
+    nobody should act on.
+    """
+    if element.ref in _served_refs(question):
+        return True, "recorded"
+
+    link = question.get("curriculum_link") or question.get("curriculum") or {}
+    if element.dimension == "outcomes":
+        recorded = str(link.get("slo_id") or question.get("slo_id") or "")
+        if recorded and recorded.strip().lower() == element.ref.strip().lower():
+            return True, "recorded"
+    if field_name:
+        recorded = str(link.get(field_name) or question.get(field_name) or "")
+        if recorded and _mentions(recorded, element.text, need=0.4):
+            return True, "recorded"
+
+    if _mentions(_question_text(question), element.text):
+        return True, "inferred"
+    return False, ""
+
+
+def _dimension_from_design(row: dict[str, Any], dimension: str, name: str,
+                           questions: list[dict[str, Any]],
+                           field_name: str = "", how: str = "") -> Dimension:
+    """One dimension, built from the shared element list."""
+    from . import design_elements
+
     dim = Dimension(name)
-    for i, item in enumerate(_listed(row, key), start=1):
-        text = _text_of(item, "text", "name", "title", "description", "question",
-                        "experience", "value", "competency")
-        element = Element(kind, f"{kind} {i}", text)
+    inferred = 0
+    for element in design_elements.by_dimension(row, dimension):
+        item = Element(element.kind, element.ref, element.text, how=how)
         for question in questions:
-            link = question.get("curriculum_link") or question.get("curriculum") or {}
-            recorded = str(link.get(field_name) or question.get(field_name) or "") \
-                if field_name else ""
-            if (recorded and _mentions(recorded, text, need=0.4)) \
-                    or _mentions(_question_text(question), text):
-                element.covered_by.append(_ref(question))
-        dim.elements.append(element)
+            covered, why = _covers(question, element, field_name=field_name)
+            if covered:
+                item.covered_by.append(_ref(question))
+                if why == "inferred":
+                    inferred += 1
+        dim.elements.append(item)
+    if inferred:
+        dim.note = (f"{inferred} of these matched on wording rather than a "
+                    f"recorded ref — regenerate to have the questions record "
+                    f"what they serve")
     return dim
 
 
@@ -381,20 +411,27 @@ def for_sub_strand(row: dict[str, Any], questions: list[dict[str, Any]],
     cover = SubStrandCoverage(
         grade=grade, subject=subject, strand=strand, sub_strand=sub_strand,
         lesson_hours=str(row.get("allocated_hours") or ""),
-        questions=len(questions))
+        questions=len(questions),
+        untagged=sum(1 for q in questions if not _served_refs(q)))
     cover.dimensions = [
-        _outcomes(row, questions),
-        _named(row, "key_inquiry_questions", "inquiry_questions", "inquiry",
-               questions),
+        _dimension_from_design(row, "outcomes", "outcomes", questions,
+                               how="a question that assesses it"),
+        _dimension_from_design(row, "inquiry_questions", "inquiry_questions",
+                               questions, how="a question that answers it"),
         _demand(row, questions, grade, subject, strand, sub_strand),
-        _named(row, "learning_experiences", "learning_experiences", "experience",
-               questions),
-        _named(row, "core_competencies", "core_competencies", "competency",
-               questions, field_name="core_competency"),
-        _named(row, "values", "values", "value", questions,
-               field_name="constitutional_value"),
-        _named(row, "required_diagrams", "required_diagrams", "diagram", questions),
-        _named(row, "experiments", "experiments", "experiment", questions),
+        _dimension_from_design(row, "learning_experiences",
+                               "learning_experiences", questions,
+                               how="a question drawn from that experience"),
+        _dimension_from_design(row, "core_competencies", "core_competencies",
+                               questions, field_name="core_competency",
+                               how="a question that exercises it"),
+        _dimension_from_design(row, "values", "values", questions,
+                               field_name="constitutional_value",
+                               how="a question that carries it"),
+        _dimension_from_design(row, "required_diagrams", "required_diagrams",
+                               questions, how="a question about that diagram"),
+        _dimension_from_design(row, "experiments", "experiments", questions,
+                               how="a question about that practical"),
     ]
     for dim in cover.dimensions:
         if not dim.note and not dim.stated:

@@ -46,6 +46,7 @@ PUBLISHING_MODULES: tuple[str, ...] = (
     "citation_evidence",       # what a reviewer may conclude about citations
     "command_words",           # the demand ladder, as the gate measures it
     "demand_profile",          # this sub-strand's own demand, as read
+    "design_elements",         # the design's elements, numbered once
 )
 
 

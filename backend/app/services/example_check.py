@@ -197,6 +197,151 @@ def _too_easy(examples: list[Any], grade: str, subject: str,
                    judgement.numeric.fix())
 
 
+def _duplicates(examples: list[Any], grade: str, subject: str) -> list[Finding]:
+    """The same worked example printed twice in one guide.
+
+    A Grade 9 integers guide taught `3 + 5 × 2` in Lesson 2 and taught it again,
+    with the same two steps and the same answer, in Lesson 5. Nothing measured
+    it: each copy is a full-length, correct, well-formed example, so a check
+    that reads forwards sees two good lessons.
+
+    Matched on the ARITHMETIC rather than the words, because a second copy is
+    usually reworded — the tell is that the sums are identical.
+    """
+    from . import task_demand
+
+    seen: dict[str, int] = {}
+    findings: list[Finding] = []
+    for index, example in enumerate(examples or [], start=1):
+        if not isinstance(example, dict):
+            continue
+        demand = task_demand.measure_item(example)
+        key = re.sub(r"\s+", "", demand.expression)
+        if not key or demand.operations == 0:
+            continue
+        if key in seen:
+            findings.append(Finding(
+                "repeated_example",
+                f"Example {index} works out \"{demand.expression}\", which "
+                f"example {seen[key]} has already worked out. A learner "
+                f"reaching it has been taught nothing new, and the lesson "
+                f"holding it is a lesson the guide did not really write.",
+                "Replace it, or move the second copy to where it is revision "
+                "and say that is what it is."))
+        else:
+            seen[key] = index
+    return findings
+
+
+# Quantities that CANNOT be negative, and the words that name them.
+#
+# A reviewer found two of these in one guide: "in a survey, if more people
+# prefer tea over coffee, we can represent this as a positive integer for tea
+# and a negative for coffee", and "when cooking, if a recipe requires you to
+# subtract KES 20 for ingredients you already have".
+#
+# There is no such thing as -15 people, and a recipe is measured in grams and
+# millilitres rather than shillings. Both read as helpful real-life context and
+# both teach a learner something false about what a negative number means —
+# which is worse than a dry example, because the learner believes it.
+#
+# What is DELIBERATELY not here: temperature, elevation, altitude, balance,
+# account, profit, score. Every one of those is genuinely signed, and they are
+# the contexts the sub-strand exists to teach.
+_CANNOT_BE_NEGATIVE: tuple[tuple[str, re.Pattern[str], str], ...] = (
+    ("a count of people or things",
+     re.compile(r"\b(surveys?|respondents?|frequenc\w+|tally|how many|"
+                r"number of (?:people|learners|students|pupils|items|"
+                r"responses|votes))\b", re.I),
+     "counts and frequencies start at zero. There is no such thing as -15 "
+     "people preferring coffee: a category is not a sign, and a learner told "
+     "otherwise will write negative frequencies in a data-handling paper."),
+    ("a mass, length or volume",
+     re.compile(r"\b(recipes?|ingredients?|cooking|grams?|kilograms?|"
+                r"millilitres?|litres?)\b", re.I),
+     "a recipe is measured in grams and millilitres, not in shillings, and a "
+     "quantity of an ingredient cannot be negative. Use a context that is "
+     "genuinely signed — temperature, altitude, or money owed."),
+)
+
+_GOES_NEGATIVE = re.compile(
+    r"\bnegative\b|\bbelow zero\b|\bminus\b|\bsubtract\w*\b|"
+    r"(?<![\d)])-\s?\d", re.I)
+
+
+def _impossible_negative(examples: list[Any]) -> list[Finding]:
+    findings: list[Finding] = []
+    for index, example in enumerate(examples or [], start=1):
+        if not isinstance(example, dict):
+            continue
+        text = _text_of(example)
+        if not _GOES_NEGATIVE.search(text):
+            continue
+        for what, pattern, why in _CANNOT_BE_NEGATIVE:
+            if pattern.search(text):
+                findings.append(Finding(
+                    "impossible_negative",
+                    f"Example {index} puts a negative value on {what}: {why}",
+                    "Move the example to a quantity that really is signed, or "
+                    "drop it. A false real-life analogy is worse than a dry "
+                    "example, because a learner believes it."))
+                break
+    return findings
+
+
+# Notation that will print as it stands, and print as nonsense.
+#
+# The Grade 9 guide printed "$(6 + ×× 2$" and "$12×12× 2 - 3 + 1$" on the page
+# a class reads. Both are what an unbalanced brace or a doubled command leaves
+# behind, and the exercise beside them then answered "10 - 22 + 5 = 8", because
+# the expression the solver was handed was not the expression on the page.
+_MANGLED: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r"[+×÷*/^-]\s*[×÷*/^]"),
+     "two operators in a row"),
+    (re.compile(r"\d\s*[×÷]\s*\d+\s*[×÷]\s*\d+\s*[×÷]"),
+     "a run of operators no expression has"),
+    (re.compile(r"[+×÷*/^-]\s*\$"), "an expression that ends on an operator"),
+    (re.compile(r"\\[a-zA-Z]+\s*\{[^}]*$"), "an unclosed LaTeX group"),
+)
+
+
+_LATEX_OP = re.compile(r"\\times|\\cdot|\\div|\\pm")
+
+
+def _as_symbols(text: str) -> str:
+    """LaTeX operators as the symbols they print, so one rule catches both."""
+    return _LATEX_OP.sub(lambda m: {"\\times": "×", "\\cdot": "×",
+                                    "\\div": "÷", "\\pm": "+"}[m.group(0)],
+                         text or "")
+
+
+def _mangled(examples: list[Any]) -> list[Finding]:
+    findings: list[Finding] = []
+    for index, example in enumerate(examples or [], start=1):
+        if not isinstance(example, dict):
+            continue
+        text = _as_symbols(_text_of(example))
+        if text.count("$") % 2:
+            findings.append(Finding(
+                "mangled_notation",
+                f"Example {index} has an odd number of dollar signs, so the "
+                f"maths and the words around it run together on the page.",
+                "Close every $ … $ pair."))
+        for pattern, what in _MANGLED:
+            found = pattern.search(text)
+            if found:
+                findings.append(Finding(
+                    "mangled_notation",
+                    f"Example {index} contains {what}: "
+                    f"\"{found.group(0).strip()}\". This prints exactly as it "
+                    f"stands, in front of a class.",
+                    "Write the expression again. A learner cannot answer what "
+                    "nobody can read, and a solver given it computes something "
+                    "else."))
+                break
+    return findings
+
+
 # Claims about every case, and the counterexamples that break them.
 _CLAIM_TESTS: tuple[tuple[re.Pattern[str], str, str], ...] = (
     (re.compile(r"positive.{0,40}negative.{0,40}closer to zero", re.I),
@@ -243,6 +388,10 @@ def check(examples: list[Any], *, grade: str = "", subject: str | None = None,
     below = _too_easy(examples, grade, subject, strand, sub_strand)
     if below:
         report.findings.append(below)
+    # And so is repetition: a second copy is only visible beside the first.
+    report.findings += _duplicates(examples, grade, subject or "")
+    report.findings += _mangled(examples)
+    report.findings += _impossible_negative(examples)
     return report
 
 

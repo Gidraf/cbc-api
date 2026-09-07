@@ -3164,7 +3164,7 @@ export type DesignCoverageDimension = {
 };
 export type DesignCoverage = {
   grade: string; subject: string; percent: number; sub_strands: number;
-  gap_count: number;
+  gap_count: number; questions: number; untagged: number;
   by_dimension: Array<{
     name: string; weight: number; sub_strands_stating_it: number;
     total: number; covered: number; percent: number; status: string;
@@ -3175,7 +3175,8 @@ export type DesignCoverage = {
   }>;
   detail: Array<{
     grade: string; subject: string; strand: string; sub_strand: string;
-    lesson_hours: string; questions: number; percent: number; gap_count: number;
+    lesson_hours: string; questions: number; untagged: number;
+    percent: number; gap_count: number;
     dimensions: DesignCoverageDimension[];
   }>;
 };

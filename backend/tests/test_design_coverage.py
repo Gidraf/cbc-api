@@ -179,3 +179,64 @@ def test_reading_a_scope_without_a_database_returns_nothing_rather_than_raising(
     report = dc.for_scope("grade-9", "Mathematics")
 
     assert report.sub_strands == [] and report.percent == 0.0
+
+
+# ── a recorded ref beats a guess ────────────────────────────────────────────
+
+
+def test_a_recorded_ref_covers_the_element_it_names() -> None:
+    """The whole point: coverage read from what the generator recorded, not
+    inferred from shared vocabulary."""
+    cover = _cover([{"question_id": "q1",
+                     "stem": "Something with no words in common at all.",
+                     "curriculum_link": {"serves": ["inquiry 1"]}}])
+    inquiry = next(d for d in cover.dimensions if d.name == "inquiry_questions")
+
+    assert inquiry.percent == 100.0
+    assert not inquiry.note, "a recorded ref is not a wording match"
+
+
+def test_a_wording_match_is_reported_as_inferred() -> None:
+    """A coverage report that cannot say which of its numbers are measured and
+    which are guessed is a report nobody should act on."""
+    cover = _cover([{"question_id": "q1",
+                     "stem": "How do we use negative numbers in daily life?"}])
+    inquiry = next(d for d in cover.dimensions if d.name == "inquiry_questions")
+
+    assert inquiry.percent == 100.0
+    assert "matched on wording" in inquiry.note
+    assert "regenerate" in inquiry.note
+
+
+def test_questions_that_record_nothing_are_counted() -> None:
+    cover = _cover([
+        {"question_id": "q1", "curriculum_link": {"serves": ["inquiry 1"]},
+         "stem": "x"},
+        {"question_id": "q2", "stem": "y"},
+    ])
+
+    assert cover.questions == 2 and cover.untagged == 1
+
+
+def test_the_older_slo_id_still_counts_as_recorded() -> None:
+    """Every question filed before `serves` existed carries one."""
+    cover = _cover([{"question_id": "q1", "stem": "no shared words here",
+                     "curriculum_link": {"slo_id": "g9-mat-02"}}])
+    outcomes = next(d for d in cover.dimensions if d.name == "outcomes")
+
+    assert [e.ref for e in outcomes.elements if e.covered] == ["g9-mat-02"]
+    assert not outcomes.note
+
+
+def test_the_refs_a_generator_is_shown_are_the_refs_coverage_matches() -> None:
+    """Two lists built in two places drift, and the drift is silent: a
+    generator recording `experience 3` against a report numbering the same
+    experience `experience 4` produces a report where everything is served and
+    nothing matches."""
+    from app.services import design_elements
+
+    shown = design_elements.refs(DESIGN)
+    matched = {e.ref for d in _cover([]).dimensions for e in d.elements
+               if e.kind != "rung"}
+
+    assert shown == matched

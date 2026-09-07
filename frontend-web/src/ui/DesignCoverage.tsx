@@ -135,6 +135,16 @@ export function DesignCoverage({ grade, subject, strand }: {
           {data.sub_strands} sub-strand(s) · <b>{data.gap_count}</b> element(s)
           with nothing against them
         </span>
+        {/* Coverage read from recorded refs cannot see an untagged question at
+            all, so a scope where most items are untagged is a scope whose
+            report is mostly the fallback guess. Saying so is the difference
+            between a number and a number somebody can act on. */}
+        {data.untagged > 0 && (
+          <Badge tone="warn">
+            {data.untagged} of {data.questions} questions record no design
+            element — regenerate to have them cite what they serve
+          </Badge>
+        )}
         <label style={{ marginLeft: "auto", fontSize: 12, display: "flex",
                         gap: 6, alignItems: "center" }}>
           <input type="checkbox" checked={approvedOnly}
@@ -206,6 +216,9 @@ export function DesignCoverage({ grade, subject, strand }: {
             <span style={{ marginLeft: "auto", fontSize: 12,
                            color: tone(sub.percent, "partial") }}>
               {sub.percent}% · {sub.gap_count} uncovered
+              {sub.untagged > 0 && (
+                <span style={{ color: "#b45309" }}> · {sub.untagged} untagged</span>
+              )}
             </span>
           </div>
           <div style={{ marginTop: 8 }}>

@@ -9,8 +9,8 @@ from fastapi.responses import HTMLResponse, StreamingResponse
 from pydantic import BaseModel
 
 from ..errors import raise_api_error
-from ..services import (demand_profile, notation, prompt_fragments,
-                        prompt_store)
+from ..services import (demand_profile, design_elements, notation,
+                        prompt_fragments, prompt_store)
 from ..services.auth import AuthContext, require_roles
 from ..services.level_register import language_block, register_block, teacher_block
 from ..services.faith_scope import prompt_block as faith_prompt_block
@@ -608,7 +608,9 @@ def factory_generate_questions_batch(
 
     blueprint_row = fetch_one(
         f"""
-        SELECT slos FROM curriculum_substrands
+        SELECT slos, key_inquiry_questions, learning_experiences,
+               core_competencies, values, required_diagrams, experiments
+        FROM curriculum_substrands
         WHERE {grade_clause("grade", "grade")}
           AND LOWER(subject) = LOWER(:subject)
           AND LOWER(sub_strand_name) LIKE :ss
@@ -618,6 +620,10 @@ def factory_generate_questions_batch(
          "ss": f"%{payload.sub_strand.lower().strip()}%"},
     )
     blueprint_slos = (blueprint_row or {}).get("slos") or []
+    # Every element this design asks for, numbered once, so the generator can
+    # record which ones each question serves — and so the coverage report reads
+    # those refs rather than guessing from shared vocabulary.
+    design_row = blueprint_row or {}
 
     notes_text = ""
     if notes_obj and isinstance(notes_obj, dict):
@@ -772,6 +778,9 @@ def factory_generate_questions_batch(
             # for Chemistry, a scaled map for Geography, sol-fa for Music.
             "domain_directives": prompt_fragments.compose(
                 payload.subject, "questions", payload.grade),
+            # Every element this design asks for, numbered, so each question
+            # can record which ones it serves.
+            "design_elements": design_elements.block_for(design_row),
             # What THIS sub-strand's design says a task has to be — the command
             # word it is assessed at, the spread across the ladder, and one
             # worked task at the top of the range.
@@ -902,6 +911,7 @@ def factory_generate_questions_batch(
         sub_strand=payload.sub_strand,
         slo_id=payload.slo_id,
         default_difficulty=payload.difficulty,
+        design_row=design_row,
         diagram_resolver=lambda raw_q, q_type: resolve_binding(
             raw_q, q_type, diagrams_list, anchored_diagram=target_diag_obj
         ),

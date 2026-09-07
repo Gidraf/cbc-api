@@ -46,7 +46,8 @@ from ..services.grade_order import grade_level
 from ..services.faith_scope import prompt_block as faith_prompt_block
 from ..services.grade_scope import notes_for as grade_scope_notes
 from ..services import notation, prompt_fragments
-from ..services import demand_profile, grade_sql, prompt_store
+from ..services import (demand_profile, design_elements, grade_sql,
+                        prompt_store)
 from ..services.langfuse_seed import SEED_PROMPT_BLOCKS
 from ..services.target_language import block_for as target_language_block
 from ..services.material_form import block_for as _material_form_block
@@ -2541,6 +2542,12 @@ def factory_generate_questions(
             # about mortise and tenon joints.
             "domain_directives": prompt_fragments.compose(
                 payload.subject, "questions", payload.grade),
+            # Every element this design asks for, numbered, so each question
+            # can record which ones it serves. Coverage then reads those refs
+            # instead of guessing from shared vocabulary.
+            "design_elements": design_elements.block_for(
+                _substrand_design_row(payload.grade, payload.subject,
+                                      payload.sub_strand)),
             # How demanding a task on THIS sub-strand has to be, read out
             # of its own outcomes, rubric and funded hours — with the band
             # floor underneath it where no profile has been extracted yet.
@@ -6069,6 +6076,33 @@ def factory_fit_check(
         layer_name=getattr(artifact, "kind", "content"))
     return {"artifact_id": payload.artifact_id, "grade": grade,
             "sub_strand": sub_strand, **fit.to_dict()}
+
+
+def _substrand_design_row(grade: str, subject: str,
+                          sub_strand: str) -> dict[str, Any]:
+    """This sub-strand's design as stored, or an empty row.
+
+    Empty rather than raising: a station whose design has not been extracted
+    yet should generate without a `serves` list, not fail. What it must never
+    do is generate WITH one that nothing validated, which is why the same empty
+    row then makes every claimed ref unverifiable and therefore discarded.
+    """
+    try:
+        return fetch_one(
+            f"""
+            SELECT slos, key_inquiry_questions, learning_experiences,
+                   core_competencies, values, required_diagrams, experiments
+            FROM curriculum_substrands
+            WHERE {grade_sql.clause('grade')}
+              AND LOWER(subject) = LOWER(:subject)
+              AND LOWER(sub_strand_name) = LOWER(:sub_strand)
+            LIMIT 1
+            """,
+            {"grade": grade, "subject": subject, "sub_strand": sub_strand},
+        ) or {}
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Could not read the design row for %s: %s", sub_strand, exc)
+        return {}
 
 
 @router.get("/factory/design-coverage")

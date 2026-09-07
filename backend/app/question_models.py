@@ -152,6 +152,18 @@ class QuestionCurriculum(BaseModel):
     sub_strand: str = ""
     slo_id: str = ""
     slo_text: str = ""
+    # Which elements of the design this item serves, by the design's own refs.
+    #
+    # Coverage used to be inferred from word overlap between a question and an
+    # outcome, because nothing recorded the link. That reports an outcome as
+    # covered when a question happens to share its vocabulary, and reports it
+    # as uncovered when the same outcome is assessed in different words. A ref
+    # is either in the design's numbered list or it is not.
+    #
+    # Refs are validated against that list before filing: an invented one is
+    # discarded rather than kept, because one element reading covered on a
+    # fabricated ref is the most expensive mistake a coverage report can make.
+    serves: list[str] = Field(default_factory=list)
 
 
 class QuestionPedagogy(BaseModel):

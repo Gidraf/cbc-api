@@ -1115,6 +1115,36 @@ def _material_figures(plan: dict[str, Any], assets: dict[str, Any], *,
 _NUMBERED_RUN = re.compile(r"(?:(?<=^)|(?<=[.?!\s]))(\d{1,2})[.)]\s+")
 
 
+def _inside_math(text: str) -> list[tuple[int, int]]:
+    """Where the $ … $ spans are, so nothing is split inside one."""
+    return [(m.start(), m.end()) for m in re.finditer(r"\$[^$\n]*\$", text)]
+
+
+def _is_a_marker(text: str, mark: "re.Match[str]") -> bool:
+    r"""Whether this "N." or "N)" really starts a question.
+
+    It does not when the bracket is part of the maths. `(6 + 4) \times 2` ends
+    a bracket with `4)`, and reading that as question 4 split the expression in
+    half: the practice list printed "$(6 +" and "\times 2$", the engine was
+    handed the fragment "10-2" from the item before it, solved it correctly to
+    8, and the page printed "8" beside a green `checked` badge under a question
+    that actually reads 10 - 22 + 5.
+
+    Nothing about that was visible downstream. The maths was right, the badge
+    was honest, and the expression it applied to no longer existed.
+    """
+    start, end = mark.start(1), mark.end(0)
+    for open_at, close_at in _inside_math(text):
+        if open_at <= start < close_at:
+            return False
+    if mark.group(0).rstrip()[-1:] == ")" or ")" in mark.group(0):
+        # A closing bracket that closes something is not a list marker.
+        before = text[:start]
+        if before.count("(") > before.count(")"):
+            return False
+    return True
+
+
 def _numbered_items(text: str) -> list[str]:
     """The numbered questions in a run of text, in order, or [].
 
@@ -1126,7 +1156,7 @@ def _numbered_items(text: str) -> list[str]:
     question ends the sentence before the next one starts. So the ascending
     RUN is picked out of the candidates and the rest ignored.
     """
-    marks = list(_NUMBERED_RUN.finditer(text))
+    marks = [m for m in _NUMBERED_RUN.finditer(text) if _is_a_marker(text, m)]
     if len(marks) < 3:
         return []
 
@@ -1252,7 +1282,8 @@ def _practice(said: str, piece: dict[str, Any]) -> str:
         out.append("<div class='solution'>")
         out.append("<div class='sn'>"
                    + str(questions.index(solution.question) + 1)
-                   + ("<span class='ok'>checked</span>" if solution.verified else "")
+                   + ("<span class='ok'>checked</span>" if solution.verified
+                      else "<span class='warn'>not verified</span>")
                    + "</div><div class='work'>")
         for line in solution.lines:
             out.append(f"<div class='math' data-display='true'>{_esc(line.latex)}</div>")

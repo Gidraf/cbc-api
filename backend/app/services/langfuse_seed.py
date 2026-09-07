@@ -1415,6 +1415,8 @@ when the quality gate reports it.
 {{ domain_directives }}
 
 {{ demand_profile }}
+
+{{ design_elements }}
 {{ faith_scope }}
 
 === CONTENT-TYPE PEDAGOGICAL DIRECTIVES ===

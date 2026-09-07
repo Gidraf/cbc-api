@@ -239,23 +239,42 @@ def test_a_batch_of_well_formed_but_easy_questions_is_held() -> None:
     assert "Junior School" in report["demand"]["says"]
 
 
-def test_the_same_batch_is_not_held_when_one_item_reaches_the_grade() -> None:
+def test_a_batch_whose_typical_item_is_below_the_grade_is_held() -> None:
+    """One adequate question beside one trivial one is a paper half of which is
+    below the grade, and a learner sits all of it."""
     from app.services import question_structure
 
-    items = [{"question_id": "q1", "question_type": "quantitative_calculation",
-              "stem": "Work out 4 + 3 and write down the answer.", "marks": 1,
-              "marking_scheme": [{"step": "add", "marks": 1}], "answer": "7",
-              "steps": [{"working": "4 + 3 = 7"}]},
-             {"question_id": "q2", "question_type": "quantitative_calculation",
-              "stem": r"Evaluate $-15 \div 3 - (-2) \times (-4) + 6$ without a "
-                      r"calculator.",
-              "marks": 3,
-              "marking_scheme": [{"step": "divide first", "marks": 1},
-                                 {"step": "multiply", "marks": 1},
-                                 {"step": "combine", "marks": 1}],
-              "answer": "-7", "steps": [{"working": "-5 - 8 + 6 = -7"}]}]
+    def item(qid, stem, answer, working, marks=1):
+        return {"question_id": qid, "question_type": "quantitative_calculation",
+                "stem": stem, "marks": marks, "answer": answer,
+                "marking_scheme": [{"step": f"step {i}", "marks": 1}
+                                   for i in range(marks)],
+                "steps": [{"working": working}]}
 
-    assert not question_structure.check_all(items, grade="grade-9")["batch_blocked"]
+    easy = item("q1", "Describe how to work out the product of -4 and 6.",
+                "-24", "-4 × 6 = -24")
+    hard = item("q2", r"Evaluate $-15 \div 3 - (-2) \times (-4) + 6$ without a "
+                      r"calculator.", "-7", "-5 - 8 + 6 = -7", marks=3)
+
+    # Two easy openers to one adequate item: the typical question is below the
+    # grade. Half and half is the boundary and passes — the rule is "fewer
+    # than half reach it", not "all of them".
+    easy2 = item("q1b", "Describe how to work out the product of -7 and 5.",
+                 "-35", "-7 × 5 = -35")
+    assert question_structure.check_all([easy, easy2, hard],
+                                        grade="grade-9")["batch_blocked"]
+
+    # A second and third item at the grade, spread across the ladder, is a
+    # paper: the easy opener is now a minority of it.
+    harder = item("q3", r"Compare $-8 + 3 \times (-4) - (-6) \div 2$ with "
+                        r"$(-3)(4) + 15$ and say which is larger.",
+                  "-17 and 3", "-8 - 12 + 3 = -17", marks=3)
+    most = item("q4", r"Evaluate $(-24) \div (-3) \times (-2) - (-8)$ and "
+                      r"calculate the remainder.", "-8", "8 × -2 + 8 = -8",
+                marks=3)
+
+    assert not question_structure.check_all([easy, hard, harder, most],
+                                            grade="grade-9")["batch_blocked"]
 
 
 def test_a_batch_with_no_grade_is_not_judged_on_demand() -> None:

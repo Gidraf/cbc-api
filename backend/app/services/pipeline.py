@@ -24,6 +24,8 @@ from ..services.question_dna import question_dna_service
 from ..services.targets import target_service
 from ..services.validation import validate_grade_dataset, validate_question_batch
 
+from . import demand_profile, design_elements
+
 logger = logging.getLogger("cbc-pipeline")
 
 
@@ -589,6 +591,14 @@ class PipelineService:
                 "experiments_generated": [e.get("title", "") for e in activities_output.get("experiments", [])],
                 "diagram_concept": diagrams_output.get("diagram_title", ""),
                 "slos": blueprint.get("slos", []),
+                # The design's own elements, numbered, so each question records
+                # which it serves. The blueprint carries them already — this is
+                # the third question call site, and a slot bound at two of
+                # three renders as literal "{{ design_elements }}" at the third.
+                "design_elements": design_elements.block_for(blueprint),
+                "demand_profile": demand_profile.for_prompt(
+                    grade_slug, subject, request.curriculum.strand,
+                    request.curriculum.sub_strand),
             },
         )
         return llm_client.generate(resolved, context.messages, temperature=0.2)

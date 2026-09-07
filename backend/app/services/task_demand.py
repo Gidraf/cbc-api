@@ -165,6 +165,10 @@ class Demand:
     total_operations: int = 0
     all_kinds: frozenset[str] = frozenset()
     steps: int = 0
+    # Whether the item is set in words rather than given as a bare expression.
+    # A word problem carries demand that counting operators cannot see; an
+    # expression typed across two lines does not.
+    word_problem: bool = False
     expression: str = ""
 
     @property
@@ -184,7 +188,7 @@ class Demand:
                 "order_matters": self.order_matters,
                 "total_operations": self.total_operations,
                 "all_kinds": sorted(self.all_kinds or self.kinds),
-                "steps": self.steps,
+                "steps": self.steps, "word_problem": self.word_problem,
                 "expression": self.expression}
 
 
@@ -264,6 +268,17 @@ def measure(text: str) -> Demand:
     return hardest
 
 
+# A command word plus an expression is not prose. "Evaluate: 3 + 5 × 2" is an
+# expression with an instruction in front of it; "A trader buys 3 crates of
+# eggs at KSh 450 each" is a situation the learner has to model.
+_PROSE_WORD = re.compile(r"[A-Za-z]{3,}")
+
+
+def _is_prose(statement: str) -> bool:
+    words = _PROSE_WORD.findall(statement or "")
+    return len(words) >= 6
+
+
 def measure_item(item: dict[str, Any]) -> Demand:
     """A worked example or a question, across its statement and every step."""
     lines = [str(item.get("statement") or item.get("stem") or
@@ -287,6 +302,7 @@ def measure_item(item: dict[str, Any]) -> Demand:
     hardest.total_operations = total
     hardest.all_kinds = frozenset(kinds)
     hardest.steps = len([w for w in working if w.strip()])
+    hardest.word_problem = _is_prose(lines[0] if lines else "")
     if not hardest.kinds:
         hardest.kinds = frozenset(kinds)
     return hardest
@@ -388,6 +404,27 @@ def floor_for(grade: str | None, subject: str | None = None) -> Floor | None:
     return _FLOORS.get(level)
 
 
+# Arithmetic so far below the grade that no teaching purpose reaches down to
+# it. One operation, one kind of operation, no negative number, nothing
+# bracketed, and every operand a single digit: `5 + 3`, `3 - 5`, `7 - 4`.
+#
+# This is NOT the grade floor, and the difference matters. A Grade 9 lesson
+# introducing the sign rule legitimately needs `-4 × 6 = -24` — one operation,
+# below the grade floor, and doing a job. Nothing at this grade needs `5 + 3`.
+# It is Grade 2 work, six years down, and a set is not excused for containing
+# it by containing something harder elsewhere.
+def infant_arithmetic(demand: Demand) -> bool:
+    if demand.operations != 1 or len(demand.kinds) != 1:
+        return False
+    if demand.negatives or demand.depth or demand.fraction_bar:
+        return False
+    return all(len(n.lstrip("-")) == 1 and "." not in n
+               for n in _NUMBER.findall(demand.expression))
+
+
+_NUMBER = re.compile(r"-?\d+(?:\.\d+)?")
+
+
 @dataclass
 class Shortfall:
     """What is missing, and what would fix it."""
@@ -418,10 +455,17 @@ def shortfall(demand: Demand, floor: Floor | None) -> Shortfall:
         return Shortfall(level=floor.level if floor else "", demand=demand,
                          floor=floor)
 
-    # A modest single line is fine when the item as a whole is real work. A
-    # multi-step word problem is demanding in a way one line never shows, and
+    # A modest single line is fine when the item as a whole is real work — a
+    # multi-step WORD PROBLEM is demanding in a way one line never shows, and
     # failing it would be failing exactly the item the grade wants most.
-    if demand.steps >= 2 and demand.total_operations >= floor.operations \
+    #
+    # The escape is for word problems and nothing else. Without that condition
+    # it let `Evaluate: 3 + 5 × 2` through, because writing the multiplication
+    # on one line and the addition on the next made a two-step item out of an
+    # expression with no brackets and no negative number in it — Grade 5 work,
+    # counted as Grade 9 because it was typed on two lines.
+    if demand.word_problem and demand.steps >= 2 \
+            and demand.total_operations >= floor.operations \
             and len(demand.all_kinds or demand.kinds) >= floor.kinds:
         return Shortfall(level=floor.level, demand=demand, floor=floor)
 
@@ -463,7 +507,14 @@ def check_item(item: dict[str, Any], grade: str | None,
 
 @dataclass
 class SetReport:
-    """How demanding the hardest item in a set is, against the grade's floor."""
+    """Whether a set of items is as demanding as its grade, item by item.
+
+    Judged on the TYPICAL item rather than the hardest one. Asking only
+    "does anything reach the grade" was the mistake: a Grade 9 guide whose
+    examples were 5 + 3, 3 - 5, 3 + 5 × 2, -4 + 6 × (-2), -300 + 300,
+    3 + 5 × 2 again and -4 + 6 × (-2) - 3 passed that test on its last
+    example. A learner reads all seven.
+    """
 
     level: str = ""
     floor: Floor | None = None
@@ -471,17 +522,42 @@ class SetReport:
     measured: int = 0
     hardest: Demand = field(default_factory=Demand)
     shortfall: Shortfall | None = None
+    # Items so far below the grade that nothing excuses them.
+    far_below: list[str] = field(default_factory=list)
+
+    @property
+    def typical_below(self) -> bool:
+        """Fewer than half the items reach the grade."""
+        return bool(self.measured) and self.at_grade * 2 < self.measured
 
     @property
     def below(self) -> bool:
-        """Nothing in the whole set reaches the grade."""
-        return bool(self.measured) and self.at_grade == 0 and self.floor is not None
+        if not self.measured or self.floor is None:
+            return False
+        return bool(self.far_below) or self.typical_below
 
     def says(self) -> str:
-        if not self.below or not self.shortfall:
+        if not self.below:
             return ""
-        return (f"Nothing in these {self.measured} items reaches {self.level}. "
-                + self.shortfall.says())
+        parts: list[str] = []
+        if self.far_below:
+            shown = ", ".join(f'"{e}"' for e in self.far_below[:4])
+            more = (f" and {len(self.far_below) - 4} more"
+                    if len(self.far_below) > 4 else "")
+            parts.append(
+                f"{len(self.far_below)} of these {self.measured} items are "
+                f"single-digit arithmetic with no negative number and nothing "
+                f"bracketed — {shown}{more}. That is primary-school work in a "
+                f"{self.level} guide, and no example in the rest of the set "
+                f"excuses it.")
+        if self.typical_below:
+            parts.append(
+                f"Only {self.at_grade} of {self.measured} items reach "
+                f"{self.level}, so the TYPICAL example here is below the "
+                f"grade — a learner reads all of them, not only the hardest.")
+            if self.shortfall and self.shortfall.misses:
+                parts.append(self.shortfall.says())
+        return " ".join(parts)
 
     def fix(self) -> str:
         return self.shortfall.fix() if self.shortfall else ""
@@ -489,6 +565,8 @@ class SetReport:
     def to_dict(self) -> dict[str, Any]:
         return {"level": self.level, "at_grade": self.at_grade,
                 "measured": self.measured, "below": self.below,
+                "typical_below": self.typical_below,
+                "far_below": self.far_below,
                 "floor": self.floor.to_dict() if self.floor else None,
                 "hardest": self.hardest.to_dict(),
                 "says": self.says(), "fix": self.fix()}
@@ -510,6 +588,8 @@ def check_set(items: list[Any], grade: str | None,
         short = shortfall(demand, floor)
         if not short.below:
             report.at_grade += 1
+        if infant_arithmetic(demand):
+            report.far_below.append(demand.expression)
         if (demand.operations, demand.depth, len(demand.kinds)) > \
                 (report.hardest.operations, report.hardest.depth,
                  len(report.hardest.kinds)):
