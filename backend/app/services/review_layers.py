@@ -30,6 +30,31 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any
 
+from . import prompt_store
+
+# The two instructions in this reviewer that a curriculum specialist would want
+# to reword. Named and seeded, so rewording one is a console edit rather than a
+# deploy, and the code still runs with no prompt store at all.
+_REPETITION_RULE = (
+    "Where the repetition block below reports duplicated lessons, duplicated "
+    "exposition or a mirrored lesson list, you MUST raise it in `issues` naming "
+    "the lessons, and reflect it in completeness and curriculum_alignment. "
+    "Reporting nothing about it is not a pass — it is the finding going "
+    "unrecorded."
+)
+_NO_DESIGN_RULE = (
+    "You are therefore NOT able to judge curriculum_alignment: mark that "
+    "dimension not_applicable and say the design was unavailable. Scoring it "
+    "anyway means scoring against your own recollection of a Kenyan curriculum, "
+    "which is the failure this review exists to catch."
+)
+
+
+def seed_prompts() -> dict[str, str]:
+    return {"review-repetition-rule": _REPETITION_RULE,
+            "review-no-design-rule": _NO_DESIGN_RULE}
+
+
 logger = logging.getLogger("cbc-review")
 
 # Each dimension answers a different question, and they fail independently.
@@ -533,11 +558,7 @@ def build_messages(
         "a page back. This is the defect reviews miss most reliably: a guide "
         "that plans seven lessons by writing four and repeating three passes "
         "every check that measures length, because each copy is full length.",
-        "Where the repetition block below reports duplicated lessons, "
-        "duplicated exposition or a mirrored lesson list, you MUST raise it in "
-        "`issues` naming the lessons, and reflect it in completeness and "
-        "curriculum_alignment. Reporting nothing about it is not a pass — it "
-        "is the finding going unrecorded.",
+        prompt_store.stored_or("review-repetition-rule", _REPETITION_RULE),
         "Repeating an ACTIVITY is not the defect: a song, a prayer or a "
         "routine repeated across lessons is how a young child learns it, and "
         "the design often asks for exactly that. The defect is repeated "
@@ -627,10 +648,7 @@ def build_messages(
         user += [
             "=== NO DESIGN WAS AVAILABLE ===",
             missing_design or "The design text for this artifact could not be located.",
-            "You are therefore NOT able to judge curriculum_alignment: mark that "
-            "dimension not_applicable and say the design was unavailable. Scoring it "
-            "anyway means scoring against your own recollection of a Kenyan "
-            "curriculum, which is the failure this review exists to catch.",
+            prompt_store.stored_or("review-no-design-rule", _NO_DESIGN_RULE),
             "",
         ]
 

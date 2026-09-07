@@ -960,6 +960,47 @@ MIGRATIONS: list[tuple[str, str]] = [
             ON question_events(question_id, happened_at DESC);
         """,
     ),
+    (
+        "031_demand_profiles",
+        """
+        -- How demanding THIS sub-strand's tasks must be, read out of its own
+        -- design rather than banded by level. Grade 7 and Grade 9 share a band
+        -- floor because inventing a difference between them would have been
+        -- inventing a syllabus; their designs already contain the difference.
+        CREATE TABLE IF NOT EXISTS demand_profiles (
+            profile_id TEXT PRIMARY KEY,
+            grade TEXT NOT NULL DEFAULT '',
+            subject TEXT NOT NULL DEFAULT '',
+            strand TEXT NOT NULL DEFAULT '',
+            sub_strand TEXT NOT NULL DEFAULT '',
+            lesson_hours TEXT NOT NULL DEFAULT '',
+            -- The command-word floor and the spread across the ladder.
+            top INT NOT NULL DEFAULT 0,
+            distinct_rungs INT NOT NULL DEFAULT 1,
+            mix JSONB NOT NULL DEFAULT '[]'::jsonb,
+            -- The arithmetic floor, for a subject that has one.
+            operations INT NOT NULL DEFAULT 0,
+            kinds INT NOT NULL DEFAULT 0,
+            depth INT NOT NULL DEFAULT 0,
+            -- One task at the top of the range and its answer. This is what a
+            -- generator actually imitates, so it is stored with the numbers.
+            exemplar_question TEXT NOT NULL DEFAULT '',
+            exemplar_answer TEXT NOT NULL DEFAULT '',
+            marks TEXT NOT NULL DEFAULT '',
+            because TEXT NOT NULL DEFAULT '',
+            design_quote TEXT NOT NULL DEFAULT '',
+            model TEXT NOT NULL DEFAULT '',
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+
+        -- One profile per sub-strand. Grades are stored as written elsewhere in
+        -- this schema, so the uniqueness is on the same four columns every
+        -- other scope query uses.
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_demand_profiles_scope
+            ON demand_profiles(grade, subject, strand, sub_strand);
+        """,
+    ),
 ]
 
 

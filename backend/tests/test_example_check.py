@@ -195,3 +195,26 @@ def test_a_clean_set_reports_the_measure_as_passing() -> None:
     measure = next(f for f in gate["reviewer"]["feedback"]
                    if f["aspect"] == "examples_model_what_they_describe")
     assert measure["status"] == "pass"
+
+
+def test_a_worked_example_is_not_judged_on_its_command_word() -> None:
+    """A worked example demands nothing of the learner — it is the teacher
+    showing a method. "Find its temperature after 2 hours" is a demonstration,
+    and failing it for not saying "evaluate" would fail every worked example in
+    every guide in the system.
+
+    That half of the measure belongs on questions, activities and experiments,
+    which do ask the learner something.
+    """
+    demonstration = {
+        "statement": "A freezer at 18°C drops 3°C every 12 minutes. Find its "
+                     "temperature after 2 hours.",
+        "steps": [{"working": "18 - (10 × 3) = -12"}], "answer": "-12°C"}
+
+    assert _kinds(demonstration) == []
+
+    from app.services import command_words
+
+    assert command_words.check_set([{"stem": demonstration["statement"]}],
+                                   "grade-9").below, \
+        "the same sentence IS below the bar as a question"

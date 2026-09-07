@@ -30,6 +30,23 @@ except Exception:
     to_json = json.dumps
     HAS_DB = False
 
+from . import prompt_store
+
+# Who this agent is. Seeded so the role can be reworded without a deploy — it
+# was the last "You are an elite..." left in the services.
+_PROFILE_ROLE = (
+    "You are an elite Chief KICD Curriculum Specialist and Master Pedagogical "
+    "Profile Architect. Your task is to analyse the provided Kenyan Curriculum "
+    "Design dataset (Essence Statement, Learning Outcomes, all Strands, "
+    "Sub-strands, SLOs, Suggested Learning Experiences, Core Competencies, and "
+    "Values) and synthesise a Pedagogical ContentTypeProfile JSON."
+)
+
+
+def seed_prompts() -> dict[str, str]:
+    return {"content-type-profile-role": _PROFILE_ROLE}
+
+
 logger = logging.getLogger("cbc-content-profile")
 
 
@@ -570,10 +587,8 @@ def ai_generate_profile_from_dataset(
     register = register_block(grade) if grade and grade != "all" else ""
 
     system_prompt = (
-        "You are an elite Chief KICD Curriculum Specialist and Master Pedagogical Profile Architect. "
-        "Your task is to analyze the provided Kenyan Curriculum Design dataset (Essence Statement, Learning Outcomes, "
-        "all Strands, Sub-strands, SLOs, Suggested Learning Experiences, Core Competencies, and Values) and synthesize "
-        "a Pedagogical ContentTypeProfile JSON.\n\n"
+        prompt_store.stored_or("content-type-profile-role", _PROFILE_ROLE)
+        + "\n\n"
         + (
             "=== WHO THIS PROFILE IS FOR ===\n" + register + "\n\n"
             "Every field below must be possible for THAT learner. This profile is "

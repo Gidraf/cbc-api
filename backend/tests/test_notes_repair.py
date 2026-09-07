@@ -494,7 +494,13 @@ def test_the_prompt_asks_for_topics_with_handovers():
 
     import app.routes.curriculum as routes
 
-    source = inspect.getsource(routes.factory_generate_notes)
+    # The instruction text lives in the prompt store now; the route renders
+    # it. Checking both is checking that the rule exists AND still reaches the
+    # station that needs it.
+    from app.services.langfuse_seed import SEED_PROMPT_BLOCKS
+
+    source = (inspect.getsource(routes.factory_generate_notes)
+              + SEED_PROMPT_BLOCKS["note-plan-rules"])
     assert "WRITE EACH LESSON AS TOPICS, NOT AS ONE BLOCK" in source
     assert "exposition_segments" in source
     assert "THE TOPICS MUST JOIN UP" in source
@@ -597,7 +603,13 @@ def test_the_prompt_draws_the_line_between_analogy_and_claim():
 
     import app.routes.curriculum as routes
 
-    source = inspect.getsource(routes.factory_generate_notes)
+    # The instruction text lives in the prompt store now; the route renders
+    # it. Checking both is checking that the rule exists AND still reaches the
+    # station that needs it.
+    from app.services.langfuse_seed import SEED_PROMPT_BLOCKS
+
+    source = (inspect.getsource(routes.factory_generate_notes)
+              + SEED_PROMPT_BLOCKS["note-plan-rules"])
     assert "ANALOGIES YES, INVENTION NO" in source
     assert "NEVER cite a scripture reference the design does not name" in source
     assert "NEVER state a statistic" in source

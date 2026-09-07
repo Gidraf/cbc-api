@@ -73,10 +73,32 @@ class LevelRegister:
             "grade_notes": list(self.grade_notes),
         }
 
+    @property
+    def langfuse_name(self) -> str:
+        return f"register/{self.level.lower().replace(' ', '-')}"
+
     def format_for_prompt(self) -> str:
-        """The block injected into every authoring prompt."""
+        """The block injected into every authoring prompt.
+
+        Two halves, and only one of them is editable. What a level's learners
+        can and cannot do is a professional judgement somebody may want to
+        correct without a deploy. Which grade this is, how old they are and
+        what their own design says are FACTS about this grade, computed here —
+        an edit that replaced them would put PP1's ages on a Grade 9 page and
+        nobody would see it happen.
+        """
+        from .prompt_store import stored_or
+
+        return "\n".join([
+            f"AUDIENCE: {self.audience} — {self.grade_label} ({self.level}), "
+            f"typically {self.typical_ages}.",
+            stored_or(self.langfuse_name, self._band_text()),
+            self._grade_text(),
+        ])
+
+    def _band_text(self) -> str:
+        """What is true of the LEVEL, and editable."""
         lines = [
-            f"AUDIENCE: {self.audience} — {self.grade_label} ({self.level}), typically {self.typical_ages}.",
             f"LITERACY: {self.literacy}",
             f"TERMINOLOGY: at this level KICD calls these {self.area_noun}s, not "
             f"{'subjects' if self.area_noun != 'subject' else 'learning areas'}. Use that word.",
@@ -101,6 +123,11 @@ class LevelRegister:
             lines.append(f"PRACTICAL WORK: {self.practicals}")
         if self.scenario_world:
             lines.append(f"CONTEXT FOR EXAMPLES: {self.scenario_world}")
+        return "\n".join(lines)
+
+    def _grade_text(self) -> str:
+        """What is true of THIS GRADE, and computed rather than edited."""
+        lines: list[str] = []
         if self.year_in_level:
             lines.append(f"POSITION: {self.grade_label} is the {self.year_in_level}.")
         if self.builds_on or self.prepares_for:
@@ -549,7 +576,24 @@ class TeacherBand:
     # The single sentence that most often goes wrong for this band.
     never: str = ""
 
+    @property
+    def langfuse_name(self) -> str:
+        """Where a subject specialist edits what this band assumes.
+
+        The teacher band is the one block in the system a head of department
+        would disagree with on sight — "you cannot assume a Grade 7 teacher
+        knows how to run an investigation" is a professional judgement, not a
+        code change. So it is a prompt, editable in the console, with the text
+        below as the default a fresh deployment starts from.
+        """
+        return f"teacher/{self.level.lower().replace(' ', '-')}"
+
     def format_for_prompt(self) -> str:
+        from .prompt_store import stored_or
+
+        return stored_or(self.langfuse_name, self._default_text())
+
+    def _default_text(self) -> str:
         lines = [
             "=== WHO IS READING THIS GUIDE ===",
             f"A {self.trained_as}. Write for a colleague, not for a novice.",
@@ -687,3 +731,21 @@ def teacher_block(grade: str | None) -> str:
     """
     band = teacher_band(grade)
     return band.format_for_prompt() if band else ""
+
+
+def seed_prompts() -> dict[str, str]:
+    """Each level's register and each band's teacher block, as its own prompt.
+
+    Editable in the console because both are professional judgements rather
+    than facts: what a level's learners can do, and what a teacher at that
+    level can be assumed to know without being told. The per-GRADE facts —
+    which grade, what age, what its own design covers — are not here, because
+    an edit that replaced those would put PP1's ages on a Grade 9 page and
+    nothing would show it had happened.
+    """
+    out: dict[str, str] = {}
+    for register in _BY_LEVEL.values():
+        out[register.langfuse_name] = register._band_text()
+    for band in _TEACHER_BANDS.values():
+        out[band.langfuse_name] = band._default_text()
+    return out

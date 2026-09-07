@@ -519,6 +519,41 @@ a learner who understands the method and one who guessed.
 An easy opener is allowed. A set whose hardest item is a single operation is
 not a Senior School set.""",
     ),
+    Fragment(
+        name="science-calculation-demand",
+        kicd=(
+            "The Integrated Science, Physics and Chemistry designs mark calculations on the design's own rubric rows — 'selects the correct formula', 'substitutes correctly' and 'states the unit' are separate levels. Three separate rows cannot be marked from an answer that is one line, so the working has to show all three."
+        ),
+        title="How demanding a science calculation has to be",
+        subjects=("physic", "chemist", "integrated science"),
+        stations=("notes", "material", "questions", "activity", "simulation"),
+        from_grade="grade-7",
+        why="A science calculation whose whole working is one multiplication "
+            "cannot be marked on the design's own rubric, which awards the "
+            "formula, the substitution and the unit separately.",
+        body=r"""=== HOW DEMANDING A CALCULATION MUST BE ===
+A calculation in this subject is not a sum with a unit stuck on the end. It is
+marked on three separate things, so it must SHOW three separate things:
+
+  1. the FORMULA, stated before any number goes into it,
+  2. the SUBSTITUTION, with the quantities put in and their units,
+  3. the ANSWER, to a sensible number of significant figures, WITH ITS UNIT.
+
+  $$\rho = \dfrac{m}{V} = \dfrac{240}{30} = 8.0\ \text{g cm}^{-3}$$
+  (mass in grams, volume in cubic centimetres)
+
+WHERE A REARRANGEMENT IS NEEDED, DO IT IN THE OPEN. Rearranging before
+substituting is a step a learner loses marks on, so it is a step the guide has
+to show rather than perform silently.
+
+A calculation whose entire working is one multiplication is below this level:
+there is nothing in it for the formula row or the unit row of the rubric to
+mark, and a learner who guessed gets the same score as one who understood.
+
+UNITS ARE PART OF THE ANSWER. An answer given as a bare number is wrong here,
+not merely untidy — and a substitution whose units do not cancel to the unit of
+the answer is a mistake the working should have caught.""",
+    ),
 )
 
 _BY_NAME = {f.name: f for f in FRAGMENTS}
@@ -588,6 +623,10 @@ def seed_prompts() -> dict[str, str]:
 
     out = {f.langfuse_name: f.body for f in FRAGMENTS}
     out.update({
+        # BODMAS never PEMDAS, KSh never dollars, metric, Kenyan places. The
+        # one notation block that was never seeded, which is why PEMDAS
+        # survived in output from a system that had the rule in its repository.
+        notation.HOUSE_NAME: notation.HOUSE_BLOCK,
         "fragment/notation-mathematics": notation.LATEX_BLOCK,
         "fragment/notation-chemistry": notation.CHEMISTRY_BLOCK,
         "fragment/notation-physics": notation.PHYSICS_BLOCK,

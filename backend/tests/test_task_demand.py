@@ -293,3 +293,53 @@ def test_the_batch_verdict_does_not_discard_the_items() -> None:
     assert '"stage": "demand"' in block
     assert "normalized_questions = [" not in block, \
         "the batch verdict must not filter the items"
+
+
+# ── what the floor applies TO ───────────────────────────────────────────────
+
+
+def test_a_subject_the_generator_was_never_told_the_rule_is_not_held_to_it() -> None:
+    """Gating a station that did exactly as it was told is how a gate loses its
+    credibility. A subject is gated on arithmetic only where its generator has
+    been given an arithmetic floor to work to."""
+    numbers = [{"statement": "How many disciples did Jesus call?",
+                "steps": [{"working": "10 + 2 = 12"}], "answer": "12"}]
+
+    assert td.check_set(numbers, "grade-9", "Christian Religious Education").below \
+        is False
+    assert td.check_set(numbers, "grade-9", "Mathematics").below is True
+
+
+def test_the_sciences_are_gated_because_their_calculations_are_marked() -> None:
+    """Their designs award the formula, the substitution and the unit
+    separately, so a one-line calculation cannot be marked on the rubric."""
+    thin = [{"statement": "Find the density.", "steps": [{"working": "240 ÷ 30 = 8"}],
+             "answer": "8 g/cm3"}]
+
+    for subject in ("Physics", "Chemistry", "Integrated Science"):
+        assert td.check_set(thin, "grade-9", subject).below, subject
+
+
+def test_the_gate_and_the_prompt_cover_the_same_subjects() -> None:
+    """One list, read by both sides. A subject gated but not instructed cries
+    wolf; a subject instructed but not gated is a rule nothing enforces."""
+    instructed = {stem for f in pf.FRAGMENTS
+                  if f.name.endswith("-demand") or "-demand-" in f.name
+                  for stem in f.subjects}
+
+    assert instructed == set(td.QUANTITATIVE)
+
+
+def test_an_unstated_subject_still_gets_the_level_floor() -> None:
+    """"Do not ask" is not "any subject": a caller that never knew the subject
+    must not silently lose the check."""
+    easy = [{"statement": "Work out 7 - 4", "steps": [{"working": "7 - 4 = 3"}]}]
+
+    assert td.check_set(easy, "grade-9").below
+
+
+def test_the_reason_given_is_about_the_level_not_about_integers() -> None:
+    """Integers were the sub-strand under review. The message printed on every
+    other Grade 9 sub-strand too, and on Pythagoras it was simply wrong."""
+    for floor in td._FLOORS.values():
+        assert "integer" not in floor.because.lower(), floor.level

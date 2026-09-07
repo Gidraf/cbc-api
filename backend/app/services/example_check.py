@@ -157,7 +157,8 @@ def _last_number(text: str) -> str | None:
     return found[-1] if found else None
 
 
-def _too_easy(examples: list[Any], grade: str) -> Finding | None:
+def _too_easy(examples: list[Any], grade: str, subject: str,
+              strand: str = "", sub_strand: str = "") -> Finding | None:
     """Arithmetic years below the grade the SET is printed for.
 
     "7 - 4 = 3" is not wrong, and it is not a Grade 9 revision question either.
@@ -177,12 +178,23 @@ def _too_easy(examples: list[Any], grade: str) -> Finding | None:
     is never flagged, which is how a floor written for Mathematics leaves a
     comprehension exercise alone.
     """
-    from . import task_demand
+    from . import demand_profile
 
-    report = task_demand.check_set(examples, grade)
-    if not report.below:
+    judgement = demand_profile.judge(examples, grade=grade, subject=subject or "",
+                                     strand=strand, sub_strand=sub_strand)
+
+    # Only the ARITHMETIC half applies here. The command-word half asks what a
+    # task demands OF THE LEARNER, and a worked example demands nothing of them
+    # — it is the teacher showing a method. "Find its temperature after 2
+    # hours" is a demonstration, and failing it for not saying "evaluate" would
+    # fail every worked example in every guide in the system.
+    #
+    # That half is measured where it belongs, on the questions, activities and
+    # experiments that do ask the learner something.
+    if not judgement.numeric.below:
         return None
-    return Finding("below_the_grade", report.says(), report.fix())
+    return Finding("below_the_grade", judgement.numeric.says(),
+                   judgement.numeric.fix())
 
 
 # Claims about every case, and the counterexamples that break them.
@@ -213,7 +225,8 @@ def _false_generalisation(text: str) -> Finding | None:
     return None
 
 
-def check(examples: list[Any], *, grade: str = "") -> Report:
+def check(examples: list[Any], *, grade: str = "", subject: str | None = None,
+          strand: str = "", sub_strand: str = "") -> Report:
     """Every worked example, against the words around its arithmetic."""
     report = Report()
     for example in (examples or []):
@@ -227,17 +240,20 @@ def check(examples: list[Any], *, grade: str = "") -> Report:
                 report.findings.append(finding)
 
     # Difficulty is a property of the set, not of any one example in it.
-    below = _too_easy(examples, grade)
+    below = _too_easy(examples, grade, subject, strand, sub_strand)
     if below:
         report.findings.append(below)
     return report
 
 
-def check_material(material: dict[str, Any], *, grade: str = "") -> Report:
+def check_material(material: dict[str, Any], *, grade: str = "",
+                   subject: str | None = None, strand: str = "",
+                   sub_strand: str = "") -> Report:
     """Every worked example in a lesson-material artifact."""
     examples: list[Any] = []
     for piece in (material.get("material") or []):
         if isinstance(piece, dict):
             examples += [e for e in (piece.get("worked_examples") or [])
                          if isinstance(e, dict)]
-    return check(examples, grade=grade)
+    return check(examples, grade=grade, subject=subject, strand=strand,
+                 sub_strand=sub_strand)

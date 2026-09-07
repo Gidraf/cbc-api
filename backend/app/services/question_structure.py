@@ -289,7 +289,9 @@ def check(question: dict[str, Any]) -> Verdict:
     return verdict
 
 
-def check_all(questions: list[Any], *, grade: str = "") -> dict[str, Any]:
+def check_all(questions: list[Any], *, grade: str = "",
+              subject: str | None = None, strand: str = "",
+              sub_strand: str = "") -> dict[str, Any]:
     """A batch, and whether it is fit to enter a review queue.
 
     Volume is the point of this: 500 items a day is only worth generating if
@@ -299,6 +301,16 @@ def check_all(questions: list[Any], *, grade: str = "") -> dict[str, Any]:
     the batch is pitched at the grade at all. A paper may contain an easy
     opener — every real paper does — but a Grade 9 paper whose hardest item is
     one addition is not a Grade 9 paper, and no per-item rule can see that.
+
+    That judgement has two halves, because two things go wrong independently.
+    A set can be arithmetically demanding and ask only for recall, and it can
+    ask for an evaluation of nothing harder than 7 - 4. The second half is what
+    covers History, CRE, English and every other subject with no arithmetic in
+    it at all — there, the command word IS the difficulty.
+
+    `sub_strand` is what lets the sub-strand's own extracted profile be used in
+    place of the band floor. Without it the band floor applies, which is
+    coarser and still a floor.
     """
     verdicts = [check(q if isinstance(q, dict) else {}) for q in (questions or [])]
     blocked = [v for v in verdicts if v.blocked]
@@ -317,13 +329,18 @@ def check_all(questions: list[Any], *, grade: str = "") -> dict[str, Any]:
     demand: dict[str, Any] = {}
     batch_blocked = False
     if grade:
-        from . import task_demand
+        from . import demand_profile
 
-        report = task_demand.check_set(questions or [], grade)
-        demand = report.to_dict()
-        if report.below:
+        judgement = demand_profile.judge(
+            questions or [], grade=grade, subject=subject or "",
+            strand=strand, sub_strand=sub_strand)
+        demand = judgement.to_dict()
+        if judgement.numeric.below:
             batch_blocked = True
             counts["batch_below_the_grade"] = 1
+        if judgement.command.below:
+            batch_blocked = True
+            counts["batch_asks_too_little"] = 1
 
     return {
         "batch_blocked": batch_blocked,

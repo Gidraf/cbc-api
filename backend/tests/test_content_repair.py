@@ -134,7 +134,11 @@ def test_the_question_route_repairs_before_it_discards() -> None:
     assert "content_repair.repair_questions(" in source
     # And re-measures, because the gate reports what is FILED and a repaired
     # item is a different item.
-    repair_block = source.split("content_repair.repair_questions(")[1][:900]
+    repair_block = source.split("content_repair.repair_questions(")[1][:1100]
     assert "question_structure.check_all(" in repair_block
-    assert "normalized_questions, grade=payload.grade)" in repair_block
+    # The full scope goes with it, so the sub-strand's own extracted demand
+    # profile is used rather than the coarser band floor.
+    for part in ("grade=payload.grade", "subject=payload.subject",
+                 "sub_strand=payload.sub_strand"):
+        assert part in repair_block, part
     assert "except Exception" in repair_block, "a failed repair is not a failed run"

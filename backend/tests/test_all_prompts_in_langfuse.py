@@ -60,46 +60,125 @@ def test_the_diagram_question_agent_reads_its_prompt_from_langfuse() -> None:
     assert "the part labelled A" in out
 
 
-def test_no_service_assembles_a_prompt_out_of_string_literals() -> None:
-    """The shape to catch: a long multi-line string that instructs a model,
-    built where nobody can edit it."""
-    offenders: list[str] = []
-    # `=== ` anchored to a line start: that is how a prompt writes a section
-    # header. Unanchored it also matched JavaScript strict equality — a
-    # `display === 'true'` inside the notes renderer's KaTeX loader was
-    # reported as an unseeded prompt.
-    instruction = re.compile(
-        r"you are (a|an|the|writing)|return only valid json|^=== ",
-        re.I | re.M)
+# Which files hold the store was a hand-kept list, and a hand-kept list is a
+# list that goes stale: every module that grew a `seed_prompts()` had to be
+# remembered here, and one that was forgotten reported working machinery as a
+# defect. The question is not WHICH FILE a literal is in. It is whether the
+# literal reaches Langfuse — text that is seeded is published, wherever it is
+# written, and text that is not is hidden, wherever it is written.
+def _seeded_text() -> str:
+    from app.services.prompt_sync import _all_prompts
 
-    for path in (APP / "services").rglob("*.py"):
-        # These ARE the prompt store: their text is seeded to Langfuse, so it
-        # is readable and editable there. Living in Python is how it gets
-        # PUBLISHED, not where it hides.
-        if path.name in {"langfuse_seed.py", "prompt_fragments.py", "notation.py"}:
-            continue
-        # A repair directive is assembled from what the last run actually
-        # produced — the modules that came back thin, by name and length, and
-        # the design steps nobody used. There is no fixed text to seed: every
-        # sentence in it names a specific failure of a specific guide.
-        if path.name == "notes_repair.py":
+    return "\n\n".join(_all_prompts().values())
+
+
+# The ones that are not prompts at all.
+_NOT_A_PROMPT = {
+    # A repair directive is assembled from what the last run actually produced
+    # — the modules that came back thin, by name and length. There is no fixed
+    # text to seed: every sentence names a specific failure of a specific guide.
+    "notes_repair.py",
+    # A README written INTO an export bundle, read by a person unpacking a zip.
+    "prompt_bundle.py",
+    "export_bundle.py",
+    # The master context a fresh deployment falls back to when no prompt store
+    # is configured at all. Seeding it is what it is a fallback FOR.
+    "langfuse_context.py",
+}
+
+
+def _instruction_literals(root: pathlib.Path) -> list[str]:
+    """Long strings that instruct a model, excluding docstrings.
+
+    Docstrings were counted before, so the scan reported nine module docstrings
+    describing prompts alongside the prompts themselves — and a check whose
+    output is mostly false alarms is a check nobody reads to the end of.
+    """
+    instruction = re.compile(
+        r"you are (a|an|the|writing)|return only valid json|^=== |"
+        r"^(WRITE|DO NOT|NEVER|ALWAYS|YOUR TASK|RULES)\b|\byou must\b",
+        re.I | re.M)
+    found: list[str] = []
+    published = _seeded_text()
+    for path in root.rglob("*.py"):
+        if path.name in _NOT_A_PROMPT:
             continue
         try:
             tree = ast.parse(path.read_text(encoding="utf-8"))
         except SyntaxError:
             continue
+        docs = set()
+        for node in ast.walk(tree):
+            body = getattr(node, "body", None)
+            if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef,
+                                 ast.AsyncFunctionDef)) and body \
+                    and isinstance(body[0], ast.Expr) \
+                    and isinstance(body[0].value, ast.Constant) \
+                    and isinstance(body[0].value.value, str):
+                docs.add(id(body[0].value))
         for node in ast.walk(tree):
             if not isinstance(node, ast.Constant) or not isinstance(node.value, str):
                 continue
-            text = node.value
-            if len(text) > 400 and instruction.search(text):
-                offenders.append(f"{path.name}:{node.lineno}  {text[:60]!r}")
+            if id(node) in docs or len(node.value) <= 200:
+                continue
+            # Seeded text is published text, whatever file it is written in.
+            if node.value.strip() in published:
+                continue
+            if instruction.search(node.value):
+                found.append(f"{path.relative_to(APP.parent)}:{node.lineno}  "
+                             f"{node.value[:60]!r}")
+    return found
+
+
+def test_no_service_assembles_a_prompt_out_of_string_literals() -> None:
+    """The shape to catch: a long multi-line string that instructs a model,
+    built where nobody can edit it."""
+    offenders = _instruction_literals(APP / "services")
 
     assert not offenders, (
         "a prompt written in Python cannot be read or improved without a "
-        "deploy — seed it and load it through get_agent_prompt:\n  "
+        "deploy — seed it and load it through get_agent_prompt or "
+        "prompt_store:\n  " + "\n  ".join(offenders)
+    )
+
+
+def test_no_ROUTE_assembles_a_prompt_out_of_string_literals() -> None:
+    """The services were scanned and the routes were not, so the longest single
+    instruction in the system — the note generator's production rules, six
+    thousand characters of it — sat in `curriculum.py` and was the one prompt
+    nobody could change a sentence in without a deploy."""
+    offenders = _instruction_literals(APP / "routes")
+
+    assert not offenders, (
+        "prompt text in a route is prompt text nobody can edit:\n  "
         + "\n  ".join(offenders)
     )
+
+
+def test_the_register_and_the_teacher_band_are_editable_without_a_deploy() -> None:
+    """The two blocks a head of department is most likely to disagree with —
+    what a level's learners can do, and what a teacher at that level can be
+    assumed to know — needed a code change to correct."""
+    from app.services.prompt_sync import _all_prompts
+
+    prompts = _all_prompts()
+    for level in ("pre-primary", "lower-primary", "upper-primary",
+                  "junior-school", "senior-school"):
+        assert f"register/{level}" in prompts, level
+        assert f"teacher/{level}" in prompts, level
+
+
+def test_the_grade_facts_inside_a_register_are_not_editable() -> None:
+    """An edit that replaced them would put PP1's ages on a Grade 9 page and
+    nothing would show it had happened."""
+    from app.services.level_register import seed_prompts, register_block
+
+    seeded = seed_prompts()["register/junior-school"]
+    block = register_block("grade-9")
+
+    assert "14-15 years old" in block
+    assert "14-15 years old" not in seeded, "an age is a fact about the grade"
+    assert "Grade 9" not in seeded, "the grade is not a property of the band"
 
 
 def test_every_seeded_prompt_reaches_langfuse_under_a_folder() -> None:
@@ -114,3 +193,38 @@ def test_every_seeded_prompt_reaches_langfuse_under_a_folder() -> None:
         foldered = langfuse_context_service.FOLDERS.get(name)
         assert foldered, f"{name} has no folder"
         assert prompts[foldered] == prompts[name], name
+
+
+def test_the_house_conventions_reach_the_prompt_store() -> None:
+    """The four subject notation blocks were seeded and the house block was
+    not, so the sentence forbidding PEMDAS existed only in the repository. A
+    running system that had never been redeployed had never been told it —
+    which is exactly what a reviewer found in the output."""
+    from app.services import notation
+    from app.services.prompt_sync import _all_prompts
+
+    assert notation.HOUSE_NAME in _all_prompts()
+    assert "BODMAS" in notation.for_prompt("Mathematics", grade="grade-9")
+    assert "Never PEMDAS" in notation.for_prompt("Mathematics", grade="grade-9")
+
+
+def test_a_blank_edit_never_removes_a_rule() -> None:
+    """Blanking a prompt is almost always an accident or a half-finished edit,
+    and honouring it removes the rules silently, at generation time, from every
+    station at once."""
+    from app.services import prompt_store
+
+    assert prompt_store.stored_or("nothing-is-stored-here", "the default") \
+        == "the default"
+
+
+def test_the_scan_asks_whether_a_literal_is_PUBLISHED_not_where_it_lives() -> None:
+    """A hand-kept list of store files goes stale: every module that grows a
+    `seed_prompts()` has to be remembered in it, and one that is forgotten
+    reports working machinery as a defect."""
+    import inspect
+
+    source = inspect.getsource(_instruction_literals)
+
+    assert "published" in source
+    assert "_IS_THE_STORE" not in source

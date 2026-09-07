@@ -106,17 +106,31 @@ def _all_prompts() -> dict[str, str]:
     the work this is meant to make easier, thrown away to make it tidier.
     """
     from .langfuse_context import langfuse_context_service
-    from .langfuse_seed import SEED_AGENT_PROMPTS, SEED_MASTER_CONTEXT
+    from .langfuse_seed import (SEED_AGENT_PROMPTS, SEED_MASTER_CONTEXT,
+                                SEED_PROMPT_BLOCKS)
 
     prompts: dict[str, str] = {
         "BECF": SEED_MASTER_CONTEXT,
         "cbc-master-context": SEED_MASTER_CONTEXT,
     }
     prompts.update(SEED_AGENT_PROMPTS)
+    prompts.update(SEED_PROMPT_BLOCKS)
+    for name, text in list(SEED_PROMPT_BLOCKS.items()):
+        foldered = langfuse_context_service.FOLDERS.get(name)
+        if foldered:
+            prompts[foldered] = text
     for name, text in list(SEED_AGENT_PROMPTS.items()):
         foldered = langfuse_context_service.FOLDERS.get(name)
         if foldered:
             prompts[foldered] = text
+
+    # Who the learner is at each level, and what the teacher reading the guide
+    # can be assumed to know. Both are professional judgements a head of
+    # department may want to correct — "you cannot assume a Grade 7 teacher can
+    # run an investigation" is not a code change — and both needed a deploy.
+    from .level_register import seed_prompts as register_seed_prompts
+
+    prompts.update(register_seed_prompts())
 
     # Each domain fragment as its own prompt, under `fragment/<name>`.
     # Education is wide, and a prompt that must serve every subject is a prompt
@@ -124,6 +138,20 @@ def _all_prompts() -> dict[str, str]:
     # have edited the prompt that writes a PP1 singing lesson. Separate, small
     # and individually editable is the only way somebody who knows chemistry
     # will touch the chemistry.
+    # What may be pictured in each faith area. The most community-sensitive
+    # text there is, and the one an engineer is least qualified to write.
+    from .faith_scope import seed_prompts as faith_seed_prompts
+
+    prompts.update(faith_seed_prompts())
+
+    # Instruction text that lives beside the code that assembles it, seeded so
+    # the WORDS can be improved without a deploy while the assembly stays put.
+    from .content_type_classifier import seed_prompts as ct_seed_prompts
+    from .review_layers import seed_prompts as review_seed_prompts
+
+    prompts.update(ct_seed_prompts())
+    prompts.update(review_seed_prompts())
+
     from .prompt_fragments import seed_prompts
 
     prompts.update(seed_prompts())

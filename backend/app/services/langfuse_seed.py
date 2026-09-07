@@ -494,6 +494,8 @@ Do not repeat the instruction back. Do not describe the material. Produce it.
 
 {{ domain_directives }}
 
+{{ demand_profile }}
+
 {{ target_language }}
 
 {{ language_register }}
@@ -634,6 +636,8 @@ them, and "the teacher demonstrates on the board" is a board nobody kept.
 {{ target_language }}
 
 {{ domain_directives }}
+
+{{ demand_profile }}
 {{ faith_scope }}
 
 === KICD BASIC EDUCATION CURRICULUM FRAMEWORK (BECF) ===
@@ -871,6 +875,8 @@ behaviour, including the physics, the ranges and what counts as correct.
 {{ notation }}
 
 {{ domain_directives }}
+
+{{ demand_profile }}
 {{ faith_scope }}
 
 === CONTENT-TYPE PEDAGOGICAL DIRECTIVES ===
@@ -1018,6 +1024,8 @@ have not looked hard enough at what the learner has to picture in their head.
 {{ notation }}
 
 {{ domain_directives }}
+
+{{ demand_profile }}
 {{ faith_scope }}
 
 === CONTENT-TYPE PEDAGOGICAL DIRECTIVES ===
@@ -1184,6 +1192,8 @@ Concept: {{ concept }}
 {{ notation }}
 
 {{ domain_directives }}
+
+{{ demand_profile }}
 {{ faith_scope }}
 
 === CONTENT-TYPE PEDAGOGICAL DIRECTIVES ===
@@ -1248,6 +1258,8 @@ SLO ID: {{ slo_id }}
 {{ notation }}
 
 {{ domain_directives }}
+
+{{ demand_profile }}
 {{ faith_scope }}
 
 === CONTENT-TYPE PEDAGOGICAL DIRECTIVES ===
@@ -1326,6 +1338,8 @@ Strand: {{ strand }} / {{ sub_strand }}
 
 {{ notation }}
 
+{{ demand_profile }}
+
 {{ faith_scope }}
 
 === THE DIAGRAM ===
@@ -1399,6 +1413,8 @@ when the quality gate reports it.
 {{ notation }}
 
 {{ domain_directives }}
+
+{{ demand_profile }}
 {{ faith_scope }}
 
 === CONTENT-TYPE PEDAGOGICAL DIRECTIVES ===
@@ -1964,6 +1980,78 @@ Output MUST be a valid JSON object:
 }
 Return ONLY valid JSON.
 """,
+    "demand-profile": r"""You are reading ONE sub-strand of a KICD curriculum design and stating how demanding its tasks have to be.
+
+Not how demanding you think they should be. How demanding THIS design says they are.
+
+Grade: {{ grade }}
+Subject: {{ subject }}
+Strand: {{ strand }}
+Sub-strand: {{ sub_strand }}
+Time the design funds for it: {{ lesson_hours }}
+
+=== WHAT YOU ARE READING ===
+{{ design_extract }}
+
+Specific learning outcomes:
+{{ slos }}
+
+The design's own assessment rubric:
+{{ rubrics }}
+
+{{ level_register }}
+
+{{ teacher_band }}
+
+{{ notation }}
+
+{{ faith_scope }}
+
+{{ domain_directives }}
+
+=== THE LADDER ===
+{{ command_ladder }}
+
+=== WHAT TO RETURN ===
+Return ONLY valid JSON with these fields:
+
+  "top": <1-6>            the HIGHEST rung this sub-strand's own outcomes and
+                          rubric ask for. Read the verbs the design actually
+                          uses. If its outcomes say "identify" and "describe"
+                          and nothing more, the answer is 2 — do not raise it
+                          because the grade sounds senior.
+  "distinct": <1-6>       how many rungs a set of tasks should spread across.
+  "mix": [{"rank": <1-6>, "share": <0-1>}, ...]
+                          the proportion of tasks at each rung. Shares add to 1.
+  "operations": <int>     for a subject whose tasks are calculations: the least
+  "kinds": <int>          number of operations, of different kinds, at what
+  "depth": <int>          bracket depth a task must have. All 0 where the
+                          sub-strand has no arithmetic in it.
+  "marks": "<string>"     what a task at the top of this range is worth, given
+                          the time the design funds.
+  "exemplar_question": "<one task at the TOP of this range>"
+  "exemplar_answer": "<its answer, worked, at the standard a marker would accept>"
+  "because": "<one sentence: what in the design sets this level>"
+  "design_quote": "<the design's own words, verbatim, that you read it from>"
+
+=== THE EXEMPLAR IS THE PART THAT MATTERS ===
+Every generator downstream imitates your exemplar. It does not read your
+numbers. So the exemplar must ACTUALLY BE at the level you have just described:
+if you set `top` to 5, the exemplar's command word must be an evaluate-level
+verb, and if you set `operations` to 3 the exemplar must contain three of them.
+
+A profile that demands an evaluation and illustrates it with a list has told
+every station in the system to write lists. That profile is refused, and the
+sub-strand falls back to a coarser rule — so an exemplar you are unsure of is
+worth more thought than a number you are sure of.
+
+=== DO NOT INVENT THE DESIGN ===
+`design_quote` must be text that appears above. If the extract does not say
+enough to set a level, say so in `because` and give the level the outcomes DO
+support. An invented rubric row reads exactly like a real one, and this profile
+is consulted by every station afterwards — so a wrong one is wrong everywhere
+and quietly.
+""",
     "substrand-generator": """
 You are the SubstrandIntelligenceAgent for the Kenyan Basic Education Curriculum Framework (BECF).
 
@@ -2194,3 +2282,86 @@ def seed_langfuse() -> dict[str, Any]:
 
 if __name__ == "__main__":
     seed_langfuse()
+
+
+# Prompt text that is APPENDED to another prompt's context rather than sent on
+# its own. It carries no register and no faith scope of its own: the context it
+# joins already states both, and repeating them puts the same instruction in
+# front of the model twice.
+SEED_PROMPT_BLOCKS: dict[str, str] = {
+    "chunk-strands": """You are reading PART of the curriculum design - pages {{ page_range }} of it.
+Extract ONLY the strands that appear on these pages. Do not infer strands from elsewhere in the subject, and do not invent any.
+Every line below is prefixed with its page:line address; cite those addresses in 'source_quote' so a reviewer can find each strand.
+Return the same JSON schema. If these pages contain no strands, return {"strands": []}.
+
+=== PAGES {{ page_range }} ===
+{{ chunk_text }}""",
+    "chunk-substrands": """You are reading PART of the curriculum design - pages {{ page_range }} of it.
+Return ONLY the sub-strands of the strand '{{ strand_name }}' that actually appear on these pages. Do not carry over sub-strands from elsewhere in the subject, and do not invent any.
+Every line below is prefixed with its page:line address; cite those addresses so a reviewer can find each sub-strand in the design.
+Return the same JSON schema. If these pages contain no sub-strands of this strand, return {"sub_strands": []}.
+
+=== PAGES {{ page_range }} ===
+{{ chunk_text }}""",
+    "note-plan-rules": r"""{{ design_block }}
+
+=== WHAT TO AUTHOR ===
+Subject: {{ subject }} ({{ grade }}, {{ level }}) [Content type: {{ content_type }}]
+Strand: {{ strand }} ➔ Sub-strand: {{ sub_strand }}
+Time the design allocates: {{ allocated_time_phrase }}
+SLOs to cover completely:
+{{ slos_formatted }}
+Key inquiry questions to address:
+{{ kiqs_formatted }}
+
+ESSENCE STATEMENT:
+{{ essence_stmt }}
+
+PRODUCTION RULES
+1. Author exactly {{ modules }} module(s) in 'modules', one per {{ module_word }} the design allocates. Number them 1 to {{ modules }}. Do not merge them, and do not invent a {{ module_word }} the design did not fund.
+2. Set each module's 'duration_minutes' to {{ minutes_each }} — never assume 60.
+3. Every module must build on the design's own suggested learning experiences above. They are the lesson; your notes explain how to teach them, not what to teach instead of them.
+4. What is TAUGHT follows the learner described in WHO THIS IS FOR: a note a teacher cannot deliver to this age group is wrong however thorough it is. How much GUIDANCE the teacher gets does not follow the learner, and the floor below is a floor.
+5. Cite a source only where the claim needs one and the source is permitted for THIS subject. A sub-strand that rests on the design alone needs no external citation, and inventing statistics to fill the field is a defect.
+6. Fill 'practical_connections' with what this sub-strand genuinely does. Where there is no apparatus, name the real materials and leave 'safety_precautions' to whatever genuinely applies — an empty string beats an invented hazard.
+7. Make the design's assessment rubric above achievable from these notes. If the rubric asks for three of something, teach three.
+
+=== ONE MODULE PER ALLOCATED LESSON ===
+This sub-strand is funded for {{ allocated_time_phrase }}. Produce EXACTLY {{ modules }} module(s) in 'modules', numbered 1 to {{ modules }}, with no gaps and none merged.
+A teacher builds a scheme of work from this and a head of department checks the scheme against it. Fewer modules than lessons cannot be scheduled: the missing lessons have no plan and nobody can see which ones they are.
+Set 'module_count' to {{ modules }} and every 'duration_minutes' to {{ minutes_each }}.
+Set 'allocated_time' to the design's own wording, verbatim: "{{ allocated_time_stated }}".
+
+=== WRITE EACH LESSON AS TOPICS, NOT AS ONE BLOCK ===
+Do NOT write the exposition as a single long passage. Break it into named TOPICS and add them to each module as `exposition_segments`, an array of objects:
+
+  "exposition_segments": [
+    {"topic": "<what this part of the lesson covers>",
+     "minutes": <how long this part takes>,
+     "body": "<the teaching content for THIS topic only>",
+     "bridge": "<one sentence handing over to the next topic>"}
+  ]
+
+HOW MANY TOPICS: as many as the lesson genuinely has, at least {{ min_segments }}. Let the material decide — a lesson with five real things to teach gets five topics, and one with three gets three. Do not pad to reach a number and do not compress two real topics into one to stay under one.
+Each topic's `body` should be about {{ segment_target_chars }} characters, and never below {{ min_segment_chars }}. Written this way the topics add up past the {{ min_body_chars }} characters a whole lesson needs, and each one is small enough to write properly.
+Keep `teacher_exposition` itself SHORT — two or three sentences framing the lesson. The substance belongs in the topics.
+
+THE TOPICS MUST JOIN UP. Each `bridge` says in one sentence how this topic hands over to the next: what the children now know, and what that sets up. The last topic's bridge points to the next lesson. A lesson that is four disconnected paragraphs is not a lesson — a teacher reads them in order and the children live through them in order.
+
+WHY IT IS BROKEN UP. One long passage comes out shallow: general where it should be specific, and short. A named topic of {{ segment_target_chars }} characters can be written properly — the actual words to say, the actual song or story, the questions in the order to ask them, what a child who has not understood will do and what to do when they do it, what to hold up and when.
+Restating the outcome in other words is padding and counts for nothing.
+
+=== ANALOGIES YES, INVENTION NO ===
+Reach for real-life analogies and everyday examples. A four-year-old understands God as provider through the food on their own table, not through a definition. "God cares for you the way your mother does when she gives you food" is exactly the right kind of teaching, and this guide should be full of it.
+Draw those analogies from the child's own world as the register above describes it: self, family, home, neighbourhood, school. Not farms, industry, counties or national development.
+
+An analogy is a TEACHING DEVICE and makes no claim about the world. A CLAIM asserts something is true, and every claim here must be checkable against the KICD design shown to you. The difference is not stylistic — it is the whole of it:
+  - NEVER cite a scripture reference the design does not name. The design names its own; use those and no others. An invented chapter and verse is indistinguishable from a real one and a teacher will read it aloud to a class.
+  - NEVER state a statistic, a percentage or a survey figure. Nothing was retrieved for this sub-strand. A number with a source attached is worse than no number, because nothing downstream can tell it from a real one.
+  - NEVER attribute anything to KNBS, KALRO, NEMA, UNESCO, a ministry or a named report. If it is not in the design in front of you, it is not available to you.
+  - NEVER invent a page or line number. Cite only addresses you can see in the excerpt above.
+Every one of these is checked after you write, mechanically, and anything invented is reported against this guide.
+Later modules must be as full as the first. A guide that starts strong and thins out is the failure this instruction exists to prevent — lessons 4 to 7 are taught by the same teacher on the same day as lesson 1.
+
+ADDITIONAL PRODUCTION DIRECTIVES: {{ custom_instructions }}""",
+}

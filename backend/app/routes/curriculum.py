@@ -46,6 +46,8 @@ from ..services.grade_order import grade_level
 from ..services.faith_scope import prompt_block as faith_prompt_block
 from ..services.grade_scope import notes_for as grade_scope_notes
 from ..services import notation, prompt_fragments
+from ..services import demand_profile, grade_sql, prompt_store
+from ..services.langfuse_seed import SEED_PROMPT_BLOCKS
 from ..services.target_language import block_for as target_language_block
 from ..services.material_form import block_for as _material_form_block
 from ..services.level_register import (
@@ -1086,6 +1088,13 @@ def factory_generate_notes(
             # about mortise and tenon joints.
             "domain_directives": prompt_fragments.compose(
                 payload.subject, "notes", payload.grade),
+            # How demanding a task on THIS sub-strand has to be, read out
+            # of its own outcomes, rubric and funded hours — with the band
+            # floor underneath it where no profile has been extracted yet.
+            "demand_profile": demand_profile.for_prompt(
+                payload.grade, payload.subject,
+                getattr(payload, "strand", "") or "",
+                getattr(payload, "sub_strand", "") or ""),
         "faith_scope": faith_prompt_block(payload.subject),
         # A language area is taught IN that language; the plan must name
         # the actual phrases, not "greetings".
@@ -1140,123 +1149,33 @@ def factory_generate_notes(
 
     context.messages.append({
         "role": "user",
-        "content": (
-            f"{design_block}\n\n"
-            f"=== WHAT TO AUTHOR ===\n"
-            f"Subject: {payload.subject} ({payload.grade}, {level}) "
-            f"[Content type: {ct_profile.content_type.upper()}]\n"
-            f"Strand: {payload.strand} \u2794 Sub-strand: {payload.sub_strand}\n"
-            f"Time the design allocates: {allocation.phrase()}\n"
-            f"SLOs to cover completely:\n{slos_formatted}\n"
-            f"Key inquiry questions to address:\n{kiqs_formatted}\n\n"
-            f"ESSENCE STATEMENT:\n{essence_stmt}\n\n"
-            f"PRODUCTION RULES\n"
-            f"1. Author exactly {allocation.modules} module(s) in 'modules', one per "
-            f"{module_word} the design allocates. Number them 1 to {allocation.modules}. "
-            f"Do not merge them, and do not invent a {module_word} the design did not fund.\n"
-            f"2. Set each module's 'duration_minutes' to "
-            f"{allocation.minutes_each or 'the length this level actually teaches for'}"
-            f" \u2014 never assume 60.\n"
-            f"3. Every module must build on the design's own suggested learning "
-            f"experiences above. They are the lesson; your notes explain how to teach "
-            f"them, not what to teach instead of them.\n"
-            f"4. What is TAUGHT follows the learner described in WHO THIS IS FOR: a "
-            f"note a teacher cannot deliver to this age group is wrong however "
-            f"thorough it is. How much GUIDANCE the teacher gets does not follow the "
-            f"learner, and the floor below is a floor.\n"
-            f"5. Cite a source only where the claim needs one and the source is "
-            f"permitted for THIS subject. A sub-strand that rests on the design alone "
-            f"needs no external citation, and inventing statistics to fill the field "
-            f"is a defect.\n"
-            f"6. Fill 'practical_connections' with what this sub-strand genuinely "
-            f"does. Where there is no apparatus, name the real materials and leave "
-            f"'safety_precautions' to whatever genuinely applies \u2014 an empty string "
-            f"beats an invented hazard.\n"
-            f"7. Make the design's assessment rubric above achievable from these "
-            f"notes. If the rubric asks for three of something, teach three.\n\n"
-            f"=== ONE MODULE PER ALLOCATED LESSON ===\n"
-            f"This sub-strand is funded for {allocation.phrase()}. Produce EXACTLY "
-            f"{allocation.modules} module(s) in 'modules', numbered 1 to "
-            f"{allocation.modules}, with no gaps and none merged.\n"
-            f"A teacher builds a scheme of work from this and a head of department "
-            f"checks the scheme against it. Fewer modules than lessons cannot be "
-            f"scheduled: the missing lessons have no plan and nobody can see which "
-            f"ones they are.\n"
-            f"Set 'module_count' to {allocation.modules} and every "
-            f"'duration_minutes' to "
-            f"{allocation.minutes_each or 'the length this level teaches for'}.\n"
-            f"Set 'allocated_time' to the design's own wording, verbatim: "
-            f"\"{allocation.stated or 'not stated'}\".\n\n"
-            f"=== WRITE EACH LESSON AS TOPICS, NOT AS ONE BLOCK ===\n"
-            f"Do NOT write the exposition as a single long passage. Break it into "
-            f"named TOPICS and add them to each module as "
-            f"`exposition_segments`, an array of objects:\n\n"
-            f'  "exposition_segments": [\n'
-            f'    {{"topic": "<what this part of the lesson covers>",\n'
-            f'     "minutes": <how long this part takes>,\n'
-            f'     "body": "<the teaching content for THIS topic only>",\n'
-            f'     "bridge": "<one sentence handing over to the next topic>"}}\n'
-            f'  ]\n\n'
-            f"HOW MANY TOPICS: as many as the lesson genuinely has, at least "
-            f"{notes_coverage.MIN_SEGMENTS}. Let the material decide — a lesson "
-            f"with five real things to teach gets five topics, and one with "
-            f"three gets three. Do not pad to reach a number and do not "
-            f"compress two real topics into one to stay under one.\n"
-            f"Each topic's `body` should be about "
-            f"{notes_coverage.SEGMENT_TARGET_CHARS} characters, and never below "
-            f"{notes_coverage.MIN_SEGMENT_CHARS}. Written this way the topics add "
-            f"up past the {notes_coverage.MIN_BODY_CHARS:,} characters a whole "
-            f"lesson needs, and each one is small enough to write properly.\n"
-            f"Keep `teacher_exposition` itself SHORT — two or three sentences "
-            f"framing the lesson. The substance belongs in the topics.\n\n"
-            f"THE TOPICS MUST JOIN UP. Each `bridge` says in one sentence how this "
-            f"topic hands over to the next: what the children now know, and what "
-            f"that sets up. The last topic's bridge points to the next lesson. A "
-            f"lesson that is four disconnected paragraphs is not a lesson — a "
-            f"teacher reads them in order and the children live through them in "
-            f"order.\n\n"
-            f"WHY IT IS BROKEN UP. One long passage comes out shallow: general "
-            f"where it should be specific, and short. A named topic of "
-            f"{notes_coverage.SEGMENT_TARGET_CHARS} characters can be written "
-            f"properly — the actual words to say, the actual song or story, the "
-            f"questions in the order to ask them, what a child who has not "
-            f"understood will do and what to do when they do it, what to hold up "
-            f"and when.\n"
-            f"Restating the outcome in other words is padding and counts for "
-            f"nothing.\n\n"
-            f"=== ANALOGIES YES, INVENTION NO ===\n"
-            f"Reach for real-life analogies and everyday examples. A "
-            f"four-year-old understands God as provider through the food on "
-            f"their own table, not through a definition. \"God cares for you "
-            f"the way your mother does when she gives you food\" is exactly "
-            f"the right kind of teaching, and this guide should be full of it.\n"
-            f"Draw those analogies from the child's own world as the register "
-            f"above describes it: self, family, home, neighbourhood, school. "
-            f"Not farms, industry, counties or national development.\n\n"
-            f"An analogy is a TEACHING DEVICE and makes no claim about the "
-            f"world. A CLAIM asserts something is true, and every claim here "
-            f"must be checkable against the KICD design shown to you. The "
-            f"difference is not stylistic — it is the whole of it:\n"
-            f"  - NEVER cite a scripture reference the design does not name. "
-            f"The design names its own; use those and no others. An invented "
-            f"chapter and verse is indistinguishable from a real one and a "
-            f"teacher will read it aloud to a class.\n"
-            f"  - NEVER state a statistic, a percentage or a survey figure. "
-            f"Nothing was retrieved for this sub-strand. A number with a source "
-            f"attached is worse than no number, because nothing downstream can "
-            f"tell it from a real one.\n"
-            f"  - NEVER attribute anything to KNBS, KALRO, NEMA, UNESCO, a "
-            f"ministry or a named report. If it is not in the design in front "
-            f"of you, it is not available to you.\n"
-            f"  - NEVER invent a page or line number. Cite only addresses you "
-            f"can see in the excerpt above.\n"
-            f"Every one of these is checked after you write, mechanically, and "
-            f"anything invented is reported against this guide.\n"
-            f"Later modules must be as full as the first. A guide that starts "
-            f"strong and thins out is the failure this instruction exists to "
-            f"prevent — lessons 4 to 7 are taught by the same teacher on the same "
-            f"day as lesson 1.\n\n"
-            f"ADDITIONAL PRODUCTION DIRECTIVES: {payload.custom_instructions}"
+        # The words live in Langfuse under `generate/lesson-plan-rules`; the
+        # assembly stays here because it is per run — how many modules this
+        # sub-strand is funded for, how long each one lasts. This was the
+        # longest single instruction in the system and the only one that
+        # needed a deploy to change a sentence in.
+        "content": prompt_store.render(
+            "note-plan-rules", SEED_PROMPT_BLOCKS["note-plan-rules"],
+                allocated_time_phrase=allocation.phrase(),
+                allocated_time_stated=allocation.stated or 'not stated',
+                content_type=ct_profile.content_type.upper(),
+                custom_instructions=payload.custom_instructions,
+                design_block=design_block,
+                essence_stmt=essence_stmt,
+                grade=payload.grade,
+                kiqs_formatted=kiqs_formatted,
+                level=level,
+                min_body_chars=f"{notes_coverage.MIN_BODY_CHARS:,}",
+                min_segment_chars=notes_coverage.MIN_SEGMENT_CHARS,
+                min_segments=notes_coverage.MIN_SEGMENTS,
+                minutes_each=allocation.minutes_each or 'the length this level teaches for',
+                module_word=module_word,
+                modules=allocation.modules,
+                segment_target_chars=notes_coverage.SEGMENT_TARGET_CHARS,
+                slos_formatted=slos_formatted,
+                strand=payload.strand,
+                sub_strand=payload.sub_strand,
+                subject=payload.subject,
         ),
     })
 
@@ -1610,6 +1529,13 @@ def factory_generate_diagram(
             # about mortise and tenon joints.
             "domain_directives": prompt_fragments.compose(
                 payload.subject, "diagram", payload.grade),
+            # How demanding a task on THIS sub-strand has to be, read out
+            # of its own outcomes, rubric and funded hours — with the band
+            # floor underneath it where no profile has been extracted yet.
+            "demand_profile": demand_profile.for_prompt(
+                payload.grade, payload.subject,
+                getattr(payload, "strand", "") or "",
+                getattr(payload, "sub_strand", "") or ""),
             "faith_scope": faith_prompt_block(payload.subject),
             "content_type_directives": ct_profile.format_for_prompt(),
             "notes_content": notes_summary_str or payload.notes_title or payload.sub_strand,
@@ -1750,6 +1676,13 @@ def factory_generate_activity(
             # about mortise and tenon joints.
             "domain_directives": prompt_fragments.compose(
                 payload.subject, "activity", payload.grade),
+            # How demanding a task on THIS sub-strand has to be, read out
+            # of its own outcomes, rubric and funded hours — with the band
+            # floor underneath it where no profile has been extracted yet.
+            "demand_profile": demand_profile.for_prompt(
+                payload.grade, payload.subject,
+                getattr(payload, "strand", "") or "",
+                getattr(payload, "sub_strand", "") or ""),
             "faith_scope": faith_prompt_block(payload.subject),
             "content_type_directives": ct_profile.format_for_prompt(),
             "notes_content": notes_str or payload.notes_title or payload.sub_strand,
@@ -1889,6 +1822,13 @@ def factory_plan_visuals(
             # about mortise and tenon joints.
             "domain_directives": prompt_fragments.compose(
                 payload.subject, "diagram", payload.grade),
+            # How demanding a task on THIS sub-strand has to be, read out
+            # of its own outcomes, rubric and funded hours — with the band
+            # floor underneath it where no profile has been extracted yet.
+            "demand_profile": demand_profile.for_prompt(
+                payload.grade, payload.subject,
+                getattr(payload, "strand", "") or "",
+                getattr(payload, "sub_strand", "") or ""),
             "faith_scope": faith_prompt_block(payload.subject),
             "content_type_directives": ct_profile.format_for_prompt(),
             "notes_content": notes_str or payload.notes_title or payload.sub_strand,
@@ -2106,6 +2046,13 @@ def factory_generate_single_visual(
             # about mortise and tenon joints.
             "domain_directives": prompt_fragments.compose(
                 payload.subject, "diagram", payload.grade),
+            # How demanding a task on THIS sub-strand has to be, read out
+            # of its own outcomes, rubric and funded hours — with the band
+            # floor underneath it where no profile has been extracted yet.
+            "demand_profile": demand_profile.for_prompt(
+                payload.grade, payload.subject,
+                getattr(payload, "strand", "") or "",
+                getattr(payload, "sub_strand", "") or ""),
             "faith_scope": faith_prompt_block(payload.subject),
             "content_type_directives": ct_profile.format_for_prompt(),
             "notes_content": notes_str or payload.sub_strand,
@@ -2436,6 +2383,13 @@ def factory_plan_activities(
             # about mortise and tenon joints.
             "domain_directives": prompt_fragments.compose(
                 payload.subject, "activity", payload.grade),
+            # How demanding a task on THIS sub-strand has to be, read out
+            # of its own outcomes, rubric and funded hours — with the band
+            # floor underneath it where no profile has been extracted yet.
+            "demand_profile": demand_profile.for_prompt(
+                payload.grade, payload.subject,
+                getattr(payload, "strand", "") or "",
+                getattr(payload, "sub_strand", "") or ""),
             "faith_scope": faith_prompt_block(payload.subject),
             "content_type_directives": ct_profile.format_for_prompt(),
             "notes_content": notes_str or payload.notes_title or payload.sub_strand,
@@ -2623,6 +2577,13 @@ def factory_generate_single_activity(
             # about mortise and tenon joints.
             "domain_directives": prompt_fragments.compose(
                 payload.subject, "activity", payload.grade),
+            # How demanding a task on THIS sub-strand has to be, read out
+            # of its own outcomes, rubric and funded hours — with the band
+            # floor underneath it where no profile has been extracted yet.
+            "demand_profile": demand_profile.for_prompt(
+                payload.grade, payload.subject,
+                getattr(payload, "strand", "") or "",
+                getattr(payload, "sub_strand", "") or ""),
             "faith_scope": faith_prompt_block(payload.subject),
             "content_type_directives": ct_profile.format_for_prompt(),
             "notes_content": notes_str or payload.sub_strand,
@@ -2763,6 +2724,13 @@ def factory_generate_questions(
             # about mortise and tenon joints.
             "domain_directives": prompt_fragments.compose(
                 payload.subject, "questions", payload.grade),
+            # How demanding a task on THIS sub-strand has to be, read out
+            # of its own outcomes, rubric and funded hours — with the band
+            # floor underneath it where no profile has been extracted yet.
+            "demand_profile": demand_profile.for_prompt(
+                payload.grade, payload.subject,
+                getattr(payload, "strand", "") or "",
+                getattr(payload, "sub_strand", "") or ""),
             "faith_scope": faith_prompt_block(payload.subject),
             "content_type_directives": ct_profile.format_for_prompt(),
             "notes_content": notes_str or payload.notes_summary or payload.sub_strand,
@@ -3938,16 +3906,9 @@ def factory_generate_strands(
                 *[m for m in context.messages if m.get("role") == "system"],
                 {
                     "role": "user",
-                    "content": (
-                        f"You are reading PART of the curriculum design - pages {chunk.page_range} of it.\n"
-                        f"Extract ONLY the strands that appear on these pages. Do not infer strands from "
-                        f"elsewhere in the subject, and do not invent any.\n"
-                        f"Every line below is prefixed with its page:line address; cite those addresses in "
-                        f"'source_quote' so a reviewer can find each strand.\n"
-                        f"Return the same JSON schema. If these pages contain no strands, return "
-                        f'{{"strands": []}}.\n\n'
-                        f"=== PAGES {chunk.page_range} ===\n{chunk.text}"
-                    ),
+                    "content": prompt_store.render(
+                        "chunk-strands", SEED_PROMPT_BLOCKS["chunk-strands"],
+                        page_range=chunk.page_range, chunk_text=chunk.text),
                 },
             ]
             chunk_resp = llm_client.generate(resolved, messages, temperature=0.2)
@@ -4140,6 +4101,49 @@ def _ground_substrands(
     return report
 
 
+def _profile_substrands(payload: Any, sub_strands: list[Any], rubrics: Any,
+                        source_material: str, resolved: Any) -> dict[str, Any]:
+    """A demand profile per sub-strand, from the design just read.
+
+    Never raises. A profile is an improvement on the band floor, not a
+    precondition for having one, so a sub-strand whose profile is refused is
+    reported and the run continues.
+    """
+    from ..services import demand_profile
+
+    by_name = {}
+    for row in (getattr(rubrics, "filled", None) or []):
+        if isinstance(row, dict) and row.get("sub_strand_name"):
+            by_name[str(row["sub_strand_name"])] = row.get("assessment_rubrics") or []
+
+    written, refused = [], []
+    for sub in sub_strands or []:
+        if not isinstance(sub, dict):
+            continue
+        name = str(sub.get("sub_strand_name") or sub.get("name") or "").strip()
+        if not name:
+            continue
+        try:
+            profile, problems = demand_profile.generate(
+                grade=payload.grade, subject=payload.subject,
+                strand=payload.strand_name, sub_strand=name,
+                lesson_hours=str(sub.get("allocated_hours") or ""),
+                design_extract=source_material[:12_000],
+                slos=sub.get("slos") or [],
+                rubrics=by_name.get(name) or sub.get("assessment_rubrics") or [],
+                resolved=resolved)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Demand profile for %s failed: %s", name, exc)
+            refused.append({"sub_strand": name, "why": [str(exc)]})
+            continue
+        if profile is None:
+            refused.append({"sub_strand": name, "why": problems})
+        else:
+            written.append(profile.to_dict())
+    return {"written": written, "refused": refused,
+            "counts": {"written": len(written), "refused": len(refused)}}
+
+
 @router.post("/factory/generate-substrands")
 def factory_generate_substrands(
     payload: FactoryGenerateSubstrandsRequest,
@@ -4269,17 +4273,10 @@ def factory_generate_substrands(
                 *skeleton.messages,
                 {
                     "role": "user",
-                    "content": (
-                        f"You are reading PART of the curriculum design - pages {chunk.page_range} of it.\n"
-                        f"Return ONLY the sub-strands of the strand '{payload.strand_name}' that actually "
-                        f"appear on these pages. Do not carry over sub-strands from elsewhere in the "
-                        f"subject, and do not invent any.\n"
-                        f"Every line below is prefixed with its page:line address; cite those addresses so "
-                        f"a reviewer can find each sub-strand in the design.\n"
-                        f"Return the same JSON schema. If these pages contain no sub-strands of this "
-                        f'strand, return {{"sub_strands": []}}.\n\n'
-                        f"=== PAGES {chunk.page_range} ===\n{chunk.text}"
-                    ),
+                    "content": prompt_store.render(
+                        "chunk-substrands", SEED_PROMPT_BLOCKS["chunk-substrands"],
+                        page_range=chunk.page_range, chunk_text=chunk.text,
+                        strand_name=payload.strand_name),
                 },
             ]
             chunk_resp = llm_client.generate(resolved, messages, temperature=0.2)
@@ -4333,8 +4330,20 @@ def factory_generate_substrands(
         sub_strands, _rubric_writer(payload, resolved, source_material[:12_000])
     )
 
+    # How demanding each sub-strand's tasks have to be, read out of the design
+    # HERE — this is the one moment the outcomes, the rubric, the funded hours
+    # and the design text are all in hand at once. Doing it later means
+    # fetching all four again for every station that wants them.
+    #
+    # A sub-strand whose profile is refused or fails keeps the band floor,
+    # which is coarser and correct. It never fails this run: the sub-strands
+    # themselves are what was asked for.
+    profiles = _profile_substrands(payload, sub_strands, rubrics,
+                                   source_material, resolved)
+
     return {
         **grounding,
+        "demand_profiles": profiles,
         "subject": payload.subject,
         "grade": payload.grade,
         "strand_name": payload.strand_name,
@@ -5553,6 +5562,9 @@ def factory_generate_material(
 
     target = _target_language(payload.subject)
     domain = prompt_fragments.compose(payload.subject, "material", payload.grade)
+    demand = demand_profile.for_prompt(payload.grade, payload.subject,
+                                       getattr(payload, "strand", "") or "",
+                                       payload.sub_strand)
 
     # What a previous, interrupted run already paid for. A draft is written
     # after every piece, so a timeout or a restart at piece 19 of 21 costs the
@@ -5574,7 +5586,8 @@ def factory_generate_material(
         messages = [{"role": "user", "content": lesson_material.prompt_for(
             directive, register=register, faith=faith, language=language,
             notation=notation, target_language=target, domain=domain,
-            grade=payload.grade, sub_strand=payload.sub_strand, slos=slos)}]
+            demand=demand, grade=payload.grade,
+            sub_strand=payload.sub_strand, slos=slos)}]
         if payload.custom_instructions:
             messages.append({"role": "user",
                              "content": payload.custom_instructions})
@@ -5627,6 +5640,8 @@ def factory_generate_material(
         "material": written,
     }
     report = lesson_material.check(content, plan, grade=payload.grade,
+                                   strand=getattr(payload, "strand", "") or "",
+                                   sub_strand=payload.sub_strand,
                                    subject=payload.subject)
     run_log.step(
         "Material written",
@@ -6263,6 +6278,96 @@ def factory_fit_check(
         layer_name=getattr(artifact, "kind", "content"))
     return {"artifact_id": payload.artifact_id, "grade": grade,
             "sub_strand": sub_strand, **fit.to_dict()}
+
+
+@router.get("/factory/demand-profiles")
+def factory_demand_profiles(
+    grade: str = Query(""),
+    subject: str = Query(""),
+    _: AuthContext = Depends(require_roles("admin", "operator", "reviewer")),
+) -> dict[str, Any]:
+    """What has been read out of the designs about how hard each sub-strand is.
+
+    Shown rather than hidden because it is the one number in the system that a
+    subject specialist can disagree with on sight: a Grade 9 sub-strand whose
+    profile says "recall" is either an accurate reading of a thin design or a
+    misreading, and only somebody who knows the subject can say which.
+    """
+    from ..services import demand_profile
+
+    rows = demand_profile.listing(grade, subject)
+    return {"profiles": rows, "count": len(rows),
+            "grade": grade, "subject": subject}
+
+
+class DemandProfileRequest(BaseModel):
+    grade: str
+    subject: str
+    strand: str = ""
+    sub_strand: str
+    lesson_hours: str = ""
+    design_extract: str = ""
+    slos: list[Any] = []
+    rubrics: list[Any] = []
+
+
+@router.post("/factory/demand-profile")
+def factory_demand_profile(
+    payload: DemandProfileRequest,
+    _: AuthContext = Depends(require_roles("admin", "operator")),
+) -> dict[str, Any]:
+    """Read one sub-strand's design again and restate how demanding it is.
+
+    Separate from sub-strand generation so a profile a specialist disagrees
+    with can be redone on its own, without regenerating the sub-strands under
+    it and invalidating everything already built on them.
+    """
+    from ..services import demand_profile
+
+    design = payload.design_extract
+    slos, rubrics, hours = payload.slos, payload.rubrics, payload.lesson_hours
+    if not design or not slos:
+        row = fetch_one(
+            f"""
+            SELECT allocated_hours, slos, learning_experiences,
+                   key_inquiry_questions, assessment_rubrics,
+                   pedagogical_guidance
+            FROM curriculum_substrands
+            WHERE {grade_sql.clause('grade')}
+              AND LOWER(subject) = LOWER(:subject)
+              AND LOWER(sub_strand_name) = LOWER(:sub_strand)
+            LIMIT 1
+            """,
+            {"grade": payload.grade, "subject": payload.subject,
+             "sub_strand": payload.sub_strand},
+        )
+        if row:
+            slos = slos or (row.get("slos") or [])
+            rubrics = rubrics or (row.get("assessment_rubrics") or [])
+            hours = hours or str(row.get("allocated_hours") or "")
+            design = design or json.dumps(
+                {k: row.get(k) for k in
+                 ("learning_experiences", "key_inquiry_questions",
+                  "assessment_rubrics", "pedagogical_guidance")},
+                ensure_ascii=False, default=str)
+
+    profile, problems = demand_profile.generate(
+        grade=payload.grade, subject=payload.subject, strand=payload.strand,
+        sub_strand=payload.sub_strand, lesson_hours=hours,
+        design_extract=design, slos=slos, rubrics=rubrics)
+
+    if profile is None:
+        # Refused, not failed. The sub-strand keeps the band floor, and the
+        # reasons say what a second attempt has to fix.
+        return {"stored": False, "refused": True, "problems": problems,
+                "using": "the band floor for this level",
+                "block": demand_profile.for_prompt(
+                    payload.grade, payload.subject, payload.strand,
+                    payload.sub_strand)}
+    return {"stored": True, "refused": False, "problems": problems,
+            "profile": profile.to_dict(),
+            "block": demand_profile.block_for(payload.grade, payload.subject,
+                                              profile)}
 
 
 @router.get("/factory/diagrams")
@@ -8059,6 +8164,13 @@ def factory_generate_media_prompts(
             # about mortise and tenon joints.
             "domain_directives": prompt_fragments.compose(
                 payload.subject, "media", payload.grade),
+            # How demanding a task on THIS sub-strand has to be, read out
+            # of its own outcomes, rubric and funded hours — with the band
+            # floor underneath it where no profile has been extracted yet.
+            "demand_profile": demand_profile.for_prompt(
+                payload.grade, payload.subject,
+                getattr(payload, "strand", "") or "",
+                getattr(payload, "sub_strand", "") or ""),
             "faith_scope": faith_prompt_block(payload.subject),
             "content_type_directives": profile.format_for_prompt() if profile else "",
             "grade": payload.grade,
@@ -8216,6 +8328,13 @@ def factory_generate_simulations(
             # about mortise and tenon joints.
             "domain_directives": prompt_fragments.compose(
                 payload.subject, "simulation", payload.grade),
+            # How demanding a task on THIS sub-strand has to be, read out
+            # of its own outcomes, rubric and funded hours — with the band
+            # floor underneath it where no profile has been extracted yet.
+            "demand_profile": demand_profile.for_prompt(
+                payload.grade, payload.subject,
+                getattr(payload, "strand", "") or "",
+                getattr(payload, "sub_strand", "") or ""),
             "faith_scope": faith_prompt_block(payload.subject),
             "content_type_directives": profile.format_for_prompt() if profile else "",
             "strand": payload.strand,

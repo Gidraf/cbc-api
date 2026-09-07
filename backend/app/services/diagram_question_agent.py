@@ -78,6 +78,7 @@ def build_agent_prompt(
     from .faith_scope import prompt_block as faith_block
     from .level_register import language_block, register_block, teacher_block
     from .notation import block_for as notation_block
+    from . import demand_profile
 
     grade = str(ctx.get("grade", ""))
     subject = str(ctx.get("subject", ""))
@@ -96,6 +97,13 @@ def build_agent_prompt(
         ("notation", notation_block(subject, grade=grade) if subject else ""),
         # A diagram question in CRE must not reach for another faith's imagery.
         ("faith_scope", faith_block(subject) if subject else ""),
+        # How demanding a question about this diagram has to be. A diagram is
+        # the easiest thing in the system to ask a naming question about, and
+        # a set of them that never leaves "label the parts" is the clearest
+        # case there is of a task that looks complete and asks for nothing.
+        ("demand_profile", demand_profile.for_prompt(
+            grade, subject, str(ctx.get("strand", "")),
+            str(ctx.get("sub_strand", ""))) if grade else ""),
         ("scene", describe_scene_for_prompt(scene)),
         ("hidden", hidden_lines),
         ("retained", retained_lines),

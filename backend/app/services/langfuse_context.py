@@ -663,8 +663,20 @@ class LangfuseContextService:
         "rubric-generator": "extract/rubrics",
         "strand-generator": "structure/strands",
         "substrand-generator": "structure/sub-strands",
+        # How demanding THIS sub-strand's tasks must be, read out of its own
+        # outcomes, rubric and funded hours rather than banded by level.
+        "demand-profile": "structure/demand-profile",
         "slo-aligner": "structure/slo-alignment",
         "note-generator": "generate/lesson-plan",
+        # The production rules for one run of that plan. They were
+        # assembled as an f-string in the route, which made the longest
+        # single instruction in the system the one nobody could edit.
+        "note-plan-rules": "generate/lesson-plan-rules",
+        # Reading one CHUNK of a design too long to send whole. The
+        # instruction that keeps a chunk read from inventing what is on
+        # the next page, and it lived in the route.
+        "chunk-strands": "extract/strands-from-pages",
+        "chunk-substrands": "extract/sub-strands-from-pages",
         "material-generator": "generate/lesson-material",
         "diagram-generator": "generate/diagrams",
         "media-prompt-generator": "generate/photos-and-videos",

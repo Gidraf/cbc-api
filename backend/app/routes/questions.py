@@ -9,7 +9,7 @@ from fastapi.responses import HTMLResponse, StreamingResponse
 from pydantic import BaseModel
 
 from ..errors import raise_api_error
-from ..services import notation, prompt_fragments
+from ..services import demand_profile, notation, prompt_fragments
 from ..services.auth import AuthContext, require_roles
 from ..services.level_register import language_block, register_block, teacher_block
 from ..services.faith_scope import prompt_block as faith_prompt_block
@@ -334,7 +334,9 @@ def question_structure_report(
     items = question_dna_service.list_questions(
         grade=grade, subject=subject, strand=strand or None,
         sub_strand=sub_strand or None, limit=limit)
-    return question_structure.check_all(items, grade=grade)
+    return question_structure.check_all(
+        items, grade=grade, subject=subject, strand=strand,
+        sub_strand=sub_strand)
 
 
 @router.get("/paper.html", response_class=HTMLResponse)
@@ -774,6 +776,12 @@ def factory_generate_questions_batch(
             # for Chemistry, a scaled map for Geography, sol-fa for Music.
             "domain_directives": prompt_fragments.compose(
                 payload.subject, "questions", payload.grade),
+            # What THIS sub-strand's design says a task has to be — the command
+            # word it is assessed at, the spread across the ladder, and one
+            # worked task at the top of the range.
+            "demand_profile": demand_profile.for_prompt(
+                payload.grade, payload.subject, payload.strand,
+                payload.sub_strand),
             "faith_scope": faith_prompt_block(payload.subject),
             "content_type_directives": ct_profile.format_for_prompt(),
             "notes_content": notes_text[:3000] or payload.sub_strand,
@@ -971,7 +979,8 @@ def factory_generate_questions_batch(
     from ..services import question_structure, question_throughput
 
     structure = question_structure.check_all(
-        normalized_questions, grade=payload.grade)
+        normalized_questions, grade=payload.grade, subject=payload.subject,
+        strand=payload.strand, sub_strand=payload.sub_strand)
     held = {v["question_id"] for v in structure["verdicts"] if v["blocked"]}
 
     # Repair before discarding. Each held item was generated and paid for, and
@@ -996,7 +1005,8 @@ def factory_generate_questions_batch(
                 # Re-measured, because the gate below reports what is FILED and
                 # a repaired item is a different item.
                 structure = question_structure.check_all(
-                    normalized_questions, grade=payload.grade)
+                    normalized_questions, grade=payload.grade, subject=payload.subject,
+        strand=payload.strand, sub_strand=payload.sub_strand)
                 held = {v["question_id"] for v in structure["verdicts"] if v["blocked"]}
         except Exception as exc:  # noqa: BLE001
             logger.warning("Repair pass failed for %s: %s", payload.sub_strand, exc)

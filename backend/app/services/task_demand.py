@@ -329,9 +329,9 @@ _FLOORS: dict[str, Floor] = {
         level="Junior School",
         operations=2, kinds=2, depth=1, order_matters=True,
         exemplar="$\\dfrac{-15 \\div 3 - (-2) \\times (-4) + 6}{-2 \\times 3 + (-4)}$",
-        because="integers at this level are assessed as combined operations on "
-                "directed numbers, with brackets and a fraction bar deciding "
-                "the order — not as one addition",
+        because="the designs assess COMBINED operations at this level — "
+                "brackets and a fraction bar deciding the order, and signs "
+                "carried through — not one operation at a time",
     ),
     "Senior School": Floor(
         level="Senior School",
@@ -344,10 +344,45 @@ _FLOORS: dict[str, Floor] = {
 _FLOORS["Tertiary"] = _FLOORS["Senior School"]
 
 
-def floor_for(grade: str | None) -> Floor | None:
-    """The floor for this grade, or None where there should not be one."""
+# WHICH SUBJECTS HAVE A FLOOR AT ALL.
+#
+# This is the same list the prompt fragments carry, and it is one list on
+# purpose. Gating a subject the generator was never given the rule for is
+# crying wolf at a station that did exactly as it was told — a Grade 9
+# Chemistry mole calculation was being failed for "one operation" while the
+# chemistry prompt had never been shown a floor.
+#
+# Add a subject here and to `prompt_fragments` together, or not at all — a
+# subject gated but not instructed is a station failed for doing as it was
+# told, and a subject instructed but not gated is a rule nothing enforces.
+# There is a test that these two lists are equal.
+#
+# The sciences are here because their calculations are arithmetic and are
+# marked as arithmetic. What they are NOT judged on is the maths exemplar: a
+# science calculation is demanding when it carries a formula, a substitution
+# and a unit, which is what their own fragment asks for.
+QUANTITATIVE: tuple[str, ...] = ("mathemat", "physic", "chemist",
+                                 "integrated science")
+
+
+def has_floor(subject: str | None) -> bool:
+    """Whether demand is something this subject is measured on."""
+    return any(re.search(rf"\b{stem}", subject or "", re.I)
+               for stem in QUANTITATIVE)
+
+
+def floor_for(grade: str | None, subject: str | None = None) -> Floor | None:
+    """The floor for this grade, or None where there should not be one.
+
+    `subject` defaults to unset, which means "do not ask the question" rather
+    than "any subject": a caller that does not know the subject gets the
+    level's floor. Callers that DO know it must pass it, so that a subject
+    whose generator was never given the rule is never held to it.
+    """
     from .grade_order import GRADE_SEQUENCE, normalize_grade
 
+    if subject is not None and not has_floor(subject):
+        return None
     slug = normalize_grade(grade)
     level = next((lv for s, _l, lv in GRADE_SEQUENCE if s == slug), "")
     return _FLOORS.get(level)
@@ -409,9 +444,10 @@ def shortfall(demand: Demand, floor: Floor | None) -> Shortfall:
     return Shortfall(level=floor.level, misses=misses, demand=demand, floor=floor)
 
 
-def check_item(item: dict[str, Any], grade: str | None) -> Shortfall:
+def check_item(item: dict[str, Any], grade: str | None,
+               subject: str | None = None) -> Shortfall:
     """One worked example or question, against its grade's floor."""
-    return shortfall(measure_item(item), floor_for(grade))
+    return shortfall(measure_item(item), floor_for(grade, subject))
 
 
 # ── A whole set, which is the unit that actually matters ─────────────────────
@@ -458,9 +494,10 @@ class SetReport:
                 "says": self.says(), "fix": self.fix()}
 
 
-def check_set(items: list[Any], grade: str | None) -> SetReport:
+def check_set(items: list[Any], grade: str | None,
+              subject: str | None = None) -> SetReport:
     """Whether a set of examples or questions reaches its grade anywhere."""
-    floor = floor_for(grade)
+    floor = floor_for(grade, subject)
     report = SetReport(level=floor.level if floor else "", floor=floor)
     hardest_short: Shortfall | None = None
     for item in (items or []):

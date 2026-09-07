@@ -40,6 +40,22 @@ class FaithScope:
     # not a quality defect, it is an offence against the community it serves.
     depiction: str = ""
 
+    @property
+    def langfuse_name(self) -> str:
+        """Where a chaplain or an imam edits what may be pictured.
+
+        The depiction rules are the most community-sensitive text in the
+        system — an IRE illustration that reaches a Kenyan classroom wrongly is
+        not a quality defect, it is an offence against the community the lesson
+        serves. That judgement should not need an engineer.
+        """
+        return "faith/" + self.subject.lower().replace(" ", "-") + "-depiction"
+
+    def depiction_text(self) -> str:
+        from .prompt_store import stored_or
+
+        return stored_or(self.langfuse_name, self.depiction) if self.depiction else ""
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "subject": self.subject,
@@ -233,16 +249,17 @@ def prompt_block(subject: str | None) -> str:
             f"  Note: KICD scopes this single learning area across {faiths}."
             " All of them are in scope here; that is the design's own intent."
         )
-    if scope.depiction:
+    depiction = scope.depiction_text()
+    if depiction:
         lines += ["", "  WHAT MAY BE PICTURED:"]
-        lines += [f"  {line}" for line in scope.depiction.split("\n")]
+        lines += [f"  {line}" for line in depiction.split("\n")]
     return "\n".join(lines)
 
 
 def depiction_rules(subject: str | None) -> str:
     """Just the imagery rules, for the media prompts that need them in full."""
     scope = scope_for(subject)
-    return scope.depiction if scope else ""
+    return scope.depiction_text() if scope else ""
 
 
 # Words that mean a prophet has been drawn. Checked after generation, because a
@@ -292,3 +309,9 @@ def cross_faith_terms(text: str, subject: str | None) -> list[str]:
             if re.search(rf"(?<![a-z]){re.escape(marker)}(?![a-z])", haystack):
                 found.append(marker)
     return sorted(set(found))
+
+
+def seed_prompts() -> dict[str, str]:
+    """What may be pictured, per faith area, as its own editable prompt."""
+    return {scope.langfuse_name: scope.depiction
+            for scope in _SCOPES.values() if scope.depiction}

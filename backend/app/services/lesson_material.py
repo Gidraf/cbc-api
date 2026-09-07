@@ -152,7 +152,7 @@ AGENT = "material-generator"
 def prompt_for(directive: Directive, *, register: str, faith: str,
                sub_strand: str, slos: list[str], language: str = "",
                notation: str = "", target_language: str = "",
-               domain: str = "", grade: str = "") -> str:
+               domain: str = "", demand: str = "", grade: str = "") -> str:
     """What to ask for, for ONE directive.
 
     One directive per call rather than a whole guide per call, because the
@@ -196,6 +196,9 @@ def prompt_for(directive: Directive, *, register: str, faith: str,
         # so the rule about difficulty reached every generator except the one
         # that produces the thing being judged.
         ("domain_directives", domain),
+        # How demanding a worked example on this sub-strand has to be. This is
+        # the station whose examples a reviewer opens first.
+        ("demand_profile", demand),
         ("target_language", target_language),
         ("language_register", language),
         ("faith_scope", faith),
@@ -521,7 +524,7 @@ def unscripted_language(material: dict[str, Any], subject: str) -> list[dict[str
 
 
 def check(material: dict[str, Any], plan: Plan, grade: str = "",
-          subject: str = "") -> MaterialReport:
+          subject: str = "", strand: str = "", sub_strand: str = "") -> MaterialReport:
     """Did each directive get material, or did it get its own words back?
 
     The failure mode here is not fabrication, it is ECHO: asked to write the
@@ -538,7 +541,9 @@ def check(material: dict[str, Any], plan: Plan, grade: str = "",
     try:
         from . import example_check
 
-        for finding in example_check.check_material(material, grade=grade).findings:
+        for finding in example_check.check_material(
+                material, grade=grade, subject=subject, strand=strand,
+                sub_strand=sub_strand).findings:
             report.miscast.append(finding.to_dict())
     except Exception as exc:  # noqa: BLE001
         logger.warning("Could not check the worked examples: %s", exc)

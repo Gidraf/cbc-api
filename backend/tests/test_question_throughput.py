@@ -158,7 +158,11 @@ def test_the_structure_gate_holds_items_before_a_person_sees_them() -> None:
     # The grade goes with it: whether a batch is pitched at the grade at all
     # is the one judgement no per-item rule can make.
     assert "question_structure.check_all(" in source
-    assert "normalized_questions, grade=payload.grade)" in source
+    # The full scope goes with it, so the sub-strand's own extracted demand
+    # profile is used rather than the coarser band floor.
+    for part in ("grade=payload.grade", "subject=payload.subject",
+                 "sub_strand=payload.sub_strand"):
+        assert part in source, part
     assert 'v["blocked"]' in source
     # Held with the reason AND the fix — a queue of rejections nobody can act
     # on is a queue nobody works.

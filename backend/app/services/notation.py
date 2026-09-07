@@ -153,6 +153,19 @@ def house_block() -> str:
     return HOUSE_BLOCK
 
 
+# The house conventions were the one notation block that never reached
+# Langfuse: the four subject blocks were seeded and this was not. So the
+# sentence forbidding PEMDAS existed only in the repository, and a running
+# system that had never been redeployed had never been told it.
+HOUSE_NAME = "fragment/notation-house-conventions"
+
+
+def house_block() -> str:
+    from .prompt_store import stored_or
+
+    return stored_or(HOUSE_NAME, HOUSE_BLOCK)
+
+
 def for_prompt(subject: str, *, grade: str = "") -> str:
     """What a generator is told about how to write, house rules included.
 
@@ -163,7 +176,8 @@ def for_prompt(subject: str, *, grade: str = "") -> str:
     marking a CRE guide on its use of LaTeX.
     """
     subject_notation = block_for(subject, grade=grade)
-    return f"{HOUSE_BLOCK}\n\n{subject_notation}" if subject_notation else HOUSE_BLOCK
+    house = house_block()
+    return f"{house}\n\n{subject_notation}" if subject_notation else house
 
 
 def block_for(subject: str, *, grade: str = "") -> str:

@@ -23,7 +23,7 @@ from app.services import prompt_fragments as pf
 
 def test_a_subject_gets_only_what_it_needs():
     assert [f.name for f in pf.for_context("Chemistry", "questions", "grade-10")] \
-        == ["chemistry-equations"]
+        == ["chemistry-equations", "science-calculation-demand"]
     assert [f.name for f in pf.for_context("Music", "notes", "grade-4")] \
         == ["music-notation"]
 

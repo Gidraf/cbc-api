@@ -77,7 +77,10 @@ def test_narrowing_actually_cuts_the_bulk() -> None:
 
 
 def test_the_notes_route_narrows_to_the_sub_strand() -> None:
-    route = open("app/routes/curriculum.py").read()
+    from app.services.langfuse_seed import SEED_PROMPT_BLOCKS
+
+    route = (open("app/routes/curriculum.py").read()
+             + SEED_PROMPT_BLOCKS["note-plan-rules"])
     notes = route[route.index("def factory_generate_notes"):]
     notes = notes[: notes.index("\n@router.")]
 
@@ -87,7 +90,10 @@ def test_the_notes_route_narrows_to_the_sub_strand() -> None:
 def test_the_whole_design_now_reaches_the_prompt() -> None:
     """It was cut to 4,000 characters — a twentieth of the source it was then
     scored against."""
-    route = open("app/routes/curriculum.py").read()
+    from app.services.langfuse_seed import SEED_PROMPT_BLOCKS
+
+    route = (open("app/routes/curriculum.py").read()
+             + SEED_PROMPT_BLOCKS["note-plan-rules"])
 
     assert "source_text[:4000]" not in route
     assert "source_text[:MAX_DESIGN_CHARS]" in route
@@ -111,7 +117,10 @@ def test_the_floor_is_half_a_printed_page_a_lesson() -> None:
 def test_the_prompt_and_the_validator_state_the_same_number() -> None:
     """The prompt asked for 800 and the validator failed below 400, so a guide
     averaging 662 passed one and failed the other."""
-    route = open("app/routes/curriculum.py").read()
+    from app.services.langfuse_seed import SEED_PROMPT_BLOCKS
+
+    route = (open("app/routes/curriculum.py").read()
+             + SEED_PROMPT_BLOCKS["note-plan-rules"])
 
     assert "MIN_BODY_CHARS * 2" not in route
     assert "{notes_coverage.MIN_BODY_CHARS:,}" in route
@@ -120,7 +129,10 @@ def test_the_prompt_and_the_validator_state_the_same_number() -> None:
 def test_the_prompt_no_longer_contradicts_its_own_floor() -> None:
     """Rule 4 said depth is "not a fixed word count" eleven lines above a fixed
     floor. Two opposite instructions means one gets followed."""
-    route = open("app/routes/curriculum.py").read()
+    from app.services.langfuse_seed import SEED_PROMPT_BLOCKS
+
+    route = (open("app/routes/curriculum.py").read()
+             + SEED_PROMPT_BLOCKS["note-plan-rules"])
 
     assert "not a fixed \" \n" not in route
     assert "Depth follows the learner described in WHO THIS IS FOR, not a fixed" not in route
