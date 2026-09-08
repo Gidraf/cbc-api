@@ -1284,19 +1284,34 @@ def _authored_key(exercises: list[dict[str, Any]]) -> str:
         question = str(exercise.get("question") or "")
         answer = str(exercise.get("answer") or "")
         verdict = worked_solutions.check(question, answer)
+        # Where the engine can work it, the ENGINE'S value is the answer.
+        #
+        # Printing the guide's wrong answer under a note saying the engine
+        # disagrees leaves the reader to decide which to believe, and this key
+        # is read by machine to build question papers — so the wrong one would
+        # become the marking key of a paper somebody sits. The rejected answer
+        # is still shown, because a silent correction is how a systematic fault
+        # goes unnoticed for a term.
+        rejected = ""
         if verdict["checked"] and verdict["agrees"]:
             mark = "<span class='ok'>checked</span>"
+            shown = answer
         elif verdict["checked"]:
-            mark = ("<span class='warn'>the engine makes it "
-                    f"{_esc(verdict['engine_answer'])}</span>")
+            mark = "<span class='ok'>corrected</span>"
+            shown = verdict["engine_answer"]
+            rejected = (f"<p class='why'>The guide gave {_math(answer)}. "
+                        f"The maths engine works this expression to "
+                        f"{_math(shown)}, and that is what is printed.</p>")
         else:
             mark = "<span class='warn'>not checked by the engine</span>"
+            shown = answer
         out.append(f"<div class='solution'><div class='sn'>{number}{mark}</div>"
                    f"<div class='work'>")
         working = str(exercise.get("working") or "").strip()
-        if working:
+        if working and not rejected:
             out.append(f"<p class='why'>{_inline_math(working)}</p>")
-        out.append(f"<p class='ans'><span>Answer</span>{_math(answer)}</p>"
+        out.append(rejected)
+        out.append(f"<p class='ans'><span>Answer</span>{_math(shown)}</p>"
                    f"</div></div>")
     out.append("</details>")
     return "".join(out)

@@ -81,5 +81,27 @@ def to_plain(text: str) -> str:
     # the word, so \alpha becomes alpha rather than vanishing mid-expression.
     out = re.sub(r"\\([a-zA-Z]+)", r"\1", out)
     out = out.replace("{", " ").replace("}", " ")
+    out = re.sub(r"\s+", " ", out).strip()
 
-    return re.sub(r"\s+", " ", out).strip()
+    # Implicit multiplication, written out.
+    #
+    # `(-2)(-4)` is how a textbook writes a product and it is not how a parser
+    # reads one: the engine took it, returned 1/10 for an expression whose
+    # value is 7/10, and reported no error at all. A wrong answer with a
+    # confident face is worse than "cannot solve" — it was printed on the page
+    # as the authority a teacher's own answer was being marked against.
+    return _explicit_products(out)
+
+
+# `)(`, `2(`, `)2` — a bracket beside a value, with nothing between them.
+_IMPLICIT: tuple[tuple[str, str], ...] = (
+    (r"\)\s*\(", ")*("),
+    (r"(\d)\s*\(", r"\1*("),
+    (r"\)\s*(\d)", r")*\1"),
+)
+
+
+def _explicit_products(text: str) -> str:
+    for pattern, replacement in _IMPLICIT:
+        text = re.sub(pattern, replacement, text)
+    return text

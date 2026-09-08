@@ -13,6 +13,8 @@ honestly marked, is worth more than one with eleven of eleven and three wrong.
 """
 from __future__ import annotations
 
+import re
+
 import logging
 from dataclasses import dataclass, field
 from typing import Any
@@ -98,6 +100,21 @@ def solve_all(questions: list[str]) -> list[Solution]:
     return [solve(q) for q in questions]
 
 
+# Units, currency and the dollars the schema itself asks for. The material
+# prompt says `"answer": "<the answer, in $…$>"`, so the generator writes `$1$`
+# — and comparing `$1$` against the engine's `1` reported EVERY correct answer
+# as a disagreement. A key whose right answers are marked wrong is worse than
+# no key: the first thing a reader does is stop believing the badge.
+_NOT_THE_VALUE = re.compile(
+    r"\$|\\[()\[\]]|\\text\s*\{[^}]*\}|\b(?:KES|KSh|Ksh|shillings?|"
+    r"marks?|points?|cm|mm|m|km|kg|g|ml|l|°?C|degrees?)\b", re.I)
+
+
+def _comparable(answer: str) -> str:
+    """An answer with everything that is not its value taken off."""
+    return _NOT_THE_VALUE.sub(" ", str(answer or "")).strip(" .,;:") or str(answer or "")
+
+
 def check(statement: str, claimed_answer: str) -> dict[str, Any]:
     """Whether an answer somebody else wrote is right.
 
@@ -122,7 +139,8 @@ def check(statement: str, claimed_answer: str) -> dict[str, Any]:
     out["engine_answer"] = trace.final_answer
     try:
         out["agrees"] = bool(
-            verify_solution(trace.final_answer, claimed_answer).get("verified"))
+            verify_solution(trace.final_answer,
+                            _comparable(claimed_answer)).get("verified"))
     except Exception:  # noqa: BLE001
         out["agrees"] = None
     return out

@@ -97,12 +97,16 @@ def test_the_key_prefers_the_answers_the_guide_itself_gives() -> None:
 
 
 def test_an_answer_the_engine_disagrees_with_says_so_in_the_key() -> None:
+    """It says so AND prints the right one — the guide's wrong answer would
+    otherwise become the marking key of a paper somebody sits."""
     from app.services.notes_renderer import _practice
 
     html = _practice("1. Calculate -7+4-(-2).", {
         "exercises": [{"question": "-7+4-(-2)", "answer": "5"}]})
 
-    assert "the engine makes it -1" in html
+    assert "corrected" in html
+    assert "The guide gave" in html
+    assert "-1" in html
 
 
 def test_questions_the_engine_cannot_work_are_listed_as_unworked() -> None:
@@ -116,3 +120,65 @@ def test_questions_the_engine_cannot_work_are_listed_as_unworked() -> None:
     ]), {})
 
     assert "could not be worked by the maths engine" in html
+
+
+# ── the key must not mark its own right answers wrong ───────────────────────
+
+
+def test_the_dollars_the_schema_asks_for_are_not_a_disagreement() -> None:
+    """The material prompt says `"answer": "<the answer, in $…$>"`, so the
+    generator writes `$1$` — and comparing that against the engine's `1`
+    reported EVERY correct answer as wrong. A key whose right answers are
+    marked wrong is worse than no key: the reader stops believing the badge."""
+    from app.services.worked_solutions import check
+
+    assert check(r"\frac{-8+4+6}{2}", "$1$")["agrees"] is True
+    assert check(r"\frac{-8+4+6}{2}", "1")["agrees"] is True
+    assert check(r"\frac{5+(-3)-4}{-2}", "$-1$")["agrees"] is False
+
+
+def test_a_unit_on_an_answer_is_not_a_disagreement() -> None:
+    from app.services.worked_solutions import check
+
+    assert check("20 + (-8)", "$12$ points")["agrees"] is True
+    assert check("12/3", r"$4\text{ metres}$")["agrees"] is True
+
+
+def test_implicit_multiplication_is_read_as_multiplication() -> None:
+    """`(-2)(-4)` is how a textbook writes a product and is not how a parser
+    reads one. The engine returned 1/10 for an expression whose value is 7/10
+    and reported no error — a wrong answer with a confident face, printed as
+    the authority a teacher's own answer was marked against."""
+    from app.services.worked_solutions import check
+
+    got = check(r"\frac{-15 \div 3 - (-2)(-4) + 6}{-2 \times 3 + (-4)}", "7/10")
+
+    assert got["agrees"] is True
+    assert "7" in got["engine_answer"] and "10" in got["engine_answer"]
+
+    from app.services.math_engine.latex_input import to_plain
+
+    assert "3*(" in to_plain("3(4+2)")
+
+
+def test_a_wrong_answer_is_corrected_rather_than_printed() -> None:
+    """This key is read by machine to build question papers, so the guide's
+    wrong answer would become the marking key of a paper somebody sits."""
+    from app.services.notes_renderer import _practice
+
+    html = _practice("1. x", {"exercises": [
+        {"question": r"\frac{5+(-3)-4}{-2}", "answer": "$-1$"}]})
+
+    assert "corrected" in html
+    assert "The guide gave" in html, "a silent correction hides a systematic fault"
+
+
+def test_a_question_the_engine_cannot_work_keeps_the_guide_s_answer() -> None:
+    from app.services.notes_renderer import _practice
+
+    html = _practice("1. x", {"exercises": [
+        {"question": "A hiker descends 300 m then ascends 150 m.",
+         "answer": "-150 m"}]})
+
+    assert "not checked by the engine" in html
+    assert "-150" in html
