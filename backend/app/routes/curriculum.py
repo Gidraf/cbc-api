@@ -5363,6 +5363,8 @@ def factory_generate_material(
     demand = demand_profile.for_prompt(payload.grade, payload.subject,
                                        getattr(payload, "strand", "") or "",
                                        payload.sub_strand)
+    elements_block = design_elements.block_for(
+        _substrand_design_row(payload.grade, payload.subject, payload.sub_strand))
 
     # What a previous, interrupted run already paid for. A draft is written
     # after every piece, so a timeout or a restart at piece 19 of 21 costs the
@@ -5384,7 +5386,7 @@ def factory_generate_material(
         messages = [{"role": "user", "content": lesson_material.prompt_for(
             directive, register=register, faith=faith, language=language,
             notation=notation, target_language=target, domain=domain,
-            demand=demand, grade=payload.grade,
+            demand=demand, elements=elements_block, grade=payload.grade,
             sub_strand=payload.sub_strand, slos=slos)}]
         if payload.custom_instructions:
             messages.append({"role": "user",
@@ -5437,6 +5439,21 @@ def factory_generate_material(
         "from_plan": {"artifact_id": plan_id, "version": plan_artifact.version},
         "material": written,
     }
+    # Six of nine wrong examples in one guide were the same mistake: a signed
+    # term substituted into a slot that already held its sign. The engine does
+    # not make it, and it has been producing this exact working for the
+    # exercises all along — so it writes the examples it can, before anything
+    # is filed.
+    repaired_examples = lesson_material.repair_examples(content)
+    if repaired_examples:
+        run_log.step(
+            "Examples corrected",
+            f"{len(repaired_examples)} worked example(s) had their arithmetic "
+            f"replaced with the maths engine's: "
+            + "; ".join(f"lesson {r['lesson']} example {r['example']} — {r['why']}"
+                        for r in repaired_examples[:4]),
+            "warn")
+
     report = lesson_material.check(content, plan, grade=payload.grade,
                                    strand=getattr(payload, "strand", "") or "",
                                    sub_strand=payload.sub_strand,

@@ -605,10 +605,46 @@ def _worked_examples(module: dict[str, Any], n: int, start: int = 1) -> str:
     if not examples:
         return ""
 
+    from . import worked_solutions
+
+    # The same treatment the EXERCISE key gets. Exercises were being checked
+    # against the engine and worked examples were not, so a guide printed one
+    # expression in sixteen examples with nine different answers, seven right
+    # and nine wrong, and every one of them looked equally authoritative.
+    #
+    # A wrong worked example is worse than a wrong exercise answer: the
+    # exercise answer is a number a learner compares against, and the example
+    # is a METHOD they copy. So the working is not silently corrected here —
+    # the steps that produced a wrong answer are wrong steps, and replacing
+    # only the answer would leave a learner imitating them.
+    seen: dict[str, int] = {}
     out = ["<div class='examples'>"]
     for i, example in enumerate(examples, start=start):
+        statement = str(example.get("statement") or "")
+        answer = str(example.get("answer") or "")
+        verdict = worked_solutions.check(statement, answer)
+
+        flag = ""
+        if verdict["checked"] and verdict["agrees"]:
+            flag = "<span class='ok'>checked</span>"
+        elif verdict["checked"]:
+            # Typeset, not escaped: a badge reading `\frac{7}{10}` is a badge
+            # that tells a teacher the checker is broken.
+            flag = ("<span class='warn'>this working does not reach "
+                    f"{_math('$' + verdict['engine_answer'] + '$')}</span>")
+
+        # And the same expression worked twice is one lesson doing another
+        # lesson's job.
+        key = re.sub(r"\s+", "", _math(statement))
+        repeat = seen.get(key)
+        if repeat:
+            flag += (f"<span class='warn'>already worked as Example "
+                     f"{n}.{repeat}</span>")
+        else:
+            seen[key] = i
+
         out.append("<div class='example'>")
-        out.append(f"<h4>Example {n}.{i}</h4>")
+        out.append(f"<h4>Example {n}.{i}{flag}</h4>")
         if example.get("statement"):
             out.append(f"<p class='statement'>{_math(example['statement'])}</p>")
 
@@ -627,6 +663,12 @@ def _worked_examples(module: dict[str, Any], n: int, start: int = 1) -> str:
         if example.get("answer"):
             out.append(f"<p class='answer'><span>Answer</span>"
                        f"{_math(example['answer'])}</p>")
+        if verdict["checked"] and verdict["agrees"] is False:
+            out.append(
+                "<p class='why'>The maths engine works this expression to "
+                f"{_math(verdict['engine_answer'])}. Do not copy the steps "
+                f"above — one of them is wrong, and the answer follows from "
+                f"it.</p>")
         out.append("</div>")
     out.append("</div>")
     return "".join(out)
@@ -1392,9 +1434,33 @@ def _echoed(value: Any) -> bool:
     return placeholder_echo.is_echo(value)
 
 
+def _serves_of(piece: dict[str, Any],
+               design_row: dict[str, Any] | None) -> list[dict[str, str]]:
+    """The design elements this piece names, resolved to the design's own words.
+
+    A ref on its own — `g9-mat-01` — is an address nobody can read. Resolved
+    against the design it becomes "perform combined operations on integers",
+    which is a phrase a head of department can find in the Grade 9 Mathematics
+    design and in the BECF. That is the point of recording it.
+
+    A ref the design does not carry is dropped rather than printed: an invented
+    provenance reads exactly like a real one, and is worse than none.
+    """
+    claimed = piece.get("serves") or []
+    if isinstance(claimed, str):
+        claimed = [claimed]
+    if not claimed or not design_row:
+        return []
+    from . import design_elements
+
+    by_ref = {e.ref: e.text for e in design_elements.enumerate_for(design_row)}
+    return [{"ref": ref, "text": by_ref[ref]}
+            for ref in (str(c).strip() for c in claimed) if ref in by_ref]
+
+
 def _citation(piece: dict[str, Any], *, grade: str = "", subject: str = "",
               strand: str = "", sub_strand: str = "",
-              plan_address: str = "") -> str:
+              plan_address: str = "", design_row: dict[str, Any] | None = None) -> str:
     """Where in the KICD design this content comes from.
 
     The page said "Where these words come from: written here for this lesson",
@@ -1411,11 +1477,12 @@ def _citation(piece: dict[str, Any], *, grade: str = "", subject: str = "",
     cleaned = placeholder_echo.clean_citation(piece.get("citation"))
     ref = cleaned["ref"]
     quote = cleaned["quote"]
+    serves = _serves_of(piece, design_row)
     attribution = str(piece.get("attribution") or "").strip()
     if placeholder_echo.is_echo(attribution):
         attribution = ""
 
-    if not (ref or quote or attribution):
+    if not (ref or quote or attribution or serves):
         return ""
 
     where = " · ".join(x for x in (grade, subject, strand, sub_strand) if x)
@@ -1428,6 +1495,17 @@ def _citation(piece: dict[str, Any], *, grade: str = "", subject: str = "",
                    + "</p>")
     if quote:
         out.append(f"<blockquote>{_esc(quote)}</blockquote>")
+    # What this piece REALISES in the design, by the design's own refs and
+    # words. This is the answer to "where does this come from" that a head of
+    # department can act on: "[g9-mat-01] perform combined operations on
+    # integers" can be looked up in the Grade 9 Mathematics design and in the
+    # BECF. "Written here for this lesson" cannot.
+    for element in (serves or []):
+        ref = str(element.get("ref") or "") if isinstance(element, dict) else ""
+        text = str(element.get("text") or "") if isinstance(element, dict) else str(element)
+        out.append(f"<p class='serves'><b>{_esc(ref)}</b> {_esc(text)}</p>"
+                   if ref else f"<p class='serves'>{_esc(text)}</p>")
+
     if attribution and not quote:
         # No design address: these words are the model's own, and the page
         # should say so rather than implying the curriculum asked for them.
@@ -1463,6 +1541,17 @@ def render_material_html(material: dict[str, Any], *, grade: str = "",
     """
     pieces = [p for p in (material.get("material") or []) if isinstance(p, dict)]
     title = f"Lesson material: {sub_strand or 'this sub-strand'}"
+
+    # Read once, for the whole guide: what the design asks for, so each piece's
+    # `serves` refs can be shown as the design's own words rather than as
+    # addresses nobody can read.
+    design_row: dict[str, Any] = {}
+    try:
+        from . import lesson_material as _lm
+
+        design_row = _lm._design_row(grade, subject, sub_strand, strand)
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("No design row for the material page (%s)", exc)
 
     meta = [p for p in (subject, grade, strand, sub_strand) if p]
     if version:
@@ -1560,7 +1649,8 @@ def render_material_html(material: dict[str, Any], *, grade: str = "",
         if plan_version:
             address = f"{address} (plan version {plan_version})" if address else \
                 f"plan version {plan_version}"
-        out.append(_citation(piece, grade=grade, subject=subject,
+        out.append(_citation(piece, design_row=design_row, grade=grade,
+                             subject=subject,
                              strand=strand, sub_strand=sub_strand,
                              plan_address=address))
         out.append("</section>")

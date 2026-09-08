@@ -33,7 +33,12 @@ from typing import Any
 logger = logging.getLogger("cbc-redundancy")
 
 # Lists that hold one entry per lesson. Anything else is not compared.
-MODULE_KEYS = ("modules", "hour_modules", "lessons")
+# `material` is here because it was NOT, and that was the gap: this module
+# understood the plan's shape and not the material's, so a guide that repeated
+# the same BODMAS paragraph in six lessons and set the same three exercises in
+# all six was measured as having no repetition at all. The material station is
+# where a learner meets the words, so it is where repetition costs most.
+MODULE_KEYS = ("modules", "hour_modules", "lessons", "material")
 
 # Lists this pipeline deliberately keeps as copies of each other. The notes
 # station mirrors `modules` into `hour_modules` because coverage, the DNA

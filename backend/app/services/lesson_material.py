@@ -152,7 +152,8 @@ AGENT = "material-generator"
 def prompt_for(directive: Directive, *, register: str, faith: str,
                sub_strand: str, slos: list[str], language: str = "",
                notation: str = "", target_language: str = "",
-               domain: str = "", demand: str = "", grade: str = "") -> str:
+               domain: str = "", demand: str = "", elements: str = "",
+               grade: str = "") -> str:
     """What to ask for, for ONE directive.
 
     One directive per call rather than a whole guide per call, because the
@@ -199,6 +200,11 @@ def prompt_for(directive: Directive, *, register: str, faith: str,
         # How demanding a worked example on this sub-strand has to be. This is
         # the station whose examples a reviewer opens first.
         ("demand_profile", demand),
+        # Every element this sub-strand's design asks for, numbered, so the
+        # piece can name which one it realises. Without it a guide can only
+        # say "written here for this lesson", which is not provenance — it is
+        # an admission that there is none.
+        ("design_elements", elements),
         ("target_language", target_language),
         ("language_register", language),
         ("faith_scope", faith),
@@ -215,6 +221,10 @@ class MaterialReport:
     written: int = 0
     thin: list[dict[str, Any]] = field(default_factory=list)
     echoed: list[dict[str, Any]] = field(default_factory=list)
+    # Pieces that name nothing in the design they realise.
+    unsourced: list[dict[str, Any]] = field(default_factory=list)
+    # The same teaching, or the same task, delivered twice as though it were new.
+    repeated: list[dict[str, Any]] = field(default_factory=list)
     # Questions the piece sets and never answers.
     unanswered: list[dict[str, Any]] = field(default_factory=list)
     # An answer the maths engine disagrees with.
@@ -337,7 +347,8 @@ def gate_of(report: "MaterialReport") -> dict[str, Any]:
     # whatever the per-piece score says.
     passed = (report.score >= PASS_SCORE and report.written == report.total
               and not report.unexercised and not report.miscast
-              and not report.unanswered and not report.wrong_answers)
+              and not report.unanswered and not report.wrong_answers
+              and not report.repeated and not report.unsourced)
 
     feedback = [
         # The arithmetic being right is not the same as it answering the
@@ -354,6 +365,27 @@ def gate_of(report: "MaterialReport") -> dict[str, Any]:
         # A quiz with no key. These notes are read by machine to build
         # question papers, so an unanswered question becomes an unanswerable
         # item on a paper somebody sits.
+        # The second copy teaches nothing and takes the place of the lesson
+        # that was funded.
+        # These notes are not written from open ground. A piece that names
+        # nothing in the design is a piece nobody can look up, defend or find
+        # again — and it is the difference between a curriculum guide and an
+        # essay about the subject.
+        {"aspect": "every_piece_names_what_it_serves",
+         "method": "serves_refs_against_the_design_s_own_elements",
+         "status": "fail" if report.unsourced else "pass",
+         "score": 0.0 if report.unsourced else 1.0,
+         "comment": (f"{len(report.unsourced)} piece(s) name nothing in the "
+                     f"design that they realise"
+                     if report.unsourced else
+                     "every piece names the design element it serves")},
+        {"aspect": "nothing_is_taught_twice",
+         "method": "every_lesson_and_every_task_against_every_other",
+         "status": "fail" if report.repeated else "pass",
+         "score": 0.0 if report.repeated else 1.0,
+         "comment": (f"{len(report.repeated)} piece(s) of teaching or task(s) "
+                     f"appear more than once"
+                     if report.repeated else "nothing is taught twice")},
         {"aspect": "every_question_set_is_answered",
          "method": "questions_in_the_text_vs_answers_given",
          "status": "fail" if report.unanswered else "pass",
@@ -471,6 +503,24 @@ def gate_of(report: "MaterialReport") -> dict[str, Any]:
     # Named before anything about length or register: a wrong marking key is
     # taught to every learner who marks their own work against it, and an
     # unanswered question becomes an unanswerable item on a paper.
+    for item in report.unsourced[:4]:
+        actions.append(
+            f"Lesson {item.get('lesson')} \"{item.get('topic', '')}\" names no "
+            f"design element. Put the ref(s) it realises in `serves` — "
+            + (f"the design offers {item['available']}."
+               if item.get("available") else
+               "or say plainly that the design funds nothing here."))
+    for item in report.repeated[:4]:
+        if item.get("kind") == "lesson":
+            actions.append(
+                "Two lessons are substantially the same teaching. Write the "
+                "second one, or merge them and give the freed time back.")
+        else:
+            actions.append(
+                f"The {item['kind']} \"{item.get('task', '')}\" is set in "
+                f"{item.get('where')} and was already set in "
+                f"{item.get('first_seen')}. Replace it — a learner meeting it "
+                f"twice is taught nothing the second time.")
     for item in report.wrong_answers[:4]:
         actions.append(
             f"Lesson {item.get('lesson')}: the answer given for \""
@@ -636,6 +686,9 @@ def check(material: dict[str, Any], plan: Plan, grade: str = "",
     for piece in pieces:
         if isinstance(piece, dict):
             _check_exercises(piece, report)
+    report.repeated = check_repetition(material)
+    report.unsourced = check_provenance(material, grade, subject, sub_strand,
+                                        strand)
 
     by_key = {}
     for piece in pieces:
@@ -693,3 +746,168 @@ def check(material: dict[str, Any], plan: Plan, grade: str = "",
     report.staged = material_form.staged(material, grade)
     report.unexercised = material_form.unexercised(material, grade)
     return report
+
+
+def repair_examples(material: dict[str, Any]) -> list[dict[str, Any]]:
+    """Replace every wrong worked example's arithmetic with the engine's.
+
+    Done BEFORE the material is filed, not at render time, because these notes
+    are read by machine to build question papers — a wrong example corrected
+    only on the page is still wrong in the data every downstream station reads.
+    """
+    from . import worked_solutions
+
+    repaired: list[dict[str, Any]] = []
+    for piece in (material.get("material") or []):
+        if not isinstance(piece, dict):
+            continue
+        examples = piece.get("worked_examples")
+        if not isinstance(examples, list):
+            continue
+        out = []
+        for index, example in enumerate(examples, start=1):
+            if not isinstance(example, dict):
+                out.append(example)
+                continue
+            fixed, why = worked_solutions.rebuild(example)
+            out.append(fixed)
+            if why:
+                repaired.append({"lesson": piece.get("module_number"),
+                                 "topic": piece.get("title") or "",
+                                 "example": index, "why": why})
+        piece["worked_examples"] = out
+    return repaired
+
+
+_OPERATOR = re.compile(r"[+×÷*/]|(?<=\d)\s*-\s*(?=\d|\()")
+
+
+def _norm_task(text: str) -> str:
+    """A task reduced to what makes it that task.
+
+    Where there is arithmetic, the ARITHMETIC is the task: "Evaluate 5 + 3 × 2
+    - 4" and "Work out: 5+3*2-4." are the same question with different words in
+    front, and a guide that varies its wording every lesson while setting the
+    identical sums has still set the identical sums.
+
+    Where there is none — a word problem, a discussion prompt — the words are
+    all there is, so they are compared instead. Stripping them too would make
+    "a hiker descends 300 m then ascends 150 m" and "a trader buys 300 at 150"
+    the same task, which they are not.
+    """
+    raw = str(text or "").lower().replace("×", "*").replace("÷", "/")
+    if _OPERATOR.search(raw):
+        return re.sub(r"[^0-9+\-*/()=.]", "", raw).strip(".")
+    return re.sub(r"[^a-z0-9]", "", raw)
+
+
+def check_repetition(material: dict[str, Any]) -> list[dict[str, Any]]:
+    """The same teaching, or the same task, delivered twice as new.
+
+    Two passes, because they catch different things. `redundancy_check`
+    compares whole pieces as prose and finds a lesson padded out of another
+    one; this also compares the individual TASKS, because a guide can vary its
+    wording in every lesson and still set the identical three exercises in all
+    six — which is what one Grade 9 guide did, alongside working one expression
+    sixteen times.
+
+    A reader meets all of it. The second copy teaches nothing and takes the
+    place of the lesson that was funded.
+    """
+    from . import redundancy_check
+
+    found: list[dict[str, Any]] = []
+    try:
+        report = redundancy_check.inspect(material)
+        for group in (report.get("near_duplicates") or []):
+            found.append({"kind": "lesson", "detail": group})
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Could not measure repetition: %s", exc)
+
+    # Every task in the guide, wherever it is set, against every other.
+    seen: dict[str, str] = {}
+    for piece in (material.get("material") or []):
+        if not isinstance(piece, dict):
+            continue
+        where = f"lesson {piece.get('module_number')}"
+        tasks: list[tuple[str, str]] = []
+        for exercise in (piece.get("exercises") or []):
+            if isinstance(exercise, dict):
+                tasks.append(("exercise", str(exercise.get("question") or "")))
+        for example in (piece.get("worked_examples") or []):
+            if isinstance(example, dict):
+                tasks.append(("worked example", str(example.get("statement") or "")))
+        for kind, text in tasks:
+            key = _norm_task(text)
+            if len(key) < 6:
+                continue
+            if key in seen and seen[key] != where:
+                found.append({"kind": kind, "where": where,
+                              "first_seen": seen[key], "task": text[:120]})
+            else:
+                seen.setdefault(key, where)
+    return found
+
+
+def check_provenance(material: dict[str, Any], grade: str, subject: str,
+                     sub_strand: str, strand: str = "") -> list[dict[str, Any]]:
+    """Every piece, against the design elements it claims to realise.
+
+    A guide that says "Not quoted from the design — written here for this
+    lesson" under every piece has told the reader there is no provenance. That
+    is not what a curriculum guide is: the notes exist because the design asks
+    for something, and naming which thing is what makes a page findable in the
+    Grade design and in the BECF a term later.
+
+    An invented ref is worse than none and is discarded rather than reported as
+    provenance, for the same reason it is discarded on a question.
+    """
+    from . import design_elements
+
+    row = _design_row(grade, subject, sub_strand, strand)
+    if not row:
+        # Nothing to check against. Silence rather than failing every piece for
+        # a design this system has not read.
+        return []
+    available = design_elements.refs(row)
+    if not available:
+        return []
+
+    out: list[dict[str, Any]] = []
+    for piece in (material.get("material") or []):
+        if not isinstance(piece, dict):
+            continue
+        kept, invented = design_elements.valid_serves(piece.get("serves"), row)
+        if kept:
+            continue
+        out.append({
+            "lesson": piece.get("module_number"),
+            "topic": piece.get("title") or piece.get("topic") or "",
+            "invented": invented,
+            "available": ", ".join(sorted(available)[:6]),
+        })
+    return out
+
+
+def _design_row(grade: str, subject: str, sub_strand: str,
+                strand: str = "") -> dict[str, Any]:
+    from ..infra.db import fetch_one
+
+    from .grade_sql import clause
+
+    try:
+        return fetch_one(
+            f"""
+            SELECT slos, key_inquiry_questions, learning_experiences,
+                   core_competencies, values, required_diagrams, experiments
+            FROM curriculum_substrands
+            WHERE {clause('grade')}
+              AND LOWER(subject) = LOWER(:subject)
+              AND LOWER(sub_strand_name) = LOWER(:sub_strand)
+            LIMIT 1
+            """,
+            {"grade": grade, "subject": subject, "sub_strand": sub_strand},
+        ) or {}
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("No design row for %s (%s)", sub_strand, exc)
+        return {}

@@ -110,6 +110,16 @@ _NOT_THE_VALUE = re.compile(
     r"marks?|points?|cm|mm|m|km|kg|g|ml|l|°?C|degrees?)\b", re.I)
 
 
+# A number, a fraction, or a fraction written in LaTeX — nothing else.
+_A_VALUE = re.compile(
+    r"^\s*-?\s*(?:\\d?frac\s*\{-?\d+(?:\.\d+)?\}\s*\{-?\d+(?:\.\d+)?\}"
+    r"|\d+(?:\.\d+)?(?:\s*/\s*-?\d+(?:\.\d+)?)?)\s*$")
+
+
+def _is_a_value(answer: str) -> bool:
+    return bool(_A_VALUE.match(str(answer or "")))
+
+
 def _comparable(answer: str) -> str:
     """An answer with everything that is not its value taken off."""
     return _NOT_THE_VALUE.sub(" ", str(answer or "")).strip(" .,;:") or str(answer or "")
@@ -135,6 +145,16 @@ def check(statement: str, claimed_answer: str) -> dict[str, Any]:
     if trace.unsolved or not trace.final_answer:
         return out
 
+    # An "answer" that is not a value is not an answer.
+    #
+    # Handed a statement it could not parse cleanly, the engine returned the
+    # fragment `\times 2) \div (-2` and reported it as the final answer — and
+    # a checker that trusts that condemns a CORRECT example for disagreeing
+    # with nonsense. A false failure on good work is exactly the error that
+    # gets a checker switched off, so silence is the safe answer here.
+    if not _is_a_value(trace.final_answer):
+        return out
+
     out["checked"] = True
     out["engine_answer"] = trace.final_answer
     try:
@@ -144,3 +164,48 @@ def check(statement: str, claimed_answer: str) -> dict[str, Any]:
     except Exception:  # noqa: BLE001
         out["agrees"] = None
     return out
+
+
+def rebuild(example: dict[str, Any]) -> tuple[dict[str, Any], str]:
+    """A worked example with the ENGINE's working in place of a wrong one.
+
+    Checking the model's arithmetic and then printing it anyway was only ever
+    half a fix. A guide came back with one expression worked sixteen times and
+    nine of them wrong, and six of those nine were the SAME mistake:
+
+        the term  -(-2) x (-4)  is  -8,
+        and the numerator  -5 - 8 + 6  was written  -5 - (-8) + 6
+
+    — the sign counted twice, because the value substituted back already
+    carried it. That is a notation trap, not a gap in the model's reasoning,
+    and no instruction reliably prevents it: the model is doing arithmetic in
+    prose with no way to check itself.
+
+    The engine has no such trouble, and it has been sitting here producing
+    exactly this working, step by step with the sign rule named at each line,
+    for the EXERCISES. So it writes the examples too. The model keeps the part
+    it is good at — the statement, the words, the context — and stops being
+    asked to do the part it cannot.
+
+    Returns the example unchanged, and "", when there is nothing to correct.
+    """
+    statement = str(example.get("statement") or "")
+    answer = str(example.get("answer") or "")
+    verdict = check(statement, answer)
+    if not verdict["checked"] or verdict["agrees"] is not False:
+        return example, ""
+
+    solved = solve_all([statement])
+    trace = solved[0] if solved else None
+    if trace is None or not trace.solved or not trace.verified or not trace.lines:
+        return example, ""
+
+    rebuilt = dict(example)
+    rebuilt["steps"] = [{"working": line.latex, "because": line.because}
+                        for line in trace.lines]
+    rebuilt["answer"] = trace.answer
+    # Kept, not discarded: a systematic fault that is silently corrected is a
+    # systematic fault nobody fixes.
+    rebuilt["replaced"] = {"answer": answer, "steps": example.get("steps") or []}
+    return rebuilt, (f"the guide answered {answer}; the maths engine works it "
+                     f"to {trace.answer}")

@@ -1,0 +1,358 @@
+<!doctype html><html lang='en'><head><meta charset='utf-8'><title>Lesson material: Integers</title><style>
+/* A textbook, not a printout.
+ *
+ * The guide read as a wall of one-column prose at 11pt across a full A4
+ * measure — about 100 characters a line, which is roughly twice what the eye
+ * tracks comfortably and why a teacher scanning it under time pressure loses
+ * their place. A publisher solves that with a narrower measure, and on A4 that
+ * means two columns.
+ *
+ * Everything else here follows from printing: it will be photocopied in
+ * greyscale on a machine in a shop, so nothing carries meaning by colour
+ * alone, and it will be read a lesson at a time, so a lesson starts on its own
+ * page and no box is ever split across one.
+ */
+@page {
+  size: A4;
+  margin: 20mm 16mm 18mm;
+  /* The running head is what makes a stapled block navigable once it is on a
+     desk with three other things on it. */
+  @top-left  { content: string(guide-title); font-family: Georgia, serif;
+               font-size: 8pt; color: #555; letter-spacing: 0.04em; }
+  @top-right { content: string(lesson-head); font-family: Georgia, serif;
+               font-size: 8pt; color: #555; }
+  @bottom-center { content: counter(page); font-family: Georgia, serif;
+                   font-size: 9pt; color: #444; }
+}
+* { box-sizing: border-box; }
+
+html { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+body {
+  font-family: Georgia, 'Times New Roman', serif;
+  font-size: 10.5pt;
+  line-height: 1.5;
+  color: #111;
+  margin: 0;
+  hyphens: auto;
+  -webkit-hyphens: auto;
+  orphans: 3;
+  widows: 3;
+  text-align: justify;
+}
+h1, h2, h3, h4, .label, .meta, .figure figcaption {
+  font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  text-align: left;
+  hyphens: none;
+}
+h2, h3, h4 { break-after: avoid; }
+
+/* ── the title page ─────────────────────────────────────────────────────── */
+.masthead {
+  string-set: guide-title content();
+  border-bottom: 3px solid #111;
+  padding-bottom: 12px;
+  margin-bottom: 20px;
+  break-after: avoid;
+}
+.masthead h1 { font-size: 21pt; line-height: 1.15; margin: 0 0 8px;
+               letter-spacing: -0.01em; }
+.meta { display: flex; flex-wrap: wrap; gap: 3px 16px; font-size: 8pt;
+        text-transform: uppercase; letter-spacing: 0.09em; color: #555; }
+.intro { font-size: 11.5pt; line-height: 1.55; color: #222; margin: 0 0 18px;
+         column-span: all; }
+/* The opening paragraph is set wider and larger, the way a chapter opener is. */
+.intro::first-line { font-variant: small-caps; letter-spacing: 0.02em; }
+
+.gaps { border: 1.5px solid #111; border-left-width: 5px; padding: 10px 14px;
+        margin-bottom: 20px; font-size: 9.5pt; break-inside: avoid; }
+.gaps h2 { font-size: 8.5pt; margin: 0 0 5px; text-transform: uppercase;
+           letter-spacing: 0.09em; }
+.gaps ul { margin: 0; padding-left: 16px; }
+
+/* ── a lesson ───────────────────────────────────────────────────────────── */
+.lesson { break-before: page; }
+.lesson:first-of-type { break-before: avoid; }
+.lesson-head { string-set: lesson-head content(); border-bottom: 1px solid #111;
+               padding-bottom: 7px; margin-bottom: 12px; break-after: avoid; }
+.lesson h2 { font-size: 15pt; margin: 0 0 3px; line-height: 1.2; }
+.lesson .n { display: block; font-size: 8pt; letter-spacing: 0.16em;
+             text-transform: uppercase; color: #666; margin-bottom: 3px; }
+.slos { font-size: 8pt; text-transform: uppercase; letter-spacing: 0.07em;
+        color: #555; margin: 0; }
+.intent { font-size: 10.5pt; margin: 0 0 12px; padding: 8px 12px;
+          background: #f2f2f0; border-left: 3px solid #111; break-inside: avoid;
+          column-span: all; }
+
+/* THE COLUMNS. Two on A4 gives about 62 characters a line — the measure a
+   book is set to, and the reason this reads as a book rather than a memo. */
+.body { column-count: 2; column-gap: 8mm; column-rule: 0.5pt solid #ddd; }
+
+.seg { margin: 0 0 12px; break-inside: avoid; }
+.seg h3 { font-size: 10.5pt; margin: 0 0 3px; }
+.seg h3 .mins { font-weight: normal; color: #777; font-size: 8.5pt;
+                letter-spacing: 0.04em; }
+.seg p { margin: 0 0 6px; }
+/* The first line of a topic is indented the way a book indents a paragraph
+   after a heading's first — a small thing that reads as typeset. */
+.seg p + p { text-indent: 1.2em; margin-top: -3px; }
+.bridge { border-left: 2px solid #999; padding-left: 9px; color: #444;
+          font-style: italic; font-size: 9.5pt; margin: 0; text-indent: 0; }
+
+/* ── figures: where a picture goes, whether or not it exists yet ────────── */
+.figure { break-inside: avoid; margin: 0 0 12px; border: 1px solid #111;
+          padding: 0; background: #fff; }
+.figure .plate {
+  /* The empty plate. A teacher photocopying this needs to SEE the space the
+     picture will occupy, or they discover at the copier that the page has no
+     room for it. */
+  /* 50mm, because the column is 85mm and a drawing built to the brief is
+     340 × 200 — so a plate that fills does not reflow the column around it. */
+  height: 50mm; border-bottom: 1px solid #111;
+  background:
+    repeating-linear-gradient(45deg, #fafafa 0 6px, #f0f0f0 6px 12px);
+  display: flex; flex-direction: column; align-items: center;
+  justify-content: center; gap: 10px;
+  text-align: center; padding: 8px;
+}
+.figure .plate span { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+                      font-size: 8pt; letter-spacing: 0.08em;
+                      text-transform: uppercase; color: #666; }
+.figure img, .figure svg { display: block; width: 100%; height: auto;
+                           border-bottom: 1px solid #111; }
+.figure figcaption { font-size: 8.5pt; line-height: 1.35; padding: 6px 8px;
+                     color: #222; }
+.figure figcaption b { letter-spacing: 0.06em; text-transform: uppercase;
+                       font-size: 7.5pt; color: #444; display: block;
+                       margin-bottom: 2px; }
+/* The brief for a figure nobody has drawn yet. On screen it is a disclosure;
+   on paper it prints in full, because the person commissioning the drawing is
+   often working from the printout. */
+.figure .plate button.copy-brief {
+  font: inherit; font-size: 8pt; letter-spacing: 0.04em;
+  text-transform: uppercase; padding: 4px 10px; cursor: pointer;
+  background: #111; color: #fff; border: none; border-radius: 3px;
+}
+/* ── the practical work ───────────────────────────────────────────────────
+   Read separately from the teaching: materials the night before, the steps at
+   the bench, the safety line before anything is handed out. */
+.activity { break-inside: avoid; border: 1px solid #111; border-radius: 3px;
+  padding: 8px 10px; margin: 10px 0; }
+.activity h4 { margin: 0 0 4px; font-size: 9pt; letter-spacing: 0.06em;
+  text-transform: uppercase; }
+.activity .intent { margin: 0 0 6px; font-style: italic; }
+.activity .hazard { border-left: 3px solid #111; background: #f4f4f4;
+  padding: 5px 8px; margin: 0 0 6px; font-size: 9pt; }
+.activity .hazard strong { display: block; font-size: 8pt; letter-spacing: 0.06em;
+  text-transform: uppercase; }
+.activity .hazard p { margin: 2px 0 0; }
+.activity .materials { margin: 0 0 6px; font-size: 9pt; }
+.activity .materials span, .activity .aside-line span {
+  font-size: 8pt; letter-spacing: 0.06em; text-transform: uppercase;
+  color: #555; margin-right: 6px; }
+.activity ol.procedure { margin: 0 0 6px; padding-left: 20px; }
+.activity ol.procedure > li { margin-bottom: 4px; }
+.activity .aside-line { margin: 0 0 4px; font-size: 9pt; }
+.figure figcaption .why { display: block; font-style: italic; color: #555;
+  margin-top: 2px; }
+
+/* ── worked examples ─────────────────────────────────────────────────────
+   Set apart from the teaching prose, because a learner revising scans for
+   them. Numbered per lesson so a teacher can say "look at Example 2.1". */
+.examples { break-inside: avoid; margin: 10px 0 14px; }
+.example { border-left: 3px solid #111; padding: 8px 0 8px 10px; margin-bottom: 10px; }
+.example h4 { margin: 0 0 5px; font-size: 8.5pt; letter-spacing: 0.08em;
+  text-transform: uppercase; }
+.example .statement { margin: 0 0 6px; font-weight: 600; }
+.example ol.working { margin: 0 0 6px; padding-left: 18px; }
+.example ol.working li { margin-bottom: 4px; }
+.example ol.working .w { display: block; }
+.example ol.working .why { display: block; font-size: 8.5pt; color: #444;
+  font-style: italic; }
+.example .answer { margin: 0; padding-top: 5px; border-top: 1px solid #ddd; }
+.example .answer span { font-size: 8pt; letter-spacing: 0.08em;
+  text-transform: uppercase; margin-right: 8px; }
+
+/* Maths that has not been typeset yet still has to be readable — a reader
+   offline sees the source rather than a blank. */
+.math { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 0.95em; }
+.math.katex-done, .katex { font-family: inherit; }
+div.math { display: block; text-align: center; margin: 6px 0; }
+
+/* ── the exercise set ────────────────────────────────────────────────────
+   Drawn from the question bank, so what a learner practises on is what was
+   reviewed and approved. */
+.exercise { break-inside: avoid; margin-top: 16px; padding-top: 10px;
+  border-top: 2px solid #111; }
+.exercise h3 { margin: 0 0 2px; font-size: 11pt; }
+.exercise .from { margin: 0 0 8px; font-size: 8pt; color: #555;
+  letter-spacing: 0.04em; text-transform: uppercase; }
+.exercise ol { margin: 0; padding-left: 20px; }
+.exercise > ol > li { break-inside: avoid; }
+.exercise ol > li { margin-bottom: 7px; }
+.exercise ol.options { margin: 4px 0 0; padding-left: 18px; font-size: 9pt; }
+.exercise .marks { font-size: 8pt; color: #555; }
+.exercise.none p { font-size: 9pt; color: #555; font-style: italic; }
+
+/* ── worked solutions ─────────────────────────────────────────────────────
+   Set like a mathematics textbook: the working centred and given room, the
+   reason for each line small beside it, and the whole thing numbered against
+   the exercise so a learner can find their own question. */
+.solutions { margin-top: 14px; padding-top: 10px; border-top: 1px solid #111; }
+/* Two columns, like the answer section at the back of a textbook. A single
+   673px row with a 20px number on the left and the working centred in the
+   remaining 614px leaves the two unrelatable — the eye cannot carry a number
+   that far to its working. */
+.solutions, .exercise > ol { column-count: 2; column-gap: 9mm; }
+.solutions h3, .solutions > .from, .solutions > .unworked { column-span: all; }
+.solutions h3 { margin: 0 0 2px; font-size: 11pt; }
+.solution { display: flex; gap: 8px; break-inside: avoid;
+  page-break-inside: avoid; -webkit-column-break-inside: avoid;
+  padding: 7px 0; border-bottom: 0.4pt solid #eee; }
+.solution:last-of-type { border-bottom: 0; }
+.solution .sn { flex: 0 0 20px; font-weight: 700; font-size: 10pt;
+  padding-top: 2px; }
+.solution .sn .ok { display: block; font-size: 6.5pt; font-weight: 600;
+  letter-spacing: 0.06em; text-transform: uppercase; color: #0a7; }
+.solution .work { flex: 1 1 auto; min-width: 0; }
+.solution .line { margin: 2px 0; }
+/* A long expression must never be clipped: on screen it scrolls, and in print
+   it is set smaller rather than cut off mid-equation. */
+.solution .math { overflow-x: auto; max-width: 100%; }
+@media print { .solution .math { font-size: 0.9em; overflow: visible; } }
+.solution .why { margin: 0; font-size: 8pt; color: #555; font-style: italic;
+  text-align: center; }
+.solution .ans { margin: 5px 0 0; padding-top: 4px; border-top: 0.4pt solid #ddd;
+  text-align: center; }
+.solution .ans span:first-child { font-size: 7.5pt; letter-spacing: 0.08em;
+  text-transform: uppercase; color: #666; margin-right: 7px; }
+.solutions .unworked { margin: 8px 0 0; font-size: 8.5pt; color: #666;
+  font-style: italic; }
+
+.seg .learners { margin: 4px 0 0; font-size: 9pt; color: #333; }
+.seg .learners span { font-size: 8pt; letter-spacing: 0.06em;
+  text-transform: uppercase; color: #666; margin-right: 6px; }
+
+.figure .brief { font-size: 8pt; border-top: 1px solid #ddd; }
+.figure .brief summary { padding: 5px 8px; cursor: pointer; letter-spacing: 0.04em;
+  text-transform: uppercase; }
+.figure .brief pre { white-space: pre-wrap; margin: 0; padding: 0 8px 8px;
+  font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 7.5pt;
+  line-height: 1.45; }
+@media print {
+  .figure .plate button.copy-brief { display: none; }
+  .figure .brief[open] pre, .figure .brief pre { display: block; }
+}
+
+/* A video or a recording has no plate to show — it has a cue. */
+.figure.cue .plate { height: 20mm;
+  background: repeating-linear-gradient(90deg, #f7f7f7 0 8px, #efefef 8px 16px); }
+
+/* ── asides ─────────────────────────────────────────────────────────────── */
+.aside { font-size: 9.5pt; break-inside: avoid; margin: 0 0 12px;
+         padding: 8px 10px; background: #f7f7f5; border-top: 2px solid #111; }
+.aside h4 { font-size: 7.5pt; text-transform: uppercase; letter-spacing: 0.1em;
+            color: #333; margin: 0 0 4px; }
+.aside ol, .aside ul { margin: 0; padding-left: 15px; }
+.aside li { margin-bottom: 3px; }
+.aside p { margin: 0 0 4px; }
+.aside p:last-child { margin-bottom: 0; }
+
+.foot { column-span: all; margin-top: 18px; border-top: 1px solid #999;
+        padding-top: 6px; font-size: 8pt; color: #666; text-align: left; }
+
+@media screen {
+  /* On a screen it is still a book: a page-width sheet on a desk, so what the
+     operator reviews is what the teacher will hold. */
+  body { background: #6b6b6b; padding: 24px 0; }
+  .sheet { width: 210mm; min-height: 297mm; margin: 0 auto 24px;
+           padding: 20mm 16mm 18mm; background: #fff;
+           box-shadow: 0 2px 14px rgba(0,0,0,0.35); }
+}
+@media print { .sheet { width: auto; min-height: 0; margin: 0; padding: 0;
+                        box-shadow: none; } }
+
+/* Two columns, like the plan's document and like a textbook. It was one wide
+   column because this page is read aloud from — but a 190mm measure is 110
+   characters, which is where a reader loses their place returning to the left
+   edge, and losing your place is exactly what must not happen mid-sentence in
+   front of a class. */
+.sheet .piece, .sheet .lessonhead { break-inside: avoid; }
+.sheet { column-count: 2; column-gap: 9mm; column-rule: 0.4pt solid #ddd; }
+.sheet .masthead { column-span: all; }
+.sheet .foot { column-span: all; }
+.sheet .lessonhead { column-span: all; }
+
+/* The exercise and its solutions carry their OWN two columns. Nested inside
+   the sheet's two they became four, each 84px wide — narrow enough that
+   `(-3) × (-4) + 10` overflowed its column and a fraction bar stretched past
+   its numerator. They span the sheet and divide themselves. */
+.sheet .exercise, .sheet .solutions { column-span: all; }
+
+/* Where this comes from — the curriculum line, the page and line in the KICD
+   design, and the design's own words. */
+.aside.citation .curriculum { font-size: 8pt; letter-spacing: 0.06em;
+  text-transform: uppercase; color: #555; margin: 0 0 3px; }
+.aside.citation .ref { font-size: 8.5pt; font-weight: 600; margin: 0 0 4px; }
+.aside.citation blockquote { margin: 0; padding-left: 8px;
+  border-left: 2px solid #999; font-style: italic; font-size: 9pt;
+  color: #333; }
+.aside.citation .own { font-size: 8.5pt; color: #666; margin: 4px 0 0;
+  font-style: italic; }
+
+/* An exercise set, one question to a line with room to answer beside it —
+   rather than the wall of prose a run-on paragraph makes of it. */
+/* Structure the model wrote in Markdown. */
+h4.mdh, h5.mdh, h6.mdh { margin: 10px 0 3px; font-size: 10pt; }
+ul.points { margin: 5px 0; padding-left: 20px; }
+ul.points > li { margin-bottom: 4px; }
+hr.mdr { border: 0; border-top: 0.4pt solid #ccc; margin: 8px 0; }
+code { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 0.92em;
+  background: #f4f4f4; padding: 0 3px; border-radius: 2px; }
+
+ol.practice { margin: 6px 0; padding-left: 22px; }
+ol.practice > li { margin-bottom: 7px; break-inside: avoid; }
+details.answers { margin: 6px 0 0; border-top: 0.4pt solid #ddd; }
+details.answers > summary { font-size: 8pt; letter-spacing: 0.06em;
+  text-transform: uppercase; color: #555; cursor: pointer; padding: 4px 0; }
+@media print {
+  details.answers { display: block; }
+  details.answers > summary { list-style: none; }
+  details.answers > div { display: block !important; }
+}
+details.answers[open] > summary { color: #111; }
+
+/* Read ALOUD, off a page held in one hand. So: one column at a large size,
+   ragged right, and no hyphenation — a word broken across a line is a word the
+   teacher stumbles on in front of the class, which is the one place the
+   typography of the plan's document would actively hurt. */
+body { text-align: left; hyphens: none; -webkit-hyphens: none; font-size: 11pt; }
+.lessonhead { font-size: 13pt; margin: 22px 0 8px; padding-top: 10px;
+              border-top: 1.5px solid #111; page-break-after: avoid; }
+.piece { margin-bottom: 18px; page-break-inside: avoid; }
+.piece h3 { font-size: 11pt; margin: 0 0 4px; }
+.piece .mins, .piece .form { font-weight: normal; color: #666; font-size: 9pt; }
+/* The instruction is reference, not script: small, grey, and never competing
+   with the words the teacher is about to say. */
+.directive { font-size: 8.5pt; color: #777; font-style: italic;
+             margin: 0 0 6px; border-left: 2px solid #ddd; padding-left: 8px; }
+.piecetitle { font-weight: bold; margin: 0 0 4px; }
+.say { font-size: 12.5pt; line-height: 1.7; margin: 0 0 8px; }
+.say p { margin: 0 0 4px; }
+.missing { color: #b45309; font-style: italic; }
+
+.katex-mathml {
+  position: absolute; clip: rect(1px, 1px, 1px, 1px);
+  padding: 0; border: 0; height: 1px; width: 1px; overflow: hidden;
+}
+</style>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"
+  onload="document.querySelectorAll('.math').forEach(function (el) {
+    try {
+      katex.render(el.textContent, el, {
+        displayMode: el.dataset.display === 'true', throwOnError: false
+      });
+      el.classList.add('katex-done');
+    } catch (err) {}
+  });"></script>
+</head><body><div class='sheet'><div class='masthead'><h1>Lesson material: Integers</h1><div class='meta'><span>Mathematics</span><span>grade-9</span><span>Numbers</span><span>Integers</span><span>version 4</span></div></div><h2 class='lessonhead'>Lesson 1</h2><section class='piece'><h3> <span class='form'>explanation</span></h3><p class='piecetitle'>Answer key: the dollars the schema asks for</p><div class='say'><p>Work these out.</p><p>1. Evaluate: <span class='math' data-display='false'>\frac{-8+4+6}{2}</span>.</p><p>2. Evaluate: <span class='math' data-display='false'>\frac{5+(-3)-4}{-2}</span>.</p><p>3. A hiker descends 300 m and then ascends 150 m. What is the change in elevation?</p></div><details class='answers'><summary>Worked answers</summary><div class='solution'><div class='sn'>1<span class='ok'>checked</span></div><div class='work'><p class='why'><span class='math' data-display='false'>-8+4+6 = 2</span>, and <span class='math' data-display='false'>2 \div 2 = 1</span>.</p><p class='ans'><span>Answer</span><span class='math' data-display='false'>1</span></p></div></div><div class='solution'><div class='sn'>2<span class='ok'>corrected</span></div><div class='work'><p class='why'>The guide gave <span class='math' data-display='false'>-1</span>. The maths engine works this expression to 1, and that is what is printed.</p><p class='ans'><span>Answer</span>1</p></div></div><div class='solution'><div class='sn'>3<span class='warn'>not checked by the engine</span></div><div class='work'><p class='ans'><span>Answer</span><span class='math' data-display='false'>-150</span> m</p></div></div></details><div class='aside'><h4>The learners</h4><p>Learners work the three items and mark their own.</p></div></section><section class='piece'><h3> <span class='form'>explanation</span></h3><p class='piecetitle'>An exercise list with brackets in it</p><div class='say'><p>Evaluate each of the following.</p><p>1. <span class='math' data-display='false'>4 + 3 \times 2</span></p><p>2. <span class='math' data-display='false'>10 - 22 + 5</span></p><p>3. <span class='math' data-display='false'>(6 + 4) \times 2</span></p><p>4. <span class='math' data-display='false'>8 - (3 + 5) \times 2</span></p><p>5. <span class='math' data-display='false'>12 \times 2 - 3 + 1</span></p></div><details class='answers'><summary>Worked answers</summary><div class='solution'><div class='sn'>1<span class='ok'>checked</span></div><div class='work'><div class='math' data-display='true'>= 4 + 6</div><p class='why'>Multiply the two numbers.</p><div class='math' data-display='true'>= 10</div><p class='why'>Add the two numbers.</p><p class='ans'><span>Answer</span><span class='math' data-display='false'>10</span></p></div></div><div class='solution'><div class='sn'>2<span class='ok'>checked</span></div><div class='work'><div class='math' data-display='true'>= -12 + 5</div><p class='why'>Taking 22 from 10 passes zero, so the answer is negative.</p><div class='math' data-display='true'>= -7</div><p class='why'>Both are negative, so they add to a larger negative.</p><p class='ans'><span>Answer</span><span class='math' data-display='false'>-7</span></p></div></div><div class='solution'><div class='sn'>3<span class='ok'>checked</span></div><div class='work'><div class='math' data-display='true'>= 10 \times 2</div><p class='why'>Add the two numbers.</p><div class='math' data-display='true'>= 20</div><p class='why'>Multiply the two numbers.</p><p class='ans'><span>Answer</span><span class='math' data-display='false'>20</span></p></div></div><div class='solution'><div class='sn'>4<span class='ok'>checked</span></div><div class='work'><div class='math' data-display='true'>= 8 - 8 \times 2</div><p class='why'>Add the two numbers.</p><div class='math' data-display='true'>= 8 - 16</div><p class='why'>Multiply the two numbers.</p><div class='math' data-display='true'>= -8</div><p class='why'>Taking 16 from 8 passes zero, so the answer is negative.</p><p class='ans'><span>Answer</span><span class='math' data-display='false'>-8</span></p></div></div><div class='solution'><div class='sn'>5<span class='ok'>checked</span></div><div class='work'><div class='math' data-display='true'>= 24 - 3 + 1</div><p class='why'>Multiply the two numbers.</p><div class='math' data-display='true'>= 21 + 1</div><p class='why'>Subtract the second number from the first.</p><div class='math' data-display='true'>= 22</div><p class='why'>Add the two numbers.</p><p class='ans'><span>Answer</span><span class='math' data-display='false'>22</span></p></div></div></details><div class='aside'><h4>The learners</h4><p>Learners work all five.</p></div></section><h2 class='lessonhead'>Lesson 2</h2><section class='piece'><h3> <span class='form'>explanation</span></h3><p class='piecetitle'>Worked examples, one shape</p><div class='say'><p>We now work the compound expression through to the end.</p></div><div class='examples'><div class='example'><h4>Example 2.1<span class='ok'>checked</span></h4><p class='statement'>Evaluate <span class='math' data-display='false'>\frac{-15 \div 3 - (-2) \times (-4) + 6}{-2 \times 3 + (-4)}</span></p><ol class='working'><li><span class='w'><span class='math' data-display='false'>-15 \div 3 = -5</span></span><span class='why'>Division comes before addition, so the numerator starts here.</span></li><li><span class='w'><span class='math' data-display='false'>-(-2) \times (-4) = -8</span></span><span class='why'>The product <span class='math' data-display='false'>(-2)\times(-4)</span> is <span class='math' data-display='false'>8</span>, and the minus in front of it makes the term <span class='math' data-display='false'>-8</span>.</span></li><li><span class='w'><span class='math' data-display='false'>-5 - 8 + 6 = -7</span></span><span class='why'>Carrying the sign through, the numerator is <span class='math' data-display='false'>-7</span>.</span></li><li><span class='w'><span class='math' data-display='false'>-2 \times 3 + (-4) = -10</span></span><span class='why'>The denominator, worked the same way.</span></li><li><span class='w'><span class='math' data-display='false'>\frac{-7}{-10} = \frac{7}{10}</span></span><span class='why'>A negative divided by a negative is positive.</span></li></ol><p class='answer'><span>Answer</span><span class='math' data-display='false'>\frac{7}{10}</span></p></div><div class='example'><h4>Example 2.2<span class='ok'>checked</span></h4><p class='statement'>Evaluate <span class='math' data-display='false'>\frac{-15 \div 3 - (-2)(-4) + 6}{-2 \times 3 + (-4)}</span> — written with implicit products</p><ol class='working'><li><span class='w'><span class='math' data-display='false'>(-2)(-4) = 8</span></span><span class='why'>Brackets written side by side mean multiply.</span></li><li><span class='w'><span class='math' data-display='false'>\frac{-7}{-10} = \frac{7}{10}</span></span><span class='why'>The same expression, the same value.</span></li></ol><p class='answer'><span>Answer</span><span class='math' data-display='false'>\frac{7}{10}</span></p></div></div><div class='aside'><h4>The learners</h4><p>Learners follow both and compare.</p></div></section><h2 class='lessonhead'>Lesson 3</h2><section class='piece'><h3> <span class='form'>explanation</span></h3><p class='piecetitle'>The same expression, six times, as version 2 printed it</p><div class='say'><p>This is what the guide did.</p></div><div class='examples'><div class='example'><h4>Example 3.1<span class='ok'>checked</span></h4><p class='statement'>Evaluate <span class='math' data-display='false'>\frac{-15 \div 3 - (-2) \times (-4) + 6}{-2 \times 3 + (-4)}</span></p><ol class='working'><li><span class='w'><span class='math' data-display='false'>-15 \div 3 = -5</span></span><span class='why'>divide first</span></li><li><span class='w'><span class='math' data-display='false'>-5 - 8 + 6 = -7</span></span><span class='why'>combine the numerator</span></li></ol><p class='answer'><span>Answer</span><span class='math' data-display='false'>\frac{7}{10}</span></p></div><div class='example'><h4>Example 3.2<span class='warn'>this working does not reach <span class='math' data-display='false'>\frac{7}{10}</span></span><span class='warn'>already worked as Example 3.1</span></h4><p class='statement'>Evaluate <span class='math' data-display='false'>\frac{-15 \div 3 - (-2) \times (-4) + 6}{-2 \times 3 + (-4)}</span></p><ol class='working'><li><span class='w'><span class='math' data-display='false'>-15 \div 3 = -5</span></span><span class='why'>divide first</span></li><li><span class='w'><span class='math' data-display='false'>-5 - 8 + 6 = -7</span></span><span class='why'>combine the numerator</span></li></ol><p class='answer'><span>Answer</span><span class='math' data-display='false'>-0.9</span></p><p class='why'>The maths engine works this expression to <span class='math' data-display='false'>\frac{7}{10}</span>. Do not copy the steps above — one of them is wrong, and the answer follows from it.</p></div><div class='example'><h4>Example 3.3<span class='warn'>this working does not reach <span class='math' data-display='false'>\frac{7}{10}</span></span><span class='warn'>already worked as Example 3.1</span></h4><p class='statement'>Evaluate <span class='math' data-display='false'>\frac{-15 \div 3 - (-2) \times (-4) + 6}{-2 \times 3 + (-4)}</span></p><ol class='working'><li><span class='w'><span class='math' data-display='false'>-15 \div 3 = -5</span></span><span class='why'>divide first</span></li><li><span class='w'><span class='math' data-display='false'>-5 - 8 + 6 = -7</span></span><span class='why'>combine the numerator</span></li></ol><p class='answer'><span>Answer</span><span class='math' data-display='false'>-7</span></p><p class='why'>The maths engine works this expression to <span class='math' data-display='false'>\frac{7}{10}</span>. Do not copy the steps above — one of them is wrong, and the answer follows from it.</p></div><div class='example'><h4>Example 3.4<span class='warn'>this working does not reach <span class='math' data-display='false'>\frac{7}{10}</span></span><span class='warn'>already worked as Example 3.1</span></h4><p class='statement'>Evaluate <span class='math' data-display='false'>\frac{-15 \div 3 - (-2) \times (-4) + 6}{-2 \times 3 + (-4)}</span></p><ol class='working'><li><span class='w'><span class='math' data-display='false'>-15 \div 3 = -5</span></span><span class='why'>divide first</span></li><li><span class='w'><span class='math' data-display='false'>-5 - 8 + 6 = -7</span></span><span class='why'>combine the numerator</span></li></ol><p class='answer'><span>Answer</span><span class='math' data-display='false'>-13</span></p><p class='why'>The maths engine works this expression to <span class='math' data-display='false'>\frac{7}{10}</span>. Do not copy the steps above — one of them is wrong, and the answer follows from it.</p></div><div class='example'><h4>Example 3.5<span class='warn'>this working does not reach <span class='math' data-display='false'>\frac{7}{10}</span></span><span class='warn'>already worked as Example 3.1</span></h4><p class='statement'>Evaluate <span class='math' data-display='false'>\frac{-15 \div 3 - (-2) \times (-4) + 6}{-2 \times 3 + (-4)}</span></p><ol class='working'><li><span class='w'><span class='math' data-display='false'>-15 \div 3 = -5</span></span><span class='why'>divide first</span></li><li><span class='w'><span class='math' data-display='false'>-5 - 8 + 6 = -7</span></span><span class='why'>combine the numerator</span></li></ol><p class='answer'><span>Answer</span><span class='math' data-display='false'>9</span></p><p class='why'>The maths engine works this expression to <span class='math' data-display='false'>\frac{7}{10}</span>. Do not copy the steps above — one of them is wrong, and the answer follows from it.</p></div><div class='example'><h4>Example 3.6<span class='ok'>checked</span><span class='warn'>already worked as Example 3.1</span></h4><p class='statement'>Evaluate <span class='math' data-display='false'>\frac{-15 \div 3 - (-2) \times (-4) + 6}{-2 \times 3 + (-4)}</span></p><ol class='working'><li><span class='w'><span class='math' data-display='false'>-15 \div 3 = -5</span></span><span class='why'>divide first</span></li><li><span class='w'><span class='math' data-display='false'>-5 - 8 + 6 = -7</span></span><span class='why'>combine the numerator</span></li></ol><p class='answer'><span>Answer</span><span class='math' data-display='false'>0.7</span></p></div></div><div class='aside'><h4>The learners</h4><p>Nothing — this block exists to show the checker working.</p></div></section><div class='foot'>Written from the lesson plan for this sub-strand. Read it before you read it aloud.</div></div></body></html>

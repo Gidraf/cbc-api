@@ -182,3 +182,91 @@ def test_a_question_the_engine_cannot_work_keeps_the_guide_s_answer() -> None:
 
     assert "not checked by the engine" in html
     assert "-150" in html
+
+
+# ── worked examples get the same check the exercise key gets ────────────────
+
+
+def test_a_worked_example_whose_answer_is_wrong_is_flagged_on_the_page() -> None:
+    """Exercises were checked against the engine and worked examples were not,
+    so one guide printed the same expression in sixteen examples with nine
+    different answers — seven right, nine wrong — and every one of them looked
+    equally authoritative."""
+    from app.services.notes_renderer import _worked_examples
+
+    expression = (r"$\frac{-15 \div 3 - (-2) \times (-4) + 6}"
+                  r"{-2 \times 3 + (-4)}$")
+    html = _worked_examples({"worked_examples": [
+        {"statement": f"Evaluate {expression}",
+         "steps": [{"working": "$-5 + 8 + 6 = 9$", "because": "combine"}],
+         "answer": "$-0.9$"}]}, 1)
+
+    assert "this working does not reach" in html
+    assert "Do not copy the steps above" in html
+
+
+def test_the_working_of_a_wrong_example_is_not_silently_corrected() -> None:
+    """A wrong exercise answer is a number a learner compares against. A wrong
+    example is a METHOD they copy — replacing only the answer would leave them
+    imitating the steps that produced the wrong one."""
+    from app.services.notes_renderer import _worked_examples
+
+    html = _worked_examples({"worked_examples": [
+        {"statement": r"Evaluate $\frac{-8+4+6}{2}$",
+         "steps": [{"working": "$-8 + 4 + 6 = 2$", "because": "combine"}],
+         "answer": "$5$"}]}, 1)
+
+    assert "$5$" in html or ">5<" in html, "the guide's answer still shows"
+    assert "one of them is wrong" in html
+
+
+def test_a_correct_worked_example_is_marked_checked() -> None:
+    from app.services.notes_renderer import _worked_examples
+
+    html = _worked_examples({"worked_examples": [
+        {"statement": r"Evaluate $\frac{-8+4+6}{2}$",
+         "steps": [{"working": "$2 \\div 2 = 1$", "because": "divide"}],
+         "answer": "$1$"}]}, 1)
+
+    assert "checked" in html and "does not reach" not in html
+
+
+def test_the_same_expression_worked_twice_is_named_on_the_page() -> None:
+    from app.services.notes_renderer import _worked_examples
+
+    same = {"statement": r"Evaluate $\frac{-8+4+6}{2}$",
+            "steps": [{"working": "$2 \\div 2 = 1$", "because": "divide"}],
+            "answer": "$1$"}
+    html = _worked_examples({"worked_examples": [same, dict(same)]}, 3)
+
+    assert "already worked as Example 3.1" in html
+
+
+def test_the_engine_s_answer_is_typeset_not_printed_raw() -> None:
+    """A badge reading `\\frac{7}{10}` tells a teacher the checker is broken."""
+    from app.services.notes_renderer import _worked_examples
+
+    html = _worked_examples({"worked_examples": [
+        {"statement": r"Evaluate $\frac{-7}{-10}$", "steps": [],
+         "answer": "$-0.9$"}]}, 1)
+
+    assert "does not reach" in html
+    # Marked for KaTeX rather than escaped into the prose.
+    assert "class='math' data-display='false'>\\frac{7}{10}" in html
+
+
+def test_the_engine_is_not_believed_when_it_returns_a_non_value() -> None:
+    r"""Handed a statement it could not parse cleanly, the engine returned the
+    fragment `\times 2) \div (-2` and reported it as the final answer. A
+    checker that trusts that condemns a CORRECT example for disagreeing with
+    nonsense — and a false failure on good work is what gets a checker switched
+    off."""
+    from app.services.worked_solutions import _is_a_value, check
+
+    assert _is_a_value(r"\frac{7}{10}") and _is_a_value("-0.9")
+    assert not _is_a_value(r"\times 2) \div (-2")
+    assert not _is_a_value("KES 70,000")
+
+    # And a statement that parses is still judged.
+    verdict = check(r"\frac{-8+4+6}{2}", "$1$")
+    assert verdict["checked"] and verdict["agrees"]

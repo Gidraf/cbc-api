@@ -496,6 +496,8 @@ Do not repeat the instruction back. Do not describe the material. Produce it.
 
 {{ demand_profile }}
 
+{{ design_elements }}
+
 {{ target_language }}
 
 {{ language_register }}
@@ -541,11 +543,30 @@ $\\dfrac{-15 \\div 3 - (-2)\\times(-4) + 6}{-2 \\times 3 + (-4)}$ correctly to
 $-7$ in the numerator, wrote the denominator $-10$ down on the next line, and
 then gave $-7$ as the answer. Every step was right and the answer was wrong.
 
-CHECK EVERY STEP'S SIGN BEFORE YOU WRITE THE NEXT ONE. In the same guide,
-$-(-2)\\times(-4)$ was worked as $2 \\times 4 = 8$: the minus was moved onto
-one factor and the sign flipped twice. It is $-8$. Every step after it
-inherited the error, and a learner imitating the guide makes the same mistake
-in the same place.
+NEVER SUBSTITUTE A SIGNED VALUE INTO A SLOT THAT ALREADY HOLDS ITS SIGN.
+This is the single commonest error in this kind of working, and it was made
+six times in one guide. In $-15 \\div 3 - (-2)\\times(-4) + 6$:
+
+  the term $(-2)\\times(-4)$ is $8$, so the expression reads $-5 - 8 + 6 = -7$
+  WRONG: writing $-5 - (-8) + 6$, then "simplifying" it to $-5 + 8 + 6 = 9$
+
+The minus is already there in front of the term. Putting the sign into the
+value as well counts it twice, and the next step tidies the double negative
+away into a positive — so the error looks like careful work.
+
+Do not substitute. REWRITE THE WHOLE EXPRESSION each time, with one part
+worked out and the rest untouched, and the signs stay where they belong.
+
+SAY WHAT THIS PIECE IS FOR, IN THE DESIGN'S OWN TERMS. These notes are not
+written from open ground: every piece exists because the design asks for
+something, and `serves` names which of the numbered elements above that is. A
+piece that serves none of them is a piece the curriculum did not fund — return
+an empty list and say so, rather than inventing a ref.
+
+This is what makes a page findable later. "Not quoted from the design" tells a
+head of department nothing; "[g9-mat-01] perform combined operations on
+integers" can be looked up in the Grade 9 Mathematics design and in the BECF,
+and either it is there or the piece should not be.
 
 ANY QUESTION YOU SET, YOU ANSWER. If this piece asks learners to work
 something out — a quiz, a practice list, "evaluate the following" — every one
@@ -623,6 +644,7 @@ Return ONLY valid JSON:
                 "because": "<why this line follows from the one above>"}],
      "answer": "<the answer, in $…$>"}
   ],
+  "serves": ["<the ref(s) from the list above that THIS piece realises, e.g. g9-mat-01, experience 2>"],
   "exercises": [
     {"question": "<one question exactly as the learner meets it, mathematics in $…$>",
      "answer": "<the answer, worked to the end>",

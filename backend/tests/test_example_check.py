@@ -549,3 +549,90 @@ def test_the_generator_is_told_to_answer_what_it_sets() -> None:
     assert "ANY QUESTION YOU SET, YOU ANSWER" in prompt
     assert '"exercises"' in prompt
     assert "Word problems included" in prompt
+
+
+# ── the engine writes the arithmetic it can ─────────────────────────────────
+
+
+def test_a_wrong_example_has_its_working_replaced_by_the_engine_s() -> None:
+    """Six of nine wrong examples in one guide were the SAME mistake: the term
+    -(-2)x(-4) is -8, and the numerator -5 - 8 + 6 was written -5 - (-8) + 6.
+    The sign was counted twice, because the value substituted back already
+    carried it. No instruction reliably prevents that — the model is doing
+    arithmetic in prose with no way to check itself."""
+    from app.services import lesson_material
+
+    expression = (r"$\frac{-15 \div 3 - (-2) \times (-4) + 6}"
+                  r"{-2 \times 3 + (-4)}$")
+    material = {"material": [{"module_number": 1, "worked_examples": [
+        {"statement": f"Evaluate {expression}",
+         "steps": [{"working": "$-5 - (-8) + 6$", "because": "substitute"},
+                   {"working": "$-5 + 8 + 6 = 9$", "because": "add"}],
+         "answer": "$-0.9$"}]}]}
+
+    repaired = lesson_material.repair_examples(material)
+    example = material["material"][0]["worked_examples"][0]
+
+    assert len(repaired) == 1
+    assert "7" in example["answer"] and "10" in example["answer"]
+    assert len(example["steps"]) > 2, "the engine's full working, not a patch"
+    assert all(s["because"] for s in example["steps"])
+
+
+def test_the_rejected_working_is_kept_beside_the_correction() -> None:
+    """A systematic fault that is silently corrected is a systematic fault
+    nobody fixes."""
+    from app.services import lesson_material
+
+    material = {"material": [{"module_number": 1, "worked_examples": [
+        {"statement": r"Evaluate $\frac{-8+4+6}{2}$",
+         "steps": [{"working": "$5$", "because": "x"}], "answer": "$5$"}]}]}
+    lesson_material.repair_examples(material)
+
+    example = material["material"][0]["worked_examples"][0]
+    assert example["replaced"]["answer"] == "$5$"
+    assert example["replaced"]["steps"]
+
+
+def test_a_correct_example_is_left_exactly_as_written() -> None:
+    """The model keeps the part it is good at."""
+    from app.services import lesson_material
+
+    original = {"statement": r"Evaluate $\frac{-8+4+6}{2}$",
+                "steps": [{"working": "$-8+4+6 = 2$", "because": "combine"},
+                          {"working": r"$2 \div 2 = 1$", "because": "divide"}],
+                "answer": "$1$"}
+    material = {"material": [{"module_number": 1,
+                              "worked_examples": [dict(original)]}]}
+
+    assert lesson_material.repair_examples(material) == []
+    assert material["material"][0]["worked_examples"][0] == original
+
+
+def test_an_example_the_engine_cannot_work_is_left_alone() -> None:
+    """A word problem is not something to overwrite with a solver's guess."""
+    from app.services import lesson_material
+
+    story = {"statement": "A hiker descends 300 m then ascends 150 m.",
+             "steps": [{"working": "-300 + 150 = -150", "because": "combine"}],
+             "answer": "-150 m"}
+    material = {"material": [{"module_number": 1,
+                              "worked_examples": [dict(story)]}]}
+
+    assert lesson_material.repair_examples(material) == []
+    assert material["material"][0]["worked_examples"][0] == story
+
+
+def test_the_repair_runs_before_the_material_is_filed() -> None:
+    """These notes are read by machine to build question papers, so an example
+    corrected only on the page is still wrong in the data every downstream
+    station reads."""
+    import inspect
+
+    from app.routes import curriculum
+
+    source = inspect.getsource(curriculum)
+    at_repair = source.index("lesson_material.repair_examples(content)")
+    at_gate = source.index("report = lesson_material.check(content, plan")
+
+    assert at_repair < at_gate
