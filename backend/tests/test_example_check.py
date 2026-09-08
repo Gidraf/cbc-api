@@ -691,3 +691,57 @@ def test_the_plan_station_actually_runs_it() -> None:
     source = inspect.getsource(curriculum.factory_generate_notes)
     assert "example_check.check_notes(" in source
     assert '"pitch": pitch.to_dict()' in inspect.getsource(curriculum)
+
+
+# ── equations a guide states in passing ─────────────────────────────────────
+
+
+def test_a_false_equation_stated_in_an_aside_is_caught() -> None:
+    r"""A guide wrote "Division follows the same rules: $12 \times (-3) = -4$".
+    Written as a multiplication it is false — the term is -36 — and the guide
+    meant a division. Nothing looked at it: the plan carries no worked
+    examples, and the prose scan only measured how HARD each expression was,
+    never whether it was true."""
+    notes = {"modules": [{"exposition_segments": [{"body":
+        r"Division follows the same rules: $12 \times (-3) = -4$."}]}]}
+
+    findings = example_check.check_notes(notes, grade="grade-9",
+                                         subject="Mathematics").findings
+    false = [f for f in findings if f.kind == "states_a_false_equation"]
+
+    assert false and "-36" in false[0].says
+    assert "reads this aloud" in false[0].fix
+
+
+def test_a_true_equation_stated_in_passing_is_left_alone() -> None:
+    notes = {"modules": [{"exposition_segments": [{"body":
+        r"For example $-3 \times 4 = -12$ and $12 \div (-3) = -4$."}]}]}
+
+    assert not [f for f in example_check.check_notes(
+        notes, grade="grade-9", subject="Mathematics").findings
+        if f.kind == "states_a_false_equation"]
+
+
+def test_the_same_equation_repeated_is_reported_once() -> None:
+    """A guide that states one wrong sum in six lessons has one thing to fix."""
+    body = r"Note that $12 \times (-3) = -4$."
+    notes = {"modules": [{"exposition_segments": [{"body": body}]},
+                         {"exposition_segments": [{"body": body}]}]}
+
+    false = [f for f in example_check.check_notes(
+        notes, grade="grade-9", subject="Mathematics").findings
+        if f.kind == "states_a_false_equation"]
+
+    assert len(false) == 1
+
+
+def test_a_height_cannot_be_negative() -> None:
+    """"A plant recorded as -2 cm" — what can be negative there is its POSITION
+    relative to a mark, which is a different quantity with a different name."""
+    report = example_check.check([{
+        "statement": "Measuring a plant",
+        "steps": [{"because": "You might record the height of a plant as 15 cm "
+                              "or -2 cm if it is below a reference point."}]}],
+        grade="grade-9", subject="Mathematics")
+
+    assert any(f.kind == "impossible_negative" for f in report.findings)

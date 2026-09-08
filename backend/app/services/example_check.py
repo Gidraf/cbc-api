@@ -393,10 +393,13 @@ _CANNOT_BE_NEGATIVE: tuple[tuple[str, re.Pattern[str], str], ...] = (
      "otherwise will write negative frequencies in a data-handling paper."),
     ("a mass, length or volume",
      re.compile(r"\b(recipes?|ingredients?|cooking|grams?|kilograms?|"
-                r"millilitres?|litres?)\b", re.I),
-     "a recipe is measured in grams and millilitres, not in shillings, and a "
-     "quantity of an ingredient cannot be negative. Use a context that is "
-     "genuinely signed — temperature, altitude, or money owed."),
+                r"millilitres?|litres?|heights?|lengths?|widths?|masses|"
+                r"weighs?|weight)\b", re.I),
+     "a quantity of stuff starts at zero. A recipe is measured in grams and "
+     "millilitres rather than shillings, and a plant is not -2 cm tall — what "
+     "can be negative there is its POSITION relative to a mark, which is a "
+     "different quantity with a different name. Use a context that is "
+     "genuinely signed: temperature, altitude, or money owed."),
 )
 
 _GOES_NEGATIVE = re.compile(
@@ -545,6 +548,59 @@ def check_material(material: dict[str, Any], *, grade: str = "",
                  sub_strand=sub_strand)
 
 
+# An equation stated in passing: "Division follows the same rules:
+# $12 \times (-3) = -4$". Written as a multiplication it is false — the term is
+# -36 — and the guide meant a division. Nothing looked at it, because the plan
+# carries no worked examples and the prose scan only measured how HARD each
+# expression was, never whether it was true.
+_PROSE_EQUATION = re.compile(
+    r"\$([^$\n]{2,80}?=[^$\n]{1,40}?)\$|(?<![\w$])([-\d(][^=\n]{1,60}?"
+    r"=\s*-?[\d.]+)(?![\w$])")
+
+
+def _prose_equations(text: str) -> list[tuple[str, str]]:
+    """Every `lhs = rhs` a passage asserts, as a pair to be checked."""
+    out: list[tuple[str, str]] = []
+    for match in _PROSE_EQUATION.finditer(text or ""):
+        body = match.group(1) or match.group(2) or ""
+        if body.count("=") != 1:
+            continue
+        lhs, rhs = body.split("=")
+        if lhs.strip() and rhs.strip():
+            out.append((lhs.strip(), rhs.strip()))
+    return out
+
+
+def check_prose_arithmetic(texts: list[str]) -> list[Finding]:
+    """Whether the equations a guide states in passing are true.
+
+    The teacher's guide asserts its arithmetic in sentences rather than in
+    worked examples, so the step-by-step checker never saw any of it. A guide
+    that states a false equation in an aside teaches it exactly as effectively
+    as one that states it in an example.
+    """
+    from . import worked_solutions
+
+    findings: list[Finding] = []
+    seen: set[str] = set()
+    for text in texts:
+        for lhs, rhs in _prose_equations(text)[:20]:
+            key = re.sub(r"\s+", "", f"{lhs}={rhs}")
+            if key in seen:
+                continue
+            seen.add(key)
+            verdict = worked_solutions.check(lhs, rhs)
+            if verdict["checked"] and verdict["agrees"] is False:
+                findings.append(Finding(
+                    "states_a_false_equation",
+                    f"The guide states \"{lhs} = {rhs}\". The maths engine "
+                    f"makes {lhs} equal {verdict['engine_answer']}.",
+                    "Correct it. A false equation in an aside is taught as "
+                    "effectively as one in a worked example, and a teacher "
+                    "reads this aloud."))
+    return findings
+
+
 def check_notes(notes: dict[str, Any], *, grade: str = "",
                 subject: str | None = None, strand: str = "",
                 sub_strand: str = "") -> Report:
@@ -576,5 +632,7 @@ def check_notes(notes: dict[str, Any], *, grade: str = "",
             items += [e for e in (module.get("worked_examples") or [])
                       if isinstance(e, dict)]
 
-    return check(items, grade=grade, subject=subject, strand=strand,
-                 sub_strand=sub_strand)
+    report = check(items, grade=grade, subject=subject, strand=strand,
+                   sub_strand=sub_strand)
+    report.findings += check_prose_arithmetic(texts)
+    return report
