@@ -307,7 +307,7 @@ def _arithmetic_faults(examples: list[Any]) -> list[Finding]:
 _SHAPE_RULES: tuple[tuple[str, str], ...] = (
     ("statement", "the task it works, written out"),
     ("steps", "numbered steps"),
-    ("answer", "a final answer on its own line"),
+    ("answer", "final answer on its own line"),
 )
 
 
@@ -323,11 +323,17 @@ def _shape_faults(examples: list[Any]) -> list[Finding]:
     for index, example in enumerate(examples or [], start=1):
         if not isinstance(example, dict):
             continue
+        # An expression lifted out of teaching prose is not a worked example
+        # and has no steps by construction. Reporting all ten of them as
+        # badly laid out is the crying-wolf failure this check exists to
+        # avoid — its subject is examples somebody actually authored.
+        if example.get("from_prose"):
+            continue
         missing = [what for key, what in _SHAPE_RULES if not example.get(key)]
         if missing:
             findings.append(Finding(
                 "solution_not_uniform",
-                f"Example {index} has no " + ", and no ".join(missing) + ".",
+                f"Example {index} has no " + ", no ".join(missing) + ".",
                 "Every worked example takes the same shape: the task, "
                 "numbered steps, and one final answer."))
             continue
@@ -536,4 +542,39 @@ def check_material(material: dict[str, Any], *, grade: str = "",
             examples += [e for e in (piece.get("worked_examples") or [])
                          if isinstance(e, dict)]
     return check(examples, grade=grade, subject=subject, strand=strand,
+                 sub_strand=sub_strand)
+
+
+def check_notes(notes: dict[str, Any], *, grade: str = "",
+                subject: str | None = None, strand: str = "",
+                sub_strand: str = "") -> Report:
+    """The teacher's guide, against the same floor its material is held to.
+
+    The plan station receives the demand block and was never measured against
+    it, so a plan could be built entirely from `3 + 5 = 8` and pass — and the
+    material station then inherits those examples and writes them out. Checking
+    the material and not the plan is checking the copy and not the original.
+    """
+    texts: list[str] = []
+    for module in (notes.get("modules") or notes.get("hour_modules") or []):
+        if not isinstance(module, dict):
+            continue
+        texts.append(str(module.get("teacher_exposition") or ""))
+        for segment in (module.get("exposition_segments") or []):
+            if isinstance(segment, dict):
+                texts.append(str(segment.get("body") or ""))
+
+    from . import task_demand
+
+    items: list[Any] = []
+    for text in texts:
+        items += task_demand.items_in_prose(text)
+
+    # Worked examples where a plan happens to carry them, judged in full.
+    for module in (notes.get("modules") or notes.get("hour_modules") or []):
+        if isinstance(module, dict):
+            items += [e for e in (module.get("worked_examples") or [])
+                      if isinstance(e, dict)]
+
+    return check(items, grade=grade, subject=subject, strand=strand,
                  sub_strand=sub_strand)

@@ -636,3 +636,58 @@ def test_the_repair_runs_before_the_material_is_filed() -> None:
     at_gate = source.index("report = lesson_material.check(content, plan")
 
     assert at_repair < at_gate
+
+
+# ── the plan is measured, not only instructed ───────────────────────────────
+
+
+def test_the_arithmetic_a_plan_teaches_from_is_measured() -> None:
+    """The plan station receives the demand block and nothing checked whether
+    it met it, so a Grade 9 plan came back teaching from twelve expressions of
+    which one reached the grade — and the material station then inherited them
+    and wrote them out. Checking the material and not the plan is checking the
+    copy and not the original."""
+    notes = {"modules": [
+        {"exposition_segments": [
+            {"body": r"For example, $3 + 5 = 8$ and $-3 + (-5) = -8$."}]},
+        {"exposition_segments": [
+            {"body": r"In $3 + 5 \times 2$ we first multiply $5 \times 2 = 10$."}]},
+    ]}
+
+    report = example_check.check_notes(notes, grade="grade-9",
+                                       subject="Mathematics")
+
+    below = [f for f in report.findings if f.kind == "below_the_grade"]
+    assert below and "3 + 5" in below[0].says
+
+
+def test_a_plan_pitched_at_its_grade_is_left_alone() -> None:
+    notes = {"modules": [{"exposition_segments": [{"body":
+        r"Evaluate $\frac{-15 \div 3 - (-2) \times (-4) + 6}"
+        r"{-2 \times 3 + (-4)}$ and $-8 + 3 \times (-4) - (-6) \div 2$."}]}]}
+
+    assert example_check.check_notes(notes, grade="grade-9",
+                                     subject="Mathematics").clean
+
+
+def test_an_expression_lifted_from_prose_is_not_judged_on_its_layout() -> None:
+    """It has no steps by construction. Reporting all ten of them as badly
+    laid out is the crying-wolf failure this check exists to avoid."""
+    notes = {"modules": [{"exposition_segments": [{"body":
+        r"Evaluate $\frac{-15 \div 3 - (-2) \times (-4) + 6}"
+        r"{-2 \times 3 + (-4)}$."}]}]}
+
+    kinds = [f.kind for f in example_check.check_notes(
+        notes, grade="grade-9", subject="Mathematics").findings]
+
+    assert "solution_not_uniform" not in kinds
+
+
+def test_the_plan_station_actually_runs_it() -> None:
+    import inspect
+
+    from app.routes import curriculum
+
+    source = inspect.getsource(curriculum.factory_generate_notes)
+    assert "example_check.check_notes(" in source
+    assert '"pitch": pitch.to_dict()' in inspect.getsource(curriculum)

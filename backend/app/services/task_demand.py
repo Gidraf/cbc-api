@@ -597,3 +597,27 @@ def check_set(items: list[Any], grade: str | None,
             hardest_short = short
     report.shortfall = hardest_short
     return report
+
+
+def items_in_prose(text: str) -> list[dict[str, Any]]:
+    """Each expression a passage teaches from, as an item in its own right.
+
+    The teacher's guide carries no `worked_examples` field: its arithmetic sits
+    inside the exposition, in sentences like "For example, $3 + 5 = 8$ and
+    $-3 + (-5) = -8$". So the plan station was told the demand floor and
+    nothing measured whether it met it — which is how a Grade 9 plan came back
+    teaching from twelve expressions of which one reached the grade.
+
+    An expression IS the item here. There is no separate statement to compare
+    it against, so only the arithmetic half applies; whether the words around
+    it model the right thing is the material station's business, because that
+    is where the words are written.
+    """
+    found: list[dict[str, Any]] = []
+    for span in _spans(text or ""):
+        if span is text:
+            continue
+        one = _measure_one(span)
+        if one.operations:
+            found.append({"statement": one.expression, "from_prose": True})
+    return found

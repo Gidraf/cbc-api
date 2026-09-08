@@ -1393,6 +1393,28 @@ def factory_generate_notes(
             "; ".join(integrity.get("findings") or [])[:300],
         )
 
+    # The plan is measured against the same floor its material is held to.
+    # It was given the demand block and nothing checked whether it met it, so a
+    # Grade 9 plan came back teaching from twelve expressions of which one
+    # reached the grade — and the material station then inherited them and
+    # wrote them out. Checking the material and not the plan is checking the
+    # copy and not the original.
+    from ..services import example_check
+
+    pitch = example_check.check_notes(
+        notes_content, grade=payload.grade, subject=payload.subject,
+        strand=payload.strand, sub_strand=payload.sub_strand)
+    if not pitch.clean:
+        run_log.step(
+            "Pitch",
+            f"{len(pitch.findings)} finding(s) on the arithmetic this plan "
+            f"teaches from: "
+            + "; ".join(f.says for f in pitch.findings[:3])[:400],
+            "warn")
+        logger.warning("Plan for %s is not pitched at its grade: %s",
+                       payload.sub_strand,
+                       "; ".join(f.says for f in pitch.findings)[:300])
+
     repetition = redundancy_check.inspect(notes_content)
     if repetition.get("checked") and not repetition.get("clean"):
         logger.warning(
@@ -1430,6 +1452,8 @@ def factory_generate_notes(
             "lesson_coverage": lesson_plan.to_dict(),
             "fabrication": fabrication.to_dict(),
             "repetition": repetition,
+        "pitch": pitch.to_dict(),
+            "pitch": pitch.to_dict(),
             "integrity": integrity,
         },
     )
@@ -1449,6 +1473,7 @@ def factory_generate_notes(
         "lesson_coverage": lesson_plan.to_dict(),
         "fabrication": fabrication.to_dict(),
         "repetition": repetition,
+        "pitch": pitch.to_dict(),
         "integrity": integrity,
         "remediation": remediation.to_dict(),
         "progress": (run_log.current().to_dict() if run_log.current() else {}),
