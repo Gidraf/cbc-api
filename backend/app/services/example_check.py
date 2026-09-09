@@ -689,7 +689,13 @@ _PROMISES = re.compile(
     r"|practise? (?:some|a few|several) (?:problems|expressions|examples)"
     r"|discuss(?:es|ing)? (?:some )?examples"
     r"|give (?:them )?(?:some )?(?:problems|examples)"
-    r"|organi[sz]e a game|set (?:them )?(?:some )?(?:problems|questions))\b",
+    r"|organi[sz]e a game|set (?:them )?(?:some )?(?:problems|questions)"
+    # The ghost assessment: twenty minutes of class time allocated to "a mix
+    # of multiple-choice questions and problem-solving tasks", and not one
+    # question anywhere in the guide.
+    r"|assessment activity|(?:sit|take|complete) (?:a |the )?(?:quiz|test)"
+    r"|(?:a |the )?quiz (?:that|which|covering)"
+    r"|multiple[- ]choice questions)\b",
     re.I)
 
 

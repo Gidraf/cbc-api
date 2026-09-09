@@ -1092,3 +1092,54 @@ def test_the_prompt_asks_for_maths_rather_than_only_forbidding_bad_maths() -> No
 
     assert "AT LEAST TWO EXPRESSIONS THROUGH TO AN ANSWER" in block
     assert "USE EVERY OPERATION ITS DESIGN NAMES" in block
+
+
+def test_the_ghost_assessment_is_caught() -> None:
+    """Twenty minutes of class time allocated to "a mix of multiple-choice
+    questions, problem-solving tasks and real-life application scenarios", and
+    not one question anywhere in the guide."""
+    import unittest.mock as mock
+
+    from app.services import lesson_material
+
+    notes = {"modules": [{"module_number": 6, "exposition_segments": [
+        {"body": "Learners will participate in an assessment activity that "
+                 "includes a mix of multiple-choice questions, problem-solving "
+                 "tasks, and real-life application scenarios."}]}]}
+    with mock.patch.object(lesson_material, "_design_row",
+                           return_value=DESIGN_ROW):
+        report = example_check.check_notes(
+            notes, grade="grade-9", subject="Mathematics", sub_strand="Integers")
+
+    assert [f for f in report.findings if f.kind == "promised_but_not_given"]
+
+
+def test_an_integers_guide_with_no_negative_numbers_is_caught() -> None:
+    """A sub-strand titled Integers whose every combined operation is
+    `3 + 4 × 2`, `(3 + 4) × 2`, `(5 - 3) + 2 × 4`, `(3 + 5) × 2 - 4` — four
+    expressions, not one negative operand between them."""
+    import unittest.mock as mock
+
+    from app.services import lesson_material
+
+    notes = {"modules": [{"module_number": 3, "exposition_segments": [{"body":
+        r"In $3 + 4 \times 2$ we multiply first. In $(3 + 4) \times 2$ we add "
+        r"first. Solve $(5 - 3) + 2 \times 4$."}]}]}
+    with mock.patch.object(lesson_material, "_design_row",
+                           return_value=DESIGN_ROW):
+        report = example_check.check_notes(
+            notes, grade="grade-9", subject="Mathematics", sub_strand="Integers")
+
+    assert [f for f in report.findings if f.kind == "no_negative_numbers"]
+
+
+def test_indices_are_not_demanded_of_a_sub_strand_that_does_not_teach_them() -> None:
+    """Indices and Logarithms is its own sub-strand with its own eight
+    lessons. Demanding $(-2)^3$ inside Integers is demanding content the
+    design puts somewhere else."""
+    from app.services import design_elements
+
+    named = design_elements.operations_named(DESIGN_ROW)
+
+    assert "^" not in named
+    assert set(named) == {"+", "-", "×", "÷"}
