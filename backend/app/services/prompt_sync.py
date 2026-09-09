@@ -48,6 +48,8 @@ PUBLISHING_MODULES: tuple[str, ...] = (
     "demand_profile",          # this sub-strand's own demand, as read
     "lesson_material",         # what earlier pieces already used
     "lesson_handoff",          # where the previous lesson ended
+    "material_form",           # what the plan directs, vs what it writes
+    "analogy_guidance",        # everyday examples, scoped to the grade
     "design_elements",         # the design's elements, numbered once
 )
 

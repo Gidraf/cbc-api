@@ -326,6 +326,12 @@ class Floor:
     order_matters: bool
     exemplar: str
     because: str
+    # More shapes of the same demand. ONE exemplar beside "the shape to aim at"
+    # is a few-shot example, and a small model copies a few-shot example: one
+    # guide worked the single exemplar sixteen times across six lessons. The
+    # cure is several shapes that share a difficulty and share no numbers, so
+    # what is being shown is the LEVEL and not the expression.
+    also: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         return {"level": self.level, "operations": self.operations,
@@ -342,6 +348,8 @@ _FLOORS: dict[str, Floor] = {
         level="Upper Primary",
         operations=2, kinds=2, depth=0, order_matters=True,
         exemplar="$1\\,250 - 3 \\times 240$",
+        also=("$96 \\div 8 + 7 \\times 4$",
+              "$(45 + 15) \\div 12 - 2$"),
         because="the designs assess the four operations together, so a single "
                 "operation cannot show whether order of operations is known",
     ),
@@ -349,6 +357,10 @@ _FLOORS: dict[str, Floor] = {
         level="Junior School",
         operations=2, kinds=2, depth=1, order_matters=True,
         exemplar="$\\dfrac{-15 \\div 3 - (-2) \\times (-4) + 6}{-2 \\times 3 + (-4)}$",
+        also=("$-18 - (-12) \\times 2 + (-7)$",
+              "$(-6) \\times (-4) \\div (-2) + 3$",
+              "$-40 \\div (-8) + (-3) \\times 6 - (-11)$",
+              "$\\dfrac{(-9 + 4) \\times (-6)}{-2 \\times 5}$"),
         because="the designs assess COMBINED operations at this level — "
                 "brackets and a fraction bar deciding the order, and signs "
                 "carried through — not one operation at a time",
@@ -357,6 +369,8 @@ _FLOORS: dict[str, Floor] = {
         level="Senior School",
         operations=3, kinds=3, depth=1, order_matters=True,
         exemplar="$\\dfrac{2^{3} - \\sqrt{49}}{(-3)(4) + 15} + \\dfrac{1}{4}$",
+        also=("$(-3)^{2} - 4 \\times (-5) + (-2)^{3}$",
+              "$\\sqrt{81} \\div (-3) + 2^{4} - (-7)$"),
         because="a pathway question combines indices, roots, brackets and "
                 "fractions in one expression",
     ),

@@ -263,11 +263,12 @@ def block_for(grade: str | None, subject: str = "",
     if floor:
         from .prompt_store import render
 
+        shapes = "\n".join(f"  {e}" for e in (floor.exemplar, *floor.also))
         parts.append(render(
             "arithmetic-floor", _ARITHMETIC_BLOCK,
             operations=floor.operations, kinds=floor.kinds,
             because=f"{floor.because[0].upper()}{floor.because[1:]}",
-            exemplar=floor.exemplar))
+            shapes=shapes))
 
     if profile:
         parts.append(_profile_block(profile))
@@ -276,7 +277,12 @@ def block_for(grade: str | None, subject: str = "",
 
 _ARITHMETIC_BLOCK = """=== HOW HARD THE ARITHMETIC HAS TO BE ===
 At least {{ operations }} operations of at least {{ kinds }} different kinds, with brackets or a fraction bar deciding the order. {{ because }}.
-The shape to aim at: {{ exemplar }}
+
+These are all AT that level. They share a difficulty and share no numbers:
+{{ shapes }}
+
+DO NOT USE ANY OF THEM. They are here to show you the LEVEL, not the question. A guide that copied the first one worked it in sixteen examples across six lessons, which is one example and five wasted lessons. Write your own, at that difficulty, different in every lesson.
+
 An easy opener is fine. A set whose HARDEST item is one operation has not reached the grade anywhere."""
 
 _PROFILE_BLOCK = """=== THIS SUB-STRAND'S OWN DEMAND, FROM ITS DESIGN ===

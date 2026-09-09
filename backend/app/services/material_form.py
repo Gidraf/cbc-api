@@ -197,17 +197,52 @@ def band_known(grade: str | None) -> bool:
     return grade_level(grade) in _BY_LEVEL
 
 
-def block_for(grade: str | None) -> str:
-    """The form, as a prompt block."""
+# What the PLAN station is told about the material it directs. Seeded, because
+# it is instruction text and the guard is right that instruction text nobody
+# can edit is instruction text nobody fixes.
+_DIRECTING = """The MATERIAL this plan directs will be {{ artifact }}, addressed to {{ addressed_to }}.
+
+You are NOT writing it. You are writing the plan a teacher works from, and that is addressed to the teacher. Direct what the material must contain; do not write the material here.
+
+A plan that writes the learner's page instead of directing it produces a guide that is neither: a teacher reads a textbook page they cannot teach from, and the material station copies it out again."""
+
+
+def _directing_block(form: Any) -> str:
+    from .prompt_store import render
+
+    return render("material-form-directing", _DIRECTING,
+                  artifact=form.artifact, addressed_to=form.addressed_to)
+
+
+def seed_prompts() -> dict[str, str]:
+    return {"material-form-directing": _DIRECTING}
+
+
+def block_for(grade: str | None, *, writing_it: bool = True) -> str:
+    """The form, as a prompt block.
+
+    `writing_it=False` is for the PLAN station, which is not writing the
+    material — it is directing the station that will. Told "this material is
+    the textbook page itself, addressed to the learner", a prompt whose own
+    opening says "the READER is a Kenyan teacher" carries two contradictory
+    instructions, and the guide came back sounding like neither.
+    """
     form = form_for(grade)
     label = grade_label(grade)
 
     lines = [
         "=== WHAT YOU ARE WRITING ===",
-        f"{label} sits in {form.band}.",
+        # The BAND is a group of levels that share one material form. Printing
+        # it as where the grade sits told a teacher "Grade 9 sits in Junior
+        # School, Senior School and Diploma", which is false and reads as a
+        # defect in the guide before a word of content is judged.
+        f"{label} is {grade_level(grade)}. The form below is the one shared by "
+        f"{form.band}.",
         "",
-        f"This material is {form.artifact}.",
-        f"It is addressed to {form.addressed_to}.",
+        (f"This material is {form.artifact}."
+         if writing_it else
+         _directing_block(form)),
+        (f"It is addressed to {form.addressed_to}." if writing_it else ""),
         "",
         f"VOICE: {form.voice}",
         "",

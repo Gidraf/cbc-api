@@ -2919,12 +2919,10 @@ WHY IT IS BROKEN UP. One long passage comes out shallow: general where it should
 Restating the outcome in other words is padding and counts for nothing.
 
 === ANALOGIES YES, INVENTION NO ===
-Reach for real-life analogies and everyday examples. A four-year-old understands God as provider through the food on their own table, not through a definition. "God cares for you the way your mother does when she gives you food" is exactly the right kind of teaching, and this guide should be full of it.
-Draw those analogies from the child's own world as the register above describes it: self, family, home, neighbourhood, school. Not farms, industry, counties or national development.
+{{ analogy_guidance }}
 
 An analogy is a TEACHING DEVICE and makes no claim about the world. A CLAIM asserts something is true, and every claim here must be checkable against the KICD design shown to you. The difference is not stylistic — it is the whole of it:
-  - NEVER cite a scripture reference the design does not name. The design names its own; use those and no others. An invented chapter and verse is indistinguishable from a real one and a teacher will read it aloud to a class.
-  - NEVER state a statistic, a percentage or a survey figure. Nothing was retrieved for this sub-strand. A number with a source attached is worse than no number, because nothing downstream can tell it from a real one.
+{{ scripture_rule }}  - NEVER state a statistic, a percentage or a survey figure. Nothing was retrieved for this sub-strand. A number with a source attached is worse than no number, because nothing downstream can tell it from a real one.
   - NEVER attribute anything to KNBS, KALRO, NEMA, UNESCO, a ministry or a named report. If it is not in the design in front of you, it is not available to you.
   - NEVER invent a page or line number. Cite only addresses you can see in the excerpt above.
 Every one of these is checked after you write, mechanically, and anything invented is reported against this guide.

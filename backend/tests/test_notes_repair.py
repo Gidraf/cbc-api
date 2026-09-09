@@ -611,7 +611,17 @@ def test_the_prompt_draws_the_line_between_analogy_and_claim():
     source = (inspect.getsource(routes.factory_generate_notes)
               + SEED_PROMPT_BLOCKS["note-plan-rules"])
     assert "ANALOGIES YES, INVENTION NO" in source
-    assert "NEVER cite a scripture reference the design does not name" in source
+    # The scripture rule is no longer unconditional. Telling a Mathematics
+    # prompt never to invent a chapter and verse is telling it about scripture,
+    # which is the one thing it had no reason to think about — and the block it
+    # sat in was written for pre-primary CRE, priming a Grade 9 maths prompt
+    # with "four-year-old", "song or story" and "God as provider".
+    from app.services import analogy_guidance
+
+    assert analogy_guidance.scripture_rule("Christian Religious Education")
+    assert analogy_guidance.scripture_rule("Mathematics") == ""
+    assert "NEVER cite a scripture reference the design does not name" in \
+        analogy_guidance.scripture_rule("Christian Religious Education")
     assert "NEVER state a statistic" in source
     # Topic count follows the material rather than a fixed number.
     assert "Let the material decide" in source
@@ -675,3 +685,57 @@ def test_examples_are_numbered_across_a_lesson_not_within_a_segment() -> None:
     numbers = re.findall(r"<h4>Example (\d+\.\d+)</h4>", html)
 
     assert numbers == ["1.1", "1.2", "1.3", "2.1"]
+
+
+def test_a_maths_prompt_is_not_primed_with_a_four_year_old() -> None:
+    """The analogy block was written for pre-primary CRE and reached every
+    subject at every grade: "A four-year-old understands God as provider
+    through the food on their own table... this guide should be full of it."
+
+    A small model attends to that. It is the likeliest single reason a Grade 9
+    integers guide came back built on number cards and dice."""
+    from app.services import analogy_guidance
+
+    block = analogy_guidance.block_for("grade-9", "Mathematics")
+
+    assert "four-year-old" not in block
+    assert "God" not in block and "song" not in block
+
+
+def test_the_analogy_scope_comes_from_the_register_not_a_constant() -> None:
+    """The old block told Grade 9 "not counties or national development" three
+    paragraphs after the register said its context IS "school, community,
+    county and national contexts"."""
+    from app.services import analogy_guidance
+    from app.services.level_register import register_for_grade
+
+    for grade in ("grade-pp1", "grade-9"):
+        block = analogy_guidance.block_for(grade, "Mathematics")
+        assert register_for_grade(grade).scenario_world in block
+
+
+def test_the_level_is_shown_several_shapes_not_one() -> None:
+    """One exemplar beside "the shape to aim at" is a few-shot example, and a
+    small model copies a few-shot example: one guide worked the single
+    exemplar sixteen times across six lessons."""
+    from app.services import demand_profile, task_demand
+
+    floor = task_demand.floor_for("grade-9", "Mathematics")
+    assert len(floor.also) >= 3
+
+    block = demand_profile.block_for("grade-9", "Mathematics", None)
+    for shape in (floor.exemplar, *floor.also):
+        assert shape in block
+    assert "DO NOT USE ANY OF THEM" in block
+
+
+def test_every_shape_offered_clears_the_floor_it_illustrates() -> None:
+    """A shape shown as "at that level" that is not at that level teaches the
+    wrong level."""
+    from app.services import task_demand
+
+    for grade in ("grade-5", "grade-9", "grade-11"):
+        floor = task_demand.floor_for(grade, "Mathematics")
+        for shape in (floor.exemplar, *floor.also):
+            short = task_demand.shortfall(task_demand.measure(shape), floor)
+            assert not short.below, f"{grade}: {shape} — {short.misses}"

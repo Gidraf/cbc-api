@@ -46,7 +46,8 @@ from ..services.grade_order import grade_level
 from ..services.faith_scope import prompt_block as faith_prompt_block
 from ..services.grade_scope import notes_for as grade_scope_notes
 from ..services import notation, prompt_fragments
-from ..services import (demand_profile, design_elements, grade_sql,
+from ..services import (analogy_guidance, demand_profile,
+                        design_elements, grade_sql,
                         prompt_store)
 from ..services.langfuse_seed import SEED_PROMPT_BLOCKS
 from ..services.target_language import block_for as target_language_block
@@ -1154,7 +1155,9 @@ def factory_generate_notes(
         # The register says who the learner is; this says what the page IS. A
         # Grade 9 plan that directs a spoken teacher script forces the material
         # station to write one, however well the register is stated.
-        "material_form": _material_form_block(payload.grade),
+        # The plan DIRECTS the material; it does not write it.
+        "material_form": _material_form_block(payload.grade,
+                                              writing_it=False),
             # How this subject writes what it cannot write in words. Empty for
             # most subjects — a CRE guide carrying two pages about balancing
             # equations spends a page of prompt on something it never uses, and
@@ -1245,6 +1248,9 @@ def factory_generate_notes(
                 grade=payload.grade,
                 kiqs_formatted=kiqs_formatted,
                 level=level,
+                analogy_guidance=analogy_guidance.block_for(
+                    payload.grade, payload.subject),
+                scripture_rule=analogy_guidance.scripture_rule(payload.subject),
                 min_body_chars=f"{notes_coverage.MIN_BODY_CHARS:,}",
                 min_segment_chars=notes_coverage.MIN_SEGMENT_CHARS,
                 min_segments=notes_coverage.MIN_SEGMENTS,
