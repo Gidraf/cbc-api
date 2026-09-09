@@ -303,6 +303,83 @@ def _arithmetic_faults(examples: list[Any]) -> list[Finding]:
     return findings
 
 
+# ── the order of operations, step by step ────────────────────────────────────
+#
+# The check that every step is a TRUE equation and the answer is RIGHT passes
+# this, and what it teaches is illegal:
+#
+#     5 + (-3) - 2 × (-4)
+#     = 5 - 3 - 2 × (-4)     "we perform addition and subtraction, left to right"
+#     = 2 - 2 × (-4)         "5 - 3 = 2"          ← the multiplication is pending
+#     = 2 - (-8)             "2 × (-4) = -8"
+#     = 10
+#
+# Every line is true. The answer is 10 and 10 is correct — by luck, because the
+# multiplication sat at the tail. A learner who applies the stated rule to
+# 4 + 3 × 2 gets 14.
+#
+# Correct arithmetic reaching a correct answer by a method that would fail on
+# the next question is the most dangerous thing a guide can contain, because
+# nothing about the numbers gives it away.
+
+_MUL_LEVEL = re.compile(r"[×÷*/]|\^")
+_ADD_LEVEL_TOP = re.compile(r"^\s*-?[\d.]+\s*[+-]\s*[\d.]+\s*$")
+
+
+def _outside_brackets(expression: str) -> str:
+    """The expression with every bracketed group collapsed to a placeholder."""
+    text = _as_symbols(expression)
+    for _ in range(8):
+        reduced = re.sub(r"\([^()]*\)", "N", text)
+        if reduced == text:
+            break
+        text = reduced
+    return text
+
+
+def _out_of_order(example: dict[str, Any], index: int) -> Finding | None:
+    """A step that adds or subtracts while a multiplication is still pending."""
+    steps = [st for st in (example.get("steps") or []) if isinstance(st, dict)]
+    running = _as_symbols(str(example.get("statement") or ""))
+
+    for number, step in enumerate(steps, start=1):
+        working = _as_symbols(str(step.get("working") or "").strip())
+        match = _EQUATION.match(working)
+        if not match:
+            running = working or running
+            continue
+        lhs, rhs = match.group("lhs").strip(), match.group("rhs").strip()
+
+        # A sub-expression inside brackets is SUPPOSED to go first.
+        bracketed = re.search(r"\([^()]*" + re.escape(lhs) + r"[^()]*\)", running)
+        if not bracketed and _ADD_LEVEL_TOP.match(lhs) \
+                and _MUL_LEVEL.search(_outside_brackets(running)):
+            return Finding(
+                "out_of_order",
+                f"Example {index}, step {number} works out \"{lhs}\" while "
+                f"\"{running.strip()}\" still has a multiplication or division "
+                f"waiting. The answer may still come out right — it does here, "
+                f"because the product sits at the end — and the METHOD is the "
+                f"one BODMAS forbids. A learner applying it to $4 + 3 "
+                f"\\times 2$ gets 14.",
+                "Work the multiplication and division first, then the addition "
+                "and subtraction from left to right. Say that in the reason for "
+                "the step, because the reason is what a learner copies.")
+        running = rhs or running
+    return None
+
+
+def _order_faults(examples: list[Any]) -> list[Finding]:
+    out: list[Finding] = []
+    for index, example in enumerate(examples or [], start=1):
+        if not isinstance(example, dict):
+            continue
+        found = _out_of_order(example, index)
+        if found:
+            out.append(found)
+    return out
+
+
 # The shape every worked example takes, so a learner meets one format.
 _SHAPE_RULES: tuple[tuple[str, str], ...] = (
     ("statement", "the task it works, written out"),
@@ -605,6 +682,7 @@ def check(examples: list[Any], *, grade: str = "", subject: str | None = None,
     report.findings += _impossible_negative(examples)
     report.findings += _shape_faults(examples)
     report.findings += _arithmetic_faults(examples)
+    report.findings += _order_faults(examples)
     report.findings += _missing_operations(examples, grade, subject or "",
                                            strand, sub_strand)
     return report

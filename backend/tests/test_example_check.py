@@ -14,6 +14,8 @@ cannot see that because there is nothing wrong with the sum.
 """
 from __future__ import annotations
 
+import re
+
 import pytest
 
 from app.services import example_check
@@ -1143,3 +1145,76 @@ def test_indices_are_not_demanded_of_a_sub_strand_that_does_not_teach_them() -> 
 
     assert "^" not in named
     assert set(named) == {"+", "-", "×", "÷"}
+
+
+# ── correct arithmetic, illegal method ──────────────────────────────────────
+
+
+BROKEN_ORDER = {
+    "statement": "Calculate 5 + (-3) - 2 × (-4)",
+    "steps": [
+        {"working": "5 + (-3) - 2 × (-4) = 5 - 3 - 2 × (-4)",
+         "because": "We perform addition and subtraction from left to right."},
+        {"working": "5 - 3 = 2", "because": "5 - 3 = 2."},
+        {"working": "2 × (-4) = -8", "because": "the product"},
+        {"working": "2 - (-8) = 2 + 8", "because": "subtracting a negative"},
+        {"working": "2 + 8 = 10", "because": "add"},
+    ],
+    "answer": "10",
+}
+
+
+def test_every_step_can_be_true_and_the_method_still_illegal() -> None:
+    """This is what makes it dangerous: nothing about the numbers gives it
+    away. Every line is a true equation, the answer is 10 and 10 is correct —
+    by luck, because the multiplication sat at the tail."""
+    from app.services.worked_solutions import check
+
+    assert check(BROKEN_ORDER["statement"], BROKEN_ORDER["answer"])["agrees"]
+
+    # Only the steps that end in a VALUE can be compared against one; a step
+    # that rewrites an expression as another expression has no value to check.
+    for step in BROKEN_ORDER["steps"]:
+        lhs, _, rhs = step["working"].partition("=")
+        if not re.fullmatch(r"\s*-?\d+(?:\.\d+)?\s*", rhs):
+            continue
+        verdict = check(lhs, rhs)
+        assert verdict["checked"] and verdict["agrees"], step["working"]
+
+
+def test_a_step_that_adds_while_a_product_is_pending_is_caught() -> None:
+    report = example_check.check([BROKEN_ORDER], grade="grade-9",
+                                 subject="Mathematics")
+
+    found = [f for f in report.findings if f.kind == "out_of_order"]
+    assert found
+    assert 'works out "5 - 3"' in found[0].says
+    assert "gets 14" in found[0].says, "it says what the learner will do wrong"
+    assert "the reason is what a learner copies" in found[0].fix
+
+
+def test_a_bracket_worked_first_is_not_out_of_order() -> None:
+    """A sub-expression inside brackets is supposed to go first."""
+    correct = {
+        "statement": "Evaluate 5 + (3 - 2) × 4",
+        "steps": [{"working": "3 - 2 = 1", "because": "the bracket first"},
+                  {"working": "1 × 4 = 4", "because": "then the product"},
+                  {"working": "5 + 4 = 9", "because": "then the sum"}],
+        "answer": "9"}
+
+    report = example_check.check([correct], grade="grade-9",
+                                 subject="Mathematics")
+
+    assert not [f for f in report.findings if f.kind == "out_of_order"]
+
+
+def test_adding_when_nothing_higher_is_pending_is_fine() -> None:
+    plain = {
+        "statement": "Evaluate -18 + 12 - 7",
+        "steps": [{"working": "-18 + 12 = -6", "because": "left to right"},
+                  {"working": "-6 - 7 = -13", "because": "left to right"}],
+        "answer": "-13"}
+
+    report = example_check.check([plain], grade="grade-9", subject="Mathematics")
+
+    assert not [f for f in report.findings if f.kind == "out_of_order"]
