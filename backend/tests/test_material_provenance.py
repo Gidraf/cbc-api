@@ -193,3 +193,107 @@ def test_the_generator_is_told_to_name_what_each_piece_serves() -> None:
     assert "{{ design_elements }}" in prompt
     assert '"serves"' in prompt
     assert "written from open ground" in prompt
+
+
+def test_a_lesson_cloned_with_new_numbers_is_caught() -> None:
+    """`redundancy_check` compares prose and the task pass compares arithmetic,
+    and a renumbered clone slips between them: the words differ enough to score
+    as distinct, and every sum in it is genuinely new. One guide taught "the
+    temperature rises from -5°C to 3°C" in lesson 3 and "rises from -3°C to
+    2°C" in lesson 6, same apparatus, and spent two of six periods reading a
+    thermometer."""
+    three = ("Integers are often used to represent temperature changes. For "
+             "example, if the temperature rises from -5C to 3C, we represent "
+             "this change as +8C. Conversely, if it drops from 2C to -4C, the "
+             "change is -6C. Let us discuss examples of tracking temperature "
+             "changes in our environment.")
+    six = ("Integers are often used to represent temperature changes. For "
+           "instance, if the temperature rises from -3C to 2C, we represent "
+           "this change as +5C. Conversely, if it drops from 1C to -4C, the "
+           "change is -5C. Let us practice reading temperature changes in our "
+           "environment.")
+    other = ("In financial contexts, integers represent profits and losses. If "
+             "a business earns KSh 5000 and incurs a loss of KSh 2000, we "
+             "write 5000 + (-2000) = 3000. Understanding this is crucial for "
+             "managing money effectively over a long period of time.")
+
+    found = lm.check_repetition({"material": [
+        {"module_number": 3, "say": three},
+        {"module_number": 4, "say": other},
+        {"module_number": 6, "say": six}]})
+
+    clones = [f for f in found if f["kind"] == "lesson"]
+    assert clones
+    assert clones[0]["first_seen"] == "lesson 3" and clones[0]["where"] == "lesson 6"
+
+
+def test_two_genuinely_different_lessons_are_not_clones() -> None:
+    a = ("Integers are used to represent temperature changes above and below "
+         "freezing, and a thermometer is the instrument that reads them off a "
+         "scale marked in degrees Celsius on both sides of zero.")
+    b = ("Multiplying two integers with the same sign gives a positive result, "
+         "and multiplying two with different signs gives a negative one. The "
+         "same rule governs division of directed numbers throughout.")
+
+    found = lm.check_repetition({"material": [
+        {"module_number": 1, "say": a}, {"module_number": 2, "say": b}]})
+
+    assert not [f for f in found if f["kind"] == "lesson"]
+
+
+# ── each piece is told what the earlier pieces used ─────────────────────────
+
+
+def test_the_ledger_names_what_earlier_pieces_already_used() -> None:
+    """The material station generates one call per directive — the finer
+    granularity it looks like it should be — and every call was blind to the
+    others. That is twenty-one authors writing one book without reading each
+    other, and it produced what that produces: one expression in sixteen
+    examples, three exercises in six lessons, lesson 6 a copy of lesson 3."""
+    block = lm.already_taught([
+        {"module_number": 1, "title": "Addition",
+         "worked_examples": [{"statement": "Evaluate -15 ÷ 3 - (-2) × (-4) + 6",
+                              "steps": [{"working": "-5 - 8 + 6 = -7"}],
+                              "answer": "7/10"}],
+         "exercises": [{"question": "5 + (-3)"}]},
+        {"module_number": 2, "title": "Temperature",
+         "exercises": [{"question": "The temperature rises from -5C to 3C."}]},
+    ])
+
+    assert "Lesson 1 — Addition" in block and "Lesson 2 — Temperature" in block
+    assert "5 + (-3)" in block
+    assert "with the numbers changed" in block, "the renumbered clone is named"
+
+
+def test_the_first_piece_gets_no_ledger() -> None:
+    """There is nothing to repeat yet, and an empty heading is noise."""
+    assert lm.already_taught([]) == ""
+
+
+def test_the_ledger_is_bounded() -> None:
+    """It must not become the prompt."""
+    many = [{"module_number": n, "title": f"Topic {n}",
+             "exercises": [{"question": f"question {n}.{i}"} for i in range(20)]}
+            for n in range(40)]
+
+    block = lm.already_taught(many)
+    listed = [ln for ln in block.split("\n") if ln.startswith("  Lesson ")]
+
+    assert len(listed) == lm.LEDGER_PIECES
+    assert "question 0.9" not in block, "only the first few items of each piece"
+
+
+def test_every_piece_after_the_first_is_given_it() -> None:
+    import inspect
+
+    from app.routes import curriculum
+
+    source = inspect.getsource(curriculum.factory_generate_material)
+    assert "written_already=lesson_material.already_taught(written)" in source
+
+
+def test_the_slot_exists_in_the_prompt() -> None:
+    """A binding whose template never mentions the slot replaces nothing."""
+    from app.services.langfuse_seed import SEED_AGENT_PROMPTS
+
+    assert "{{ already_taught }}" in SEED_AGENT_PROMPTS["material-generator"]

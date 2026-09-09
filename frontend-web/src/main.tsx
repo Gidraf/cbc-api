@@ -13,6 +13,7 @@ import { Approvals } from "./views/Approvals";
 import { Coverage } from "./views/Coverage";
 import { ContentFactory } from "./views/ContentFactory";
 import { Datasets } from "./views/Datasets";
+import { DesignCoverageScreen } from "./views/DesignCoverageScreen";
 import { Profiles } from "./views/Profiles";
 import { ProviderKeys } from "./views/ProviderKeys";
 import { StageModels } from "./views/StageModels";
@@ -98,6 +99,10 @@ function Router() {
         <Route
           path="approvals"
           element={<Screen name="Versions and approval"><Approvals /></Screen>}
+        />
+        <Route
+          path="design-coverage"
+          element={<Screen name="KICD design coverage"><DesignCoverageScreen /></Screen>}
         />
         <Route path="datasets" element={<Screen name="Datasets"><Datasets /></Screen>} />
         <Route path="skills" element={<Screen name="Teaching skills"><Profiles /></Screen>} />

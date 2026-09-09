@@ -10,9 +10,9 @@ import { Button, Card } from "../ui/components";
  */
 export class RouteBoundary extends React.Component<
   { children: React.ReactNode; name: string },
-  { error: Error | null }
+  { error: Error | null; where: string }
 > {
-  state: { error: Error | null } = { error: null };
+  state: { error: Error | null; where: string } = { error: null, where: "" };
 
   static getDerivedStateFromError(error: Error) {
     return { error };
@@ -20,6 +20,13 @@ export class RouteBoundary extends React.Component<
 
   componentDidCatch(error: Error, info: React.ErrorInfo) {
     console.error(`Error in ${this.props.name}:`, error, info);
+    // ON THE PAGE, not only in the console.
+    //
+    // "Datasets could not render / Cannot read properties of undefined
+    // (reading 'approval')" named a screen with no `approval` anywhere in it,
+    // and finding the component that actually threw meant reading every view
+    // in the subtree. The stack React already hands us says which one it was.
+    this.setState({ where: info.componentStack || "" });
   }
 
   render() {
@@ -46,7 +53,28 @@ export class RouteBoundary extends React.Component<
           >
             {this.state.error.message}
           </pre>
-          <Button variant="primary" size="sm" onClick={() => this.setState({ error: null })}>
+          {this.state.where && (
+            <details style={{ fontSize: "var(--text-xs)", maxWidth: "100%" }}>
+              <summary style={{ cursor: "pointer", color: "var(--ink-2)" }}>
+                Where it happened
+              </summary>
+              <pre
+                style={{
+                  background: "var(--surface-2)",
+                  border: "1px solid var(--line)",
+                  borderRadius: "var(--radius-sm)",
+                  padding: "var(--s3)",
+                  fontSize: "var(--text-xs)",
+                  overflowX: "auto",
+                  maxWidth: "100%",
+                  marginTop: "var(--s2)",
+                }}
+              >
+                {this.state.where.trim()}
+              </pre>
+            </details>
+          )}
+          <Button variant="primary" size="sm" onClick={() => this.setState({ error: null, where: "" })}>
             Try again
           </Button>
         </div>

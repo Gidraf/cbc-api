@@ -498,6 +498,8 @@ Do not repeat the instruction back. Do not describe the material. Produce it.
 
 {{ design_elements }}
 
+{{ already_taught }}
+
 {{ target_language }}
 
 {{ language_register }}
@@ -2354,6 +2356,20 @@ if __name__ == "__main__":
 # joins already states both, and repeating them puts the same instruction in
 # front of the model twice.
 SEED_PROMPT_BLOCKS: dict[str, str] = {
+    "note-one-lesson": """=== WRITE ONE LESSON: LESSON {{ number }} OF {{ lessons }} ===
+Everything above describes the whole sub-strand. You are writing ONE lesson of it — lesson {{ number }} — and nothing else.
+
+Return the same JSON schema with exactly ONE entry in `modules`: this lesson. Do not write the other lessons, do not summarise them, and do not leave placeholders for them. They are written by their own calls.
+
+{{ handoff }}
+
+WHAT THIS LESSON MUST NOT DO:
+  - It must not re-teach what the previous lesson taught.
+  - It must not re-use the tasks the previous lesson worked, or the same tasks with the numbers changed.
+  - It must not narrow the outcome it serves. Where the outcome says "basic operations", this lesson teaches the operations the DESIGN names — writing "(addition, subtraction)" into the objective deletes multiplication and division from the whole sub-strand, because nothing downstream will teach what the objective did not ask for.
+
+Write it in full. A lesson written short here is a lesson the material station has to invent from, and it invents badly.
+""",
     "activity-task-directive": """{{ ct_profile_format_for_prompt }}
 
 {{ dossier_formatted_context }}

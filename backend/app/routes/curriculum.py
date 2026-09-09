@@ -915,6 +915,85 @@ def factory_get_profile(
     }
 
 
+def _plan_lesson_by_lesson(context: Any, resolved: Any, *, lessons: int,
+                           grade: str, subject: str, strand: str,
+                           sub_strand: str, run_log: Any) -> Any:
+    """Write the guide one lesson at a time, each told where the last ended.
+
+    The plan was one call for all six lessons, and it showed: the tail thinned
+    out, lesson 6 came back a renumbered lesson 3, and one objective quietly
+    narrowed "basic operations" to "(addition, subtraction)" for the whole
+    sub-strand.
+
+    Splitting it is only half the answer. The material station already writes
+    one call per piece and, blind to its siblings, produced one expression
+    worked sixteen times. So each lesson here is handed the previous one — what
+    it taught, the tasks it used, the sentence it ended on — and its own rung
+    of the difficulty ladder.
+
+    Falls back to a single call for a one-lesson sub-strand, where there is no
+    sequence to carry and the loop would only add a round trip.
+    """
+    from ..services import lesson_handoff, task_demand
+    from ..services.llm_client import llm_client
+
+    floor = task_demand.floor_for(grade, subject)
+    ladder = lesson_handoff.ladder(lessons, floor)
+    previous: Any = None
+    envelope: dict[str, Any] | None = None
+    modules: list[dict[str, Any]] = []
+
+    for number in range(1, lessons + 1):
+        step = ladder[number - 1] if number <= len(ladder) else None
+        messages = [
+            *context.messages,
+            {"role": "user", "content": prompt_store.render(
+                "note-one-lesson", SEED_PROMPT_BLOCKS["note-one-lesson"],
+                number=number, lessons=lessons,
+                handoff=lesson_handoff.block(previous, step))},
+        ]
+        try:
+            resp = llm_client.generate(resolved, messages, temperature=0.15)
+        except Exception as exc:  # noqa: BLE001
+            # One lesson failing is not the sub-strand failing. The gap is
+            # recorded where a reader sees it rather than silently closing over
+            # it, and coverage will count the module as missing.
+            logger.warning("Lesson %d of %s failed: %s", number, sub_strand, exc)
+            run_log.step(f"Lesson {number}/{lessons}", f"failed — {exc}", "fail")
+            continue
+
+        content = resp.content if isinstance(resp.content, dict) else {}
+        if envelope is None and content:
+            envelope = {k: v for k, v in content.items()
+                        if k not in ("modules", "hour_modules")}
+
+        written = [m for m in (content.get("modules")
+                               or content.get("hour_modules") or [])
+                   if isinstance(m, dict)]
+        if not written:
+            run_log.step(f"Lesson {number}/{lessons}",
+                         "the model returned no module", "fail")
+            continue
+
+        # One lesson per call, whatever the model returned. Its own numbering
+        # restarts at 1 on every call, so the number is set here — the guide's
+        # lesson 4 is the fourth call, not whatever the fourth call called it.
+        module = written[0]
+        module["module_number"] = number
+        modules.append(module)
+        previous = lesson_handoff.read(module)
+        run_log.step(
+            f"Lesson {number}/{lessons}",
+            str(module.get("module_title") or module.get("title") or "written"),
+            "ok")
+
+    if not modules:
+        return None
+    out = dict(envelope or {})
+    out["modules"] = modules
+    return out
+
+
 @router.post("/factory/generate-notes")
 def factory_generate_notes(
     payload: FactoryGenerateNotesRequest,
@@ -1204,8 +1283,20 @@ def factory_generate_notes(
             )
         }
 
-    resp = llm_client.generate(resolved, context.messages, temperature=0.15)
-    notes_content = resp.content
+    # One call per lesson, each told where the last one ended. A single call
+    # for the whole guide is what thinned the tail and cloned lesson 6 from
+    # lesson 3.
+    notes_content = None
+    if allocation.modules > 1:
+        notes_content = _plan_lesson_by_lesson(
+            context, resolved, lessons=allocation.modules, grade=payload.grade,
+            subject=payload.subject, strand=payload.strand,
+            sub_strand=payload.sub_strand, run_log=run_log)
+    if notes_content is None:
+        # A one-lesson sub-strand, or every lesson failed: the original single
+        # call, so a run still produces something a person can read and repair.
+        resp = llm_client.generate(resolved, context.messages, temperature=0.15)
+        notes_content = resp.content
 
     # The depth floor is checked BEFORE anything else reads the guide, because
     # everything downstream is downstream of it: the audit counts its words, the
@@ -5411,7 +5502,9 @@ def factory_generate_material(
         messages = [{"role": "user", "content": lesson_material.prompt_for(
             directive, register=register, faith=faith, language=language,
             notation=notation, target_language=target, domain=domain,
-            demand=demand, elements=elements_block, grade=payload.grade,
+            demand=demand, elements=elements_block,
+            written_already=lesson_material.already_taught(written),
+            grade=payload.grade,
             sub_strand=payload.sub_strand, slos=slos)}]
         if payload.custom_instructions:
             messages.append({"role": "user",

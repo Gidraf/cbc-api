@@ -207,3 +207,30 @@ def operations_named(row: dict[str, Any]) -> dict[str, str]:
         if re.search(pattern, text, re.I):
             found[symbol] = name
     return found
+
+
+# A sub-strand about DIRECTED numbers, in the design's own words.
+_DIRECTED = re.compile(
+    r"\binteger\w*|\bdirected number\w*|\bnegative\w*|\bpositive and negative"
+    r"|\bsigned number\w*", re.I)
+
+
+def wants_negatives(row: dict[str, Any]) -> bool:
+    """Whether this sub-strand's own design is about signed numbers.
+
+    The demand floor counts operations, kinds and brackets and never asks
+    whether a single number is negative — so `6 + 2 \times (3 - 1)` cleared the
+    Grade 9 floor as the peak of a guide on INTEGERS. Three operations, three
+    kinds, a bracket, order of operations deciding the answer, and not one
+    directed number in it.
+
+    Read from the design rather than from the sub-strand's title, so a
+    sub-strand on whole numbers is never asked for a negative it does not
+    teach.
+    """
+    text = " ".join(e.text for e in enumerate_for(row))
+    for extra in ("sub_strand_name", "strand_name"):
+        value = row.get(extra)
+        if isinstance(value, str):
+            text += " " + value
+    return bool(_DIRECTED.search(text))

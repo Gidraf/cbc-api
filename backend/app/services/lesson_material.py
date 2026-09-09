@@ -24,6 +24,7 @@ neither well.
 """
 from __future__ import annotations
 
+import difflib
 import logging
 import re
 from dataclasses import dataclass, field
@@ -153,7 +154,7 @@ def prompt_for(directive: Directive, *, register: str, faith: str,
                sub_strand: str, slos: list[str], language: str = "",
                notation: str = "", target_language: str = "",
                domain: str = "", demand: str = "", elements: str = "",
-               grade: str = "") -> str:
+               written_already: str = "", grade: str = "") -> str:
     """What to ask for, for ONE directive.
 
     One directive per call rather than a whole guide per call, because the
@@ -205,6 +206,10 @@ def prompt_for(directive: Directive, *, register: str, faith: str,
         # say "written here for this lesson", which is not provenance — it is
         # an admission that there is none.
         ("design_elements", elements),
+        # What the earlier calls in this run already used. Every piece is
+        # generated blind to the others; this is the only thing that stops six
+        # lessons being one lesson written six times.
+        ("already_taught", written_already),
         ("target_language", target_language),
         ("language_register", language),
         ("faith_scope", faith),
@@ -782,6 +787,12 @@ def repair_examples(material: dict[str, Any]) -> list[dict[str, Any]]:
 _OPERATOR = re.compile(r"[+×÷*/]|(?<=\d)\s*-\s*(?=\d|\()")
 
 
+def _skeleton_of(text: str) -> str:
+    """A passage with its numbers taken out, so a renumbered copy still matches."""
+    stripped = re.sub(r"-?\d+(?:\.\d+)?", "#", str(text or "").lower())
+    return re.sub(r"[^a-z#]+", " ", stripped).strip()
+
+
 def _norm_task(text: str) -> str:
     """A task reduced to what makes it that task.
 
@@ -823,6 +834,35 @@ def check_repetition(material: dict[str, Any]) -> list[dict[str, Any]]:
             found.append({"kind": "lesson", "detail": group})
     except Exception as exc:  # noqa: BLE001
         logger.warning("Could not measure repetition: %s", exc)
+
+    # The same teaching with the numbers changed.
+    #
+    # `redundancy_check` compares prose and the task pass compares arithmetic,
+    # and a lesson cloned with new numbers slips between them: the words differ
+    # enough to score as distinct, and every sum in it is genuinely new. One
+    # guide taught "the temperature rises from -5°C to 3°C" in lesson 3 and
+    # "rises from -3°C to 2°C" in lesson 6, with the same apparatus, and spent
+    # two of six periods reading a thermometer.
+    #
+    # Take the numbers out and the two are the same lesson.
+    skeletons: dict[str, str] = {}
+    for piece in (material.get("material") or []):
+        if not isinstance(piece, dict):
+            continue
+        said = str(piece.get("say") or "")
+        if len(said) < 200:
+            continue
+        skeleton = _skeleton_of(said)
+        where = f"lesson {piece.get('module_number')}"
+        for seen_key, seen_where in skeletons.items():
+            if seen_where == where:
+                continue
+            if difflib.SequenceMatcher(None, seen_key, skeleton).ratio() >= 0.80:
+                found.append({"kind": "lesson", "where": where,
+                              "first_seen": seen_where,
+                              "task": "the same teaching with different numbers"})
+                break
+        skeletons[skeleton] = where
 
     # Every task in the guide, wherever it is set, against every other.
     seen: dict[str, str] = {}
@@ -911,3 +951,68 @@ def _design_row(grade: str, subject: str, sub_strand: str,
     except Exception as exc:  # noqa: BLE001
         logger.debug("No design row for %s (%s)", sub_strand, exc)
         return {}
+
+
+# How many earlier pieces to name. Long enough that a six-lesson sub-strand
+# carries its whole history, short enough that the ledger never becomes the
+# prompt.
+LEDGER_PIECES = 24
+LEDGER_ITEMS_EACH = 6
+
+
+def already_taught(written: list[dict[str, Any]]) -> str:
+    """What earlier pieces in this run have already used.
+
+    The material station generates one call per directive — which is the finer
+    granularity it looks like it should be — and every call is blind to the
+    others. That is not a smaller version of the same job; it is twenty-one
+    authors writing one book without reading each other, and it produced
+    exactly what that produces: the same expression worked in sixteen
+    examples, the same three exercises set in six lessons, and lesson 6 a
+    renumbered copy of lesson 3.
+
+    Splitting work finer does not improve accuracy on its own. Splitting it
+    finer and telling each part what the others did is a different thing.
+    """
+    from . import task_demand
+
+    lines: list[str] = []
+    for piece in (written or [])[-LEDGER_PIECES:]:
+        if not isinstance(piece, dict):
+            continue
+        used: list[str] = []
+        for example in (piece.get("worked_examples") or []):
+            if isinstance(example, dict):
+                demand = task_demand.measure_item(example)
+                if demand.expression:
+                    used.append(demand.expression)
+        for exercise in (piece.get("exercises") or []):
+            if isinstance(exercise, dict) and exercise.get("question"):
+                used.append(str(exercise["question"])[:60])
+        title = str(piece.get("title") or piece.get("topic") or "").strip()
+        head = f"Lesson {piece.get('module_number')}"
+        if title:
+            head += f" — {title}"
+        if used:
+            head += ": " + "; ".join(used[:LEDGER_ITEMS_EACH])
+        lines.append("  " + head)
+
+    if not lines:
+        return ""
+
+    from .prompt_store import render
+
+    return render("already-taught", _LEDGER_BLOCK, written="\n".join(lines))
+
+
+_LEDGER_BLOCK = """=== ALREADY WRITTEN IN THIS SUB-STRAND ===
+These pieces have been written already, with the tasks each one used:
+{{ written }}
+
+DO NOT REPEAT ANY OF THEM. Not the expressions, not the exercises, and not the teaching with the numbers changed — a lesson that works the same idea on different figures is the same lesson, and it takes the place of the one the design funded.
+
+You are writing ONE piece of a guide somebody reads end to end. Each piece is generated on its own and cannot see the others, so this list is the only thing standing between a six-lesson sub-strand and one lesson written six times."""
+
+
+def seed_prompts() -> dict[str, str]:
+    return {"already-taught": _LEDGER_BLOCK}

@@ -195,7 +195,8 @@ export function DiagramLibrary() {
                 <Button
                   size="sm"
                   onClick={() => {
-                    setHidden(diagram.data!.layers.filter((l) => l.removable).map((l) => l.layer_id));
+                    setHidden((diagram.data?.layers ?? [])
+                      .filter((l) => l.removable).map((l) => l.layer_id));
                     setRegion("");
                   }}
                 >

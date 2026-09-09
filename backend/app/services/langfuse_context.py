@@ -672,6 +672,7 @@ class LangfuseContextService:
         # assembled as an f-string in the route, which made the longest
         # single instruction in the system the one nobody could edit.
         "note-plan-rules": "generate/lesson-plan-rules",
+        "note-one-lesson": "generate/lesson-plan-one-lesson",
         "activity-task-directive": "generate/activity-tasks",
         "anchor-experiment": "generate/anchor-experiment",
         "anchor-hour-module": "generate/anchor-hour-module",

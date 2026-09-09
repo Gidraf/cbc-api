@@ -1000,10 +1000,10 @@ function Revise({ artifactId, onDone }: { artifactId: string; onDone: (id: strin
   const actions = useArtifactActions(artifactId);
   const [extra, setExtra] = React.useState("");
 
-  if (directives.isLoading) return <LoadingBlock rows={3} label="Reading the findings" />;
   if (directives.isError) return <ErrorNotice error={directives.error} />;
+  if (!directives.data) return <LoadingBlock rows={3} label="Reading the findings" />;
 
-  const found = directives.data!;
+  const found = directives.data;
   const nothing = !found.directives;
 
   return (
@@ -1176,11 +1176,18 @@ export function VersionReview({
       />
     );
   }
-  if (artifact.isLoading) return <LoadingBlock rows={4} label="Loading the version" />;
   if (artifact.isError) return <ErrorNotice error={artifact.error} />;
+  // Not `isLoading`: in React Query v5 that is `isPending && isFetching`, so a
+  // PAUSED query — the browser offline, the fetch never started — is neither
+  // loading nor errored and still has no data. Guarding on the data itself is
+  // the only test that cannot be wrong.
+  if (!artifact.data) return <LoadingBlock rows={4} label="Loading the version" />;
 
-  const data = artifact.data!;
-  const approval = data.approval;
+  const data = artifact.data;
+  // A version filed before these fields existed carries neither, and a screen
+  // that cannot open is worse than one missing a badge.
+  const approval = data.approval ?? ({} as typeof data.approval);
+  const reviews = data.reviews ?? [];
   const rows = versions.data?.versions || [];
 
   const tabs = [
@@ -1196,12 +1203,12 @@ export function VersionReview({
     {
       id: "review",
       label: "Review",
-      badge: data.reviews.length ? (
-        <Badge tone={approval.can_approve ? "ok" : "warn"}>{data.reviews.length}</Badge>
+      badge: reviews.length ? (
+        <Badge tone={approval.can_approve ? "ok" : "warn"}>{reviews.length}</Badge>
       ) : undefined,
       hint: "Three layers, scored per dimension",
     },
-    ...(data.reviews.length
+    ...(reviews.length
       ? [{
           id: "revise",
           label: "Regenerate",
@@ -1426,7 +1433,7 @@ export function VersionReview({
               onReviewed={setLastInputs}
             />
 
-            {(data.reviews.length > 0 || lastInputs) && (
+            {(reviews.length > 0 || lastInputs) && (
               <Stack direction="row" gap="var(--s2)" style={{ flexWrap: "wrap" }}>
                 <CopyButton
                   label="Copy the review record"
@@ -1485,7 +1492,7 @@ export function VersionReview({
                 </div>
               </div>
             )}
-            {data.reviews.length === 0 ? (
+            {reviews.length === 0 ? (
               <EmptyState
                 title="No reviews yet"
                 description="Nothing is approved until layers 2 and 3 have run, from two different vendors."

@@ -1,7 +1,6 @@
 import React from "react";
 import { useSearchParams } from "react-router-dom";
 import { DiagramLibrary } from "../ui/DiagramLibrary";
-import { DesignCoverage } from "../ui/DesignCoverage";
 import { QuestionPipeline } from "../ui/QuestionPipeline";
 import { QuestionStream } from "../ui/QuestionStream";
 import { PromptWorkshop } from "../ui/PromptWorkshop";
@@ -1197,18 +1196,22 @@ export function ContentFactory() {
                     />
                   )}
 
-                  {/* And the other half of the same question: not how many
-                      were written, but what of the DESIGN still has nothing
-                      against it. A sub-strand reads 100% produced with three
-                      of its five outcomes never assessed, because ten
-                      questions on outcome one look exactly like ten spread
-                      across five. */}
+                  {/* The other half of the same question — what of the DESIGN
+                      still has nothing against it — lives on its own screen.
+                      This is where somebody GENERATES, one sub-strand at a
+                      time with a run in flight; that is what they ask
+                      afterwards, across a whole subject. Linked, not inlined,
+                      so neither job is scrolled past to reach the other. */}
                   {station.id === "questions" && selected && (
-                    <DesignCoverage
-                      grade={effectiveGrade}
-                      subject={selected.subject}
-                      strand={selected.strand}
-                    />
+                    <div style={{ marginTop: "var(--s3)", fontSize: "var(--text-sm)" }}>
+                      <Link
+                        to={`/design-coverage?grade=${encodeURIComponent(effectiveGrade)}` +
+                            `&subject=${encodeURIComponent(selected.subject)}` +
+                            `&strand=${encodeURIComponent(selected.strand || "")}`}
+                      >
+                        See what of the KICD design these questions cover →
+                      </Link>
+                    </div>
                   )}
 
                   {/* A question set is read as a paper, not as JSON. Two

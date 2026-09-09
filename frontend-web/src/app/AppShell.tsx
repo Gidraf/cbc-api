@@ -17,6 +17,12 @@ const NAV: { group: string; items: NavItem[] }[] = [
         hint: "Every grade as a project, stage by stage — what is built, what passed, what is stuck",
       },
       { to: "/coverage", label: "Curriculum coverage", icon: "▤", hint: "What is done and what is left, per grade" },
+      {
+        to: "/design-coverage",
+        label: "KICD design coverage",
+        icon: "◫",
+        hint: "Which outcomes, inquiry questions and competencies have a question against them",
+      },
       { to: "/factory", label: "Content factory", icon: "⚒", right: "generate", hint: "Notes, diagrams, activities, questions" },
     ],
   },

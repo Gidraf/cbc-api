@@ -889,3 +889,58 @@ def test_a_real_variable_is_still_read() -> None:
     found = task_demand.items_in_prose("Evaluate $3x + 2x$ when x is 4.")
 
     assert found, "x is algebra, not an English word"
+
+
+def test_a_directed_number_sub_strand_with_no_negatives_is_caught() -> None:
+    """`6 + 2 × (3 - 1)` clears the Grade 9 floor — three operations, a
+    bracket, order of operations deciding the answer — and was the PEAK of a
+    guide on integers. Not one directed number in it."""
+    import unittest.mock as mock
+
+    from app.services import lesson_material
+
+    items = [{"statement": "3 + 5 × 2", "steps": [{"working": "3 + 5 × 2 = 13"}]},
+             {"statement": "6 + 2 × (3 - 1)",
+              "steps": [{"working": "6 + 2 × (3 - 1) = 10"}]}]
+    with mock.patch.object(lesson_material, "_design_row",
+                           return_value=DESIGN_ROW):
+        report = example_check.check(items, grade="grade-9",
+                                     subject="Mathematics",
+                                     sub_strand="Integers")
+
+    assert [f for f in report.findings if f.kind == "no_negative_numbers"]
+
+
+def test_one_negative_anywhere_satisfies_it() -> None:
+    import unittest.mock as mock
+
+    from app.services import lesson_material
+
+    items = [{"statement": "-15 ÷ 3 - (-2) × (-4) + 6",
+              "steps": [{"working": "-5 - 8 + 6 = -7"}]}]
+    with mock.patch.object(lesson_material, "_design_row",
+                           return_value=DESIGN_ROW):
+        report = example_check.check(items, grade="grade-9",
+                                     subject="Mathematics",
+                                     sub_strand="Integers")
+
+    assert not [f for f in report.findings if f.kind == "no_negative_numbers"]
+
+
+def test_a_whole_number_sub_strand_is_never_asked_for_a_negative() -> None:
+    """Read from the design, not from the sub-strand's title."""
+    import unittest.mock as mock
+
+    from app.services import design_elements, lesson_material
+
+    whole = {"sub_strand_name": "Whole numbers",
+             "slos": [{"slo_id": "x", "slo": "add and subtract whole numbers"}]}
+    assert not design_elements.wants_negatives(whole)
+
+    with mock.patch.object(lesson_material, "_design_row", return_value=whole):
+        report = example_check.check(
+            [{"statement": "6 + 2 × (3 - 1)",
+              "steps": [{"working": "6 + 2 × (3 - 1) = 10"}]}],
+            grade="grade-9", subject="Mathematics", sub_strand="Whole numbers")
+
+    assert not [f for f in report.findings if f.kind == "no_negative_numbers"]

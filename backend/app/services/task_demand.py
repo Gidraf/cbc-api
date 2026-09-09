@@ -241,6 +241,10 @@ def _tidy(expr: str) -> str:
     text = re.sub(r"\(\s+", "(", expr.strip())
     text = re.sub(r"\s+\)", ")", text)
     text = re.sub(r"\(\s*-\s*(\d)", r"(-\1", text)
+    # A leading sign belongs to its number: "- 15 ÷ 3" reads as a subtraction
+    # with nothing on its left, and these strings are shown to the model in the
+    # hand-off and to a person in the findings.
+    text = re.sub(r"^-\s+(\d)", r"-\1", text)
     return re.sub(r"\s{2,}", " ", text)
 
 

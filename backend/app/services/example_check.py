@@ -400,10 +400,27 @@ def _missing_operations(items: list[Any], grade: str, subject: str,
     if not used:
         return []
 
+    findings: list[Finding] = []
+
+    # A sub-strand about directed numbers whose expressions contain none.
+    if design_elements.wants_negatives(row):
+        signed = any(task_demand.measure_item(i).negatives
+                     for i in (items or []) if isinstance(i, dict))
+        if not signed:
+            findings.append(Finding(
+                "no_negative_numbers",
+                "This sub-strand's design is about directed numbers, and not "
+                "one expression in this content uses a negative number. "
+                "`6 + 2 × (3 - 1)` clears the difficulty floor — three "
+                "operations, a bracket, order of operations deciding the "
+                "answer — and teaches nothing about signs.",
+                "Work the examples on signed numbers: a negative operand, a "
+                "negative result, or a subtraction that crosses zero."))
+
     missing = {sym: name for sym, name in wanted.items() if sym not in used}
     if not missing:
-        return []
-    return [Finding(
+        return findings
+    return findings + [Finding(
         "operation_never_taught",
         "The design for this sub-strand names "
         + ", ".join(sorted(missing.values()))
