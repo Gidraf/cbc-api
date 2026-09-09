@@ -229,14 +229,18 @@ def _bootstrap_default_stage_bindings() -> None:
     if runtime_state.stage_bindings:
         return
 
-    provider = Provider.OPENAI.value
-    model = "gpt-4o-mini"
+    # A stage that AUTHORS gets a model that can reason; a stage that reads a
+    # table out of a document does not need one and paying for one is waste.
+    # Every stage used to default to gpt-4o-mini, including the one writing
+    # Grade 9 mathematics out of 35,000 tokens of curriculum design.
+    from .services.stages import needs_reasoning
 
+    provider = Provider.OPENAI.value
     for stage in STAGE_NAMES:
         runtime_state.stage_bindings[stage] = StageBinding(
             pipeline_stage=stage,
             provider=provider,
-            model=model,
+            model="gpt-4o" if needs_reasoning(stage) else "gpt-4o-mini",
             base_url=None,
         )
 

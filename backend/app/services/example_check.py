@@ -457,6 +457,13 @@ _CANNOT_BE_NEGATIVE: tuple[tuple[str, re.Pattern[str], str], ...] = (
      "counts and frequencies start at zero. There is no such thing as -15 "
      "people preferring coffee: a category is not a sign, and a learner told "
      "otherwise will write negative frequencies in a data-handling paper."),
+    ("a pH reading",
+     re.compile(r"\bpH\b", re.I),
+     "the pH scale runs from 0 to 14 in school science and is read in "
+     "decimals — blood is 7.4, lemon juice about 2.2. There is no negative pH "
+     "at this level, so it is the wrong example for a directed number. "
+     "Elevation above and below sea level, temperature either side of "
+     "freezing, or a bank balance are the real ones."),
     ("a mass, length or volume",
      re.compile(r"\b(recipes?|ingredients?|cooking|grams?|kilograms?|"
                 r"millilitres?|litres?|heights?|lengths?|widths?|masses|"
@@ -473,7 +480,7 @@ _GOES_NEGATIVE = re.compile(
     r"(?<![\d)])-\s?\d", re.I)
 
 
-def _impossible_negative(examples: list[Any]) -> list[Finding]:
+def _impossible_negative(examples: list[Any], what: str = "Example") -> list[Finding]:
     findings: list[Finding] = []
     for index, example in enumerate(examples or [], start=1):
         if not isinstance(example, dict):
@@ -481,11 +488,11 @@ def _impossible_negative(examples: list[Any]) -> list[Finding]:
         text = _text_of(example)
         if not _GOES_NEGATIVE.search(text):
             continue
-        for what, pattern, why in _CANNOT_BE_NEGATIVE:
+        for kind, pattern, why in _CANNOT_BE_NEGATIVE:
             if pattern.search(text):
                 findings.append(Finding(
                     "impossible_negative",
-                    f"Example {index} puts a negative value on {what}: {why}",
+                    f"{what} {index} puts a negative value on {kind}: {why}",
                     "Move the example to a quantity that really is signed, or "
                     "drop it. A false real-life analogy is worse than a dry "
                     "example, because a learner believes it."))
@@ -669,6 +676,58 @@ def check_prose_arithmetic(texts: list[str]) -> list[Finding]:
     return findings
 
 
+def _lessons_without_maths(notes: dict[str, Any], grade: str, subject: str,
+                          strand: str, sub_strand: str) -> list[Finding]:
+    """A lesson in a mathematics sub-strand that contains no mathematics.
+
+    Every check until now asked how HARD the expressions were and none asked
+    whether there were any. So a guide came back with three expressions across
+    six lessons — 240 minutes of instruction — and the demand gate looked at
+    the three, found one of them adequate, and had nothing to say about the
+    five lessons that contained none at all.
+
+    A lesson that teaches an operation and shows none of it worked is a lesson
+    that teaches nothing, and it is the reason the questions station has
+    nothing to build a paper from.
+    """
+    from . import design_elements, lesson_material, task_demand
+
+    row = lesson_material._design_row(grade, subject, sub_strand, strand)
+    if not row or not design_elements.operations_named(row):
+        # Not a sub-strand about operations — a lesson of prose is right here.
+        return []
+
+    empty: list[int] = []
+    for number, module in enumerate(
+            notes.get("modules") or notes.get("hour_modules") or [], start=1):
+        if not isinstance(module, dict):
+            continue
+        text = str(module.get("teacher_exposition") or "")
+        for segment in (module.get("exposition_segments") or []):
+            if isinstance(segment, dict):
+                text += " " + str(segment.get("body") or "")
+        worked = module.get("worked_examples") or []
+        if task_demand.items_in_prose(text) or worked:
+            continue
+        empty.append(int(module.get("module_number") or number))
+
+    if not empty:
+        return []
+    return [Finding(
+        "lesson_without_mathematics",
+        f"Lesson{'' if len(empty) == 1 else 's'} "
+        + ", ".join(str(n) for n in empty)
+        + f" contain{'s' if len(empty) == 1 else ''} no mathematics at all — "
+        f"not one expression, not one worked example. This sub-strand's design "
+        f"is about "
+        + ", ".join(sorted(design_elements.operations_named(row).values()))
+        + ", and a lesson that teaches an operation and shows none of it "
+          "worked is 40 minutes that teaches nothing.",
+        "Put the arithmetic in. Every lesson works at least one expression "
+        "through to its answer — that is also the only thing the questions "
+        "station has to build a paper from.")]
+
+
 def _narrowed_objectives(notes: dict[str, Any], grade: str, subject: str,
                          strand: str, sub_strand: str) -> list[Finding]:
     """A lesson objective that asks for less than the outcome it cites.
@@ -758,4 +817,12 @@ def check_notes(notes: dict[str, Any], *, grade: str = "",
     report.findings += check_prose_arithmetic(texts)
     report.findings += _narrowed_objectives(notes, grade, subject or "",
                                             strand, sub_strand)
+    report.findings += _lessons_without_maths(notes, grade, subject or "",
+                                              strand, sub_strand)
+    # The prose too, not only the worked examples. A plan states its false
+    # analogy in a sentence — "integers represent data such as the pH levels of
+    # substances" — and never writes it as an example, so a check that reads
+    # only `worked_examples` never sees it.
+    report.findings += _impossible_negative(
+        [{"statement": t} for t in texts if t.strip()], what="Passage")
     return report

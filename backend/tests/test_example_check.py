@@ -944,3 +944,89 @@ def test_a_whole_number_sub_strand_is_never_asked_for_a_negative() -> None:
             grade="grade-9", subject="Mathematics", sub_strand="Whole numbers")
 
     assert not [f for f in report.findings if f.kind == "no_negative_numbers"]
+
+
+def test_a_lesson_with_no_mathematics_in_it_is_caught() -> None:
+    """Every check until now asked how HARD the expressions were and none
+    asked whether there were any. A guide came back with three expressions
+    across six lessons — 240 minutes — and the demand gate looked at the
+    three and had nothing to say about the five lessons containing none."""
+    import unittest.mock as mock
+
+    from app.services import lesson_material
+
+    notes = {"modules": [
+        {"module_number": 1, "exposition_segments": [
+            {"body": "An integer is a whole number. Examples include -3 and 5."}]},
+        {"module_number": 2, "exposition_segments": [
+            {"body": r"In $3 + 5 \times 2$ we multiply first."}]},
+        {"module_number": 5, "exposition_segments": [
+            {"body": "Games are an effective way to reinforce learning."}]},
+    ]}
+    with mock.patch.object(lesson_material, "_design_row",
+                           return_value=DESIGN_ROW):
+        report = example_check.check_notes(
+            notes, grade="grade-9", subject="Mathematics", sub_strand="Integers")
+
+    found = [f for f in report.findings
+             if f.kind == "lesson_without_mathematics"]
+    assert found
+    assert "Lessons 1, 5" in found[0].says
+    assert "questions station" in found[0].fix
+
+
+def test_a_lesson_that_works_something_is_not_flagged() -> None:
+    import unittest.mock as mock
+
+    from app.services import lesson_material
+
+    notes = {"modules": [{"module_number": 1, "exposition_segments": [
+        {"body": r"Evaluate $-40 \div (-8) + (-3) \times 6 - (-11)$."}]}]}
+    with mock.patch.object(lesson_material, "_design_row",
+                           return_value=DESIGN_ROW):
+        report = example_check.check_notes(
+            notes, grade="grade-9", subject="Mathematics", sub_strand="Integers")
+
+    assert not [f for f in report.findings
+                if f.kind == "lesson_without_mathematics"]
+
+
+def test_a_subject_with_no_operations_is_never_asked_for_arithmetic() -> None:
+    """A lesson of prose is right in a sub-strand the design does not put
+    operations in."""
+    import unittest.mock as mock
+
+    from app.services import lesson_material
+
+    row = {"sub_strand_name": "The Church",
+           "slos": [{"slo_id": "x", "slo": "describe the role of the Church"}]}
+    notes = {"modules": [{"module_number": 1, "exposition_segments": [
+        {"body": "The Church serves the community in many ways."}]}]}
+    with mock.patch.object(lesson_material, "_design_row", return_value=row):
+        report = example_check.check_notes(
+            notes, grade="grade-9", subject="Christian Religious Education",
+            sub_strand="The Church")
+
+    assert not [f for f in report.findings
+                if f.kind == "lesson_without_mathematics"]
+
+
+def test_a_false_analogy_stated_only_in_prose_is_caught() -> None:
+    """A plan states its false analogy in a sentence and never writes it as an
+    example, so a check reading only `worked_examples` never sees it."""
+    import unittest.mock as mock
+
+    from app.services import lesson_material
+
+    notes = {"modules": [{"module_number": 4, "exposition_segments": [{"body":
+        "In science, integers represent data such as the negative pH levels "
+        "of substances."}]}]}
+    with mock.patch.object(lesson_material, "_design_row",
+                           return_value=DESIGN_ROW):
+        report = example_check.check_notes(
+            notes, grade="grade-9", subject="Mathematics", sub_strand="Integers")
+
+    found = [f for f in report.findings if f.kind == "impossible_negative"]
+    assert found
+    assert "pH scale runs from 0 to 14" in found[0].says
+    assert found[0].says.startswith("Passage"), "a paragraph is not an example"

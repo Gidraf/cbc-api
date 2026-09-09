@@ -170,8 +170,18 @@ class RuntimeState:
 
             # Auto-correct invalid or typo model names
             if provider == "openai":
+                # An unset or unrecognised model fell to gpt-4o-mini SILENTLY,
+                # including on the stations that write the content. A stage
+                # nobody configured should fall to something that can do the
+                # work, and be visible in the log when it does.
                 if not raw_model or lower in {"", "null", "undefined", "default", "none"} or "gpt-5" in lower or "gpt5" in lower:
-                    model = "gpt-4o-mini"
+                    from .services.stages import needs_reasoning
+
+                    model = ("gpt-4o" if needs_reasoning(row["pipeline_stage"])
+                             else "gpt-4o-mini")
+                    logger.warning(
+                        "Stage %s had no usable model (%r); falling back to %s.",
+                        row["pipeline_stage"], raw_model, model)
                 elif "4o-mini" in lower or "gpt-4-mini" in lower:
                     model = "gpt-4o-mini"
                 elif "4o" in lower:

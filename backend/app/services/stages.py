@@ -200,3 +200,36 @@ def describe(stage: str) -> dict[str, str]:
         return {"name": stage, "label": stage, "drives": "", "guidance": ""}
     return {"name": found.name, "label": found.label, "drives": found.drives,
             "falls_back_to": found.falls_back_to, "guidance": found.guidance}
+
+
+# Which stages need a model that can actually reason, and which do not.
+#
+# Every stage defaulted to gpt-4o-mini. That is a fast, cheap distillation
+# model, and it was being asked to hold 35,000 tokens of curriculum design and
+# write six lessons of rigorous Grade 9 mathematics. What it produced was what
+# a small model produces under that load: it drifted to the easiest arithmetic,
+# repeated one expression sixteen times, and in one guide wrote five lessons
+# with no mathematics in them at all.
+#
+# The split is by what the stage has to DO. Reading a strand list out of a
+# table, or classifying a subject, is extraction — a small model is right for
+# it and a large one is waste. Writing a lesson, a worked example or an exam
+# question is authoring, and no gate downstream can put back reasoning the
+# model did not do.
+AUTHORING: frozenset[str] = frozenset({
+    "notes_generation",
+    "material_generation",
+    "question_generation",
+    "diagram_generation",
+    "activity_generation",
+    "simulation_generation",
+    "regeneration",
+    "reviewer_panel",
+})
+
+EXTRACTION: frozenset[str] = frozenset(NAMES) - AUTHORING
+
+
+def needs_reasoning(stage: str) -> bool:
+    """Whether this stage writes something, as opposed to reading something."""
+    return stage in AUTHORING

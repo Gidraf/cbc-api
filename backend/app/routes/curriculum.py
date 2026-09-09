@@ -1042,7 +1042,8 @@ def factory_generate_notes(
     substrand_row = fetch_one(
         """
         SELECT allocated_hours, slos, learning_experiences, key_inquiry_questions,
-               core_competencies, values, required_diagrams, experiments, pedagogical_guidance
+               core_competencies, values, required_diagrams, experiments,
+               pedagogical_guidance, source_pages
         FROM curriculum_substrands
         WHERE (REPLACE(LOWER(grade), 'grade-', '') = REPLACE(LOWER(:grade), 'grade-', ''))
           AND LOWER(subject) = LOWER(:subject)
@@ -1072,6 +1073,28 @@ def factory_generate_notes(
         payload.grade, payload.subject, supplied=source_text,
     )
     source_text = found.text
+    # The design, cut to the pages this sub-strand is written from.
+    #
+    # The whole 69-page document was going in: foreword, ISBN, table of
+    # contents, and every other strand — 90,000 characters of a 124,000
+    # character prompt, sent to a model whose reasoning degrades under exactly
+    # that load, all of it about content it must not write. The pages were
+    # already recorded on the sub-strand row and nothing read them.
+    from ..services import design_scope
+
+    trim = design_scope.for_sub_strand(
+        source_text, (substrand_row or {}).get("source_pages"),
+        payload.sub_strand)
+    if trim.trimmed:
+        run_log.step(
+            "Design trimmed",
+            f"pages {', '.join(str(n) for n in trim.kept)} of {trim.total} — "
+            f"{len(source_text):,} characters cut to {len(trim.text):,}", "ok")
+        source_text = trim.text
+    elif trim.reason:
+        logger.info("Design not trimmed for %s: %s", payload.sub_strand,
+                    trim.reason)
+
     essence_stmt = essence_stmt or found.essence_statement
     if level == "Basic Education" and found.level:
         level = found.level
