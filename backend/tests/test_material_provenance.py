@@ -297,3 +297,73 @@ def test_the_slot_exists_in_the_prompt() -> None:
     from app.services.langfuse_seed import SEED_AGENT_PROMPTS
 
     assert "{{ already_taught }}" in SEED_AGENT_PROMPTS["material-generator"]
+
+
+# ── the prompt promises this check; it has to actually run ──────────────────
+
+
+def test_lessons_sharing_an_outcome_are_caught_even_with_no_citations() -> None:
+    """The prompt tells the model that repeating an outcome "is detected
+    mechanically after you write — by comparing each module's `slos_covered`,
+    `citations` and `learning_experiences_used`".
+
+    It was not. The check required a citation as well as an outcome, so a guide
+    that gave three of its six lessons to one outcome and cited the design
+    nowhere skipped every one of them. A promise in a prompt that nothing keeps
+    is worse than no promise.
+    """
+    from app.services.redundancy_check import _same_outcome_same_source
+
+    same = "work out combined operations of integers in the correct order"
+    uncited = [{"module_number": n, "title": f"Lesson {n}",
+                "slos_covered": [same], "citations": [],
+                "learning_experiences_used": ["work out combined operations"]}
+               for n in (2, 3, 4)]
+
+    found = _same_outcome_same_source(uncited)
+
+    assert len(found) == 1
+    assert found[0]["lessons"] == ["Lesson 2", "Lesson 3", "Lesson 4"]
+    assert found[0]["uncited"] is True
+
+
+def test_it_still_works_when_the_guide_does_cite() -> None:
+    from app.services.redundancy_check import _same_outcome_same_source
+
+    same = "work out combined operations of integers in the correct order"
+    cited = [{"module_number": n, "title": f"Lesson {n}",
+              "slos_covered": [same], "citations": [{"ref": "13:4"}],
+              "learning_experiences_used": ["x"]} for n in (2, 3, 4)]
+
+    found = _same_outcome_same_source(cited)
+
+    assert len(found) == 1 and found[0]["ref"] == "13:4"
+    assert found[0]["uncited"] is False
+
+
+def test_lessons_on_different_outcomes_are_not_grouped() -> None:
+    from app.services.redundancy_check import _same_outcome_same_source
+
+    different = [
+        {"module_number": 1, "title": "L1", "slos_covered": ["perform basic operations"],
+         "citations": [], "learning_experiences_used": ["cards"]},
+        {"module_number": 2, "title": "L2", "slos_covered": ["apply integers to real life"],
+         "citations": [], "learning_experiences_used": ["thermometer"]},
+    ]
+
+    assert _same_outcome_same_source(different) == []
+
+
+def test_the_finding_reads_properly_with_no_citation() -> None:
+    """"from the same line ()" is what an empty citation printed."""
+    from app.services import redundancy_check
+
+    same = "work out combined operations of integers in the correct order"
+    report = redundancy_check.inspect({"modules": [
+        {"module_number": n, "title": f"Lesson {n}", "slos_covered": [same],
+         "citations": [], "learning_experiences_used": ["combined operations"]}
+        for n in (2, 3, 4)]})
+
+    text = " ".join(report.get("findings") or [])
+    assert "none of them cites the design" in text
+    assert "same line ()" not in text

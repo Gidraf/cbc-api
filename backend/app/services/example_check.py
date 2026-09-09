@@ -676,6 +676,60 @@ def check_prose_arithmetic(texts: list[str]) -> list[Finding]:
     return findings
 
 
+# A sentence that promises a problem and does not give one.
+#
+# "Present learners with real-life problems that require combined operations,
+# such as calculating total expenses or profits." — what are the numbers? What
+# are the expenses? A teacher who printed that guide still has to invent every
+# problem in it, which is the work the guide exists to have done.
+_PROMISES = re.compile(
+    r"\b(present(?:s|ing)? (?:learners|them|the class) with"
+    r"|work(?: through)? (?:some |a few |several )?(?:more )?examples"
+    r"|solve (?:the following|these|expressions|problems)"
+    r"|practise? (?:some|a few|several) (?:problems|expressions|examples)"
+    r"|discuss(?:es|ing)? (?:some )?examples"
+    r"|give (?:them )?(?:some )?(?:problems|examples)"
+    r"|organi[sz]e a game|set (?:them )?(?:some )?(?:problems|questions))\b",
+    re.I)
+
+
+def _promised_but_not_given(notes: dict[str, Any], grade: str, subject: str,
+                            strand: str, sub_strand: str) -> list[Finding]:
+    """A lesson that says it will present problems, and presents none."""
+    from . import design_elements, lesson_material, task_demand
+
+    row = lesson_material._design_row(grade, subject, sub_strand, strand)
+    if not row or not design_elements.operations_named(row):
+        return []
+
+    empty: list[str] = []
+    for number, module in enumerate(
+            notes.get("modules") or notes.get("hour_modules") or [], start=1):
+        if not isinstance(module, dict):
+            continue
+        lesson = int(module.get("module_number") or number)
+        for segment in (module.get("exposition_segments") or []):
+            if not isinstance(segment, dict):
+                continue
+            body = str(segment.get("body") or "")
+            promise = _PROMISES.search(body)
+            if not promise or task_demand.items_in_prose(body):
+                continue
+            empty.append(f"lesson {lesson}, \"{promise.group(0).strip()}\"")
+
+    if not empty:
+        return []
+    shown = "; ".join(empty[:4])
+    more = f" and {len(empty) - 4} more" if len(empty) > 4 else ""
+    return [Finding(
+        "promised_but_not_given",
+        f"{len(empty)} passage(s) promise a problem and give none — {shown}"
+        f"{more}. A teacher who printed this still has to invent every problem "
+        f"in it, which is the work the guide exists to have done.",
+        "Write the problem out: the numbers, the expression, and the answer. "
+        "A description of an example is not an example.")]
+
+
 def _lessons_without_maths(notes: dict[str, Any], grade: str, subject: str,
                           strand: str, sub_strand: str) -> list[Finding]:
     """A lesson in a mathematics sub-strand that contains no mathematics.
@@ -819,6 +873,8 @@ def check_notes(notes: dict[str, Any], *, grade: str = "",
                                             strand, sub_strand)
     report.findings += _lessons_without_maths(notes, grade, subject or "",
                                               strand, sub_strand)
+    report.findings += _promised_but_not_given(notes, grade, subject or "",
+                                               strand, sub_strand)
     # The prose too, not only the worked examples. A plan states its false
     # analogy in a sentence — "integers represent data such as the pH levels of
     # substances" — and never writes it as an example, so a check that reads

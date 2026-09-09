@@ -1030,3 +1030,65 @@ def test_a_false_analogy_stated_only_in_prose_is_caught() -> None:
     assert found
     assert "pH scale runs from 0 to 14" in found[0].says
     assert found[0].says.startswith("Passage"), "a paragraph is not an example"
+
+
+def test_a_passage_that_promises_a_problem_and_gives_none_is_caught() -> None:
+    """"Present learners with real-life problems that require combined
+    operations, such as calculating total expenses or profits." — what are the
+    numbers? A teacher who printed that guide still has to invent every problem
+    in it, which is the work the guide exists to have done."""
+    import unittest.mock as mock
+
+    from app.services import lesson_material
+
+    notes = {"modules": [{"module_number": 3, "exposition_segments": [
+        {"body": "Present learners with real-life problems that require "
+                 "combined operations, such as calculating total expenses."},
+        {"body": "Organize a game where learners pick integers and perform "
+                 "combined operations."},
+    ]}]}
+    with mock.patch.object(lesson_material, "_design_row",
+                           return_value=DESIGN_ROW):
+        report = example_check.check_notes(
+            notes, grade="grade-9", subject="Mathematics", sub_strand="Integers")
+
+    found = [f for f in report.findings if f.kind == "promised_but_not_given"]
+    assert found and "2 passage(s)" in found[0].says
+    assert "A description of an example is not an example" in found[0].fix
+
+
+def test_a_promise_that_is_kept_is_not_flagged() -> None:
+    import unittest.mock as mock
+
+    from app.services import lesson_material
+
+    notes = {"modules": [{"module_number": 2, "exposition_segments": [
+        {"body": r"Learners will solve expressions such as $3 + (-2) \times 4$ "
+                 r"and $-40 \div (-8) + 6$."}]}]}
+    with mock.patch.object(lesson_material, "_design_row",
+                           return_value=DESIGN_ROW):
+        report = example_check.check_notes(
+            notes, grade="grade-9", subject="Mathematics", sub_strand="Integers")
+
+    assert not [f for f in report.findings
+                if f.kind == "promised_but_not_given"]
+
+
+def test_both_spellings_of_organise_are_matched() -> None:
+    """`organis[ez]e?` cannot match "organize" — it requires the s first."""
+    from app.services.example_check import _PROMISES
+
+    assert _PROMISES.search("Organize a game where learners pick integers")
+    assert _PROMISES.search("Organise a game where learners pick integers")
+
+
+def test_the_prompt_asks_for_maths_rather_than_only_forbidding_bad_maths() -> None:
+    """A prompt full of "this is checked mechanically" and no positive
+    requirement teaches avoidance: describing a calculation cannot fail an
+    arithmetic check and doing one can."""
+    from app.services import prompt_fragments
+
+    block = prompt_fragments.compose("Mathematics", "notes", "grade-9")
+
+    assert "AT LEAST TWO EXPRESSIONS THROUGH TO AN ANSWER" in block
+    assert "USE EVERY OPERATION ITS DESIGN NAMES" in block

@@ -277,9 +277,12 @@ def _findings(report: dict[str, Any]) -> list[str]:
         names = group["lessons"]
         doing = (" All of them have the learners do the same things"
                  if group.get("same_experiences") else "")
+        # "from the same line ()" is what an empty citation printed.
+        source = (f" from the same line ({group['ref']})" if group.get("ref")
+                  else ", and none of them cites the design")
         out.append(
             f"{len(names)} lessons ({'; '.join(names)}) all teach "
-            f"\"{group['slo']}\" from the same line ({group['ref']}).{doing}. "
+            f"\"{group['slo']}\"{source}.{doing}. "
             f"Keep the first. Rewrite the rest to draw on suggested learning "
             f"experiences the design offers and no lesson has used yet, and to "
             f"take the outcome further — introduce it, then practise it, then "
@@ -404,7 +407,15 @@ def _same_outcome_same_source(modules: list) -> list[dict[str, Any]]:
     experiences: dict[tuple, set[tuple[str, ...]]] = {}
     for i, module in enumerate(modules):
         slos, refs = _slos_of(module), _refs_of(module)
-        if not slos or not refs:
+        # The outcome alone is enough to group on.
+        #
+        # This required a citation as well, and the prompt tells the model that
+        # repeating an outcome "is detected mechanically after you write". It
+        # was not: a guide that gave three of its six lessons to one outcome
+        # and cited the design nowhere skipped every one of them, because the
+        # check needed a field the guide had left empty. A promise in a prompt
+        # that nothing keeps is worse than no promise.
+        if not slos:
             continue
         key = (slos, refs)
         groups.setdefault(key, []).append(_label(module, i))
@@ -419,7 +430,10 @@ def _same_outcome_same_source(modules: list) -> list[dict[str, Any]]:
         # shape of padding, and it is the guide's own claim about itself.
         used = experiences.get(key) or set()
         same = len(used) == 1 and bool(next(iter(used), ()))
-        out.append({"slo": key[0][0], "ref": key[1][0], "lessons": names,
+        out.append({"slo": key[0][0],
+                    "ref": key[1][0] if key[1] else "",
+                    "uncited": not key[1],
+                    "lessons": names,
                     "same_experiences": same})
     return out
 

@@ -481,6 +481,17 @@ THESE ARE TOO EASY AT THIS LEVEL, whatever sentence is wrapped around them:
 Each is one operation. Each is Grade 4 arithmetic. A parent who opens the
 booklet at one of them does not read the next page.
 
+EVERY LESSON WORKS AT LEAST TWO EXPRESSIONS THROUGH TO AN ANSWER. Not
+"present learners with problems", not "work through some examples", not
+"discuss how this applies" — the actual expression, the actual steps, the
+actual answer. One guide came back with two expressions across six lessons and
+240 minutes of teaching, because describing a calculation cannot fail an
+arithmetic check and doing one can. Describing it is not teaching it, and it
+leaves the teacher to invent every problem in the guide.
+
+ACROSS THE SUB-STRAND, USE EVERY OPERATION ITS DESIGN NAMES. A guide on
+combined operations that never divides has not taught combined operations.
+
 AN EASY FIRST EXAMPLE IS FINE. A lesson introducing the sign rule needs
 $-4 \times 6 = -24$ in it. What is not fine is a set whose HARDEST item is at
 that level: that set has not reached the grade anywhere.
