@@ -599,6 +599,12 @@ def check_set(items: list[Any], grade: str | None,
     return report
 
 
+# The only single-letter words in English. Read as variables, "If I have +4
+# and add +6 I get +10" yielded the expression "+ 6 I" — prose reported as
+# arithmetic, and then reported as arithmetic below the grade.
+_ENGLISH_LETTERS = frozenset({"i", "a"})
+
+
 def items_in_prose(text: str) -> list[dict[str, Any]]:
     """Each expression a passage teaches from, as an item in its own right.
 
@@ -618,6 +624,13 @@ def items_in_prose(text: str) -> list[dict[str, Any]]:
         if span is text:
             continue
         one = _measure_one(span)
-        if one.operations:
-            found.append({"statement": one.expression, "from_prose": True})
+        if not one.operations:
+            continue
+        # An expression whose only non-numeric operand is an English word is a
+        # sentence, not algebra.
+        letters = {t.lower() for t in _TOKEN.findall(one.expression)
+                   if len(t) == 1 and t.isalpha()}
+        if letters and letters <= _ENGLISH_LETTERS:
+            continue
+        found.append({"statement": one.expression, "from_prose": True})
     return found

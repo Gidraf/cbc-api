@@ -368,6 +368,55 @@ def _shape_faults(examples: list[Any]) -> list[Finding]:
     return findings
 
 
+def _missing_operations(items: list[Any], grade: str, subject: str,
+                        strand: str, sub_strand: str) -> list[Finding]:
+    """Operations the design names and the guide never uses.
+
+    A Grade 9 integers guide came back with multiplication and division gone
+    entirely — six lessons of adding and subtracting small positives — for a
+    sub-strand whose design names all four operations by name.
+
+    The demand floor happened to catch that set, because an expression with no
+    multiplication-level operator can never make the order of operations
+    matter. "Happened to catch" is not a check: what the design NAMES, the
+    guide has to teach, and the design says so in words that can be read.
+    """
+    from . import design_elements, lesson_material, task_demand
+
+    row = lesson_material._design_row(grade, subject, sub_strand, strand)
+    if not row:
+        # Nothing to read the requirement out of. Silence rather than a rule
+        # invented from the sub-strand's title.
+        return []
+    wanted = design_elements.operations_named(row)
+    if not wanted:
+        return []
+
+    used: set[str] = set()
+    for item in (items or []):
+        if isinstance(item, dict):
+            used |= set(task_demand.measure_item(item).all_kinds
+                        or task_demand.measure_item(item).kinds)
+    if not used:
+        return []
+
+    missing = {sym: name for sym, name in wanted.items() if sym not in used}
+    if not missing:
+        return []
+    return [Finding(
+        "operation_never_taught",
+        "The design for this sub-strand names "
+        + ", ".join(sorted(missing.values()))
+        + ", and no expression in this content uses "
+        + ("it" if len(missing) == 1 else "them")
+        + ". A learner is assessed on what the design names, not on what the "
+          "guide found easiest to write.",
+        "Teach and work examples on "
+        + ", ".join(f"{name} ({sym})" for sym, name in sorted(missing.items(),
+                                                              key=lambda kv: kv[1]))
+        + ".")]
+
+
 # Quantities that CANNOT be negative, and the words that name them.
 #
 # A reviewer found two of these in one guide: "in a survey, if more people
@@ -532,6 +581,8 @@ def check(examples: list[Any], *, grade: str = "", subject: str | None = None,
     report.findings += _impossible_negative(examples)
     report.findings += _shape_faults(examples)
     report.findings += _arithmetic_faults(examples)
+    report.findings += _missing_operations(examples, grade, subject or "",
+                                           strand, sub_strand)
     return report
 
 
@@ -601,6 +652,59 @@ def check_prose_arithmetic(texts: list[str]) -> list[Finding]:
     return findings
 
 
+def _narrowed_objectives(notes: dict[str, Any], grade: str, subject: str,
+                         strand: str, sub_strand: str) -> list[Finding]:
+    """A lesson objective that asks for less than the outcome it cites.
+
+    This is where multiplication and division actually went. A Grade 9 guide
+    whose outcome reads "perform basic operations on Integers" wrote, as its
+    own objective, "perform basic operations (ADDITION, SUBTRACTION) on
+    integers" — and every station downstream then served that narrowed
+    objective faithfully. Six lessons without a single product, decided by a
+    parenthesis in one line, before a word of content was written.
+
+    A generic outcome is not an invitation to pick two. What "basic
+    operations" means for this sub-strand is what its own design says, and the
+    design says so in words.
+    """
+    from . import design_elements, lesson_material
+
+    row = lesson_material._design_row(grade, subject, sub_strand, strand)
+    if not row:
+        return []
+    required = design_elements.operations_named(row)
+    if len(required) < 2:
+        return []
+
+    findings: list[Finding] = []
+    for number, module in enumerate(
+            notes.get("modules") or notes.get("hour_modules") or [], start=1):
+        if not isinstance(module, dict):
+            continue
+        objective = str(module.get("learning_intent") or "").strip()
+        if not objective:
+            continue
+        named = design_elements.operations_named({"slos": [{"slo": objective}]})
+        # Only where the objective ENUMERATES: an objective that names none is
+        # generic, like the outcome, and is not narrowing anything.
+        if not named or set(named) >= set(required):
+            continue
+        missing = {sym: name for sym, name in required.items() if sym not in named}
+        findings.append(Finding(
+            "objective_narrows_the_outcome",
+            f"Lesson {number}'s objective names only "
+            + ", ".join(sorted(named.values()))
+            + ", and the design for this sub-strand requires "
+            + ", ".join(sorted(required.values()))
+            + f". Nothing downstream will teach "
+            + ", ".join(sorted(missing.values()))
+            + ", because the objective did not ask for it.",
+            "Either widen the objective to what the outcome covers, or say in "
+            "the plan which other lesson carries "
+            + ", ".join(sorted(missing.values())) + "."))
+    return findings
+
+
 def check_notes(notes: dict[str, Any], *, grade: str = "",
                 subject: str | None = None, strand: str = "",
                 sub_strand: str = "") -> Report:
@@ -635,4 +739,6 @@ def check_notes(notes: dict[str, Any], *, grade: str = "",
     report = check(items, grade=grade, subject=subject, strand=strand,
                    sub_strand=sub_strand)
     report.findings += check_prose_arithmetic(texts)
+    report.findings += _narrowed_objectives(notes, grade, subject or "",
+                                            strand, sub_strand)
     return report

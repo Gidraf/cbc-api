@@ -19,6 +19,7 @@ worth reporting rather than a near-miss worth accepting.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -164,3 +165,45 @@ def valid_serves(claimed: Any, row: dict[str, Any]) -> tuple[list[str], list[str
         else:
             invented.append(ref)
     return keep, invented
+
+
+# ── which operations a sub-strand's own design asks for ─────────────────────
+#
+# The demand floor asks how HARD an expression is and never asks which
+# operations it uses. A reviewer found a Grade 9 integers guide in which
+# multiplication and division had vanished entirely — every expression across
+# six lessons was addition and subtraction of small positives — and the design
+# for that sub-strand names all four operations by name.
+#
+# The floor happens to catch that set, because an expression with no
+# multiplication-level operator can never make the order of operations matter.
+# But "happens to catch" is not a check. What the design NAMES, the guide has
+# to teach, and the design says so in words that can be read.
+_OPERATION_WORDS: tuple[tuple[str, str, str], ...] = (
+    ("+", "addition", r"add(?:ition|ing|s)?\b|sum\b|plus\b"),
+    ("-", "subtraction", r"subtract\w*|minus\b|difference\b|take away"),
+    ("×", "multiplication", r"multipl\w+|product\b|times\b"),
+    ("÷", "division", r"divi(?:de|sion|ding|sor)\w*|quotient\b|share\w* equally"),
+    ("^", "indices", r"indice\w*|index\b|power\w*|squar\w+|cub\w+|exponent\w*"),
+    ("√", "roots", r"square root\w*|surd\w*|\broots?\b"),
+)
+
+
+def operations_named(row: dict[str, Any]) -> dict[str, str]:
+    """The operations this sub-strand's design asks for, by symbol.
+
+    Read out of the design's own outcomes, experiences and rubric — never
+    assumed from the sub-strand's title. A design that names only addition and
+    subtraction asks for only those, and demanding a product of it would be
+    demanding content the curriculum did not fund.
+    """
+    text = " ".join(e.text for e in enumerate_for(row))
+    for extra in ("sub_strand_name", "strand_name", "pedagogical_guidance"):
+        value = row.get(extra)
+        if isinstance(value, str):
+            text += " " + value
+    found: dict[str, str] = {}
+    for symbol, name, pattern in _OPERATION_WORDS:
+        if re.search(pattern, text, re.I):
+            found[symbol] = name
+    return found

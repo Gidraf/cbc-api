@@ -745,3 +745,147 @@ def test_a_height_cannot_be_negative() -> None:
         grade="grade-9", subject="Mathematics")
 
     assert any(f.kind == "impossible_negative" for f in report.findings)
+
+
+# ── what the design names, the guide has to teach ───────────────────────────
+
+
+DESIGN_ROW = {
+    "sub_strand_name": "Integers",
+    "slos": [{"slo_id": "g9-01", "slo": "perform basic operations (addition, "
+              "subtraction, multiplication and division) on integers"}],
+}
+
+
+def _with_design(items, row=None, **over):
+    import unittest.mock as mock
+
+    from app.services import lesson_material
+
+    with mock.patch.object(lesson_material, "_design_row",
+                           return_value=DESIGN_ROW if row is None else row):
+        return example_check.check(items, grade="grade-9",
+                                   subject="Mathematics",
+                                   sub_strand="Integers", **over)
+
+
+def test_an_operation_the_design_names_and_the_guide_never_uses_is_caught() -> None:
+    """A Grade 9 integers guide came back with multiplication and division gone
+    entirely — six lessons of adding and subtracting small positives — for a
+    sub-strand whose design names all four operations by name."""
+    report = _with_design([
+        {"statement": "3 + 5 - 2", "steps": [{"working": "3 + 5 - 2 = 6"}]},
+        {"statement": "4 + 3 - 2 + 6", "steps": [{"working": "4 + 3 - 2 + 6 = 11"}]},
+    ])
+
+    found = [f for f in report.findings if f.kind == "operation_never_taught"]
+    assert found
+    assert "multiplication" in found[0].says and "division" in found[0].says
+    assert "×" in found[0].fix and "÷" in found[0].fix
+
+
+def test_a_guide_that_uses_them_is_not_flagged() -> None:
+    report = _with_design([
+        {"statement": "3 + 5 - 2", "steps": [{"working": "3 + 5 - 2 = 6"}]},
+        {"statement": "-15 ÷ 3 - (-2) × (-4) + 6",
+         "steps": [{"working": "-5 - 8 + 6 = -7"}]},
+    ])
+
+    assert not [f for f in report.findings if f.kind == "operation_never_taught"]
+
+
+def test_a_design_that_names_only_two_operations_asks_for_only_those() -> None:
+    """Demanding a product of a design that never mentions one would be
+    demanding content the curriculum did not fund."""
+    row = {"sub_strand_name": "Whole numbers",
+           "slos": [{"slo_id": "x", "slo": "add and subtract whole numbers"}]}
+    report = _with_design(
+        [{"statement": "3 + 5 - 2", "steps": [{"working": "3 + 5 - 2 = 6"}]}],
+        row=row)
+
+    assert not [f for f in report.findings if f.kind == "operation_never_taught"]
+
+
+def test_a_design_this_system_has_not_read_asks_for_nothing() -> None:
+    """Silence rather than a rule invented from the sub-strand's title."""
+    report = _with_design(
+        [{"statement": "3 + 5 - 2", "steps": [{"working": "3 + 5 - 2 = 6"}]}],
+        row={})
+
+    assert not [f for f in report.findings if f.kind == "operation_never_taught"]
+
+
+def test_the_operations_are_read_from_the_design_not_assumed() -> None:
+    from app.services import design_elements
+
+    assert design_elements.operations_named(DESIGN_ROW) == {
+        "+": "addition", "-": "subtraction",
+        "×": "multiplication", "÷": "division"}
+
+    indices = {"slos": [{"slo_id": "y",
+                         "slo": "evaluate powers of integers with negative bases"}]}
+    assert "^" in design_elements.operations_named(indices)
+
+
+def test_an_objective_that_narrows_its_own_outcome_is_caught() -> None:
+    """This is where multiplication and division actually went. A Grade 9 guide
+    whose outcome reads "perform basic operations on Integers" wrote, as its
+    own objective, "perform basic operations (ADDITION, SUBTRACTION) on
+    integers" — and every station downstream served that narrowed objective
+    faithfully. Six lessons without a single product, decided by a parenthesis
+    in one line, before a word of content was written."""
+    import unittest.mock as mock
+
+    from app.services import lesson_material
+
+    notes = {"modules": [
+        {"learning_intent": "perform basic operations (addition, subtraction) "
+                            "on integers using number cards"},
+        {"learning_intent": "apply integers in real-life contexts"},
+    ]}
+    with mock.patch.object(lesson_material, "_design_row",
+                           return_value=DESIGN_ROW):
+        report = example_check.check_notes(
+            notes, grade="grade-9", subject="Mathematics", sub_strand="Integers")
+
+    found = [f for f in report.findings
+             if f.kind == "objective_narrows_the_outcome"]
+    assert len(found) == 1, "the generic second objective narrows nothing"
+    assert "Lesson 1" in found[0].says
+    assert "multiplication" in found[0].says and "division" in found[0].says
+
+
+def test_an_objective_that_covers_the_design_is_not_flagged() -> None:
+    import unittest.mock as mock
+
+    from app.services import lesson_material
+
+    notes = {"modules": [{"learning_intent":
+        "perform addition, subtraction, multiplication and division on integers"}]}
+    with mock.patch.object(lesson_material, "_design_row",
+                           return_value=DESIGN_ROW):
+        report = example_check.check_notes(
+            notes, grade="grade-9", subject="Mathematics", sub_strand="Integers")
+
+    assert not [f for f in report.findings
+                if f.kind == "objective_narrows_the_outcome"]
+
+
+def test_english_words_are_not_read_as_algebra() -> None:
+    """"If I have +4 and add +6 I get +10" yielded the expression "+ 6 I" —
+    prose reported as arithmetic, and then reported as arithmetic below the
+    grade."""
+    from app.services import task_demand
+
+    found = task_demand.items_in_prose(
+        "If I have +4 and add +6 I get +10.")
+
+    assert not any("I" in item["statement"] for item in found)
+
+
+def test_a_real_variable_is_still_read() -> None:
+    from app.services import task_demand
+
+    found = task_demand.items_in_prose("Evaluate $3x + 2x$ when x is 4.")
+
+    assert found, "x is algebra, not an English word"
