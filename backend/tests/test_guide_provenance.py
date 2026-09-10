@@ -101,3 +101,33 @@ def test_check_provenance_refuses_rather_than_passing_silently() -> None:
         assert "curriculum_substrands" in str(exc) or "no learning outcomes" in str(exc)
     else:  # pragma: no cover - only if a design row appears for this name
         pass
+
+
+def test_an_unloaded_design_reads_differently_from_an_uncited_lesson() -> None:
+    """Two faults, two fixes. One sentence was covering both.
+
+    Twelve lessons across two guides printed "this lesson names no design
+    element" when the design row was in fact present — `_design_row` matched the
+    sub-strand name exactly while the notes route matched exact-OR-LIKE, so the
+    route had the outcomes and the resolver had nothing.
+    """
+    missing = _provenance({}, grade_label="grade-9", subject="Mathematics",
+                          design_row={})
+    uncited = _provenance({}, grade_label="grade-9", subject="Mathematics",
+                          design_row=_ROW)
+
+    assert "design for this sub-strand is not loaded" in _text(missing)
+    assert "missing design, not a missing citation" in _text(missing)
+    assert "names no design element" in _text(uncited)
+    assert "not loaded" not in _text(uncited)
+
+
+def test_the_resolver_looks_the_design_up_the_way_the_route_does() -> None:
+    """An exact-only match left the guide uncitable for a row the route found."""
+    import inspect
+
+    sql = inspect.getsource(lesson_material._design_row)
+
+    assert "sub_strand_pattern" in sql, \
+        "the notes route matches exact OR LIKE; this has to agree or the " \
+        "guide cannot cite a design the route is already reading"

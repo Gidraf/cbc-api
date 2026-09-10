@@ -164,6 +164,8 @@ def _classify(text: str, *, in_the_resource_list: bool = False) -> str:
     """What kind of thing this is, or "object" if nobody generates it."""
     if _is_a_shopping_list(text):
         return "object"
+    if in_the_resource_list and is_a_blank_form(text):
+        return "object"
     for kind, pattern in _PATTERNS:
         if pattern.search(text):
             # "charts for recording operations" is a piece of card. The audio
@@ -225,6 +227,23 @@ CATEGORY_WORDS = {
     "model", "models", "table", "tables", "visual", "visuals",
     "sketch", "sketches", "plot", "plots",
 }
+
+
+# "<kind> for <gerund> …" in a list of things to have ready is a BLANK form:
+# "charts for recording temperatures" is ruled paper the teacher brings, and
+# "chart of temperatures in Nairobi" is a figure somebody draws. The purpose
+# clause is what separates them, and it only means this inside the list.
+_BLANK_FORM = re.compile(
+    r"^\s*(?:a|an|the|some)?\s*(?:[a-z]+\s+)?(?:" + "|".join(
+        sorted(w for w in ("chart", "charts", "table", "tables", "sheet",
+                           "sheets", "card", "cards", "grid", "grids",
+                           "paper", "papers", "form", "forms"))
+    ) + r")\s+for\s+\w+ing\b", re.I)
+
+
+def is_a_blank_form(text: str) -> bool:
+    """Ruled paper described by what will be written on it, not by what it shows."""
+    return bool(_BLANK_FORM.match(str(text or "")))
 
 
 def names_only_a_category(text: str) -> bool:

@@ -229,9 +229,11 @@ def test_card_described_by_what_it_records_is_not_a_recording() -> None:
                              "whiteboard and markers"],
     }]}
 
-    # Not audio: that was the original fault, and it stands.
+    # Not audio: that was the original fault, and it stands. It is now an
+    # object rather than a diagram — a chart described by what gets written on
+    # it is ruled paper, so it reserves no plate at all.
     assert ar._classify("charts for recording operations",
-                        in_the_resource_list=True) == "diagram"
+                        in_the_resource_list=True) == "object"
 
     # And it reserves no plate either, because "for recording operations" says
     # why the chart is wanted and never what it shows.
@@ -256,8 +258,9 @@ def test_the_rule_applies_only_to_the_materials_list() -> None:
     a list of things to carry in."""
     assert ar._classify(
         "charts for recording operations") == "audio"
+    # Inside the list it is neither audio nor a figure: it is paper.
     assert ar._classify(
-        "charts for recording operations", in_the_resource_list=True) == "diagram"
+        "charts for recording operations", in_the_resource_list=True) == "object"
 
 
 # ── a caption that says only what the picture is FOR ─────────────────────────
@@ -319,3 +322,31 @@ def test_no_plate_is_reserved_from_a_materials_list_entry() -> None:
 
     assert [(r.module_number, r.what) for r in drawn] == [
         (7, "a number line from -10 to 10 marked in ones")]
+
+
+def test_a_chart_described_by_what_gets_written_on_it_is_paper() -> None:
+    """"charts for recording temperatures" reserved Diagram 3.1 on a real page.
+
+    It is ruled paper the teacher brings. "chart of temperatures in Nairobi" is
+    a figure somebody draws. The purpose clause is the whole difference, and it
+    only carries that meaning inside the list of things to have ready.
+    """
+    from app.services.asset_requirements import _classify, is_a_blank_form
+
+    for text in ("charts for recording temperatures",
+                 "sheets for recording results",
+                 "a table for recording readings",
+                 "cards for sorting integers"):
+        assert is_a_blank_form(text), text
+        assert _classify(text, in_the_resource_list=True) == "object", text
+
+
+def test_a_figure_that_names_what_it_shows_is_still_drawn() -> None:
+    from app.services.asset_requirements import _classify, is_a_blank_form
+
+    for text in ("number line",
+                 "chart of temperatures in Nairobi",
+                 "a bar chart of Grade 9 attendance",
+                 "a table of the first ten square numbers"):
+        assert not is_a_blank_form(text), text
+        assert _classify(text, in_the_resource_list=True) in ("diagram", "image"), text

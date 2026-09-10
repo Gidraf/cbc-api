@@ -971,6 +971,12 @@ def _design_row(grade: str, subject: str, sub_strand: str,
     from .grade_sql import clause
 
     try:
+        # The same tolerance the notes route uses to find this row. It matched
+        # exactly here and exact-OR-LIKE there, so a stored name the route
+        # found by pattern — "Integers (Numbers)", or one with stray
+        # whitespace — gave the route its outcomes while this returned nothing.
+        # Every lesson then printed "names no design element" about a design
+        # whose own learning outcomes were on the same page as its objectives.
         return fetch_one(
             f"""
             SELECT slos, key_inquiry_questions, learning_experiences,
@@ -978,10 +984,12 @@ def _design_row(grade: str, subject: str, sub_strand: str,
             FROM curriculum_substrands
             WHERE {clause('grade')}
               AND LOWER(subject) = LOWER(:subject)
-              AND LOWER(sub_strand_name) = LOWER(:sub_strand)
+              AND (LOWER(sub_strand_name) = LOWER(:sub_strand)
+                   OR LOWER(sub_strand_name) LIKE LOWER(:sub_strand_pattern))
             LIMIT 1
             """,
-            {"grade": grade, "subject": subject, "sub_strand": sub_strand},
+            {"grade": grade, "subject": subject, "sub_strand": sub_strand,
+             "sub_strand_pattern": f"%{sub_strand}%"},
         ) or {}
     except Exception as exc:  # noqa: BLE001
         logger.debug("No design row for %s (%s)", sub_strand, exc)

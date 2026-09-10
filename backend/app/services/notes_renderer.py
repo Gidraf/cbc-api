@@ -818,12 +818,22 @@ def _provenance(module: dict[str, Any], *, grade_label: str = "",
         body.append(f"<blockquote>{_esc(quote)}</blockquote>")
 
     if not serves and not ref and not quote:
-        # Named plainly, so it reads as a gap to close rather than as a design
-        # that happens to be quiet.
-        body.append(
-            "<p class='none'>This lesson names no design element. Nothing on "
-            "this page can be looked up in the curriculum design or the BECF "
-            "until it does.</p>")
+        # Two different faults with two different fixes, and one sentence was
+        # covering both: a lesson that cited nothing, and a design this system
+        # never loaded. Twelve lessons across two guides printed the first
+        # message when the cause was the second — the row was there, and the
+        # lookup that found its outcomes was not the lookup that resolved refs.
+        if not design_row:
+            body.append(
+                "<p class='none'>The curriculum design for this sub-strand is "
+                "not loaded, so nothing on this page could be resolved against "
+                "it. This is a missing design, not a missing citation — load "
+                "the sub-strand and regenerate.</p>")
+        else:
+            body.append(
+                "<p class='none'>This lesson names no design element. Nothing "
+                "on this page can be looked up in the curriculum design or the "
+                "BECF until it does.</p>")
 
     inner = _aside("Where this comes from", "".join(body))
     return inner.replace("<div class='aside'>", "<div class='aside citation'>", 1)
