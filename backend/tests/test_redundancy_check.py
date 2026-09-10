@@ -565,3 +565,119 @@ def test_a_standard_lesson_frame_is_not_mistaken_for_a_template():
 def test_a_templated_lesson_counts_against_the_score_like_a_copied_one():
     """It wastes the same lesson."""
     assert redundancy_check.inspect(_templated())["score"] < 70
+
+
+# --- Padding that renames instead of copying --------------------------------
+#
+# The check above compares prose. A model asked for six lessons out of three
+# ideas does not copy and paste — it rewords. A real Grade 9 Integers guide
+# came back with lesson 2 and lesson 4 both titled "Combined Operations with
+# Integers", teaching the same content in different sentences, and scored
+# 100/100 clean: their prose agreed on under half, so nothing fired.
+
+
+def _named_lesson(n: int, title: str, topics: list[tuple[str, str]]) -> dict:
+    return {
+        "title": title,
+        "module_number": n,
+        "exposition_segments": [
+            {"topic": t, "body": b, "minutes": 10} for t, b in topics
+        ],
+    }
+
+
+def _integers_guide() -> dict:
+    return {"modules": [
+        _named_lesson(1, "Introduction to Integers", [
+            ("Understanding Integers",
+             "An integer is a whole number that can be positive, negative or "
+             "zero. Examples include -3, 0 and 5, and they are met whenever a "
+             "quantity can fall below nothing at all."),
+        ]),
+        _named_lesson(2, "Combined Operations with Integers", [
+            ("Understanding Combined Operations",
+             "Combined operations use more than one operation in a single "
+             "expression, and BODMAS settles which one is taken first so that "
+             "two readers of the same line reach the same answer."),
+        ]),
+        _named_lesson(4, "Combined Operations with Integers", [
+            ("Understanding Combined Operations",
+             "Introduce the order of operations. Work through the steps with "
+             "the class, stressing that division is taken before addition "
+             "however the line happens to be written down."),
+        ]),
+    ]}
+
+
+def test_two_lessons_with_the_same_title_are_one_lesson_written_twice():
+    report = redundancy_check.inspect(_integers_guide())
+
+    assert not report["near_duplicates"], "the prose genuinely differs"
+    assert not report["clean"]
+    assert [p["b"] for p in report["same_name"]] == ["lesson 4"]
+
+
+def test_the_finding_names_the_lessons_rather_than_the_repeated_title():
+    """Both lessons answer to the same title, so naming them by it named
+    neither: the finding read "X carries the same title as X"."""
+    findings = redundancy_check.inspect(_integers_guide())["findings"]
+    title_finding = next(f for f in findings if "same claim" in f)
+
+    assert "lesson 4" in title_finding.lower()
+    assert "lesson 2" in title_finding.lower()
+
+
+def test_a_block_taught_twice_under_one_name_is_found_though_reworded():
+    report = redundancy_check.inspect(_integers_guide())
+
+    assert not report["repeated_segments"], "no two bodies are verbatim"
+    repeated = report["same_name_segments"]
+    assert [s["topic"] for s in repeated] == ["Understanding Combined Operations"]
+    assert repeated[0]["places"] == ["lesson 2", "lesson 4"]
+
+
+def test_the_same_claim_worded_the_other_way_round_still_counts():
+    guide = {"modules": [
+        _named_lesson(1, "Real-Life Applications of Integers", [
+            ("Temperature", "A reading below zero is written with a minus."),
+        ]),
+        _named_lesson(2, "Applications of Integers in Real Life", [
+            ("Money", "A debt is money counted the other way."),
+        ]),
+    ]}
+
+    assert redundancy_check.inspect(guide)["same_name"]
+
+
+def test_the_standard_lesson_shape_is_not_padding():
+    """Every lesson runs opening, development, conclusion. Reporting that
+    would report every guide ever written and mean nothing."""
+    guide = {"modules": [
+        _named_lesson(n, title, [
+            ("Introduction", body_a), ("Main Activity", body_b),
+            ("Conclusion", body_c),
+        ])
+        for n, title, body_a, body_b, body_c in [
+            (1, "Adding Integers",
+             "Two positives make a larger positive on the number line.",
+             "The class adds pairs of cards drawn from a bag.",
+             "Each learner writes one sum they got right."),
+            (2, "Multiplying Integers",
+             "A product of two negatives is positive, which surprises them.",
+             "The class fills a grid of products from -4 to 4.",
+             "Each learner states the sign rule in their own words."),
+        ]
+    ]}
+
+    report = redundancy_check.inspect(guide)
+    assert report["clean"], report["findings"]
+
+
+def test_a_one_word_heading_may_repeat():
+    """It is usually the sub-strand's own name, which any lesson may say."""
+    guide = {"modules": [
+        _named_lesson(1, "Adding Integers", [("Integers", "Whole numbers.")]),
+        _named_lesson(2, "Multiplying Integers", [("Integers", "Signed ones.")]),
+    ]}
+
+    assert not redundancy_check.inspect(guide)["same_name_segments"]

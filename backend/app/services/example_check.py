@@ -928,6 +928,100 @@ def _narrowed_objectives(notes: dict[str, Any], grade: str, subject: str,
     return findings
 
 
+def _items_of(module: dict[str, Any]) -> list[dict[str, Any]]:
+    """Every expression one lesson teaches from, wherever it is written."""
+    from . import task_demand
+
+    text = str(module.get("teacher_exposition") or "")
+    for segment in (module.get("exposition_segments") or []):
+        if isinstance(segment, dict):
+            text += " " + str(segment.get("body") or "")
+    items: list[dict[str, Any]] = list(task_demand.items_in_prose(text))
+    items += [e for e in (module.get("worked_examples") or [])
+              if isinstance(e, dict)]
+    return items
+
+
+def _lesson_by_lesson(notes: dict[str, Any], grade: str, subject: str,
+                      strand: str, sub_strand: str) -> list[Finding]:
+    """Each lesson against its own rung, instead of the guide against the floor.
+
+    `check_set` pools every expression in the guide and asks whether the set
+    reaches the grade. That is the right question for a question paper and the
+    wrong one for a teacher's guide, because a class does not meet the set —
+    it meets one lesson at a time. A guide whose lesson 2 works
+    `-10 + 6 \times (-2)` carries the whole set over the floor while lessons 1,
+    3 and 5 teach from single-operation arithmetic, and nothing says so.
+
+    The rung comes from `lesson_handoff.ladder`, so an opening lesson is held
+    to less than a closing one: what is enforced is that every lesson reaches
+    SOMETHING at its own step, not that all six are equally hard.
+    """
+    from . import design_elements, lesson_handoff, lesson_material, task_demand
+
+    modules = [m for m in (notes.get("modules") or notes.get("hour_modules") or [])
+               if isinstance(m, dict)]
+    floor = task_demand.floor_for(grade, subject)
+    if not modules or floor is None:
+        return []
+
+    row = lesson_material._design_row(grade, subject, sub_strand, strand)
+    signed_wanted = bool(row) and design_elements.wants_negatives(row)
+
+    shallow: list[tuple[int, Any, Any]] = []
+    unsigned: list[int] = []
+    for module, step in zip(modules, lesson_handoff.ladder(len(modules), floor)):
+        try:
+            number = int(module.get("module_number") or step.lesson)
+        except (TypeError, ValueError):
+            number = step.lesson
+        measured = [d for d in (task_demand.measure_item(i)
+                                for i in _items_of(module)) if d.measurable]
+        if not measured:
+            # A lesson with no arithmetic at all is `_lessons_without_maths`.
+            # Reporting it twice trains a reader to skim both.
+            continue
+        if not any(d.operations >= step.operations
+                   and len(d.kinds) >= step.kinds
+                   and d.depth >= step.depth for d in measured):
+            best = max(measured,
+                       key=lambda d: (d.operations, len(d.kinds), d.depth))
+            shallow.append((number, step, best))
+        if signed_wanted and not any(d.negatives for d in measured):
+            unsigned.append(number)
+
+    findings: list[Finding] = []
+    if shallow:
+        worst = "; ".join(
+            f"lesson {n} gets no further than `{d.expression}` "
+            f"({d.operations} operation{'' if d.operations == 1 else 's'}, "
+            f"{len(d.kinds)} kind{'' if len(d.kinds) == 1 else 's'}), where its "
+            f"step asks for {s.operations} and {s.kinds}"
+            for n, s, d in shallow[:4])
+        findings.append(Finding(
+            "lesson_below_its_own_step",
+            f"{len(shallow)} lesson{'' if len(shallow) == 1 else 's'} never "
+            f"reach the demand of their own position in the sub-strand: "
+            f"{worst}. The guide as a whole can still clear the floor on one "
+            f"hard expression in one lesson — but a class meets one lesson at "
+            f"a time, and these ones are an easier grade for forty minutes.",
+            "Work at least one expression per lesson at that lesson's step. "
+            "Easier ones alongside it are the build-up and are wanted; what is "
+            "not allowed is a lesson that never gets there."))
+    if unsigned:
+        findings.append(Finding(
+            "lesson_without_negative_numbers",
+            f"Lesson{'' if len(unsigned) == 1 else 's'} "
+            + ", ".join(str(n) for n in unsigned)
+            + f" work{'s' if len(unsigned) == 1 else ''} only on positive "
+            f"numbers, in a sub-strand whose design is about directed ones. "
+            f"The guide overall uses negatives, so the guide-wide check is "
+            f"satisfied while these lessons teach none.",
+            "Put a signed number in every lesson: a negative operand, a "
+            "negative result, or a subtraction that crosses zero."))
+    return findings
+
+
 def check_notes(notes: dict[str, Any], *, grade: str = "",
                 subject: str | None = None, strand: str = "",
                 sub_strand: str = "") -> Report:
@@ -966,6 +1060,8 @@ def check_notes(notes: dict[str, Any], *, grade: str = "",
                                             strand, sub_strand)
     report.findings += _lessons_without_maths(notes, grade, subject or "",
                                               strand, sub_strand)
+    report.findings += _lesson_by_lesson(notes, grade, subject or "",
+                                         strand, sub_strand)
     report.findings += _promised_but_not_given(notes, grade, subject or "",
                                                strand, sub_strand)
     # The prose too, not only the worked examples. A plan states its false

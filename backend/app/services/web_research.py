@@ -33,6 +33,34 @@ AUTHORITATIVE_DOMAINS = [
 ]
 
 
+# The only sources a question about the Kenyan curriculum may be answered from.
+# KICD writes the designs and KNEC sets the assessments against them; what
+# either publishes about a sub-strand IS the curriculum, and what any other site
+# publishes is somebody's account of it.
+#
+# `AUTHORITATIVE_DOMAINS` above does not scope anything — it moves a credibility
+# score from 0.85 to 0.95 and keeps every result either way. That is how a
+# dossier for a Grade 9 sub-strand came to be built out of general-web pages and
+# a Wikipedia summary, none of which knows what the design says.
+CURRICULUM_DOMAINS: tuple[str, ...] = (
+    "kicd.ac.ke",
+    "knec.ac.ke",
+    "education.go.ke",
+)
+
+
+def within_scope(domain: str, allowed: tuple[str, ...] = CURRICULUM_DOMAINS) -> bool:
+    """Whether a result came from one of the allowed hosts.
+
+    Suffix-matched on a label boundary, so `kicd.ac.ke` accepts
+    `www.kicd.ac.ke` and refuses `kicd.ac.ke.example.com` — which is the shape
+    every lookalike takes.
+    """
+    host = str(domain or "").lower().strip().rstrip(".")
+    host = host.split("@")[-1].split(":")[0]
+    return any(host == d or host.endswith("." + d) for d in allowed)
+
+
 @dataclass(slots=True)
 class ResearchCitation:
     title: str
@@ -127,6 +155,7 @@ class WebResearchAgent:
         grade: str = "grade-dte",
         topic_type: str = "notes",
         extra_query: str = "",
+        scope: tuple[str, ...] | None = CURRICULUM_DOMAINS,
     ) -> ResearchDossier:
         """Executes targeted web research across multiple angles and returns a rich ResearchDossier."""
         topic_name = f"{subject} - {sub_strand}"
@@ -140,14 +169,23 @@ class WebResearchAgent:
         deliberation_trace.append(f"🔍 Initiating Deep Web & Academic Research for [{subject}] Sub-strand: [{sub_strand}] ({grade}).")
 
         # 1. Generate multi-angle search queries
-        queries = self._generate_search_queries(subject, strand, sub_strand, grade, topic_type, extra_query)
+        queries = self._generate_search_queries(
+            subject, strand, sub_strand, grade, topic_type, extra_query,
+            scope=scope)
         deliberation_trace.append(f"📡 Generated {len(queries)} multi-angle research queries: {clean_q_list(queries)}")
 
         # 2. Execute Web Searches & Fetch Content
+        turned_away: list[str] = []
         for q in queries[:4]:
             try:
-                results = self._execute_search(q)
+                # Scoped research does not fall back to Wikipedia. A general
+                # encyclopaedia answer to "what does the Grade 9 design say"
+                # reads like research and is not any.
+                results = self._execute_search(q, allow_fallback=not scope)
                 for r in results:
+                    if scope and not within_scope(r.get("domain", ""), scope):
+                        turned_away.append(str(r.get("domain") or "?"))
+                        continue
                     if not any(c.url == r["url"] for c in citations):
                         citations.append(
                             ResearchCitation(
@@ -163,6 +201,19 @@ class WebResearchAgent:
                 logger.warning("Search query failed for %s: %s", q, exc)
 
         deliberation_trace.append(f"📚 Retrieved and verified {len(citations)} authoritative source references.")
+        if scope:
+            deliberation_trace.append(
+                "🔒 Research restricted to " + ", ".join(scope)
+                + (f"; {len(turned_away)} result(s) from outside it discarded ("
+                   + ", ".join(sorted(set(turned_away))[:5]) + ")."
+                   if turned_away else "; nothing from outside it was offered.")
+            )
+            if not citations:
+                deliberation_trace.append(
+                    "⚠️ No source inside the scope answered. The dossier is "
+                    "empty, which is the honest result: write from the design "
+                    "itself and cite it, rather than from the open web."
+                )
 
         # 3. Add Domain-Grounded Empirical Kenyan & Academic Data
         empirical_data, academic_insights, kenyan_case_studies, safety_guidelines = self._extract_empirical_insights(
@@ -206,7 +257,9 @@ class WebResearchAgent:
         )
 
     def _generate_search_queries(
-        self, subject: str, strand: str, sub_strand: str, grade: str, topic_type: str, extra_query: str
+        self, subject: str, strand: str, sub_strand: str, grade: str,
+        topic_type: str, extra_query: str,
+        scope: tuple[str, ...] | None = None,
     ) -> list[str]:
         """Builds high-precision search queries for KICD, KALRO, KNEC, and academic research."""
         clean_sub = sub_strand.split(" ", 1)[-1] if sub_strand[:3].replace(".", "").isdigit() else sub_strand
@@ -238,25 +291,38 @@ class WebResearchAgent:
             hint = ""
         if hint:
             base_queries.insert(0, f"Kenya {subject} {clean_sub} {hint}"[:200])
-        return base_queries[:4]
+        queries = base_queries[:4]
+        if scope:
+            # Asked of the search engine as well as enforced on the results.
+            # Filtering alone spends four searches to discard nearly all of
+            # what comes back; the restriction makes the searches themselves
+            # look in the right place.
+            site = " OR ".join(f"site:{d}" for d in scope)
+            queries = [f"({site}) {q}"[:280] for q in queries]
+            queries.insert(0, f"({site}) {grade} {subject} {clean_sub} "
+                              f"curriculum design learning outcomes"[:280])
+        return queries[:4]
 
-    def _execute_search(self, query: str) -> list[dict[str, Any]]:
+    def _execute_search(self, query: str, *,
+                        allow_fallback: bool = True) -> list[dict[str, Any]]:
         """Executes search using httpx if available, otherwise urllib.request."""
         if HAS_HTTPX and httpx is not None:
             try:
                 with httpx.Client(timeout=self.timeout, headers=self.headers, follow_redirects=True) as client:
-                    return self._search_duckduckgo_httpx(client, query)
+                    return self._search_duckduckgo_httpx(
+                        client, query, allow_fallback=allow_fallback)
             except Exception:
                 pass
-        return self._search_wikipedia_urllib(query)
+        return self._search_wikipedia_urllib(query) if allow_fallback else []
 
-    def _search_duckduckgo_httpx(self, client: Any, query: str) -> list[dict[str, Any]]:
+    def _search_duckduckgo_httpx(self, client: Any, query: str, *,
+                                 allow_fallback: bool = True) -> list[dict[str, Any]]:
         url = "https://html.duckduckgo.com/html/"
         resp = client.post(url, data={"q": query})
         results: list[dict[str, Any]] = []
 
         if resp.status_code != 200:
-            return self._search_wikipedia_urllib(query)
+            return self._search_wikipedia_urllib(query) if allow_fallback else []
 
         matches = re.findall(
             r"<a class=\"result__url\" href=\"([^\"]+)\".*?<a class=\"result__snippet[^>]*>(.*?)</a>",
@@ -283,7 +349,7 @@ class WebResearchAgent:
                 "credibility": credibility,
             })
 
-        if not results:
+        if not results and allow_fallback:
             return self._search_wikipedia_urllib(query)
 
         return results

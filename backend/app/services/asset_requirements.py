@@ -154,12 +154,26 @@ def _is_a_shopping_list(text: str) -> bool:
     return named >= 2 or (named >= 1 and len(_LIST.findall(text)) >= 2)
 
 
-def _classify(text: str) -> str:
+# Media nobody carries into the room. A teacher brings card, counters and
+# worksheets; a recording, a clip and a simulation are produced.
+_NOT_BROUGHT_TO_CLASS = frozenset({"audio", "video", "simulation"})
+
+
+def _classify(text: str, *, in_the_resource_list: bool = False) -> str:
     """What kind of thing this is, or "object" if nobody generates it."""
     if _is_a_shopping_list(text):
         return "object"
     for kind, pattern in _PATTERNS:
         if pattern.search(text):
+            # "charts for recording operations" is a piece of card. The audio
+            # pattern saw "recording" before anything looked at "charts", and a
+            # Grade 9 page then opened with "play the recording at this point"
+            # beside a caption naming an item off the materials list. Where an
+            # entry in the list of things to have ready also names a classroom
+            # object, the media word is describing what the object is FOR.
+            if (in_the_resource_list and kind in _NOT_BROUGHT_TO_CLASS
+                    and _CLASSROOM.search(text)):
+                continue
             # A song is audio; a song sheet is not. Where an object word is the
             # HEAD of the phrase, it is a thing to bring.
             if kind == "image" and _OBJECT.search(text) and not re.search(
@@ -224,7 +238,8 @@ def read(plan: dict[str, Any]) -> Requirements:
             number = i
         title = str(module.get("title") or f"Lesson {number}")
 
-        def add(text: str, topic: str, source: str, kind: str = "") -> None:
+        def add(text: str, topic: str, source: str, kind: str = "",
+                in_the_resource_list: bool = False) -> None:
             what = " ".join(str(text).split()).strip(" .,;")
             if len(what) < 4:
                 return
@@ -243,13 +258,15 @@ def read(plan: dict[str, Any]) -> Requirements:
             # on Integers" as an object to bring to class, which reserves no
             # plate — so the drawing that existed for it had nowhere to go.
             out.items.append(Requirement(
-                kind=kind or _classify(what), what=what, module_number=number,
+                kind=kind or _classify(
+                    what, in_the_resource_list=in_the_resource_list),
+                what=what, module_number=number,
                 module_title=title, topic=topic, source=source))
 
         # What the plan says the teacher must have ready. The plainest
         # statement of a requirement there is.
         for entry in (module.get("resources_needed") or []):
-            add(str(entry), "", "resources_needed")
+            add(str(entry), "", "resources_needed", in_the_resource_list=True)
 
         # The visuals the plan names outright. Requirements were read only
         # from `resources_needed` and from the teaching text, so a lesson that

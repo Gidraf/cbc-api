@@ -260,6 +260,24 @@ def _findings(report: dict[str, Any]) -> list[str]:
             f"The same block of exposition appears in {len(seg['places'])} "
             f"lessons ({'; '.join(seg['places'])}). Write each one fresh."
         )
+    for pair in report.get("same_name", []):
+        also = ("" if pair["also"].lower() == pair["claim"].lower()
+                else f" (titled \"{pair['also']}\")")
+        out.append(
+            f"{pair['b'].capitalize()} is titled \"{pair['claim']}\", the same "
+            f"claim as {pair['a']}{also}. Two lessons named the same thing are "
+            f"one lesson written twice, however differently the prose reads. "
+            f"Give it the part of the outcome the earlier lesson did not reach "
+            f"— introduce, then practise, then apply — or say in `gaps` that "
+            f"the design does not fund this many distinct lessons."
+        )
+    for seg in report.get("same_name_segments", []):
+        out.append(
+            f"\"{seg['topic']}\" is taught in "
+            f"{' and '.join(seg['places'])}. Rewriting a block under the name "
+            f"it already carries elsewhere does not make it new teaching. Keep "
+            f"it where it belongs and give the other lessons their own ground."
+        )
     for pair in report.get("parallel_shapes", []):
         same = (" They also teach the same outcome."
                 if pair["same_outcome"] else "")
@@ -310,6 +328,8 @@ def _score(report: dict[str, Any]) -> float:
 
     padded = {pair["b"] for pair in report["near_duplicates"]}
     padded |= {pair["b"] for pair in report.get("parallel_shapes", [])}
+    # The copy is charged, never the lesson that was copied.
+    padded |= {pair["b_label"] for pair in report.get("same_name", [])}
     # Every lesson of a padded group except the first. Their prose differs, so
     # no similarity check charges them, and a guide could be four sevenths one
     # outcome taught four times and still score 100.
@@ -321,7 +341,8 @@ def _score(report: dict[str, Any]) -> float:
     # already counted is not counted twice — and the original is not charged
     # for having been copied.
     partial = set()
-    for seg in report["repeated_segments"]:
+    for seg in (report["repeated_segments"]
+                + report.get("same_name_segments", [])):
         standing = [m for m in seg["modules"] if m not in padded]
         if len(standing) > 1:
             partial.update(standing[1:])
@@ -394,6 +415,124 @@ def _topics_of(module: Any) -> list[str]:
         return []
     return [str(s.get("topic") or "") for s in (module.get("exposition_segments") or [])
             if isinstance(s, dict)]
+
+
+# Words that carry no claim of their own. Kept apart from `_STRUCTURAL`, which
+# decides whether a heading is PURELY a position in the lesson; widening that
+# set would quietly reclassify real topics as frame.
+_FUNCTION = {
+    "with", "in", "into", "to", "for", "from", "on", "at", "by", "using",
+    "use", "uses", "used", "about", "through", "via", "more", "some", "its",
+    "their", "our", "your", "his", "her", "them", "it", "this", "that",
+    "these", "those", "how", "what", "why", "when", "where", "which", "is",
+    "are", "was", "were", "be", "being", "been", "do", "does", "doing",
+    "further", "other", "others", "basic", "simple", "various", "different",
+}
+
+
+def _named(heading: str) -> str:
+    """A heading reduced to the claim it makes, so rewording cannot hide it.
+
+    Two lessons both called "Combined Operations with Integers" are one lesson
+    written twice, and so are "Real-Life Applications of Integers" and
+    "Applications of Integers in Real Life". What survives is the subject, with
+    position words, function words and word order removed — because the form
+    padding takes is not copy-and-paste.
+    """
+    words = {w for w in re.sub(r"[^a-z ]+", " ", _norm(heading)).split()
+             if w and w not in _STRUCTURAL and w not in _FUNCTION}
+    return " ".join(sorted(words))
+
+
+def _claims(heading: str) -> bool:
+    """Whether a heading says enough to be compared at all.
+
+    Two content words is the floor. A one-word heading repeating is usually the
+    sub-strand's own name, which every lesson is entitled to say.
+    """
+    return len(_named(heading).split()) >= 2 and not _is_structural(heading)
+
+
+def _where(module: Any, index: int) -> str:
+    """A lesson named by its position.
+
+    `_label` answers with the title, which is the very field the two checks
+    below find repeated — so a finding about two lessons of the same name read
+    "X carries the same title as X" and identified neither of them.
+    """
+    if isinstance(module, dict) and module.get("module_number"):
+        try:
+            return f"lesson {int(module['module_number'])}"
+        except (TypeError, ValueError):
+            pass
+    return f"lesson {index + 1}"
+
+
+def _same_name_modules(modules: list, path: str) -> list[dict[str, Any]]:
+    """Two lessons that make the same claim in their titles.
+
+    A model asked for six lessons out of three ideas does not copy and paste —
+    it renames and rewords. That is why every similarity check here passed a
+    Grade 9 guide whose lesson 2 and lesson 4 were both titled "Combined
+    Operations with Integers" and taught the same content: their prose agreed
+    on less than half, so `_near_duplicate_modules` saw nothing, while the
+    claim on the tin was identical.
+
+    The title is the cheapest signal in the artifact and the hardest to
+    explain away. A guide that funds six lessons and names two of them the
+    same thing has said in its own words that it has five.
+    """
+    seen: dict[str, tuple[int, str]] = {}
+    out: list[dict[str, Any]] = []
+    for i, module in enumerate(modules[:MAX_MODULES]):
+        if not isinstance(module, dict):
+            continue
+        title = str(module.get("title") or "")
+        if not _claims(title):
+            continue
+        key = _named(title)
+        first = seen.get(key)
+        if first is None:
+            seen[key] = (i, title)
+            continue
+        out.append({
+            "a": _where(modules[first[0]], first[0]),
+            "b": _where(module, i),
+            "claim": title.strip(),
+            "also": first[1].strip(),
+            # `_score` counts wasted lessons by `_label`, as every other check
+            # here does. Mixing the two vocabularies charged one copy twice.
+            "b_label": _label(module, i),
+        })
+    return out
+
+
+def _same_name_segments(modules: list, path: str) -> list[dict[str, Any]]:
+    """One teaching block delivered under the same name in two lessons.
+
+    `_repeated_segments` keys on the body, so it only ever fired on verbatim
+    copies. A block rewritten from scratch under the name it already carried
+    somewhere else is the same block as far as the class is concerned: they
+    have met it, and the second sitting teaches them nothing.
+    """
+    where: dict[str, list[tuple[int, str]]] = {}
+    for i, module in enumerate(modules[:MAX_MODULES]):
+        for topic in _topics_of(module):
+            if not _claims(topic):
+                continue
+            where.setdefault(_named(topic), []).append((i, topic))
+
+    out: list[dict[str, Any]] = []
+    for found in where.values():
+        # Twice under one lesson is a structure problem, not padding.
+        if len({i for i, _ in found}) < 2:
+            continue
+        out.append({
+            "topic": found[0][1].strip(),
+            "places": [_where(modules[i], i) for i, _ in found],
+            "modules": [_label(modules[i], i) for i, _ in found],
+        })
+    return out
 
 
 def _same_outcome_same_source(modules: list) -> list[dict[str, Any]]:
@@ -487,6 +626,8 @@ def inspect(content: Any) -> dict[str, Any]:
     segments: list[dict[str, Any]] = []
     shapes: list[dict[str, Any]] = []
     concentrated: list[dict[str, Any]] = []
+    renamed: list[dict[str, Any]] = []
+    restated: list[dict[str, Any]] = []
     counted = 0
     for path, modules in lists:
         # Compare one copy of a mirrored pair, not both — otherwise every
@@ -498,6 +639,8 @@ def inspect(content: Any) -> dict[str, Any]:
         segments += _repeated_segments(modules, path)
         shapes += _parallel_shapes(modules)
         concentrated += _same_outcome_same_source(modules)
+        renamed += _same_name_modules(modules, path)
+        restated += _same_name_segments(modules, path)
 
     report = {
         "checked": True,
@@ -508,7 +651,10 @@ def inspect(content: Any) -> dict[str, Any]:
         "repeated_segments": segments[:MAX_REPORTED],
         "parallel_shapes": shapes[:MAX_REPORTED],
         "same_outcome_same_source": concentrated[:MAX_REPORTED],
-        "clean": not (mirrors or duplicates or segments or shapes
+        "same_name": renamed[:MAX_REPORTED],
+        "same_name_segments": restated[:MAX_REPORTED],
+        "clean": not (mirrors or duplicates or segments or shapes or renamed
+                      or restated
                       or [g for g in concentrated if _is_padding(g)]),
     }
     report["score"] = _score(report)
@@ -555,6 +701,22 @@ def render(report: dict[str, Any]) -> str:
         for place in seg["places"]:
             lines.append(f"      {place}")
         lines.append(f"      \"{seg['excerpt']}…\"")
+        lines.append("")
+
+    for pair in report.get("same_name", []):
+        lines.append(
+            f"  SAME TITLE: {pair['a']} and {pair['b']} are both called "
+            f"\"{pair['claim']}\""
+        )
+        lines.append("      Their prose differs; the claim on the tin does "
+                     "not. The class meets the same lesson twice.")
+        lines.append("")
+
+    for seg in report.get("same_name_segments", []):
+        lines.append(
+            f"  THE SAME BLOCK BY NAME: \"{seg['topic']}\" is taught in "
+            + " and ".join(seg["places"])
+        )
         lines.append("")
 
     for pair in report.get("parallel_shapes", []):

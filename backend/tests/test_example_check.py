@@ -1282,3 +1282,89 @@ def test_the_prompt_s_own_corrected_working_passes_the_gate() -> None:
                                  subject="Mathematics")
 
     assert [f.kind for f in report.findings] == []
+
+
+# --- Each lesson against its own rung ---------------------------------------
+#
+# `check_set` pools every expression in the guide. A real Grade 9 Integers
+# guide worked `-10 + 6 x (-2)` in lesson 2 and single-operation arithmetic in
+# lessons 1, 3 and 5 — the pooled set cleared the floor, and nothing reported
+# the three lessons that were an easier grade for forty minutes each.
+
+
+def _lesson_with(number: int, *bodies: str) -> dict:
+    return {
+        "module_number": number,
+        "title": f"Lesson {number}",
+        "exposition_segments": [{"topic": f"Part {i}", "body": b}
+                                for i, b in enumerate(bodies, start=1)],
+    }
+
+
+def _per_lesson(notes: dict, row=None) -> list:
+    import unittest.mock as mock
+
+    from app.services import lesson_material
+
+    with mock.patch.object(lesson_material, "_design_row",
+                           return_value=DESIGN_ROW if row is None else row):
+        return example_check._lesson_by_lesson(
+            notes, "grade-9", "Mathematics", "Numbers", "Integers")
+
+
+def test_one_hard_lesson_no_longer_carries_the_easy_ones() -> None:
+    notes = {"modules": [
+        _lesson_with(1, "For example $3 + (-5)$ gives $-2$, and $4 - 7$ is $-3$."),
+        _lesson_with(2, "Work $-10 + 6 \\times (-2)$, taking the product first."),
+        _lesson_with(3, "A learner spends $500 - 150$ and has 350 left."),
+    ]}
+
+    found = [f for f in _per_lesson(notes)
+             if f.kind == "lesson_below_its_own_step"]
+    assert len(found) == 1
+    says = found[0].says
+    assert "lesson 1" in says and "lesson 3" in says
+    assert "lesson 2" not in says, "lesson 2 reaches its step"
+
+
+def test_a_lesson_is_not_charged_for_also_containing_easy_work() -> None:
+    """The build-up inside a lesson is wanted. What is not allowed is a lesson
+    that never gets to its step."""
+    notes = {"modules": [_lesson_with(
+        1,
+        "Start with $4 - 7$ and $3 + (-5)$ to recall the number line.",
+        "Then work $-10 + 6 \\times (-2)$ through to its answer.")]}
+
+    assert not [f for f in _per_lesson(notes)
+                if f.kind == "lesson_below_its_own_step"]
+
+
+def test_a_lesson_with_no_arithmetic_is_reported_once_not_twice() -> None:
+    """`_lessons_without_maths` owns that defect. Two findings for one fault
+    teaches a reader to skim both."""
+    notes = {"modules": [_lesson_with(
+        1, "Discuss with learners where they meet integers in daily life.")]}
+
+    assert not [f for f in _per_lesson(notes)
+                if f.kind == "lesson_below_its_own_step"]
+
+
+def test_a_lesson_of_positives_is_found_though_the_guide_has_negatives() -> None:
+    notes = {"modules": [
+        _lesson_with(1, "Work $-10 + 6 \\times (-2)$ and then $-8 \\div (-2) + 3$."),
+        _lesson_with(2, "Add the prices $150 + 200 \\times 2$ and take the total."),
+    ]}
+
+    found = [f for f in _per_lesson(notes)
+             if f.kind == "lesson_without_negative_numbers"]
+    assert len(found) == 1
+    assert "2" in found[0].says and "Lesson" in found[0].says
+
+
+def test_a_sub_strand_that_is_not_about_signs_is_not_asked_for_negatives() -> None:
+    whole = {"sub_strand_name": "Whole Numbers",
+             "slos": [{"slo": "multiply and divide whole numbers up to 1000"}]}
+    notes = {"modules": [_lesson_with(1, "Work $250 \\times 4 + 120$ for the total.")]}
+
+    assert not [f for f in _per_lesson(notes, row=whole)
+                if f.kind == "lesson_without_negative_numbers"]

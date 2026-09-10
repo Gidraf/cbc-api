@@ -211,3 +211,44 @@ def test_with_no_plan_filed_the_board_says_that_rather_than_nothing():
             / "frontend-web/src/views/Pipelines.tsx").read_text()
 
     assert "station plans from the plan." in view
+
+
+# --- The materials list is not a list of media ------------------------------
+#
+# A Grade 9 Integers page opened with "play the recording at this point" over a
+# caption reading "charts for recording operations" — an item off the lesson's
+# own materials list. The audio pattern saw the word "recording" before
+# anything looked at the word "charts".
+
+
+def test_card_described_by_what_it_records_is_not_a_recording() -> None:
+    plan = {"modules": [{
+        "module_number": 1,
+        "title": "Introduction to Integers",
+        "resources_needed": ["number cards", "charts for recording operations",
+                             "whiteboard and markers"],
+    }]}
+
+    kinds = {r.what: r.kind for r in ar.read(plan).items}
+    assert kinds["charts for recording operations"] == "diagram"
+    assert "audio" not in kinds.values()
+
+
+def test_a_recording_the_plan_actually_asks_for_is_still_audio() -> None:
+    plan = {"modules": [{
+        "module_number": 1,
+        "title": "Kenyan Folk Songs",
+        "resources_needed": ["a recording of the school choir singing Malaika"],
+    }]}
+
+    assert [r.kind for r in ar.read(plan).items] == ["audio"]
+
+
+def test_the_rule_applies_only_to_the_materials_list() -> None:
+    """In teaching prose, "listen to the recording" means what it says; the
+    exemption exists because every entry under `resources_needed` is an item in
+    a list of things to carry in."""
+    assert ar._classify(
+        "charts for recording operations") == "audio"
+    assert ar._classify(
+        "charts for recording operations", in_the_resource_list=True) == "diagram"

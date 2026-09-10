@@ -1572,7 +1572,6 @@ def factory_generate_notes(
             "lesson_coverage": lesson_plan.to_dict(),
             "fabrication": fabrication.to_dict(),
             "repetition": repetition,
-        "pitch": pitch.to_dict(),
             "pitch": pitch.to_dict(),
             "integrity": integrity,
         },
