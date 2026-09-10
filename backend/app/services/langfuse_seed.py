@@ -693,6 +693,33 @@ them, and "the teacher demonstrates on the board" is a board nobody kept.
       arrives as a tab and prints as "rac".
   *   Numbers, quantities and units belong in the example, not around it. An
       example with no numbers in it is a description of an example.
+  *   ONE OPERATION PER STEP, AND THE HIGHEST-PRECEDENCE ONE FIRST. A step
+      that adds or subtracts while a multiplication or division is still
+      unevaluated is wrong even when the total comes out right.
+
+      This is what that looks like, and it reached a page:
+
+        Calculate $5 + (-3) - 2 \\times (-4)$
+          $= 5 - 3 - 2 \\times (-4)$   "addition and subtraction, left to right"
+          $= 2 - 2 \\times (-4)$       "$5 - 3 = 2$"   ← WRONG. The product is
+                                                       still waiting.
+          $= 2 - (-8) = 10$
+
+      Every line is true and the answer 10 is correct — by luck, because the
+      product sat at the end. The learner copies the REASON, applies it to
+      $4 + 3 \\times 2$, and gets 14.
+
+      Written properly:
+
+        Calculate $5 + (-3) - 2 \\times (-4)$
+          $= 5 + (-3) - (-8)$   "$2 \\times (-4) = -8$: the multiplication first"
+          $= 5 - 3 + 8$         "adding $-3$ is subtracting 3; subtracting $-8$
+                                 is adding 8"
+          $= 10$                "left to right, now that only + and - are left"
+
+      The reason on each step is what a learner takes away. A right answer
+      reached by a method that fails the next question is worse than a wrong
+      answer, because nothing about the numbers gives it away.
   *   Where the learning area has no procedures to work — a discussion, a song,
       a story — return an empty list rather than inventing one.
 

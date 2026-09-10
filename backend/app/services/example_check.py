@@ -706,9 +706,17 @@ def check_material(material: dict[str, Any], *, grade: str = "",
 # -36 — and the guide meant a division. Nothing looked at it, because the plan
 # carries no worked examples and the prose scan only measured how HARD each
 # expression was, never whether it was true.
+# The bare-prose branch must not cross a `$`. It did, and spliced the tail of
+# one expression onto the head of the next: from "(2 \times 4)$. Present the
+# expression $5 + (3 - 2) \times 4" to "= 5" — an equation nobody wrote,
+# reported as false, in text that made the checker look broken.
+#
+# And it must not stop in the MIDDLE of a chain. "5 + (3 - 2) \times 4 = 5 + 1
+# \times 4 = 9" is true; reading it as "... = 5" is not. A chain belongs to the
+# step checker, which walks it in order.
 _PROSE_EQUATION = re.compile(
-    r"\$([^$\n]{2,80}?=[^$\n]{1,40}?)\$|(?<![\w$])([-\d(][^=\n]{1,60}?"
-    r"=\s*-?[\d.]+)(?![\w$])")
+    r"\$([^$\n]{2,80}?=[^$\n]{1,40}?)\$|(?<![\w$])([-\d(][^=\n$]{1,60}?"
+    r"=\s*-?[\d.]+)(?![\w$])(?!\s*[-+×÷*/^=])")
 
 
 def _prose_equations(text: str) -> list[tuple[str, str]]:
@@ -716,6 +724,7 @@ def _prose_equations(text: str) -> list[tuple[str, str]]:
     out: list[tuple[str, str]] = []
     for match in _PROSE_EQUATION.finditer(text or ""):
         body = match.group(1) or match.group(2) or ""
+        # A chained equation is checked step by step, not as a whole.
         if body.count("=") != 1:
             continue
         lhs, rhs = body.split("=")

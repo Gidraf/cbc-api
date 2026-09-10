@@ -1218,3 +1218,67 @@ def test_adding_when_nothing_higher_is_pending_is_fine() -> None:
     report = example_check.check([plain], grade="grade-9", subject="Mathematics")
 
     assert not [f for f in report.findings if f.kind == "out_of_order"]
+
+
+def test_a_prose_equation_is_not_spliced_across_two_math_spans() -> None:
+    r"""The bare-prose branch allowed `$` inside its body, so it ran from the
+    tail of one expression to the head of the next — "(2 \times 4)$. Present
+    the expression $5 + (3 - 2) \times 4 = 5" — and reported an equation nobody
+    wrote as false, in text that made the checker look broken."""
+    text = (r"Use a simple example, such as evaluating $3 + (2 \times 4)$. "
+            r"Present the expression $5 + (3 - 2) \times 4 = 5 + 1 \times 4 = 9$.")
+
+    findings = example_check.check_prose_arithmetic([text])
+
+    assert not findings, [f.says for f in findings]
+
+
+def test_a_chained_equation_is_left_to_the_step_checker() -> None:
+    """"a = b = c" read as "a = b" is a false reading of a true statement."""
+    from app.services.example_check import _prose_equations
+
+    pairs = _prose_equations(r"so $5 + (3 - 2) \times 4 = 5 + 1 \times 4 = 9$")
+
+    assert pairs == [], pairs
+
+
+def test_a_genuinely_false_aside_is_still_caught() -> None:
+    findings = example_check.check_prose_arithmetic(
+        [r"For instance, $5 + (-3) = 7$, which we can see on the number line."])
+
+    assert findings and "states_a_false_equation" == findings[0].kind
+
+
+def test_the_prompt_shows_the_order_fault_and_its_repair() -> None:
+    """A rule stated abstractly is a rule a model applies abstractly. The
+    prompt names the exact working that reached a page, says why the correct
+    answer did not save it, and shows the same example worked properly."""
+    from app.services import notation
+    from app.services.langfuse_seed import SEED_AGENT_PROMPTS
+
+    house = notation.for_prompt("Mathematics", grade="grade-9")
+    assert "EVEN WHEN THE ANSWER WOULD COME OUT RIGHT ANYWAY" in house
+
+    prompt = SEED_AGENT_PROMPTS["note-generator"]
+    assert "ONE OPERATION PER STEP" in prompt
+    assert "still waiting" in prompt
+    assert "gets 14" in prompt, "it says what the learner will do with the rule"
+
+
+def test_the_prompt_s_own_corrected_working_passes_the_gate() -> None:
+    """A prompt that asks for working the checker then rejects is a prompt
+    that cannot be satisfied. The two have to agree."""
+    corrected = {
+        "statement": "Calculate 5 + (-3) - 2 × (-4)",
+        "steps": [
+            {"working": "2 × (-4) = -8", "because": "the multiplication first"},
+            {"working": "5 + (-3) - (-8) = 5 - 3 + 8",
+             "because": "adding -3 is subtracting 3; subtracting -8 is adding 8"},
+            {"working": "5 - 3 + 8 = 10",
+             "because": "left to right, now only + and - are left"}],
+        "answer": "10"}
+
+    report = example_check.check([corrected], grade="grade-9",
+                                 subject="Mathematics")
+
+    assert [f.kind for f in report.findings] == []

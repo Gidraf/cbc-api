@@ -139,6 +139,9 @@ HOUSE_BLOCK = """=== HOW THIS IS WRITTEN IN KENYA ===
   - The order of operations is BODMAS — Brackets, Of/Orders, Division,
     Multiplication, Addition, Subtraction. Never PEMDAS, and never the word
     "parentheses": they are brackets.
+  - BODMAS governs the WORKING, not just the name. Never evaluate an addition
+    or a subtraction while a multiplication or division is still waiting,
+    EVEN WHEN THE ANSWER WOULD COME OUT RIGHT ANYWAY.
   - Money is Kenya shillings. Write "KSh 250" or "250 shillings", never "$250".
     Amounts should be ones a learner recognises from a shop or a fare.
   - Metric throughout: metres, kilograms, litres, degrees Celsius.
