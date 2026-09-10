@@ -322,6 +322,15 @@ h2, h3, h4 { break-after: avoid; }
 .example { border-left: 3px solid #111; padding: 8px 0 8px 10px; margin-bottom: 10px; }
 .example h4 { margin: 0 0 5px; font-size: 8.5pt; letter-spacing: 0.08em;
   text-transform: uppercase; }
+/* The verdict was unstyled, so it ran into the heading: "Example 1.1checked".
+   A badge a teacher has to parse out of a word is a badge they stop reading. */
+.example h4 .ok, .example h4 .warn, .example h4 .none {
+  display: inline-block; margin-left: 7px; padding: 0 4px;
+  font-size: 6.5pt; font-weight: 600; letter-spacing: 0.06em;
+  border: 1px solid; border-radius: 2px; vertical-align: 1px; }
+.example h4 .ok { color: #1c6b2e; background: #eef6f0; border-color: #bcdcc4; }
+.example h4 .warn { color: #9b1c1c; background: #fdeeee; border-color: #f0bcbc; }
+.example h4 .none { color: #555; background: #f2f2f2; border-color: #dcdcdc; }
 .example .statement { margin: 0 0 6px; font-weight: 600; }
 .example ol.working { margin: 0 0 6px; padding-left: 18px; }
 .example ol.working li { margin-bottom: 4px; }
@@ -622,16 +631,28 @@ def _worked_examples(module: dict[str, Any], n: int, start: int = 1) -> str:
     for i, example in enumerate(examples, start=start):
         statement = str(example.get("statement") or "")
         answer = str(example.get("answer") or "")
-        verdict = worked_solutions.check(statement, answer)
+        # The statement where it can be read, the steps where it cannot. A word
+        # problem has no expression in its statement, so the old check declined
+        # it and the badge came out BLANK — the same blank an example with no
+        # mathematics gets. One guide wrote `10 - 5 + 12 = 7` under that blank.
+        verdict = worked_solutions.check_working(
+            statement, answer, example.get("steps"))
 
-        flag = ""
         if verdict["checked"] and verdict["agrees"]:
             flag = "<span class='ok'>checked</span>"
+        elif verdict["checked"] and verdict.get("step"):
+            flag = ("<span class='warn'>step "
+                    f"{verdict['step']} does not reach "
+                    f"{_math('$' + verdict['claimed'] + '$')}</span>")
         elif verdict["checked"]:
             # Typeset, not escaped: a badge reading `\frac{7}{10}` is a badge
             # that tells a teacher the checker is broken.
             flag = ("<span class='warn'>this working does not reach "
                     f"{_math('$' + verdict['engine_answer'] + '$')}</span>")
+        else:
+            # Silence read as approval. It has to say nobody checked it.
+            flag = ("<span class='none' title='the engine could not read this "
+                    "example'>not checked</span>")
 
         # And the same expression worked twice is one lesson doing another
         # lesson's job.
@@ -663,7 +684,15 @@ def _worked_examples(module: dict[str, Any], n: int, start: int = 1) -> str:
         if example.get("answer"):
             out.append(f"<p class='answer'><span>Answer</span>"
                        f"{_math(example['answer'])}</p>")
-        if verdict["checked"] and verdict["agrees"] is False:
+        if verdict["checked"] and verdict["agrees"] is False and verdict.get("step"):
+            out.append(
+                f"<p class='why'>Step {verdict['step']} is wrong: its own "
+                f"left-hand side works out to "
+                f"{_math('$' + verdict['engine_answer'] + '$')}, not "
+                f"{_math('$' + verdict['claimed'] + '$')}. The answer below "
+                f"may still be right, but the METHOD is not — and the method "
+                f"is what a learner copies.</p>")
+        elif verdict["checked"] and verdict["agrees"] is False:
             out.append(
                 "<p class='why'>The maths engine works this expression to "
                 f"{_math(verdict['engine_answer'])}. Do not copy the steps "

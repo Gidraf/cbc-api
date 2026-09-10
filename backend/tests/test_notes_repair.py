@@ -682,7 +682,9 @@ def test_examples_are_numbered_across_a_lesson_not_within_a_segment() -> None:
     ]}
     html = render_material_html(material, grade="grade-9", subject="Mathematics",
                                 sub_strand="Integers")
-    numbers = re.findall(r"<h4>Example (\d+\.\d+)</h4>", html)
+    # Not `</h4>`-anchored: every example now carries a verdict badge inside
+    # the heading, because a blank one was being read as approval.
+    numbers = re.findall(r"<h4>Example (\d+\.\d+)", html)
 
     assert numbers == ["1.1", "1.2", "1.3", "2.1"]
 

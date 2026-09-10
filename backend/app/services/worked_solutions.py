@@ -166,6 +166,65 @@ def check(statement: str, claimed_answer: str) -> dict[str, Any]:
     return out
 
 
+# A step's own equation: `10 - 5 + 12 = 7`. Bounded so a paragraph that
+# happens to contain an `=` is not mistaken for one.
+_STEP_EQUATION = re.compile(r"^(?P<lhs>[^=]{2,120}?)\s*=\s*(?P<rhs>[^=]{1,60})$")
+
+_MAX_STEPS = 12
+
+
+def check_steps(steps: Any) -> dict[str, Any]:
+    """Whether each step's own equation is true.
+
+    A word problem has no expression in its statement, so `check` declines it
+    and the page showed no badge at all — the same blank an example with no
+    checkable mathematics gets. Example 3.1 of a Grade 9 Integers guide wrote
+    `10 - 5 + 12 = 7` under that blank: the step is worth 17, the temperature
+    answer 7 was right, and nothing on the page said the method was not.
+
+    The steps are checkable even when the statement is not, so they are checked
+    and the first false one is reported with its number.
+    """
+    out: dict[str, Any] = {"checked": False, "agrees": None,
+                           "engine_answer": "", "step": 0, "claimed": ""}
+    if not isinstance(steps, list):
+        return out
+
+    usable = [s for s in steps if isinstance(s, dict)][:_MAX_STEPS]
+    for number, step in enumerate(usable, start=1):
+        match = _STEP_EQUATION.match(str(step.get("working") or "").strip())
+        if not match:
+            continue
+        verdict = check(match.group("lhs"), match.group("rhs"))
+        if not verdict["checked"]:
+            continue
+        out["checked"] = True
+        if verdict["agrees"] is False:
+            out["agrees"] = False
+            out["engine_answer"] = verdict["engine_answer"]
+            out["step"] = number
+            out["claimed"] = match.group("rhs").strip()
+            return out
+        if out["agrees"] is None:
+            out["agrees"] = True
+    return out
+
+
+def check_working(statement: str, claimed_answer: str,
+                 steps: Any = None) -> dict[str, Any]:
+    """The statement where it can be read, the steps where it cannot.
+
+    One entry point, so the badge on the page and the findings in the console
+    cannot disagree about whether an example was checked.
+    """
+    out = check(statement, claimed_answer)
+    out.setdefault("step", 0)
+    out.setdefault("claimed", "")
+    if out["checked"]:
+        return out
+    return check_steps(steps)
+
+
 def rebuild(example: dict[str, Any]) -> tuple[dict[str, Any], str]:
     """A worked example with the ENGINE's working in place of a wrong one.
 
