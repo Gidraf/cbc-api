@@ -45,7 +45,8 @@ def test_results_from_outside_the_scope_are_discarded_not_downranked() -> None:
     assert any("discarded" in line for line in dossier.deliberation_trace)
 
 
-def test_an_empty_scoped_dossier_says_so_rather_than_filling_itself() -> None:
+def test_nothing_at_all_is_reported_rather_than_hidden() -> None:
+    """Scoped and open both dry: say so, do not pretend the dossier is full."""
     import unittest.mock as mock
 
     agent = web_research.WebResearchAgent()
@@ -54,7 +55,59 @@ def test_an_empty_scoped_dossier_says_so_rather_than_filling_itself() -> None:
                                        grade="grade-9")
 
     assert not dossier.citations
-    assert any("empty" in line for line in dossier.deliberation_trace)
+    assert any("scoped or open" in line for line in dossier.deliberation_trace)
+
+
+def test_a_scope_that_finds_nothing_widens_instead_of_starving() -> None:
+    """An empty `dossier_formatted_context` reaches the model as silence.
+
+    kicd.ac.ke publishes the designs as documents, not a page per sub-strand,
+    so a scoped search legitimately finds nothing — and the station that
+    defaulted to scope handed every generation an empty research block without
+    anything saying why.
+    """
+    import unittest.mock as mock
+
+    agent = web_research.WebResearchAgent()
+    outside = [{"title": "t", "url": "https://en.wikipedia.org/wiki/Integer",
+                "domain": "en.wikipedia.org", "snippet": "s",
+                "credibility": 0.95}]
+
+    calls: list[bool] = []
+
+    def search(query: str, *, allow_fallback: bool = True):
+        calls.append(allow_fallback)
+        # Scoped pass (no fallback) finds nothing; the widened pass finds this.
+        return outside if allow_fallback else []
+
+    with mock.patch.object(agent, "_execute_search", side_effect=search):
+        dossier = agent.research_topic("Mathematics", "Numbers", "Integers",
+                                       grade="grade-9")
+
+    assert [c.source_domain for c in dossier.citations] == ["en.wikipedia.org"]
+    assert True in calls, "it must actually widen, not just report widening"
+    assert any("Widening beyond" in line for line in dossier.deliberation_trace)
+    assert any("NONE of them is the design" in line
+               for line in dossier.deliberation_trace)
+
+
+def test_a_widened_source_cannot_outrank_the_design() -> None:
+    import unittest.mock as mock
+
+    agent = web_research.WebResearchAgent()
+    outside = [{"title": "t", "url": "https://example.com/integers",
+                "domain": "example.com", "snippet": "s", "credibility": 0.95}]
+
+    def search(query: str, *, allow_fallback: bool = True):
+        return outside if allow_fallback else []
+
+    with mock.patch.object(agent, "_execute_search", side_effect=search):
+        dossier = agent.research_topic("Mathematics", "Numbers", "Integers",
+                                       grade="grade-9")
+
+    assert dossier.citations
+    assert all(c.credibility_score <= web_research.OUTSIDE_SCOPE_CEILING
+               for c in dossier.citations)
 
 
 def test_scoped_research_does_not_fall_back_to_an_encyclopaedia() -> None:

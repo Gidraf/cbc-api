@@ -49,6 +49,11 @@ CURRICULUM_DOMAINS: tuple[str, ...] = (
 )
 
 
+# What a source found outside the curriculum domains may claim at most. It
+# stays usable; it stops outranking the design.
+OUTSIDE_SCOPE_CEILING: float = 0.6
+
+
 def within_scope(domain: str, allowed: tuple[str, ...] = CURRICULUM_DOMAINS) -> bool:
     """Whether a result came from one of the allowed hosts.
 
@@ -176,29 +181,40 @@ class WebResearchAgent:
 
         # 2. Execute Web Searches & Fetch Content
         turned_away: list[str] = []
-        for q in queries[:4]:
-            try:
-                # Scoped research does not fall back to Wikipedia. A general
-                # encyclopaedia answer to "what does the Grade 9 design say"
-                # reads like research and is not any.
-                results = self._execute_search(q, allow_fallback=not scope)
+
+        def _gather(active_scope: tuple[str, ...] | None, *,
+                    fallback: bool, ceiling: float = 1.0) -> None:
+            """Collect citations, keeping only what `active_scope` allows.
+
+            `ceiling` caps credibility: a page found outside the curriculum
+            domains may be correct, but it cannot outrank the design itself,
+            and a ranking that let it do so is how a Wikipedia summary came to
+            be the most trusted source in a dossier about a KICD sub-strand.
+            """
+            for q in queries[:4]:
+                try:
+                    results = self._execute_search(q, allow_fallback=fallback)
+                except Exception as exc:
+                    logger.warning("Search query failed for %s: %s", q, exc)
+                    continue
                 for r in results:
-                    if scope and not within_scope(r.get("domain", ""), scope):
+                    if active_scope and not within_scope(r.get("domain", ""), active_scope):
                         turned_away.append(str(r.get("domain") or "?"))
                         continue
-                    if not any(c.url == r["url"] for c in citations):
-                        citations.append(
-                            ResearchCitation(
-                                title=r["title"],
-                                url=r["url"],
-                                source_domain=r["domain"],
-                                snippet=r["snippet"],
-                                key_facts=r.get("facts", []),
-                                credibility_score=r.get("credibility", 0.9),
-                            )
+                    if any(c.url == r["url"] for c in citations):
+                        continue
+                    citations.append(
+                        ResearchCitation(
+                            title=r["title"],
+                            url=r["url"],
+                            source_domain=r["domain"],
+                            snippet=r["snippet"],
+                            key_facts=r.get("facts", []),
+                            credibility_score=min(r.get("credibility", 0.9), ceiling),
                         )
-            except Exception as exc:
-                logger.warning("Search query failed for %s: %s", q, exc)
+                    )
+
+        _gather(scope, fallback=not scope)
 
         deliberation_trace.append(f"📚 Retrieved and verified {len(citations)} authoritative source references.")
         if scope:
@@ -209,11 +225,29 @@ class WebResearchAgent:
                    if turned_away else "; nothing from outside it was offered.")
             )
             if not citations:
+                # Scoping must not mean starving. kicd.ac.ke publishes the
+                # designs as documents, not as a page per sub-strand, so a
+                # scoped search legitimately returns nothing — and an empty
+                # `dossier_formatted_context` reaches the model as silence,
+                # indistinguishable from research that found nothing to say.
+                # So widen, and say plainly that what came back is not KICD.
                 deliberation_trace.append(
-                    "⚠️ No source inside the scope answered. The dossier is "
-                    "empty, which is the honest result: write from the design "
-                    "itself and cite it, rather than from the open web."
+                    "⚠️ No source inside the scope answered. Widening beyond "
+                    "the curriculum domains, capped below design authority."
                 )
+                _gather(None, fallback=True, ceiling=OUTSIDE_SCOPE_CEILING)
+                if citations:
+                    deliberation_trace.append(
+                        f"🌐 {len(citations)} source(s) found outside the "
+                        "curriculum domains. NONE of them is the design: treat "
+                        "them as background and cite the design for anything "
+                        "the curriculum actually requires."
+                    )
+                else:
+                    deliberation_trace.append(
+                        "⚠️ Nothing answered, scoped or open. Write from the "
+                        "design in context and cite it."
+                    )
 
         # 3. Add Domain-Grounded Empirical Kenyan & Academic Data
         empirical_data, academic_insights, kenyan_case_studies, safety_guidelines = self._extract_empirical_insights(
