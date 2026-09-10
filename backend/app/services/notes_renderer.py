@@ -783,11 +783,58 @@ def _media_cue(item: dict[str, Any], number: str) -> str:
     return f"<figure class='figure'>{body}<figcaption>{caption}</figcaption></figure>"
 
 
+def _provenance(module: dict[str, Any], *, grade_label: str = "",
+                subject: str = "", strand: str = "", sub_strand: str = "",
+                design_row: dict[str, Any] | None = None) -> str:
+    """What this lesson realises in the design, by the design's own words.
+
+    A ref alone — `g9-mat-01` — is an address nobody can read. Resolved it
+    becomes "perform combined operations on integers", which a head of
+    department can find in the Grade 9 Mathematics design and in the BECF.
+
+    When nothing resolves the block still prints, saying so. It used to return
+    nothing, and a lesson with no provenance looked exactly like a lesson whose
+    provenance nobody had asked for — under a footer claiming both came from
+    the KICD design.
+    """
+    from . import placeholder_echo
+
+    serves = _serves_of(module, design_row)
+    cleaned = placeholder_echo.clean_citation(module.get("citation"))
+    ref, quote = cleaned["ref"], cleaned["quote"]
+
+    where = " · ".join(x for x in (grade_label, subject, strand, sub_strand) if x)
+    body = [f"<p class='curriculum'>{_esc(where)}</p>"] if where else []
+
+    for element in serves:
+        body.append(f"<p class='serves'><b>{_esc(element['ref'])}</b> "
+                    f"{_esc(element['text'])}</p>")
+
+    if ref:
+        page, _, line = ref.partition(":")
+        body.append(f"<p class='ref'>KICD design, page {_esc(page)}"
+                    + (f", line {_esc(line)}" if line else "") + "</p>")
+    if quote:
+        body.append(f"<blockquote>{_esc(quote)}</blockquote>")
+
+    if not serves and not ref and not quote:
+        # Named plainly, so it reads as a gap to close rather than as a design
+        # that happens to be quiet.
+        body.append(
+            "<p class='none'>This lesson names no design element. Nothing on "
+            "this page can be looked up in the curriculum design or the BECF "
+            "until it does.</p>")
+
+    inner = _aside("Where this comes from", "".join(body))
+    return inner.replace("<div class='aside'>", "<div class='aside citation'>", 1)
+
+
 def _lesson(module: dict[str, Any], n: int,
             assets: dict[str, str] | None = None, *,
             grade_label: str = "", subject: str = "",
             strand: str = "", sub_strand: str = "",
-            extras: dict[str, Any] | None = None) -> str:
+            extras: dict[str, Any] | None = None,
+            design_row: dict[str, Any] | None = None) -> str:
     title = str(module.get("title") or f"Lesson {n}")
     out = ["<section class='lesson'>"]
 
@@ -878,6 +925,15 @@ def _lesson(module: dict[str, Any], n: int,
     if module.get("homework_or_follow_up"):
         out.append(_aside("After the lesson",
                           f"<p>{_esc(module['homework_or_follow_up'])}</p>"))
+
+    # Provenance was rendered on the MATERIAL page and nowhere else, so the
+    # teacher's guide — the document anybody actually prints and teaches from —
+    # carried a footer reading "Generated from the KICD curriculum design" and
+    # not one reference to it. A lesson a head of department cannot look up is
+    # a lesson nobody can defend.
+    out.append(_provenance(module, grade_label=grade_label, subject=subject,
+                           strand=strand, sub_strand=sub_strand,
+                           design_row=design_row))
 
     # What the other stations made for THIS lesson. A guide was rendered from
     # the lesson plan alone, so the activity KICD funded — written, reviewed
@@ -1081,6 +1137,16 @@ def render_html(notes: dict[str, Any], *, grade: str = "", subject: str = "",
     modules = _modules(notes)
     title = str(notes.get("title") or f"Teacher's Guide: {sub_strand or 'Lesson notes'}")
 
+    # Read once for the whole guide, so every lesson's `serves` refs can print
+    # as the design's own words instead of as addresses nobody can read.
+    design_row: dict[str, Any] = {}
+    try:
+        from . import lesson_material as _lm
+
+        design_row = _lm._design_row(grade, subject, sub_strand, strand)
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("No design row for the guide (%s)", exc)
+
     meta = [p for p in (subject, grade, strand, sub_strand) if p]
     if notes.get("allocated_time"):
         meta.append(str(notes["allocated_time"]))
@@ -1125,6 +1191,7 @@ def render_html(notes: dict[str, Any], *, grade: str = "", subject: str = "",
         # come back and ask about.
         out.append(_lesson(
             module, i, assets, grade_label=grade, subject=subject,
+            design_row=design_row,
             strand=strand, sub_strand=sub_strand,
             extras={
                 "activities": by_lesson_activities.get(number, []),
@@ -1719,6 +1786,13 @@ _MATERIAL_CSS = """
 .aside.citation .curriculum { font-size: 8pt; letter-spacing: 0.06em;
   text-transform: uppercase; color: #555; margin: 0 0 3px; }
 .aside.citation .ref { font-size: 8.5pt; font-weight: 600; margin: 0 0 4px; }
+/* A ref and the design's words for it, on one line a head of department can
+   take to the design document and the BECF. */
+.aside.citation .serves { margin: 0 0 3px; font-size: 8.5pt; }
+.aside.citation .serves b { font-family: ui-monospace, Menlo, monospace;
+  font-size: 7.5pt; letter-spacing: 0.04em; text-transform: uppercase;
+  margin-right: 5px; color: #333; }
+.aside.citation .none { margin: 0; font-size: 8.5pt; color: #9b1c1c; }
 .aside.citation blockquote { margin: 0; padding-left: 8px;
   border-left: 2px solid #999; font-style: italic; font-size: 9pt;
   color: #333; }

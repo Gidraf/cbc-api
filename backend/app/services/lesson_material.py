@@ -228,6 +228,11 @@ class MaterialReport:
     echoed: list[dict[str, Any]] = field(default_factory=list)
     # Pieces that name nothing in the design they realise.
     unsourced: list[dict[str, Any]] = field(default_factory=list)
+    # Why provenance could not be checked at all, where it could not be. An
+    # empty `unsourced` used to mean both "every piece cites the design" and
+    # "this system has never read the design", and the gate reported the second
+    # as the first with a score of 1.0.
+    provenance_blocked: str = ""
     # The same teaching, or the same task, delivered twice as though it were new.
     repeated: list[dict[str, Any]] = field(default_factory=list)
     # Questions the piece sets and never answers.
@@ -353,7 +358,8 @@ def gate_of(report: "MaterialReport") -> dict[str, Any]:
     passed = (report.score >= PASS_SCORE and report.written == report.total
               and not report.unexercised and not report.miscast
               and not report.unanswered and not report.wrong_answers
-              and not report.repeated and not report.unsourced)
+              and not report.repeated and not report.unsourced
+              and not report.provenance_blocked)
 
     feedback = [
         # The arithmetic being right is not the same as it answering the
@@ -378,9 +384,16 @@ def gate_of(report: "MaterialReport") -> dict[str, Any]:
         # essay about the subject.
         {"aspect": "every_piece_names_what_it_serves",
          "method": "serves_refs_against_the_design_s_own_elements",
-         "status": "fail" if report.unsourced else "pass",
-         "score": 0.0 if report.unsourced else 1.0,
-         "comment": (f"{len(report.unsourced)} piece(s) name nothing in the "
+         "status": ("unchecked" if report.provenance_blocked
+                    else "fail" if report.unsourced else "pass"),
+         # Not 1.0. An unread design is not a clean bill of health, and scoring
+         # it as one is how a guide with no citation in it passed this gate.
+         "score": (0.0 if (report.provenance_blocked or report.unsourced)
+                   else 1.0),
+         "comment": (f"provenance could not be checked: "
+                     f"{report.provenance_blocked}"
+                     if report.provenance_blocked else
+                     f"{len(report.unsourced)} piece(s) name nothing in the "
                      f"design that they realise"
                      if report.unsourced else
                      "every piece names the design element it serves")},
@@ -508,6 +521,12 @@ def gate_of(report: "MaterialReport") -> dict[str, Any]:
     # Named before anything about length or register: a wrong marking key is
     # taught to every learner who marks their own work against it, and an
     # unanswered question becomes an unanswerable item on a paper.
+    if report.provenance_blocked:
+        actions.append(
+            f"Provenance is unverifiable: {report.provenance_blocked}. Load "
+            f"this sub-strand's design before publishing the guide — until it "
+            f"is loaded, nothing on the page can cite the curriculum and the "
+            f"page must not claim to.")
     for item in report.unsourced[:4]:
         actions.append(
             f"Lesson {item.get('lesson')} \"{item.get('topic', '')}\" names no "
@@ -692,8 +711,12 @@ def check(material: dict[str, Any], plan: Plan, grade: str = "",
         if isinstance(piece, dict):
             _check_exercises(piece, report)
     report.repeated = check_repetition(material)
-    report.unsourced = check_provenance(material, grade, subject, sub_strand,
-                                        strand)
+    try:
+        report.unsourced = check_provenance(material, grade, subject,
+                                            sub_strand, strand)
+    except UncheckableProvenance as exc:
+        report.unsourced = []
+        report.provenance_blocked = str(exc)
 
     by_key = {}
     for piece in pieces:
@@ -889,6 +912,16 @@ def check_repetition(material: dict[str, Any]) -> list[dict[str, Any]]:
     return found
 
 
+class UncheckableProvenance(RuntimeError):
+    """The design could not be read, so no piece can be checked against it.
+
+    Distinct from "every piece cites the design" on purpose. The two were the
+    same empty list, and a guide generated for a sub-strand this system had
+    never loaded scored 1.0 on provenance and printed no citation anywhere,
+    under a footer reading "Generated from the KICD curriculum design".
+    """
+
+
 def check_provenance(material: dict[str, Any], grade: str, subject: str,
                      sub_strand: str, strand: str = "") -> list[dict[str, Any]]:
     """Every piece, against the design elements it claims to realise.
@@ -906,12 +939,14 @@ def check_provenance(material: dict[str, Any], grade: str, subject: str,
 
     row = _design_row(grade, subject, sub_strand, strand)
     if not row:
-        # Nothing to check against. Silence rather than failing every piece for
-        # a design this system has not read.
-        return []
+        raise UncheckableProvenance(
+            f"no row in curriculum_substrands for {grade} · {subject} · "
+            f"{sub_strand}, so nothing could be checked against the design")
     available = design_elements.refs(row)
     if not available:
-        return []
+        raise UncheckableProvenance(
+            f"the design row for {sub_strand} carries no learning outcomes, "
+            f"inquiry questions or experiences to cite")
 
     out: list[dict[str, Any]] = []
     for piece in (material.get("material") or []):

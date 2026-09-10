@@ -130,11 +130,36 @@ def test_a_piece_that_names_a_real_element_passes() -> None:
     assert _provenance({"material": [_piece(1, serves=["g9-mat-01"])]}) == []
 
 
-def test_a_design_this_system_has_not_read_fails_nothing() -> None:
-    """Silence rather than failing every piece for a design nobody extracted."""
+def test_a_design_this_system_has_not_read_blames_no_piece() -> None:
+    """No piece is at fault for a design nobody extracted — but it is not clean.
+
+    This used to return `[]`, which is also what "every piece cites the design"
+    returns. The gate read the empty list, scored 1.0 and printed "every piece
+    names the design element it serves" about a guide that had never been
+    checked against anything, under a footer claiming KICD provenance.
+    """
     with mock.patch.object(lm, "_design_row", return_value={}):
-        assert lm.check_provenance({"material": [_piece(1)]},
-                                   "grade-9", "Mathematics", "Integers") == []
+        try:
+            lm.check_provenance({"material": [_piece(1)]},
+                                "grade-9", "Mathematics", "Integers")
+        except lm.UncheckableProvenance as exc:
+            assert "curriculum_substrands" in str(exc)
+        else:
+            raise AssertionError("an unread design must not report clean")
+
+
+def test_an_unread_design_is_reported_as_unchecked_not_passed() -> None:
+    report = lm.MaterialReport(total=1, written=1)
+    report.provenance_blocked = "no row in curriculum_substrands for grade-9"
+    gate = lm.gate_of(report)
+
+    assert not gate["passed"]
+    aspect = next(a for a in gate["reviewer"]["feedback"]
+                  if a["aspect"] == "every_piece_names_what_it_serves")
+    assert aspect["status"] == "unchecked"
+    assert aspect["score"] == 0.0
+    assert "could not be checked" in aspect["comment"]
+    assert any("unverifiable" in a for a in gate["next_actions"])
 
 
 def test_missing_provenance_fails_the_gate() -> None:
