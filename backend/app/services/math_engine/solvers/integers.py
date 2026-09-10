@@ -26,10 +26,26 @@ from ..objects import SolutionStep, SolutionTrace
 
 # A number, an operator, or a bracket. Unicode operators are included because
 # the models write them and so do the textbooks.
-_TOKEN = re.compile(r"\d+\.\d+|\d+|[-+*/×÷()]|\s+")
+_TOKEN = re.compile(r"\d+\.\d+|\d+|\*\*|[-+*/×÷()^]|\s+")
 
 _TIMES = {"*", "×"}
 _DIVIDE = {"/", "÷"}
+
+# Orders is the O in BODMAS and the designs name it, so the engine has to work
+# it. Until it did, `8 + (3 \times 4) - 2^2` lost the exponent before it was
+# ever parsed and the engine answered 18 for an expression worth 16 —
+# contradicting correct working on the page, under its own authority.
+_SUPERSCRIPT = str.maketrans({
+    "\u2070": "0", "\u00b9": "1", "\u00b2": "2", "\u00b3": "3", "\u2074": "4",
+    "\u2075": "5", "\u2076": "6", "\u2077": "7", "\u2078": "8", "\u2079": "9",
+})
+_SUPERS = re.compile(r"[\u2070\u00b9\u00b2\u00b3\u2074-\u2079]+")
+
+
+def _normalise(text: str) -> str:
+    """One spelling for each operator, before anything tries to read them."""
+    out = _SUPERS.sub(lambda m: "^" + m.group(0).translate(_SUPERSCRIPT), text)
+    return out.replace("**", "^")
 
 
 class NotArithmetic(ValueError):
@@ -72,7 +88,9 @@ def _render(tokens: list[str]) -> str:
     for i, token in enumerate(tokens):
         if i in skip:
             continue
-        if token == "*":
+        if token == "^":
+            out.append("^")
+        elif token == "*":
             out.append(" \\times ")
         elif token == "/":
             out.append(" \\div ")
@@ -100,6 +118,11 @@ def _render(tokens: list[str]) -> str:
 
 def _reason(left: Fraction, op: str, right: Fraction, result: Fraction) -> str:
     """Why this step comes out as it does — the sign rules, said plainly."""
+    if op == "^":
+        if left < 0 and right.denominator == 1 and int(right) % 2 == 0:
+            return (f"An even power of a negative is positive: "
+                    f"{_show(left)} multiplied by itself gives {_show(result)}.")
+        return f"{_show(left)} multiplied by itself {_show(right)} times."
     if op == "*":
         if left < 0 and right < 0:
             return "A negative multiplied by a negative gives a positive."
@@ -130,6 +153,14 @@ def _reason(left: Fraction, op: str, right: Fraction, result: Fraction) -> str:
 
 
 def _apply(left: Fraction, op: str, right: Fraction) -> Fraction:
+    if op == "^":
+        if right.denominator != 1:
+            raise NotArithmetic("fractional exponent")
+        if abs(right) > 64:
+            raise NotArithmetic("exponent too large to work by hand")
+        if left == 0 and right < 0:
+            raise NotArithmetic("division by zero")
+        return left ** int(right)
     if op == "+":
         return left + right
     if op == "-":
@@ -176,6 +207,12 @@ def _next_operation(tokens: list[str]) -> tuple[str, int, int] | None:
             kind, a, b = found
             return (kind, a + depth_open + 1, b + depth_open + 1)
 
+    # Orders before × and ÷, and right to left: 2^3^2 is 2^(3^2), not (2^3)^2.
+    for i in range(len(tokens) - 1, -1, -1):
+        if (tokens[i] == "^" and i > 0 and _is_value(tokens[i - 1])
+                and i + 1 < len(tokens)):
+            return ("op", i, i)
+
     for wanted in (("*", "/"), ("+", "-")):
         for i, token in enumerate(tokens):
             if (token in wanted and i > 0 and _is_value(tokens[i - 1])
@@ -198,10 +235,10 @@ def solve_integer_expression(text: str, max_steps: int = 12) -> SolutionTrace:
     Raises `NotArithmetic` when the text is not a self-contained calculation,
     so the dispatcher can move on rather than inventing an answer.
     """
-    tokens = _tokenise(text.strip())
+    tokens = _tokenise(_normalise(text).strip())
     if not any(_is_value(t) for t in tokens):
         raise NotArithmetic("no numbers")
-    if not any(t in "+-*/" for t in tokens[1:]):
+    if not any(t in "+-*/^" for t in tokens[1:]):
         raise NotArithmetic("nothing to work out")
 
     problem = _render(tokens)
@@ -295,6 +332,50 @@ def _from_words(text: str) -> str:
     return ""
 
 
+# An operator the engine cannot work. Anywhere in the sentence it disqualifies
+# the whole sentence: "50% of 40 + 10" offers the clean run `40 + 10`, and
+# answering 50 from it is a misreading published as a fact.
+_UNSUPPORTED = set("\u221a%!|")
+
+# The LaTeX commands this engine can read. Anything else — \\sqrt, \\frac,
+# \\sum — means the run we can parse is only part of the expression.
+_LATEX_OK = frozenset({"times", "div", "cdot", "left", "right", "text", "quad"})
+_LATEX = re.compile(r"\\([A-Za-z]+)")
+
+# A character that binds to whatever sits against it — an exponent, a brace, a
+# degree sign. Touching the run means the run is part of something larger.
+_BINDS = set("^_{}\\\u00b0")
+
+# A number welded to a letter: `3x`, `x2`. The run beside it is a fragment of
+# an algebraic expression, not a calculation.
+_TERM = re.compile(r"(?:\d[A-Za-z]|[A-Za-z]\d)\s*$")
+
+
+def _is_a_fragment(source: str, span: tuple[int, int]) -> bool:
+    """Whether the run at `span` is part of a larger mathematical object."""
+    start, end = span
+
+    if any(ch in _UNSUPPORTED for ch in source):
+        return True
+    if any(name not in _LATEX_OK for name in _LATEX.findall(source)):
+        return True
+
+    before, after = source[:start], source[end:]
+
+    # Touching, with no space to separate them.
+    for edge in (before[-1:], after[:1]):
+        if edge and (edge in _BINDS or edge.isdigit()):
+            return True
+
+    # A term like `3x` before the run, even with a space after it.
+    if _TERM.search(before):
+        return True
+    if re.match(r"^\s*(?:\d[A-Za-z]|[A-Za-z]\d)", after):
+        return True
+
+    return False
+
+
 def arithmetic_in(text: str) -> str:
     """The self-contained calculation inside a sentence, or "".
 
@@ -302,15 +383,25 @@ def arithmetic_in(text: str) -> str:
     that is nothing but numbers, operators and brackets — and where there is no
     such run, try the calculation written in words.
     """
+    source = _normalise(text)
     best = ""
-    for run in re.findall(r"[0-9+\-*/×÷().\s]+", text):
-        candidate = run.strip(" .\n\t")
+    best_span = (0, 0)
+    for run in re.finditer(r"[0-9+\-*/×÷()^.\s]+", source):
+        candidate = run.group(0).strip(" .\n\t")
         if not re.search(r"\d", candidate):
             continue
-        if not re.search(r"[-+*/×÷]", candidate.lstrip("-+")):
+        if not re.search(r"[-+*/×÷^]", candidate.lstrip("-+")):
             continue
         if candidate.count("(") != candidate.count(")"):
             continue
         if len(candidate) > len(best):
             best = candidate
+            start = run.start() + run.group(0).find(candidate)
+            best_span = (start, start + len(candidate))
+    if best and _is_a_fragment(source, best_span):
+        # Answering from part of an expression is worse than not answering.
+        # `8 + (3 \times 4) - 2^2` once yielded the run `8 + (3 \times 4) - 2`,
+        # which works out to 18 — and the engine published 18 against working
+        # that correctly reached 16. A truncated run is not the calculation.
+        return ""
     return best or _from_words(text)
