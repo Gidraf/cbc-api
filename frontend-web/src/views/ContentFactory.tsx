@@ -1606,6 +1606,13 @@ function StationResult({ result }: { result: any }) {
   // reported on its own rather than folded into the gate's score.
   const repetition = result?.repetition;
   const repeats: string[] = repetition?.checked && !repetition?.clean ? repetition.findings || [] : [];
+  // The arithmetic the guide teaches from, against the floor for its grade and
+  // against each lesson's own rung. Measured on every run since the plan
+  // station started being checked, stored with the version — and never drawn,
+  // so the one gate that reads the mathematics was invisible in the console.
+  const pitch = result?.pitch;
+  const mispitched: any[] =
+    pitch && !pitch.clean ? pitch.findings || [] : [];
   // The guide against its own claims: an slo_map naming lessons that teach
   // something else, a learning experience the design never suggested.
   const integrity = result?.integrity;
@@ -1618,7 +1625,14 @@ function StationResult({ result }: { result: any }) {
   const steps: any[] = result?.progress?.steps || [];
   const remediation = result?.remediation;
 
-  if (!gate && !rejected.length && !repeats.length && !contradictions.length && !steps.length)
+  if (
+    !gate &&
+    !rejected.length &&
+    !repeats.length &&
+    !contradictions.length &&
+    !mispitched.length &&
+    !steps.length
+  )
     return null;
 
   return (
@@ -1667,6 +1681,37 @@ function StationResult({ result }: { result: any }) {
             {contradictions.map((f, i) => (
               <li key={i} style={{ marginBottom: "4px" }}>
                 {f}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {mispitched.length > 0 && (
+        <div
+          style={{
+            border: "1px solid var(--warn)",
+            background: "var(--warn-wash)",
+            borderRadius: "var(--radius-sm)",
+            padding: "var(--s3)",
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: "var(--s2)", flexWrap: "wrap" }}>
+            <Badge tone="warn">pitched below the grade</Badge>
+            <strong style={{ fontSize: "var(--text-sm)" }}>
+              {pitch.checked} expression{pitch.checked === 1 ? "" : "s"} measured
+            </strong>
+            <span style={{ fontSize: "var(--text-sm)", color: "var(--ink-2)" }}>
+              every lesson against its own rung, not the guide against the floor
+            </span>
+          </div>
+          <ul style={{ margin: "var(--s2) 0 0", paddingLeft: "1.1rem", fontSize: "var(--text-sm)" }}>
+            {mispitched.map((f, i) => (
+              <li key={i} style={{ marginBottom: "6px" }}>
+                {f.says}
+                {f.fix && (
+                  <div style={{ color: "var(--ink-2)", marginTop: "2px" }}>{f.fix}</div>
+                )}
               </li>
             ))}
           </ul>
