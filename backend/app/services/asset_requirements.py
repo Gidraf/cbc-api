@@ -143,7 +143,8 @@ _LIST = re.compile(r",|\band\b", re.I)
 _CLASSROOM = re.compile(
     r"\b(cards?|worksheets?|counters?|dice|beads?|sticks?|bottle tops?|"
     r"stones?|straws?|rulers?|tape measures?|thermometers?|calculators?|"
-    r"charts?|manila|markers?|string)\b", re.I)
+    r"charts?|manila|markers?|string|sheets?|pads?|notebooks?|"
+    r"graph papers?|squared papers?)\b", re.I)
 
 
 def _is_a_shopping_list(text: str) -> bool:
@@ -203,6 +204,20 @@ _ASKS = re.compile(
 # Words that name the ARTEFACT rather than its subject. Not a list of bad
 # topics — it is the closed class of words a figure caption can never usefully
 # consist of, because every figure on every page is one of them.
+# Why a picture is wanted, never what it shows. "Charts for visual
+# representation" and "Charts for displaying problems" both reserved a plate
+# and told whoever had to draw it nothing — they are the purpose clause with the
+# subject missing.
+PURPOSE_WORDS = {
+    "representation", "representations", "representing", "display",
+    "displaying", "displays", "recording", "record", "illustrating",
+    "showing", "show", "demonstrating", "demonstration", "reference",
+    "purposes", "purpose", "use", "uses", "using", "aid", "aids",
+    "visualisation", "visualization", "support", "explanation", "explaining",
+    "problems", "operations", "concepts", "ideas", "examples", "work",
+    "understanding", "learning", "teaching", "class", "lesson", "lessons",
+}
+
 CATEGORY_WORDS = {
     "chart", "charts", "diagram", "diagrams", "figure", "figures",
     "graph", "graphs", "illustration", "illustrations", "image", "images",
@@ -220,7 +235,8 @@ def names_only_a_category(text: str) -> bool:
     """
     words = [w for w in re.findall(r"[a-z]+", str(text).lower())
              if w not in ("a", "an", "the", "of", "and", "for", "some")]
-    return bool(words) and all(w in CATEGORY_WORDS for w in words)
+    return bool(words) and all(w in CATEGORY_WORDS or w in PURPOSE_WORDS
+                               for w in words)
 
 
 def read(plan: dict[str, Any]) -> Requirements:

@@ -229,8 +229,14 @@ def test_card_described_by_what_it_records_is_not_a_recording() -> None:
                              "whiteboard and markers"],
     }]}
 
+    # Not audio: that was the original fault, and it stands.
+    assert ar._classify("charts for recording operations",
+                        in_the_resource_list=True) == "diagram"
+
+    # And it reserves no plate either, because "for recording operations" says
+    # why the chart is wanted and never what it shows.
     kinds = {r.what: r.kind for r in ar.read(plan).items}
-    assert kinds["charts for recording operations"] == "diagram"
+    assert "charts for recording operations" not in kinds
     assert "audio" not in kinds.values()
 
 
@@ -252,3 +258,64 @@ def test_the_rule_applies_only_to_the_materials_list() -> None:
         "charts for recording operations") == "audio"
     assert ar._classify(
         "charts for recording operations", in_the_resource_list=True) == "diagram"
+
+
+# ── a caption that says only what the picture is FOR ─────────────────────────
+#
+# Three of three figures in a Grade 9 Integers guide were captioned off the
+# materials list: "Charts for visual representation", "Charts for displaying
+# problems", and "Recording sheets" — the last under a plate reading "play the
+# recording at this point", about paper the teacher brings. Each reserved space
+# on the page and told whoever had to produce it nothing.
+
+def test_a_purpose_clause_with_no_subject_names_no_figure() -> None:
+    from app.services.asset_requirements import names_only_a_category
+
+    for text in ("Charts for visual representation",
+                 "Charts for displaying problems",
+                 "charts for recording operations",
+                 "charts for the lesson",
+                 "a diagram for reference"):
+        assert names_only_a_category(text), text
+
+
+def test_a_caption_that_names_its_subject_survives() -> None:
+    """The check earns its keep only if it does not eat the real ones."""
+    from app.services.asset_requirements import names_only_a_category
+
+    for text in ("a number line from -10 to 10 marked in ones",
+                 "Digestive system",
+                 "Bar chart of Grade 9 attendance",
+                 "a thermometer showing -5 degrees Celsius",
+                 "a table of the first ten square numbers",
+                 "the water cycle"):
+        assert not names_only_a_category(text), text
+
+
+def test_recording_sheets_are_paper_not_audio() -> None:
+    """`Recording sheets` matched the audio pattern on the word "recording"."""
+    from app.services.asset_requirements import _classify
+
+    assert _classify("Recording sheets", in_the_resource_list=True) == "object"
+    assert _classify("recording pads", in_the_resource_list=True) == "object"
+
+
+def test_no_plate_is_reserved_from_a_materials_list_entry() -> None:
+    from app.services.asset_requirements import read
+
+    plan = {"modules": [
+        {"module_number": 3, "title": "Applying combined operations",
+         "resources_needed": ["Number cards", "Charts for visual representation",
+                              "Whiteboard and markers"]},
+        {"module_number": 4, "title": "Advanced applications",
+         "resources_needed": ["Thermometers", "Recording sheets", "Whiteboard"]},
+        {"module_number": 6, "title": "Complex applications",
+         "resources_needed": ["Charts for displaying problems"]},
+        {"module_number": 7, "title": "One that does name its subject",
+         "resources_needed": ["a number line from -10 to 10 marked in ones"]},
+    ]}
+    drawn = [r for r in read(plan).items
+             if r.kind in ("diagram", "image", "video", "audio", "simulation")]
+
+    assert [(r.module_number, r.what) for r in drawn] == [
+        (7, "a number line from -10 to 10 marked in ones")]
