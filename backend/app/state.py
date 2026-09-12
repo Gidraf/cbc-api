@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import secrets
 from dataclasses import dataclass, field
@@ -10,6 +11,11 @@ from cryptography.fernet import Fernet
 from .config import Provider
 from .infra.db import execute, fetch_all, to_json
 from .settings import settings
+
+logger = logging.getLogger("cbc-state")
+
+# The one OpenAI model every stage runs on. Not mini, for any stage.
+DEFAULT_OPENAI_MODEL = "gpt-4o"
 
 
 @dataclass(slots=True)
@@ -175,15 +181,17 @@ class RuntimeState:
                 # nobody configured should fall to something that can do the
                 # work, and be visible in the log when it does.
                 if not raw_model or lower in {"", "null", "undefined", "default", "none"} or "gpt-5" in lower or "gpt5" in lower:
-                    from .services.stages import needs_reasoning
-
-                    model = ("gpt-4o" if needs_reasoning(row["pipeline_stage"])
-                             else "gpt-4o-mini")
+                    model = DEFAULT_OPENAI_MODEL
                     logger.warning(
                         "Stage %s had no usable model (%r); falling back to %s.",
                         row["pipeline_stage"], raw_model, model)
                 elif "4o-mini" in lower or "gpt-4-mini" in lower:
-                    model = "gpt-4o-mini"
+                    # Never mini. The console wrote it into every stage and
+                    # the content came out of the smaller model.
+                    model = DEFAULT_OPENAI_MODEL
+                    logger.warning(
+                        "Stage %s was bound to %r; using %s — mini is not used "
+                        "for any stage.", row["pipeline_stage"], raw_model, model)
                 elif "4o" in lower:
                     model = "gpt-4o"
                 else:

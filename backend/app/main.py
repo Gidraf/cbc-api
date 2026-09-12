@@ -38,7 +38,7 @@ from .services.pipeline import PipelineService
 from .services.provider_router import ProviderRouter
 from .services.validation import validate_grade_dataset
 from .services.workflow import WorkflowService
-from .state import StageBinding, runtime_state
+from .state import DEFAULT_OPENAI_MODEL, StageBinding, runtime_state
 
 app = FastAPI(title="CBC API Platform", version="2.1.0", description="Contract-First Educational Content Production System")
 
@@ -229,18 +229,17 @@ def _bootstrap_default_stage_bindings() -> None:
     if runtime_state.stage_bindings:
         return
 
-    # A stage that AUTHORS gets a model that can reason; a stage that reads a
-    # table out of a document does not need one and paying for one is waste.
-    # Every stage used to default to gpt-4o-mini, including the one writing
-    # Grade 9 mathematics out of 35,000 tokens of curriculum design.
-    from .services.stages import needs_reasoning
-
+    # Every stage runs on gpt-4o. The reading stages were on gpt-4o-mini to
+    # save money, and then the authoring stages were too, because the console
+    # wrote mini into every binding — and a Grade 9 mathematics guide came out
+    # of the smaller model six times in a row. One model, no exceptions, is
+    # the rule the operator asked for.
     provider = Provider.OPENAI.value
     for stage in STAGE_NAMES:
         runtime_state.stage_bindings[stage] = StageBinding(
             pipeline_stage=stage,
             provider=provider,
-            model="gpt-4o" if needs_reasoning(stage) else "gpt-4o-mini",
+            model=DEFAULT_OPENAI_MODEL,
             base_url=None,
         )
 

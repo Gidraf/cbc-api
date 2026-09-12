@@ -290,3 +290,41 @@ def test_the_console_offers_installed_models_rather_than_free_text() -> None:
     # And a bound model the server does not have stays visible and selectable,
     # because hiding it hides what is actually bound.
     assert "(not installed there)" in screen
+
+
+# ── no stage runs on mini ─────────────────────────────────────────────────────
+
+
+def test_a_stored_mini_binding_is_loaded_as_4o(monkeypatch) -> None:
+    """The console wrote gpt-4o-mini into every stage binding, a stored row
+    overrides the bootstrap default, and six Grade 9 mathematics guides came
+    out of the smaller model. Mini is not used for any stage."""
+    from app import state as state_mod
+
+    rows = [{"pipeline_stage": "notes_generation", "provider": "openai",
+             "model": "gpt-4o-mini", "base_url": None},
+            {"pipeline_stage": "web_research", "provider": "openai",
+             "model": "", "base_url": None}]
+    monkeypatch.setattr(state_mod, "fetch_all",
+                        lambda q, *a, **k: rows if "stage_bindings" in q else [])
+
+    rs = state_mod.RuntimeState()
+    rs.load_from_db()
+
+    assert rs.stage_bindings["notes_generation"].model == "gpt-4o"
+    assert rs.stage_bindings["web_research"].model == "gpt-4o"
+
+
+def test_the_bootstrap_default_is_4o_for_every_stage() -> None:
+    from app import main as main_mod
+    from app.state import RuntimeState, runtime_state
+
+    saved = dict(runtime_state.stage_bindings)
+    try:
+        runtime_state.stage_bindings.clear()
+        main_mod._bootstrap_default_stage_bindings()
+        models = {b.model for b in runtime_state.stage_bindings.values()}
+        assert models == {"gpt-4o"}, models
+    finally:
+        runtime_state.stage_bindings.clear()
+        runtime_state.stage_bindings.update(saved)
