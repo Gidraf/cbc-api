@@ -244,6 +244,11 @@ def check_steps(steps: Any) -> dict[str, Any]:
         match = _STEP_EQUATION.match(working)
         if match:
             lhs, rhs = match.group("lhs").strip(), match.group("rhs").strip()
+            # `Change = -3 - 5`, then `Change = -8`: a label on the left is
+            # not arithmetic. The claim is that what the label stood for on
+            # the previous line comes to this.
+            if previous and not any(ch.isdigit() for ch in lhs):
+                lhs = previous
         elif working.startswith("=") and previous:
             lhs, rhs = previous, working.lstrip("= ").strip()
         elif previous and _is_a_value(_comparable(working)):

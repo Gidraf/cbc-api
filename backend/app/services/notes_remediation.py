@@ -1142,6 +1142,7 @@ def run(
     max_passes: int = MAX_PASSES,
     design_row: dict[str, Any] | None = None,
     strand: str = "",
+    regenerate: Any = None,
 ) -> tuple[dict[str, Any], Report]:
     """Repair the guide until the checks pass, it stops improving, or passes run out."""
     report = Report()
@@ -1233,12 +1234,17 @@ def run(
                 notes)
 
         try:
-            response = generate(
-                model_config,
-                (base_messages or []) + [{"role": "user", "content": instruction}],
-                temperature=0.2,
-            )
-            content = response.content if hasattr(response, "content") else response
+            if rung == "regenerate" and regenerate is not None:
+                # The planner again — with the plan, the hand-off and the
+                # write-time checks — told what the last guide failed.
+                content = regenerate(findings)
+            else:
+                response = generate(
+                    model_config,
+                    (base_messages or []) + [{"role": "user", "content": instruction}],
+                    temperature=0.2,
+                )
+                content = response.content if hasattr(response, "content") else response
             if rung == "rewrite":
                 landed = _merge(notes, content)
             else:

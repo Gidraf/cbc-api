@@ -2393,6 +2393,8 @@ Return the same JSON schema with exactly ONE entry in `modules`: this lesson. Do
 
 {{ handoff }}
 
+{{ failed }}
+
 WHAT THIS LESSON MUST NOT DO:
   - It must not re-teach what the previous lesson taught.
   - It must not re-use the tasks the previous lesson worked, or the same tasks with the numbers changed.

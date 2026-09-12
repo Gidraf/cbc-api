@@ -199,11 +199,12 @@ def test_the_loop_numbers_the_lessons_itself() -> None:
 
 
 def test_the_envelope_survives_the_split() -> None:
-    """The guide's own title and intro come from the first call; only the
-    modules are collected."""
+    """The guide's intro comes from the first call; only the modules are
+    collected. The title is the sub-strand's — lesson 1 used to title the
+    whole guide after itself."""
     out, _ = _fake_run(3)
 
-    assert out["title"] == "Integers" and out["intro"] == "envelope field"
+    assert out["title"] == "Teacher's Guide: Integers" and out["intro"] == "envelope field"
     assert "hour_modules" not in out, "the mirror is added later, once"
 
 
@@ -403,3 +404,112 @@ def test_a_rung_where_order_matters_is_not_met_by_two_additive_kinds() -> None:
     assert step.order_matters
     d = task_demand.measure("$50 - 20 + 15$")
     assert len(d.kinds) >= step.kinds and not d.order_matters
+
+
+# ── checked at write time, and written again the same way ────────────────────
+
+
+def _run_with(monkeypatch, lessons: int, author, design_row=None, findings=None):
+    import types
+    import unittest.mock as mock
+
+    from app.routes import curriculum
+    from app.services.cost_tracker import TokenUsage
+
+    seen: list[str] = []
+
+    class Resp:
+        def __init__(self, content):
+            self.content = content
+            self.usage = TokenUsage()
+            self.model = "fake"
+            self.provider = "fake"
+
+    def generate(resolved, messages, temperature=0.15):
+        seen.append(messages[-1]["content"])
+        return Resp({"title": "x", "modules": [author(len(seen), messages[-1]["content"])]})
+
+    log = types.SimpleNamespace(step=lambda *a, **k: None)
+    ctx = types.SimpleNamespace(messages=[{"role": "user", "content": "the sub-strand"}])
+    with mock.patch("app.services.llm_client.llm_client.generate", generate):
+        out = curriculum._plan_lesson_by_lesson(
+            ctx, object(), lessons=lessons, grade="grade-9", subject="Mathematics",
+            strand="Numbers", sub_strand="Integers", run_log=log,
+            design_row=design_row or {}, design_experiences=["discuss integers"],
+            findings=findings)
+    return out.content, seen
+
+
+CLONE = {"statement": r"Evaluate $(-3 + 5) \times 2 - 4$.",
+         "steps": [{"working": r"$(-3+5) \times 2 - 4 = 2 \times 2 - 4$", "because": "brackets"},
+                   {"working": r"$2 \times 2 - 4 = 0$", "because": "multiply, subtract"}],
+         "answer": "0"}
+FRESH = {"statement": r"Evaluate $-18 - (-12) \times 2 + (-7)$.",
+         "steps": [{"working": r"$-18 - (-12) \times 2 + (-7) = -18 + 24 - 7$", "because": "multiply first"},
+                   {"working": r"$-18 + 24 - 7 = -1$", "because": "left to right"}],
+         "answer": "-1"}
+SECOND = {"statement": r"Work out $\dfrac{(-9 + 4) \times (-6)}{-2 \times 5}$.",
+          "steps": [{"working": r"$\dfrac{(-9+4) \times (-6)}{-2 \times 5} = \dfrac{-5 \times (-6)}{-10}$", "because": "brackets"},
+                    {"working": r"$\dfrac{30}{-10} = -3$", "because": "divide"}],
+          "answer": "-3"}
+THIRD = {"statement": r"Work out $-40 \div (-8) + (-3) \times 6 - (-11)$.",
+         "steps": [{"working": r"$-40 \div (-8) + (-3) \times 6 - (-11) = 5 - 18 + 11$", "because": "÷ and × first"},
+                   {"working": r"$5 - 18 + 11 = -2$", "because": "left to right"}],
+         "answer": "-2"}
+
+
+def test_a_lesson_that_clones_the_one_before_is_written_again_at_once(monkeypatch) -> None:
+    """Lesson 2 worked the expression lesson 1 had worked. It used to be found
+    only when the finished guide was inspected, and the fix then was writing
+    the whole guide again."""
+    def author(call, prompt):
+        if call == 1:
+            return {"module_number": 1, "title": "Lesson 1", "worked_examples": [CLONE, SECOND],
+                    "learning_experiences_used": ["discuss integers"]}
+        if call == 2:
+            return {"module_number": 1, "title": "Lesson 2", "worked_examples": [CLONE, THIRD],
+                    "learning_experiences_used": ["discuss integers"]}
+        return {"module_number": 1, "title": "Lesson 2 again", "worked_examples": [FRESH, THIRD],
+                "learning_experiences_used": ["discuss integers"]}
+
+    out, seen = _run_with(monkeypatch, 2, author)
+
+    assert len(seen) == 3, "lesson 1, lesson 2, and one retry of lesson 2"
+    assert "FAILED THESE CHECKS" in seen[2] and "repeats an expression" in seen[2]
+    assert out["modules"][1]["title"] == "Lesson 2 again"
+
+
+def test_a_retry_that_does_no_better_is_not_kept_over_the_first(monkeypatch) -> None:
+    def author(call, prompt):
+        return {"module_number": 1, "title": f"Attempt {call}", "worked_examples": [CLONE, SECOND],
+                "learning_experiences_used": ["discuss integers"]}
+
+    out, seen = _run_with(monkeypatch, 2, author)
+
+    assert len(seen) == 3, "one retry, not a loop"
+    assert out["modules"][1]["title"] in {"Attempt 2", "Attempt 3"}
+
+
+def test_a_regeneration_tells_each_lesson_what_the_last_guide_failed(monkeypatch) -> None:
+    prompts: list[str] = []
+
+    def author(call, prompt):
+        prompts.append(prompt)
+        return {"module_number": 1, "title": f"L{call}",
+                "worked_examples": [[FRESH, SECOND], [CLONE, THIRD]][(call - 1) % 2],
+                "learning_experiences_used": ["discuss integers"]}
+
+    _run_with(monkeypatch, 2, author,
+              findings=["Lesson 2 works an example of exactly the shape Lesson 1 already worked.",
+                        "The design suggests \"x\" and no lesson uses it."])
+
+    assert "FAILED THESE CHECKS" not in prompts[0], "lesson 1 had no finding of its own"
+    assert "exactly the shape Lesson 1" in prompts[1]
+    assert "no lesson uses it" not in prompts[1], "guide-wide findings are not a lesson's to fix"
+
+
+def test_the_guide_is_titled_after_the_sub_strand_not_after_lesson_1(monkeypatch) -> None:
+    out, _ = _run_with(monkeypatch, 1, lambda c, p: {
+        "module_number": 1, "title": "Lesson 1: Basics", "worked_examples": [FRESH, SECOND],
+        "learning_experiences_used": ["discuss integers"]})
+    assert out["title"] == "Teacher's Guide: Integers" and out["module_count"] == 1

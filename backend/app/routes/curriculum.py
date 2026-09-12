@@ -916,10 +916,37 @@ def factory_get_profile(
     }
 
 
+# Findings that name a lesson and are about what that lesson WROTE — the kind
+# a second attempt at the same lesson can fix while the hand-off is still
+# fresh. Guide-wide findings (an experience no lesson uses, an empty field in
+# every module) are the remediation loop's business afterwards.
+_WRITE_TIME_FINDING = (
+    "repeats an expression", "exactly the shape", "written to the wrong plan",
+    "never reach the demand", "no worked example", "only one worked example",
+    "wrong arithmetic", "sign rule", "bare expression", "not an integer",
+    "nothing in the lesson does it", "is titled",
+)
+
+
+def _findings_for(findings: list[str], number: int) -> list[str]:
+    """The findings ABOUT lesson `number` — the one it opens with, or the one
+    the demand check names as falling short. "Lesson 2 works exactly the shape
+    Lesson 1 already worked" is about lesson 2, not lesson 1."""
+    import re as _re
+
+    about = _re.compile(rf'^"?Lesson {number}\b')
+    short = _re.compile(rf"\blesson {number} gets no further")
+    return [f for f in findings
+            if (about.match(f) or short.search(f))
+            and any(k in f for k in _WRITE_TIME_FINDING)]
+
+
 def _plan_lesson_by_lesson(context: Any, resolved: Any, *, lessons: int,
                            grade: str, subject: str, strand: str,
                            sub_strand: str, run_log: Any,
-                           design_row: dict[str, Any] | None = None) -> Any:
+                           design_row: dict[str, Any] | None = None,
+                           design_experiences: list[str] | None = None,
+                           findings: list[str] | None = None) -> Any:
     """Write the guide one lesson at a time, each told where the last ended.
 
     The plan was one call for all six lessons, and it showed: the tail thinned
@@ -936,7 +963,7 @@ def _plan_lesson_by_lesson(context: Any, resolved: Any, *, lessons: int,
     Falls back to a single call for a one-lesson sub-strand, where there is no
     sequence to carry and the loop would only add a round trip.
     """
-    from ..services import lesson_dealer, lesson_handoff, task_demand
+    from ..services import lesson_dealer, lesson_handoff, notes_remediation, task_demand
     from ..services.cost_tracker import TokenUsage
     from ..services.llm_client import LlmResponse, llm_client
 
@@ -961,9 +988,17 @@ def _plan_lesson_by_lesson(context: Any, resolved: Any, *, lessons: int,
     model_used = ""
     provider_used = ""
 
-    for number in range(1, lessons + 1):
+    def _write(number: int, extra: list[str]) -> tuple[dict[str, Any] | None, Any]:
+        """One call for one lesson. `extra` is what an earlier attempt at
+        this lesson, or the last guide, got wrong — told to the model."""
         step = ladder[number - 1] if number <= len(ladder) else None
         brief = briefs[number - 1] if number <= len(briefs) else None
+        failed = ""
+        if extra:
+            failed = ("=== THE LAST ATTEMPT AT THIS LESSON FAILED THESE CHECKS ===\n"
+                      + "\n".join(f"  - {f}" for f in extra[:8])
+                      + "\nThese are mechanical, not opinions. Write the lesson so "
+                        "that none of them can be raised again.")
         messages = [
             *context.messages,
             {"role": "user", "content": prompt_store.render(
@@ -971,38 +1006,17 @@ def _plan_lesson_by_lesson(context: Any, resolved: Any, *, lessons: int,
                 number=number, lessons=lessons,
                 brief=lesson_dealer.block(brief),
                 handoff=lesson_handoff.block(previous, step),
+                failed=failed,
                 worked_examples_rule=lesson_handoff.worked_examples_rule(
                     subject, floor))},
         ]
-        try:
-            resp = llm_client.generate(resolved, messages, temperature=0.15)
-        except Exception as exc:  # noqa: BLE001
-            # One lesson failing is not the sub-strand failing. The gap is
-            # recorded where a reader sees it rather than silently closing over
-            # it, and coverage will count the module as missing.
-            logger.warning("Lesson %d of %s failed: %s", number, sub_strand, exc)
-            run_log.step(f"Lesson {number}/{lessons}", f"failed — {exc}", "fail")
-            continue
-
-        usage.prompt_tokens += resp.usage.prompt_tokens
-        usage.completion_tokens += resp.usage.completion_tokens
-        usage.total_tokens += resp.usage.total_tokens
-        model_used = model_used or resp.model
-        provider_used = provider_used or resp.provider
-
+        resp = llm_client.generate(resolved, messages, temperature=0.15)
         content = resp.content if isinstance(resp.content, dict) else {}
-        if envelope is None and content:
-            envelope = {k: v for k, v in content.items()
-                        if k not in ("modules", "hour_modules")}
-
         written = [m for m in (content.get("modules")
                                or content.get("hour_modules") or [])
                    if isinstance(m, dict)]
         if not written:
-            run_log.step(f"Lesson {number}/{lessons}",
-                         "the model returned no module", "fail")
-            continue
-
+            return None, resp
         # One lesson per call, whatever the model returned. Its own numbering
         # restarts at 1 on every call, so the number is set here — the guide's
         # lesson 4 is the fourth call, not whatever the fourth call called it.
@@ -1012,6 +1026,64 @@ def _plan_lesson_by_lesson(context: Any, resolved: Any, *, lessons: int,
             # Kept on the lesson, so the checks and the rewrite instruction
             # can hold it to the plan it was written to.
             module["brief"] = brief.to_dict()
+        return module, resp
+
+    def _count(resp: Any) -> None:
+        nonlocal model_used, provider_used
+        usage.prompt_tokens += resp.usage.prompt_tokens
+        usage.completion_tokens += resp.usage.completion_tokens
+        usage.total_tokens += resp.usage.total_tokens
+        model_used = model_used or resp.model
+        provider_used = provider_used or resp.provider
+
+    for number in range(1, lessons + 1):
+        extra = _findings_for(findings or [], number)
+        try:
+            module, resp = _write(number, extra)
+        except Exception as exc:  # noqa: BLE001
+            # One lesson failing is not the sub-strand failing. The gap is
+            # recorded where a reader sees it rather than silently closing over
+            # it, and coverage will count the module as missing.
+            logger.warning("Lesson %d of %s failed: %s", number, sub_strand, exc)
+            run_log.step(f"Lesson {number}/{lessons}", f"failed — {exc}", "fail")
+            continue
+        _count(resp)
+        content = resp.content if isinstance(resp.content, dict) else {}
+        if envelope is None and content:
+            envelope = {k: v for k, v in content.items()
+                        if k not in ("modules", "hour_modules")}
+        if module is None:
+            run_log.step(f"Lesson {number}/{lessons}",
+                         "the model returned no module", "fail")
+            continue
+
+        # Checked at write time, once, while the hand-off is still fresh. A
+        # lesson that cloned the one before it used to be found only when
+        # the whole guide was inspected at the end, and the fix then was
+        # writing the whole guide again.
+        try:
+            _s, found, targets = notes_remediation._inspect(
+                {"modules": [*modules, module]}, design_experiences or [],
+                design_row or {}, strand=strand, sub_strand=sub_strand)
+            again = _findings_for(found, number) if number in targets else []
+        except Exception:  # noqa: BLE001
+            again = []
+        if again:
+            run_log.step(f"Lesson {number}/{lessons}",
+                         f"failed {len(again)} check(s) at write time; one more "
+                         f"attempt — {again[0][:100]}", "warn")
+            try:
+                retry, resp2 = _write(number, again)
+                _count(resp2)
+                if retry is not None:
+                    _s2, found2, targets2 = notes_remediation._inspect(
+                        {"modules": [*modules, retry]}, design_experiences or [],
+                        design_row or {}, strand=strand, sub_strand=sub_strand)
+                    if len(_findings_for(found2, number)) <= len(again):
+                        module = retry
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Retry of lesson %d failed: %s", number, exc)
+
         modules.append(module)
         previous = lesson_handoff.read(module, previous)
         run_log.step(
@@ -1023,6 +1095,11 @@ def _plan_lesson_by_lesson(context: Any, resolved: Any, *, lessons: int,
         return None
     out = dict(envelope or {})
     out["modules"] = modules
+    # The envelope came from lesson 1's call, and lesson 1 titled it after
+    # itself: "Teacher's Guide: Lesson 1 - Basic Operations on Integers".
+    out["title"] = f"Teacher's Guide: {sub_strand}"
+    out["sub_strand"] = sub_strand
+    out["module_count"] = len(modules)
     return LlmResponse(content=out, usage=usage, model=model_used,
                        provider=provider_used)
 
@@ -1358,7 +1435,9 @@ def factory_generate_notes(
             context, resolved, lessons=allocation.modules, grade=payload.grade,
             subject=payload.subject, strand=payload.strand,
             sub_strand=payload.sub_strand, run_log=run_log,
-            design_row=substrand_row or {})
+            design_row=substrand_row or {},
+            design_experiences=[_plain(e) for e in
+                                ((substrand_row or {}).get("learning_experiences") or [])])
     if resp is None:
         # A one-lesson sub-strand, or every lesson failed: the original single
         # call, so a run still produces something a person can read and repair.
@@ -1428,6 +1507,17 @@ def factory_generate_notes(
         # So a lesson that names no design element is rewritten, not published.
         design_row=substrand_row or {},
         strand=payload.strand,
+        # Writing the whole guide again goes back through the per-lesson
+        # planner — plan, hand-off and write-time checks — not one call for
+        # all six lessons with none of them.
+        regenerate=(lambda findings: (lambda r: r.content if r else None)(
+            _plan_lesson_by_lesson(
+                context, resolved, lessons=allocation.modules,
+                grade=payload.grade, subject=payload.subject,
+                strand=payload.strand, sub_strand=payload.sub_strand,
+                run_log=run_log, design_row=substrand_row or {},
+                design_experiences=[_plain(e) for e in (design_experiences or [])],
+                findings=findings))) if allocation.modules > 1 else None,
     )
     if remediation.attempted:
         lesson_plan = notes_coverage.check(

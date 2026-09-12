@@ -736,3 +736,31 @@ def test_a_guide_read_back_from_the_store_says_which_version_it_is():
               / "frontend-web/src/views/NotesReader.tsx").read_text()
 
     assert "saved version" in reader
+
+
+def test_the_regenerate_rung_uses_the_planner_when_it_is_given_one():
+    """Writing the whole guide again was one call for all six lessons with
+    the base prompt — no plan, no hand-off — the configuration that clones."""
+    calls: list[str] = []
+    regenerated: list[list[str]] = []
+
+    def generate(config, messages, temperature=0.2):
+        calls.append(messages[-1]["content"])
+        return {"modules": []}
+
+    def regenerate(findings):
+        regenerated.append(list(findings))
+        return {"modules": [{"module_number": n, "title": f"Lesson {n}: fresh {n}",
+                             "slos_covered": [SLOS[0]], "learning_experiences_used": [DESIGN[0]],
+                             "exposition_segments": [{"topic": f"T{n}", "body": "Fresh teaching. " * 20}]}
+                            for n in range(1, 5)]}
+
+    notes_remediation.run(
+        _guide(), design_experiences=DESIGN, slos=SLOS,
+        generate=generate, model_config=object(), base_messages=[],
+        sub_strand="Our God", allocation_phrase="4 lessons",
+        max_passes=4, regenerate=regenerate)
+
+    assert regenerated, "the regenerate rung went through the planner"
+    assert all("WRITE THIS GUIDE AGAIN" not in c for c in calls), \
+        "and not through one whole-guide call"
