@@ -361,9 +361,10 @@ def test_a_gpt_5_request_carries_no_temperature_and_room_to_think() -> None:
 
     p = openai_payload("gpt-5-mini", [{"role": "user", "content": "x"}], 0.15, 1.0)
     assert "temperature" not in p and "top_p" not in p and "max_tokens" not in p
-    assert p["max_completion_tokens"] >= 16000
-    assert p["reasoning_effort"] in {"minimal", "low", "medium", "high"}
-    assert p["response_format"] == {"type": "json_object"}
+    assert p["max_output_tokens"] >= 16000
+    assert p["reasoning"]["effort"] in {"minimal", "low", "medium", "high"}
+    assert p["text"] == {"format": {"type": "json_object"}}
+    assert p["input"] == [{"role": "user", "content": "x"}]
 
     q = openai_payload("gpt-4o", [{"role": "user", "content": "x"}], 0.15, 1.0)
     assert q["temperature"] == 0.15 and q["max_tokens"] == 8192

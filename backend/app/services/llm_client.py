@@ -34,15 +34,23 @@ def is_reasoning_model(model: str) -> bool:
 
 def openai_payload(model: str, messages: list[dict[str, str]],
                    temperature: float, top_p: float) -> dict[str, Any]:
+    """The request for this model: the Responses API for a reasoning model,
+    Chat Completions for the rest.
+
+    Responses takes the conversation as `input`, the thinking budget as
+    `reasoning.effort`, JSON mode as `text.format`, and the output cap as
+    `max_output_tokens` — which the reasoning tokens count against, so it is
+    set wide. The JSON a station wants is the same either way.
+    """
     from ..settings import settings
 
     if is_reasoning_model(model):
         return {
             "model": model,
-            "messages": messages,
-            "max_completion_tokens": 16384,
-            "reasoning_effort": settings.openai_reasoning_effort,
-            "response_format": {"type": "json_object"},
+            "input": messages,
+            "reasoning": {"effort": settings.openai_reasoning_effort},
+            "max_output_tokens": 32768,
+            "text": {"format": {"type": "json_object"}},
         }
     return {
         "model": model,
@@ -52,6 +60,21 @@ def openai_payload(model: str, messages: list[dict[str, str]],
         "max_tokens": 8192,
         "response_format": {"type": "json_object"},
     }
+
+
+def responses_output_text(data: dict[str, Any]) -> str:
+    """The assistant's text from a Responses API body (what the SDK exposes
+    as `output_text`)."""
+    if isinstance(data.get("output_text"), str):
+        return data["output_text"]
+    parts: list[str] = []
+    for item in data.get("output") or []:
+        if not isinstance(item, dict) or item.get("type") != "message":
+            continue
+        for content in item.get("content") or []:
+            if isinstance(content, dict) and content.get("type") == "output_text":
+                parts.append(str(content.get("text") or ""))
+    return "".join(parts)
 
 
 @dataclass(slots=True)
@@ -129,7 +152,9 @@ class LlmClient:
         """
         provider = config.provider
 
-        if provider == Provider.OPENAI.value or provider == Provider.OLLAMA.value:
+        if provider == Provider.OPENAI.value and is_reasoning_model(config.model or DEFAULT_OPENAI_MODEL):
+            raw_text, usage = self._call_openai_responses(config, messages)
+        elif provider == Provider.OPENAI.value or provider == Provider.OLLAMA.value:
             raw_text, usage = self._call_openai_compatible(config, messages, temperature, top_p)
         elif provider == Provider.ANTHROPIC.value:
             raw_text, usage = self._call_anthropic(config, messages, temperature, top_p)
@@ -227,6 +252,52 @@ class LlmClient:
                 "LLM_PROVIDER_ERROR",
                 f"{provider_name} API error ({status}): {body_preview}",
             )
+
+    def _call_openai_responses(
+        self,
+        config: ResolvedModelConfig,
+        messages: list[dict[str, str]],
+    ) -> tuple[str, TokenUsage]:
+        """POST /responses, and the message text out of its `output` list.
+
+        The list carries reasoning items before the message; the text is the
+        `output_text` part of the first `message` item. Usage is named
+        `input_tokens` / `output_tokens` here, not prompt/completion.
+        """
+        headers: dict[str, str] = {"Content-Type": "application/json"}
+        if config.api_key:
+            headers["Authorization"] = f"Bearer {config.api_key}"
+        base_url = config.resolved_base_url.rstrip("/")
+        url = f"{base_url}/responses"
+        model_name = (config.model or DEFAULT_OPENAI_MODEL).strip() or DEFAULT_OPENAI_MODEL
+        payload = openai_payload(model_name, messages, 0.0, 1.0)
+
+        with httpx.Client(timeout=self.timeout) as client:
+            resp = client.post(url, headers=headers, json=payload)
+            if resp.status_code == 400 and ("text.format" in resp.text or "json_object" in resp.text):
+                payload.pop("text", None)
+                resp = client.post(url, headers=headers, json=payload)
+            if resp.status_code >= 400:
+                self._classify_http_error(config, resp)
+
+            data = resp.json()
+            text = responses_output_text(data)
+            if not text and str(data.get("status") or "") == "incomplete":
+                reason = ((data.get("incomplete_details") or {}).get("reason") or "unknown")
+                raise_api_error(
+                    "LLM_INCOMPLETE",
+                    f"{model_name} stopped before writing anything ({reason}). "
+                    f"With reasoning effort '{payload['reasoning']['effort']}' the "
+                    f"thinking used the whole output budget; lower "
+                    f"OPENAI_REASONING_EFFORT or raise max_output_tokens.",
+                )
+            raw_usage = data.get("usage") or {}
+            usage = TokenUsage(
+                prompt_tokens=int(raw_usage.get("input_tokens", 0) or 0),
+                completion_tokens=int(raw_usage.get("output_tokens", 0) or 0),
+                total_tokens=int(raw_usage.get("total_tokens", 0) or 0),
+            )
+            return text, usage
 
     def _call_openai_compatible(
         self,

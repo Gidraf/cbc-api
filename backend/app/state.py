@@ -14,11 +14,9 @@ from .settings import settings
 
 logger = logging.getLogger("cbc-state")
 
-# The one OpenAI model every stage runs on. Chosen for cost as much as for
-# reasoning: a Grade 9 guide through four remediation passes on gpt-4o came to
-# several dollars and was still wrong; gpt-5-mini is a tenth of the input
-# price and reasons better. An operator can bind a stage to any GPT-5-family
-# id in the console (gpt-5, gpt-5.1, gpt-5-nano...) and it is passed through.
+# The one OpenAI model every stage runs on, from OPENAI_DEFAULT_MODEL. An
+# operator can bind a stage to any GPT-5-family id in the console and it is
+# passed through; a new release of the family is a line in .env, not a deploy.
 DEFAULT_OPENAI_MODEL = settings.openai_default_model
 
 

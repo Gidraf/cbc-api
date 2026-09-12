@@ -30,13 +30,13 @@ class Settings:
     # LLM Provider Keys
     openai_api_key: str | None = os.getenv("OPENAI_API_KEY")
     # How hard a GPT-5-family model thinks before it writes. Reasoning tokens
-    # are billed as output, so this is the cost dial: "minimal" is near-4o
-    # behaviour, "low" is the default, "medium"/"high" for a station whose
-    # output is worth it.
-    openai_reasoning_effort: str = os.getenv("OPENAI_REASONING_EFFORT", "low")
+    # are billed as output, so this is the cost dial. "high" by default: the
+    # stations write the content, and a guide that comes back wrong four
+    # passes running costs more than the thinking would have.
+    openai_reasoning_effort: str = os.getenv("OPENAI_REASONING_EFFORT", "high")
     # The model every stage runs on unless bound otherwise. An environment
     # value so that a new release of the family is a line in .env, not a deploy.
-    openai_default_model: str = os.getenv("OPENAI_DEFAULT_MODEL", "gpt-5-mini").strip() or "gpt-5-mini"
+    openai_default_model: str = os.getenv("OPENAI_DEFAULT_MODEL", "gpt-5.6-sol").strip() or "gpt-5.6-sol"
     anthropic_api_key: str | None = os.getenv("ANTHROPIC_API_KEY")
     gemini_api_key: str | None = os.getenv("GEMINI_API_KEY")
     ollama_base_url: str | None = os.getenv("OLLAMA_BASE_URL")

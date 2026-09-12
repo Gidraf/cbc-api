@@ -167,12 +167,12 @@ export function App() {
     ollama: { api_key: "", base_url: "http://host.docker.internal:11434", ollama_models: "llama3.1,qwen2.5:7b,mistral" }
   });
   const [stageDrafts, setStageDrafts] = useState<Record<Stage, { provider: Provider; model: string; base_url: string }>>({
-    notes_generation: { provider: "openai", model: "gpt-5-mini", base_url: "" },
-    diagram_generation: { provider: "openai", model: "gpt-5-mini", base_url: "" },
-    activity_generation: { provider: "openai", model: "gpt-5-mini", base_url: "" },
-    question_generation: { provider: "openai", model: "gpt-5-mini", base_url: "" },
-    reviewer_panel: { provider: "openai", model: "gpt-5-mini", base_url: "" },
-    regeneration: { provider: "openai", model: "gpt-5-mini", base_url: "" }
+    notes_generation: { provider: "openai", model: "gpt-5.6-sol", base_url: "" },
+    diagram_generation: { provider: "openai", model: "gpt-5.6-sol", base_url: "" },
+    activity_generation: { provider: "openai", model: "gpt-5.6-sol", base_url: "" },
+    question_generation: { provider: "openai", model: "gpt-5.6-sol", base_url: "" },
+    reviewer_panel: { provider: "openai", model: "gpt-5.6-sol", base_url: "" },
+    regeneration: { provider: "openai", model: "gpt-5.6-sol", base_url: "" }
   });
 
   // Datasets & Prompts State (Langfuse)
@@ -9749,22 +9749,22 @@ export function App() {
                     await run("Bootstrap OpenAI Bindings", async () => {
                       const res = await fetchJson<any>("/admin/pipeline-bindings/bootstrap", {
                         method: "POST",
-                        body: JSON.stringify({ provider: "openai", model: "gpt-5-mini", base_url: null }),
+                        body: JSON.stringify({ provider: "openai", model: "gpt-5.6-sol", base_url: null }),
                       }, auth());
                       setStageDrafts({
-                        notes_generation: { provider: "openai", model: "gpt-5-mini", base_url: "" },
-                        diagram_generation: { provider: "openai", model: "gpt-5-mini", base_url: "" },
-                        activity_generation: { provider: "openai", model: "gpt-5-mini", base_url: "" },
-                        question_generation: { provider: "openai", model: "gpt-5-mini", base_url: "" },
-                        reviewer_panel: { provider: "openai", model: "gpt-5-mini", base_url: "" },
-                        regeneration: { provider: "openai", model: "gpt-5-mini", base_url: "" },
+                        notes_generation: { provider: "openai", model: "gpt-5.6-sol", base_url: "" },
+                        diagram_generation: { provider: "openai", model: "gpt-5.6-sol", base_url: "" },
+                        activity_generation: { provider: "openai", model: "gpt-5.6-sol", base_url: "" },
+                        question_generation: { provider: "openai", model: "gpt-5.6-sol", base_url: "" },
+                        reviewer_panel: { provider: "openai", model: "gpt-5.6-sol", base_url: "" },
+                        regeneration: { provider: "openai", model: "gpt-5.6-sol", base_url: "" },
                       });
                       return res;
                     });
                   }}
                   disabled={isRunning}
                 >
-                  ⚡ Set All Stages to OpenAI (gpt-5-mini)
+                  ⚡ Set All Stages to OpenAI (gpt-5.6-sol)
                 </button>
               </div>
             </div>
@@ -9786,7 +9786,7 @@ export function App() {
                           value={draft.provider}
                           onChange={(e) => {
                             const p = e.target.value as Provider;
-                            const defaultModel = p === "openai" ? "gpt-5-mini" : (p === "anthropic" ? "claude-3-5-sonnet-20241022" : (p === "gemini" ? "gemini-2.0-flash" : "llama3.1"));
+                            const defaultModel = p === "openai" ? "gpt-5.6-sol" : (p === "anthropic" ? "claude-3-5-sonnet-20241022" : (p === "gemini" ? "gemini-2.0-flash" : "llama3.1"));
                             setStageDrafts({
                               ...stageDrafts,
                               [stage]: { ...draft, provider: p, model: defaultModel },
@@ -9806,7 +9806,7 @@ export function App() {
                         <input
                           value={draft.model}
                           onChange={(e) => setStageDrafts({ ...stageDrafts, [stage]: { ...draft, model: e.target.value } })}
-                          placeholder="e.g. gpt-5-mini, gpt-5, gpt-4o, claude-3-5-sonnet-20241022"
+                          placeholder="e.g. gpt-5.6-sol, gpt-5-mini, gpt-4o, claude-3-5-sonnet-20241022"
                           style={{ marginTop: "4px" }}
                         />
                       </label>
@@ -9826,7 +9826,7 @@ export function App() {
                           method: "POST",
                           body: JSON.stringify({
                             provider: draft.provider,
-                            model: draft.model || "gpt-5-mini",
+                            model: draft.model || "gpt-5.6-sol",
                             base_url: draft.base_url || null,
                           }),
                         }, auth()))}
