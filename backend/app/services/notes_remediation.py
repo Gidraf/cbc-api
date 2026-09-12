@@ -371,6 +371,40 @@ def _inspect(notes: dict[str, Any],
         if home and home not in targets:
             targets.append(home)
 
+    # Three more ways a guide repeats itself, each reported for months and
+    # never a target. With a finding and no lesson to rewrite the loop jumped
+    # straight to regenerating the whole guide — the one path that drops the
+    # lesson-to-lesson hand-off, and so the path most likely to hand back the
+    # same repeat. Every guide in a run of six came back with "Review of
+    # Combined Operations" taught twice and "Complex Problem Solving" three
+    # times, and every one was published.
+    #
+    # The first lesson carrying a name or a block is the honest one; the rest
+    # are rewritten. Entries name lessons by position ("lesson 4") because the
+    # title is the very thing two of these checks find repeated.
+    by_position = {_number(m, i): _number(m, i)
+                   for i, m in enumerate(modules, start=1)}
+
+    def _at(where: str) -> int:
+        match = re.search(r"lesson\s+(\d+)", str(where or ""), re.I)
+        number = int(match.group(1)) if match else 0
+        return number if number in by_position else 0
+
+    # Two lessons with the same title: the later one is written again.
+    for pair in repetition.get("same_name") or []:
+        number = _at(pair.get("b", ""))
+        if number and number not in targets:
+            targets.append(number)
+
+    # The same topic heading, or the same block of prose, in several lessons:
+    # every lesson after the first that carries it.
+    for group in (repetition.get("same_name_segments") or []) + \
+                 (repetition.get("repeated_segments") or []):
+        for where in (group.get("places") or [])[1:]:
+            number = _at(where)
+            if number and number not in targets:
+                targets.append(number)
+
     # A lesson that names nothing in the design is rewritten, not published.
     # Six guides in a row printed "this lesson names no design element" under
     # every lesson; the finding was true each time and nothing was ever asked
