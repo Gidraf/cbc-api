@@ -158,9 +158,17 @@ def check(statement: str, claimed_answer: str) -> dict[str, Any]:
     out["checked"] = True
     out["engine_answer"] = trace.final_answer
     try:
-        out["agrees"] = bool(
-            verify_solution(trace.final_answer,
-                            _comparable(claimed_answer)).get("verified"))
+        comp = _comparable(claimed_answer)
+        agreed = bool(verify_solution(trace.final_answer, comp).get("verified"))
+        if not agreed and not _is_a_value(comp):
+            # Prose answer ("The shopkeeper has 45 items in stock"): the numeric
+            # value is embedded in the sentence. If the engine answer appears as
+            # a standalone number inside the prose, they agree — "45 items" is
+            # the same claim as "$45$".
+            agreed = bool(
+                re.search(r"(?<!\d)" + re.escape(trace.final_answer.strip())
+                          + r"(?!\d)", comp))
+        out["agrees"] = agreed
     except Exception:  # noqa: BLE001
         out["agrees"] = None
     return out

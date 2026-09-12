@@ -413,6 +413,50 @@ def _inspect(notes: dict[str, Any],
         if number not in targets:
             targets.append(number)
 
+    # A lesson whose every worked example is primary arithmetic is rewritten.
+    #
+    # `50 - 20 + 15` and `5 - 3 + 4` pass arithmetic checks (the answers are
+    # correct) and pass every duplication check (they are not the same text).
+    # Nothing stopped them reaching the page — which a parent opening the Grade 9
+    # booklet reads as Grade 4. The demand gate for QUESTIONS has existed since the
+    # task_demand module was written; worked EXAMPLES had no equivalent.
+    #
+    # A lesson is flagged only when ALL its examples lack a second operation kind.
+    # One lesson's examples mixing addition/multiplication is already at grade.
+    try:
+        from . import task_demand
+
+        for i, module in enumerate(modules, start=1):
+            number = _number(module, i)
+            examples = [ex for ex in (module.get("worked_examples") or [])
+                        if isinstance(ex, dict) and ex.get("statement")]
+            if not examples:
+                continue
+            sub_grade = [
+                ex for ex in examples
+                if not task_demand.measure(
+                    str(ex.get("statement") or "") + " "
+                    + " ".join(
+                        str(s.get("working") or "") for s in
+                        (ex.get("steps") or []) if isinstance(s, dict)
+                    )
+                ).order_matters
+            ]
+            if len(sub_grade) == len(examples):
+                grade = str(design_row.get("grade_name") or "") if design_row else ""
+                findings.append(
+                    f"Lesson {number} worked example(s) use only addition or "
+                    f"subtraction — no multiplication, division or indices. At "
+                    f"{grade or 'this'} level every example must use AT LEAST two "
+                    f"different operation KINDS (e.g. + and ×) so BODMAS decides "
+                    f"the answer. Rewrite all examples for this lesson at grade level."
+                )
+                if number not in targets:
+                    targets.append(number)
+                score = max(0.0, score - 15.0)
+    except Exception:  # noqa: BLE001
+        pass
+
     return score, findings, targets
 
 

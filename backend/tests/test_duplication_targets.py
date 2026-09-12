@@ -75,3 +75,63 @@ def test_a_guide_that_repeats_nothing_has_no_duplication_targets() -> None:
     _, _, targets = notes_remediation._inspect(notes, [], None)
 
     assert targets == []
+
+
+# ── difficulty floor check ────────────────────────────────────────────────────
+
+
+def _ops_module(n: int, title: str, examples: list[dict]) -> dict:
+    """A module with worked examples but no other fields that could trip integrity checks."""
+    return {
+        "module_number": n, "title": title,
+        "worked_examples": examples,
+        "learning_experiences_used": ["discuss integers"],  # stop integrity flagging
+    }
+
+
+def test_a_lesson_with_only_addition_and_subtraction_examples_is_a_target() -> None:
+    """'50 - 20 + 15' and '5 - 3 + 4' pass arithmetic checks (answers correct)
+    and pass every duplication check (text differs). Nothing stopped them
+    reaching the Grade 9 page — a parent reads Grade 4 arithmetic.
+
+    The remediation loop now checks whether every worked example in a lesson
+    has at least two DIFFERENT operation kinds. If none do, the lesson is a
+    rewrite target and the score drops.
+    """
+    notes = {"modules": [_ops_module(1, "Operations", [
+        {"statement": r"Calculate $50 - 20 + 15$.",
+         "steps": [{"working": r"$50 - 20 = 30$", "because": "subtract first"},
+                   {"working": r"$30 + 15 = 45$", "because": "then add"}],
+         "answer": "45"},
+        {"statement": r"Work out $5 - 3 + 4$.",
+         "steps": [{"working": r"$5 - 3 = 2$", "because": "subtract"},
+                   {"working": r"$2 + 4 = 6$", "because": "add"}],
+         "answer": "6"},
+    ])]}
+
+    _score, findings, targets = notes_remediation._inspect(
+        notes, ["discuss integers"], {})
+
+    assert 1 in targets, "lesson 1 must be flagged for rewrite"
+    assert any("operation" in f.lower() for f in findings), \
+        "a finding should name the missing operation kind"
+
+
+def test_a_lesson_with_a_mixed_example_is_not_flagged() -> None:
+    """(-4 + 6) × 3 - 5 mixes × with + and - so BODMAS decides the answer."""
+    notes = {"modules": [_ops_module(1, "Operations", [
+        {"statement": r"Evaluate $(-4 + 6) \times 3 - 5$.",
+         "steps": [{"working": r"$(-4+6) \times 3 - 5 = 2 \times 3 - 5$",
+                    "because": "brackets first"},
+                   {"working": r"$2 \times 3 - 5 = 6 - 5$",
+                    "because": "multiply before subtract"},
+                   {"working": r"$6 - 5 = 1$", "because": "subtract"}],
+         "answer": "1"},
+    ])]}
+
+    _score, findings, targets = notes_remediation._inspect(
+        notes, ["discuss integers"], {})
+
+    diff_findings = [f for f in findings if "operation" in f.lower()]
+    assert not diff_findings, \
+        f"a lesson with a mixed example must not raise a difficulty finding: {diff_findings}"

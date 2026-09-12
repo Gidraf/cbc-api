@@ -151,6 +151,35 @@ def test_an_answer_somebody_else_wrote_can_be_checked() -> None:
     assert wrong["checked"] and wrong["agrees"] is False
 
 
+def test_a_prose_answer_that_contains_the_correct_value_agrees() -> None:
+    """'The shopkeeper has 45 items in stock' must agree with engine answer 45.
+
+    Example 4.1 of a Grade 9 Integers guide had the badge "this working does
+    not reach 45" and a note "The maths engine works this expression to 45"
+    side by side on the same page — directly contradictory. The problem: when
+    the answer field is a prose sentence, _comparable left the full sentence in,
+    and verify_solution("45", "The shopkeeper has 45 items in stock") returned
+    False even though the mathematics was correct.
+    """
+    result = worked_solutions.check(
+        r"$50 - 20 + 15$",
+        "The shopkeeper has 45 items in stock.",
+    )
+    assert result["checked"], "engine must be able to read 50-20+15"
+    assert result["agrees"] is True, (
+        "prose answer containing '45' should agree with engine answer 45"
+    )
+
+
+def test_a_prose_answer_with_the_wrong_value_disagrees() -> None:
+    result = worked_solutions.check(
+        r"$50 - 20 + 15$",
+        "The shopkeeper has 30 items in stock.",
+    )
+    assert result["checked"]
+    assert result["agrees"] is False
+
+
 # ── the page ────────────────────────────────────────────────────────────────
 
 def _booklet(monkeypatch, questions: list[str]) -> str:
