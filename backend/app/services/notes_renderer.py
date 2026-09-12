@@ -848,6 +848,13 @@ def _lesson(module: dict[str, Any], n: int,
     title = str(module.get("title") or f"Lesson {n}")
     out = ["<section class='lesson'>"]
 
+    # Before the header draws `slos_covered`: refs the model filed there move
+    # to `serves`, so the objectives line reads as objectives and the refs
+    # print, resolved, under "Where this comes from".
+    if design_row:
+        from . import design_elements
+        design_elements.harvest_serves(module, design_row)
+
     # The head sets the running head for every page this lesson spills onto.
     out.append("<div class='lesson-head'>")
     out.append(f"<h2><span class='n'>Lesson {n}</span>{_esc(title)}</h2>")
@@ -1552,16 +1559,15 @@ def _serves_of(piece: dict[str, Any],
     A ref the design does not carry is dropped rather than printed: an invented
     provenance reads exactly like a real one, and is worse than none.
     """
-    claimed = piece.get("serves") or []
-    if isinstance(claimed, str):
-        claimed = [claimed]
-    if not claimed or not design_row:
+    if not design_row:
         return []
     from . import design_elements
 
+    # Wherever the lesson put them. A guide cited every lesson correctly in
+    # `slos_covered` and printed "names no design element" six times.
+    claimed = design_elements.harvest_serves(piece, design_row)
     by_ref = {e.ref: e.text for e in design_elements.enumerate_for(design_row)}
-    return [{"ref": ref, "text": by_ref[ref]}
-            for ref in (str(c).strip() for c in claimed) if ref in by_ref]
+    return [{"ref": ref, "text": by_ref[ref]} for ref in claimed if ref in by_ref]
 
 
 def _citation(piece: dict[str, Any], *, grade: str = "", subject: str = "",

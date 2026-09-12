@@ -13,7 +13,7 @@ from __future__ import annotations
 import inspect
 
 from app.services import design_elements, notes_remediation
-from app.services.langfuse_seed import SEED_PROMPT_BLOCKS
+from app.services.langfuse_seed import SEED_AGENT_PROMPTS, SEED_PROMPT_BLOCKS
 
 _ROW = {
     "slos": ["perform basic operations on Integers in different situations",
@@ -76,7 +76,8 @@ def test_an_invented_ref_is_removed_before_it_can_print() -> None:
 
     assert notes["modules"][0]["serves"] == []
     assert report["uncited"] == [1]
-    assert "outcome 9, g9-mat-77" in report["findings"][0]
+    assert "outcome 9" in report["findings"][0]
+    assert "g9-mat-77" in report["findings"][0]
     assert "discarded" in report["findings"][0]
 
 
@@ -105,3 +106,77 @@ def test_the_route_hands_the_design_row_to_remediation() -> None:
 
     source = inspect.getsource(curriculum.factory_generate_notes)
     assert "design_row=substrand_row" in source
+
+
+# ── the model cited in the wrong field, and it still counts ──────────────────
+#
+# The module skeleton's placeholder read `"slos_covered": ["<the SLO(s) this
+# lesson SERVES>"]`. Asked to "record which of these it serves", the model put
+# every ref there — bracketed, exactly as asked, every one valid — and the page
+# said the lesson named nothing. A lesson that cites correctly in the wrong
+# field has cited.
+
+_DESIGN = {
+    "slos": [{"id": "grade-9-Mat-1.1-1", "text": "perform basic operations on Integers"},
+             {"id": "grade-9-Mat-1.1-2", "text": "work out combined operations of integers"}],
+    "key_inquiry_questions": ["How are integers used in real life?"],
+    "learning_experiences": ["use number cards", "play integer games"],
+    "core_competencies": [], "values": [], "required_diagrams": [], "experiments": [],
+}
+
+
+def _as_the_model_wrote_it() -> dict:
+    return {"module_number": 1, "title": "Introduction",
+            "slos_covered": ["[grade-9-Mat-1.1-1]", "[inquiry 1]", "[experience 2]",
+                             "perform basic operations on Integers"]}
+
+
+def test_refs_filed_in_slos_covered_are_harvested_into_serves() -> None:
+    module = _as_the_model_wrote_it()
+    kept = design_elements.harvest_serves(module, _DESIGN)
+
+    assert kept == ["grade-9-Mat-1.1-1", "inquiry 1", "experience 2"]
+    assert module["serves"] == kept
+
+
+def test_the_objectives_line_is_left_reading_as_objectives() -> None:
+    """"[grade-9-Mat-1.1-1] · [inquiry 1] · perform basic…" is not a header."""
+    module = _as_the_model_wrote_it()
+    design_elements.harvest_serves(module, _DESIGN)
+
+    assert module["slos_covered"] == ["perform basic operations on Integers"]
+
+
+def test_a_bracketed_phrase_that_is_not_a_ref_stays_put() -> None:
+    module = {"slos_covered": ["[see page 12]", "perform basic operations"]}
+    kept = design_elements.harvest_serves(module, _DESIGN)
+
+    assert kept == []
+    assert module["slos_covered"] == ["[see page 12]", "perform basic operations"]
+
+
+def test_the_harvested_lesson_is_not_a_rewrite_target() -> None:
+    notes = {"modules": [_as_the_model_wrote_it()]}
+    report = notes_remediation.check_provenance(notes, _DESIGN)
+
+    assert report["uncited"] == []
+    assert report["score"] == 100.0
+
+
+def test_an_invented_bracketed_ref_in_slos_covered_is_named() -> None:
+    notes = {"modules": [{"module_number": 1, "title": "L1",
+                          "slos_covered": ["[grade-9-Mat-9.9-9]"]}]}
+    report = notes_remediation.check_provenance(notes, _DESIGN)
+
+    assert report["uncited"] == [1]
+    assert "grade-9-Mat-9.9-9" in report["findings"][0]
+
+
+def test_the_skeleton_now_shows_where_serves_goes() -> None:
+    # The module skeleton lives in the system prompt, `note-generator`, which
+    # the notes route assembles; the rules block carries the element list.
+    skeleton = SEED_AGENT_PROMPTS["note-generator"]
+
+    assert '"serves":' in skeleton
+    assert "this lesson serves" not in skeleton, \
+        "the slos_covered placeholder must stop using the word that names the other field"

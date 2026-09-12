@@ -165,6 +165,60 @@ def seed_prompts() -> dict[str, str]:
     return {"design-elements": _BLOCK, "design-elements-lesson": _LESSON_BLOCK}
 
 
+_BRACKETED = re.compile(r"\[([^\[\]]{1,80})\]")
+
+
+def harvest_serves(module: dict[str, Any], row: dict[str, Any]) -> list[str]:
+    """The design refs a lesson names, wherever it put them.
+
+    The module skeleton's placeholder for `slos_covered` read "the SLO(s) this
+    lesson SERVES", so when the design-elements block asked for "which of these
+    it serves", the model put the refs there — bracketed, exactly as asked,
+    every one of them valid — and the page said the lesson named nothing. A
+    lesson that cites correctly in the wrong field has cited.
+
+    Bracketed refs in `slos_covered` are moved into `serves` and removed from
+    `slos_covered`, so the header stops reading "[grade-9-Mat-1.1-1] · [inquiry
+    1] · perform basic operations…". Only refs the design carries move; a
+    bracketed phrase that is not a ref stays where it was.
+    """
+    if not isinstance(module, dict):
+        return []
+    known = refs(row)
+    found: list[str] = []
+
+    claimed = module.get("serves") or []
+    if isinstance(claimed, str):
+        claimed = [claimed]
+    for item in claimed:
+        text = str(item).strip().strip("[]").strip()
+        if text and text not in found:
+            found.append(text)
+
+    slos = module.get("slos_covered")
+    if isinstance(slos, list):
+        kept_slos: list[Any] = []
+        for entry in slos:
+            text = str(entry).strip()
+            bracketed = _BRACKETED.findall(text)
+            inner = [b.strip() for b in bracketed if b.strip() in known]
+            if inner and _BRACKETED.sub("", text).strip(" ·-") == "":
+                # The whole entry was refs: it moves, and the entry goes.
+                for ref in inner:
+                    if ref not in found:
+                        found.append(ref)
+                continue
+            for ref in inner:
+                if ref not in found:
+                    found.append(ref)
+            kept_slos.append(entry)
+        if len(kept_slos) != len(slos):
+            module["slos_covered"] = kept_slos
+
+    module["serves"] = [r for r in found if r in known]
+    return module["serves"]
+
+
 def valid_serves(claimed: Any, row: dict[str, Any]) -> tuple[list[str], list[str]]:
     """The refs a question may keep, and the ones it invented.
 

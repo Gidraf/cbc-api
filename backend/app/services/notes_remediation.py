@@ -406,8 +406,15 @@ def check_provenance(notes: dict[str, Any],
     modules = _modules(notes)
     for i, module in enumerate(modules, start=1):
         number = _number(module, i)
-        kept, invented = design_elements.valid_serves(module.get("serves"), design_row)
-        module["serves"] = kept
+        # Harvest first: refs the model filed in `slos_covered` count, and move.
+        # Anything bracketed that the design does not carry is the invention.
+        known = design_elements.refs(design_row)
+        offered = [str(x).strip().strip("[]").strip()
+                   for x in (module.get("serves") or [])]
+        offered += [b.strip() for x in (module.get("slos_covered") or [])
+                    for b in design_elements._BRACKETED.findall(str(x))]
+        invented = sorted({o for o in offered if o and o not in known})
+        kept = design_elements.harvest_serves(module, design_row)
         if kept:
             out["cited"] += 1
             continue

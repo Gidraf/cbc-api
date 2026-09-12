@@ -884,7 +884,8 @@ Output MUST be a valid JSON object matching this schema:
       "module_number": 1,
       "title": "Lesson 1: <what this lesson is about>",
       "duration_minutes": 0,
-      "slos_covered": ["<the SLO(s) this lesson serves>"],
+      "slos_covered": ["<the SLO(s) this lesson covers, in the design's own words>"],
+      "serves": ["<design ref(s) this lesson realises, EXACTLY as bracketed under WHAT THIS DESIGN ASKS FOR — e.g. grade-9-Mat-1.1-2, experience 3>"],
       "learning_intent": "What the learner will be able to do at the end of this one lesson.",
       "teacher_exposition": "The substantive content for this lesson, in full. What the teacher needs to know and be able to explain, at the depth described above.",
       "worked_examples": [
