@@ -16,6 +16,7 @@ from ..services.auth import AuthContext, require_roles
 from ..services.curriculum_extractor import curriculum_extractor
 from ..services import (
     artifact_registry,
+    example_audit,
     citation_check,
     auto_run,
     design_source,
@@ -921,7 +922,8 @@ _WRITE_TIME_FINDING = (
     "repeats an expression", "exactly the shape", "written to the wrong plan",
     "never reach the demand", "no worked example", "only one worked example",
     "wrong arithmetic", "sign rule", "bare expression", "not an integer",
-    "nothing in the lesson does it", "is titled",
+    "nothing in the lesson does it", "is titled", "is wrong:",
+    "no negative number", "no exposition topics",
 )
 
 
@@ -1521,6 +1523,13 @@ def factory_generate_notes(
                 run_log=run_log, design_row=substrand_row or {},
                 design_experiences=[_plain(e) for e in (design_experiences or [])],
                 findings=findings))) if allocation.modules > 1 else None,
+        # A second reader for the worked examples, once per pass: solves each
+        # independently and says which working is not the working for its
+        # question. The one thing the arithmetic checks cannot ask.
+        audit=lambda n: example_audit.audit(
+            n, generate=llm_client.generate, model_config=resolved,
+            grade=payload.grade, subject=payload.subject,
+            sub_strand=payload.sub_strand),
     )
     if remediation.attempted:
         lesson_plan = notes_coverage.check(

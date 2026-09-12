@@ -389,7 +389,11 @@ def _inspect(notes: dict[str, Any],
         scores.append(float(provenance.get("score", 100.0)))
     if pitch.checked:
         scores.append(float(pitch.score))
-    score = round(sum(scores) / len(scores), 1)
+    # The worst dimension, not the mean. A guide with three of six lessons
+    # below the grade scored 94 because repetition, integrity and provenance
+    # were clean and the demand score was one of four averaged — and 94 is
+    # not what a teacher reading those three lessons would give it.
+    score = round(min(scores), 1)
 
     # Which lessons to rewrite: the later member of each repeated pair. The
     # earlier one is the real lesson and rewriting it loses good work.
@@ -634,6 +638,38 @@ def _inspect(notes: dict[str, Any],
             if number not in targets:
                 targets.append(number)
             score = max(0.0, score - 10.0)
+
+        # A worked example with no negative number in it, in a sub-strand
+        # whose design is about directed numbers. `2000 + 1500 − 800` and
+        # `10 − (2 × 3) + 4` were the two examples of the combined-operations
+        # lesson of a Grade 9 Integers guide: whole-number arithmetic under an
+        # integers heading. The per-lesson demand check reads the prose too,
+        # and the prose had a negative in it, so it passed.
+        try:
+            from . import design_elements, task_demand
+
+            if design_row and design_elements.wants_negatives(design_row):
+                for i, module in enumerate(modules, start=1):
+                    number = _number(module, i)
+                    examples = [ex for ex in (module.get("worked_examples") or [])
+                                if isinstance(ex, dict) and ex.get("statement")]
+                    if not examples:
+                        continue
+                    if any(task_demand.measure_item(ex).negatives for ex in examples):
+                        continue
+                    findings.append(
+                        f"Lesson {number}'s worked examples contain no negative "
+                        f"number at all. This sub-strand is about directed numbers; "
+                        f"an example on whole numbers under an integers heading is "
+                        f"primary-school arithmetic however many operations it has. "
+                        f"Every worked example carries at least one negative operand "
+                        f"or a negative result."
+                    )
+                    if number not in targets:
+                        targets.append(number)
+                    score = max(0.0, score - 12.0)
+        except Exception:  # noqa: BLE001
+            pass
 
         # An Integers sub-strand whose worked example comes out at 2.5. The
         # model picks the numbers first and divides second; two of the four
@@ -1225,14 +1261,43 @@ def run(
     design_row: dict[str, Any] | None = None,
     strand: str = "",
     regenerate: Any = None,
+    audit: Any = None,
 ) -> tuple[dict[str, Any], Report]:
     """Repair the guide until the checks pass, it stops improving, or passes run out."""
+    def inspect_all() -> tuple[float, list[str], list[int]]:
+        """The mechanical checks, and then the reader.
+
+        The audit is a model call, so it runs once per pass here and not
+        inside every write-time check. Its findings name a lesson and say
+        "is wrong:", which is the form the targeted rewrite acts on.
+        """
+        score, findings, targets = _inspect(
+            notes, design_experiences, design_row, strand=strand, sub_strand=sub_strand)
+        if audit is None:
+            return score, findings, targets
+        try:
+            more, lessons = audit(notes)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Example audit failed: %s", exc)
+            return score, findings, targets
+        for finding in more:
+            if finding not in findings:
+                findings.append(finding)
+        for number in lessons:
+            if number not in targets:
+                targets.append(number)
+        if more:
+            score = max(0.0, score - 10.0 * len(more))
+            run_log.step("Second reader",
+                         f"{len(more)} worked example(s) wrong on a read: "
+                         f"{more[0][:120]}", "warn")
+        return score, findings, targets
+
     report = Report()
     if not isinstance(notes, dict):
         return notes, report
 
-    score, findings, targets = _inspect(notes, design_experiences, design_row,
-                                        strand=strand, sub_strand=sub_strand)
+    score, findings, targets = inspect_all()
     report.score_before = report.score_after = score
     report.clean = not findings
     if report.clean:
@@ -1259,8 +1324,7 @@ def run(
                 this.deterministic.append(repair)
                 run_log.step(f"Repair {number}", repair)
 
-        score, findings, targets = _inspect(notes, design_experiences, design_row,
-                                        strand=strand, sub_strand=sub_strand)
+        score, findings, targets = inspect_all()
         this.after = score
 
         # The free repairs only ever help, so the repaired guide is the new
@@ -1348,8 +1412,7 @@ def run(
             if repair:
                 this.deterministic.append(repair)
 
-        after, findings, targets = _inspect(notes, design_experiences, design_row,
-                                        strand=strand, sub_strand=sub_strand)
+        after, findings, targets = inspect_all()
         this.after = after
         this.findings = findings
         this.calls, this.cost_usd = _since(spent_before)
@@ -1401,8 +1464,7 @@ def run(
     #
     # `notes` is mutated in place through the caller's reference, so the
     # contents are swapped rather than the name rebound.
-    current, current_findings, _ = _inspect(notes, design_experiences, design_row,
-                                        strand=strand, sub_strand=sub_strand)
+    current, current_findings, _ = inspect_all()
     if best_score > current:
         notes.clear()
         notes.update(best)

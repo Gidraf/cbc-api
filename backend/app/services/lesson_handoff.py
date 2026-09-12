@@ -127,6 +127,15 @@ def worked_examples_rule(subject: str | None, floor: Any,
         "The exposition must teach what the examples use. Before an example "
         "multiplies or divides signed numbers, this lesson or an earlier one "
         "must have STATED the sign rule in its own prose, with the reason.",
+        "The prose does not work the same expression the worked examples work. "
+        "A topic may SET UP an example, state the rule it uses, or work a "
+        "different, smaller one; the full working belongs in `worked_examples` "
+        "and appears on the page once.",
+        "Every worked example in a sub-strand about directed numbers carries a "
+        "negative operand or a negative result. A story is modelled as it is "
+        "told: an expense, a payment or a withdrawal is SUBTRACTED; a donation, "
+        "a refund or a deposit is ADDED; a change from A to B is B − A. A place "
+        "has the weather it has — no Kenyan town is below zero at night.",
         "",
         f"At {floor.level} level, {floor.because}. So the HARDER of each "
         f"lesson's two examples must use at least {operations} operations of "

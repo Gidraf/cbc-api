@@ -140,6 +140,62 @@ def test_the_block_is_editable_without_a_deploy() -> None:
 # ── the route writes one lesson per call ────────────────────────────────────
 
 
+# Twelve expressions of twelve shapes, every one an integer, so a fake lesson
+# built from any two of them passes the write-time checks: at grade, signed,
+# not a clone of another lesson's shape, integer answers, working the engine
+# can verify.
+POOL: list[tuple[str, str]] = [
+    (r"-18 - (-12) \times 2 + (-7)", "-1"),
+    (r"\dfrac{(-9 + 4) \times (-6)}{-2 \times 5}", "-3"),
+    (r"(-6) \times (-4) \div (-2) + 3", "-9"),
+    (r"-40 \div (-8) + (-3) \times 6 - (-11)", "-2"),
+    (r"(7 - 12) \times (-3) + 20 \div (-4)", "10"),
+    (r"(3 + (-9)) \div (-2) - 4 \times (-5)", "23"),
+    (r"-30 \div (-5) \times (-2) + 14", "2"),
+    (r"(-8 + 2) \times (-3) - (-10)", "28"),
+    (r"\dfrac{(-20) \div 4 + 9}{-2}", "-2"),
+    (r"-5 \times (-3) - (-4) \times (-6) + 1", "-8"),
+    (r"(-12 \div (-3) + (-7)) \times 2", "-6"),
+    (r"-9 + (-3) \times (-4) \div (-6) - 2", "-13"),
+]
+
+
+def _example(k: int) -> dict:
+    expr, answer = POOL[k % len(POOL)]
+    return {"statement": f"Work out ${expr}$.",
+            "steps": [{"working": f"${expr} = {answer}$", "because": "BODMAS, signs carried"}],
+            "answer": answer}
+
+
+def _two_examples(lesson: int) -> list[dict]:
+    return [_example(2 * (lesson - 1)), _example(2 * (lesson - 1) + 1)]
+
+
+_SENTENCES = [
+    "The number line runs both ways and zero is where the signs change.",
+    "A debt grows when more is borrowed and shrinks when some is repaid.",
+    "A thermometer reads below zero on a cold morning on the mountain.",
+    "Brackets are worked first because they group what belongs together.",
+    "Two negatives multiplied give a positive because the direction reverses twice.",
+    "Dividing a negative by a positive shares a loss among several people.",
+    "A fraction bar is a pair of brackets the learner has to supply.",
+    "Checking by substitution shows whether the order of operations was kept.",
+]
+
+
+def _complete(module: dict, lesson: int) -> dict:
+    """A fake module with enough in it that the write-time checks pass, and
+    with prose of its own so two fakes are not the same block of exposition."""
+    sentence = _SENTENCES[lesson % len(_SENTENCES)]
+    module.setdefault("exposition_segments", [
+        {"topic": f"Topic {lesson}",
+         "body": "Learners discuss integers in pairs. " + (sentence + " ") * 25,
+         "bridge": f"On to part {lesson + 1}."}])
+    module.setdefault("worked_examples", _two_examples(lesson))
+    module.setdefault("learning_experiences_used", ["discuss integers"])
+    return module
+
+
 def _fake_run(lessons: int):
     """Drive the real loop with a model that always numbers its module 1."""
     import types
@@ -163,13 +219,13 @@ def _fake_run(lessons: int):
         n = len(seen)
         return Resp({
             "title": "Integers", "intro": "envelope field",
-            "modules": [{
+            "modules": [_complete({
                 "module_number": 1,
                 "module_title": f"Written for call {n}",
                 "exposition_segments": [{
                     "topic": f"Topic {n}",
-                    "body": r"Evaluate $-15 \div 3 - (-2) \times (-4) + 6$.",
-                    "bridge": f"On to part {n + 1}."}]}]})
+                    "body": r"Evaluate $-15 \div 3 - (-2) \times (-4) + 6$. " * 8,
+                    "bridge": f"On to part {n + 1}."}]}, n)]})
 
     log = types.SimpleNamespace(step=lambda *a, **k: None)
     ctx = types.SimpleNamespace(
@@ -274,7 +330,7 @@ def test_one_failed_lesson_does_not_lose_the_others() -> None:
         calls["n"] += 1
         if calls["n"] == 2:
             raise RuntimeError("provider timed out")
-        return Resp({"modules": [{"module_number": 1, "module_title": "ok"}]})
+        return Resp({"modules": [_complete({"module_number": 1, "module_title": "ok"}, calls["n"])]})
 
     log = types.SimpleNamespace(step=lambda *a, **k: None)
     ctx = types.SimpleNamespace(messages=[{"role": "user", "content": "x"}])
@@ -298,12 +354,17 @@ def test_the_per_lesson_run_reports_usage_like_a_single_call() -> None:
     import types
     import unittest.mock as mock
 
+    import itertools
+
     from app.routes import curriculum
     from app.services.cost_tracker import TokenUsage
 
+    calls = itertools.count(1)
+
     class Resp:
         def __init__(self):
-            self.content = {"modules": [{"module_number": 1, "module_title": "ok"}]}
+            self.content = {"modules": [_complete({"module_number": 1, "module_title": "ok"},
+                                                  next(calls))]}
             self.usage = TokenUsage(prompt_tokens=100, completion_tokens=50,
                                     total_tokens=150)
             self.model = "gpt-4o"
@@ -427,7 +488,8 @@ def _run_with(monkeypatch, lessons: int, author, design_row=None, findings=None)
 
     def generate(resolved, messages, temperature=0.15):
         seen.append(messages[-1]["content"])
-        return Resp({"title": "x", "modules": [author(len(seen), messages[-1]["content"])]})
+        return Resp({"title": "x", "modules": [
+            _complete(author(len(seen), messages[-1]["content"]), len(seen))]})
 
     log = types.SimpleNamespace(step=lambda *a, **k: None)
     ctx = types.SimpleNamespace(messages=[{"role": "user", "content": "the sub-strand"}])

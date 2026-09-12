@@ -693,3 +693,27 @@ def test_a_lesson_about_it_tools_is_not_told_it_does_not_teach_them() -> None:
     _s, findings, _targets = notes_remediation._inspect(notes, design, {})
 
     assert not any("nothing in the lesson does it" in f for f in findings), findings
+
+
+def test_a_lesson_whose_examples_have_no_negative_number_is_a_target() -> None:
+    """`2000 + 1500 − 800` and `10 − (2 × 3) + 4` were the two examples of the
+    combined-operations lesson of an Integers guide. The per-lesson demand
+    check read the prose too, and the prose had a negative in it."""
+    row = {**GRADE_9_MATHS, "sub_strand_name": "Integers",
+           "slos": [{"id": "grade-9-Mat-1.1-2", "text": "work out combined operations of integers"}]}
+    notes = {"modules": [_ops_module(4, "Combined", [
+        _clone(r"$2000 + 1500 - 800$", "2700"),
+        _clone(r"$10 - (2 \times 3) + 4$", "8")])]}
+
+    _s, findings, targets = notes_remediation._inspect(notes, ["discuss integers"], row, sub_strand="Integers")
+
+    assert 4 in targets
+    assert any("no negative number" in f for f in findings), findings
+
+
+def test_the_score_is_the_worst_dimension_not_the_mean() -> None:
+    """Three of six lessons below the grade scored 94 because the other
+    three dimensions were clean and the demand was one of four averaged."""
+    import inspect as _inspect_mod
+    source = _inspect_mod.getsource(notes_remediation._inspect)
+    assert "round(min(scores), 1)" in source
