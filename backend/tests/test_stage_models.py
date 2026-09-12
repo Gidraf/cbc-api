@@ -312,7 +312,7 @@ def test_a_stored_mini_or_empty_binding_is_loaded_as_the_default(monkeypatch) ->
     rs.load_from_db()
 
     assert rs.stage_bindings["notes_generation"].model == state_mod.DEFAULT_OPENAI_MODEL
-    assert rs.stage_bindings["web_research"].model == state_mod.DEFAULT_OPENAI_MODEL
+    assert rs.stage_bindings["web_research"].model == state_mod.LIGHT_OPENAI_MODEL
 
 
 def test_a_gpt_5_binding_is_passed_through_not_rewritten(monkeypatch) -> None:
@@ -335,20 +335,47 @@ def test_a_gpt_5_binding_is_passed_through_not_rewritten(monkeypatch) -> None:
     assert rs.stage_bindings["reviewer_panel"].model == "gpt-5"
 
 
-def test_the_bootstrap_default_is_one_model_for_every_stage() -> None:
+def test_the_bootstrap_binds_writers_and_readers_to_their_tiers() -> None:
+    """One flagship model on every stage was the most expensive way to
+    classify a subject. Stages that write get the default; stages that read
+    get the light model."""
     from app import main as main_mod
-    from app.state import DEFAULT_OPENAI_MODEL, runtime_state
+    from app.services.stages import AUTHORING, EXTRACTION
+    from app.state import DEFAULT_OPENAI_MODEL, LIGHT_OPENAI_MODEL, runtime_state
 
     saved = dict(runtime_state.stage_bindings)
     try:
         runtime_state.stage_bindings.clear()
         main_mod._bootstrap_default_stage_bindings()
-        models = {b.model for b in runtime_state.stage_bindings.values()}
-        assert models == {DEFAULT_OPENAI_MODEL}, models
-        assert DEFAULT_OPENAI_MODEL.startswith("gpt-5")
+        for stage in AUTHORING:
+            assert runtime_state.stage_bindings[stage].model == DEFAULT_OPENAI_MODEL
+        for stage in EXTRACTION:
+            assert runtime_state.stage_bindings[stage].model == LIGHT_OPENAI_MODEL
+        assert DEFAULT_OPENAI_MODEL.startswith("gpt-5") and LIGHT_OPENAI_MODEL.startswith("gpt-5")
     finally:
         runtime_state.stage_bindings.clear()
         runtime_state.stage_bindings.update(saved)
+
+
+def test_the_console_button_applies_the_tiers_when_no_model_is_named() -> None:
+    from app import main as main_mod
+    from app.state import DEFAULT_OPENAI_MODEL, LIGHT_OPENAI_MODEL, runtime_state
+    from app.state import ProviderCredential
+
+    saved = dict(runtime_state.stage_bindings)
+    had = "openai" in runtime_state.provider_credentials
+    try:
+        if not had:
+            runtime_state.provider_credentials["openai"] = ProviderCredential(provider="openai")
+        runtime_state.persist_stage_binding = lambda stage: None  # type: ignore[method-assign]
+        out = main_mod._apply_bootstrap_bindings("openai", "", None)
+        assert out["bindings"]["notes_generation"] == DEFAULT_OPENAI_MODEL
+        assert out["bindings"]["ingest_extraction"] == LIGHT_OPENAI_MODEL
+    finally:
+        runtime_state.stage_bindings.clear()
+        runtime_state.stage_bindings.update(saved)
+        if not had:
+            runtime_state.provider_credentials.pop("openai", None)
 
 
 # ── a reasoning model is asked in its own request shape ──────────────────────
@@ -368,6 +395,34 @@ def test_a_gpt_5_request_carries_no_temperature_and_room_to_think() -> None:
 
     q = openai_payload("gpt-4o", [{"role": "user", "content": "x"}], 0.15, 1.0)
     assert q["temperature"] == 0.15 and q["max_tokens"] == 8192
+
+
+def test_the_5_6_family_is_priced_from_the_table_with_cached_input() -> None:
+    """Six per-lesson calls share one 11,000-token prefix; billing all six at
+    the full input rate overstated a run by a third."""
+    from app.services.cost_tracker import TokenUsage, calculate_cost
+
+    full = calculate_cost("gpt-5.6-terra", "openai",
+                          TokenUsage(1_000_000, 100_000, 1_100_000))
+    mostly_cached = calculate_cost("gpt-5.6-terra", "openai",
+                                   TokenUsage(1_000_000, 100_000, 1_100_000, cached_tokens=900_000))
+    assert full.input_cost_usd == 2.00
+    assert mostly_cached.input_cost_usd == round(0.1 * 2.00 + 0.9 * 0.20, 6)
+    assert full.output_cost_usd == 1.20
+
+    sol = calculate_cost("gpt-5.6-sol", "openai", TokenUsage(1_000_000, 1_000_000, 2_000_000))
+    luna = calculate_cost("gpt-5.6-luna", "openai", TokenUsage(1_000_000, 1_000_000, 2_000_000))
+    assert sol.total_cost_usd == 24.00 and luna.total_cost_usd == 1.40
+
+
+def test_a_reading_stage_thinks_less_than_a_writing_one() -> None:
+    from app.services.llm_client import openai_payload
+    from app.settings import settings
+
+    write = openai_payload("gpt-5.6-terra", [], 0, 1, stage="notes_generation")
+    read = openai_payload("gpt-5.6-luna", [], 0, 1, stage="web_research")
+    assert write["reasoning"]["effort"] == settings.openai_reasoning_effort
+    assert read["reasoning"]["effort"] == settings.openai_light_reasoning_effort
 
 
 def test_an_unlisted_gpt_5_snapshot_is_priced_as_its_size_class() -> None:

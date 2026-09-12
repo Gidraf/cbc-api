@@ -108,13 +108,19 @@ def test_thinking_that_eats_the_whole_budget_is_a_named_error(posted) -> None:
     assert "OPENAI_REASONING_EFFORT" in str(caught.value) or "reasoning" in str(caught.value).lower()
 
 
-def test_the_shipped_default_is_the_operators_model() -> None:
-    from app.settings import Settings
+def test_the_shipped_defaults_are_the_5_6_tiers() -> None:
     import os
-    saved = os.environ.pop("OPENAI_DEFAULT_MODEL", None)
+    from app.settings import Settings
+    saved = {k: os.environ.pop(k, None) for k in
+             ("OPENAI_DEFAULT_MODEL", "OPENAI_LIGHT_MODEL",
+              "OPENAI_REASONING_EFFORT", "OPENAI_LIGHT_REASONING_EFFORT")}
     try:
-        assert Settings().openai_default_model == "gpt-5.6-sol"
-        assert Settings().openai_reasoning_effort == "high"
+        fresh = Settings()
+        assert fresh.openai_default_model == "gpt-5.6-terra"
+        assert fresh.openai_light_model == "gpt-5.6-luna"
+        assert fresh.openai_reasoning_effort == "medium"
+        assert fresh.openai_light_reasoning_effort == "low"
     finally:
-        if saved is not None:
-            os.environ["OPENAI_DEFAULT_MODEL"] = saved
+        for k, val in saved.items():
+            if val is not None:
+                os.environ[k] = val

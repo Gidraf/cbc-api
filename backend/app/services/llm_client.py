@@ -33,7 +33,8 @@ def is_reasoning_model(model: str) -> bool:
 
 
 def openai_payload(model: str, messages: list[dict[str, str]],
-                   temperature: float, top_p: float) -> dict[str, Any]:
+                   temperature: float, top_p: float,
+                   stage: str = "") -> dict[str, Any]:
     """The request for this model: the Responses API for a reasoning model,
     Chat Completions for the rest.
 
@@ -43,12 +44,15 @@ def openai_payload(model: str, messages: list[dict[str, str]],
     set wide. The JSON a station wants is the same either way.
     """
     from ..settings import settings
+    from .stages import needs_reasoning
 
     if is_reasoning_model(model):
+        effort = (settings.openai_reasoning_effort if not stage or needs_reasoning(stage)
+                  else settings.openai_light_reasoning_effort)
         return {
             "model": model,
             "input": messages,
-            "reasoning": {"effort": settings.openai_reasoning_effort},
+            "reasoning": {"effort": effort},
             "max_output_tokens": 32768,
             "text": {"format": {"type": "json_object"}},
         }
@@ -270,7 +274,8 @@ class LlmClient:
         base_url = config.resolved_base_url.rstrip("/")
         url = f"{base_url}/responses"
         model_name = (config.model or DEFAULT_OPENAI_MODEL).strip() or DEFAULT_OPENAI_MODEL
-        payload = openai_payload(model_name, messages, 0.0, 1.0)
+        payload = openai_payload(model_name, messages, 0.0, 1.0,
+                                 stage=config.pipeline_stage)
 
         with httpx.Client(timeout=self.timeout) as client:
             resp = client.post(url, headers=headers, json=payload)
@@ -296,6 +301,8 @@ class LlmClient:
                 prompt_tokens=int(raw_usage.get("input_tokens", 0) or 0),
                 completion_tokens=int(raw_usage.get("output_tokens", 0) or 0),
                 total_tokens=int(raw_usage.get("total_tokens", 0) or 0),
+                cached_tokens=int((raw_usage.get("input_tokens_details") or {})
+                                  .get("cached_tokens", 0) or 0),
             )
             return text, usage
 
@@ -336,6 +343,8 @@ class LlmClient:
                 prompt_tokens=raw_usage.get("prompt_tokens", 0),
                 completion_tokens=raw_usage.get("completion_tokens", 0),
                 total_tokens=raw_usage.get("total_tokens", 0),
+                cached_tokens=int((raw_usage.get("prompt_tokens_details") or {})
+                                  .get("cached_tokens", 0) or 0),
             )
             return text, usage
 

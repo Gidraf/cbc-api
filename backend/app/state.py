@@ -14,10 +14,17 @@ from .settings import settings
 
 logger = logging.getLogger("cbc-state")
 
-# The one OpenAI model every stage runs on, from OPENAI_DEFAULT_MODEL. An
-# operator can bind a stage to any GPT-5-family id in the console and it is
-# passed through; a new release of the family is a line in .env, not a deploy.
+# The OpenAI model a stage runs on unless bound otherwise in the console:
+# the default for stages that write, the light one for stages that read.
+# Any GPT-5-family id bound in the console is passed through untouched.
 DEFAULT_OPENAI_MODEL = settings.openai_default_model
+LIGHT_OPENAI_MODEL = settings.openai_light_model
+
+
+def default_model_for(stage: str) -> str:
+    from .services.stages import needs_reasoning
+
+    return DEFAULT_OPENAI_MODEL if needs_reasoning(stage) else LIGHT_OPENAI_MODEL
 
 
 @dataclass(slots=True)
@@ -187,14 +194,14 @@ class RuntimeState:
                 # gpt-4o — the failure hardest to notice, because the run
                 # succeeds.
                 if not raw_model or lower in {"", "null", "undefined", "default", "none"}:
-                    model = DEFAULT_OPENAI_MODEL
+                    model = default_model_for(row["pipeline_stage"])
                     logger.warning(
                         "Stage %s had no usable model (%r); falling back to %s.",
                         row["pipeline_stage"], raw_model, model)
                 elif "4o-mini" in lower or "gpt-4-mini" in lower:
                     # Never gpt-4o-mini. The console wrote it into every
                     # stage and the content came out of the smaller model.
-                    model = DEFAULT_OPENAI_MODEL
+                    model = default_model_for(row["pipeline_stage"])
                     logger.warning(
                         "Stage %s was bound to %r; using %s — gpt-4o-mini is "
                         "not used for any stage.", row["pipeline_stage"], raw_model, model)

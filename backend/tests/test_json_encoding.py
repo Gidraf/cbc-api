@@ -26,6 +26,7 @@ def test_the_shape_that_actually_broke_it() -> None:
 
     assert stored["usage"] == {
         "prompt_tokens": 10, "completion_tokens": 20, "total_tokens": 30,
+        "cached_tokens": 0,
     }
 
 
@@ -82,7 +83,8 @@ def test_primitives_are_untouched() -> None:
 # ── The usage shape itself ──────────────────────────────────────────────────
 
 @pytest.mark.parametrize("usage,expected", [
-    (TokenUsage(1, 2, 3), {"prompt_tokens": 1, "completion_tokens": 2, "total_tokens": 3}),
+    (TokenUsage(1, 2, 3), {"prompt_tokens": 1, "completion_tokens": 2, "total_tokens": 3,
+                           "cached_tokens": 0}),
     ({"prompt_tokens": 4}, {"prompt_tokens": 4}),
     (None, {}),
 ])

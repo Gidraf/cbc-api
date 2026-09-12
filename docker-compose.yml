@@ -18,10 +18,13 @@ x-backend-env: &backend-env
 
   # Provider API keys/config
   OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-  # The OpenAI model every stage runs on unless a stage is bound otherwise in the console.
-  OPENAI_DEFAULT_MODEL: ${OPENAI_DEFAULT_MODEL:-gpt-5.6-sol}
-  # minimal | low | medium | high — how hard GPT-5-family models think (billed as output).
-  OPENAI_REASONING_EFFORT: ${OPENAI_REASONING_EFFORT:-high}
+  # OpenAI models by tier: stages that WRITE (notes, material, questions, rewrites, review)
+  # and stages that READ (research, classification, extraction). Effort is how hard a
+  # reasoning model thinks; reasoning tokens are billed as output.
+  OPENAI_DEFAULT_MODEL: ${OPENAI_DEFAULT_MODEL:-gpt-5.6-terra}
+  OPENAI_REASONING_EFFORT: ${OPENAI_REASONING_EFFORT:-medium}
+  OPENAI_LIGHT_MODEL: ${OPENAI_LIGHT_MODEL:-gpt-5.6-luna}
+  OPENAI_LIGHT_REASONING_EFFORT: ${OPENAI_LIGHT_REASONING_EFFORT:-low}
   ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
   GEMINI_API_KEY: ${GEMINI_API_KEY:-}
   OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}

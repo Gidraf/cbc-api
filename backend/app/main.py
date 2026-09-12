@@ -38,7 +38,7 @@ from .services.pipeline import PipelineService
 from .services.provider_router import ProviderRouter
 from .services.validation import validate_grade_dataset
 from .services.workflow import WorkflowService
-from .state import DEFAULT_OPENAI_MODEL, StageBinding, runtime_state
+from .state import StageBinding, default_model_for, runtime_state
 
 app = FastAPI(title="CBC API Platform", version="2.1.0", description="Contract-First Educational Content Production System")
 
@@ -75,22 +75,31 @@ def _apply_bootstrap_bindings(provider: str, model: str, base_url: str | None) -
     if provider not in runtime_state.provider_credentials:
         raise_api_error("UNSUPPORTED_MODEL_PROVIDER", f"Unsupported provider: {provider}")
 
+    # No model named, on OpenAI: each stage gets its tier's default — the
+    # authoring model for stages that write, the light one for stages that
+    # read. One flagship model on every stage was the console's old button,
+    # and it was the most expensive way to classify a subject.
     updated = []
+    bindings: dict[str, str] = {}
     for stage in sorted(STAGE_NAMES):
+        chosen = (model or "").strip() or (
+            default_model_for(stage) if provider == Provider.OPENAI.value else "")
         runtime_state.stage_bindings[stage] = StageBinding(
             pipeline_stage=stage,
             provider=provider,
-            model=model,
+            model=chosen,
             base_url=base_url,
         )
         runtime_state.persist_stage_binding(stage)
         updated.append(stage)
+        bindings[stage] = chosen
 
     return {
         "provider": provider,
         "model": model,
         "base_url": base_url,
         "stages_updated": updated,
+        "bindings": bindings,
     }
 
 
@@ -208,7 +217,7 @@ class BrowseRequest(BaseModel):
 
 class BulkStageBindingRequest(BaseModel):
     provider: str
-    model: str
+    model: str = ""
     base_url: str | None = None
 
 
@@ -239,7 +248,7 @@ def _bootstrap_default_stage_bindings() -> None:
         runtime_state.stage_bindings[stage] = StageBinding(
             pipeline_stage=stage,
             provider=provider,
-            model=DEFAULT_OPENAI_MODEL,
+            model=default_model_for(stage),
             base_url=None,
         )
 

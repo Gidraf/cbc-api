@@ -29,14 +29,21 @@ class Settings:
 
     # LLM Provider Keys
     openai_api_key: str | None = os.getenv("OPENAI_API_KEY")
-    # How hard a GPT-5-family model thinks before it writes. Reasoning tokens
-    # are billed as output, so this is the cost dial. "high" by default: the
-    # stations write the content, and a guide that comes back wrong four
-    # passes running costs more than the thinking would have.
-    openai_reasoning_effort: str = os.getenv("OPENAI_REASONING_EFFORT", "high")
-    # The model every stage runs on unless bound otherwise. An environment
-    # value so that a new release of the family is a line in .env, not a deploy.
-    openai_default_model: str = os.getenv("OPENAI_DEFAULT_MODEL", "gpt-5.6-sol").strip() or "gpt-5.6-sol"
+    # Two tiers of OpenAI model, by what a stage has to DO. Writing a lesson,
+    # a worked example or an exam question is authoring; reading a strand list
+    # out of a table or classifying a subject is extraction, and a flagship
+    # model on it is waste. Both are .env values: a new release of the family
+    # is a line here, not a deploy.
+    openai_default_model: str = (
+        os.getenv("OPENAI_DEFAULT_MODEL", "gpt-5.6-terra").strip() or "gpt-5.6-terra")
+    openai_light_model: str = (
+        os.getenv("OPENAI_LIGHT_MODEL", "gpt-5.6-luna").strip() or "gpt-5.6-luna")
+    # How hard a reasoning model thinks before it writes. Reasoning tokens are
+    # billed as OUTPUT — the expensive side — and "high" can multiply them
+    # several times over. The loop checks the content mechanically and sends
+    # it back, so authoring gets "medium"; extraction needs almost none.
+    openai_reasoning_effort: str = os.getenv("OPENAI_REASONING_EFFORT", "medium")
+    openai_light_reasoning_effort: str = os.getenv("OPENAI_LIGHT_REASONING_EFFORT", "low")
     anthropic_api_key: str | None = os.getenv("ANTHROPIC_API_KEY")
     gemini_api_key: str | None = os.getenv("GEMINI_API_KEY")
     ollama_base_url: str | None = os.getenv("OLLAMA_BASE_URL")
