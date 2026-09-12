@@ -996,7 +996,7 @@ def _plan_lesson_by_lesson(context: Any, resolved: Any, *, lessons: int,
         module = written[0]
         module["module_number"] = number
         modules.append(module)
-        previous = lesson_handoff.read(module)
+        previous = lesson_handoff.read(module, previous)
         run_log.step(
             f"Lesson {number}/{lessons}",
             str(module.get("module_title") or module.get("title") or "written"),
@@ -1056,9 +1056,9 @@ def factory_generate_notes(
     # 2. Fetch Sub-strand specific blueprint from database
     substrand_row = fetch_one(
         """
-        SELECT allocated_hours, slos, learning_experiences, key_inquiry_questions,
-               core_competencies, values, required_diagrams, experiments,
-               pedagogical_guidance, source_pages
+        SELECT grade, subject, allocated_hours, slos, learning_experiences,
+               key_inquiry_questions, core_competencies, values,
+               required_diagrams, experiments, pedagogical_guidance, source_pages
         FROM curriculum_substrands
         WHERE (REPLACE(LOWER(grade), 'grade-', '') = REPLACE(LOWER(:grade), 'grade-', ''))
           AND LOWER(subject) = LOWER(:subject)

@@ -185,13 +185,37 @@ def _lesson_text(module: dict[str, Any]) -> str:
 # same topic does not qualify, low enough to survive rewording.
 _TAUGHT = 0.6
 
+# Below this much of the experience's vocabulary, a lesson that NAMES the
+# experience plainly does not do it. Deliberately far under _TAUGHT: the band
+# between is "maybe, in other words", and a rewrite on a maybe is churn. A
+# lesson that cited "use IT tools ... to carry out operations on integers" and
+# made a poster shares 2 of 8 stems; the lesson that used number cards shares 7
+# of 10.
+_ABSENT = 0.35
 
-def _teaches(experience: str, module: dict[str, Any]) -> bool:
+# Fewer words than this and the lesson has no text to judge — a stub, or a
+# module whose prose the material station has not written yet.
+_ENOUGH_TEXT = 40
+
+
+def _coverage(experience: str, module: dict[str, Any]) -> float | None:
     wanted = _stems(experience)
     if len(wanted) < 2:
-        return False
+        return None
     shared = wanted & _stems(_lesson_text(module))
-    return len(shared) / len(wanted) >= _TAUGHT
+    return len(shared) / len(wanted)
+
+
+def _teaches(experience: str, module: dict[str, Any]) -> bool:
+    coverage = _coverage(experience, module)
+    return coverage is not None and coverage >= _TAUGHT
+
+
+def _plainly_absent(experience: str, module: dict[str, Any]) -> bool:
+    if len(_lesson_text(module).split()) < _ENOUGH_TEXT:
+        return False
+    coverage = _coverage(experience, module)
+    return coverage is not None and coverage < _ABSENT
 
 
 def check_learning_experiences(notes: dict[str, Any],
@@ -249,6 +273,55 @@ def check_learning_experiences(notes: dict[str, Any],
     return findings
 
 
+def check_declared_but_not_taught(
+        notes: dict[str, Any],
+        design_experiences: list[str]) -> tuple[list[str], list[int]]:
+    """Lessons that NAME a design experience their text does not DO.
+
+    The unused-experience check reads the declared field, so the moment a
+    lesson wrote `experience 5` under `learning_experiences_used` the finding
+    went quiet — and the lesson was poster-making. "use IT tools ... to carry
+    out operations on integers" was cited by a lesson containing no IT tool,
+    no print resource and no operation. Naming without teaching is the worse
+    failure: it makes the guide look grounded exactly where it is not.
+
+    Returns the findings and the module numbers to rewrite.
+    """
+    if not design_experiences:
+        return [], []
+    bullets = [(e, _norm(e)) for e in design_experiences if str(e).strip()]
+    findings: list[str] = []
+    numbers: list[int] = []
+    for i, module in enumerate(_modules(notes)):
+        for used in (module.get("learning_experiences_used") or []):
+            key = _norm(used)
+            if not key:
+                continue
+            bullet = next((e for e, k in bullets if key in k or k in key), None)
+            if bullet is None:
+                continue
+            # Judge the lesson on what it CLAIMED, at the shorter of the two
+            # wordings, and without the mother-tongue gloss a design bullet
+            # runs on into after a semicolon — English prose cannot share
+            # stems with "Mungu ni mkuu na wa ajabu sana", and it should not
+            # have to.
+            claim = str(used) if len(key) < len(_norm(bullet)) else bullet
+            claim = claim.split(";")[0]
+            if not _plainly_absent(claim, module):
+                continue
+            findings.append(
+                f"\"{_label(module, i)}\" names \"{bullet}\" under "
+                f"`learning_experiences_used`, but nothing in the lesson does "
+                f"it — the activities described are not that experience. "
+                f"Either make the lesson actually carry it out, in the design's "
+                f"own terms, or take the citation off. Naming an experience the "
+                f"lesson does not teach is worse than leaving it unnamed.")
+            number = _number(module, i)
+            if number not in numbers:
+                numbers.append(number)
+    return findings, numbers
+
+
 def check_required_fields(notes: dict[str, Any]) -> list[str]:
     """Fields the schema asks for that no module supplied."""
     modules = _modules(notes)
@@ -277,9 +350,12 @@ def check(notes: dict[str, Any],
     if not isinstance(notes, dict):
         return {"checked": False, "findings": [], "score": 100.0}
 
+    undelivered, undelivered_in = check_declared_but_not_taught(
+        notes, design_experiences or [])
     findings = (
         check_slo_map(notes)
         + check_learning_experiences(notes, design_experiences or [])
+        + undelivered
         + check_required_fields(notes)
     )
     # Each contradiction is a thing a teacher will hit. Ten of them is not ten
@@ -290,4 +366,5 @@ def check(notes: dict[str, Any],
         "clean": not findings,
         "score": 100.0 if not findings else score,
         "findings": findings,
+        "undelivered": undelivered_in,
     }

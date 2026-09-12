@@ -83,6 +83,10 @@ class Handoff:
     tasks: list[str] = field(default_factory=list)
     ended_on: str = ""
     outcomes: list[str] = field(default_factory=list)
+    # Every expression worked by ANY lesson before this one, not only the last.
+    # A hand-off that named only the previous lesson's tasks let lesson 5 work
+    # what lesson 3 had worked, and the duplicate check then sent it back.
+    earlier_tasks: list[str] = field(default_factory=list)
 
     @property
     def empty(self) -> bool:
@@ -91,15 +95,22 @@ class Handoff:
     def to_dict(self) -> dict[str, Any]:
         return {"lesson": self.lesson, "title": self.title,
                 "taught": self.taught, "tasks": self.tasks,
-                "ended_on": self.ended_on, "outcomes": self.outcomes}
+                "ended_on": self.ended_on, "outcomes": self.outcomes,
+                "earlier_tasks": self.earlier_tasks}
 
 
-def read(module: dict[str, Any]) -> Handoff:
-    """What the lesson just written leaves behind for the next one."""
+def read(module: dict[str, Any],
+         before: Handoff | None = None) -> Handoff:
+    """What the lesson just written leaves behind for the next one.
+
+    `before` is the hand-off this lesson was itself written from; its tasks
+    are carried forward so the list of worked expressions grows lesson by
+    lesson instead of being replaced.
+    """
     from . import task_demand
 
     if not isinstance(module, dict):
-        return Handoff()
+        return Handoff(earlier_tasks=_all_tasks(before))
 
     segments = [s for s in (module.get("exposition_segments") or [])
                 if isinstance(s, dict)]
@@ -135,7 +146,19 @@ def read(module: dict[str, Any]) -> Handoff:
         tasks=tasks[:8],
         ended_on=ended,
         outcomes=[str(s) for s in (module.get("slos") or [])][:4],
+        earlier_tasks=_all_tasks(before),
     )
+
+
+def _all_tasks(before: Handoff | None) -> list[str]:
+    """Everything worked before the lesson `before` describes, plus its own."""
+    if before is None:
+        return []
+    out = list(before.earlier_tasks)
+    for task in before.tasks:
+        if task not in out:
+            out.append(task)
+    return out[:40]
 
 
 def _plural(count: int, noun: str) -> str:
@@ -161,6 +184,10 @@ def block(previous: Handoff | None, step: Step | None) -> str:
             bits.append("  worked: " + "; ".join(previous.tasks))
         if previous.ended_on:
             bits.append(f"  ended on: \"{previous.ended_on}\"")
+        if previous.earlier_tasks:
+            bits.append("Worked by lessons before that (do not work any of "
+                        "these again either): "
+                        + "; ".join(previous.earlier_tasks))
         before = "\n".join(bits)
 
     if step is None:

@@ -335,3 +335,35 @@ def test_the_route_reads_one_resp_whichever_path_wrote_the_guide() -> None:
     content = source.index("notes_content = resp.content")
     assert planner < fallback < content, \
         "both branches assign resp BEFORE anything reads it"
+
+
+# ── every earlier lesson, not only the last ──────────────────────────────────
+
+
+def test_the_handoff_accumulates_what_every_earlier_lesson_worked() -> None:
+    """Lesson 5 worked what lesson 3 had worked. The hand-off named only the
+    previous lesson's tasks, so lesson 5 was never told about lesson 3's."""
+    first = lh.read(MODULE)
+    second = lh.read({
+        "module_number": 2, "module_title": "Multiplying",
+        "exposition_segments": [{"topic": "Sign rule",
+                                 "body": r"Work out $(-3) \times (-4) + 10$."}]},
+        first)
+    third = lh.read({"module_number": 3, "module_title": "Dividing"}, second)
+
+    assert any("5 + (-3)" in t for t in second.earlier_tasks)
+    assert any("5 + (-3)" in t for t in third.earlier_tasks), "carried two lessons on"
+    assert any("(-3)" in t and "(-4)" in t for t in third.earlier_tasks)
+
+    block = lh.block(third, None)
+    assert "5 + (-3)" in block and "lessons before that" in block
+
+
+def test_the_fourth_call_is_told_what_the_first_worked() -> None:
+    _, seen = _fake_run(4)
+
+    assert "Written for call 1" in seen[1]
+    # Lesson 1's expression is only *directly* in call 2's hand-off, but the
+    # accumulated list carries it into calls 3 and 4 as well.
+    assert seen[3].count("÷") >= 1
+    assert "lessons before that" in seen[3]

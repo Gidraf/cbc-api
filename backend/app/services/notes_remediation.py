@@ -413,6 +413,38 @@ def _inspect(notes: dict[str, Any],
         if number not in targets:
             targets.append(number)
 
+    # A lesson that NAMES an experience its text does not DO is rewritten.
+    for number in integrity.get("undelivered") or []:
+        if number not in targets:
+            targets.append(number)
+
+    # A mathematics lesson with no worked example at all is rewritten.
+    #
+    # Every check on worked examples below runs over the list a lesson
+    # supplies, and an empty list passes all of them. The first guide generated
+    # after those checks landed had no worked examples in any of its six
+    # lessons — the shortest path through a difficulty floor, a duplicate check
+    # and an arithmetic check is to write nothing for them to read. A maths
+    # lesson a learner cannot imitate from is not one, whatever else it passes.
+    subject = str((design_row or {}).get("subject") or "").lower()
+    if "math" in subject:
+        for i, module in enumerate(modules, start=1):
+            number = _number(module, i)
+            examples = [ex for ex in (module.get("worked_examples") or [])
+                        if isinstance(ex, dict) and ex.get("statement")]
+            if examples:
+                continue
+            findings.append(
+                f"Lesson {number} has no worked example. This is a Mathematics "
+                f"lesson: `worked_examples` must carry at least two examples, "
+                f"each set in the words a learner reads, worked step by step "
+                f"to its answer with the REASON for every step. A learner "
+                f"revising at home has nothing to imitate without them."
+            )
+            if number not in targets:
+                targets.append(number)
+            score = max(0.0, score - 15.0)
+
     # A lesson whose every worked example is primary arithmetic is rewritten.
     #
     # `50 - 20 + 15` and `5 - 3 + 4` pass arithmetic checks (the answers are

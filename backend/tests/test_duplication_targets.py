@@ -229,3 +229,78 @@ def test_a_lesson_with_correct_arithmetic_is_not_flagged_for_errors() -> None:
 
     arith_findings = [f for f in findings if "arithmetic" in f.lower()]
     assert not arith_findings, f"correct arithmetic must not be flagged: {arith_findings}"
+
+
+# ── a mathematics lesson with no worked example at all ───────────────────────
+
+
+def test_a_mathematics_lesson_with_no_worked_examples_is_a_target() -> None:
+    """The first guide generated after the difficulty floor, the duplicate check
+    and the arithmetic check landed had no worked examples in any lesson. All
+    three checks run over the list a lesson supplies; an empty list passed
+    every one of them."""
+    notes = {"modules": [_ops_module(1, "Operations", [])]}
+
+    _score, findings, targets = notes_remediation._inspect(
+        notes, ["discuss integers"], {"subject": "Mathematics"})
+
+    assert 1 in targets
+    assert any("no worked example" in f for f in findings)
+
+
+def test_a_non_mathematics_lesson_needs_no_worked_example() -> None:
+    notes = {"modules": [_ops_module(1, "Our God", [])]}
+
+    _score, findings, _targets = notes_remediation._inspect(
+        notes, ["discuss integers"], {"subject": "Christian Religious Education"})
+
+    assert not any("no worked example" in f for f in findings)
+
+
+# ── an experience named but not taught ───────────────────────────────────────
+
+
+def test_a_lesson_that_names_an_experience_it_does_not_teach_is_a_target() -> None:
+    """Lesson 4 wrote `experience 5` — "use IT tools and other resources such as
+    print to carry out operations on integers" — under learning_experiences_used
+    and then taught poster-making. The unused-experience check read the field
+    and went quiet."""
+    it_tools = ("use IT tools and other resources such as print to carry out "
+                "operations on integers")
+    notes = {"modules": [{
+        "module_number": 4, "title": "Appreciating the Use of Integers",
+        "exposition_segments": [
+            {"topic": "Integers in Science",
+             "body": "Discuss how integers are used in scientific measurements, "
+                     "such as temperature, pressure and altitude. Scientists use "
+                     "negative integers to represent below sea level."},
+            {"topic": "Collaborative Activity",
+             "body": "Organize a group activity where learners create a poster "
+                     "illustrating the use of integers in various contexts. "
+                     "Evaluate the group posters for understanding and creativity."},
+        ],
+        "resources_needed": ["poster materials", "markers"],
+        "learning_experiences_used": [it_tools],
+    }]}
+
+    _score, findings, targets = notes_remediation._inspect(notes, [it_tools], {})
+
+    assert 4 in targets
+    assert any("nothing in the lesson does it" in f for f in findings)
+
+
+def test_a_lesson_that_teaches_what_it_names_is_left_alone() -> None:
+    it_tools = ("use IT tools and other resources such as print to carry out "
+                "operations on integers")
+    notes = {"modules": [{
+        "module_number": 4, "title": "Integers with IT tools",
+        "teacher_exposition": "Learners use IT tools — a calculator app and a "
+                              "spreadsheet — and print resources such as the "
+                              "textbook to carry out operations on integers, "
+                              "checking each other's answers.",
+        "learning_experiences_used": [it_tools],
+    }]}
+
+    _score, findings, _targets = notes_remediation._inspect(notes, [it_tools], {})
+
+    assert not any("nothing in the lesson does it" in f for f in findings)

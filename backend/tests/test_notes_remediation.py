@@ -198,10 +198,12 @@ def test_a_clean_guide_is_not_touched():
         ],
         "modules": [
             _module(1, "Introducing God", QUALITIES, DESIGN[:4], "203:26",
-                    ["Saying the Name of God", "Using Gestures", "Singing"]),
+                    ["Saying the Name of God", "Using Gestures", "Singing",
+                     "In Turns, Saying What They Know about God"]),
             _module(2, "Practicing Prayer", PRAYERS, DESIGN[4:], "203:36",
                     ["What is Prayer?", "Listening to a Recorded Clip",
-                     "Praying Together in Twos"]),
+                     "Saying a Short Prayer to God in Groups",
+                     "Singing Songs in Groups"]),
         ],
     }
 
