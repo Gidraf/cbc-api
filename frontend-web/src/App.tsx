@@ -296,6 +296,19 @@ export function App() {
   const [clearDatasetSubject, setClearDatasetSubject] = useState("");
   const [clearDatasetStrand, setClearDatasetStrand] = useState("");
   const [clearDatasetMode, setClearDatasetMode] = useState<"datasets_only" | "cascade_all">("cascade_all");
+  // What a clear removes. "dataset" is the sub-strands and designs; the rest
+  // is what was written from them. Clearing the notes and keeping the dataset
+  // is the common case after a pipeline change.
+  const CLEAR_LAYERS: { key: string; label: string; hint: string }[] = [
+    { key: "notes", label: "Lesson notes & material", hint: "teacher's guides, material, published bundles, drafts" },
+    { key: "diagrams", label: "Diagrams & media", hint: "figures, photo and video briefs, uploaded assets" },
+    { key: "activities", label: "Activities & simulations", hint: "practicals, experiments, simulations" },
+    { key: "questions", label: "Questions", hint: "the question bank and its review events" },
+    { key: "jobs", label: "Queued jobs", hint: "queued and failed generation jobs for this scope" },
+    { key: "dataset", label: "Dataset (sub-strands & designs)", hint: "the curriculum rows themselves" },
+  ];
+  const [clearLayers, setClearLayers] = useState<string[]>(CLEAR_LAYERS.map((l) => l.key));
+  const clearPreset = (keys: string[]) => setClearLayers(keys);
   const [deletionInspectionData, setDeletionInspectionData] = useState<any>(null);
   const [isInspectingDeletion, setIsInspectingDeletion] = useState(false);
 
@@ -1711,11 +1724,12 @@ export function App() {
   }
 
   async function executeDatasetClear() {
-    await run(`Clearing Dataset (${clearDatasetMode === 'cascade_all' ? 'Cascade All Generations' : 'Definitions Only'})...`, async () => {
+    await run(`Clearing ${clearLayers.join(", ")}...`, async () => {
       const res = await fetchJson<any>(`/api/v1/admin/langfuse/datasets/${clearDatasetGrade}/clear`, {
         method: "POST",
         body: JSON.stringify({
-          clear_mode: clearDatasetMode,
+          clear_mode: clearLayers.includes("dataset") && clearLayers.length === 1 ? "datasets_only" : "cascade_all",
+          layers: clearLayers,
           subject: clearDatasetSubject || undefined,
           strand: clearDatasetStrand || undefined,
         }),
@@ -2266,13 +2280,16 @@ export function App() {
     });
   }
 
-  async function deleteSubjectWithGenerations(gradeSlug: string, subjectName: string) {
-    if (!window.confirm(`⚠️ DANGER: Are you sure you want to permanently delete the ENTIRE SUBJECT "${subjectName}" across ${gradeSlug}, including all strands, sub-strands, notes, diagrams, and question bank?`)) {
+  async function deleteSubjectWithGenerations(gradeSlug: string, subjectName: string, layers: string = "all") {
+    const what = layers === "generated"
+      ? `everything GENERATED for "${subjectName}" in ${gradeSlug} — notes, diagrams, activities, questions and jobs — keeping the dataset`
+      : `the ENTIRE SUBJECT "${subjectName}" across ${gradeSlug}, including all strands, sub-strands, notes, diagrams, and question bank`;
+    if (!window.confirm(`⚠️ DANGER: Are you sure you want to permanently delete ${what}?`)) {
       return;
     }
-    await run(`Deleting Entire Subject "${subjectName}"...`, async () => {
+    await run(`Deleting ${layers === "generated" ? "generated content of" : "entire subject"} "${subjectName}"...`, async () => {
       const res = await fetchJson<any>(
-        `/api/v1/curriculum/subject?grade=${encodeURIComponent(gradeSlug)}&subject=${encodeURIComponent(subjectName)}`,
+        `/api/v1/curriculum/subject?grade=${encodeURIComponent(gradeSlug)}&subject=${encodeURIComponent(subjectName)}&layers=${encodeURIComponent(layers)}&confirm=DELETE`,
         { method: "DELETE" },
         auth()
       );
@@ -3125,45 +3142,33 @@ export function App() {
                     </div>
                   </div>
 
-                  {/* Deletion Mode Selector */}
+                  {/* What to clear, layer by layer */}
                   <div style={{ marginBottom: "14px", padding: "12px", background: "#f8fafc", borderRadius: "8px", border: "1px solid #e2e8f0" }}>
                     <strong style={{ display: "block", marginBottom: "8px", fontSize: "13px", color: "#334155" }}>
-                      Select Clear / Deletion Scope:
+                      What to clear:
                     </strong>
-                    <label style={{ display: "flex", alignItems: "flex-start", gap: "8px", marginBottom: "8px", cursor: "pointer" }}>
-                      <input
-                        type="radio"
-                        name="clear_mode"
-                        checked={clearDatasetMode === "cascade_all"}
-                        onChange={() => setClearDatasetMode("cascade_all")}
-                        style={{ marginTop: "3px" }}
-                      />
-                      <div>
-                        <strong style={{ color: "#991b1b", fontSize: "12.5px" }}>
-                          🔥 Cascade Clear Everything (Recommended for Clean Restart)
-                        </strong>
-                        <p style={{ margin: "2px 0 0", fontSize: "11.5px", color: "#64748b" }}>
-                          Deletes dataset blueprint definitions AND all generated 4-hour lesson notes, vector SVG diagrams, practical experiments, and assessment items in one click.
-                        </p>
-                      </div>
-                    </label>
-                    <label style={{ display: "flex", alignItems: "flex-start", gap: "8px", cursor: "pointer" }}>
-                      <input
-                        type="radio"
-                        name="clear_mode"
-                        checked={clearDatasetMode === "datasets_only"}
-                        onChange={() => setClearDatasetMode("datasets_only")}
-                        style={{ marginTop: "3px" }}
-                      />
-                      <div>
-                        <strong style={{ color: "#d97706", fontSize: "12.5px" }}>
-                          ⚡ Clear Dataset Definitions Only
-                        </strong>
-                        <p style={{ margin: "2px 0 0", fontSize: "11.5px", color: "#64748b" }}>
-                          Clears the raw syllabus blueprint/curriculum metadata while preserving previously generated notes and questions in storage.
-                        </p>
-                      </div>
-                    </label>
+                    <div style={{ display: "flex", gap: "6px", marginBottom: "10px", flexWrap: "wrap" }}>
+                      <button className="ghost" type="button" onClick={() => clearPreset(CLEAR_LAYERS.map((l) => l.key))}>Everything</button>
+                      <button className="ghost" type="button" onClick={() => clearPreset(CLEAR_LAYERS.filter((l) => l.key !== "dataset").map((l) => l.key))}>Generated only (keep dataset)</button>
+                      <button className="ghost" type="button" onClick={() => clearPreset(["notes"])}>Lesson notes only</button>
+                      <button className="ghost" type="button" onClick={() => clearPreset(["dataset"])}>Dataset only</button>
+                    </div>
+                    {CLEAR_LAYERS.map((layer) => (
+                      <label key={layer.key} style={{ display: "flex", alignItems: "flex-start", gap: "8px", marginBottom: "6px", cursor: "pointer" }}>
+                        <input
+                          type="checkbox"
+                          checked={clearLayers.includes(layer.key)}
+                          onChange={(e) => setClearLayers(e.target.checked
+                            ? [...clearLayers, layer.key]
+                            : clearLayers.filter((k) => k !== layer.key))}
+                          style={{ marginTop: "3px" }}
+                        />
+                        <div>
+                          <strong style={{ color: layer.key === "dataset" ? "#991b1b" : "#334155", fontSize: "12.5px" }}>{layer.label}</strong>
+                          <p style={{ margin: "2px 0 0", fontSize: "11.5px", color: "#64748b" }}>{layer.hint}</p>
+                        </div>
+                      </label>
+                    ))}
                   </div>
 
                   {/* Action Buttons */}
@@ -3173,10 +3178,10 @@ export function App() {
                     </button>
                     <button
                       onClick={executeDatasetClear}
-                      disabled={isRunning}
+                      disabled={isRunning || clearLayers.length === 0}
                       style={{ background: "#b91c1c", borderColor: "#b91c1c", color: "#fff", fontWeight: 700 }}
                     >
-                      {isRunning ? "Deleting..." : `🗑️ Confirm & Clear (${clearDatasetMode === 'cascade_all' ? 'Cascade All' : 'Definitions Only'})`}
+                      {isRunning ? "Deleting..." : `🗑️ Confirm & Clear (${clearLayers.length === CLEAR_LAYERS.length ? "everything" : clearLayers.join(", ")})`}
                     </button>
                   </div>
                 </div>
@@ -3816,9 +3821,17 @@ export function App() {
                                 </button>
                                 <button
                                   className="ghost"
+                                  style={{ fontSize: '0.78rem', padding: '5px 8px', color: '#b45309', borderColor: '#fcd34d' }}
+                                  title="Delete everything generated for this subject — notes, diagrams, activities, questions, jobs — and keep the dataset"
+                                  onClick={() => deleteSubjectWithGenerations(d.grade, d.subject, "generated")}
+                                >
+                                  🧹 Clear generated
+                                </button>
+                                <button
+                                  className="ghost"
                                   style={{ fontSize: '0.78rem', padding: '5px 8px', color: '#b91c1c', borderColor: '#fca5a5' }}
-                                  title="Permanently delete this entire subject and all its generations"
-                                  onClick={() => deleteSubjectWithGenerations(d.grade, d.subject)}
+                                  title="Permanently delete this entire subject, its dataset and all its generations"
+                                  onClick={() => deleteSubjectWithGenerations(d.grade, d.subject, "all")}
                                 >
                                   🗑️ Delete
                                 </button>

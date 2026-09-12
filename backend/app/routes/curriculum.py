@@ -468,33 +468,30 @@ def delete_curriculum_strand(
 def delete_curriculum_subject(
     grade: str = Query(...),
     subject: str = Query(...),
+    layers: str = Query("all", description="Comma-separated layers or a preset: "
+                        "all | generated | dataset | notes,diagrams,activities,questions,jobs"),
+    confirm: str = Query("", description=f"'{scoped_delete.CONFIRMATION}' to delete; "
+                         "anything else previews the counts"),
     _: AuthContext = Depends(require_roles("admin", "operator", "reviewer")),
 ) -> dict[str, Any]:
-    """Deletes an entire subject curriculum design and all its generated content."""
-    clean_subj = subject.lower().strip()
+    """Clear a subject's content in the layers named, or the whole subject.
 
-    execute(
-        "DELETE FROM substrand_resources WHERE LOWER(curriculum->>'subject') = :subject",
-        {"subject": clean_subj},
-    )
-    execute(
-        "DELETE FROM curriculum_substrands WHERE LOWER(subject) = :subject",
-        {"subject": clean_subj},
-    )
-    execute(
-        "DELETE FROM curriculum_designs WHERE LOWER(subject) = :subject",
-        {"subject": clean_subj},
-    )
-    execute(
-        "DELETE FROM question_dna WHERE LOWER(curriculum_link->>'subject') = :subject",
-        {"subject": clean_subj},
-    )
-
+    This used to run its own four DELETEs — sub-strands, designs, bundles,
+    questions — and leave every artifact version, review, label, media brief,
+    uploaded figure, draft and queued job behind. The console then showed the
+    subject as still there, because it was. Now it is the same engine that
+    removes a sub-strand, at subject scope, one layer at a time.
+    """
+    report = scoped_delete.delete(
+        grade, subject, layers=layers, confirm=confirm, whole_subject=True)
     return {
-        "success": True,
-        "message": f"Deleted subject '{subject}' across {grade} and all generations.",
+        "success": not report.dry_run and not report.failed,
+        "dry_run": report.dry_run,
+        "message": report.to_dict()["message"],
         "grade": grade,
         "subject": subject,
+        "layers": list(report.layers),
+        "removed": report.to_dict(),
     }
 
 

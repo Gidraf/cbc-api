@@ -696,7 +696,13 @@ def read_prompt_status(
 
 
 class ClearDatasetRequest(BaseModel):
-    clear_mode: str = "cascade_all"  # "datasets_only" | "cascade_all"
+    # The old two modes still work: "cascade_all" is every layer,
+    # "datasets_only" is the dataset layer alone. `layers` names them
+    # directly — "generated" keeps the dataset and clears everything written
+    # from it, or any list of notes, diagrams, activities, questions, jobs,
+    # dataset.
+    clear_mode: str = "cascade_all"
+    layers: list[str] | None = None
     subject: str | None = None
     strand: str | None = None
 
@@ -826,64 +832,40 @@ def clear_grade_dataset(
     payload: ClearDatasetRequest,
     _: AuthContext = Depends(require_roles("admin")),
 ) -> dict[str, Any]:
-    """Clears dataset definitions only or cascades to delete all generated lesson notes, visuals, activities, and questions."""
-    from ..infra.db import execute
+    """Clear a grade, a subject in it, or a strand in that — in the layers named.
+
+    This ran its own DELETEs over four tables and called it a cascade; the
+    versions, reviews, labels, media, figures, drafts and jobs stayed. It is
+    now the same engine that removes a sub-strand, at the wider scope.
+    """
+    from ..services import scoped_delete
     from ..services.validation import validate_grade_dataset
 
     grade_slug = validate_grade_dataset(grade)
-    alt_grade = grade_slug.replace("grade-", "")
-    subject = payload.subject.strip() if payload.subject else None
-    strand = payload.strand.strip() if payload.strand else None
+    subject = (payload.subject or "").strip()
+    strand = (payload.strand or "").strip()
+    layers = payload.layers or (
+        ["dataset"] if payload.clear_mode == "datasets_only" else ["all"])
 
-    # Clear dataset definitions
-    cs_query = "DELETE FROM curriculum_substrands WHERE (REPLACE(LOWER(grade), 'grade-', '') = REPLACE(LOWER(:grade), 'grade-', ''))"
-    cs_params: dict[str, Any] = {"grade": grade_slug, "alt_grade": alt_grade}
-    if subject:
-        cs_query += " AND LOWER(subject) = LOWER(:subject)"
-        cs_params["subject"] = subject
-    if strand:
-        cs_query += " AND LOWER(strand_name) = LOWER(:strand)"
-        cs_params["strand"] = strand
-    execute(cs_query, cs_params)
-
-    cd_query = "DELETE FROM curriculum_designs WHERE (REPLACE(LOWER(grade), 'grade-', '') = REPLACE(LOWER(:grade), 'grade-', ''))"
-    cd_params: dict[str, Any] = {"grade": grade_slug, "alt_grade": alt_grade}
-    if subject:
-        cd_query += " AND LOWER(subject) = LOWER(:subject)"
-        cd_params["subject"] = subject
-    execute(cd_query, cd_params)
+    report = scoped_delete.delete(
+        grade_slug, subject, strand,
+        confirm=scoped_delete.CONFIRMATION, layers=layers,
+        whole_subject=bool(subject), whole_grade=not subject)
 
     # Clear memory cache in langfuse_context_service
     langfuse_context_service._cache.clear()
 
-    deleted_generations = False
-    if payload.clear_mode == "cascade_all":
-        # Delete generated resources
-        res_query = "DELETE FROM substrand_resources WHERE (LOWER(curriculum->>'grade') = LOWER(:grade) OR LOWER(curriculum->>'grade') = LOWER(:alt_grade))"
-        res_params: dict[str, Any] = {"grade": grade_slug, "alt_grade": alt_grade}
-        if subject:
-            res_query += " AND LOWER(curriculum->>'subject') = LOWER(:subject)"
-            res_params["subject"] = subject
-        if strand:
-            res_query += " AND LOWER(curriculum->>'strand') = LOWER(:strand)"
-            res_params["strand"] = strand
-        execute(res_query, res_params)
-
-        # Delete standalone questions
-        q_query = "DELETE FROM question_dna WHERE (LOWER(curriculum_link->>'grade') = LOWER(:grade) OR LOWER(curriculum_link->>'grade') = LOWER(:alt_grade))"
-        q_params: dict[str, Any] = {"grade": grade_slug, "alt_grade": alt_grade}
-        if subject:
-            q_query += " AND LOWER(curriculum_link->>'subject') = LOWER(:subject)"
-            q_params["subject"] = subject
-        execute(q_query, q_params)
-        deleted_generations = True
-
     return {
-        "status": "success",
+        "status": "success" if not report.failed else "partial",
         "grade": grade_slug,
         "clear_mode": payload.clear_mode,
-        "deleted_generations": deleted_generations,
-        "message": f"Successfully cleared {payload.clear_mode} for {grade_slug}" + (f" (Subject: {subject})" if subject else ""),
+        "layers": list(report.layers),
+        "deleted_generations": any(l != "dataset" for l in report.layers),
+        "removed": report.to_dict(),
+        "message": (f"Cleared {', '.join(report.layers)} for {grade_slug}"
+                    + (f" / {subject}" if subject else "")
+                    + (f" / {strand}" if strand else "")
+                    + f": {report.total} row(s)."),
     }
 
 

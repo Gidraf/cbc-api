@@ -91,13 +91,95 @@ def test_json_scoped_tables_are_narrowed_through_their_json():
     assert "curriculum_link->>'sub_strand'" in clause
 
 
-def test_it_refuses_to_run_without_a_strand_or_sub_strand():
-    """Clearing a whole learning area is what the reset is for, and it asks for
-    a longer confirmation because it takes more."""
+def test_a_whole_subject_has_to_be_asked_for_by_name():
+    """Clearing a whole learning area by accident is the expensive mistake;
+    clearing it on purpose is what the subject delete does."""
     from app.errors import ApiError
 
     with pytest.raises(ApiError):
         scoped_delete.delete("grade-pp1", "CRE")
+    with pytest.raises(ApiError):
+        scoped_delete.delete("grade-pp1", "", whole_subject=True)
+
+
+def test_a_whole_subject_scope_reaches_every_derived_table(monkeypatch):
+    """The subject delete had its own list of four tables and left the
+    versions, reviews, labels, media, figures, drafts and jobs behind — and
+    the console then showed the subject as still there."""
+    from app.services import scoped_delete as sd
+
+    counted: list[str] = []
+    monkeypatch.setattr(sd, "_count_and_delete", lambda t, *a: (counted.append(t.table) or {"table": t.table, "what": t.what, "rows": 1}))
+    monkeypatch.setattr(sd, "_remove_designs", lambda *a: {"table": "curriculum_designs", "what": "designs", "rows": 1})
+
+    report = sd.delete("grade-9", "Mathematics", whole_subject=True)
+
+    assert report.dry_run
+    for table in ("artifacts", "artifact_reviews", "artifact_labels", "artifact_comments",
+                  "artifact_dna", "substrand_media", "uploaded_assets", "material_drafts",
+                  "question_events", "substrand_resources", "question_dna", "jobs",
+                  "curriculum_substrands"):
+        assert table in counted, table
+    assert any(t["table"] == "curriculum_designs" for t in report.tables)
+
+
+# ── layers ───────────────────────────────────────────────────────────────────
+
+
+def test_every_artifact_kind_belongs_to_a_layer():
+    """A kind in no layer is a row nothing can ever clear."""
+    from app.services.artifact_registry import KINDS
+
+    covered = {k for t in scoped_delete.DERIVED for k in t.kinds}
+    assert not [k for k in KINDS if k not in covered]
+
+
+def test_clearing_the_notes_keeps_the_dataset_and_the_questions(monkeypatch):
+    from app.services import scoped_delete as sd
+
+    touched: list[tuple[str, str]] = []
+    monkeypatch.setattr(sd, "_count_and_delete",
+                        lambda t, *a: (touched.append((t.table, t.layer)) or None))
+    monkeypatch.setattr(sd, "_remove_designs", lambda *a: pytest.fail("designs must not be touched"))
+
+    report = sd.delete("grade-9", "Mathematics", whole_subject=True, layers=["notes"])
+
+    assert report.layers == ("notes",)
+    tables = {t for t, _l in touched}
+    assert "substrand_resources" in tables and "material_drafts" in tables
+    assert "curriculum_substrands" not in tables and "question_dna" not in tables
+    assert all(layer == "notes" for _t, layer in touched)
+
+
+def test_the_notes_layer_takes_only_notes_artifacts():
+    notes = next(t for t in scoped_delete.DERIVED if t.table == "artifacts" and t.layer == "notes")
+    clause, params = _clause(notes, grade="grade-9", subject="Mathematics")
+    assert "kind IN" in clause
+    assert set(params[k] for k in params if k.startswith("kind_")) == {"notes", "material", "hour_module"}
+
+    reviews = next(t for t in scoped_delete.DERIVED if t.table == "artifact_reviews" and t.layer == "questions")
+    clause, params = _clause(reviews, grade="grade-9", subject="Mathematics")
+    assert "a.kind IN" in clause and "question" in params.values()
+
+
+def test_presets_and_lists_resolve_to_layers():
+    assert scoped_delete.resolve_layers("generated") == scoped_delete.GENERATED
+    assert scoped_delete.resolve_layers("dataset") == ("dataset",)
+    assert scoped_delete.resolve_layers("notes, questions") == ("notes", "questions")
+    assert scoped_delete.resolve_layers(None) == tuple(scoped_delete.LAYERS)
+    from app.errors import ApiError
+    with pytest.raises(ApiError):
+        scoped_delete.resolve_layers("everything-please")
+
+
+def test_the_console_clears_by_layer():
+    """The modal offered two radios — everything, or the dataset alone — and
+    the subject row offered one delete. Both now say what they clear."""
+    app = (FRONTEND / "src" / "App.tsx").read_text(encoding="utf-8")
+    assert "layers: clearLayers" in app
+    assert "Generated only (keep dataset)" in app
+    assert 'deleteSubjectWithGenerations(d.grade, d.subject, "generated")' in app
+    assert "confirm=DELETE" in app
 
 
 def test_it_is_a_dry_run_unless_confirmed():

@@ -44,11 +44,27 @@ class Scoped:
     sub_strand_json: str = ""
     # Rows reachable only through another table's key.
     via_artifacts: str = ""
+    # Which LAYER of the sub-strand's content this table holds — so an
+    # operator can clear the lesson notes and keep the dataset, or the other
+    # way round. One of LAYERS below.
+    layer: str = "notes"
+    # For the artifacts table and the tables hanging off it: only these
+    # artifact kinds. The same table holds the notes, the diagrams, the
+    # questions and the dataset's own strand and sub-strand records.
+    kinds: tuple[str, ...] = ()
 
     def clause(self, grade: str, subject: str, strand: str, sub_strand: str
                ) -> tuple[str, dict[str, Any]]:
         params: dict[str, Any] = {}
         parts: list[str] = []
+
+        def kinds_clause(alias: str) -> str:
+            if not self.kinds:
+                return ""
+            names = ", ".join(f":kind_{i}" for i in range(len(self.kinds)))
+            for i, kind in enumerate(self.kinds):
+                params[f"kind_{i}"] = kind
+            return f"{alias}kind IN ({names})"
 
         if self.via_artifacts:
             # These tables carry an artifact_id and no curriculum scope of
@@ -71,6 +87,9 @@ class Scoped:
             if sub_strand:
                 inner.append("LOWER(a.sub_strand_name) = LOWER(:sub_strand)")
                 params["sub_strand"] = sub_strand
+            by_kind = kinds_clause("a.")
+            if by_kind:
+                inner.append(by_kind)
             clause = (
                 f"{self.via_artifacts} IN (SELECT a.artifact_id FROM artifacts a "
                 f"WHERE {' AND '.join(inner)})"
@@ -109,59 +128,126 @@ class Scoped:
             if not add(column, json_path, value, name):
                 return "", {}
 
+        by_kind = kinds_clause("")
+        if by_kind:
+            parts.append(by_kind)
+
         return (" AND ".join(parts) if parts else "1=1"), params
 
 
+# The layers a sub-strand's content comes in. An operator who wants the
+# lesson notes written again does not want the dataset gone with them, and one
+# who has re-ingested a design does not want the questions gone with it.
+LAYERS: dict[str, str] = {
+    "notes": "lesson notes and material",
+    "diagrams": "diagrams, figures and media briefs",
+    "activities": "activities, experiments and simulations",
+    "questions": "questions and their events",
+    "jobs": "queued and failed jobs",
+    "dataset": "the sub-strands and designs themselves",
+}
+GENERATED: tuple[str, ...] = ("notes", "diagrams", "activities", "questions", "jobs")
+# What the console offers: a name and the layers it stands for.
+PRESETS: dict[str, tuple[str, ...]] = {
+    "all": tuple(LAYERS),
+    "generated": GENERATED,
+    "dataset": ("dataset",),
+}
+
+_NOTES_KINDS = ("notes", "material", "hour_module")
+_DIAGRAM_KINDS = ("diagram", "photo_prompt", "video_prompt")
+_ACTIVITY_KINDS = ("activity", "experiment", "simulation")
+_QUESTION_KINDS = ("question", "answer")
+_DATASET_KINDS = ("ingest", "strand", "sub_strand")
+
 # Children before parents. Deleting the sub-strand first would leave its notes,
 # its questions and its review verdicts pointing at a row that is gone.
-DERIVED: tuple[Scoped, ...] = (
-    Scoped("artifact_comments", "comments on versions", via_artifacts="artifact_id"),
-    Scoped("artifact_reviews", "review verdicts", via_artifacts="artifact_id"),
-    Scoped("artifact_labels", "labels", via_artifacts="artifact_id"),
-    Scoped("artifact_dna", "content fingerprints",
-           grade_json="curriculum_link->>'grade'",
-           subject_json="curriculum_link->>'subject'",
-           strand_json="curriculum_link->>'strand'",
-           sub_strand_json="curriculum_link->>'sub_strand'"),
-    Scoped("artifacts", "generated versions",
-           grade="grade", subject="subject",
-           strand="strand_name", sub_strand="sub_strand_name"),
+DERIVED: tuple[Scoped, ...] = tuple(
+    scoped
+    for kinds, layer in (
+        (_NOTES_KINDS, "notes"), (_DIAGRAM_KINDS, "diagrams"),
+        (_ACTIVITY_KINDS, "activities"), (_QUESTION_KINDS, "questions"),
+        (_DATASET_KINDS, "dataset"),
+    )
+    for scoped in (
+        Scoped("artifact_comments", f"comments on {layer} versions",
+               via_artifacts="artifact_id", layer=layer, kinds=kinds),
+        Scoped("artifact_reviews", f"review verdicts on {layer}",
+               via_artifacts="artifact_id", layer=layer, kinds=kinds),
+        Scoped("artifact_labels", f"labels on {layer}",
+               via_artifacts="artifact_id", layer=layer, kinds=kinds),
+        Scoped("artifact_dna", f"content fingerprints of {layer}",
+               via_artifacts="artifact_id", layer=layer, kinds=kinds),
+        Scoped("artifacts", f"generated {layer} versions",
+               grade="grade", subject="subject",
+               strand="strand_name", sub_strand="sub_strand_name",
+               layer=layer, kinds=kinds),
+    )
+) + (
     Scoped("substrand_media", "photo and video briefs",
            grade="grade", subject="subject",
-           strand="strand_name", sub_strand="sub_strand_name"),
+           strand="strand_name", sub_strand="sub_strand_name", layer="diagrams"),
     # Drawn and uploaded figures. Deleting a sub-strand and leaving these
     # behind meant the next plan for it picked them straight back up: the book
     # attaches whatever is filed for a sub-strand, whether or not anything
     # currently asks for it.
     Scoped("uploaded_assets", "drawn diagrams and uploaded figures",
            grade="grade", subject="subject",
-           strand="strand", sub_strand="sub_strand"),
+           strand="strand", sub_strand="sub_strand", layer="diagrams"),
     Scoped("material_drafts", "unfinished lesson-material runs",
            grade="grade", subject="subject",
-           strand="strand", sub_strand="sub_strand"),
+           strand="strand", sub_strand="sub_strand", layer="notes"),
     Scoped("question_events", "generation, review and approval events",
            grade="grade", subject="subject",
-           strand="strand", sub_strand="sub_strand"),
-    Scoped("substrand_resources", "notes, diagrams, activities",
+           strand="strand", sub_strand="sub_strand", layer="questions"),
+    # The published bundle — notes, diagrams, activities and questions in one
+    # row. It belongs to the notes layer: it is what the notes station writes,
+    # and it is what the book is printed from.
+    Scoped("substrand_resources", "published lesson bundles",
            grade_json="curriculum->>'grade'", subject_json="curriculum->>'subject'",
            strand_json="curriculum->>'strand'",
-           sub_strand_json="curriculum->>'sub_strand'"),
+           sub_strand_json="curriculum->>'sub_strand'", layer="notes"),
     Scoped("question_dna", "questions",
            grade_json="curriculum_link->>'grade'",
            subject_json="curriculum_link->>'subject'",
            strand_json="curriculum_link->>'strand'",
-           sub_strand_json="curriculum_link->>'sub_strand'"),
+           sub_strand_json="curriculum_link->>'sub_strand'", layer="questions"),
     # Queued and failed work for a scope that no longer exists. A job left
     # behind is worse than an orphaned row: it still runs, and regenerates
     # content for a sub-strand nobody can see, which then reappears in the
     # console as if the delete had silently undone itself.
     Scoped("jobs", "queued and failed jobs",
            grade="grade", subject="subject",
-           strand="strand", sub_strand="sub_strand"),
+           strand="strand", sub_strand="sub_strand", layer="jobs"),
     Scoped("curriculum_substrands", "the sub-strand itself",
            grade="grade", subject="subject",
-           strand="strand_name", sub_strand="sub_strand_name"),
+           strand="strand_name", sub_strand="sub_strand_name", layer="dataset"),
 )
+
+
+def resolve_layers(requested: Any) -> tuple[str, ...]:
+    """Layer names from what a caller sent: names, presets, or nothing (= all)."""
+    if not requested:
+        return PRESETS["all"]
+    if isinstance(requested, str):
+        requested = [part for part in requested.replace(";", ",").split(",")]
+    chosen: list[str] = []
+    for raw in requested:
+        name = str(raw or "").strip().lower()
+        if not name:
+            continue
+        for layer in PRESETS.get(name, (name,)):
+            if layer not in LAYERS:
+                from ..errors import raise_api_error
+
+                raise_api_error(
+                    "VALIDATION_FAILED",
+                    f"'{name}' is not a layer. Layers: {', '.join(LAYERS)}; "
+                    f"presets: {', '.join(PRESETS)}.")
+            if layer not in chosen:
+                chosen.append(layer)
+    return tuple(chosen) or PRESETS["all"]
+
 
 CONFIRMATION = "DELETE"
 
@@ -170,6 +256,7 @@ CONFIRMATION = "DELETE"
 class DeleteReport:
     scope: dict[str, str] = field(default_factory=dict)
     dry_run: bool = True
+    layers: tuple[str, ...] = ()
     tables: list[dict[str, Any]] = field(default_factory=list)
     failed: list[dict[str, str]] = field(default_factory=list)
     strand_removed: bool = False
@@ -182,6 +269,7 @@ class DeleteReport:
         return {
             "scope": self.scope,
             "dry_run": self.dry_run,
+            "layers": list(self.layers),
             "total_rows": self.total,
             "tables": [t for t in self.tables if t.get("rows")],
             "failed": self.failed,
@@ -284,6 +372,22 @@ _ORPHAN_ARTIFACTS = """
 """
 
 
+def _remove_designs(grade: str, subject: str, dry_run: bool) -> dict[str, Any]:
+    """The design rows of a whole subject, or a whole grade."""
+    from ..infra.db import execute, fetch_one
+
+    clause = "(REPLACE(LOWER(grade), 'grade-', '') = REPLACE(LOWER(:grade), 'grade-', ''))"
+    params: dict[str, Any] = {"grade": grade}
+    if subject:
+        clause += " AND LOWER(subject) = LOWER(:subject)"
+        params["subject"] = subject
+    row = fetch_one(f"SELECT COUNT(*) AS n FROM curriculum_designs WHERE {clause}", params)
+    rows = int((row or {}).get("n") or 0)
+    if rows and not dry_run:
+        execute(f"DELETE FROM curriculum_designs WHERE {clause}", params)
+    return {"table": "curriculum_designs", "what": "the designs themselves", "rows": rows}
+
+
 def find_orphans(limit: int = 500) -> list[dict[str, Any]]:
     """Generated content whose sub-strand is gone.
 
@@ -348,34 +452,48 @@ def delete(
     *,
     confirm: str = "",
     keep_strand: bool = False,
+    layers: Any = None,
+    whole_subject: bool = False,
+    whole_grade: bool = False,
 ) -> DeleteReport:
-    """Remove one sub-strand, or one strand and everything under it.
+    """Remove a sub-strand, a strand, a subject or a grade — the layers named.
 
-    `keep_strand` deletes a strand's sub-strands and their content but leaves
-    the strand itself in place — which is what "regenerate this strand's
-    sub-strands" needs, since the strand is the thing being regenerated
-    against.
+    `layers` is a list of layer names or presets ("all", "generated",
+    "dataset"); nothing means everything. `keep_strand` deletes a strand's
+    sub-strands and their content but leaves the strand itself in place —
+    which is what "regenerate this strand's sub-strands" needs, since the
+    strand is the thing being regenerated against.
+
+    A whole subject or a whole grade has to be asked for by name. The old
+    subject delete had its own list of four tables and left the versions,
+    the reviews, the labels, the media and the queued jobs behind — and the
+    console then showed the subject as still there.
     """
     from ..errors import raise_api_error
 
-    if not (grade and subject):
-        raise_api_error("VALIDATION_FAILED", "A grade and a subject are required.")
-    if not (strand or sub_strand):
+    if not grade:
+        raise_api_error("VALIDATION_FAILED", "A grade is required.")
+    if not subject and not whole_grade:
+        raise_api_error("VALIDATION_FAILED", "A subject is required.")
+    if not (strand or sub_strand) and not (whole_subject or whole_grade):
         raise_api_error(
             "VALIDATION_FAILED",
-            "Name a strand or a sub-strand. Clearing a whole learning area is "
-            "what POST /factory/reset is for, and it asks for a longer "
-            "confirmation because it takes more.",
+            "Name a strand or a sub-strand, or ask for the whole subject "
+            "(whole_subject=true) or the whole grade (whole_grade=true).",
         )
 
+    chosen = resolve_layers(layers)
     dry_run = confirm.strip().upper() != CONFIRMATION
     report = DeleteReport(
         scope={"grade": grade, "subject": subject,
                "strand": strand, "sub_strand": sub_strand},
         dry_run=dry_run,
+        layers=chosen,
     )
 
     for target in DERIVED:
+        if target.layer not in chosen:
+            continue
         try:
             result = _count_and_delete(target, grade, subject, strand, sub_strand, dry_run)
         except Exception as exc:  # noqa: BLE001
@@ -387,11 +505,18 @@ def delete(
             report.tables.append(result)
 
     # Only when the whole strand is going, and only after its children have.
-    if strand and not sub_strand and not keep_strand:
+    if "dataset" in chosen and strand and not sub_strand and not keep_strand:
         try:
             report.strand_removed = _remove_strand_from_design(
                 grade, subject, strand, dry_run
             )
+        except Exception as exc:  # noqa: BLE001
+            report.failed.append({"table": "curriculum_designs", "error": str(exc)[:200]})
+
+    # A whole subject or grade takes its design rows with it.
+    if "dataset" in chosen and not strand and not sub_strand:
+        try:
+            report.tables.append(_remove_designs(grade, subject, dry_run))
         except Exception as exc:  # noqa: BLE001
             report.failed.append({"table": "curriculum_designs", "error": str(exc)[:200]})
 
