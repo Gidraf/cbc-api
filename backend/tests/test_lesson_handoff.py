@@ -147,11 +147,16 @@ def _fake_run(lessons: int):
 
     from app.routes import curriculum
 
+    from app.services.cost_tracker import TokenUsage
+
     seen: list[str] = []
 
     class Resp:
         def __init__(self, content):
             self.content = content
+            self.usage = TokenUsage()
+            self.model = "fake"
+            self.provider = "fake"
 
     def generate(resolved, messages, temperature=0.15):
         seen.append(messages[-1]["content"])
@@ -174,7 +179,8 @@ def _fake_run(lessons: int):
             ctx, object(), lessons=lessons, grade="grade-9",
             subject="Mathematics", strand="Numbers", sub_strand="Integers",
             run_log=log)
-    return out, seen
+    # The planner now returns a response; these tests read the guide it wrote.
+    return out.content, seen
 
 
 def test_one_call_is_made_per_lesson() -> None:
@@ -242,7 +248,7 @@ def test_a_single_lesson_sub_strand_still_uses_one_call() -> None:
 
     source = inspect.getsource(curriculum.factory_generate_notes)
     assert "if allocation.modules > 1:" in source
-    assert "if notes_content is None:" in source, "the single call remains"
+    assert "if resp is None:" in source, "the single call remains"
 
 
 def test_one_failed_lesson_does_not_lose_the_others() -> None:
@@ -253,9 +259,15 @@ def test_one_failed_lesson_does_not_lose_the_others() -> None:
 
     calls = {"n": 0}
 
+    from app.services.cost_tracker import TokenUsage
+
     class Resp:
         def __init__(self, content):
             self.content = content
+            self.usage = TokenUsage(prompt_tokens=100, completion_tokens=50,
+                                    total_tokens=150)
+            self.model = "gpt-4o"
+            self.provider = "openai"
 
     def generate(resolved, messages, temperature=0.15):
         calls["n"] += 1
@@ -270,4 +282,56 @@ def test_one_failed_lesson_does_not_lose_the_others() -> None:
             ctx, object(), lessons=3, grade="grade-9", subject="Mathematics",
             strand="Numbers", sub_strand="Integers", run_log=log)
 
-    assert [m["module_number"] for m in out["modules"]] == [1, 3]
+    assert [m["module_number"] for m in out.content["modules"]] == [1, 3]
+
+
+def test_the_per_lesson_run_reports_usage_like_a_single_call() -> None:
+    """"Lesson plan failed after 2 attempts: cannot access local variable
+    'resp' where it is not associated with a value."
+
+    The route read `resp.usage` at the end, and `resp` was only ever assigned
+    by the single-call fallback. Every multi-lesson guide was written, checked,
+    repaired and SAVED — and then the response crashed, so the operator saw an
+    error and a new version at the same time, twice per run.
+    """
+    import types
+    import unittest.mock as mock
+
+    from app.routes import curriculum
+    from app.services.cost_tracker import TokenUsage
+
+    class Resp:
+        def __init__(self):
+            self.content = {"modules": [{"module_number": 1, "module_title": "ok"}]}
+            self.usage = TokenUsage(prompt_tokens=100, completion_tokens=50,
+                                    total_tokens=150)
+            self.model = "gpt-4o"
+            self.provider = "openai"
+
+    log = types.SimpleNamespace(step=lambda *a, **k: None)
+    ctx = types.SimpleNamespace(messages=[{"role": "user", "content": "x"}])
+    with mock.patch("app.services.llm_client.llm_client.generate",
+                    lambda *a, **k: Resp()):
+        out = curriculum._plan_lesson_by_lesson(
+            ctx, object(), lessons=3, grade="grade-9", subject="Mathematics",
+            strand="Numbers", sub_strand="Integers", run_log=log)
+
+    # Three calls, summed, in the shape the route already reads.
+    assert out.usage.prompt_tokens == 300
+    assert out.usage.completion_tokens == 150
+    assert out.usage.total_tokens == 450
+    assert out.model == "gpt-4o" and out.provider == "openai"
+    assert len(out.content["modules"]) == 3
+
+
+def test_the_route_reads_one_resp_whichever_path_wrote_the_guide() -> None:
+    import inspect
+
+    from app.routes import curriculum
+
+    source = inspect.getsource(curriculum.factory_generate_notes)
+    planner = source.index("resp = _plan_lesson_by_lesson(")
+    fallback = source.index("resp = llm_client.generate(resolved, context.messages")
+    content = source.index("notes_content = resp.content")
+    assert planner < fallback < content, \
+        "both branches assign resp BEFORE anything reads it"

@@ -936,13 +936,21 @@ def _plan_lesson_by_lesson(context: Any, resolved: Any, *, lessons: int,
     sequence to carry and the loop would only add a round trip.
     """
     from ..services import lesson_handoff, task_demand
-    from ..services.llm_client import llm_client
+    from ..services.cost_tracker import TokenUsage
+    from ..services.llm_client import LlmResponse, llm_client
 
     floor = task_demand.floor_for(grade, subject)
     ladder = lesson_handoff.ladder(lessons, floor)
     previous: Any = None
     envelope: dict[str, Any] | None = None
     modules: list[dict[str, Any]] = []
+    # Six calls are one run to the caller. Their usage is summed and returned
+    # in the same shape as a single call, so nothing downstream has to know
+    # the guide was written a lesson at a time — and so the route stops
+    # reading a `resp` that only the single-call fallback ever assigned.
+    usage = TokenUsage()
+    model_used = ""
+    provider_used = ""
 
     for number in range(1, lessons + 1):
         step = ladder[number - 1] if number <= len(ladder) else None
@@ -962,6 +970,12 @@ def _plan_lesson_by_lesson(context: Any, resolved: Any, *, lessons: int,
             logger.warning("Lesson %d of %s failed: %s", number, sub_strand, exc)
             run_log.step(f"Lesson {number}/{lessons}", f"failed — {exc}", "fail")
             continue
+
+        usage.prompt_tokens += resp.usage.prompt_tokens
+        usage.completion_tokens += resp.usage.completion_tokens
+        usage.total_tokens += resp.usage.total_tokens
+        model_used = model_used or resp.model
+        provider_used = provider_used or resp.provider
 
         content = resp.content if isinstance(resp.content, dict) else {}
         if envelope is None and content:
@@ -992,7 +1006,8 @@ def _plan_lesson_by_lesson(context: Any, resolved: Any, *, lessons: int,
         return None
     out = dict(envelope or {})
     out["modules"] = modules
-    return out
+    return LlmResponse(content=out, usage=usage, model=model_used,
+                       provider=provider_used)
 
 
 @router.post("/factory/generate-notes")
@@ -1320,17 +1335,17 @@ def factory_generate_notes(
     # One call per lesson, each told where the last one ended. A single call
     # for the whole guide is what thinned the tail and cloned lesson 6 from
     # lesson 3.
-    notes_content = None
+    resp = None
     if allocation.modules > 1:
-        notes_content = _plan_lesson_by_lesson(
+        resp = _plan_lesson_by_lesson(
             context, resolved, lessons=allocation.modules, grade=payload.grade,
             subject=payload.subject, strand=payload.strand,
             sub_strand=payload.sub_strand, run_log=run_log)
-    if notes_content is None:
+    if resp is None:
         # A one-lesson sub-strand, or every lesson failed: the original single
         # call, so a run still produces something a person can read and repair.
         resp = llm_client.generate(resolved, context.messages, temperature=0.15)
-        notes_content = resp.content
+    notes_content = resp.content
 
     # The depth floor is checked BEFORE anything else reads the guide, because
     # everything downstream is downstream of it: the audit counts its words, the
