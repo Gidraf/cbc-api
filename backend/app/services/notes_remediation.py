@@ -457,6 +457,96 @@ def _inspect(notes: dict[str, Any],
     except Exception:  # noqa: BLE001
         pass
 
+    # A worked example that repeats an expression already worked in an earlier
+    # lesson teaches nothing new. The same `(-3+5)×4-6` in lessons 3 and 4, or
+    # `(-4+6)×3-5` in lessons 5 and 6, makes the later lesson worthless as
+    # practice. `redundancy_check` operates on exposition text and never sees
+    # example statements (they are too short for its minimum-length threshold).
+    #
+    # Normalise: remove LaTeX delimiters, spaces and ASCII punctuation that is
+    # not an operator, then lowercase. Two statements that map to the same string
+    # are the same mathematical exercise. Only the later lesson is rewritten —
+    # the first lesson to work it is the honest one.
+    try:
+        _LATEX_STRIP = re.compile(r"\\[a-zA-Z]+\{?|[\[\]()${}]")
+        _SPACE_STRIP = re.compile(r"[\s,.;:]+")
+
+        def _norm_expr(text: str) -> str:
+            t = _LATEX_STRIP.sub("", str(text or ""))
+            t = _SPACE_STRIP.sub("", t).lower()
+            return t
+
+        seen_exprs: dict[str, int] = {}
+        for i, module in enumerate(modules, start=1):
+            number = _number(module, i)
+            for ex in (module.get("worked_examples") or []):
+                if not isinstance(ex, dict):
+                    continue
+                stmt = str(ex.get("statement") or "")
+                if not stmt:
+                    continue
+                key = _norm_expr(stmt)
+                if len(key) < 4:
+                    continue
+                if key in seen_exprs:
+                    first = seen_exprs[key]
+                    findings.append(
+                        f"Lesson {number} repeats an expression already worked "
+                        f"in Lesson {first}. A learner who has already seen this "
+                        f"example gains nothing from it a second time. Replace the "
+                        f"duplicate with a NEW expression that has not appeared "
+                        f"in any earlier lesson."
+                    )
+                    if number not in targets:
+                        targets.append(number)
+                    score = max(0.0, score - 10.0)
+                else:
+                    seen_exprs[key] = number
+    except Exception:  # noqa: BLE001
+        pass
+
+    # A worked example whose step arithmetic is wrong poisons the lesson. The
+    # badge on the rendered page says so — but the badge result never flowed
+    # back into _inspect, so the remediation loop published examples where a
+    # step like `10 - 5 + 12 = 7` appeared alongside "this working does not
+    # reach 17" without ever being asked to fix it.
+    #
+    # `check_working` checks the statement where it can and falls back to the
+    # step equations. An example that agrees is left alone; only disagreements
+    # (checked=True, agrees=False) are acted on, so the loop does not rewrite
+    # lessons whose arithmetic merely cannot be verified.
+    try:
+        from . import worked_solutions
+
+        for i, module in enumerate(modules, start=1):
+            number = _number(module, i)
+            for ex in (module.get("worked_examples") or []):
+                if not isinstance(ex, dict):
+                    continue
+                stmt = str(ex.get("statement") or "")
+                answer = str(ex.get("answer") or "")
+                steps = ex.get("steps")
+                verdict = worked_solutions.check_working(stmt, answer, steps)
+                if verdict.get("checked") and verdict.get("agrees") is False:
+                    engine = verdict.get("engine_answer", "")
+                    step_n = verdict.get("step", 0)
+                    if step_n:
+                        where = f"step {step_n} claims {verdict.get('claimed', '')} " \
+                                f"but the maths engine reaches {engine}"
+                    else:
+                        where = (f"the answer claims {answer} "
+                                 f"but the maths engine reaches {engine}")
+                    findings.append(
+                        f"Lesson {number} has a worked example with wrong arithmetic "
+                        f"({where}). A learner imitating this will reach the wrong "
+                        f"answer. Fix the arithmetic so every step equation is true."
+                    )
+                    if number not in targets:
+                        targets.append(number)
+                    score = max(0.0, score - 20.0)
+    except Exception:  # noqa: BLE001
+        pass
+
     return score, findings, targets
 
 
@@ -577,9 +667,12 @@ def _instruction(findings: list[str], targets: list[int],
         "than writing a seventh way to sing a song.",
         "Where a finding above says an experience is UNUSED, the rewritten "
         "lesson must actually teach it AND name it in that lesson's "
-        "`learning_experiences_used`, worded as the design words it. Teaching "
-        "it without naming it leaves the guide looking ungrounded; naming it "
-        "without teaching it is worse.",
+        "`learning_experiences_used`, worded exactly as the design words it. "
+        "Teaching it without naming it leaves the guide looking ungrounded; "
+        "naming it without teaching it is worse. The specific experience text "
+        "appears in the finding itself — copy it verbatim into "
+        "`learning_experiences_used` and build the lesson activities around it, "
+        "not around a paraphrase of it.",
         "Keep every other lesson exactly as it is; you are not being asked for "
         "them and rewriting them loses work that already passed.",
     ])

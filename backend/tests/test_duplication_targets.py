@@ -135,3 +135,97 @@ def test_a_lesson_with_a_mixed_example_is_not_flagged() -> None:
     diff_findings = [f for f in findings if "operation" in f.lower()]
     assert not diff_findings, \
         f"a lesson with a mixed example must not raise a difficulty finding: {diff_findings}"
+
+
+# ── cross-lesson expression deduplication ─────────────────────────────────────
+
+
+def _mixed_example(stmt: str, answer: str) -> dict:
+    """A mixed-operation worked example that passes the difficulty floor check."""
+    return {
+        "statement": stmt,
+        "steps": [{"working": f"${stmt.strip('$')} = {answer}$", "because": "compute"}],
+        "answer": answer,
+    }
+
+
+def test_the_same_expression_in_two_lessons_targets_the_later_one() -> None:
+    """(-3+5)×4-6 in lesson 3 and again in lesson 4 is the loop that produced
+    six guides with duplicate examples. redundancy_check never saw it — the
+    statements are too short for its minimum-length threshold.
+
+    The remediation loop now normalises example statements and flags any later
+    lesson that repeats an expression worked in an earlier one. The finding names
+    the later lesson (4) and the earlier lesson (3) — not the other way around.
+    """
+    expr = r"$(-3 + 5) \times 4 - 6$"
+    notes = {"modules": [
+        _ops_module(1, "Intro", [_mixed_example(r"$(-4 + 6) \times 3 - 5$", "1")]),
+        _ops_module(2, "Practice", [_mixed_example(r"$(-2 + 8) \times 2 - 3$", "9")]),
+        _ops_module(3, "Review", [_mixed_example(expr, "2")]),
+        _ops_module(4, "Advanced", [_mixed_example(expr, "2")]),
+    ]}
+
+    _score, findings, targets = notes_remediation._inspect(
+        notes, ["discuss integers"], {})
+
+    assert 4 in targets, "the later lesson must be a rewrite target"
+    # The finding names 'Lesson 4' as the repeat and 'Lesson 3' as the original.
+    # Any finding that names lesson 4 and lesson 3 in that relationship is enough.
+    repeat_findings = [f for f in findings if "repeat" in f.lower()]
+    assert repeat_findings, "a 'repeat' finding must be generated"
+    assert any("Lesson 4" in f and "Lesson 3" in f for f in repeat_findings), (
+        f"the finding must name lesson 4 (repeat) and lesson 3 (original): {repeat_findings}"
+    )
+
+
+def test_a_guide_with_all_distinct_expressions_has_no_dedup_findings() -> None:
+    notes = {"modules": [
+        _ops_module(1, "A", [_mixed_example(r"$(-4 + 6) \times 3 - 5$", "1")]),
+        _ops_module(2, "B", [_mixed_example(r"$(-3 + 5) \times 4 - 6$", "2")]),
+        _ops_module(3, "C", [_mixed_example(r"$(-2 + 8) \times 2 - 3$", "9")]),
+    ]}
+
+    _score, findings, targets = notes_remediation._inspect(
+        notes, ["discuss integers"], {})
+
+    repeat_findings = [f for f in findings if "repeat" in f.lower()]
+    assert not repeat_findings, f"no expressions repeated: {repeat_findings}"
+
+
+# ── arithmetic error detection ────────────────────────────────────────────────
+
+
+def test_a_lesson_with_a_wrong_step_equation_is_a_target() -> None:
+    """Step 1 claims 10 - 5 + 12 = 7 but 10-5+12 = 17.
+
+    check_steps produces a badge for the page; before this fix the badge result
+    never reached _inspect so the lesson was published with the error inside it.
+    """
+    notes = {"modules": [_ops_module(1, "Temperatures", [
+        {"statement": "The temperature was 10°C. It fell 5°C then rose 12°C.",
+         "steps": [{"working": "$10 - 5 + 12 = 7$", "because": "combine changes"}],
+         "answer": "7"},
+    ])]}
+
+    _score, findings, targets = notes_remediation._inspect(
+        notes, ["discuss integers"], {})
+
+    assert 1 in targets, "a wrong step must target the lesson for rewrite"
+    assert any("arithmetic" in f.lower() for f in findings)
+
+
+def test_a_lesson_with_correct_arithmetic_is_not_flagged_for_errors() -> None:
+    notes = {"modules": [_ops_module(1, "Correct", [
+        {"statement": r"Calculate $(-3) \times (-4) + 10$.",
+         "steps": [{"working": r"$(-3) \times (-4) + 10 = 12 + 10$",
+                    "because": "negative × negative = positive"},
+                   {"working": r"$12 + 10 = 22$", "because": "add"}],
+         "answer": "22"},
+    ])]}
+
+    _score, findings, targets = notes_remediation._inspect(
+        notes, ["discuss integers"], {})
+
+    arith_findings = [f for f in findings if "arithmetic" in f.lower()]
+    assert not arith_findings, f"correct arithmetic must not be flagged: {arith_findings}"

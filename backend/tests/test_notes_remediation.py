@@ -451,7 +451,7 @@ def test_the_rewrite_is_told_to_name_the_experience_as_well_as_teach_it():
 
     assert calls
     assert "`learning_experiences_used`" in calls[0]
-    assert "worded as the design words it" in calls[0]
+    assert "worded exactly as the design words it" in calls[0]
 
 
 def test_a_guide_with_no_slo_map_at_all_gets_one():
