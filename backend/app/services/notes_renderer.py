@@ -907,7 +907,7 @@ def _lesson(module: dict[str, Any], n: int,
     questions = [q for q in (module.get("key_questions") or []) if str(q).strip()]
     if questions:
         out.append(_aside("Ask, in this order",
-                          "<ol>" + "".join(f"<li>{_esc(q)}</li>" for q in questions) + "</ol>"))
+                          "<ol>" + "".join(f"<li>{_inline_math(q)}</li>" for q in questions) + "</ol>"))
 
     resources = [r for r in (module.get("resources_needed") or []) if str(r).strip()]
     if resources:

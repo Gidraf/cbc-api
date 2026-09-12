@@ -449,18 +449,75 @@ def _inspect(notes: dict[str, Any],
             number = _number(module, i)
             examples = [ex for ex in (module.get("worked_examples") or [])
                         if isinstance(ex, dict) and ex.get("statement")]
-            if examples:
+            if len(examples) >= 2:
                 continue
             findings.append(
-                f"Lesson {number} has no worked example. This is a Mathematics "
-                f"lesson: `worked_examples` must carry at least two examples, "
-                f"each set in the words a learner reads, worked step by step "
-                f"to its answer with the REASON for every step. A learner "
-                f"revising at home has nothing to imitate without them."
+                f"Lesson {number} has "
+                + ("only one worked example" if examples else "no worked example")
+                + ". This is a Mathematics lesson: `worked_examples` must carry "
+                f"at least two examples, each set in the words a learner reads, "
+                f"worked step by step to its answer with the REASON for every "
+                f"step. A learner revising at home has nothing to imitate "
+                f"without them."
             )
             if number not in targets:
                 targets.append(number)
-            score = max(0.0, score - 15.0)
+            score = max(0.0, score - (5.0 if examples else 15.0))
+
+        # The exposition must teach what the examples use. Lesson 1 of a
+        # Grade 9 guide explained adding on a number line and then worked
+        # `3 + (-5) × 2 - 4`; no lesson in the guide ever stated that a
+        # negative times a positive is negative. A learner cannot get from
+        # that exposition to that example, and the sign rule is exactly what
+        # they get wrong.
+        sign_rule_taught_by: int | None = None
+        for i, module in enumerate(modules, start=1):
+            number = _number(module, i)
+            if sign_rule_taught_by is None and _teaches_sign_rule(module):
+                sign_rule_taught_by = number
+            if sign_rule_taught_by is not None:
+                continue
+            if not any(_multiplies_signed(ex) for ex in
+                       (module.get("worked_examples") or [])
+                       if isinstance(ex, dict)):
+                continue
+            findings.append(
+                f"Lesson {number}'s worked examples multiply or divide signed "
+                f"numbers, and no lesson up to and including it has taught the "
+                f"sign rule — nowhere does the exposition say what a negative "
+                f"times a negative, or a negative divided by a positive, gives. "
+                f"Lesson {number} must state the rule in its own exposition, "
+                f"with the reason, before it works an example that uses it."
+            )
+            if number not in targets:
+                targets.append(number)
+            score = max(0.0, score - 10.0)
+
+        # A lesson about real life must work a real-life example. "Applying
+        # Integers to Real-Life Situations" came with two bare expressions and
+        # not a temperature, a shilling or a metre between them; the examples
+        # served a different lesson from the one on the tin.
+        for i, module in enumerate(modules, start=1):
+            number = _number(module, i)
+            examples = [ex for ex in (module.get("worked_examples") or [])
+                        if isinstance(ex, dict) and ex.get("statement")]
+            if not examples or not _about_real_life(module):
+                continue
+            if any(not _bare_expression(str(ex.get("statement") or ""))
+                   for ex in examples):
+                continue
+            findings.append(
+                f"Lesson {number} is about applying integers to real-life "
+                f"situations, and every one of its worked examples is a bare "
+                f"expression. At least one must be set as a situation — a "
+                f"temperature that falls and rises, money owed and paid, "
+                f"height above and below sea level, points scored and lost — "
+                f"with the integers and the operations arising from the "
+                f"situation and the answer given in its units."
+            )
+            if number not in targets:
+                targets.append(number)
+            score = max(0.0, score - 10.0)
 
     # A worked example that repeats an expression already worked in an earlier
     # lesson teaches nothing new. The same `(-3+5)×4-6` in lessons 3 and 4, or
@@ -472,16 +529,8 @@ def _inspect(notes: dict[str, Any],
     # not an operator, then lowercase. Two statements that map to the same string
     # are the same mathematical exercise. Only the later lesson is rewritten —
     # the first lesson to work it is the honest one.
+    seen_exprs: dict[str, int] = {}
     try:
-        _LATEX_STRIP = re.compile(r"\\[a-zA-Z]+\{?|[\[\]()${}]")
-        _SPACE_STRIP = re.compile(r"[\s,.;:]+")
-
-        def _norm_expr(text: str) -> str:
-            t = _LATEX_STRIP.sub("", str(text or ""))
-            t = _SPACE_STRIP.sub("", t).lower()
-            return t
-
-        seen_exprs: dict[str, int] = {}
         for i, module in enumerate(modules, start=1):
             number = _number(module, i)
             for ex in (module.get("worked_examples") or []):
@@ -507,6 +556,46 @@ def _inspect(notes: dict[str, Any],
                     score = max(0.0, score - 10.0)
                 else:
                     seen_exprs[key] = number
+    except Exception:  # noqa: BLE001
+        pass
+
+    # The same SHAPE with the numbers changed is the same example. Six lessons
+    # of a Grade 9 guide each worked `a + b × (-c) ± d` over `e - (-f)` — the
+    # floor's exemplar, copied six times with new digits — and every one
+    # passed the check above, because none of them was the same TEXT. The
+    # hand-off already says a lesson that works the same idea on new figures
+    # is the same lesson; this is where that is enforced.
+    try:
+        seen_shapes: dict[str, int] = {}
+        for i, module in enumerate(modules, start=1):
+            number = _number(module, i)
+            for ex in (module.get("worked_examples") or []):
+                if not isinstance(ex, dict):
+                    continue
+                stmt = str(ex.get("statement") or "")
+                if not stmt or _norm_expr(stmt) in seen_exprs and \
+                        seen_exprs[_norm_expr(stmt)] != number:
+                    continue  # already reported as the same expression
+                shape = _skeleton(stmt)
+                if shape.count("n") < 3:
+                    continue  # too small a shape to own
+                first = seen_shapes.get(shape)
+                if first is not None and first != number:
+                    findings.append(
+                        f"Lesson {number} works an example of exactly the "
+                        f"shape Lesson {first} already worked — the same "
+                        f"operations in the same places with the numbers "
+                        f"changed ({shape}). A learner who has seen it once "
+                        f"learns nothing from it again. Give Lesson {number} "
+                        f"an example whose SHAPE is new to the guide: "
+                        f"different operations, a bracket somewhere else, a "
+                        f"situation instead of an expression."
+                    )
+                    if number not in targets:
+                        targets.append(number)
+                    score = max(0.0, score - 8.0)
+                elif first is None:
+                    seen_shapes[shape] = number
     except Exception:  # noqa: BLE001
         pass
 
@@ -553,6 +642,88 @@ def _inspect(notes: dict[str, Any],
         pass
 
     return score, findings, targets
+
+
+_LATEX_STRIP = re.compile(r"\\[a-zA-Z]+\{?|[\[\]()${}]")
+_SPACE_STRIP = re.compile(r"[\s,.;:]+")
+
+
+def _norm_expr(text: str) -> str:
+    """A statement with LaTeX, spaces and punctuation taken off, for finding
+    the same expression written twice."""
+    t = _LATEX_STRIP.sub("", str(text or ""))
+    return _SPACE_STRIP.sub("", t).lower()
+
+
+_MATH_SPAN = re.compile(r"\$\$?(.+?)\$\$?", re.S)
+_FRAC = re.compile(r"\\d?frac\s*\{([^{}]*)\}\s*\{([^{}]*)\}")
+_NUMBER = re.compile(r"\d+(?:[.,]\d+)?")
+
+
+def _skeleton(statement: str) -> str:
+    """The shape of an expression with its numbers taken out.
+
+    `-12 + 4 × (-3) + 6` over `2 - 5` and `-20 + 5 × (-3) - 4` over
+    `2 - (-1)` both come out as `(n±n×n±n)÷(n±n)`. Signs are folded — a
+    negative in place of a positive is the same shape — and so are + and −,
+    because "the same idea on new figures" is what this exists to find.
+    """
+    spans = _MATH_SPAN.findall(str(statement or ""))
+    text = " ".join(spans) if spans else str(statement or "")
+    for _ in range(3):
+        text = _FRAC.sub(r"(\1)÷(\2)", text)
+    text = re.sub(r"\\(?:times|cdot)", "×", text)
+    text = re.sub(r"\\div", "÷", text)
+    text = re.sub(r"\\(?:left|right|,|;|!|quad|text)\b", "", text)
+    text = text.replace("*", "×").replace("/", "÷").replace("[", "(").replace("]", ")")
+    text = _NUMBER.sub("n", text)
+    text = re.sub(r"[\s$]+", "", text)
+    text = re.sub(r"(?<![n)])-(?=n|\()", "", text)   # unary minus
+    text = re.sub(r"[+\-−–]", "±", text)
+    text = re.sub(r"\(n\)", "n", text)
+    return text
+
+
+def _bare_expression(statement: str) -> bool:
+    """A statement that is an expression and nothing else — no situation."""
+    from .task_demand import _is_prose
+
+    return not _is_prose(_MATH_SPAN.sub(" ", str(statement or "")))
+
+
+_REAL_LIFE = re.compile(
+    r"real[- ]life|real[- ]world|situation|daily|everyday|apply|applying|"
+    r"application|appreciat|context", re.I)
+
+
+def _about_real_life(module: dict[str, Any]) -> bool:
+    text = " ".join([str(module.get("title") or ""),
+                     str(module.get("learning_intent") or ""),
+                     *[str(s) for s in (module.get("slos_covered") or [])]])
+    return bool(_REAL_LIFE.search(text))
+
+
+_SIGN_RULE_OP = re.compile(r"multipl|times|product|divid|quotient", re.I)
+_SIGN_RULE_SIGN = re.compile(r"negative|sign", re.I)
+
+
+def _teaches_sign_rule(module: dict[str, Any]) -> bool:
+    """Whether the lesson's own prose states how signs behave under × or ÷."""
+    bodies = [str(module.get("teacher_exposition") or "")]
+    bodies += [str(s.get("body") or "") for s in
+               (module.get("exposition_segments") or []) if isinstance(s, dict)]
+    for body in bodies:
+        for sentence in re.split(r"(?<=[.!?])\s+", body):
+            if _SIGN_RULE_OP.search(sentence) and _SIGN_RULE_SIGN.search(sentence):
+                return True
+    return False
+
+
+def _multiplies_signed(example: dict[str, Any]) -> bool:
+    from . import task_demand
+
+    demand = task_demand.measure_item(example)
+    return bool(demand.all_kinds & {"×", "÷"}) and demand.negatives > 0
 
 
 def _pitch(notes: dict[str, Any], design_row: dict[str, Any] | None,

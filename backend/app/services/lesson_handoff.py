@@ -97,9 +97,20 @@ def worked_examples_rule(subject: str | None, floor: Any) -> str:
         "empty list is a rejected lesson, not a shorter one. Each example: a "
         "statement in the words a learner reads, the working step by step in "
         "LaTeX between single dollars, the REASON at every step, and the answer.",
-        "A NEW expression every time. Do not work an expression that any earlier "
-        "lesson of this guide has already worked — the hand-off above lists "
-        "them. The same expression in two lessons is one example printed twice.",
+        "A NEW expression every time, and a NEW SHAPE: do not work an expression "
+        "that any earlier lesson of this guide has already worked — the hand-off "
+        "above lists them — and do not work one of the same shape with the "
+        "numbers changed. Six lessons each working `a + b × (−c) − d` over "
+        "`e − (−f)` is one example printed six times.",
+        "Where this lesson's outcome is about real-life situations, applying or "
+        "appreciating, at least one example is a SITUATION — a temperature that "
+        "falls and rises, money owed and paid, height above and below sea level "
+        "— with the integers and operations arising from it and the answer in "
+        "its units. A bare expression under a real-life heading serves a "
+        "different lesson from the one on the tin.",
+        "The exposition must teach what the examples use. Before an example "
+        "multiplies or divides signed numbers, this lesson or an earlier one "
+        "must have STATED the sign rule in its own prose, with the reason.",
         "",
         f"At {floor.level} level, {floor.because}. So every worked example "
         f"must use at least {floor.operations} operations of "

@@ -375,3 +375,180 @@ def test_a_lesson_that_teaches_what_it_names_is_left_alone() -> None:
     _score, findings, _targets = notes_remediation._inspect(notes, [it_tools], {})
 
     assert not any("nothing in the lesson does it" in f for f in findings)
+
+
+# ── the same shape with the numbers changed ──────────────────────────────────
+
+
+def _clone(stmt: str, answer: str) -> dict:
+    return {"statement": f"Evaluate the expression {stmt}.",
+            "steps": [{"working": f"{stmt.strip('$')} = {answer}", "because": "work it"}],
+            "answer": answer}
+
+
+def test_the_same_shape_in_a_later_lesson_is_a_target() -> None:
+    """Six lessons each worked `a + b × (−c) ± d` over `e − (−f)` — the floor's
+    exemplar with new digits — and none was the same TEXT, so the expression
+    check passed all six."""
+    notes = {"modules": [
+        _ops_module(1, "Basics", [_clone(r"$\dfrac{-12 + 4 \times (-3) + 6}{2 - 5}$", "6")]),
+        _ops_module(2, "Combined", [_clone(r"$\dfrac{-12 + 3 \times (-4) - 6}{2 - (-3)}$", "-6")]),
+        _ops_module(3, "Real life", [_clone(r"$\dfrac{-20 + 5 \times (-3) - 4}{2 - (-1)}$", "-13")]),
+    ]}
+
+    _score, findings, targets = notes_remediation._inspect(notes, ["discuss integers"], {})
+
+    assert 2 in targets and 3 in targets and 1 not in [
+        n for n in targets if any(f"Lesson {n} works an example of exactly the shape" in f
+                                  for f in findings)]
+    assert sum("exactly the shape" in f for f in findings) == 2
+
+
+def test_a_different_shape_is_not_a_clone() -> None:
+    notes = {"modules": [
+        _ops_module(1, "A", [_clone(r"$\dfrac{-12 + 4 \times (-3) + 6}{2 - 5}$", "6")]),
+        _ops_module(2, "B", [_clone(r"$(-5 + 10) - (3 \times 2)$", "-1")]),
+        _ops_module(3, "C", [_clone(r"$-50 + 20 - 3 \times (-4)$", "-18")]),
+    ]}
+
+    _s, findings, _t = notes_remediation._inspect(notes, ["discuss integers"], {})
+
+    assert not any("exactly the shape" in f for f in findings), findings
+
+
+def test_the_skeleton_folds_signs_and_additive_operators() -> None:
+    k = notes_remediation._skeleton
+    assert k(r"$\dfrac{-12 + 4 \times (-3) + 6}{2 - 5}$") == \
+        k(r"$\dfrac{-20 + 5 \times (-3) - 4}{2 - (-1)}$") == "(n±n×n±n)÷(n±n)"
+    assert k(r"$3 + (-5) \times 2 - 4$") == "n±n×n±n"
+    assert k(r"$50 - (30 + 20) + (-10)$") == "n±(n±n)±n"
+
+
+# ── the exposition must teach what the examples use ──────────────────────────
+
+
+def _lesson(n: int, title: str, prose: str, examples: list[dict]) -> dict:
+    return {**_ops_module(n, title, examples),
+            "exposition_segments": [{"topic": title, "body": prose}]}
+
+
+SIGNED = {"statement": r"Evaluate $3 + (-5) \times 2 - 4$.",
+          "steps": [{"working": r"$3 + (-5) \times 2 - 4 = 3 - 10 - 4$", "because": "multiply first"},
+                    {"working": r"$3 - 10 - 4 = -11$", "because": "left to right"}],
+          "answer": "-11"}
+
+
+def test_multiplying_signed_numbers_before_the_sign_rule_is_taught_is_a_target() -> None:
+    """Lesson 1 explained adding on a number line and worked `3 + (−5) × 2 − 4`;
+    no lesson in the guide ever said what a negative times a positive gives."""
+    notes = {"modules": [_lesson(
+        1, "Basic Operations",
+        "Demonstrate how to add and subtract integers using number cards. "
+        "Show how to add 3 and -5 by moving left on the number line.",
+        [SIGNED, SIGNED])]}
+
+    _s, findings, targets = notes_remediation._inspect(
+        notes, ["discuss integers"], GRADE_9_MATHS)
+
+    assert 1 in targets
+    assert any("sign rule" in f for f in findings), findings
+
+
+def test_once_a_lesson_states_the_sign_rule_later_lessons_may_use_it() -> None:
+    notes = {"modules": [
+        _lesson(1, "Sign rules",
+                "To multiply two integers, multiply the sizes; if the signs differ "
+                "the product is negative, if they are the same it is positive.",
+                [SIGNED, SIGNED]),
+        _lesson(2, "Combined", "Apply BODMAS to the expressions below.",
+                [{"statement": r"Work out $-6 \div 2 + 4 \times (-1)$.",
+                  "steps": [{"working": r"$-6 \div 2 + 4 \times (-1) = -3 - 4$", "because": "÷ and × first"},
+                            {"working": r"$-3 - 4 = -7$", "because": "add"}],
+                  "answer": "-7"}] * 2),
+    ]}
+
+    _s, findings, _t = notes_remediation._inspect(notes, ["discuss integers"], GRADE_9_MATHS)
+
+    assert not any("sign rule" in f for f in findings), findings
+
+
+# ── a real-life lesson must work a real-life example ─────────────────────────
+
+
+def test_a_real_life_lesson_with_only_bare_expressions_is_a_target() -> None:
+    notes = {"modules": [{
+        **_lesson(3, "Applying Integers to Real-Life Situations",
+                  "Discuss how integers are used in temperature and finance. " * 3,
+                  [_clone(r"$(-5 + 10) - (3 \times 2)$", "-1"),
+                   _clone(r"$-50 + 20 - 3 \times (-4)$", "-18")]),
+        "slos_covered": ["apply Integers to real-life situations"]}]}
+
+    _s, findings, targets = notes_remediation._inspect(
+        notes, ["discuss integers"], GRADE_9_MATHS)
+
+    assert 3 in targets
+    assert any("bare expression" in f for f in findings), findings
+
+
+def test_a_real_life_lesson_with_a_situation_is_left_alone() -> None:
+    situation = {
+        "statement": "The temperature at dawn was $-5$°C. By noon it had risen by "
+                     "$12$°C, and by midnight it had fallen by $3 \\times 4$°C. "
+                     "What was the temperature at midnight?",
+        "steps": [{"working": r"$-5 + 12 - 3 \times 4 = -5 + 12 - 12$", "because": "multiply first"},
+                  {"working": r"$-5 + 12 - 12 = -5$", "because": "left to right"}],
+        "answer": "$-5$°C"}
+    notes = {"modules": [{
+        **_lesson(3, "Applying Integers to Real-Life Situations",
+                  "Discuss how integers are used in temperature and finance. " * 3,
+                  [situation, _clone(r"$-50 + 20 - 3 \times (-4)$", "-18")]),
+        "slos_covered": ["apply Integers to real-life situations"]}]}
+
+    _s, findings, _t = notes_remediation._inspect(notes, ["discuss integers"], GRADE_9_MATHS)
+
+    assert not any("bare expression" in f for f in findings), findings
+
+
+def test_a_single_worked_example_is_short() -> None:
+    notes = {"modules": [_ops_module(2, "Combined", [SIGNED])]}
+
+    _s, findings, targets = notes_remediation._inspect(notes, ["discuss integers"], GRADE_9_MATHS)
+
+    assert 2 in targets
+    assert any("only one worked example" in f for f in findings)
+
+
+# ── generic stems do not count as teaching an experience ─────────────────────
+
+
+def test_it_tools_is_not_taught_by_a_lesson_that_merely_mentions_integers() -> None:
+    """The lesson scored 3 of 8 on `integer`, `operation` and `out` — words
+    every experience in the design shares — and passed."""
+    design = [
+        "discuss with peers and work out basic operations on integers using number cards and charts",
+        "play games involving numbers and operations by picking integers and performing all basic operations",
+        "work out combined operations of integers in the correct order",
+        "carry out activities such as reading temperature changes in a thermometer",
+        "use IT tools and other resources such as print to carry out operations on integers",
+        "play creative games that involve integers",
+    ]
+    notes = {"modules": [{
+        "module_number": 4, "title": "Evaluating Complex Expressions with Integers",
+        "exposition_segments": [
+            {"topic": "Understanding Complex Expressions",
+             "body": "Introduce complex expressions involving integers, explaining how "
+                     "they can represent real-life situations. Work through several "
+                     "examples with the class, demonstrating how to apply the order "
+                     "of operations. Show each step clearly."},
+            {"topic": "Real-Life Applications",
+             "body": "Present real-life scenarios where learners must evaluate "
+                     "expressions involving integers, such as the total temperature "
+                     "change over a week. Encourage learners to work in pairs."}],
+        "resources_needed": ["calculators", "printed scenarios", "whiteboard"],
+        "learning_experiences_used": [design[4]],
+    }]}
+
+    _s, findings, targets = notes_remediation._inspect(notes, design, {})
+
+    assert 4 in targets
+    assert any("nothing in the lesson does it" in f for f in findings), findings

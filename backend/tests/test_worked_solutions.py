@@ -320,3 +320,18 @@ def test_no_station_looks_up_a_profile_without_a_grade() -> None:
                 offenders.append(f"{path.name}: {args.strip()[:60]}")
 
     assert not offenders, offenders
+
+
+def test_a_key_question_with_maths_in_it_is_typeset() -> None:
+    """Lesson 2 asked "Can you solve this combined operation: $5 + 2 \\times 3$?"
+    and the page printed the dollars and the backslash."""
+    from app.services.notes_renderer import render_html
+
+    html = render_html({"title": "Integers", "modules": [
+        {"title": "Lesson 2", "teacher_exposition": "BODMAS.",
+         "key_questions": [r"Can you solve $5 + 2 \times 3$?"]}]},
+        grade="grade-9", subject="Mathematics", sub_strand="Integers")
+
+    asked = html.split("Ask, in this order")[1][:400]
+    assert "$5 + 2" not in asked
+    assert "5 + 2 \\times 3" in asked or "class='math'" in asked or "katex" in asked.lower() or "mathjax" in asked.lower()

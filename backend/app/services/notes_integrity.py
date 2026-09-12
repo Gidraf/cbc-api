@@ -198,23 +198,45 @@ _ABSENT = 0.35
 _ENOUGH_TEXT = 40
 
 
-def _coverage(experience: str, module: dict[str, Any]) -> float | None:
-    wanted = _stems(experience)
+# A stem that half the design's own experiences share — "integer",
+# "operation" in an Integers sub-strand — says nothing about WHICH experience
+# a lesson is doing. "use IT tools and other resources such as print to carry
+# out operations on integers" scored 3 of 8 against a poster-making lesson on
+# `integer`, `operation` and `out` alone, and passed.
+_COMMON_SHARE = 0.5
+
+
+def _common_stems(design_experiences: list[str] | None) -> set[str]:
+    bullets = [e for e in (design_experiences or []) if str(e).strip()]
+    if len(bullets) < 3:
+        return set()
+    counts: dict[str, int] = {}
+    for bullet in bullets:
+        for stem in _stems(bullet):
+            counts[stem] = counts.get(stem, 0) + 1
+    return {stem for stem, n in counts.items() if n / len(bullets) >= _COMMON_SHARE}
+
+
+def _coverage(experience: str, module: dict[str, Any],
+              design_experiences: list[str] | None = None) -> float | None:
+    wanted = _stems(experience) - _common_stems(design_experiences)
     if len(wanted) < 2:
         return None
     shared = wanted & _stems(_lesson_text(module))
     return len(shared) / len(wanted)
 
 
-def _teaches(experience: str, module: dict[str, Any]) -> bool:
-    coverage = _coverage(experience, module)
+def _teaches(experience: str, module: dict[str, Any],
+             design_experiences: list[str] | None = None) -> bool:
+    coverage = _coverage(experience, module, design_experiences)
     return coverage is not None and coverage >= _TAUGHT
 
 
-def _plainly_absent(experience: str, module: dict[str, Any]) -> bool:
+def _plainly_absent(experience: str, module: dict[str, Any],
+                    design_experiences: list[str] | None = None) -> bool:
     if len(_lesson_text(module).split()) < _ENOUGH_TEXT:
         return False
-    coverage = _coverage(experience, module)
+    coverage = _coverage(experience, module, design_experiences)
     return coverage is not None and coverage < _ABSENT
 
 
@@ -258,7 +280,7 @@ def check_learning_experiences(notes: dict[str, Any],
         # at all — which is untrue, and trains an operator to distrust the
         # number rather than act on it.
         taught_in = [_label(m, i) for i, m in enumerate(_modules(notes))
-                     if _teaches(experience, m)]
+                     if _teaches(experience, m, design_experiences)]
         if taught_in:
             findings.append(
                 f"The design suggests \"{experience}\". "
@@ -307,7 +329,7 @@ def check_declared_but_not_taught(
             # have to.
             claim = str(used) if len(key) < len(_norm(bullet)) else bullet
             claim = claim.split(";")[0]
-            if not _plainly_absent(claim, module):
+            if not _plainly_absent(claim, module, design_experiences):
                 continue
             findings.append(
                 f"\"{_label(module, i)}\" names \"{bullet}\" under "
