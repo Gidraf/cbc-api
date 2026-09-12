@@ -2908,6 +2908,8 @@ SLOs to cover completely:
 Key inquiry questions to address:
 {{ kiqs_formatted }}
 
+{{ design_elements }}
+
 ESSENCE STATEMENT:
 {{ essence_stmt }}
 

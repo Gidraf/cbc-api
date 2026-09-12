@@ -310,15 +310,22 @@ def repair_citation_addresses(notes: dict[str, Any], design_text: str) -> str:
 
 
 def _inspect(notes: dict[str, Any],
-             design_experiences: list[str]) -> tuple[float, list[str], list[int]]:
+             design_experiences: list[str],
+             design_row: dict[str, Any] | None = None,
+             ) -> tuple[float, list[str], list[int]]:
     """The score, the findings, and which modules a rewrite should target."""
     repetition = redundancy_check.inspect(notes)
     integrity = notes_integrity.check(notes, design_experiences)
+    provenance = check_provenance(notes, design_row)
 
-    findings = list(repetition.get("findings") or []) + list(integrity.get("findings") or [])
-    score = round(
-        (float(repetition.get("score", 100.0)) + float(integrity.get("score", 100.0))) / 2, 1
-    )
+    findings = (list(repetition.get("findings") or [])
+                + list(integrity.get("findings") or [])
+                + list(provenance.get("findings") or []))
+    scores = [float(repetition.get("score", 100.0)),
+              float(integrity.get("score", 100.0))]
+    if provenance.get("checked"):
+        scores.append(float(provenance.get("score", 100.0)))
+    score = round(sum(scores) / len(scores), 1)
 
     # Which lessons to rewrite: the later member of each repeated pair. The
     # earlier one is the real lesson and rewriting it loses good work.
@@ -364,7 +371,58 @@ def _inspect(notes: dict[str, Any],
         if home and home not in targets:
             targets.append(home)
 
+    # A lesson that names nothing in the design is rewritten, not published.
+    # Six guides in a row printed "this lesson names no design element" under
+    # every lesson; the finding was true each time and nothing was ever asked
+    # to act on it.
+    for number in provenance.get("uncited") or []:
+        if number not in targets:
+            targets.append(number)
+
     return score, findings, targets
+
+
+def check_provenance(notes: dict[str, Any],
+                     design_row: dict[str, Any] | None) -> dict[str, Any]:
+    """Which lessons name a design element, and which name nothing.
+
+    Invented refs are removed from the module before anything prints them — an
+    invented provenance reads exactly like a real one. The finding for an
+    uncited lesson carries the refs on offer, so the rewrite is told what to
+    choose from rather than told it was wrong.
+    """
+    from . import design_elements
+
+    out: dict[str, Any] = {"checked": False, "score": 100.0,
+                           "findings": [], "uncited": [], "cited": 0}
+    if not design_row:
+        return out
+    elements = design_elements.enumerate_for(design_row)
+    if not elements:
+        return out
+    out["checked"] = True
+
+    offer = "; ".join(f"[{e.ref}] {e.text}" for e in elements[:8])
+    modules = _modules(notes)
+    for i, module in enumerate(modules, start=1):
+        number = _number(module, i)
+        kept, invented = design_elements.valid_serves(module.get("serves"), design_row)
+        module["serves"] = kept
+        if kept:
+            out["cited"] += 1
+            continue
+        out["uncited"].append(number)
+        title = str(module.get("title") or f"Lesson {number}")
+        why = (f" It named {', '.join(invented)}, which the design does not "
+               f"carry, so those were discarded." if invented else "")
+        out["findings"].append(
+            f"Lesson {number} \"{title}\" names no design element.{why} Put "
+            f"the ref(s) this lesson actually realises in its `serves` list, "
+            f"exactly as bracketed — the design offers: {offer}.")
+
+    if modules:
+        out["score"] = round(100.0 * out["cited"] / len(modules), 1)
+    return out
 
 
 def _best_home(modules: list[dict[str, Any]], experience: str) -> int:
@@ -569,13 +627,14 @@ def run(
     sub_strand: str = "",
     allocation_phrase: str = "",
     max_passes: int = MAX_PASSES,
+    design_row: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], Report]:
     """Repair the guide until the checks pass, it stops improving, or passes run out."""
     report = Report()
     if not isinstance(notes, dict):
         return notes, report
 
-    score, findings, targets = _inspect(notes, design_experiences)
+    score, findings, targets = _inspect(notes, design_experiences, design_row)
     report.score_before = report.score_after = score
     report.clean = not findings
     if report.clean:
@@ -601,7 +660,7 @@ def run(
                 this.deterministic.append(repair)
                 run_log.step(f"Repair {number}", repair)
 
-        score, findings, targets = _inspect(notes, design_experiences)
+        score, findings, targets = _inspect(notes, design_experiences, design_row)
         this.after = score
 
         # The free repairs only ever help, so the repaired guide is the new
@@ -682,7 +741,7 @@ def run(
             if repair:
                 this.deterministic.append(repair)
 
-        after, findings, targets = _inspect(notes, design_experiences)
+        after, findings, targets = _inspect(notes, design_experiences, design_row)
         this.after = after
         this.findings = findings
         this.calls, this.cost_usd = _since(spent_before)
@@ -734,7 +793,7 @@ def run(
     #
     # `notes` is mutated in place through the caller's reference, so the
     # contents are swapped rather than the name rebound.
-    current, current_findings, _ = _inspect(notes, design_experiences)
+    current, current_findings, _ = _inspect(notes, design_experiences, design_row)
     if best_score > current:
         notes.clear()
         notes.update(best)

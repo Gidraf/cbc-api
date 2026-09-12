@@ -1267,6 +1267,11 @@ def factory_generate_notes(
                 content_type=ct_profile.content_type.upper(),
                 custom_instructions=payload.custom_instructions,
                 design_block=design_block,
+                # The numbered elements each lesson records `serves` against.
+                # Empty when the design row carries none, so an unextracted
+                # sub-strand asks for no citation rather than an invented one.
+                design_elements=design_elements.block_for(
+                    substrand_row or {}, unit="lesson"),
                 essence_stmt=essence_stmt,
                 grade=payload.grade,
                 kiqs_formatted=kiqs_formatted,
@@ -1387,6 +1392,8 @@ def factory_generate_notes(
         base_messages=context.messages,
         sub_strand=payload.sub_strand,
         allocation_phrase=allocation.phrase(),
+        # So a lesson that names no design element is rewritten, not published.
+        design_row=substrand_row or {},
     )
     if remediation.attempted:
         lesson_plan = notes_coverage.check(

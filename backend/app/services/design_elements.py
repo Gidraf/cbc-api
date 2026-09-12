@@ -114,11 +114,17 @@ def by_dimension(row: dict[str, Any], dimension: str) -> list[Element]:
 # ── what the generator is shown ──────────────────────────────────────────────
 
 
-def block_for(row: dict[str, Any]) -> str:
+def block_for(row: dict[str, Any], unit: str = "question") -> str:
     """The numbered list a generator records `serves` against.
 
     Empty when the design states nothing, so a sub-strand nobody has extracted
     yet asks for no citation rather than inviting an invented one.
+
+    `unit` picks the wording. The block was written for questions and only
+    ever reached the questions station; the notes station — which writes the
+    teacher's guide — was never asked to cite, and so never did. Six guides in
+    a row printed "this lesson names no design element" under every lesson,
+    and the model had done nothing wrong: nobody had told it.
     """
     elements = enumerate_for(row)
     if not elements:
@@ -127,6 +133,9 @@ def block_for(row: dict[str, Any]) -> str:
     from .prompt_store import render
 
     lines = [f"  [{e.ref}] {e.text}" for e in elements]
+    if unit == "lesson":
+        return render("design-elements-lesson", _LESSON_BLOCK,
+                      elements="\n".join(lines))
     return render("design-elements", _BLOCK, elements="\n".join(lines))
 
 
@@ -141,8 +150,19 @@ RULES FOR `serves`:
   - A set of questions should between them cover EVERY ref above. An element with no question against it is a promise the design makes and this content does not keep."""
 
 
+_LESSON_BLOCK = """=== WHAT THIS DESIGN ASKS FOR, ELEMENT BY ELEMENT ===
+Every lesson you write must record which of these it realises, in a `serves` list of refs on the module, exactly as written in the brackets:
+{{ elements }}
+
+RULES FOR `serves`:
+  - Use the ref EXACTLY as it appears in brackets. A ref that is not on this list is discarded, and the lesson then counts as serving nothing.
+  - A lesson usually realises ONE or TWO outcomes and the experiences and inquiry questions that go with them. List what the lesson genuinely teaches and nothing else: a lesson tagged with every ref to look thorough makes the whole design read as covered by one lesson, and then nobody can see that lessons 4, 5 and 6 taught the same outcome again.
+  - The lessons should between them cover EVERY ref above. An outcome with no lesson against it is a promise the design makes that this guide does not keep, and a head of department checking the scheme of work against the design will find it.
+  - This is what makes the guide a curriculum document rather than an essay about the subject: each lesson's `serves` is printed on the page as "Where this comes from", in the design's own words, so a teacher challenged on a lesson can open the design and the BECF and point."""
+
+
 def seed_prompts() -> dict[str, str]:
-    return {"design-elements": _BLOCK}
+    return {"design-elements": _BLOCK, "design-elements-lesson": _LESSON_BLOCK}
 
 
 def valid_serves(claimed: Any, row: dict[str, Any]) -> tuple[list[str], list[str]]:
