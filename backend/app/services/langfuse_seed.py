@@ -2389,6 +2389,8 @@ Everything above describes the whole sub-strand. You are writing ONE lesson of i
 
 Return the same JSON schema with exactly ONE entry in `modules`: this lesson. Do not write the other lessons, do not summarise them, and do not leave placeholders for them. They are written by their own calls.
 
+{{ brief }}
+
 {{ handoff }}
 
 WHAT THIS LESSON MUST NOT DO:

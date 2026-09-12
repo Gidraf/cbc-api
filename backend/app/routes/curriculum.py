@@ -918,7 +918,8 @@ def factory_get_profile(
 
 def _plan_lesson_by_lesson(context: Any, resolved: Any, *, lessons: int,
                            grade: str, subject: str, strand: str,
-                           sub_strand: str, run_log: Any) -> Any:
+                           sub_strand: str, run_log: Any,
+                           design_row: dict[str, Any] | None = None) -> Any:
     """Write the guide one lesson at a time, each told where the last ended.
 
     The plan was one call for all six lessons, and it showed: the tail thinned
@@ -935,12 +936,20 @@ def _plan_lesson_by_lesson(context: Any, resolved: Any, *, lessons: int,
     Falls back to a single call for a one-lesson sub-strand, where there is no
     sequence to carry and the loop would only add a round trip.
     """
-    from ..services import lesson_handoff, task_demand
+    from ..services import lesson_dealer, lesson_handoff, task_demand
     from ..services.cost_tracker import TokenUsage
     from ..services.llm_client import LlmResponse, llm_client
 
     floor = task_demand.floor_for(grade, subject)
     ladder = lesson_handoff.ladder(lessons, floor)
+    # Which outcome and which experience each lesson is FOR, dealt before a
+    # word is written. Told only "lesson 4 of 6", the model chose the outcome
+    # itself — the same one three times, and one of the four never.
+    briefs = lesson_dealer.deal(design_row or {}, lessons)
+    if briefs:
+        run_log.step("Plan", "; ".join(
+            f"L{b.lesson} {b.outcome_ref} via "
+            + (", ".join(b.experience_refs) or "practice") for b in briefs))
     previous: Any = None
     envelope: dict[str, Any] | None = None
     modules: list[dict[str, Any]] = []
@@ -954,11 +963,13 @@ def _plan_lesson_by_lesson(context: Any, resolved: Any, *, lessons: int,
 
     for number in range(1, lessons + 1):
         step = ladder[number - 1] if number <= len(ladder) else None
+        brief = briefs[number - 1] if number <= len(briefs) else None
         messages = [
             *context.messages,
             {"role": "user", "content": prompt_store.render(
                 "note-one-lesson", SEED_PROMPT_BLOCKS["note-one-lesson"],
                 number=number, lessons=lessons,
+                brief=lesson_dealer.block(brief),
                 handoff=lesson_handoff.block(previous, step),
                 worked_examples_rule=lesson_handoff.worked_examples_rule(
                     subject, floor))},
@@ -997,6 +1008,10 @@ def _plan_lesson_by_lesson(context: Any, resolved: Any, *, lessons: int,
         # lesson 4 is the fourth call, not whatever the fourth call called it.
         module = written[0]
         module["module_number"] = number
+        if brief is not None:
+            # Kept on the lesson, so the checks and the rewrite instruction
+            # can hold it to the plan it was written to.
+            module["brief"] = brief.to_dict()
         modules.append(module)
         previous = lesson_handoff.read(module, previous)
         run_log.step(
@@ -1342,7 +1357,8 @@ def factory_generate_notes(
         resp = _plan_lesson_by_lesson(
             context, resolved, lessons=allocation.modules, grade=payload.grade,
             subject=payload.subject, strand=payload.strand,
-            sub_strand=payload.sub_strand, run_log=run_log)
+            sub_strand=payload.sub_strand, run_log=run_log,
+            design_row=substrand_row or {})
     if resp is None:
         # A one-lesson sub-strand, or every lesson failed: the original single
         # call, so a run still produces something a person can read and repair.

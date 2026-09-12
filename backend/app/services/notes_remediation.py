@@ -423,6 +423,40 @@ def _inspect(notes: dict[str, Any],
         if number not in targets:
             targets.append(number)
 
+    # A lesson written to a different plan from the one it was dealt. The
+    # brief said "outcome 4 via experience 6"; the lesson came back about
+    # combined operations again. However good it is, it has taken the place
+    # of the lesson the design funded here.
+    for i, module in enumerate(modules, start=1):
+        brief = module.get("brief")
+        if not isinstance(brief, dict):
+            continue
+        number = _number(module, i)
+        wrong: list[str] = []
+        outcome = str(brief.get("outcome") or "")
+        if outcome and not any(_same_outcome(outcome, str(s))
+                               for s in (module.get("slos_covered") or [])):
+            wrong.append(f"its outcome is \"{outcome}\" ({brief.get('outcome_ref')})")
+        used = [_norm(u) for u in (module.get("learning_experiences_used") or [])]
+        for ref, text in zip(brief.get("experience_refs") or [],
+                             brief.get("experiences") or []):
+            key = _norm(text)
+            if not any(key in u or u in key for u in used if u):
+                wrong.append(f"it is taught through \"{text}\" ({ref})")
+        if not wrong:
+            continue
+        findings.append(
+            f"Lesson {number} was written to the wrong plan: "
+            + "; ".join(wrong)
+            + ". That is what this lesson is FOR — its title, objective, "
+            f"activities and worked examples are about that and nothing else, "
+            f"and `slos_covered` and `learning_experiences_used` say so in the "
+            f"design's words."
+        )
+        if number not in targets:
+            targets.append(number)
+        score = max(0.0, score - 12.0)
+
     # A lesson pitched below its own rung of the grade's ladder, one with no
     # mathematics in an operations sub-strand, one with no signed number where
     # the design is about directed numbers: all rewritten.
@@ -914,8 +948,36 @@ def _flatten(value: Any, out: list[str] | None = None) -> list[str]:
     return acc
 
 
+def _briefs_of(notes: dict[str, Any], only: list[int] | None = None) -> str:
+    """The plan each lesson was dealt, restated for a rewrite.
+
+    A rewrite that is told what was wrong and not what the lesson is FOR
+    writes the same lesson again in new words.
+    """
+    from . import lesson_dealer
+
+    lines: list[str] = []
+    for i, module in enumerate(_modules(notes), start=1):
+        number = _number(module, i)
+        if only is not None and number not in only:
+            continue
+        raw = module.get("brief")
+        if not isinstance(raw, dict):
+            continue
+        brief = lesson_dealer.Brief(
+            lesson=number, outcome_ref=str(raw.get("outcome_ref") or ""),
+            outcome=str(raw.get("outcome") or ""),
+            experience_refs=list(raw.get("experience_refs") or []),
+            experiences=list(raw.get("experiences") or []),
+            position=int(raw.get("position") or 1), of=int(raw.get("of") or 1))
+        lines.append(f"LESSON {number}:\n" + lesson_dealer.block(brief))
+    return "\n\n".join(lines)
+
+
 def _instruction(findings: list[str], targets: list[int],
-                 sub_strand: str, allocation_phrase: str) -> str:
+                 sub_strand: str, allocation_phrase: str,
+                 notes: dict[str, Any] | None = None) -> str:
+    plan = _briefs_of(notes, targets) if notes else ""
     return "\n".join([
         "=== REWRITE THESE LESSONS. THEY WERE CHECKED AND THEY FAILED. ===",
         f"You wrote a guide for '{sub_strand}' ({allocation_phrase}). It was "
@@ -924,6 +986,7 @@ def _instruction(findings: list[str], targets: list[int],
         "",
         *[f"  - {f}" for f in findings],
         "",
+        *([plan, ""] if plan else []),
         f"Rewrite ONLY lesson(s) {', '.join(str(n) for n in targets)}. Return "
         f"the same JSON shape, with `modules` holding ONLY those lessons, each "
         f"keeping its own `module_number`.",
@@ -950,7 +1013,8 @@ def _instruction(findings: list[str], targets: list[int],
 
 
 def _whole_guide_instruction(findings: list[str], sub_strand: str,
-                             allocation_phrase: str, modules: int) -> str:
+                             allocation_phrase: str, modules: int,
+                             notes: dict[str, Any] | None = None) -> str:
     """Write the guide again, knowing what was wrong with the last one.
 
     Reached when rewriting the failing lessons has not cleared them twice over.
@@ -968,12 +1032,12 @@ def _whole_guide_instruction(findings: list[str], sub_strand: str,
         "",
         f"Produce all {modules} lessons again, numbered 1 to {modules}.",
         "",
-        "PLAN BEFORE YOU WRITE. Take the design's suggested learning "
-        "experiences and deal them out across the lessons FIRST, so each "
-        "lesson has its own material before a word is written. That is what "
-        "was missing: the last guide wrote lessons in order, ran out of "
-        "material, and reached for the same three beats — discuss how a parent "
-        "does it, invent a gesture, sing a song — under new titles.",
+        *([_briefs_of(notes), ""] if notes and _briefs_of(notes) else []),
+        "THE PLAN ABOVE IS FIXED. Each lesson is written to its own outcome "
+        "and experiences and no other's. That is what was missing: the last "
+        "guide wrote lessons in order, ran out of material, and reached for "
+        "the same three beats — review, work through examples, real-life "
+        "applications — under new titles.",
         "Two lessons that share a shape are one lesson however different the "
         "sentences are. If, having dealt the experiences out, there is not "
         "enough material for every funded lesson, say so in `gaps` in those "
@@ -1158,14 +1222,15 @@ def run(
                          f"{findings[0][:110]}", "warn")
             this.asked_of_model = targets
             instruction = _instruction(findings, targets, sub_strand,
-                                       allocation_phrase)
+                                       allocation_phrase, notes)
         else:
             run_log.step(f"Regenerate {number}",
                          f"rewriting one lesson at a time did not clear "
                          f"{len(findings)} finding(s); writing the whole guide "
                          f"again", "warn")
             instruction = _whole_guide_instruction(
-                findings, sub_strand, allocation_phrase, len(_modules(notes)))
+                findings, sub_strand, allocation_phrase, len(_modules(notes)),
+                notes)
 
         try:
             response = generate(
