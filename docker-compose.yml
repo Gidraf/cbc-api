@@ -18,6 +18,10 @@ x-backend-env: &backend-env
 
   # Provider API keys/config
   OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+  # The OpenAI model every stage runs on unless a stage is bound otherwise in the console.
+  OPENAI_DEFAULT_MODEL: ${OPENAI_DEFAULT_MODEL:-gpt-5-mini}
+  # minimal | low | medium | high — how hard GPT-5-family models think (billed as output).
+  OPENAI_REASONING_EFFORT: ${OPENAI_REASONING_EFFORT:-low}
   ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
   GEMINI_API_KEY: ${GEMINI_API_KEY:-}
   OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}

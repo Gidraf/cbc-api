@@ -13,9 +13,45 @@ from ..errors import raise_api_error
 from ..services.cost_tracker import TokenUsage
 from ..services.json_latex import repair as repair_latex_json
 from ..services.provider_router import ResolvedModelConfig
+from ..state import DEFAULT_OPENAI_MODEL
 from ..services.retry import retry_llm
 
 logger = logging.getLogger("cbc-llm")
+
+
+# GPT-5 and the o-series are reasoning models, and their request is a
+# different shape: `temperature` and `top_p` are rejected outright,
+# `max_tokens` is `max_completion_tokens` and has to leave room for the
+# thinking that is billed as output, and `reasoning_effort` is the cost
+# dial. A stage bound to gpt-5-mini through the 4o-shaped request failed with
+# "Unsupported parameter: 'temperature'" on every call.
+_REASONING_MODEL = re.compile(r"^(gpt-5|o1|o3|o4)", re.I)
+
+
+def is_reasoning_model(model: str) -> bool:
+    return bool(_REASONING_MODEL.match((model or "").strip()))
+
+
+def openai_payload(model: str, messages: list[dict[str, str]],
+                   temperature: float, top_p: float) -> dict[str, Any]:
+    from ..settings import settings
+
+    if is_reasoning_model(model):
+        return {
+            "model": model,
+            "messages": messages,
+            "max_completion_tokens": 16384,
+            "reasoning_effort": settings.openai_reasoning_effort,
+            "response_format": {"type": "json_object"},
+        }
+    return {
+        "model": model,
+        "messages": messages,
+        "temperature": temperature,
+        "top_p": top_p,
+        "max_tokens": 8192,
+        "response_format": {"type": "json_object"},
+    }
 
 
 @dataclass(slots=True)
@@ -206,18 +242,11 @@ class LlmClient:
         base_url = config.resolved_base_url.rstrip("/")
         url = f"{base_url}/chat/completions" if not base_url.endswith("/v1") else f"{base_url}/chat/completions"
 
-        model_name = (config.model or "gpt-4o-mini").strip()
+        model_name = (config.model or DEFAULT_OPENAI_MODEL).strip()
         if not model_name or model_name.lower() in {"null", "undefined", "default", "none"}:
-            model_name = "gpt-4o-mini"
+            model_name = DEFAULT_OPENAI_MODEL
 
-        payload: dict[str, Any] = {
-            "model": model_name,
-            "messages": messages,
-            "temperature": temperature,
-            "top_p": top_p,
-            "max_tokens": 8192,
-            "response_format": {"type": "json_object"},
-        }
+        payload = openai_payload(model_name, messages, temperature, top_p)
 
         with httpx.Client(timeout=self.timeout) as client:
             resp = client.post(url, headers=headers, json=payload)

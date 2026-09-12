@@ -11,7 +11,13 @@ logger = logging.getLogger("cbc-cost")
 # Published model pricing: USD per 1 million tokens
 # Source: https://openai.com/pricing, https://anthropic.com/pricing, https://ai.google.dev/pricing
 MODEL_PRICING: dict[str, dict[str, float]] = {
-    # OpenAI
+    # OpenAI — GPT-5 family. Reasoning tokens are billed as output. The more
+    # specific ids sit ABOVE the family id because lookup is by prefix.
+    "gpt-5-mini": {"input": 0.25, "output": 2.00},
+    "gpt-5-nano": {"input": 0.05, "output": 0.40},
+    "gpt-5.1": {"input": 1.25, "output": 10.00},
+    "gpt-5.2": {"input": 1.75, "output": 14.00},
+    "gpt-5": {"input": 1.25, "output": 10.00},
     "gpt-4o-mini": {"input": 0.15, "output": 0.60},
     "gpt-4o-mini-2024-07-18": {"input": 0.15, "output": 0.60},
     "gpt-4o": {"input": 2.50, "output": 10.00},
@@ -79,6 +85,15 @@ def _lookup_pricing(model: str, provider: str) -> dict[str, float]:
     # Exact match
     if model in MODEL_PRICING:
         return MODEL_PRICING[model]
+    # A GPT-5 id this table has not met (a dated snapshot, a point release)
+    # is priced as its size class rather than as $0 — a run that reports no
+    # cost is a run whose cost nobody notices until the invoice.
+    lower = model.lower()
+    if lower.startswith("gpt-5"):
+        family = ("gpt-5-nano" if "nano" in lower
+                  else "gpt-5-mini" if "mini" in lower else "gpt-5")
+        logger.info("Pricing '%s' as %s.", model, family)
+        return MODEL_PRICING[family]
     # Prefix match (e.g. 'gpt-4o-mini-2024-07-18' matches 'gpt-4o-mini')
     for known_model, pricing in MODEL_PRICING.items():
         if model.startswith(known_model) or known_model.startswith(model):

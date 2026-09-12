@@ -295,10 +295,10 @@ def test_the_console_offers_installed_models_rather_than_free_text() -> None:
 # ── no stage runs on mini ─────────────────────────────────────────────────────
 
 
-def test_a_stored_mini_binding_is_loaded_as_4o(monkeypatch) -> None:
+def test_a_stored_mini_or_empty_binding_is_loaded_as_the_default(monkeypatch) -> None:
     """The console wrote gpt-4o-mini into every stage binding, a stored row
     overrides the bootstrap default, and six Grade 9 mathematics guides came
-    out of the smaller model. Mini is not used for any stage."""
+    out of the smaller model. gpt-4o-mini is not used for any stage."""
     from app import state as state_mod
 
     rows = [{"pipeline_stage": "notes_generation", "provider": "openai",
@@ -311,20 +311,69 @@ def test_a_stored_mini_binding_is_loaded_as_4o(monkeypatch) -> None:
     rs = state_mod.RuntimeState()
     rs.load_from_db()
 
-    assert rs.stage_bindings["notes_generation"].model == "gpt-4o"
-    assert rs.stage_bindings["web_research"].model == "gpt-4o"
+    assert rs.stage_bindings["notes_generation"].model == state_mod.DEFAULT_OPENAI_MODEL
+    assert rs.stage_bindings["web_research"].model == state_mod.DEFAULT_OPENAI_MODEL
 
 
-def test_the_bootstrap_default_is_4o_for_every_stage() -> None:
+def test_a_gpt_5_binding_is_passed_through_not_rewritten(monkeypatch) -> None:
+    """"gpt-5" was on the typo list, written when no such model existed. A
+    stage bound to gpt-5 was silently served gpt-4o — the run succeeded, so
+    nobody noticed — and an operator trying to move to it could not."""
+    from app import state as state_mod
+
+    rows = [{"pipeline_stage": "notes_generation", "provider": "openai",
+             "model": "gpt-5.4-mini", "base_url": None},
+            {"pipeline_stage": "reviewer_panel", "provider": "openai",
+             "model": "gpt-5", "base_url": None}]
+    monkeypatch.setattr(state_mod, "fetch_all",
+                        lambda q, *a, **k: rows if "stage_bindings" in q else [])
+
+    rs = state_mod.RuntimeState()
+    rs.load_from_db()
+
+    assert rs.stage_bindings["notes_generation"].model == "gpt-5.4-mini"
+    assert rs.stage_bindings["reviewer_panel"].model == "gpt-5"
+
+
+def test_the_bootstrap_default_is_one_model_for_every_stage() -> None:
     from app import main as main_mod
-    from app.state import RuntimeState, runtime_state
+    from app.state import DEFAULT_OPENAI_MODEL, runtime_state
 
     saved = dict(runtime_state.stage_bindings)
     try:
         runtime_state.stage_bindings.clear()
         main_mod._bootstrap_default_stage_bindings()
         models = {b.model for b in runtime_state.stage_bindings.values()}
-        assert models == {"gpt-4o"}, models
+        assert models == {DEFAULT_OPENAI_MODEL}, models
+        assert DEFAULT_OPENAI_MODEL.startswith("gpt-5")
     finally:
         runtime_state.stage_bindings.clear()
         runtime_state.stage_bindings.update(saved)
+
+
+# ── a reasoning model is asked in its own request shape ──────────────────────
+
+
+def test_a_gpt_5_request_carries_no_temperature_and_room_to_think() -> None:
+    """Through the 4o-shaped request every call failed with "Unsupported
+    parameter: 'temperature'"."""
+    from app.services.llm_client import openai_payload
+
+    p = openai_payload("gpt-5-mini", [{"role": "user", "content": "x"}], 0.15, 1.0)
+    assert "temperature" not in p and "top_p" not in p and "max_tokens" not in p
+    assert p["max_completion_tokens"] >= 16000
+    assert p["reasoning_effort"] in {"minimal", "low", "medium", "high"}
+    assert p["response_format"] == {"type": "json_object"}
+
+    q = openai_payload("gpt-4o", [{"role": "user", "content": "x"}], 0.15, 1.0)
+    assert q["temperature"] == 0.15 and q["max_tokens"] == 8192
+
+
+def test_an_unlisted_gpt_5_snapshot_is_priced_as_its_size_class() -> None:
+    """A run on a model the price table had not met reported $0, which is a
+    cost nobody notices until the invoice."""
+    from app.services.cost_tracker import TokenUsage, calculate_cost
+
+    mini = calculate_cost("gpt-5.4-mini", "openai", TokenUsage(1_000_000, 1_000_000, 2_000_000))
+    full = calculate_cost("gpt-5-2026-01-01", "openai", TokenUsage(1_000_000, 1_000_000, 2_000_000))
+    assert 0 < mini.total_cost_usd < full.total_cost_usd

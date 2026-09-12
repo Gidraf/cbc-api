@@ -14,8 +14,12 @@ from .settings import settings
 
 logger = logging.getLogger("cbc-state")
 
-# The one OpenAI model every stage runs on. Not mini, for any stage.
-DEFAULT_OPENAI_MODEL = "gpt-4o"
+# The one OpenAI model every stage runs on. Chosen for cost as much as for
+# reasoning: a Grade 9 guide through four remediation passes on gpt-4o came to
+# several dollars and was still wrong; gpt-5-mini is a tenth of the input
+# price and reasons better. An operator can bind a stage to any GPT-5-family
+# id in the console (gpt-5, gpt-5.1, gpt-5-nano...) and it is passed through.
+DEFAULT_OPENAI_MODEL = settings.openai_default_model
 
 
 @dataclass(slots=True)
@@ -180,18 +184,22 @@ class RuntimeState:
                 # including on the stations that write the content. A stage
                 # nobody configured should fall to something that can do the
                 # work, and be visible in the log when it does.
-                if not raw_model or lower in {"", "null", "undefined", "default", "none"} or "gpt-5" in lower or "gpt5" in lower:
+                # "gpt-5" was on this list as a typo, written when no such
+                # model existed. A stage bound to it was silently served
+                # gpt-4o — the failure hardest to notice, because the run
+                # succeeds.
+                if not raw_model or lower in {"", "null", "undefined", "default", "none"}:
                     model = DEFAULT_OPENAI_MODEL
                     logger.warning(
                         "Stage %s had no usable model (%r); falling back to %s.",
                         row["pipeline_stage"], raw_model, model)
                 elif "4o-mini" in lower or "gpt-4-mini" in lower:
-                    # Never mini. The console wrote it into every stage and
-                    # the content came out of the smaller model.
+                    # Never gpt-4o-mini. The console wrote it into every
+                    # stage and the content came out of the smaller model.
                     model = DEFAULT_OPENAI_MODEL
                     logger.warning(
-                        "Stage %s was bound to %r; using %s — mini is not used "
-                        "for any stage.", row["pipeline_stage"], raw_model, model)
+                        "Stage %s was bound to %r; using %s — gpt-4o-mini is "
+                        "not used for any stage.", row["pipeline_stage"], raw_model, model)
                 elif "4o" in lower:
                     model = "gpt-4o"
                 else:
