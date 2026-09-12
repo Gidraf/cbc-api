@@ -387,3 +387,11 @@ def test_a_failed_guide_says_so_on_its_first_page() -> None:
                          "modules": [{"title": "Lesson 1", "teacher_exposition": "x"}]},
                         grade="grade-9", subject="Mathematics", sub_strand="Integers")
     assert "did not pass" not in clean
+
+
+def test_a_bare_value_after_an_expression_continues_the_chain() -> None:
+    """`-3 - 5`, then `-8` on its own line, printed "not checked"."""
+    good = worked_solutions.check_steps([{"working": "$-3 - 5$"}, {"working": "$-8$"}])
+    bad = worked_solutions.check_steps([{"working": "$-3 - 5$"}, {"working": "$-2$"}])
+    assert good["checked"] and good["agrees"] is True
+    assert bad["checked"] and bad["agrees"] is False and bad["step"] == 2

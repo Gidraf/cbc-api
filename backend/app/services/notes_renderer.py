@@ -898,7 +898,7 @@ def _lesson(module: dict[str, Any], n: int,
             # The figure this paragraph promised, immediately under it.
             out += [html for _, html in placed.get(i, [])]
             if seg.get("learners"):
-                out.append(f"<p class='learners'><span>The learners</span>"
+                out.append(f"<p class='learners'><span>The learners:</span> "
                            f"{_math(seg['learners'])}</p>")
             if seg.get("bridge"):
                 out.append(f"<p class='bridge'>{_math(seg['bridge'])}</p>")

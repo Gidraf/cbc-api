@@ -205,8 +205,14 @@ class RuntimeState:
                     logger.warning(
                         "Stage %s was bound to %r; using %s — gpt-4o-mini is "
                         "not used for any stage.", row["pipeline_stage"], raw_model, model)
-                elif "4o" in lower:
-                    model = "gpt-4o"
+                elif "4o" in lower or lower.startswith("gpt-4"):
+                    # The console's old button wrote gpt-4o into every stage.
+                    # The GPT-4 family is not a choice anybody makes now; it
+                    # is what was there before the tiers existed.
+                    model = default_model_for(row["pipeline_stage"])
+                    logger.warning(
+                        "Stage %s was bound to %r; using %s — the GPT-4 family "
+                        "is retired here.", row["pipeline_stage"], raw_model, model)
                 else:
                     model = raw_model
             elif provider == "anthropic":

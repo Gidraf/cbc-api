@@ -211,6 +211,25 @@ class QualityGateService:
         )
         overall = round((reviewer.score + approver_1.score + approver_2.score) / 3)
 
+        # The guide's own mechanical checks outrank the measured criteria. A
+        # page read "Notes gate passed at 95/100" beside "Checks this guide
+        # did not pass — 40/100": the gate measured words per sentence and
+        # term coverage and never looked at what the remediation loop had
+        # found and failed to clear.
+        self_check = content.get("self_check") if isinstance(content, dict) else None
+        if isinstance(self_check, dict) and not self_check.get("clean"):
+            outstanding = [str(f) for f in (self_check.get("outstanding") or []) if str(f).strip()]
+            if outstanding:
+                score = self_check.get("score")
+                passed = False
+                reviewer.risk_flags.insert(0, (
+                    f"the guide's own checks stand at "
+                    f"{score:g}/100 with {len(outstanding)} finding(s) the rewrite "
+                    f"loop could not clear" if isinstance(score, (int, float)) else
+                    f"{len(outstanding)} finding(s) the rewrite loop could not clear"))
+                if isinstance(score, (int, float)):
+                    overall = min(overall, round(float(score)))
+
         next_actions = [
             f"Improve {f.aspect.replace('_', ' ')}: {f.comment}"
             for f in reviewer.feedback

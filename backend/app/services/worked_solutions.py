@@ -246,6 +246,10 @@ def check_steps(steps: Any) -> dict[str, Any]:
             lhs, rhs = match.group("lhs").strip(), match.group("rhs").strip()
         elif working.startswith("=") and previous:
             lhs, rhs = previous, working.lstrip("= ").strip()
+        elif previous and _is_a_value(_comparable(working)):
+            # `-3 - 5`, then `-8` on its own line: the value is what the
+            # expression before it comes to.
+            lhs, rhs = previous, working
         else:
             previous = working
             continue

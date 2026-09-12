@@ -433,3 +433,23 @@ def test_an_unlisted_gpt_5_snapshot_is_priced_as_its_size_class() -> None:
     mini = calculate_cost("gpt-5.4-mini", "openai", TokenUsage(1_000_000, 1_000_000, 2_000_000))
     full = calculate_cost("gpt-5-2026-01-01", "openai", TokenUsage(1_000_000, 1_000_000, 2_000_000))
     assert 0 < mini.total_cost_usd < full.total_cost_usd
+
+
+def test_a_stored_gpt_4o_binding_moves_to_its_tier(monkeypatch) -> None:
+    """A guide ran on gpt-4o after the 5.6 tiers shipped: the loader moved
+    empty and 4o-mini bindings and left a stored gpt-4o exactly where the
+    console's old button had put it."""
+    from app import state as state_mod
+
+    rows = [{"pipeline_stage": "notes_generation", "provider": "openai",
+             "model": "gpt-4o", "base_url": None},
+            {"pipeline_stage": "ingest_extraction", "provider": "openai",
+             "model": "gpt-4.1-mini", "base_url": None}]
+    monkeypatch.setattr(state_mod, "fetch_all",
+                        lambda q, *a, **k: rows if "stage_bindings" in q else [])
+
+    rs = state_mod.RuntimeState()
+    rs.load_from_db()
+
+    assert rs.stage_bindings["notes_generation"].model == state_mod.DEFAULT_OPENAI_MODEL
+    assert rs.stage_bindings["ingest_extraction"].model == state_mod.LIGHT_OPENAI_MODEL
