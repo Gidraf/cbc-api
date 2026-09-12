@@ -297,6 +297,7 @@ class LlmClient:
                     f"OPENAI_REASONING_EFFORT or raise max_output_tokens.",
                 )
             raw_usage = data.get("usage") or {}
+            logger.info("responses usage for %s: %s", model_name, raw_usage)
             usage = TokenUsage(
                 prompt_tokens=int(raw_usage.get("input_tokens", 0) or 0),
                 completion_tokens=int(raw_usage.get("output_tokens", 0) or 0),

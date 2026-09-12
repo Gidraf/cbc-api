@@ -145,7 +145,15 @@ _EMPTY_WORDS = frozenset({
     "from", "at", "as", "or", "is", "are", "be", "it", "its", "this", "that",
     "their", "them", "they", "will", "can", "using", "use", "used", "all",
     "different", "various", "such", "e", "g", "eg", "involving", "involves",
+    # Filler a design bullet is built from, not what it is about: "use IT
+    # tools and OTHER resources such as print to CARRY OUT operations".
+    "other", "carry", "out",
 })
+
+# A two-to-four letter capital token is a name, not a word: "IT tools",
+# "ICT", "PCI". Lowercased it vanished into the pronoun stoplist, and a lesson
+# built on IT tools scored one stem against the experience that asked for them.
+_ACRONYM = re.compile(r"\b[A-Z]{2,4}\b")
 
 
 def _stems(text: str) -> set[str]:
@@ -155,8 +163,8 @@ def _stems(text: str) -> set[str]:
     same word for this, and anything cleverer needs a stemmer this repository
     does not carry.
     """
+    out: set[str] = {f"acr:{a.lower()}" for a in _ACRONYM.findall(str(text or ""))}
     words = re.findall(r"[a-z]+", str(text or "").lower())
-    out: set[str] = set()
     for word in words:
         if word in _EMPTY_WORDS or len(word) < 3:
             continue

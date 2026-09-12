@@ -80,16 +80,26 @@ def ladder(lessons: int, floor: Any) -> list[Step]:
     return steps
 
 
-def worked_examples_rule(subject: str | None, floor: Any) -> str:
+def worked_examples_rule(subject: str | None, floor: Any,
+                         profile: Any = None) -> str:
     """What one lesson is told about its worked examples, for THIS subject
     and THIS grade — or nothing, where the subject has no such rule.
 
     The rule used to be written into the lesson prompt itself, for every
     subject and every grade, with Grade 9 integer exemplars: a PP1 CRE lesson
     was told its worked examples must let BODMAS decide the answer.
+
+    `profile` is the sub-strand's own demand, read from its design, where one
+    has been extracted. The level's floor is a floor; the design's own figure
+    is usually higher, and a model told the floor writes to the floor — a
+    guide came back with every example at exactly two operations because
+    that is what this rule had said.
     """
     if not subject or "math" not in subject.lower() or floor is None:
         return ""
+    operations = max(int(floor.operations), int(getattr(profile, "operations", 0) or 0))
+    kinds = max(int(floor.kinds), int(getattr(profile, "kinds", 0) or 0))
+    depth = max(int(floor.depth), int(getattr(profile, "depth", 0) or 0))
     lines = [
         "=== WORKED EXAMPLES — REQUIRED (NON-NEGOTIABLE) ===",
         "`worked_examples` must hold AT LEAST TWO examples in this lesson, "
@@ -118,14 +128,20 @@ def worked_examples_rule(subject: str | None, floor: Any) -> str:
         "multiplies or divides signed numbers, this lesson or an earlier one "
         "must have STATED the sign rule in its own prose, with the reason.",
         "",
-        f"At {floor.level} level, {floor.because}. So every worked example "
-        f"must use at least {floor.operations} operations of "
-        f"{_plural(floor.kinds, 'different kind')}"
+        f"At {floor.level} level, {floor.because}. So the HARDER of each "
+        f"lesson's two examples must use at least {operations} operations of "
+        f"{_plural(kinds, 'different kind')}"
         + (", mixing + or − with × or ÷ so that the ORDER of operations "
            "decides the answer" if floor.order_matters else "")
-        + (", with a bracket or fraction bar" if floor.depth else "")
-        + ".",
+        + (", with a bracket or fraction bar" if depth else "")
+        + ". That is the least — not the target. The design's own item at the "
+          "top of its range is shown above; write to that.",
     ]
+    if profile is not None and getattr(profile, "exemplar_question", ""):
+        lines.append(
+            "This sub-strand's own design asks for items like: "
+            + str(profile.exemplar_question).strip()
+            + " — write your own at that demand, not this one.")
     if floor.order_matters:
         lines.append(
             "One kind of operation, however long the sum or whatever story is "

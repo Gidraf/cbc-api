@@ -513,3 +513,19 @@ def test_the_guide_is_titled_after_the_sub_strand_not_after_lesson_1(monkeypatch
         "module_number": 1, "title": "Lesson 1: Basics", "worked_examples": [FRESH, SECOND],
         "learning_experiences_used": ["discuss integers"]})
     assert out["title"] == "Teacher's Guide: Integers" and out["module_count"] == 1
+
+
+def test_the_rule_carries_the_sub_strands_own_demand_over_the_floor() -> None:
+    """The floor is two operations. The design's own profile said four, and a
+    model told two wrote every example at two."""
+    import types
+
+    profile = types.SimpleNamespace(operations=4, kinds=2, depth=1,
+                                    exemplar_question="Calculate the final balance of an account "
+                                                      "that starts at $-18$, receives $24$, pays $3$ "
+                                                      "each to $2$ suppliers and is refunded $5$.")
+    rule = lh.worked_examples_rule("Mathematics", FLOOR, profile)
+    assert "at least 4 operations" in rule
+    assert "starts at $-18$" in rule
+    assert "not the target" in rule
+    assert "at least 2 operations" in lh.worked_examples_rule("Mathematics", FLOOR, None)

@@ -86,6 +86,7 @@ def _ops_module(n: int, title: str, examples: list[dict]) -> dict:
         "module_number": n, "title": title,
         "worked_examples": examples,
         "learning_experiences_used": ["discuss integers"],  # stop integrity flagging
+        "exposition_segments": [{"topic": title, "body": "Learners discuss integers in pairs. " * 12}],
     }
 
 
@@ -166,7 +167,8 @@ def test_a_grade_5_lesson_is_held_to_the_upper_primary_floor() -> None:
 def test_a_cre_guide_is_never_measured_for_arithmetic() -> None:
     notes = {"modules": [{
         "module_number": 1, "title": "Introducing God",
-        "teacher_exposition": "Learners say the name of God in mother tongue. " * 8,
+        "exposition_segments": [{"topic": "The name of God",
+                                 "body": "Learners say the name of God in mother tongue. " * 8}],
         "learning_experiences_used": ["say the name of God in their mother tongue"],
     }]}
 
@@ -602,3 +604,92 @@ def test_the_same_situation_on_new_numbers_is_the_same_example() -> None:
     assert 5 in targets
     shape = [f for f in findings if "exactly the shape" in f]
     assert shape and "a temperature changes from n°c to n°c" in shape[0], shape
+
+
+# ── the third guide on terra ─────────────────────────────────────────────────
+
+
+def _temp(n: int, extra: dict | None = None) -> dict:
+    """The example the model would not stop writing."""
+    return {"statement": "A temperature drops from 5°C to -3°C. What is the change in temperature?",
+            "steps": [{"working": "$-3 - 5 = -8$", "because": "final minus initial"}],
+            "answer": "-8°C", **(extra or {})}
+
+
+def test_an_example_an_earlier_lesson_worked_is_removed_from_the_later_one() -> None:
+    """The same temperature problem was the worked example of lessons 1, 3, 5
+    and 6. The hand-off said not to; the check found it every pass; the model
+    wrote it again. A second copy of something already on the page is the one
+    thing that can be removed without losing anything."""
+    notes = {"modules": [
+        _ops_module(1, "Basics", [_temp(1), SIGNED]),
+        _ops_module(3, "IT tools", [_clone(r"$-50 + 20 \times (-3) - (-10)$", "-100"), _temp(3)]),
+        _ops_module(5, "Real life", [_temp(5), _clone(r"$2 - (-4)$", "6")]),
+    ]}
+
+    note = notes_remediation.drop_repeated_examples(notes)
+
+    assert "Removed 2 worked example(s)" in note
+    assert len(notes["modules"][0]["worked_examples"]) == 2, "the first lesson keeps it"
+    assert [e["answer"] for e in notes["modules"][1]["worked_examples"]] == ["-100"]
+    assert [e["answer"] for e in notes["modules"][2]["worked_examples"]] == ["6"]
+    assert notes_remediation.drop_repeated_examples(notes) == "", "idempotent"
+
+
+def test_a_lessons_own_prose_and_example_sharing_an_expression_is_not_a_repeat() -> None:
+    notes = {"modules": [{**_ops_module(4, "Combined", [_clone(r"$-5 + 3 \times (2 - 4)$", "-11")]),
+                          "exposition_segments": [{"topic": "Worked", "body": r"Consider $-5 + 3 \times (2 - 4)$. " * 10}]}]}
+    assert notes_remediation.drop_repeated_examples(notes) == ""
+    assert len(notes["modules"][0]["worked_examples"]) == 1
+
+
+def test_a_lesson_that_came_back_as_a_script_is_a_target() -> None:
+    """Introduction / Development / Conclusion with "present the worked
+    examples, explaining each step clearly" — a lesson plan with the content
+    left out, and it printed as one."""
+    notes = {"modules": [{
+        "module_number": 5, "title": "Lesson 5: Applying Integers",
+        "lesson_flow": [{"phase": "Introduction", "what_the_teacher_does": "Introduce integers."},
+                        {"phase": "Development", "what_the_teacher_does": "Present the worked examples, explaining each step clearly."},
+                        {"phase": "Conclusion", "what_the_teacher_does": "Summarise."}],
+        "worked_examples": [_temp(5), _clone(r"$2 - (-4)$", "6")],
+        "learning_experiences_used": ["discuss integers"],
+    }]}
+
+    _s, findings, targets = notes_remediation._inspect(notes, ["discuss integers"], GRADE_9_MATHS)
+
+    assert 5 in targets
+    assert any("no exposition topics" in f for f in findings), findings
+
+
+def test_a_lesson_about_it_tools_is_not_told_it_does_not_teach_them() -> None:
+    """The lesson introduced calculators, spreadsheets and educational software
+    and used them for the calculations, and the check said nothing in it did
+    the experience — "IT" had vanished into the pronoun stoplist and the
+    experience's other words are filler."""
+    design = [
+        "discuss with peers and work out basic operations on integers using number cards and charts",
+        "play games involving numbers and operations by picking integers and performing all basic operations",
+        "work out combined operations of integers in the correct order",
+        "carry out activities such as reading temperature changes in a thermometer",
+        "use IT tools and other resources such as print to carry out operations on integers",
+        "play creative games that involve integers",
+    ]
+    notes = {"modules": [{
+        "module_number": 3, "title": "Lesson 3: Applying Integer Operations Using IT Tools",
+        "exposition_segments": [
+            {"topic": "Introduction to IT Tools for Integer Operations",
+             "body": "Begin by introducing various IT tools such as calculators, spreadsheets, "
+                     "and educational software that can assist in performing operations on "
+                     "integers. Explain how these tools can simplify calculations and help "
+                     "visualize problems. Highlight the importance of accuracy when using technology."},
+            {"topic": "Real-Life Application",
+             "body": "Present a debt of KSh 200, a payment of KSh 50 and a further loan of KSh 100. "
+                     "Use IT tools to perform the calculations and visualize the results."}],
+        "resources_needed": ["Calculators, spreadsheets, or educational software"],
+        "learning_experiences_used": [design[4]],
+    }]}
+
+    _s, findings, _targets = notes_remediation._inspect(notes, design, {})
+
+    assert not any("nothing in the lesson does it" in f for f in findings), findings

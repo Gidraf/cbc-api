@@ -966,6 +966,12 @@ def _plan_lesson_by_lesson(context: Any, resolved: Any, *, lessons: int,
 
     floor = task_demand.floor_for(grade, subject)
     ladder = lesson_handoff.ladder(lessons, floor)
+    try:
+        from ..services import demand_profile as _dp
+
+        profile = _dp.load(grade, subject, strand, sub_strand)
+    except Exception:  # noqa: BLE001
+        profile = None
     # Which outcome and which experience each lesson is FOR, dealt before a
     # word is written. Told only "lesson 4 of 6", the model chose the outcome
     # itself — the same one three times, and one of the four never.
@@ -1005,7 +1011,7 @@ def _plan_lesson_by_lesson(context: Any, resolved: Any, *, lessons: int,
                 handoff=lesson_handoff.block(previous, step),
                 failed=failed,
                 worked_examples_rule=lesson_handoff.worked_examples_rule(
-                    subject, floor))},
+                    subject, floor, profile))},
         ]
         resp = llm_client.generate(resolved, messages, temperature=0.15)
         content = resp.content if isinstance(resp.content, dict) else {}

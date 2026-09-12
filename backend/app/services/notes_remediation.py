@@ -213,6 +213,65 @@ def rebuild_slo_map(notes: dict[str, Any], slos: list[str]) -> str:
             f"authored.")
 
 
+def drop_repeated_examples(notes: dict[str, Any]) -> str:
+    """Remove a worked example that an earlier lesson has already worked.
+
+    "A temperature drops from 5°C to −3°C. What is the change?" was the
+    worked example of lessons 1, 3, 5 and 6 of one guide. The hand-off told
+    each lesson not to; the check found it every pass; the model wrote it
+    again. A second copy of something already on the page is the one thing
+    that can be removed without losing anything, so it is removed — and the
+    lesson left short then fails the two-examples check and is asked for a
+    new one, rather than a rewrite being asked to stop doing what it will
+    not stop doing.
+
+    Only across lessons. The same expression worked in a lesson's prose and
+    again as its example is the lesson showing its own working twice, which
+    is a different and lesser fault.
+    """
+    from . import task_demand
+
+    def key_of(example: dict[str, Any]) -> str:
+        try:
+            expression = task_demand.measure_item(example).expression
+        except Exception:  # noqa: BLE001
+            expression = ""
+        return _norm_expr(expression) if expression else _norm_expr(
+            str(example.get("statement") or ""))
+
+    seen: dict[str, int] = {}
+    dropped: list[str] = []
+    for i, module in enumerate(_modules(notes), start=1):
+        number = _number(module, i)
+        examples = module.get("worked_examples")
+        if not isinstance(examples, list):
+            continue
+        kept: list[Any] = []
+        mine: set[str] = set()
+        for example in examples:
+            if not isinstance(example, dict):
+                kept.append(example)
+                continue
+            key = key_of(example)
+            first = seen.get(key)
+            if key and len(key) >= 3 and first is not None and first != number:
+                dropped.append(f"lesson {number} repeated lesson {first}'s "
+                               f"\"{str(example.get('statement') or '')[:60]}\"")
+                continue
+            kept.append(example)
+            if key:
+                mine.add(key)
+        for key in mine:
+            seen.setdefault(key, number)
+        if len(kept) != len(examples):
+            module["worked_examples"] = kept
+    if not dropped:
+        return ""
+    return (f"Removed {len(dropped)} worked example(s) that an earlier lesson had "
+            f"already worked ({'; '.join(dropped[:4])}). A learner reads each "
+            f"once; the lesson left short is asked for a new one.")
+
+
 def strip_invented_experiences(notes: dict[str, Any],
                                design_experiences: list[str]) -> str:
     """Remove anything in `learning_experiences_used` the design never suggested.
@@ -417,6 +476,29 @@ def _inspect(notes: dict[str, Any],
     for number in provenance.get("uncited") or []:
         if number not in targets:
             targets.append(number)
+
+    # A lesson with no teaching in it. The schema asks for the exposition as
+    # named topics; a lesson that comes back as Introduction / Development /
+    # Conclusion with "present the worked examples, explaining each step" is
+    # a classroom script with the content left out, and it printed as one.
+    for i, module in enumerate(modules, start=1):
+        topics = [t for t in (module.get("exposition_segments") or [])
+                  if isinstance(t, dict) and str(t.get("body") or "").strip()]
+        prose = str(module.get("teacher_exposition") or "")
+        if topics or len(prose.split()) >= 120:
+            continue
+        number = _number(module, i)
+        findings.append(
+            f"Lesson {number} has no exposition topics — no `exposition_segments` "
+            f"with teaching in them. What is there is a lesson plan (introduce, "
+            f"present the examples, summarise), not the content a teacher "
+            f"explains. Write the lesson as named topics, each with the actual "
+            f"teaching: the rule, the reason, the example worked, the question "
+            f"to ask and the wrong answer to expect."
+        )
+        if number not in targets:
+            targets.append(number)
+        score = max(0.0, score - 12.0)
 
     # A lesson that NAMES an experience its text does not DO is rewritten.
     for number in integrity.get("undelivered") or []:
@@ -1171,6 +1253,7 @@ def run(
 
         for repair in (rebuild_slo_map(notes, slos),
                        strip_invented_experiences(notes, design_experiences),
+                       drop_repeated_examples(notes),
                        repair_citation_addresses(notes, design_text)):
             if repair:
                 this.deterministic.append(repair)
@@ -1260,6 +1343,7 @@ def run(
 
         for repair in (rebuild_slo_map(notes, slos),
                        strip_invented_experiences(notes, design_experiences),
+                       drop_repeated_examples(notes),
                        repair_citation_addresses(notes, design_text)):
             if repair:
                 this.deterministic.append(repair)
