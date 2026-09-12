@@ -120,6 +120,33 @@ def _is_a_value(answer: str) -> bool:
     return bool(_A_VALUE.match(str(answer or "")))
 
 
+_FRACTION_FORM = re.compile(
+    r"^\s*(-?)\s*\\d?frac\s*\{\s*(-?\d+(?:\.\d+)?)\s*\}\s*\{\s*(-?\d+(?:\.\d+)?)\s*\}\s*$")
+_SLASH_FORM = re.compile(r"^\s*(-?\d+(?:\.\d+)?)\s*/\s*(-?\d+(?:\.\d+)?)\s*$")
+
+
+def _as_number(text: str) -> float | None:
+    """A value in any of the forms an answer is written in, or None."""
+    raw = str(text or "").strip()
+    frac = _FRACTION_FORM.match(raw)
+    if frac:
+        sign = -1.0 if frac.group(1) else 1.0
+        try:
+            return sign * float(frac.group(2)) / float(frac.group(3))
+        except (ValueError, ZeroDivisionError):
+            return None
+    slash = _SLASH_FORM.match(raw)
+    if slash:
+        try:
+            return float(slash.group(1)) / float(slash.group(2))
+        except (ValueError, ZeroDivisionError):
+            return None
+    try:
+        return float(raw.replace(",", ""))
+    except ValueError:
+        return None
+
+
 def _comparable(answer: str) -> str:
     """An answer with everything that is not its value taken off."""
     return _NOT_THE_VALUE.sub(" ", str(answer or "")).strip(" .,;:") or str(answer or "")
@@ -168,6 +195,13 @@ def check(statement: str, claimed_answer: str) -> dict[str, Any]:
             agreed = bool(
                 re.search(r"(?<!\d)" + re.escape(trace.final_answer.strip())
                           + r"(?!\d)", comp))
+        if not agreed:
+            # The same value written differently: `\dfrac{-5}{-2}` is `5/2`
+            # is `2.5`. The verifier compares forms; a step that is right in a
+            # form it does not reduce must not be condemned for it.
+            mine, theirs = _as_number(trace.final_answer), _as_number(comp)
+            agreed = (mine is not None and theirs is not None
+                      and abs(mine - theirs) < 1e-9)
         out["agrees"] = agreed
     except Exception:  # noqa: BLE001
         out["agrees"] = None
@@ -198,12 +232,25 @@ def check_steps(steps: Any) -> dict[str, Any]:
     if not isinstance(steps, list):
         return out
 
+    # Working is also written as a chain — `5 + (-3)`, then `= 5 - 3`, then
+    # `= 2` — one expression per step with the equals sign leading the next.
+    # Read that way, each step claims that the previous expression equals this
+    # one, which is a checkable equation. Read the old way, a leading `=` has
+    # no left-hand side and the whole example printed "not checked".
     usable = [s for s in steps if isinstance(s, dict)][:_MAX_STEPS]
+    previous = ""
     for number, step in enumerate(usable, start=1):
-        match = _STEP_EQUATION.match(str(step.get("working") or "").strip())
-        if not match:
+        working = str(step.get("working") or "").strip().strip("$").strip()
+        match = _STEP_EQUATION.match(working)
+        if match:
+            lhs, rhs = match.group("lhs").strip(), match.group("rhs").strip()
+        elif working.startswith("=") and previous:
+            lhs, rhs = previous, working.lstrip("= ").strip()
+        else:
+            previous = working
             continue
-        verdict = check(match.group("lhs"), match.group("rhs"))
+        previous = rhs
+        verdict = check(lhs, rhs)
         if not verdict["checked"]:
             continue
         out["checked"] = True
@@ -211,7 +258,7 @@ def check_steps(steps: Any) -> dict[str, Any]:
             out["agrees"] = False
             out["engine_answer"] = verdict["engine_answer"]
             out["step"] = number
-            out["claimed"] = match.group("rhs").strip()
+            out["claimed"] = rhs
             return out
         if out["agrees"] is None:
             out["agrees"] = True

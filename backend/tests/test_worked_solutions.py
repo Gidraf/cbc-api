@@ -335,3 +335,55 @@ def test_a_key_question_with_maths_in_it_is_typeset() -> None:
     asked = html.split("Ask, in this order")[1][:400]
     assert "$5 + 2" not in asked
     assert "5 + 2 \\times 3" in asked or "class='math'" in asked or "katex" in asked.lower() or "mathjax" in asked.lower()
+
+
+# ── working written as a chain ───────────────────────────────────────────────
+
+
+def test_chained_steps_are_checked_as_equations() -> None:
+    """`5 + (-3)`, then `= 5 - 3`, then `= 2`: each step claims the previous
+    expression equals this one. Read with a leading `=` as an equation with no
+    left side, the whole example printed "not checked"."""
+    good = worked_solutions.check_steps(
+        [{"working": "$5 + (-3)$"}, {"working": "$= 5 - 3$"}, {"working": "$= 2$"}])
+    bad = worked_solutions.check_steps(
+        [{"working": "$5 + (-3)$"}, {"working": "$= 5 - 3$"}, {"working": "$= 3$"}])
+
+    assert good["checked"] and good["agrees"] is True
+    assert bad["checked"] and bad["agrees"] is False and bad["step"] == 3
+
+
+def test_a_label_before_the_equals_sign_starts_the_chain() -> None:
+    verdict = worked_solutions.check_steps(
+        [{"working": "$Change = -5 - 20$"}, {"working": "$= -25$"}])
+    assert verdict["checked"] and verdict["agrees"] is True
+
+
+def test_the_same_value_in_a_different_form_agrees() -> None:
+    """`\\dfrac{3+(-8)}{-2} = \\dfrac{-5}{-2}` is true; the verifier compared
+    forms and condemned it, which is the false failure that gets a checker
+    switched off."""
+    verdict = worked_solutions.check_steps(
+        [{"working": r"$= \dfrac{3 + (-8)}{-2}$"}, {"working": r"$= \dfrac{-5}{-2}$"},
+         {"working": "$= 2.5$"}])
+    assert verdict["checked"] and verdict["agrees"] is True
+
+
+def test_a_failed_guide_says_so_on_its_first_page() -> None:
+    """A guide the loop scored 35 and gave up on rendered exactly like one
+    that passed."""
+    from app.services.notes_renderer import render_html
+
+    html = render_html({"title": "Integers", "self_check": {
+        "score": 35.1, "clean": False, "passes": 4,
+        "outstanding": ["Lesson 4 is titled the same as lesson 6.",
+                        r"Lesson 1 answers $2$ for a change from $5$ to $-3$."]},
+        "modules": [{"title": "Lesson 1", "teacher_exposition": "x"}]},
+        grade="grade-9", subject="Mathematics", sub_strand="Integers")
+
+    assert "Checks this guide did not pass" in html and "35.1/100" in html
+    assert html.index("did not pass") < html.index("Lesson 1</h2>") if "Lesson 1</h2>" in html else True
+    clean = render_html({"title": "Integers", "self_check": {"clean": True, "outstanding": []},
+                         "modules": [{"title": "Lesson 1", "teacher_exposition": "x"}]},
+                        grade="grade-9", subject="Mathematics", sub_strand="Integers")
+    assert "did not pass" not in clean

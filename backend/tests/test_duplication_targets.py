@@ -552,3 +552,53 @@ def test_it_tools_is_not_taught_by_a_lesson_that_merely_mentions_integers() -> N
 
     assert 4 in targets
     assert any("nothing in the lesson does it" in f for f in findings), findings
+
+
+# ── the rest of what the second guide showed ─────────────────────────────────
+
+
+def test_a_non_integer_answer_in_the_integers_sub_strand_is_a_target() -> None:
+    notes = {"modules": [_ops_module(2, "Combined", [
+        _clone(r"$\dfrac{-10 + 5 \times (-3) - 2}{4 - (-2)}$", "$-4.5$"),
+        _clone(r"$-6 \div 2 + 4 \times (-1)$", "$-7$")])]}
+
+    _s, findings, targets = notes_remediation._inspect(
+        notes, ["discuss integers"], GRADE_9_MATHS, sub_strand="Integers")
+
+    assert 2 in targets
+    assert any("not an integer" in f for f in findings), findings
+
+
+def test_a_review_lesson_while_an_experience_goes_untaught_is_a_target() -> None:
+    games = ("play games involving numbers and operations by picking integers "
+             "and performing all basic operations")
+    notes = {"modules": [
+        _lesson(1, "Introduction to Integers", "Integers and number cards. " * 10,
+                [SIGNED, SIGNED]),
+        _lesson(6, "Review and Assessment of Integers",
+                "Review the key concepts learned throughout the unit. " * 10,
+                [SIGNED, SIGNED]),
+    ]}
+
+    _s, findings, targets = notes_remediation._inspect(
+        notes, ["discuss integers", games], GRADE_9_MATHS)
+
+    assert 6 in targets
+    assert any("review or assessment lesson while" in f for f in findings), findings
+
+
+def test_the_same_situation_on_new_numbers_is_the_same_example() -> None:
+    def situation(a, b):
+        return {"statement": f"A temperature changes from {a}°C to {b}°C. What is the total change in temperature?",
+                "steps": [{"working": f"${b} - {a} = {b - a}$", "because": "final minus initial"}],
+                "answer": f"{b - a}°C"}
+    notes = {"modules": [
+        _ops_module(4, "Review", [situation(20, -5), _clone(r"$-6 \div 2 + 4 \times (-1)$", "-7")]),
+        _ops_module(5, "Applying", [situation(5, -3), _clone(r"$(-5 + 10) - (3 \times 2)$", "-1")]),
+    ]}
+
+    _s, findings, targets = notes_remediation._inspect(notes, ["discuss integers"], {})
+
+    assert 5 in targets
+    shape = [f for f in findings if "exactly the shape" in f]
+    assert shape and "a temperature changes from n°c to n°c" in shape[0], shape

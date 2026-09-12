@@ -107,7 +107,13 @@ def worked_examples_rule(subject: str | None, floor: Any) -> str:
         "falls and rises, money owed and paid, height above and below sea level "
         "— with the integers and operations arising from it and the answer in "
         "its units. A bare expression under a real-life heading serves a "
-        "different lesson from the one on the tin.",
+        "different lesson from the one on the tin. A situation still has to "
+        "reach the grade: three days each 4°C colder is 3 × (−4); five items "
+        "at KSh 120 with KSh 200 off is 5 × 120 − 200; a debt shared four ways "
+        "is ÷ 4. A change FROM one value TO another is final minus initial — "
+        "from 5°C to −3°C is −3 − 5 = −8, not 5 + (−3).",
+        "Every answer in an Integers sub-strand is an integer. Choose the "
+        "numbers so that every division is exact.",
         "The exposition must teach what the examples use. Before an example "
         "multiplies or divides signed numbers, this lesson or an earlier one "
         "must have STATED the sign rule in its own prose, with the reason.",

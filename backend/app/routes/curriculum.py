@@ -1417,6 +1417,15 @@ def factory_generate_notes(
         lesson_plan = notes_coverage.check(
             notes_content, allocation, slos, experiences=design_experiences
         )
+        # Stamped INTO the guide, so the page carries it. The report went back
+        # to the API caller and nowhere else, and a guide the loop had scored
+        # 35 and given up on rendered exactly like one that passed.
+        notes_content["self_check"] = {
+            "score": remediation.score_after,
+            "clean": remediation.clean,
+            "passes": len(remediation.passes),
+            "outstanding": list(remediation.outstanding),
+        }
         run_log.step(
             "Self-check settled",
             f"{remediation.score_before}/100 → {remediation.score_after}/100 "

@@ -519,6 +519,53 @@ def _inspect(notes: dict[str, Any],
                 targets.append(number)
             score = max(0.0, score - 10.0)
 
+        # An Integers sub-strand whose worked example comes out at 2.5. The
+        # model picks the numbers first and divides second; two of the four
+        # hard examples in one guide had answers that were not integers, in
+        # the one sub-strand where that is the whole point.
+        if "integer" in sub_strand.lower():
+            for i, module in enumerate(modules, start=1):
+                number = _number(module, i)
+                for ex in (module.get("worked_examples") or []):
+                    if not isinstance(ex, dict):
+                        continue
+                    answer = str(ex.get("answer") or "")
+                    if not _NON_INTEGER.search(answer):
+                        continue
+                    findings.append(
+                        f"Lesson {number} has a worked example whose answer is "
+                        f"{answer.strip()} — not an integer, in the Integers "
+                        f"sub-strand. Choose numbers so that every division "
+                        f"is exact and every answer is an integer."
+                    )
+                    if number not in targets:
+                        targets.append(number)
+                    score = max(0.0, score - 8.0)
+                    break
+
+    # A "Review and Assessment" lesson while a design experience is still
+    # untaught is padding with a name. Two of six lessons in one guide were
+    # titled exactly that, and "play games ... performing all basic
+    # operations" was taught nowhere. The funded lesson is the untaught
+    # experience, not a second recap.
+    untaught = [q.group(1) for q in
+                (re.search(r'"([^"]+)" and no lesson uses it', f) for f in findings)
+                if q]
+    if untaught:
+        for i, module in enumerate(modules, start=1):
+            number = _number(module, i)
+            if not _REVIEW_TITLE.search(str(module.get("title") or "")):
+                continue
+            findings.append(
+                f"Lesson {number} is a review or assessment lesson while the "
+                f"design's own experience \"{untaught[0]}\" is taught in no "
+                f"lesson. The design funded that experience, not a recap. "
+                f"Rewrite Lesson {number} to teach it."
+            )
+            if number not in targets:
+                targets.append(number)
+            score = max(0.0, score - 8.0)
+
     # A worked example that repeats an expression already worked in an earlier
     # lesson teaches nothing new. The same `(-3+5)×4-6` in lessons 3 and 4, or
     # `(-4+6)×3-5` in lessons 5 and 6, makes the later lesson worthless as
@@ -577,19 +624,21 @@ def _inspect(notes: dict[str, Any],
                         seen_exprs[_norm_expr(stmt)] != number:
                     continue  # already reported as the same expression
                 shape = _skeleton(stmt)
-                if shape.count("n") < 3:
+                if _bare_expression(stmt) and shape.count("n") < 3:
                     continue  # too small a shape to own
                 first = seen_shapes.get(shape)
                 if first is not None and first != number:
+                    what = ("the same operations in the same places with the "
+                            "numbers changed" if _bare_expression(stmt) else
+                            "the same situation with the numbers changed")
                     findings.append(
                         f"Lesson {number} works an example of exactly the "
-                        f"shape Lesson {first} already worked — the same "
-                        f"operations in the same places with the numbers "
-                        f"changed ({shape}). A learner who has seen it once "
-                        f"learns nothing from it again. Give Lesson {number} "
-                        f"an example whose SHAPE is new to the guide: "
-                        f"different operations, a bracket somewhere else, a "
-                        f"situation instead of an expression."
+                        f"shape Lesson {first} already worked — {what} "
+                        f"({shape}). A learner who has seen it once learns "
+                        f"nothing from it again. Give Lesson {number} an "
+                        f"example whose SHAPE is new to the guide: different "
+                        f"operations, a bracket somewhere else, a different "
+                        f"situation."
                     )
                     if number not in targets:
                         targets.append(number)
@@ -661,13 +710,21 @@ _NUMBER = re.compile(r"\d+(?:[.,]\d+)?")
 
 
 def _skeleton(statement: str) -> str:
-    """The shape of an expression with its numbers taken out.
+    """The shape of an example with its numbers taken out.
 
     `-12 + 4 × (-3) + 6` over `2 - 5` and `-20 + 5 × (-3) - 4` over
     `2 - (-1)` both come out as `(n±n×n±n)÷(n±n)`. Signs are folded — a
     negative in place of a positive is the same shape — and so are + and −,
     because "the same idea on new figures" is what this exists to find.
+
+    A situation is skeletonised as its words: "A temperature changes from
+    n°C to n°C. What is the total change?" in lesson 4 and again in lesson 5
+    is one example set twice.
     """
+    if not _bare_expression(statement):
+        words = re.sub(r"[-−–]?\d+(?:[.,]\d+)?", "n", str(statement or "").lower())
+        words = re.sub(r"[$\\{}]", "", words)
+        return re.sub(r"\s+", " ", words).strip()
     spans = _MATH_SPAN.findall(str(statement or ""))
     text = " ".join(spans) if spans else str(statement or "")
     for _ in range(3):
@@ -690,6 +747,9 @@ def _bare_expression(statement: str) -> bool:
 
     return not _is_prose(_MATH_SPAN.sub(" ", str(statement or "")))
 
+
+_NON_INTEGER = re.compile(r"\d\.\d|\\d?frac\s*\{|\d\s*/\s*\d")
+_REVIEW_TITLE = re.compile(r"\b(review|revision|assessment|recap|consolidation)\b", re.I)
 
 _REAL_LIFE = re.compile(
     r"real[- ]life|real[- ]world|situation|daily|everyday|apply|applying|"

@@ -1368,3 +1368,23 @@ def test_a_sub_strand_that_is_not_about_signs_is_not_asked_for_negatives() -> No
 
     assert not [f for f in _per_lesson(notes, row=whole)
                 if f.kind == "lesson_without_negative_numbers"]
+
+
+def test_a_story_fault_is_seen_through_the_dollars_and_names_its_lesson() -> None:
+    """Example 1.1 answered 2 for a change from $5°C$ to $-3°C$ and was not
+    caught; example 3.1 — the same mistake written without dollars — was. And
+    the finding named no lesson, so nothing could rewrite it."""
+    from app.services import example_check
+
+    report = example_check.check_notes({"modules": [{
+        "module_number": 1, "title": "Lesson 1",
+        "worked_examples": [{
+            "statement": "Calculate the temperature change when it goes from $5°C$ to $-3°C$.",
+            "steps": [{"working": "$5+(-3)$", "because": "a"},
+                      {"working": "$=5-3$", "because": "b"}, {"working": "$=2$", "because": "c"}],
+            "answer": "$2°C$"}]}]},
+        grade="grade-9", subject="Mathematics", sub_strand="Integers")
+
+    wrong = [f for f in report.findings if f.kind == "models_the_wrong_thing"]
+    assert wrong, [f.says for f in report.findings]
+    assert wrong[0].lessons == [1]

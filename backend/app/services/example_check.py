@@ -91,6 +91,10 @@ class Report:
                 "findings": [f.to_dict() for f in self.findings]}
 
 
+_TEX_WRAP = re.compile(r"\\(?:text|mathrm|mbox)\s*\{([^{}]*)\}")
+_TEX_NOISE = re.compile(r"\$|\\[,;!]|\^\s*\\circ|\\circ|\\degree|\\left|\\right")
+
+
 def _text_of(example: dict[str, Any]) -> str:
     parts = [str(example.get("statement") or "")]
     for step in (example.get("steps") or []):
@@ -98,6 +102,17 @@ def _text_of(example: dict[str, Any]) -> str:
             parts += [str(step.get("working") or ""), str(step.get("because") or "")]
     parts.append(str(example.get("answer") or ""))
     return " ".join(parts)
+
+
+def _as_story(text: str) -> str:
+    """The same text with the LaTeX dressing taken off, for the story checks.
+
+    "from $5°C$ to $-3°C$" is the same story as "from 5°C to -3°C", and the
+    story checks read it with a regex that a dollar sign stops dead. Example
+    1.1 of a Grade 9 guide answered 2 for a change from 5 to −3 and was not
+    caught, while example 3.1 — the same mistake written without dollars — was.
+    """
+    return _TEX_NOISE.sub("", _TEX_WRAP.sub(r"\1", text))
 
 
 def _direction_fault(text: str) -> Finding | None:
@@ -670,10 +685,15 @@ def check(examples: list[Any], *, grade: str = "", subject: str | None = None,
         if not isinstance(example, dict):
             continue
         report.checked += 1
-        text = _text_of(example)
+        text = _as_story(_text_of(example))
         for finding in (_direction_fault(text), _change_fault(text),
                         _false_generalisation(text)):
             if finding:
+                # Which lesson wrote it, where the caller said. A story fault
+                # with no lesson attached was a finding nothing could rewrite.
+                lesson = example.get("_lesson")
+                if isinstance(lesson, int) and lesson not in finding.lessons:
+                    finding.lessons.append(lesson)
                 report.findings.append(finding)
 
     # Difficulty is a property of the set, not of any one example in it.
@@ -1056,10 +1076,17 @@ def check_notes(notes: dict[str, Any], *, grade: str = "",
     for text in texts:
         items += task_demand.items_in_prose(text)
 
-    # Worked examples where a plan happens to carry them, judged in full.
-    for module in (notes.get("modules") or notes.get("hour_modules") or []):
+    # Worked examples where a plan happens to carry them, judged in full, and
+    # each one told which lesson it belongs to.
+    for position, module in enumerate(
+            notes.get("modules") or notes.get("hour_modules") or [], start=1):
         if isinstance(module, dict):
-            items += [e for e in (module.get("worked_examples") or [])
+            try:
+                number = int(module.get("module_number") or position)
+            except (TypeError, ValueError):
+                number = position
+            items += [{**e, "_lesson": number}
+                      for e in (module.get("worked_examples") or [])
                       if isinstance(e, dict)]
 
     report = check(items, grade=grade, subject=subject, strand=strand,

@@ -639,7 +639,14 @@ def _worked_examples(module: dict[str, Any], n: int, start: int = 1) -> str:
             statement, answer, example.get("steps"))
 
         if verdict["checked"] and verdict["agrees"]:
-            flag = "<span class='ok'>checked</span>"
+            # What was checked is the arithmetic. An example that adds 5 and
+            # -3 for a change FROM 5 TO -3 has correct arithmetic and the
+            # wrong sum, and a badge reading "checked" told a teacher it was
+            # right.
+            flag = ("<span class='ok' title='every step of the working is "
+                    "arithmetically true; whether it is the right working for "
+                    "the question is not something this checks'>"
+                    "arithmetic checked</span>")
         elif verdict["checked"] and verdict.get("step"):
             flag = ("<span class='warn'>step "
                     f"{verdict['step']} does not reach "
@@ -1141,6 +1148,31 @@ def _solutions(questions: list[str]) -> str:
     return "".join(out)
 
 
+def _self_check(notes: dict[str, Any]) -> str:
+    """What the checks still hold against this guide, on its first page.
+
+    A guide the loop scored 35 and gave up on printed exactly like one that
+    passed, and was read as finished. Nobody selling a page should have to
+    open a run log to learn that the page failed.
+    """
+    report = notes.get("self_check")
+    if not isinstance(report, dict) or report.get("clean"):
+        return ""
+    outstanding = [str(f) for f in (report.get("outstanding") or []) if str(f).strip()]
+    if not outstanding:
+        return ""
+    score = report.get("score")
+    head = "Checks this guide did not pass"
+    if isinstance(score, (int, float)):
+        head += f" — {score:g}/100"
+    return ("<div class='gaps self-check'><h2>" + _esc(head) + "</h2>"
+            "<p>These were found mechanically and the rewrite loop could not "
+            "clear them. Read them before teaching or selling from this page.</p>"
+            "<ul>" + "".join(f"<li>{_inline_math(f)}</li>" for f in outstanding[:12])
+            + (f"<li>… and {len(outstanding) - 12} more.</li>" if len(outstanding) > 12 else "")
+            + "</ul></div>")
+
+
 def render_html(notes: dict[str, Any], *, grade: str = "", subject: str = "",
                 strand: str = "", sub_strand: str = "", version: int = 0,
                 assets: dict[str, str] | None = None) -> str:
@@ -1182,6 +1214,8 @@ def render_html(notes: dict[str, Any], *, grade: str = "", subject: str = "",
     ]
     if notes.get("intro"):
         out.append(f"<p class='intro'>{_esc(notes['intro'])}</p>")
+
+    out.append(_self_check(notes))
 
     gaps = [g for g in (notes.get("gaps") or []) if str(g).strip()]
     if gaps:
