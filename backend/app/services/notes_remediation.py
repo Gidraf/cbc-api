@@ -312,19 +312,24 @@ def repair_citation_addresses(notes: dict[str, Any], design_text: str) -> str:
 def _inspect(notes: dict[str, Any],
              design_experiences: list[str],
              design_row: dict[str, Any] | None = None,
+             *, strand: str = "", sub_strand: str = "",
              ) -> tuple[float, list[str], list[int]]:
     """The score, the findings, and which modules a rewrite should target."""
     repetition = redundancy_check.inspect(notes)
     integrity = notes_integrity.check(notes, design_experiences)
     provenance = check_provenance(notes, design_row)
+    pitch = _pitch(notes, design_row, strand, sub_strand)
 
     findings = (list(repetition.get("findings") or [])
                 + list(integrity.get("findings") or [])
-                + list(provenance.get("findings") or []))
+                + list(provenance.get("findings") or [])
+                + [f"{f.says} {f.fix}".strip() for f in pitch.findings])
     scores = [float(repetition.get("score", 100.0)),
               float(integrity.get("score", 100.0))]
     if provenance.get("checked"):
         scores.append(float(provenance.get("score", 100.0)))
+    if pitch.checked:
+        scores.append(float(pitch.score))
     score = round(sum(scores) / len(scores), 1)
 
     # Which lessons to rewrite: the later member of each repeated pair. The
@@ -418,6 +423,19 @@ def _inspect(notes: dict[str, Any],
         if number not in targets:
             targets.append(number)
 
+    # A lesson pitched below its own rung of the grade's ladder, one with no
+    # mathematics in an operations sub-strand, one with no signed number where
+    # the design is about directed numbers: all rewritten.
+    #
+    # `example_check.check_notes` measured every one of these against the
+    # grade's floor — per subject, per grade, per lesson — and ran AFTER this
+    # loop, into a log line. A guide could fail every rung and be published;
+    # the loop that could have sent it back never heard.
+    for finding in pitch.findings:
+        for number in finding.lessons:
+            if number in by_position and number not in targets:
+                targets.append(number)
+
     # A mathematics lesson with no worked example at all is rewritten.
     #
     # Every check on worked examples below runs over the list a lesson
@@ -426,8 +444,7 @@ def _inspect(notes: dict[str, Any],
     # lessons — the shortest path through a difficulty floor, a duplicate check
     # and an arithmetic check is to write nothing for them to read. A maths
     # lesson a learner cannot imitate from is not one, whatever else it passes.
-    subject = str((design_row or {}).get("subject") or "").lower()
-    if "math" in subject:
+    if _needs_worked_examples(design_row):
         for i, module in enumerate(modules, start=1):
             number = _number(module, i)
             examples = [ex for ex in (module.get("worked_examples") or [])
@@ -444,50 +461,6 @@ def _inspect(notes: dict[str, Any],
             if number not in targets:
                 targets.append(number)
             score = max(0.0, score - 15.0)
-
-    # A lesson whose every worked example is primary arithmetic is rewritten.
-    #
-    # `50 - 20 + 15` and `5 - 3 + 4` pass arithmetic checks (the answers are
-    # correct) and pass every duplication check (they are not the same text).
-    # Nothing stopped them reaching the page — which a parent opening the Grade 9
-    # booklet reads as Grade 4. The demand gate for QUESTIONS has existed since the
-    # task_demand module was written; worked EXAMPLES had no equivalent.
-    #
-    # A lesson is flagged only when ALL its examples lack a second operation kind.
-    # One lesson's examples mixing addition/multiplication is already at grade.
-    try:
-        from . import task_demand
-
-        for i, module in enumerate(modules, start=1):
-            number = _number(module, i)
-            examples = [ex for ex in (module.get("worked_examples") or [])
-                        if isinstance(ex, dict) and ex.get("statement")]
-            if not examples:
-                continue
-            sub_grade = [
-                ex for ex in examples
-                if not task_demand.measure(
-                    str(ex.get("statement") or "") + " "
-                    + " ".join(
-                        str(s.get("working") or "") for s in
-                        (ex.get("steps") or []) if isinstance(s, dict)
-                    )
-                ).order_matters
-            ]
-            if len(sub_grade) == len(examples):
-                grade = str(design_row.get("grade_name") or "") if design_row else ""
-                findings.append(
-                    f"Lesson {number} worked example(s) use only addition or "
-                    f"subtraction — no multiplication, division or indices. At "
-                    f"{grade or 'this'} level every example must use AT LEAST two "
-                    f"different operation KINDS (e.g. + and ×) so BODMAS decides "
-                    f"the answer. Rewrite all examples for this lesson at grade level."
-                )
-                if number not in targets:
-                    targets.append(number)
-                score = max(0.0, score - 15.0)
-    except Exception:  # noqa: BLE001
-        pass
 
     # A worked example that repeats an expression already worked in an earlier
     # lesson teaches nothing new. The same `(-3+5)×4-6` in lessons 3 and 4, or
@@ -580,6 +553,41 @@ def _inspect(notes: dict[str, Any],
         pass
 
     return score, findings, targets
+
+
+def _pitch(notes: dict[str, Any], design_row: dict[str, Any] | None,
+           strand: str, sub_strand: str) -> Any:
+    """The guide against its grade's floor, or an empty report where the
+    subject and grade are unknown or have no floor."""
+    from . import example_check
+
+    row = design_row or {}
+    grade = str(row.get("grade") or "")
+    subject = str(row.get("subject") or "")
+    if not grade or not subject:
+        return example_check.Report()
+    try:
+        return example_check.check_notes(
+            notes, grade=grade, subject=subject, strand=strand,
+            sub_strand=sub_strand)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Could not pitch-check %s: %s", sub_strand, exc)
+        return example_check.Report()
+
+
+def _needs_worked_examples(design_row: dict[str, Any] | None) -> bool:
+    """A mathematics guide at a grade that has a demand floor — Grade 4 up.
+
+    A PP1 Mathematical Activities lesson sorting objects by colour has nothing
+    to work through to an answer, and the floor table already says so.
+    """
+    from . import task_demand
+
+    row = design_row or {}
+    subject = str(row.get("subject") or "")
+    if "math" not in subject.lower():
+        return False
+    return task_demand.floor_for(str(row.get("grade") or ""), subject) is not None
 
 
 def check_provenance(notes: dict[str, Any],
@@ -838,13 +846,15 @@ def run(
     allocation_phrase: str = "",
     max_passes: int = MAX_PASSES,
     design_row: dict[str, Any] | None = None,
+    strand: str = "",
 ) -> tuple[dict[str, Any], Report]:
     """Repair the guide until the checks pass, it stops improving, or passes run out."""
     report = Report()
     if not isinstance(notes, dict):
         return notes, report
 
-    score, findings, targets = _inspect(notes, design_experiences, design_row)
+    score, findings, targets = _inspect(notes, design_experiences, design_row,
+                                        strand=strand, sub_strand=sub_strand)
     report.score_before = report.score_after = score
     report.clean = not findings
     if report.clean:
@@ -870,7 +880,8 @@ def run(
                 this.deterministic.append(repair)
                 run_log.step(f"Repair {number}", repair)
 
-        score, findings, targets = _inspect(notes, design_experiences, design_row)
+        score, findings, targets = _inspect(notes, design_experiences, design_row,
+                                        strand=strand, sub_strand=sub_strand)
         this.after = score
 
         # The free repairs only ever help, so the repaired guide is the new
@@ -951,7 +962,8 @@ def run(
             if repair:
                 this.deterministic.append(repair)
 
-        after, findings, targets = _inspect(notes, design_experiences, design_row)
+        after, findings, targets = _inspect(notes, design_experiences, design_row,
+                                        strand=strand, sub_strand=sub_strand)
         this.after = after
         this.findings = findings
         this.calls, this.cost_usd = _since(spent_before)
@@ -1003,7 +1015,8 @@ def run(
     #
     # `notes` is mutated in place through the caller's reference, so the
     # contents are swapped rather than the name rebound.
-    current, current_findings, _ = _inspect(notes, design_experiences, design_row)
+    current, current_findings, _ = _inspect(notes, design_experiences, design_row,
+                                        strand=strand, sub_strand=sub_strand)
     if best_score > current:
         notes.clear()
         notes.update(best)

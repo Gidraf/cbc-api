@@ -959,7 +959,9 @@ def _plan_lesson_by_lesson(context: Any, resolved: Any, *, lessons: int,
             {"role": "user", "content": prompt_store.render(
                 "note-one-lesson", SEED_PROMPT_BLOCKS["note-one-lesson"],
                 number=number, lessons=lessons,
-                handoff=lesson_handoff.block(previous, step))},
+                handoff=lesson_handoff.block(previous, step),
+                worked_examples_rule=lesson_handoff.worked_examples_rule(
+                    subject, floor))},
         ]
         try:
             resp = llm_client.generate(resolved, messages, temperature=0.15)
@@ -1409,6 +1411,7 @@ def factory_generate_notes(
         allocation_phrase=allocation.phrase(),
         # So a lesson that names no design element is rewritten, not published.
         design_row=substrand_row or {},
+        strand=payload.strand,
     )
     if remediation.attempted:
         lesson_plan = notes_coverage.check(

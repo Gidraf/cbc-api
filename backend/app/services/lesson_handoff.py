@@ -41,12 +41,18 @@ class Step:
     kinds: int
     depth: int
     reaches_the_floor: bool
+    # Whether the kinds must MIX: one of + − with one of × ÷ ^ √, so that the
+    # order of operations decides the answer. Two kinds counted as `+` and `−`
+    # let `50 − 20 + 15` pass a Grade 9 rung; that is the Grade 4 arithmetic
+    # the floor exists to keep out.
+    order_matters: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return {"lesson": self.lesson, "of": self.of,
                 "operations": self.operations, "kinds": self.kinds,
                 "depth": self.depth,
-                "reaches_the_floor": self.reaches_the_floor}
+                "reaches_the_floor": self.reaches_the_floor,
+                "order_matters": self.order_matters}
 
 
 def ladder(lessons: int, floor: Any) -> list[Step]:
@@ -69,8 +75,49 @@ def ladder(lessons: int, floor: Any) -> list[Step]:
             kinds=max(2, floor.kinds - relief),
             depth=0 if early else floor.depth,
             reaches_the_floor=not early,
+            order_matters=bool(floor.order_matters),
         ))
     return steps
+
+
+def worked_examples_rule(subject: str | None, floor: Any) -> str:
+    """What one lesson is told about its worked examples, for THIS subject
+    and THIS grade — or nothing, where the subject has no such rule.
+
+    The rule used to be written into the lesson prompt itself, for every
+    subject and every grade, with Grade 9 integer exemplars: a PP1 CRE lesson
+    was told its worked examples must let BODMAS decide the answer.
+    """
+    if not subject or "math" not in subject.lower() or floor is None:
+        return ""
+    lines = [
+        "=== WORKED EXAMPLES — REQUIRED (NON-NEGOTIABLE) ===",
+        "`worked_examples` must hold AT LEAST TWO examples in this lesson, "
+        "including a lesson whose outcome is \"appreciate\" or \"apply\". An "
+        "empty list is a rejected lesson, not a shorter one. Each example: a "
+        "statement in the words a learner reads, the working step by step in "
+        "LaTeX between single dollars, the REASON at every step, and the answer.",
+        "A NEW expression every time. Do not work an expression that any earlier "
+        "lesson of this guide has already worked — the hand-off above lists "
+        "them. The same expression in two lessons is one example printed twice.",
+        "",
+        f"At {floor.level} level, {floor.because}. So every worked example "
+        f"must use at least {floor.operations} operations of "
+        f"{_plural(floor.kinds, 'different kind')}"
+        + (", mixing + or − with × or ÷ so that the ORDER of operations "
+           "decides the answer" if floor.order_matters else "")
+        + (", with a bracket or fraction bar" if floor.depth else "")
+        + ".",
+    ]
+    if floor.order_matters:
+        lines.append(
+            "One kind of operation, however long the sum or whatever story is "
+            "wrapped round it, is below this grade: $50 - 20 + 15$ and "
+            "$7 + (-3)$ are not worked examples at this level.")
+    shapes = [floor.exemplar, *floor.also]
+    lines.append("Shapes at this level (write your OWN — these show the SHAPE, "
+                 "not the question): " + "   ".join(shapes))
+    return "\n".join(lines)
 
 
 @dataclass

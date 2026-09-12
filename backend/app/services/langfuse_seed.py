@@ -2396,23 +2396,7 @@ WHAT THIS LESSON MUST NOT DO:
   - It must not re-use the tasks the previous lesson worked, or the same tasks with the numbers changed.
   - It must not narrow the outcome it serves. Where the outcome says "basic operations", this lesson teaches the operations the DESIGN names — writing "(addition, subtraction)" into the objective deletes multiplication and division from the whole sub-strand, because nothing downstream will teach what the objective did not ask for.
 
-WORKED EXAMPLES — REQUIRED (NON-NEGOTIABLE):
-`worked_examples` must hold AT LEAST TWO examples in every lesson of a mathematics guide, including a lesson whose outcome is "appreciate" or "apply". An empty list is a rejected lesson, not a shorter one. Each example: a statement in the words a learner reads, the working step by step in LaTeX between single dollars, the REASON at every step, and the answer.
-A NEW expression every time. Do not work an expression that any earlier lesson of this guide has already worked — the hand-off tells you what they were. The same expression in two lessons is one example printed twice.
-
-WORKED EXAMPLES — DIFFICULTY FLOOR (NON-NEGOTIABLE):
-Every worked example you write must use AT LEAST two DIFFERENT kinds of operation so that BODMAS decides the answer. A lesson whose examples use only addition and subtraction has not reached the grade — that is Grade 4 arithmetic, not Grade 9. The minimum for a valid example:
-  - two or more different operation KINDS (e.g., × or ÷ alongside + or -)
-  - at least one bracket or fraction bar so precedence must be read, not assumed
-  - negative numbers where the sub-strand involves directed numbers
-
-These are ALL too simple regardless of the story around them:
-  $50 - 20 + 15$   $5 - 3 + 4$   $7 + (-3)$   $200 + (-50)$
-They have ONE operation kind and no bracket. A learner cannot revise from them.
-
-A valid example at this level:
-  $(-4 + 6) \\times 3 - 5$   or   $\\dfrac{-15 \\div 3 - (-2) \\times (-4)}{-2 \\times 3 + (-4)}$
-Write your OWN — do not copy these. They show the SHAPE, not the question.
+{{ worked_examples_rule }}
 
 Write it in full. A lesson written short here is a lesson the material station has to invent from, and it invents badly.
 """,

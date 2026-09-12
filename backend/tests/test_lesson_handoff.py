@@ -367,3 +367,39 @@ def test_the_fourth_call_is_told_what_the_first_worked() -> None:
     # accumulated list carries it into calls 3 and 4 as well.
     assert seen[3].count("÷") >= 1
     assert "lessons before that" in seen[3]
+
+
+# ── the worked-examples rule is the grade's and the subject's ────────────────
+
+
+def test_a_non_maths_subject_gets_no_worked_examples_rule() -> None:
+    """A PP1 CRE lesson was told its worked examples must let BODMAS decide
+    the answer: the rule was written into the lesson prompt for every subject
+    with Grade 9 integer exemplars."""
+    assert lh.worked_examples_rule("Christian Religious Education", FLOOR) == ""
+    assert lh.worked_examples_rule("Kiswahili", None) == ""
+
+
+def test_a_grade_with_no_floor_gets_no_rule() -> None:
+    assert lh.worked_examples_rule(
+        "Mathematics", task_demand.floor_for("grade-2", "Mathematics")) == ""
+
+
+def test_the_rule_carries_the_grades_own_exemplars() -> None:
+    upper = lh.worked_examples_rule(
+        "Mathematics", task_demand.floor_for("grade-5", "Mathematics"))
+    junior = lh.worked_examples_rule("Mathematics", FLOOR)
+
+    assert "AT LEAST TWO examples" in upper and "AT LEAST TWO examples" in junior
+    assert "Upper Primary" in upper and "1\\,250 - 3 \\times 240" in upper
+    assert "Junior School" in junior and "dfrac" in junior
+    assert "dfrac" not in upper, "a Grade 5 lesson is not shown a Grade 9 fraction bar"
+    assert "50 - 20 + 15" in junior, "the shape that is below the grade is named"
+
+
+def test_a_rung_where_order_matters_is_not_met_by_two_additive_kinds() -> None:
+    """`50 − 20 + 15` has two kinds and met a Junior School opening rung."""
+    step = lh.ladder(6, FLOOR)[0]
+    assert step.order_matters
+    d = task_demand.measure("$50 - 20 + 15$")
+    assert len(d.kinds) >= step.kinds and not d.order_matters

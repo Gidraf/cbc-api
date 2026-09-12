@@ -60,9 +60,13 @@ class Finding:
     kind: str
     says: str
     fix: str = ""
+    # Which lessons the finding is about, where it is about particular ones —
+    # so a repair loop has something to rewrite rather than a sentence to parse.
+    lessons: list[int] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
-        return {"kind": self.kind, "says": self.says, "fix": self.fix}
+        return {"kind": self.kind, "says": self.says, "fix": self.fix,
+                "lessons": list(self.lessons)}
 
 
 @dataclass
@@ -872,7 +876,8 @@ def _lessons_without_maths(notes: dict[str, Any], grade: str, subject: str,
           "worked is 40 minutes that teaches nothing.",
         "Put the arithmetic in. Every lesson works at least one expression "
         "through to its answer — that is also the only thing the questions "
-        "station has to build a paper from.")]
+        "station has to build a paper from.",
+        lessons=list(empty))]
 
 
 def _narrowed_objectives(notes: dict[str, Any], grade: str, subject: str,
@@ -983,7 +988,9 @@ def _lesson_by_lesson(notes: dict[str, Any], grade: str, subject: str,
             continue
         if not any(d.operations >= step.operations
                    and len(d.kinds) >= step.kinds
-                   and d.depth >= step.depth for d in measured):
+                   and d.depth >= step.depth
+                   and (d.order_matters or not step.order_matters)
+                   for d in measured):
             best = max(measured,
                        key=lambda d: (d.operations, len(d.kinds), d.depth))
             shallow.append((number, step, best))
@@ -1007,7 +1014,8 @@ def _lesson_by_lesson(notes: dict[str, Any], grade: str, subject: str,
             f"a time, and these ones are an easier grade for forty minutes.",
             "Work at least one expression per lesson at that lesson's step. "
             "Easier ones alongside it are the build-up and are wanted; what is "
-            "not allowed is a lesson that never gets there."))
+            "not allowed is a lesson that never gets there.",
+            lessons=[n for n, _s, _d in shallow]))
     if unsigned:
         findings.append(Finding(
             "lesson_without_negative_numbers",
@@ -1018,7 +1026,8 @@ def _lesson_by_lesson(notes: dict[str, Any], grade: str, subject: str,
             f"The guide overall uses negatives, so the guide-wide check is "
             f"satisfied while these lessons teach none.",
             "Put a signed number in every lesson: a negative operand, a "
-            "negative result, or a subtraction that crosses zero."))
+            "negative result, or a subtraction that crosses zero.",
+            lessons=list(unsigned)))
     return findings
 
 

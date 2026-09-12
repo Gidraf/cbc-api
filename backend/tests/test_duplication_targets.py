@@ -94,9 +94,10 @@ def test_a_lesson_with_only_addition_and_subtraction_examples_is_a_target() -> N
     and pass every duplication check (text differs). Nothing stopped them
     reaching the Grade 9 page — a parent reads Grade 4 arithmetic.
 
-    The remediation loop now checks whether every worked example in a lesson
-    has at least two DIFFERENT operation kinds. If none do, the lesson is a
-    rewrite target and the score drops.
+    The loop now hears `example_check.check_notes`, which measures every
+    lesson against its own rung of the GRADE's ladder — and that rung, at a
+    level whose floor says the order of operations must matter, is not met by
+    two kinds that are both additive.
     """
     notes = {"modules": [_ops_module(1, "Operations", [
         {"statement": r"Calculate $50 - 20 + 15$.",
@@ -110,11 +111,70 @@ def test_a_lesson_with_only_addition_and_subtraction_examples_is_a_target() -> N
     ])]}
 
     _score, findings, targets = notes_remediation._inspect(
-        notes, ["discuss integers"], {})
+        notes, ["discuss integers"], GRADE_9_MATHS)
 
     assert 1 in targets, "lesson 1 must be flagged for rewrite"
-    assert any("operation" in f.lower() for f in findings), \
-        "a finding should name the missing operation kind"
+    assert any("never reach the demand" in f for f in findings), findings
+
+
+GRADE_9_MATHS = {"grade": "grade-9", "subject": "Mathematics"}
+GRADE_5_MATHS = {"grade": "grade-5", "subject": "Mathematics"}
+GRADE_2_MATHS = {"grade": "grade-2", "subject": "Mathematics"}
+PP1_CRE = {"grade": "pp1", "subject": "Christian Religious Education"}
+
+
+def test_the_same_lesson_is_at_grade_for_grade_2_and_not_flagged() -> None:
+    """The rule is the GRADE's, not Grade 9's. `50 - 20 + 15` is exactly what
+    a Grade 2 design asks for, and Pre-Primary and Lower Primary have no
+    floor at all."""
+    notes = {"modules": [_ops_module(1, "Operations", [
+        {"statement": r"Calculate $50 - 20 + 15$.",
+         "steps": [{"working": r"$50 - 20 + 15 = 45$", "because": "left to right"}],
+         "answer": "45"},
+    ])]}
+
+    _score, findings, targets = notes_remediation._inspect(
+        notes, ["discuss integers"], GRADE_2_MATHS)
+
+    assert not any("never reach the demand" in f for f in findings), findings
+    assert 1 not in targets
+
+
+def test_a_grade_5_lesson_is_held_to_the_upper_primary_floor() -> None:
+    """Upper Primary asks for two kinds where order matters and no bracket;
+    `96 ÷ 8 + 7 × 4` meets it, `50 − 20 + 15` does not."""
+    at_grade = {"modules": [_ops_module(1, "Operations", [
+        {"statement": r"Work out $96 \div 8 + 7 \times 4$.",
+         "steps": [{"working": r"$96 \div 8 + 7 \times 4 = 12 + 28$",
+                    "because": "divide and multiply before adding"},
+                   {"working": r"$12 + 28 = 40$", "because": "add"}],
+         "answer": "40"},
+    ])]}
+    below = {"modules": [_ops_module(1, "Operations", [
+        {"statement": r"Work out $50 - 20 + 15$.",
+         "steps": [{"working": r"$50 - 20 + 15 = 45$", "because": "left to right"}],
+         "answer": "45"},
+    ])]}
+
+    _s, ok, _t = notes_remediation._inspect(at_grade, ["discuss integers"], GRADE_5_MATHS)
+    _s, bad, targets = notes_remediation._inspect(below, ["discuss integers"], GRADE_5_MATHS)
+
+    assert not any("never reach the demand" in f for f in ok), ok
+    assert any("never reach the demand" in f for f in bad) and 1 in targets
+
+
+def test_a_cre_guide_is_never_measured_for_arithmetic() -> None:
+    notes = {"modules": [{
+        "module_number": 1, "title": "Introducing God",
+        "teacher_exposition": "Learners say the name of God in mother tongue. " * 8,
+        "learning_experiences_used": ["say the name of God in their mother tongue"],
+    }]}
+
+    _score, findings, targets = notes_remediation._inspect(
+        notes, ["say the name of God in their mother tongue"], PP1_CRE)
+
+    assert not any("demand" in f or "worked example" in f for f in findings), findings
+    assert targets == []
 
 
 def test_a_lesson_with_a_mixed_example_is_not_flagged() -> None:
@@ -130,9 +190,9 @@ def test_a_lesson_with_a_mixed_example_is_not_flagged() -> None:
     ])]}
 
     _score, findings, targets = notes_remediation._inspect(
-        notes, ["discuss integers"], {})
+        notes, ["discuss integers"], GRADE_9_MATHS)
 
-    diff_findings = [f for f in findings if "operation" in f.lower()]
+    diff_findings = [f for f in findings if "never reach the demand" in f]
     assert not diff_findings, \
         f"a lesson with a mixed example must not raise a difficulty finding: {diff_findings}"
 
@@ -242,10 +302,21 @@ def test_a_mathematics_lesson_with_no_worked_examples_is_a_target() -> None:
     notes = {"modules": [_ops_module(1, "Operations", [])]}
 
     _score, findings, targets = notes_remediation._inspect(
-        notes, ["discuss integers"], {"subject": "Mathematics"})
+        notes, ["discuss integers"], GRADE_9_MATHS)
 
     assert 1 in targets
     assert any("no worked example" in f for f in findings)
+
+
+def test_a_pp1_mathematical_activities_lesson_needs_none() -> None:
+    """Sorting objects by colour has nothing to work through to an answer,
+    and the floor table already says Pre-Primary has no floor."""
+    notes = {"modules": [_ops_module(1, "Sorting", [])]}
+
+    _score, findings, _t = notes_remediation._inspect(
+        notes, ["discuss integers"], {"grade": "pp1", "subject": "Mathematical Activities"})
+
+    assert not any("no worked example" in f for f in findings)
 
 
 def test_a_non_mathematics_lesson_needs_no_worked_example() -> None:
