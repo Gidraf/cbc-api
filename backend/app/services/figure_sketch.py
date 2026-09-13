@@ -413,21 +413,10 @@ def render(figure: dict[str, Any]) -> dict[str, Any] | None:
             "alt_text": str(figure.get("alt_text") or title)}
 
 
-PROMPT_BLOCK = """=== FIGURES A QUESTION NEEDS ===
-An item that is set on a figure the lesson did not draw — a shape with its sides marked, a bar
-graph, a clock, a number line, a shaded fraction, a table of data — carries the figure as DATA
-in `figure`, and the system draws it beside the question. Never describe a figure in words that
-the learner is then told to "study"; give the data and it will be drawn. Give ONLY the numbers
-the question uses. Kinds and their fields:
-  {"kind": "number_line", "min": -10, "max": 10, "step": 2, "marks": [{"value": -4, "label": "P"}]}
-  {"kind": "bar_chart", "title": "Rainfall in Kisumu", "categories": ["Jan","Feb","Mar"], "values": [60, 45, 120], "y_label": "Rainfall", "unit": "mm"}
-  {"kind": "pie_chart", "title": "How 40 learners travel", "slices": [{"label": "Walk", "value": 20}, {"label": "Bus", "value": 12}, {"label": "Bicycle", "value": 8}], "show": "none"}
-  {"kind": "line_graph", "title": "...", "x_label": "Day", "y_label": "Temperature (°C)", "points": [[1, 18], [2, 21], [3, 19]]}
-  {"kind": "table", "title": "...", "columns": ["Item", "Price (sh)"], "rows": [["Flour 2 kg", "180"], ["Bread", "65"]]}
-  {"kind": "clock", "hour": 7, "minute": 45}
-  {"kind": "thermometer", "min": -20, "max": 50, "reading": -5, "unit": "°C"}
-  {"kind": "shape", "shape": "rectangle|square|triangle|right_triangle|circle|parallelogram|trapezium", "dimensions": {"length": 12, "width": 5}, "unit": "cm", "labels": {"vertices": ["A","B","C","D"]}, "shaded": false}
-  {"kind": "fraction", "parts": 8, "shaded": 3, "form": "bar"}
-  {"kind": "angle", "degrees": 135, "label": "x"}
-The stem then says "Study the figure below" or "In the figure below, …". A figure that is a lesson
-diagram already drawn for this sub-strand is referred to by `diagram_ref` instead."""
+def prompt_block() -> str:
+    """How the writer asks for a figure — seeded, so it can be edited in
+    Langfuse like every other prompt."""
+    from .langfuse_seed import SEED_PROMPT_BLOCKS
+    from .prompt_store import render
+
+    return render("question-figures", SEED_PROMPT_BLOCKS["question-figures"])
