@@ -4,11 +4,15 @@ import {
   gradeOptionLabel,
   subjectOptionLabel,
   useComposedPaper,
+  useFreezePaper,
+  useFrozenPaperPdf,
   useGrades,
+  useOpenFrozenPaper,
   useOpenPaper,
   usePaperPdf,
   useStoredStructure,
   useSubjects,
+  type ComposedPaper,
   type PaperRequest,
 } from "../lib/queries";
 
@@ -30,9 +34,12 @@ export function PaperComposer() {
   const [strand, setStrand] = React.useState("");
   const [subStrand, setSubStrand] = React.useState("");
   const [marks, setMarks] = React.useState(50);
+  const [count, setCount] = React.useState(30);
+  const [format, setFormat] = React.useState("auto");
   const [seed, setSeed] = React.useState("");
   const [drafts, setDrafts] = React.useState(true);
   const [title, setTitle] = React.useState("");
+  const [frozen, setFrozen] = React.useState<ComposedPaper | null>(null);
 
   const subjects = useSubjects(grade);
   const structure = useStoredStructure(grade, subject);
@@ -41,11 +48,25 @@ export function PaperComposer() {
 
   const request: PaperRequest | null =
     grade && subject
-      ? { grade, subject, kind, strand, sub_strand: subStrand, marks, seed, drafts, title }
+      ? { grade, subject, kind, strand, sub_strand: subStrand, marks, count, format, seed, drafts, title }
       : null;
   const composed = useComposedPaper(request);
   const open = useOpenPaper();
   const pdf = usePaperPdf();
+  const freeze = useFreezePaper();
+  const openFrozen = useOpenFrozenPaper();
+  const frozenPdf = useFrozenPaperPdf();
+
+  async function freezeIt() {
+    if (!request) return;
+    try {
+      const res = await freeze.mutateAsync(request);
+      setFrozen(res);
+      toast(`Paper frozen as ${res.exam_id}: ${res.question_count} questions. The QR code on it opens the marking scheme.`, "ok");
+    } catch (err) {
+      toast(err instanceof Error ? err.message : "Could not freeze the paper.", "danger");
+    }
+  }
 
   async function show(opts: { answers?: boolean; withScheme?: boolean }) {
     if (!request) return;
@@ -133,11 +154,30 @@ export function PaperComposer() {
               )}
             </Field>
           )}
-          <Field label="Marks">
+          <Field label="Layout" hint="Auto follows the national paper for the grade: KPSEA at 4–6, KJSEA at 7–9.">
             {(p) => (
-              <Input {...p} type="number" min={5} max={200} value={marks} onChange={(e) => setMarks(Number(e.target.value) || 50)} />
+              <Select {...p} value={format} onChange={(e) => setFormat(e.target.value)}>
+                <option value="auto">National paper (auto)</option>
+                <option value="kpsea">KPSEA — 30 multiple choice</option>
+                <option value="kjsea">KJSEA — Section A + B</option>
+                <option value="senior">Senior school</option>
+                <option value="school">School paper (by marks)</option>
+              </Select>
             )}
           </Field>
+          {format === "school" ? (
+            <Field label="Marks">
+              {(p) => (
+                <Input {...p} type="number" min={5} max={200} value={marks} onChange={(e) => setMarks(Number(e.target.value) || 50)} />
+              )}
+            </Field>
+          ) : (
+            <Field label="Questions" hint="30 fits two pages at KNEC density; 50 runs to three.">
+              {(p) => (
+                <Input {...p} type="number" min={5} max={100} value={count} onChange={(e) => setCount(Number(e.target.value) || 30)} />
+              )}
+            </Field>
+          )}
           <Field label="Set" hint="A different word deals a different paper from the same bank — Paper 1 and Paper 2 for two streams.">
             {(p) => <Input {...p} value={seed} placeholder="e.g. stream-b" onChange={(e) => setSeed(e.target.value)} />}
           </Field>
@@ -171,6 +211,7 @@ export function PaperComposer() {
                 </Badge>
                 <Badge tone="neutral">{paper.question_count} questions</Badge>
                 <Badge tone="neutral">{paper.time_allowed}</Badge>
+                {paper.format?.key && <Badge tone="info">{paper.format.key.toUpperCase()}</Badge>}
                 {paper.has_drafts && <Badge tone="warn">contains drafts</Badge>}
                 <span className="mono" style={{ color: "var(--ink-3)" }}>set {paper.seed}</span>
               </Stack>
@@ -206,7 +247,47 @@ export function PaperComposer() {
           <Button variant="ghost" disabled={!ready || pdf.isPending} onClick={() => download({ withScheme: true })}>
             {pdf.isPending ? "Rendering PDF…" : "Download booklet PDF"}
           </Button>
+          <Button variant="primary" disabled={!ready || freeze.isPending} onClick={freezeIt}>
+            {freeze.isPending ? "Freezing…" : "Freeze & print"}
+          </Button>
         </Stack>
+
+        {frozen && frozen.exam_id && (
+          <div
+            style={{
+              border: "1px solid var(--ok)",
+              borderRadius: "var(--radius-sm)",
+              padding: "var(--s3)",
+              fontSize: "var(--text-sm)",
+            }}
+          >
+            <Stack gap="var(--s2)">
+              <Stack direction="row" gap="var(--s2)" wrap>
+                <strong>Frozen: {frozen.title}</strong>
+                <span className="mono" style={{ color: "var(--ink-3)" }}>{frozen.exam_id}</span>
+              </Stack>
+              <div style={{ color: "var(--ink-2)" }}>
+                Print this one — it carries a QR code and short link to its marking scheme, and it prints the
+                same next term. Marking scheme link:{" "}
+                <code style={{ wordBreak: "break-all" }}>{frozen.scheme_url}</code>
+              </div>
+              <Stack direction="row" gap="var(--s2)" wrap>
+                <Button variant="primary" onClick={() => openFrozen.mutate({ examId: frozen.exam_id! })}>
+                  Print paper
+                </Button>
+                <Button onClick={() => openFrozen.mutate({ examId: frozen.exam_id!, answers: true })}>
+                  Marking scheme
+                </Button>
+                <Button variant="ghost" onClick={() => frozenPdf.mutate({ examId: frozen.exam_id! })}>
+                  Paper PDF
+                </Button>
+                <Button variant="ghost" onClick={() => frozenPdf.mutate({ examId: frozen.exam_id!, answers: true })}>
+                  Scheme PDF
+                </Button>
+              </Stack>
+            </Stack>
+          </div>
+        )}
       </Stack>
     </Card>
   );

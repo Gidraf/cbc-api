@@ -103,6 +103,11 @@ def _exam_payload(row: dict[str, Any]) -> dict[str, Any]:
         "instructions": row.get("instructions") or DEFAULT_INSTRUCTIONS,
         "question_ids": row.get("question_ids") or [],
         "created_at": str(row.get("created_at", "")),
+        # Composed from the bank, with its layout frozen — printed from
+        # /paper.html; a hand-picked exam prints from /render.
+        "from_bank": bool(isinstance(row.get("snapshot"), dict) and (row["snapshot"] or {}).get("sections")),
+        "scheme_url": str(((row.get("snapshot") or {}) if isinstance(row.get("snapshot"), dict) else {}).get("scheme_url") or ""),
+        "has_drafts": bool(((row.get("snapshot") or {}) if isinstance(row.get("snapshot"), dict) else {}).get("has_drafts")),
     }
 
 
@@ -282,6 +287,88 @@ def render_exam(
         headers["Content-Disposition"] = f'attachment; filename="{exam_id}-{suffix}.{extension}"'
 
     return Response(content=body, media_type=media_type, headers=headers)
+
+
+def _thawed(row: dict[str, Any]) -> Any:
+    """The frozen paper, as the renderer prints it."""
+    from ..services import paper_builder, question_rows
+
+    snapshot = row.get("snapshot") or {}
+    if not isinstance(snapshot, dict) or not snapshot.get("sections"):
+        raise_api_error("SCHEMA_VALIDATION_FAILED",
+                        "This exam was composed by hand from the question bank; print it from "
+                        "/render. Papers composed from the bank carry their layout with them.")
+    questions = question_rows.flatten_all(_load_questions(list(row.get("question_ids") or [])))
+    snapshot = {**snapshot, "exam_id": row.get("exam_id"), "title": row.get("title"),
+                "grade": row.get("grade"), "subject": row.get("subject"),
+                "time_allowed": row.get("time_allowed"), "instructions": row.get("instructions") or []}
+    return paper_builder.thaw(snapshot, questions)
+
+
+def _print(row: dict[str, Any], *, answers: bool, with_scheme: bool) -> str:
+    from ..services import question_paper
+
+    paper = _thawed(row)
+    return question_paper.render_paper(
+        paper, answers=answers, with_scheme=with_scheme,
+        assets=question_paper.figures_for(paper.items))
+
+
+@router.get("/exams/{exam_id}/paper.html")
+def print_exam(
+    exam_id: str,
+    answers: bool = Query(default=False),
+    with_scheme: bool = Query(default=False),
+    _: AuthContext = Depends(require_roles("admin", "operator", "reviewer", "developer")),
+) -> Any:
+    """A frozen paper in the national paper's design — or its marking scheme."""
+    from fastapi.responses import HTMLResponse
+
+    row = fetch_one("SELECT * FROM exams WHERE exam_id = :eid", {"eid": exam_id})
+    if not row:
+        raise_api_error("NOT_FOUND", f"No exam with id {exam_id}")
+    return HTMLResponse(_print(row, answers=answers, with_scheme=with_scheme))
+
+
+@router.get("/exams/{exam_id}/paper.pdf")
+def print_exam_pdf(
+    exam_id: str,
+    answers: bool = Query(default=False),
+    with_scheme: bool = Query(default=False),
+    _: AuthContext = Depends(require_roles("admin", "operator", "reviewer")),
+) -> Any:
+    from ..services import pdf
+
+    row = fetch_one("SELECT * FROM exams WHERE exam_id = :eid", {"eid": exam_id})
+    if not row:
+        raise_api_error("NOT_FOUND", f"No exam with id {exam_id}")
+    try:
+        body = pdf.from_html(_print(row, answers=answers, with_scheme=with_scheme))
+    except pdf.PdfUnavailable as exc:
+        raise_api_error("MODEL_ENDPOINT_UNAVAILABLE", str(exc))
+    suffix = "marking-scheme" if answers else "booklet" if with_scheme else "paper"
+    return Response(content=body, media_type="application/pdf",
+                    headers={"Content-Disposition": f'inline; filename="{exam_id}-{suffix}.pdf"'})
+
+
+@router.get("/exams/{exam_id}/scheme")
+def public_marking_scheme(exam_id: str, token: str = Query(default="")) -> Any:
+    """The marking scheme the QR code on the printed paper opens.
+
+    No sign-in: the token printed on the paper is the credential, and it
+    opens this one exam's scheme and nothing else. A wrong or missing token
+    is a 404 rather than a 401, so the route does not confirm the exam
+    exists.
+    """
+    import hmac
+
+    from fastapi.responses import HTMLResponse
+
+    row = fetch_one("SELECT * FROM exams WHERE exam_id = :eid", {"eid": exam_id})
+    expected = str((row or {}).get("share_token") or "")
+    if not row or not expected or not token or not hmac.compare_digest(expected, token):
+        raise_api_error("NOT_FOUND", "No such marking scheme.")
+    return HTMLResponse(_print(row, answers=True, with_scheme=False))
 
 
 def _strip_answers(content: dict[str, Any]) -> dict[str, Any]:

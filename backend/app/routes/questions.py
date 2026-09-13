@@ -4,12 +4,12 @@ import json as json_lib
 import logging
 from typing import Any, Literal
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import HTMLResponse, StreamingResponse
 from pydantic import BaseModel
 
 from ..errors import raise_api_error
-from ..services import (demand_profile, design_elements, notation,
+from ..services import (assessment_format, demand_profile, design_elements, notation,
                         prompt_fragments, prompt_store)
 from ..services.auth import AuthContext, require_roles
 from ..services.level_register import language_block, register_block, teacher_block
@@ -411,7 +411,8 @@ def questions_paper_pdf(
 
 
 def _composed_paper(*, grade: str, subject: str, kind: str, strand: str, sub_strand: str,
-                    marks: int, seed: str, drafts: bool, title: str) -> Any:
+                    marks: int, seed: str, drafts: bool, title: str, format_key: str = "auto",
+                    count: int | None = None, series: str = "", year: int | None = None) -> Any:
     """One paper from the bank, for the scope the kind names."""
     from ..services import paper_builder, question_rows
 
@@ -431,7 +432,112 @@ def _composed_paper(*, grade: str, subject: str, kind: str, strand: str, sub_str
                  if str((q.get("curriculum") or {}).get("strand") or "").lower() == strand.lower()]
     return paper_builder.compose(
         items, kind=kind, grade=grade, subject=subject, strand=strand,
-        sub_strand=sub_strand, marks=marks, seed=seed, title=title, allow_drafts=drafts)
+        sub_strand=sub_strand, marks=marks, seed=seed, title=title, allow_drafts=drafts,
+        format_key=format_key, count=count, series=series or _series_name(), year=year)
+
+
+def _series_name() -> str:
+    """The name printed at the head and foot of every paper — the seller's."""
+    import os
+
+    return os.getenv("PAPER_SERIES_NAME", "").strip()
+
+
+def _public_base(request: Any) -> str:
+    """The address this deployment is reached at, for the link on the paper."""
+    forwarded_proto = request.headers.get("x-forwarded-proto", "")
+    forwarded_host = request.headers.get("x-forwarded-host", "")
+    scheme = forwarded_proto.split(",")[0].strip() or request.url.scheme
+    host = forwarded_host.split(",")[0].strip() or request.headers.get("host", "") or request.url.netloc
+    return f"{scheme}://{host}"
+
+
+class PaperFreezeRequest(BaseModel):
+    grade: str
+    subject: str
+    kind: str = "topical"
+    strand: str = ""
+    sub_strand: str = ""
+    marks: int = 50
+    count: int | None = None
+    format: str = "auto"
+    seed: str = ""
+    drafts: bool = True
+    title: str = ""
+    series: str = ""
+    year: int | None = None
+
+
+@router.post("/paper/freeze")
+def freeze_paper(
+    payload: PaperFreezeRequest,
+    request: Request,
+    auth: AuthContext = Depends(require_roles("admin", "operator")),
+) -> dict[str, Any]:
+    """Compose a paper and FREEZE it: the exact items, in their order, with a
+    share token for the marking scheme, so the printed paper's QR code opens
+    the scheme and next term's reprint is this paper and not a redeal."""
+    import secrets
+
+    from ..infra.db import execute, to_json
+    from ..models import now_iso
+    from ..services.ids import mint_exam_id
+
+    paper = _composed_paper(grade=payload.grade, subject=payload.subject, kind=payload.kind,
+                            strand=payload.strand, sub_strand=payload.sub_strand, marks=payload.marks,
+                            seed=payload.seed, drafts=payload.drafts, title=payload.title,
+                            format_key=payload.format, count=payload.count, series=payload.series,
+                            year=payload.year)
+    if not paper.items:
+        raise_api_error("SUBSTRAND_BUNDLE_NOT_FOUND",
+                        f"The bank holds no usable items for {payload.subject} · "
+                        f"{payload.sub_strand or payload.strand or payload.kind}. Generate questions first.")
+
+    grade_slug = normalize_grade(payload.grade)
+    exam_id = mint_exam_id(grade_slug, payload.subject)
+    token = secrets.token_urlsafe(18)
+    base = _public_base(request)
+    paper.exam_id = exam_id
+    paper.scheme_url = f"{base}/api/v1/exams/{exam_id}/scheme?token={token}"
+
+    snapshot = {**paper.to_dict(), "frozen_at": now_iso(),
+                "questions": [{"question_id": q.get("question_id"), "version": q.get("version", 1),
+                               "status": q.get("status", "")} for q in paper.items],
+                "sections": [{**s.to_dict(), "instructions": s.instructions} for s in paper.sections]}
+    execute(
+        """
+        INSERT INTO exams (
+            exam_id, title, grade, grade_ordinal, subject, strand, sub_strand,
+            time_allowed, total_marks, instructions, question_ids, snapshot, created_by, share_token
+        )
+        VALUES (
+            :exam_id, :title, :grade, :grade_ordinal, :subject, :strand, :sub_strand,
+            :time_allowed, :total_marks, CAST(:instructions AS jsonb),
+            CAST(:question_ids AS jsonb), CAST(:snapshot AS jsonb), :created_by, :share_token
+        )
+        """,
+        {
+            "exam_id": exam_id, "title": paper.title, "grade": grade_slug,
+            "grade_ordinal": grade_ordinal(grade_slug), "subject": payload.subject,
+            "strand": payload.strand, "sub_strand": payload.sub_strand,
+            "time_allowed": paper.time_allowed, "total_marks": int(round(paper.total_marks)),
+            "instructions": to_json(paper.instructions),
+            "question_ids": to_json([q.get("question_id") for q in paper.items]),
+            "snapshot": to_json(snapshot), "created_by": auth.subject, "share_token": token,
+        },
+    )
+    logger.info("Paper %s frozen by %s: %d item(s), %s marks, %s",
+                exam_id, auth.subject, len(paper.items), paper.total_marks, paper.title)
+    out = paper.to_dict()
+    out["render_urls"] = {
+        "paper": f"/api/v1/exams/{exam_id}/paper.html",
+        "booklet": f"/api/v1/exams/{exam_id}/paper.html?with_scheme=true",
+        "marking_scheme": f"/api/v1/exams/{exam_id}/paper.html?answers=true",
+        "paper_pdf": f"/api/v1/exams/{exam_id}/paper.pdf",
+        "booklet_pdf": f"/api/v1/exams/{exam_id}/paper.pdf?with_scheme=true",
+        "scheme_public": paper.scheme_url,
+    }
+    return out
 
 
 @router.get("/paper/exam.json")
@@ -445,16 +551,19 @@ def composed_paper_json(
     seed: str = Query("", description="Deal a different paper from the same bank"),
     drafts: bool = Query(True, description="Admit unapproved items, stamped DRAFT"),
     title: str = Query(""),
+    format: str = Query("auto", description="auto (the grade's national paper), kpsea, kjsea, senior, school"),
+    count: int | None = Query(None, ge=5, le=100, description="Items on a formatted paper"),
     _: AuthContext = Depends(require_roles("admin", "operator", "reviewer", "developer")),
 ) -> dict[str, Any]:
     """The composition — sections, ids, marks — for the console to show and
     the exam builder to freeze."""
     paper = _composed_paper(grade=grade, subject=subject, kind=kind, strand=strand,
                             sub_strand=sub_strand, marks=marks, seed=seed, drafts=drafts,
-                            title=title)
+                            title=title, format_key=format, count=count)
     out = paper.to_dict()
     query = (f"grade={grade}&subject={subject}&kind={kind}&strand={strand}"
-             f"&sub_strand={sub_strand}&marks={marks}&seed={paper.seed}&drafts={str(drafts).lower()}")
+             f"&sub_strand={sub_strand}&marks={marks}&seed={paper.seed}&drafts={str(drafts).lower()}"
+             f"&format={format}" + (f"&count={count}" if count else ""))
     out["render_urls"] = {
         "paper": f"/api/v1/questions/paper/exam.html?{query}",
         "marking_scheme": f"/api/v1/questions/paper/exam.html?{query}&answers=true",
@@ -476,6 +585,8 @@ def composed_paper_html(
     seed: str = Query(""),
     drafts: bool = Query(True),
     title: str = Query(""),
+    format: str = Query("auto"),
+    count: int | None = Query(None, ge=5, le=100),
     answers: bool = Query(False, description="The marking scheme alone"),
     with_scheme: bool = Query(False, description="The paper, then the scheme, in one document"),
     _: AuthContext = Depends(require_roles("admin", "operator", "reviewer", "developer")),
@@ -487,7 +598,7 @@ def composed_paper_html(
 
     paper = _composed_paper(grade=grade, subject=subject, kind=kind, strand=strand,
                             sub_strand=sub_strand, marks=marks, seed=seed, drafts=drafts,
-                            title=title)
+                            title=title, format_key=format, count=count)
     return HTMLResponse(question_paper.render_paper(
         paper, answers=answers, with_scheme=with_scheme,
         assets=question_paper.figures_for(paper.items)))
@@ -504,6 +615,8 @@ def composed_paper_pdf(
     seed: str = Query(""),
     drafts: bool = Query(True),
     title: str = Query(""),
+    format: str = Query("auto"),
+    count: int | None = Query(None, ge=5, le=100),
     answers: bool = Query(False),
     with_scheme: bool = Query(False),
     _: AuthContext = Depends(require_roles("admin", "operator", "reviewer")),
@@ -514,7 +627,7 @@ def composed_paper_pdf(
 
     paper = _composed_paper(grade=grade, subject=subject, kind=kind, strand=strand,
                             sub_strand=sub_strand, marks=marks, seed=seed, drafts=drafts,
-                            title=title)
+                            title=title, format_key=format, count=count)
     document = question_paper.render_paper(
         paper, answers=answers, with_scheme=with_scheme,
         assets=question_paper.figures_for(paper.items))
@@ -959,6 +1072,11 @@ def factory_generate_questions_batch(
                 subject=payload.subject,
                 subject_4_upper=payload.subject[:4].upper(),
                 types_str=types_str)
+            # The shape and pitch of the national paper at this grade — what
+            # a KPSEA or KJSEA item is like — so the items are the items a
+            # moderator would keep. Appended rather than slotted, so a prompt
+            # edited in Langfuse before this existed still receives it.
+            + "\n\n" + assessment_format.prompt_block(payload.grade, payload.batch_count)
         ),
     })
 

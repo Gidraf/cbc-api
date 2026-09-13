@@ -16,7 +16,7 @@ import {
   Th,
 } from "../ui/components";
 import { apiUrl } from "../api";
-import { gradeOptionLabel, useExams, useGrades } from "../lib/queries";
+import { gradeOptionLabel, useExams, useFrozenPaperPdf, useGrades, useOpenFrozenPaper } from "../lib/queries";
 import { PaperComposer } from "./PaperComposer";
 
 /**
@@ -28,6 +28,8 @@ export function ExamBuilder() {
   const grades = useGrades();
   const [grade, setGrade] = React.useState("");
   const exams = useExams({ grade: grade || undefined });
+  const openFrozen = useOpenFrozenPaper();
+  const frozenPdf = useFrozenPaperPdf();
 
   function renderUrl(examId: string, opts: { answers?: boolean; format?: string; download?: boolean } = {}) {
     const params = new URLSearchParams({ format: opts.format || "html" });
@@ -101,6 +103,25 @@ export function ExamBuilder() {
                   <Td numeric>{exam.total_marks}</Td>
                   <Td>{exam.time_allowed}</Td>
                   <Td>
+                    {exam.from_bank ? (
+                      <Stack direction="row" gap="var(--s1)" wrap>
+                        <Button size="sm" variant="primary" onClick={() => openFrozen.mutate({ examId: exam.exam_id })}>
+                          Paper
+                        </Button>
+                        <Button size="sm" onClick={() => openFrozen.mutate({ examId: exam.exam_id, answers: true })}>
+                          Scheme
+                        </Button>
+                        <Button size="sm" variant="ghost" onClick={() => frozenPdf.mutate({ examId: exam.exam_id })}>
+                          PDF
+                        </Button>
+                        {exam.scheme_url && (
+                          <a href={exam.scheme_url} target="_blank" rel="noreferrer" style={{ fontSize: "var(--text-xs)" }}>
+                            QR link
+                          </a>
+                        )}
+                        {exam.has_drafts && <Badge tone="warn">drafts</Badge>}
+                      </Stack>
+                    ) : (
                     <Stack direction="row" gap="var(--s1)" wrap>
                       <Button size="sm" onClick={() => window.open(renderUrl(exam.exam_id), "_blank")}>
                         Paper
@@ -122,6 +143,7 @@ export function ExamBuilder() {
                         Markdown
                       </Button>
                     </Stack>
+                    )}
                   </Td>
                 </tr>
               ))}

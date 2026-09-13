@@ -91,6 +91,12 @@ class Paper:
     seed: str = ""
     asked_for: int = 0
     shortfall: str = ""
+    # The national shape this paper follows (KPSEA, KJSEA, …), and the lines
+    # at its head. Empty for the generic A/B/C school paper.
+    format: dict[str, Any] = field(default_factory=dict)
+    masthead: dict[str, str] = field(default_factory=dict)
+    exam_id: str = ""
+    scheme_url: str = ""
 
     @property
     def items(self) -> list[dict[str, Any]]:
@@ -111,6 +117,8 @@ class Paper:
             "sections": [s.to_dict() for s in self.sections],
             "question_ids": [str(q.get("question_id") or "") for q in self.items],
             "question_count": len(self.items),
+            "format": dict(self.format), "masthead": dict(self.masthead),
+            "exam_id": self.exam_id, "scheme_url": self.scheme_url,
         }
 
 
@@ -226,10 +234,79 @@ def _deal(candidates: list[dict[str, Any]], budget: float, rng: random.Random,
     return chosen
 
 
+def _figure_of(question: dict[str, Any]) -> str:
+    binding = question.get("diagram")
+    if isinstance(binding, dict):
+        return str(binding.get("diagram_id") or binding.get("diagram_title") or "")
+    return ""
+
+
+def group_by_figure(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Items on the same figure made consecutive, in the order the first of
+    them appears — so the paper can say "study the map below and answer
+    questions 6 to 10" and print the map once."""
+    out: list[dict[str, Any]] = []
+    placed: set[int] = set()
+    for i, question in enumerate(items):
+        if i in placed:
+            continue
+        out.append(question)
+        placed.add(i)
+        figure = _figure_of(question)
+        if not figure:
+            continue
+        for j in range(i + 1, len(items)):
+            if j not in placed and _figure_of(items[j]) == figure:
+                out.append(items[j])
+                placed.add(j)
+    return out
+
+
+def _compose_to_format(pool: list[dict[str, Any]], paper: Paper, fmt: Any, count: int | None,
+                       rng: random.Random) -> None:
+    """The national shape: each section takes the types it takes, in the
+    count the format sets (scaled when fewer items are asked for)."""
+    from .assessment_format import Format  # noqa: F401  (typing only)
+
+    total = fmt.total_items
+    scale = (count / total) if (count and total) else 1.0
+    seen_tasks: set[str] = set()
+    used_topics: dict[tuple[str, str], int] = {}
+    for spec in fmt.sections:
+        wanted = max(1, int(round(spec.count * scale)))
+        candidates = [q for q in pool if str(q.get("question_type") or "").lower() in spec.kinds
+                      and _task_key(q) not in seen_tasks]
+        if spec.marks_each:
+            # A selected-response section counts items, not marks: budget in
+            # items by making every item one mark for the deal.
+            for q in candidates:
+                (q.setdefault("pedagogy", {}))["max_marks"] = spec.marks_each
+            chosen = _deal(candidates, float(wanted), rng, seen_tasks, used_topics)
+        else:
+            low, high = spec.marks_range
+            fitting = [q for q in candidates if low <= _marks_of(q) <= high] or candidates
+            budget = wanted * (low + high) / 2.0
+            chosen = _deal(fitting, budget, rng, seen_tasks, used_topics)[:wanted]
+        if chosen:
+            paper.sections.append(Section(spec.letter, spec.heading, spec.instructions,
+                                          group_by_figure(chosen)))
+    paper.format = fmt.to_dict()
+
+
 def compose(items: list[dict[str, Any]], *, kind: str, grade: str, subject: str,
             strand: str = "", sub_strand: str = "", marks: int = 50,
-            seed: str = "", title: str = "", allow_drafts: bool = False) -> Paper:
-    """One paper from the bank's items for its scope."""
+            seed: str = "", title: str = "", allow_drafts: bool = False,
+            format_key: str = "", count: int | None = None, year: int | None = None,
+            series: str = "") -> Paper:
+    """One paper from the bank's items for its scope.
+
+    `format_key` picks the shape: "auto" (the default) follows the national
+    paper for the grade — KPSEA, KJSEA, senior — and "school" is the generic
+    three-section paper by marks. `count` is the number of items on a
+    formatted paper; `marks` is the budget of a school paper.
+    """
+    from . import assessment_format
+
     kind = kind if kind in KINDS else "topical"
     pool = [q for q in (items or []) if isinstance(q, dict) and _stem(q)]
     # Only the scope's own items, whatever the caller handed over.
@@ -252,6 +329,18 @@ def compose(items: list[dict[str, Any]], *, kind: str, grade: str, subject: str,
                   title=title or {"topical": f"Topical Test: {scope}",
                                   "strand": f"End of Strand Assessment: {scope}",
                                   "term": f"End of Term Examination: {scope}"}[kind])
+
+    fmt = None if (format_key or "auto") == "school" else (
+        assessment_format.by_key(format_key) or assessment_format.for_grade(grade))
+    paper.masthead = assessment_format.masthead(grade, subject, year=year, series=series)
+    if not pool:
+        paper.shortfall = "the bank holds no usable items for this scope"
+        return paper
+    if fmt is not None:
+        _compose_to_format(pool, paper, fmt, count, rng)
+        _finish(paper, kind, sub_strand, grade, fmt.time_allowed, list(fmt.instructions),
+                asked_items=count or fmt.total_items)
+        return paper
 
     by_section: dict[str, list[dict[str, Any]]] = {"A": [], "B": [], "C": []}
     for question in pool:
@@ -289,20 +378,56 @@ def compose(items: list[dict[str, Any]], *, kind: str, grade: str, subject: str,
     # Only one section: the letter is noise on a five-question quiz.
     if len(paper.sections) == 1:
         paper.sections[0].heading = ""
+    for section in paper.sections:
+        section.items = group_by_figure(section.items)
 
-    paper.has_drafts = any(str(q.get("status") or "") != "approved" for q in paper.items)
-    for question in paper.items:
-        name = (question.get("curriculum") or {}).get("sub_strand") or sub_strand or "—"
-        paper.covers[name] = paper.covers.get(name, 0) + 1
-    paper.time_allowed = time_for(paper.total_marks, grade)
-    paper.instructions = [
+    _finish(paper, kind, sub_strand, grade, time_for(paper.total_marks, grade), [
         "Write your name, class and admission number in the spaces provided.",
         f"This paper has {len(paper.items)} questions in "
         f"{len(paper.sections)} section{'s' if len(paper.sections) != 1 else ''}. Answer ALL questions.",
         "Show all your working clearly. Marks may be awarded for correct method.",
         "Do not write in the margins or on the marking column.",
-    ]
+    ])
     if paper.total_marks < marks - 0.5:
         paper.shortfall = (f"the bank supplied {paper.total_marks:g} of the {marks} marks asked for; "
                            f"generate more items for this scope to fill the paper")
+    return paper
+
+
+def _finish(paper: Paper, kind: str, sub_strand: str, grade: str, time_allowed: str,
+            instructions: list[str], asked_items: int | None = None) -> None:
+    paper.has_drafts = any(str(q.get("status") or "") != "approved" for q in paper.items)
+    for question in paper.items:
+        name = (question.get("curriculum") or {}).get("sub_strand") or sub_strand or "—"
+        paper.covers[name] = paper.covers.get(name, 0) + 1
+    paper.time_allowed = time_allowed
+    paper.instructions = instructions
+    if asked_items and len(paper.items) < asked_items:
+        paper.shortfall = (f"the bank supplied {len(paper.items)} of the {asked_items} items the "
+                           f"paper takes; generate more items for this scope to fill it")
+
+
+def thaw(snapshot: dict[str, Any], questions: list[dict[str, Any]]) -> Paper:
+    """A frozen paper, rebuilt from its snapshot and the items it froze.
+
+    The snapshot records the composition — the sections and the ids in each,
+    the format, the masthead, the seed — and the items come from the bank by
+    id; the paper reprints next term exactly as it printed today.
+    """
+    by_id = {str(q.get("question_id") or ""): q for q in questions}
+    paper = Paper(kind=str(snapshot.get("kind") or "topical"), title=str(snapshot.get("title") or ""),
+                  grade=str(snapshot.get("grade") or ""), subject=str(snapshot.get("subject") or ""),
+                  strand=str(snapshot.get("strand") or ""), sub_strand=str(snapshot.get("sub_strand") or ""),
+                  seed=str(snapshot.get("seed") or ""), asked_for=int(snapshot.get("asked_for") or 0),
+                  format=dict(snapshot.get("format") or {}), masthead=dict(snapshot.get("masthead") or {}),
+                  exam_id=str(snapshot.get("exam_id") or ""), scheme_url=str(snapshot.get("scheme_url") or ""),
+                  time_allowed=str(snapshot.get("time_allowed") or ""),
+                  instructions=list(snapshot.get("instructions") or []),
+                  has_drafts=bool(snapshot.get("has_drafts")), covers=dict(snapshot.get("covers") or {}))
+    for section in snapshot.get("sections") or []:
+        if not isinstance(section, dict):
+            continue
+        items = [by_id[i] for i in (section.get("question_ids") or []) if i in by_id]
+        paper.sections.append(Section(str(section.get("letter") or ""), str(section.get("heading") or ""),
+                                      str(section.get("instructions") or ""), items))
     return paper

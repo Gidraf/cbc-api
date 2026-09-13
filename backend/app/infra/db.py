@@ -1019,6 +1019,16 @@ MIGRATIONS: list[tuple[str, str]] = [
         CREATE INDEX IF NOT EXISTS idx_service_logs_at ON service_logs(at DESC);
         """,
     ),
+    (
+        "033_exam_share_token",
+        """
+        -- A frozen paper's marking scheme is reached from the printed paper by a
+        -- QR code. The code carries this token; the scheme route accepts it
+        -- without a sign-in, so a marker with the paper in hand can open it.
+        ALTER TABLE exams ADD COLUMN IF NOT EXISTS share_token TEXT NOT NULL DEFAULT '';
+        CREATE INDEX IF NOT EXISTS idx_exams_share_token ON exams(share_token);
+        """,
+    ),
 ]
 
 

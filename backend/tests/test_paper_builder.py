@@ -55,6 +55,7 @@ def _bank() -> list[dict]:
 
 
 ARGS = dict(grade="grade-9", subject="Mathematics", strand="Numbers")
+SCHOOL = dict(ARGS, format_key="school")
 
 
 def test_the_bank_rows_reach_the_renderer_with_their_text() -> None:
@@ -69,7 +70,7 @@ def test_the_bank_rows_reach_the_renderer_with_their_text() -> None:
 
 def test_a_topical_paper_has_sections_that_add_up() -> None:
     items = question_rows.flatten_all(_bank())
-    paper = paper_builder.compose(items, kind="topical", sub_strand="Integers", marks=30, **ARGS)
+    paper = paper_builder.compose(items, kind="topical", sub_strand="Integers", marks=30, **SCHOOL)
 
     assert paper.title == "Topical Test: Integers"
     assert [s.letter for s in paper.sections] == ["A", "B", "C"]
@@ -82,7 +83,7 @@ def test_a_topical_paper_has_sections_that_add_up() -> None:
 
 def test_a_strand_paper_is_dealt_across_its_sub_strands() -> None:
     items = question_rows.flatten_all(_bank())
-    paper = paper_builder.compose(items, kind="strand", marks=40, **ARGS)
+    paper = paper_builder.compose(items, kind="strand", marks=40, **SCHOOL)
 
     assert paper.title == "End of Strand Assessment: Numbers"
     assert set(paper.covers) == {"Integers", "Fractions"}
@@ -91,7 +92,7 @@ def test_a_strand_paper_is_dealt_across_its_sub_strands() -> None:
 
 def test_within_a_section_the_items_run_easy_to_hard() -> None:
     items = question_rows.flatten_all(_bank())
-    paper = paper_builder.compose(items, kind="topical", sub_strand="Integers", marks=30, **ARGS)
+    paper = paper_builder.compose(items, kind="topical", sub_strand="Integers", marks=30, **SCHOOL)
 
     section_a = paper.sections[0]
     difficulties = [q["pedagogy"]["difficulty_index"] for q in section_a.items]
@@ -100,10 +101,10 @@ def test_within_a_section_the_items_run_easy_to_hard() -> None:
 
 def test_the_same_request_composes_the_same_paper_and_a_seed_deals_another() -> None:
     items = question_rows.flatten_all(_bank())
-    one = paper_builder.compose(items, kind="topical", sub_strand="Integers", marks=30, **ARGS)
-    two = paper_builder.compose(items, kind="topical", sub_strand="Integers", marks=30, **ARGS)
+    one = paper_builder.compose(items, kind="topical", sub_strand="Integers", marks=30, **SCHOOL)
+    two = paper_builder.compose(items, kind="topical", sub_strand="Integers", marks=30, **SCHOOL)
     other = paper_builder.compose(items, kind="topical", sub_strand="Integers", marks=30,
-                                  seed="stream-b", **ARGS)
+                                  seed="stream-b", **SCHOOL)
 
     assert one.to_dict()["question_ids"] == two.to_dict()["question_ids"]
     assert other.to_dict()["question_ids"] != one.to_dict()["question_ids"]
@@ -115,7 +116,7 @@ def test_the_same_task_under_two_ids_is_set_once() -> None:
     rows.append(_row("int-mcq-copy", "Integers", "multiple_choice",
                      "Work out $(-1) \\times 3 + 1$.", 1, options=True))
     items = question_rows.flatten_all(rows)
-    paper = paper_builder.compose(items, kind="topical", sub_strand="Integers", marks=40, **ARGS)
+    paper = paper_builder.compose(items, kind="topical", sub_strand="Integers", marks=40, **SCHOOL)
 
     ids = paper.to_dict()["question_ids"]
     assert not ("int-mcq-copy" in ids and "int-mcq-1" in ids)
@@ -128,8 +129,8 @@ def test_drafts_are_kept_out_unless_asked_and_stamp_the_page_when_let_in() -> No
             row["status"] = "draft"
     items = question_rows.flatten_all(rows)
 
-    strict = paper_builder.compose(items, kind="strand", marks=30, allow_drafts=False, **ARGS)
-    loose = paper_builder.compose(items, kind="strand", marks=30, allow_drafts=True, **ARGS)
+    strict = paper_builder.compose(items, kind="strand", marks=30, allow_drafts=False, **SCHOOL)
+    loose = paper_builder.compose(items, kind="strand", marks=30, allow_drafts=True, **SCHOOL)
 
     assert "Fractions" not in strict.covers and not strict.has_drafts
     assert "Fractions" in loose.covers and loose.has_drafts
@@ -139,7 +140,7 @@ def test_drafts_are_kept_out_unless_asked_and_stamp_the_page_when_let_in() -> No
 
 def test_a_bank_too_small_for_the_marks_says_so() -> None:
     items = question_rows.flatten_all(_bank()[:3])
-    paper = paper_builder.compose(items, kind="topical", sub_strand="Integers", marks=50, **ARGS)
+    paper = paper_builder.compose(items, kind="topical", sub_strand="Integers", marks=50, **SCHOOL)
 
     assert paper.total_marks == 3
     assert "3 of the 50 marks" in paper.shortfall
@@ -148,7 +149,7 @@ def test_a_bank_too_small_for_the_marks_says_so() -> None:
 
 def test_a_section_with_nothing_in_the_bank_gives_its_marks_to_the_others() -> None:
     items = question_rows.flatten_all([r for r in _bank() if "str" not in r["question_id"]])
-    paper = paper_builder.compose(items, kind="topical", sub_strand="Integers", marks=24, **ARGS)
+    paper = paper_builder.compose(items, kind="topical", sub_strand="Integers", marks=24, **SCHOOL)
 
     assert [s.letter for s in paper.sections] == ["A", "B"]
     assert paper.total_marks == 24
@@ -156,21 +157,116 @@ def test_a_section_with_nothing_in_the_bank_gives_its_marks_to_the_others() -> N
 
 def test_the_booklet_prints_the_paper_then_the_scheme_with_the_key_up_front() -> None:
     items = question_rows.flatten_all(_bank())
-    paper = paper_builder.compose(items, kind="topical", sub_strand="Integers", marks=30, **ARGS)
+    paper = paper_builder.compose(items, kind="topical", sub_strand="Integers", count=20,
+                                  series="Step Flyer Series", **ARGS)
+    paper.scheme_url = "https://papers.example.co.ke/api/v1/exams/exam-1/scheme?token=abc"
 
     learner = question_paper.render_paper(paper)
     scheme = question_paper.render_paper(paper, answers=True)
     booklet = question_paper.render_paper(paper, with_scheme=True)
 
-    assert "Name:" in learner and "Instructions" in learner and "End of paper" in learner
-    assert "Section A" in learner and "Section C" in learner
-    assert "Correct option" not in learner
-    assert "Marking scheme" in scheme and "class='key'" in scheme and "Correct option" in scheme
-    assert "Name:" not in scheme
-    assert booklet.count("<h1>") == 2 and "scheme-start" in booklet
+    # The masthead the national paper carries.
+    assert "KENYA JUNIOR SCHOOL EDUCATION ASSESSMENT" in learner
+    assert "GRADE 9 – YEAR" in learner and "'subject'>MATHEMATICS<" in learner and "Step Flyer Series" in learner
+    assert "(i) Your name" in learner and "READ THESE INSTRUCTIONS CAREFULLY" in learner
+    assert "For official use only" in learner, "Section B marks table"
+    assert "SECTION A" in learner and "SECTION B" in learner
+    # The scheme is reached from the paper, never printed on it.
+    assert "<svg" in learner.split("class='qr'")[1][:2000], "a QR code on the paper"
+    assert "papers.example.co.ke/api/v1/exams/exam-1/scheme" in learner
+    assert "Correct option" not in learner and "MARKING SCHEME" not in learner
+    assert "MARKING SCHEME" in scheme and "class='keygrid'" in scheme
+    assert "(i) Your name" not in scheme
+    assert booklet.count("class='mast'") == 2 and "break-before: page" in booklet
     # Continuous numbering across sections.
-    assert "<span class='qno'>1.</span>" in learner
-    assert f"<span class='qno'>{len(paper.items)}.</span>" in learner
+    assert "<span class='n'>1.</span>" in learner
+    assert f"<span class='n'>{len(paper.items)}.</span>" in learner
+
+
+def test_a_grade_6_paper_is_kpsea_shaped_and_a_grade_9_paper_kjsea() -> None:
+    rows = [dict(r, curriculum_link={**r["curriculum_link"], "grade": "grade-6"}) for r in _bank()]
+    items = question_rows.flatten_all(rows)
+
+    six = paper_builder.compose(items, kind="strand", count=30, grade="grade-6",
+                                subject="Mathematics", strand="Numbers")
+    nine = paper_builder.compose(question_rows.flatten_all(_bank()), kind="strand", count=40, **ARGS)
+
+    assert six.format["key"] == "kpsea"
+    assert [s.letter for s in six.sections] == [""], "one section, all multiple choice"
+    assert all(q.get("options") for q in six.items)
+    assert six.masthead["assessment"] == "KENYA PRIMARY SCHOOL EDUCATION ASSESSMENT"
+    assert nine.format["key"] == "kjsea"
+    assert [s.letter for s in nine.sections] == ["A", "B"]
+    assert all(q.get("options") for q in nine.sections[0].items)
+    assert not any(q.get("options") for q in nine.sections[1].items)
+    assert nine.time_allowed == "1 hour 40 minutes"
+
+
+def test_items_on_one_figure_sit_together_and_the_figure_prints_once() -> None:
+    rows = _bank()
+    for n in range(1, 4):
+        rows.append({**rows[0], "question_id": f"map-{n}",
+                     "content": {**rows[0]["content"], "question_text": f"Which town is on the coast? ({n})",
+                                 "diagram": {"diagram_id": "kenya-map", "diagram_title": "Sketch map of Kenya"}}})
+    items = question_rows.flatten_all(rows)
+    paper = paper_builder.compose(items, kind="topical", sub_strand="Integers", count=30, **ARGS)
+
+    ids = [q["question_id"] for q in paper.sections[0].items]
+    positions = [ids.index(f"map-{n}") for n in range(1, 4)]
+    assert max(positions) - min(positions) == 2, "the three map items are consecutive"
+
+    html = question_paper.render_paper(paper, assets={"kenya-map": {"svg_markup": "<svg><text>x</text></svg>",
+                                                                    "scene_document": {}}})
+    first = min(positions) + 1
+    assert html.count("Study the map below") == 1
+    assert f"answer questions {first} to {first + 2}" in html
+
+
+def test_a_frozen_paper_thaws_to_the_same_paper() -> None:
+    items = question_rows.flatten_all(_bank())
+    paper = paper_builder.compose(items, kind="topical", sub_strand="Integers", count=20, **ARGS)
+    snapshot = {**paper.to_dict(),
+                "sections": [{**s.to_dict(), "instructions": s.instructions} for s in paper.sections],
+                "time_allowed": paper.time_allowed, "instructions": paper.instructions}
+
+    again = paper_builder.thaw(snapshot, items)
+
+    assert again.to_dict()["question_ids"] == paper.to_dict()["question_ids"]
+    assert [s.letter for s in again.sections] == [s.letter for s in paper.sections]
+    assert again.format == paper.format and again.masthead == paper.masthead
+    assert again.total_marks == paper.total_marks
+
+
+def test_the_freeze_and_public_scheme_routes_exist() -> None:
+    import inspect
+
+    from app.routes import exams, questions
+
+    q = inspect.getsource(questions)
+    e = inspect.getsource(exams)
+    assert '@router.post("/paper/freeze")' in q and "share_token" in q
+    assert "secrets.token_urlsafe" in q
+    assert '@router.get("/exams/{exam_id}/scheme")' in e
+    scheme = e[e.index("def public_marking_scheme("):]
+    assert "Depends(require_roles" not in scheme[:600], "the QR link needs no sign-in"
+    assert "hmac.compare_digest" in scheme
+    assert '@router.get("/exams/{exam_id}/paper.html")' in e
+
+
+def test_the_generator_is_told_what_paper_its_items_are_for() -> None:
+    import inspect
+
+    from app.routes import questions
+    from app.services import assessment_format
+
+    assert "assessment_format.prompt_block(payload.grade, payload.batch_count)" in inspect.getsource(questions)
+    block = assessment_format.prompt_block("grade-6", 50)
+    assert "KENYA PRIMARY SCHOOL EDUCATION ASSESSMENT" in block
+    assert "Nothing a Grade 3 learner could answer" in block
+    assert "50 items" in block
+    assert assessment_format.for_grade("grade-8").key == "kjsea"
+    assert assessment_format.for_grade("grade-2").key == "lower_primary"
+    assert assessment_format.for_grade("grade-11").key == "senior"
 
 
 def test_a_diagram_question_prints_its_figure_blank_for_the_learner_and_labelled_for_the_marker() -> None:

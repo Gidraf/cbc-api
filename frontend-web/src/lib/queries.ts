@@ -3288,9 +3288,14 @@ export type PaperRequest = {
   strand?: string;
   sub_strand?: string;
   marks: number;
+  /** Items on a paper in the national format; `marks` is the budget of a school paper. */
+  count?: number;
+  /** auto (the grade's national paper), kpsea, kjsea, senior, or school. */
+  format?: string;
   seed?: string;
   drafts: boolean;
   title?: string;
+  series?: string;
 };
 
 export type ComposedPaper = {
@@ -3307,6 +3312,9 @@ export type ComposedPaper = {
   question_ids: string[];
   sections: { letter: string; heading: string; marks: number; count: number; question_ids: string[] }[];
   render_urls: Record<string, string>;
+  format?: { key: string; assessment: string; band: string };
+  exam_id?: string;
+  scheme_url?: string;
 };
 
 function paperQuery(v: PaperRequest): string {
@@ -3320,7 +3328,9 @@ function paperQuery(v: PaperRequest): string {
     seed: v.seed || "",
     drafts: String(v.drafts),
     title: v.title || "",
+    format: v.format || "auto",
   });
+  if (v.count) params.set("count", String(v.count));
   return params.toString();
 }
 
@@ -3360,6 +3370,60 @@ export function usePaperPdf() {
       const link = document.createElement("a");
       link.href = url;
       link.download = filename || "paper.pdf";
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      return filename;
+    },
+  });
+}
+
+/** Freeze the composed paper: the exact items, a share token, a QR code to the scheme. */
+export function useFreezePaper() {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: PaperRequest) =>
+      api<ComposedPaper>("/api/v1/questions/paper/freeze", {
+        method: "POST",
+        body: JSON.stringify({ ...v, format: v.format || "auto" }),
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["exams"] });
+    },
+  });
+}
+
+/** Open a frozen paper (or its scheme, or the booklet) in a new tab. */
+export function useOpenFrozenPaper() {
+  const { token } = useAuth();
+  return useMutation({
+    mutationFn: async ({ examId, answers, withScheme }: { examId: string; answers?: boolean; withScheme?: boolean }) => {
+      const params = new URLSearchParams();
+      if (answers) params.set("answers", "true");
+      if (withScheme) params.set("with_scheme", "true");
+      const { blob } = await fetchBlob(`/api/v1/exams/${encodeURIComponent(examId)}/paper.html?${params}`, { bearerToken: token });
+      const url = URL.createObjectURL(new Blob([await blob.text()], { type: "text/html" }));
+      window.open(url, "_blank", "noopener");
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+      return url;
+    },
+  });
+}
+
+export function useFrozenPaperPdf() {
+  const { token } = useAuth();
+  return useMutation({
+    mutationFn: async ({ examId, answers, withScheme }: { examId: string; answers?: boolean; withScheme?: boolean }) => {
+      const params = new URLSearchParams();
+      if (answers) params.set("answers", "true");
+      if (withScheme) params.set("with_scheme", "true");
+      const { blob, filename } = await fetchBlob(`/api/v1/exams/${encodeURIComponent(examId)}/paper.pdf?${params}`, { bearerToken: token });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = filename || `${examId}.pdf`;
       document.body.appendChild(link);
       link.click();
       link.remove();
