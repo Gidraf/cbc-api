@@ -41,6 +41,9 @@ class RefreshRequest(BaseModel):
 
 class CreateApiKeyRequest(BaseModel):
     label: str = "Default API Key"
+    # The role the key carries. Never above the maker's own: an admin may
+    # mint a developer key for a script, a developer may not mint an admin.
+    role: str = ""
 
 
 @router.post("/login")
@@ -118,6 +121,10 @@ def create_developer_api_key(
     payload: CreateApiKeyRequest,
     context: AuthContext = Depends(require_roles("admin", "developer")),
 ) -> dict[str, Any]:
+    ranks = {"reviewer": 1, "developer": 2, "operator": 3, "admin": 4}
+    wanted = (payload.role or context.role).strip().lower()
+    if wanted not in ranks or ranks[wanted] > ranks.get(context.role, 0):
+        raise_api_error("FORBIDDEN", f"A {context.role} cannot make a {wanted} key.")
     raw_key = f"cbc_live_{secrets.token_urlsafe(32)}"
     key_hash = hashlib.sha256(raw_key.encode("utf-8")).hexdigest()
     key_id = f"key_{secrets.token_hex(6)}"
@@ -131,7 +138,7 @@ def create_developer_api_key(
             "kid": key_id,
             "khash": key_hash,
             "uid": context.subject,
-            "role": context.role,
+            "role": wanted,
             "label": payload.label,
         },
     )
@@ -139,6 +146,7 @@ def create_developer_api_key(
     return {
         "key_id": key_id,
         "api_key": raw_key,
+        "role": wanted,
         "label": payload.label,
         "note": "Copy this API key now. It will not be shown again in plain text.",
     }
@@ -146,10 +154,17 @@ def create_developer_api_key(
 
 @router.get("/api-keys")
 def list_api_keys(context: AuthContext = Depends(require_roles("admin", "developer"))) -> dict[str, Any]:
-    keys = fetch_all(
-        "SELECT key_id, user_id, role, label, is_active, last_used_at, created_at FROM api_keys WHERE user_id = :uid",
-        {"uid": context.subject},
-    )
+    # An admin sees every key on the deployment; anyone else sees their own.
+    if context.role == "admin":
+        keys = fetch_all(
+            "SELECT key_id, user_id, role, label, is_active, last_used_at, created_at "
+            "FROM api_keys ORDER BY created_at DESC")
+    else:
+        keys = fetch_all(
+            "SELECT key_id, user_id, role, label, is_active, last_used_at, created_at "
+            "FROM api_keys WHERE user_id = :uid ORDER BY created_at DESC",
+            {"uid": context.subject},
+        )
     return {"api_keys": keys}
 
 
@@ -158,8 +173,11 @@ def revoke_api_key(
     key_id: str,
     context: AuthContext = Depends(require_roles("admin", "developer")),
 ) -> dict[str, Any]:
-    execute(
-        "DELETE FROM api_keys WHERE key_id = :kid AND user_id = :uid",
-        {"kid": key_id, "uid": context.subject},
-    )
+    if context.role == "admin":
+        execute("DELETE FROM api_keys WHERE key_id = :kid", {"kid": key_id})
+    else:
+        execute(
+            "DELETE FROM api_keys WHERE key_id = :kid AND user_id = :uid",
+            {"kid": key_id, "uid": context.subject},
+        )
     return {"status": "revoked", "key_id": key_id}

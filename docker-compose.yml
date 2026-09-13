@@ -27,6 +27,9 @@ x-backend-env: &backend-env
   OPENAI_LIGHT_REASONING_EFFORT: ${OPENAI_LIGHT_REASONING_EFFORT:-low}
   # Set to a long random string to enable GET /api/v1/admin/logs/share?token=… (read-only recent logs). Unset = off.
   LOG_SHARE_TOKEN: ${LOG_SHARE_TOKEN:-}
+  # Stored log lines are pruned hourly: older than this many days, and beyond this many rows.
+  LOG_RETENTION_DAYS: ${LOG_RETENTION_DAYS:-7}
+  LOG_KEEP_ROWS: ${LOG_KEEP_ROWS:-20000}
   ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
   GEMINI_API_KEY: ${GEMINI_API_KEY:-}
   OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
@@ -134,6 +137,7 @@ services:
     build: *backend-build
     command: >
       celery -A app.celery_app worker
+      --beat
       --loglevel=info
       --concurrency=${CELERY_CONCURRENCY:-1}
       --queues=${CELERY_TASK_QUEUE:-cbc_generation}

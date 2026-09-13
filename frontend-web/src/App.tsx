@@ -152,6 +152,21 @@ export function App() {
     return isTokenValid(t) ? t : "";
   });
   const [apiKey, setApiKey] = useState("");
+  // API keys made in the console. A key carries a role and opens everything
+  // that role can do — including the log link, when it is an admin key.
+  type ApiKeyRow = { key_id: string; user_id: string; role: string; label: string; is_active: boolean; last_used_at: string | null; created_at: string };
+  const [apiKeys, setApiKeys] = useState<ApiKeyRow[]>([]);
+  const [newKeyLabel, setNewKeyLabel] = useState("");
+  const [newKeyRole, setNewKeyRole] = useState<string>("admin");
+  const [freshKey, setFreshKey] = useState<{ key_id: string; api_key: string; label: string; role: string } | null>(null);
+  async function loadApiKeys() {
+    try {
+      const res = await fetchJson<any>("/api/v1/auth/api-keys", { method: "GET" }, auth());
+      setApiKeys(res?.api_keys || []);
+    } catch {
+      setApiKeys([]);
+    }
+  }
   const [currentRole, setCurrentRole] = useState<Role | null>(() => {
     const t = localStorage.getItem("cbc_token") || "";
     if (!t || !isTokenValid(t)) return null;
@@ -2661,6 +2676,13 @@ export function App() {
   async function refreshDashboard() {
     await Promise.all([loadTodayTarget(), loadQuestionBank(), loadCostSummary(), loadProfilesList()]);
   }
+
+  useEffect(() => {
+    if (view === "pipelines" && bearerToken) {
+      void loadApiKeys();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view, bearerToken]);
 
   useEffect(() => {
     // 1. Listen for 401 Auth Expired events from api.ts
@@ -9751,6 +9773,121 @@ export function App() {
         {/* 10. PIPELINES TAB */}
         {view === "pipelines" && (
           <section className="panel">
+            <div className="panel-head">
+              <div>
+                <h2>API Keys</h2>
+                <p>A key does everything its role can do in this portal — an admin key also opens the log link and can clear logs. Keys are shown once, at creation.</p>
+              </div>
+              <div style={{ display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" }}>
+                <input
+                  placeholder="Label, e.g. claude-diagnostics"
+                  value={newKeyLabel}
+                  onChange={(e) => setNewKeyLabel(e.target.value)}
+                  style={{ minWidth: "200px" }}
+                />
+                <select value={newKeyRole} onChange={(e) => setNewKeyRole(e.target.value)}>
+                  <option value="admin">admin — everything</option>
+                  <option value="operator">operator — generate and review</option>
+                  <option value="developer">developer — read and build</option>
+                  <option value="reviewer">reviewer — review only</option>
+                </select>
+                <button
+                  disabled={isRunning || !newKeyLabel.trim()}
+                  onClick={async () => {
+                    await run("Create API key", async () => {
+                      const res = await fetchJson<any>("/api/v1/auth/api-keys", {
+                        method: "POST",
+                        body: JSON.stringify({ label: newKeyLabel.trim(), role: newKeyRole }),
+                      }, auth());
+                      setFreshKey(res);
+                      setNewKeyLabel("");
+                      await loadApiKeys();
+                      return res;
+                    });
+                  }}
+                >
+                  🔑 Create key
+                </button>
+                <button className="ghost" onClick={loadApiKeys} disabled={isRunning}>Refresh</button>
+              </div>
+            </div>
+            {freshKey && (
+              <div style={{ margin: "0 0 12px", padding: "12px", background: "#fefce8", border: "1px solid #fde68a", borderRadius: "8px" }}>
+                <strong>New {freshKey.role} key "{freshKey.label}" — copy it now, it will not be shown again.</strong>
+                <div style={{ display: "flex", gap: "8px", alignItems: "center", marginTop: "8px", flexWrap: "wrap" }}>
+                  <code style={{ padding: "6px 8px", background: "#fff", border: "1px solid #e5e7eb", borderRadius: "6px", wordBreak: "break-all" }}>{freshKey.api_key}</code>
+                  <button className="ghost" onClick={() => { navigator.clipboard.writeText(freshKey.api_key).catch(() => window.prompt("Copy:", freshKey.api_key)); }}>Copy key</button>
+                  {freshKey.role === "admin" && (
+                    <button
+                      className="ghost"
+                      title="A link that opens the last hour of API and worker logs to whoever holds it"
+                      onClick={() => {
+                        const url = `${window.location.origin.replace(/\/$/, "")}/api/v1/admin/logs/share?token=${encodeURIComponent(freshKey.api_key)}&since_minutes=60`;
+                        navigator.clipboard.writeText(url).catch(() => window.prompt("Copy:", url));
+                      }}
+                    >
+                      📋 Copy log link with this key
+                    </button>
+                  )}
+                  <button className="ghost" onClick={() => setFreshKey(null)}>Done</button>
+                </div>
+              </div>
+            )}
+            <div style={{ overflowX: "auto", marginBottom: "18px" }}>
+              <table>
+                <thead>
+                  <tr><th>Label</th><th>Role</th><th>Owner</th><th>Last used</th><th>Created</th><th></th></tr>
+                </thead>
+                <tbody>
+                  {apiKeys.length === 0 && (
+                    <tr><td colSpan={6} style={{ color: "#64748b" }}>No keys yet. Create one above, or press Refresh.</td></tr>
+                  )}
+                  {apiKeys.map((k) => (
+                    <tr key={k.key_id}>
+                      <td>{k.label}</td>
+                      <td>{k.role}</td>
+                      <td>{k.user_id}</td>
+                      <td>{k.last_used_at ? new Date(k.last_used_at).toLocaleString() : "never"}</td>
+                      <td>{new Date(k.created_at).toLocaleString()}</td>
+                      <td>
+                        <button
+                          className="ghost"
+                          style={{ color: "#b91c1c", borderColor: "#fca5a5" }}
+                          disabled={isRunning}
+                          onClick={async () => {
+                            if (!window.confirm(`Revoke key "${k.label}"? Anything using it stops working at once.`)) return;
+                            await run("Revoke API key", async () => {
+                              const res = await fetchJson<any>(`/api/v1/auth/api-keys/${encodeURIComponent(k.key_id)}`, { method: "DELETE" }, auth());
+                              await loadApiKeys();
+                              return res;
+                            });
+                          }}
+                        >
+                          Revoke
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="panel-head">
+              <div>
+                <h2>Service Logs</h2>
+                <p>API and worker log lines kept in the database; pruned hourly by age and by count.</p>
+              </div>
+              <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                <button className="ghost" disabled={isRunning} onClick={async () => {
+                  await run("Prune logs", async () => fetchJson<any>("/api/v1/admin/logs/prune", { method: "POST" }, auth()));
+                }}>🧹 Prune now</button>
+                <button className="ghost" style={{ color: "#b91c1c", borderColor: "#fca5a5" }} disabled={isRunning} onClick={async () => {
+                  if (!window.confirm("Delete ALL stored log lines?")) return;
+                  await run("Clear logs", async () => fetchJson<any>("/api/v1/admin/logs", { method: "DELETE" }, auth()));
+                }}>🗑️ Clear all logs</button>
+              </div>
+            </div>
+
             <div className="panel-head">
               <div>
                 <h2>Stage-to-Model Bindings</h2>

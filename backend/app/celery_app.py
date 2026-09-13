@@ -74,7 +74,39 @@ celery_app.conf.update(
     task_default_retry_delay=30,
 
     broker_connection_retry_on_startup=True,
+    # Housekeeping on a clock. Runs when the worker is started with -B (beat
+    # embedded), which the compose file does; without it these are dormant.
+    beat_schedule={
+        "prune-service-logs": {
+            "task": "app.tasks.prune_service_logs",
+            "schedule": 3600.0,
+        },
+    },
 )
+
+
+# The generation runs HERE, in this worker's child processes — not in
+# app.worker — so this is where the log store has to be installed, and after
+# Celery has set up logging, because Celery replaces the root logger's
+# handlers when it does.
+try:
+    from celery.signals import after_setup_logger, worker_process_init
+
+    @after_setup_logger.connect
+    def _install_log_store(logger=None, **kwargs):  # noqa: ANN001
+        from .services import log_store
+
+        log_store.install("celery")
+
+    @worker_process_init.connect
+    def _restart_log_store_in_child(**kwargs):  # noqa: ANN001
+        # The child inherits the handler and not its flush thread.
+        from .services import log_store
+
+        log_store.install("celery")
+except Exception:  # noqa: BLE001
+    pass
+
 
 def broker_available() -> bool:
     """Whether a Celery broker can actually be reached right now.

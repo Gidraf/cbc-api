@@ -37,10 +37,47 @@ def _client(monkeypatch, rows):
     return TestClient(app)
 
 
-def test_the_share_link_is_off_unless_a_token_is_set(monkeypatch) -> None:
+def test_a_token_that_is_neither_the_env_token_nor_a_key_is_refused(monkeypatch) -> None:
+    from app.routes import admin_logs
+
     monkeypatch.delenv("LOG_SHARE_TOKEN", raising=False)
+    monkeypatch.setattr(admin_logs, "_opens", lambda token: False)
     client = _client(monkeypatch, [])
-    assert client.get("/api/v1/admin/logs/share?token=anything").status_code == 404
+    assert client.get("/api/v1/admin/logs/share?token=anything-long-enough-here").status_code == 401
+
+
+def test_an_admin_api_key_opens_the_link(monkeypatch) -> None:
+    """The key the operator made in the console is the token: one credential,
+    revocable from the screen it was made on."""
+    import hashlib
+
+    from app.routes import admin_logs
+
+    monkeypatch.delenv("LOG_SHARE_TOKEN", raising=False)
+    key = "cbc_live_" + "x" * 40
+    digest = hashlib.sha256(key.encode()).hexdigest()
+
+    def fetch_one(query, params=None):
+        return {"role": "admin"} if (params or {}).get("h") == digest else None
+    import app.infra.db as db
+    monkeypatch.setattr(db, "fetch_one", fetch_one)
+    monkeypatch.setattr(db, "execute", lambda *a, **k: None)
+
+    assert admin_logs._opens(key) is True
+    assert admin_logs._opens("cbc_live_" + "y" * 40) is False
+
+
+def test_a_developer_key_does_not_open_the_logs(monkeypatch) -> None:
+    import hashlib
+
+    from app.routes import admin_logs
+    import app.infra.db as db
+
+    monkeypatch.delenv("LOG_SHARE_TOKEN", raising=False)
+    key = "cbc_live_" + "d" * 40
+    monkeypatch.setattr(db, "fetch_one", lambda q, p=None: {"role": "developer"})
+    monkeypatch.setattr(db, "execute", lambda *a, **k: None)
+    assert admin_logs._opens(key) is False
 
 
 def test_the_share_link_opens_only_to_its_own_token(monkeypatch) -> None:
@@ -59,9 +96,34 @@ def test_the_share_link_opens_only_to_its_own_token(monkeypatch) -> None:
 
 
 def test_a_short_token_does_not_open_the_link(monkeypatch) -> None:
+    from app.routes import admin_logs
+
     monkeypatch.setenv("LOG_SHARE_TOKEN", "short")
-    client = _client(monkeypatch, [])
-    assert client.get("/api/v1/admin/logs/share?token=short").status_code == 404
+    assert admin_logs._opens("short") is False
+
+
+def test_the_prune_drops_by_age_and_by_count(monkeypatch) -> None:
+    ran: list[tuple[str, dict]] = []
+    counts = iter([1000, 300])
+    import app.infra.db as db
+    monkeypatch.setattr(db, "execute", lambda q, p=None: ran.append((q, p or {})))
+    monkeypatch.setattr(db, "fetch_one", lambda q, p=None: {"n": next(counts)})
+
+    removed = log_store.prune(keep=500, retention_days=3)
+
+    assert removed == 700
+    assert any("days" in q and p.get("days") == "3" for q, p in ran)
+    assert any("- :keep" in q and p.get("keep") == 500 for q, p in ran)
+
+
+def test_the_hourly_job_is_scheduled_and_the_worker_runs_beat() -> None:
+    import pathlib
+
+    from app.celery_app import celery_app
+
+    assert "prune-service-logs" in celery_app.conf.beat_schedule
+    compose = (pathlib.Path(__file__).resolve().parents[2] / "docker-compose.yml").read_text()
+    assert "--beat" in compose.split("generation-worker")[1].split("environment")[0]
 
 
 def test_an_admin_can_read_the_share_link_from_the_console(monkeypatch) -> None:

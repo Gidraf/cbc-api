@@ -18,7 +18,8 @@ import time
 from collections import deque
 from typing import Any
 
-KEEP = 20_000
+KEEP = int(os.getenv("LOG_KEEP_ROWS", "20000"))
+RETENTION_DAYS = int(os.getenv("LOG_RETENTION_DAYS", "7"))
 FLUSH_EVERY = 2.0      # seconds
 FLUSH_AT = 200         # rows
 
@@ -41,6 +42,20 @@ class DbLogHandler(logging.Handler):
         self._rows: deque[tuple[str, str, str]] = deque()
         self._lock = threading.Lock()
         self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+        self.ensure_running()
+
+    def ensure_running(self) -> None:
+        """Start the flush thread, or start it again after a fork.
+
+        A prefork worker inherits this handler from its parent and not the
+        parent's threads: the buffer fills in the child and nothing writes
+        it. Called from the child's own startup.
+        """
+        if self._thread is not None and self._thread.is_alive():
+            return
+        self._stop.clear()
+        self._lock = threading.Lock()
         self._thread = threading.Thread(target=self._loop, name="log-store", daemon=True)
         self._thread.start()
 
@@ -90,12 +105,38 @@ class DbLogHandler(logging.Handler):
 
     def _prune(self) -> None:
         try:
-            from ..infra.db import execute
-
-            execute("DELETE FROM service_logs WHERE id < "
-                    "(SELECT COALESCE(MAX(id), 0) - :keep FROM service_logs)", {"keep": KEEP})
+            prune()
         except Exception:  # noqa: BLE001
             return
+
+
+def prune(keep: int = KEEP, retention_days: int = RETENTION_DAYS) -> int:
+    """Drop lines older than the retention, and any beyond the row cap.
+    Returns how many went."""
+    from ..infra.db import execute, fetch_one
+
+    before = int((fetch_one("SELECT COUNT(*) AS n FROM service_logs") or {}).get("n") or 0)
+    execute("DELETE FROM service_logs WHERE at < NOW() - (:days || ' days')::interval",
+            {"days": str(max(1, int(retention_days)))})
+    execute("DELETE FROM service_logs WHERE id < "
+            "(SELECT COALESCE(MAX(id), 0) - :keep FROM service_logs)", {"keep": int(keep)})
+    after = int((fetch_one("SELECT COUNT(*) AS n FROM service_logs") or {}).get("n") or 0)
+    return max(0, before - after)
+
+
+def clear(older_than_minutes: int = 0) -> int:
+    """Delete stored log lines — all of them, or only those older than N minutes."""
+    from ..infra.db import execute, fetch_one
+
+    if older_than_minutes > 0:
+        where = "at < NOW() - (:minutes || ' minutes')::interval"
+        params: dict[str, Any] = {"minutes": str(int(older_than_minutes))}
+    else:
+        where, params = "1=1", {}
+    count = int((fetch_one(f"SELECT COUNT(*) AS n FROM service_logs WHERE {where}", params) or {}).get("n") or 0)
+    if count:
+        execute(f"DELETE FROM service_logs WHERE {where}", params)
+    return count
 
 
 _installed: DbLogHandler | None = None
@@ -105,6 +146,8 @@ def install(process: str) -> None:
     """Attach the handler to the root logger once per process."""
     global _installed
     if _installed is not None:
+        _installed.process = process or _installed.process
+        _installed.ensure_running()
         return
     if not os.getenv("DATABASE_URL"):
         return

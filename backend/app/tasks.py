@@ -50,3 +50,13 @@ def run_job(self, job_id: str) -> dict:
         run_job.apply_async((job_id,), countdown=15)
 
     return outcome
+
+
+@celery_app.task(name="app.tasks.prune_service_logs")
+def prune_service_logs() -> dict:
+    """Drop log lines past their retention, on the hour."""
+    from .services import log_store
+
+    removed = log_store.prune()
+    logger.info("Pruned %d service log line(s).", removed)
+    return {"removed": removed}
