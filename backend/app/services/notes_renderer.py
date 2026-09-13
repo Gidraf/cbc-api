@@ -69,6 +69,17 @@ def _inline_math(value: Any) -> str:
     return _math(re.sub(r"\$\$([^$]+?)\$\$", r"$\1$", str(value or "")))
 
 
+_DOUBLED_COMMAND = re.compile(r"\\\\(?=[A-Za-z]{2,})")
+
+
+def _single_backslashes(text: str) -> str:
+    """`\\times` is `\times` written twice over. A model that escaped its
+    LaTeX for JSON and was then escaped again sends `(-6)\\times7`, and KaTeX
+    reads `\\` as a line break — so "(−6)", a new line, and the word
+    "times". No document here ever means a line break before a word."""
+    return _DOUBLED_COMMAND.sub(lambda m: "\\", text)
+
+
 def _math(value: Any) -> str:
     """Text with its `$…$` spans marked for typesetting, everything else escaped.
 
@@ -78,7 +89,7 @@ def _math(value: Any) -> str:
     string: escaping first would turn the maths into entities, and typesetting
     first would trust prose we did not write.
     """
-    text = str(value or "")
+    text = _single_backslashes(str(value or ""))
     out: list[str] = []
     last = 0
     for match in _MATH_SPAN.finditer(text):
@@ -1460,50 +1471,91 @@ def _spoken(said: str) -> str:
 
 
 def _authored_key(exercises: list[dict[str, Any]]) -> str:
-    """The answers the guide itself gives, each checked where it can be.
+    """The questions the piece sets and the answers it gives, each checked
+    where it can be.
 
-    A word problem's answer cannot be verified by the engine and is still an
-    answer; it is marked as the guide's rather than the engine's, so a person
-    reading the key knows which ones nobody has checked.
+    The questions are printed here: a key of eight answers under a page
+    that never showed the eight questions was a key to nothing. A word
+    problem's answer cannot be verified by the engine and is still an
+    answer; it is marked as the guide's rather than the engine's, so a
+    person reading the key knows which ones nobody has checked.
     """
     from . import worked_solutions
 
-    out = ["<details class='answers'><summary>Worked answers</summary>"]
+    out = ["<ol class='practice exercise-set'>"]
+    for exercise in exercises:
+        question = str(exercise.get("question") or "").strip()
+        out.append(f"<li>{_math(question)}</li>" if question else "<li><i>(no question recorded)</i></li>")
+    out.append("</ol>")
+
+    out.append("<details class='answers'><summary>Worked answers</summary>")
     for number, exercise in enumerate(exercises, start=1):
         question = str(exercise.get("question") or "")
         answer = str(exercise.get("answer") or "")
+        working = str(exercise.get("working") or "").strip()
         verdict = worked_solutions.check(question, answer)
-        # Where the engine can work it, the ENGINE'S value is the answer.
-        #
-        # Printing the guide's wrong answer under a note saying the engine
-        # disagrees leaves the reader to decide which to believe, and this key
-        # is read by machine to build question papers — so the wrong one would
-        # become the marking key of a paper somebody sits. The rejected answer
-        # is still shown, because a silent correction is how a systematic fault
-        # goes unnoticed for a term.
+        # Only an answer that IS a value can be replaced by the engine's
+        # value. "The operation sign is +; the signs attached are − and +"
+        # answers a question about signs; the engine solving the expression
+        # in that question and printing −3 in place of the sentence was a
+        # correction of nothing. A sentence with the engine's value in it
+        # agrees; a sentence without it is left as the guide's.
+        is_value = worked_solutions._is_a_value(worked_solutions._comparable(answer))
         rejected = ""
+        engine_steps: list[Any] = []
         if verdict["checked"] and verdict["agrees"]:
             mark = "<span class='ok'>checked</span>"
             shown = answer
-        elif verdict["checked"]:
+        elif verdict["checked"] and is_value:
             mark = "<span class='ok'>corrected</span>"
             shown = verdict["engine_answer"]
             rejected = (f"<p class='why'>The guide gave {_math(answer)}. "
                         f"The maths engine works this expression to "
                         f"{_math(shown)}, and that is what is printed.</p>")
+            try:
+                engine_steps = worked_solutions.solve(question).lines
+            except Exception:  # noqa: BLE001
+                engine_steps = []
         else:
             mark = "<span class='warn'>not checked by the engine</span>"
             shown = answer
+        # An answer that does not match its own working is worse than either
+        # alone: the learner sees two values and no way to choose.
+        mismatch = _working_disagrees(working, shown) if working and not rejected else ""
+        if mismatch:
+            mark = "<span class='warn'>answer disagrees with its working</span>"
         out.append(f"<div class='solution'><div class='sn'>{number}{mark}</div>"
                    f"<div class='work'>")
-        working = str(exercise.get("working") or "").strip()
         if working and not rejected:
             out.append(f"<p class='why'>{_inline_math(working)}</p>")
+        if mismatch:
+            out.append(f"<p class='why'>{_esc(mismatch)}</p>")
         out.append(rejected)
+        if engine_steps:
+            out.append("<ol class='steps'>" + "".join(
+                f"<li>{_math(step.latex)}"
+                + (f"<span class='why'>{_math(step.because)}</span>" if step.because else "")
+                + "</li>" for step in engine_steps[:8]) + "</ol>")
         out.append(f"<p class='ans'><span>Answer</span>{_math(shown)}</p>"
                    f"</div></div>")
     out.append("</details>")
     return "".join(out)
+
+
+def _working_disagrees(working: str, answer: str) -> str:
+    """Where the working's last value and the answer differ, say so."""
+    from .worked_solutions import _as_number, _comparable, last_value
+
+    final = last_value(working)
+    if final is None:
+        return ""
+    theirs = _as_number(_comparable(answer))
+    if theirs is None:
+        return ""
+    if abs(final - theirs) < 1e-9:
+        return ""
+    return (f"The working ends at {final:g} and the answer says {theirs:g}. "
+            f"One of them is wrong; check the working before this is used.")
 
 
 def _practice(said: str, piece: dict[str, Any]) -> str:

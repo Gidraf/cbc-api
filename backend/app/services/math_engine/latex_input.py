@@ -60,6 +60,8 @@ def to_plain(text: str) -> str:
         return ""
 
     out = str(text)
+    # "1,200" is twelve hundred, not two numbers.
+    out = re.sub(r"(?<=\d),(?=\d{3}(?!\d))", "", out)
 
     # Math delimiters first: the content inside them is the mathematics, and
     # the markers themselves are noise once it is extracted.

@@ -267,7 +267,8 @@ class MaterialReport:
         return (not self.thin and not self.echoed and not self.infantilised
                 and not self.unscripted and not self.announced
                 and not self.staged and not self.unexercised
-                and not self.echoed_schema
+                and not self.echoed_schema and not self.wrong_answers
+                and not self.unanswered and not self.repeated and not self.miscast
                 and self.written == self.total)
 
     @property
@@ -280,7 +281,14 @@ class MaterialReport:
                 - len(self.infantilised) - len(self.unscripted)
                 - len(self.announced) - len(self.staged)
                 - len(self.echoed_schema))
-        return round(max(0.0, good) / self.total * 100, 1)
+        base = max(0.0, good) / self.total * 100
+        # A wrong answer, an unanswered question, a lesson taught twice and a
+        # miscast example each cost the page they are on. They were counted
+        # and reported and did not move the score, so a guide with six wrong
+        # keys filed at 95.
+        faults = (len(self.wrong_answers) + len(self.unanswered)
+                  + len(self.repeated) + len(self.miscast))
+        return round(max(0.0, base - faults * (100.0 / self.total) * 0.5), 1)
 
     def to_dict(self) -> dict[str, Any]:
         return {"total": self.total, "written": self.written,
@@ -291,6 +299,8 @@ class MaterialReport:
                 "staged": self.staged,
                 "unexercised": self.unexercised,
                 "echoed_schema": self.echoed_schema,
+                "wrong_answers": self.wrong_answers, "unanswered": self.unanswered,
+                "repeated": self.repeated, "miscast": self.miscast,
                 "clean": self.clean, "score": self.score}
 
 
@@ -710,7 +720,7 @@ def check(material: dict[str, Any], plan: Plan, grade: str = "",
     for piece in pieces:
         if isinstance(piece, dict):
             _check_exercises(piece, report)
-    report.repeated = check_repetition(material)
+    report.repeated = check_repetition(material) + retaught_rules(material)
     try:
         report.unsourced = check_provenance(material, grade, subject,
                                             sub_strand, strand)
@@ -1003,6 +1013,47 @@ LEDGER_PIECES = 24
 LEDGER_ITEMS_EACH = 6
 
 
+# The rules a maths guide explains once and then refers to. Each pattern is
+# what an EXPLANATION of the rule looks like — a bare use of the rule inside
+# a worked step does not match. The Integers guide explained the order of
+# operations in nine of twenty-one pieces and the sign rule in seven.
+_RULES: tuple[tuple[str, str], ...] = (
+    ("the order of operations (BODMAS)",
+     r"(brackets?\b.{0,80}\b(first|before)\b.{0,120}\b(multiplication|division)\b.{0,120}\b(addition|subtraction)"
+     r"|\bBODMAS\b.{0,40}\b(brackets|order))"),
+    ("the sign rule for multiplication and division",
+     r"(same|like|equal) signs?\b.{0,60}\bpositive\b.{0,120}\b(different|unlike)\b.{0,40}\bsigns?\b.{0,60}\bnegative"),
+    ("subtracting a negative is adding its opposite",
+     r"subtract(ing|ion of)? a negative\b.{0,60}\b(add(ing)?|same as|equivalent)"),
+    ("the operation sign and the sign attached to a number",
+     r"operation sign\b.{0,160}\b(attached|belongs)"),
+    ("reading a signed number on a number line",
+     r"positive (integers|numbers)\b.{0,40}\bright\b.{0,80}\bnegative (integers|numbers)\b.{0,40}\bleft"),
+)
+_RULES_RE = [(name, re.compile(pattern, re.I | re.S)) for name, pattern in _RULES]
+
+
+def rules_explained(piece: dict[str, Any]) -> list[str]:
+    """Which of the standing rules this piece explains (not merely uses)."""
+    said = str((piece or {}).get("say") or "")
+    return [name for name, pattern in _RULES_RE if pattern.search(said)]
+
+
+def retaught_rules(material: dict[str, Any]) -> list[dict[str, Any]]:
+    """A rule explained in full more than twice across the guide.
+
+    Once to teach it and once to revise it is a guide; a third and fourth
+    full explanation is a guide that forgot it had one."""
+    pieces = [p for p in ((material or {}).get("material") or []) if isinstance(p, dict)]
+    where: dict[str, list[str]] = {}
+    for piece in pieces:
+        for rule in rules_explained(piece):
+            where.setdefault(rule, []).append(
+                f"lesson {piece.get('module_number')}: {piece.get('title') or piece.get('topic') or ''}")
+    return [{"kind": "rule", "rule": rule, "explained_in": places, "times": len(places)}
+            for rule, places in where.items() if len(places) > 2]
+
+
 def already_taught(written: list[dict[str, Any]]) -> str:
     """What earlier pieces in this run have already used.
 
@@ -1040,12 +1091,21 @@ def already_taught(written: list[dict[str, Any]]) -> str:
             head += ": " + "; ".join(used[:LEDGER_ITEMS_EACH])
         lines.append("  " + head)
 
-    if not lines:
+    explained: dict[str, str] = {}
+    for piece in (written or []):
+        if not isinstance(piece, dict):
+            continue
+        for rule in rules_explained(piece):
+            explained.setdefault(rule, f"Lesson {piece.get('module_number')}")
+    rules = "\n".join(f"  - {rule} — explained in {where}" for rule, where in explained.items())
+
+    if not lines and not rules:
         return ""
 
     from .prompt_store import render
 
-    return render("already-taught", _LEDGER_BLOCK, written="\n".join(lines))
+    return render("already-taught", _LEDGER_BLOCK, written="\n".join(lines) or "  (nothing yet)",
+                  rules=rules or "  (none yet)")
 
 
 _LEDGER_BLOCK = """=== ALREADY WRITTEN IN THIS SUB-STRAND ===
@@ -1054,8 +1114,162 @@ These pieces have been written already, with the tasks each one used:
 
 DO NOT REPEAT ANY OF THEM. Not the expressions, not the exercises, and not the teaching with the numbers changed — a lesson that works the same idea on different figures is the same lesson, and it takes the place of the one the design funded.
 
+RULES ALREADY EXPLAINED IN FULL — refer to them ("as in Lesson 1"), use them, but do not explain them again:
+{{ rules }}
+A guide that explains the order of operations in nine of its twenty-one pieces is a guide that forgot it had explained it. The second explanation is revision; the third is padding.
+
 You are writing ONE piece of a guide somebody reads end to end. Each piece is generated on its own and cannot see the others, so this list is the only thing standing between a six-lesson sub-strand and one lesson written six times."""
 
 
+# ── one piece, checked and mended before the next is written ─────────────────
+#
+# The material station wrote twenty-one pieces, checked the set at the end,
+# and filed it with its findings. A piece that came back empty printed "No
+# words were written for this part"; a key whose working ended at 40 and
+# whose answer said 46 printed both; a sentence answering a question about
+# signs was "corrected" to −3 by an engine that solved the expression
+# instead. Nothing sent any of it back. These are the checks a piece is
+# held to as soon as it is written, and what a second attempt is told.
+
+_DOUBLED_COMMAND = re.compile(r"\\\\(?=[A-Za-z]{2,})")
+_BARE_COMMAND = re.compile(r"(?<=[\d)\]])\s*(times|div|approx|cdot)\s*(?=[-−\d(\[])")
+_DEGREE_CARET = re.compile(r"(?<=\d)\^\s*C\b")
+
+
+def _tidy_text(text: str) -> str:
+    """The mechanical mendings: a LaTeX command escaped twice, a command that
+    lost its backslash, `20^C` for twenty degrees."""
+    out = _DOUBLED_COMMAND.sub("\\\\", str(text or ""))
+    out = _BARE_COMMAND.sub(lambda m: " \\" + m.group(1) + " ", out)
+    out = _DEGREE_CARET.sub(r"^\\circ C", out)
+    return out
+
+
+def tidy_piece(piece: dict[str, Any]) -> list[str]:
+    """Mend in place what needs no model. Returns what was mended."""
+    mended: list[str] = []
+    if not isinstance(piece, dict):
+        return mended
+    for key in ("say", "title"):
+        if isinstance(piece.get(key), str):
+            fixed = _tidy_text(piece[key])
+            if fixed != piece[key]:
+                piece[key] = fixed
+                mended.append(f"{key}: notation")
+    # The title repeated as the first line of the prose.
+    title = str(piece.get("title") or piece.get("topic") or "").strip()
+    say = str(piece.get("say") or "")
+    if title and say.lstrip().lower().startswith(title.lower()):
+        rest = say.lstrip()[len(title):].lstrip(" :\n")
+        if rest:
+            piece["say"] = rest
+            mended.append("title repeated as the first line")
+    for exercise in piece.get("exercises") or []:
+        if isinstance(exercise, dict):
+            for key in ("question", "answer", "working"):
+                if isinstance(exercise.get(key), str):
+                    fixed = _tidy_text(exercise[key])
+                    if fixed != exercise[key]:
+                        exercise[key] = fixed
+                        mended.append(f"exercise {key}: notation")
+    for example in piece.get("worked_examples") or []:
+        if isinstance(example, dict):
+            for key in ("statement", "answer"):
+                if isinstance(example.get(key), str):
+                    example[key] = _tidy_text(example[key])
+            for step in example.get("steps") or []:
+                if isinstance(step, dict) and isinstance(step.get("working"), str):
+                    step["working"] = _tidy_text(step["working"])
+    return mended
+
+
+def inspect_piece(piece: dict[str, Any]) -> list[str]:
+    """What is wrong with one piece, in sentences a rewrite can act on."""
+    from . import worked_solutions
+
+    findings: list[str] = []
+    if not isinstance(piece, dict):
+        return ["the piece is not an object"]
+    say = str(piece.get("say") or "").strip()
+    if not say:
+        return ["no words were written: `say` is empty"]
+    if len(say) < MIN_MATERIAL_CHARS:
+        findings.append(f"`say` is {len(say)} characters — too thin to teach from")
+
+    exercises = [e for e in (piece.get("exercises") or []) if isinstance(e, dict)]
+    for number, exercise in enumerate(exercises, start=1):
+        question = str(exercise.get("question") or "").strip()
+        answer = str(exercise.get("answer") or "").strip()
+        working = str(exercise.get("working") or "").strip()
+        if answer and not question:
+            findings.append(f"exercise {number} has an answer and no question")
+            continue
+        if question and not answer:
+            findings.append(f"exercise {number} (\"{question[:80]}\") has no answer")
+            continue
+        if working:
+            chain = worked_solutions.check_chain(working)
+            if chain["checked"] and chain["agrees"] is False:
+                findings.append(
+                    f"exercise {number}: the working states \"{chain['link'][:120]}\", and the "
+                    f"link ending \"= {chain['claimed']}\" is false — it comes to {chain['engine_answer']}")
+                continue
+            final = worked_solutions.last_value(working)
+            theirs = worked_solutions._as_number(worked_solutions._comparable(answer))
+            if final is not None and theirs is not None and abs(final - theirs) > 1e-9:
+                findings.append(
+                    f"exercise {number}: the working ends at {final:g} and the answer says "
+                    f"{theirs:g}; make the answer what the working reaches, and check the working")
+                continue
+        if worked_solutions._is_a_value(worked_solutions._comparable(answer)):
+            verdict = worked_solutions.check(question, answer)
+            if verdict["checked"] and verdict["agrees"] is False:
+                findings.append(
+                    f"exercise {number} (\"{question[:80]}\") answers {answer[:40]}; the maths "
+                    f"engine makes it {verdict['engine_answer']}")
+
+    for number, example in enumerate(piece.get("worked_examples") or [], start=1):
+        if not isinstance(example, dict):
+            continue
+        verdict = worked_solutions.check_working(
+            str(example.get("statement") or ""), str(example.get("answer") or ""),
+            example.get("steps"))
+        if verdict.get("checked") and verdict.get("agrees") is False:
+            where = f" at step {verdict['step']}" if verdict.get("step") else ""
+            findings.append(
+                f"worked example {number}{where} is wrong: it says {verdict.get('claimed') or example.get('answer')}, "
+                f"the engine makes it {verdict['engine_answer']}")
+    return findings
+
+
+_REWRITE_BLOCK = """=== REWRITE THIS PIECE ===
+The piece below was checked as soon as it was written, and it failed. Rewrite it in the SAME JSON
+shape, keeping everything that was right — the same topic, the same form, the same situations —
+and fixing exactly what is named. Return only the JSON object for the piece.
+
+WHAT FAILED:
+{{ findings }}
+
+THE PIECE AS WRITTEN:
+{{ piece }}
+
+RULES: every exercise has a question, a working and an answer, and the answer is the value the
+working reaches. Every link of a chain `a = b = c` is true. A question that asks for words
+(which sign, which operation has priority) is answered in words, not with the value of the
+whole expression. LaTeX commands carry ONE backslash inside JSON strings: \\\\times, \\\\div."""
+
+
+def rewrite_prompt(piece: dict[str, Any], findings: list[str]) -> str:
+    import json as _json
+
+    from .prompt_store import render
+
+    shown = {k: v for k, v in piece.items()
+             if k not in ("module_number", "module_title", "index", "topic", "minutes", "instruction")}
+    return render("material-rewrite-directive", _REWRITE_BLOCK,
+                  findings="\n".join(f"- {f}" for f in findings),
+                  piece=_json.dumps(shown, ensure_ascii=False, indent=1)[:9000])
+
+
 def seed_prompts() -> dict[str, str]:
-    return {"already-taught": _LEDGER_BLOCK}
+    return {"already-taught": _LEDGER_BLOCK, "material-rewrite-directive": _REWRITE_BLOCK}

@@ -5764,6 +5764,12 @@ def factory_generate_material(
                          f"{directive.topic}: failed — {exc}", "fail")
             piece = {"say": "", "error": str(exc)[:200]}
 
+        # Checked as soon as it is written, mended where no model is needed,
+        # and rewritten ONCE where one is — with the findings. A piece that
+        # came back empty, or with a key whose working ends at 40 and whose
+        # answer says 46, used to be filed and printed as it was.
+        piece = _mend_piece(piece, messages, resolved, llm_client, directive, i, len(plan.directives))
+
         written.append({
             **piece,
             "module_number": directive.module_number,
@@ -5849,6 +5855,39 @@ def factory_generate_material(
             "quality_gate": lesson_material.gate_of(report),
             "model": resolved.model,
             "artifact": versioned}
+
+
+def _mend_piece(piece: dict[str, Any], messages: list[dict[str, Any]], resolved: Any,
+                llm_client: Any, directive: Any, number: int, total: int) -> dict[str, Any]:
+    """Tidy, inspect, and rewrite once if the findings warrant it."""
+    from ..services import lesson_material
+
+    piece = piece if isinstance(piece, dict) else {}
+    lesson_material.tidy_piece(piece)
+    findings = lesson_material.inspect_piece(piece)
+    if not findings:
+        return piece
+    run_log.step(f"Checked {number}/{total}",
+                 f"{directive.topic}: {len(findings)} finding(s) — {findings[0][:110]}", "warn")
+    try:
+        again = llm_client.generate(
+            resolved, messages + [{"role": "user",
+                                   "content": lesson_material.rewrite_prompt(piece, findings)}],
+            temperature=0.3)
+        redone = again.content if isinstance(again.content, dict) else {}
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Rewrite of %s part %d failed: %s", directive.topic, directive.index, exc)
+        return piece
+    lesson_material.tidy_piece(redone)
+    left = lesson_material.inspect_piece(redone)
+    if redone.get("say") and len(left) < len(findings):
+        run_log.step(f"Rewrote {number}/{total}",
+                     f"{directive.topic}: {len(findings)} → {len(left)} finding(s)",
+                     "ok" if not left else "warn")
+        return redone
+    run_log.step(f"Rewrote {number}/{total}",
+                 f"{directive.topic}: the rewrite did not improve it; the first attempt stands", "warn")
+    return piece
 
 
 class DrawVisualRequest(BaseModel):

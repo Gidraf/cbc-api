@@ -51,9 +51,17 @@ _OTHER_BRACKETS = str.maketrans({"[": "(", "]": ")", "{": "(", "}": ")"})
 _LEFT_RIGHT = re.compile(r"\\(?:left|right|,|;|!)\s*")
 
 
+# "1,200" is twelve hundred. The tokeniser read the comma as the end of the
+# run and worked `200 + (-475) + 300 + (-150)` — and published −125 under
+# "arithmetic checked" for a balance that was 875. A comma between a digit
+# and exactly three digits is a thousands separator, never a list.
+_THOUSANDS = re.compile(r"(?<=\d),(?=\d{3}(?!\d))")
+
+
 def _normalise(text: str) -> str:
     """One spelling for each operator and bracket, before anything reads them."""
-    out = _LEFT_RIGHT.sub("", text).replace("\\{", "(").replace("\\}", ")")
+    out = _THOUSANDS.sub("", text)
+    out = _LEFT_RIGHT.sub("", out).replace("\\{", "(").replace("\\}", ")")
     out = _SUPERS.sub(lambda m: "^" + m.group(0).translate(_SUPERSCRIPT), out)
     return out.replace("**", "^").translate(_OTHER_BRACKETS)
 

@@ -360,3 +360,57 @@ def rebuild(example: dict[str, Any]) -> tuple[dict[str, Any], str]:
     rebuilt["replaced"] = {"answer": answer, "steps": example.get("steps") or []}
     return rebuilt, (f"the guide answered {answer}; the maths engine works it "
                      f"to {trace.answer}")
+
+
+# ── working written as one string ────────────────────────────────────────────
+#
+# The material's exercises write their working as prose with chains in it:
+# `$16 + 24 - 6 + 6 = 40 - 6 + 6 = 46$; the sign rule gives ...`. Each `=`
+# link is a claim, the last value is what the working says the answer is,
+# and both were unread: a key printed 46 under working that ends at 40.
+
+_CHAIN = re.compile(r"\$\$?([^$]+?)\$\$?|((?:[-−\d(][^;.\n]*?=)[^;.\n]+)")
+
+
+def chains_in(working: str) -> list[list[str]]:
+    """Every `a = b = c` chain in a passage, as lists of its links."""
+    out: list[list[str]] = []
+    for match in _CHAIN.finditer(str(working or "")):
+        body = (match.group(1) or match.group(2) or "").strip()
+        if "=" not in body:
+            continue
+        links = [part.strip() for part in body.split("=") if part.strip()]
+        if len(links) >= 2 and any(ch.isdigit() for ch in links[0]):
+            out.append(links)
+    return out
+
+
+def check_chain(working: str) -> dict[str, Any]:
+    """Every link of every chain in the working, against the engine.
+
+    Reports the first false link — `40 - 6 + 6 = 46` — with what it comes
+    to. A chain the engine cannot read leaves no verdict.
+    """
+    out: dict[str, Any] = {"checked": False, "agrees": None, "engine_answer": "",
+                           "claimed": "", "link": ""}
+    for links in chains_in(working)[:8]:
+        steps = [{"working": links[0]}] + [{"working": "= " + link} for link in links[1:]]
+        verdict = check_steps(steps)
+        if not verdict["checked"]:
+            continue
+        out["checked"] = True
+        if verdict["agrees"] is False:
+            out.update(agrees=False, engine_answer=verdict["engine_answer"],
+                       claimed=verdict["claimed"], link=" = ".join(links))
+            return out
+        out["agrees"] = True
+    return out
+
+
+def last_value(working: str) -> float | None:
+    """What the working says the answer is: the value the last chain ends at."""
+    chains = chains_in(working)
+    if not chains:
+        return None
+    tail = chains[-1][-1]
+    return _as_number(_comparable(tail))
