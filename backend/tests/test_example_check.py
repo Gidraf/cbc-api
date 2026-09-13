@@ -1413,3 +1413,31 @@ def test_a_lessons_own_prose_walkthrough_is_not_a_repeat_of_its_worked_example()
     repeats = [f for f in report.findings if f.kind == "repeated_example"]
     assert len(repeats) == 1, [f.says for f in repeats]
     assert "Example 3" in repeats[0].says, "the cross-lesson copy, not the lesson's own prose"
+
+
+def test_the_typical_item_is_the_typical_worked_example_not_the_teaching_prose() -> None:
+    """A sign-rule paragraph carries `3 × (-4) = -12` and `-24 ÷ 6` because
+    that is how the rule is taught. Counting those as items below the grade
+    failed a guide for teaching."""
+    from app.services import example_check
+
+    hard = [
+        (r"$[(-8) + 20] \div 3 - (-2) \times 4$", "12"),
+        (r"$18 - [(-4) \times 3] + 20 \div (-5)$", "26"),
+        (r"$[(-48 \div 6) + 5] \times (-2) + 3$", "9"),
+        (r"$[(-28 + 10) \div (-3)] \times 4 - 7$", "17"),
+    ]
+    modules = []
+    for n, (expr, ans) in enumerate(hard, start=1):
+        modules.append({
+            "module_number": n, "title": f"L{n}",
+            "exposition_segments": [{"topic": "Sign rules", "body":
+                r"State the rule with $3 \times (-4) = -12$, $(-3) \times (-4) = 12$, "
+                r"$-24 \div 6 = -4$ and $-3 + 5 = 2$, then $4 - (-3) = 7$."}],
+            "worked_examples": [{"statement": f"Work out {expr}.",
+                                 "steps": [{"working": f"{expr[:-1]} = {ans}$", "because": "…"}],
+                                 "answer": ans}]})
+    report = example_check.check_notes({"modules": modules}, grade="grade-9",
+                                       subject="Mathematics", sub_strand="Integers")
+    below = [f for f in report.findings if f.kind == "below_the_grade"]
+    assert not below, [f.says for f in below]

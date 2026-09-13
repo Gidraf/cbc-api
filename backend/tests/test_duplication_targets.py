@@ -724,3 +724,35 @@ def test_the_score_counts_findings_under_a_measured_ceiling() -> None:
     assert scored(94, ["f"] * 41) == 0.0
     assert scored(60, ["f"] * 2) == 60, "never above what the measures allow"
     assert scored(94, ["f"] * 22) < scored(94, ["f"] * 18), "fewer findings reads higher"
+
+
+def test_a_games_lesson_teaches_the_games_experience() -> None:
+    """"games" stemmed to "gam" and "game" to "game", so a lesson that said
+    "game" five times never matched the experience that said "games"."""
+    from app.services.notes_integrity import _stems
+
+    assert _stems("play games") == _stems("play game")
+    assert "game" in _stems("games")
+
+    design = [
+        "discuss with peers and work out basic operations on integers using number cards and charts",
+        "play games involving numbers and operations by picking integers and performing all basic operations",
+        "work out combined operations of integers in the correct order",
+        "carry out activities such as reading temperature changes in a thermometer",
+        "use IT tools and other resources such as print to carry out operations on integers",
+        "play creative games that involve integers",
+    ]
+    notes = {"modules": [{
+        "module_number": 2, "title": "Lesson 2: Integer operations through a situation game",
+        "exposition_segments": [
+            {"topic": "The four-operation integer game",
+             "body": "Groups of four use the roles card picker, calculator, checker and reporter. "
+                     "A player picks two integer cards and an operation card, records the expression, "
+                     "estimates its sign and size, and calculates. Require at least one addition, "
+                     "subtraction, multiplication and division round. The game gives repeated practice."}],
+        "resources_needed": ["Integer cards", "Operation cards", "Situation cards"],
+        "learning_experiences_used": [design[1]],
+    }]}
+
+    _s, findings, _t = notes_remediation._inspect(notes, design, {})
+    assert not any("nothing in the lesson does it" in f for f in findings), findings

@@ -199,8 +199,22 @@ def _too_easy(examples: list[Any], grade: str, subject: str,
     """
     from . import demand_profile
 
-    judgement = demand_profile.judge(examples, grade=grade, subject=subject or "",
+    # The typical item is the typical WORKED EXAMPLE. The prose of a lesson
+    # that introduces the sign rule carries `3 × (-4) = -12` and `-24 ÷ 6`
+    # because that is how the rule is taught, and counting those as "items
+    # below the grade" failed a guide for teaching. The infant-arithmetic
+    # test still reads everything; the typical-item test reads what a
+    # learner is given to imitate, where there are enough of them to judge.
+    worked = [e for e in (examples or []) if isinstance(e, dict) and not e.get("_prose")]
+    judged = worked if len(worked) >= 4 else examples
+    judgement = demand_profile.judge(judged, grade=grade, subject=subject or "",
                                      strand=strand, sub_strand=sub_strand)
+    if judged is not examples and not judgement.numeric.below:
+        # Still catch primary-school arithmetic anywhere on the page.
+        everything = demand_profile.judge(examples, grade=grade, subject=subject or "",
+                                          strand=strand, sub_strand=sub_strand)
+        if everything.numeric.far_below:
+            judgement = everything
 
     # Only the ARITHMETIC half applies here. The command-word half asks what a
     # task demands OF THE LEARNER, and a worked example demands nothing of them

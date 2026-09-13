@@ -170,6 +170,11 @@ def _stems(text: str) -> set[str]:
             continue
         for suffix in ("ing", "ies", "ed", "es", "s"):
             if len(word) > len(suffix) + 2 and word.endswith(suffix):
+                # "games" is "game" + s, not "gam" + es: take "es" only
+                # where the stem itself ends in the letters that need it
+                # (boxes, watches, classes), and a bare "s" otherwise.
+                if suffix == "es" and not word[:-2].endswith(("s", "x", "z", "ch", "sh")):
+                    continue
                 word = word[: -len(suffix)]
                 break
         out.add(word)
@@ -199,7 +204,7 @@ _TAUGHT = 0.6
 # lesson that cited "use IT tools ... to carry out operations on integers" and
 # made a poster shares 2 of 8 stems; the lesson that used number cards shares 7
 # of 10.
-_ABSENT = 0.35
+_ABSENT = 0.30
 
 # Fewer words than this and the lesson has no text to judge — a stub, or a
 # module whose prose the material station has not written yet.

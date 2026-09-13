@@ -69,6 +69,11 @@ def _stems(text: str) -> set[str]:
             continue
         for suffix in ("ing", "ies", "ed", "es", "s"):
             if len(word) > len(suffix) + 2 and word.endswith(suffix):
+                # "games" is "game" + s, not "gam" + es: take "es" only
+                # where the stem itself ends in the letters that need it
+                # (boxes, watches, classes), and a bare "s" otherwise.
+                if suffix == "es" and not word[:-2].endswith(("s", "x", "z", "ch", "sh")):
+                    continue
                 word = word[: -len(suffix)]
                 break
         out.add(word)
