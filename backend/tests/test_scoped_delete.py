@@ -173,13 +173,14 @@ def test_presets_and_lists_resolve_to_layers():
 
 
 def test_the_console_clears_by_layer():
-    """The modal offered two radios — everything, or the dataset alone — and
-    the subject row offered one delete. Both now say what they clear."""
-    app = (FRONTEND / "src" / "App.tsx").read_text(encoding="utf-8")
-    assert "layers: clearLayers" in app
-    assert "Generated only (keep dataset)" in app
-    assert 'deleteSubjectWithGenerations(d.grade, d.subject, "generated")' in app
-    assert "confirm=DELETE" in app
+    """The reset dialog cleared everything or nothing. It now says what it
+    clears — the notes alone, everything generated with the dataset kept — and
+    previews the counts for exactly that."""
+    panel = (FRONTEND / "src" / "views" / "ResetPanel.tsx").read_text(encoding="utf-8")
+    assert "Generated only — keep dataset" in panel
+    assert "Lesson notes only" in panel
+    assert "layers: chosen()" in panel
+    assert not (FRONTEND / "src" / "App.tsx").exists(), "the legacy console is gone"
 
 
 def test_it_is_a_dry_run_unless_confirmed():
@@ -376,3 +377,49 @@ def test_a_grade_matches_however_it_was_written() -> None:
     source = inspect.getsource(artifact_registry.search)
     assert "REPLACE(LOWER(a.grade), 'grade-', '')" in source
     assert "REPLACE(LOWER(:grade), 'grade-', '')" in source
+
+
+# ── the factory reset in layers ───────────────────────────────────────────────
+
+
+def test_a_layered_reset_goes_through_scoped_delete_and_the_resets_own_extras(monkeypatch):
+    from app.services import factory_reset, scoped_delete
+
+    asked: dict = {}
+
+    def fake_delete(grade, subject, strand="", sub_strand="", **kw):
+        asked.update(kw, grade=grade, subject=subject)
+        r = scoped_delete.DeleteReport(scope={}, dry_run=not kw.get("confirm"), layers=tuple(kw["layers"]))
+        r.tables.append({"table": "artifacts", "what": "generated notes versions", "rows": 3})
+        return r
+    monkeypatch.setattr(scoped_delete, "delete", fake_delete)
+    monkeypatch.setattr(factory_reset, "_count", lambda table, where, params: 2)
+
+    report = factory_reset.run("grade-9", "Mathematics", layers=["notes", "activities"])
+
+    assert asked["layers"] == ["notes", "activities"] and asked["whole_subject"] is True
+    assert report.dry_run and report.layers == ["notes", "activities"]
+    tables = {t["table"] for t in report.tables}
+    assert "artifacts" in tables and "math_simulations" in tables, "the reset's own extra"
+    assert "diagram_registry" not in tables and "pipeline_runs" not in tables
+
+
+def test_no_layers_means_everything_as_before(monkeypatch):
+    from app.services import factory_reset, scoped_delete
+
+    monkeypatch.setattr(scoped_delete, "delete", lambda *a, **k: pytest.fail("not layered"))
+    monkeypatch.setattr(factory_reset, "_count", lambda table, where, params: 0)
+
+    report = factory_reset.run("grade-9", "Mathematics")
+
+    assert report.layers == []
+    assert report.to_dict()["layers"] == ["all"]
+    assert len(report.tables) == len(factory_reset.DERIVED) - len(report.skipped)
+
+
+def test_an_unknown_layer_is_refused():
+    from app.errors import ApiError
+    from app.services import factory_reset
+
+    with pytest.raises(ApiError):
+        factory_reset.run("grade-9", "Mathematics", layers=["everything-please"])

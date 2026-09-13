@@ -707,6 +707,7 @@ export type ResetReport = {
   skipped: { table: string; why: string }[];
   failed: { table: string; error: string }[];
   protected: string[];
+  layers?: string[];
   confirmation_required: string;
   message: string;
 };
@@ -720,7 +721,7 @@ export function useFactoryReset() {
   const api = useApi();
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (v: { grade?: string; subject?: string; confirm?: string }) =>
+    mutationFn: (v: { grade?: string; subject?: string; confirm?: string; layers?: string[] }) =>
       api<ResetReport>("/api/v1/curriculum/factory/reset", {
         method: "POST",
         body: JSON.stringify(v),
@@ -3223,4 +3224,57 @@ export function useDemandProfiles(v: { grade: string; subject: string }) {
           `&subject=${encodeURIComponent(v.subject)}`,
       ),
   });
+}
+
+
+// ── Portal API keys: credentials for this API itself, made in the console ───
+
+export type PortalApiKey = {
+  key_id: string;
+  user_id: string;
+  role: string;
+  label: string;
+  is_active: boolean;
+  last_used_at: string | null;
+  created_at: string;
+};
+
+export function usePortalKeys() {
+  const api = useApi();
+  return useQuery({
+    queryKey: ["portal-keys"],
+    queryFn: () => api<{ api_keys: PortalApiKey[] }>("/api/v1/auth/api-keys"),
+    staleTime: 10_000,
+  });
+}
+
+export function useCreatePortalKey() {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { label: string; role: string }) =>
+      api<{ key_id: string; api_key: string; role: string; label: string }>("/api/v1/auth/api-keys", {
+        method: "POST",
+        body: JSON.stringify(v),
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["portal-keys"] }),
+  });
+}
+
+export function useRevokePortalKey() {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (keyId: string) =>
+      api<{ status: string }>(`/api/v1/auth/api-keys/${encodeURIComponent(keyId)}`, { method: "DELETE" }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["portal-keys"] }),
+  });
+}
+
+export function useLogHousekeeping() {
+  const api = useApi();
+  return {
+    prune: useMutation({ mutationFn: () => api<{ removed: number }>("/api/v1/admin/logs/prune", { method: "POST" }) }),
+    clear: useMutation({ mutationFn: () => api<{ removed: number }>("/api/v1/admin/logs", { method: "DELETE" }) }),
+  };
 }

@@ -40,6 +40,21 @@ export function ResetPanel({
   const reset = useFactoryReset();
   const [open, setOpen] = React.useState(false);
   const [typed, setTyped] = React.useState("");
+  // What goes. "dataset" is the sub-strands and designs; everything else was
+  // written from them. Clearing the notes and keeping the dataset is the
+  // usual case after a change to the pipeline.
+  const LAYERS: { key: string; label: string }[] = [
+    { key: "notes", label: "Lesson notes & material" },
+    { key: "diagrams", label: "Diagrams & media" },
+    { key: "activities", label: "Activities & simulations" },
+    { key: "questions", label: "Questions" },
+    { key: "jobs", label: "Queued jobs" },
+    { key: "dataset", label: "Dataset — sub-strands & designs" },
+    { key: "runs", label: "Run history & costs" },
+  ];
+  const [layers, setLayers] = React.useState<string[]>(LAYERS.map((l) => l.key));
+  const everything = layers.length === LAYERS.length;
+  const chosen = () => (everything ? undefined : layers);
 
   const report = reset.data;
   const phrase = report?.confirmation_required || "DELETE ALL GENERATED CONTENT";
@@ -56,7 +71,14 @@ export function ResetPanel({
     setOpen(true);
     setTyped("");
     reset.reset();
-    reset.mutate({ grade, subject });
+    reset.mutate({ grade, subject, layers: chosen() });
+  }
+
+  function choose(next: string[]) {
+    setLayers(next);
+    setTyped("");
+    reset.reset();
+    if (next.length) reset.mutate({ grade, subject, layers: next.length === LAYERS.length ? undefined : next });
   }
 
   return (
@@ -81,7 +103,7 @@ export function ResetPanel({
                   variant="danger"
                   disabled={!armed || reset.isPending || !report || report.total_rows === 0}
                   loading={reset.isPending}
-                  onClick={() => reset.mutate({ grade, subject, confirm: phrase })}
+                  onClick={() => reset.mutate({ grade, subject, confirm: phrase, layers: chosen() })}
                 >
                   Delete {report ? report.total_rows.toLocaleString() : ""} row(s)
                 </Button>
@@ -98,6 +120,29 @@ export function ResetPanel({
                 again by re-ingesting.
               </p>
             </div>
+
+            {!done && (
+              <div style={{ fontSize: "var(--text-sm)" }}>
+                <strong>What to clear</strong>
+                <Stack direction="row" gap="var(--s2)" style={{ flexWrap: "wrap", margin: "6px 0" }}>
+                  <Button size="sm" variant="ghost" onClick={() => choose(LAYERS.map((l) => l.key))}>Everything</Button>
+                  <Button size="sm" variant="ghost" onClick={() => choose(LAYERS.filter((l) => l.key !== "dataset" && l.key !== "runs").map((l) => l.key))}>Generated only — keep dataset</Button>
+                  <Button size="sm" variant="ghost" onClick={() => choose(["notes"])}>Lesson notes only</Button>
+                </Stack>
+                <Stack direction="row" gap="var(--s3)" style={{ flexWrap: "wrap" }}>
+                  {LAYERS.map((l) => (
+                    <label key={l.key} style={{ display: "inline-flex", gap: "6px", alignItems: "center", cursor: "pointer" }}>
+                      <input
+                        type="checkbox"
+                        checked={layers.includes(l.key)}
+                        onChange={(e) => choose(e.target.checked ? [...layers, l.key] : layers.filter((k) => k !== l.key))}
+                      />
+                      {l.label}
+                    </label>
+                  ))}
+                </Stack>
+              </div>
+            )}
 
             {reset.error && <ErrorNotice error={reset.error} />}
 

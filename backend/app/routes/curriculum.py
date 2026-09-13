@@ -3692,6 +3692,9 @@ class FactoryResetRequest(BaseModel):
     # request. The exact phrase has to be typed.
     confirm: str = ""
     include: list[str] = []
+    # Which layers to clear: notes, diagrams, activities, questions, jobs,
+    # dataset, runs — or the presets all / generated. Empty means everything.
+    layers: list[str] = []
 
 
 class GenerateSimulationsRequest(BaseModel):
@@ -8064,6 +8067,7 @@ def factory_reset(
     report = reset.run(
         grade=payload.grade, subject=payload.subject,
         confirm=payload.confirm, include=payload.include or None,
+        layers=payload.layers or None,
     )
 
     if not report.dry_run:

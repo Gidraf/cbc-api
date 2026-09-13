@@ -30,10 +30,6 @@ import { SignIn } from "./views/SignIn";
 import "./ui/tokens.css";
 import "katex/dist/katex.min.css";
 
-// The legacy console is ~9,600 lines and its own stylesheet. Loading it lazily
-// keeps it out of the initial bundle for the screens that replaced it.
-const Legacy = React.lazy(() => import("./views/Legacy").then((m) => ({ default: m.Legacy })));
-
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
@@ -108,16 +104,6 @@ function Router() {
         <Route path="skills" element={<Screen name="Teaching skills"><Profiles /></Screen>} />
         <Route path="models" element={<Screen name="Model per station"><StageModels /></Screen>} />
         <Route path="keys" element={<Screen name="API keys"><ProviderKeys /></Screen>} />
-        <Route
-          path="legacy"
-          element={
-            <Screen name="Advanced console">
-              <React.Suspense fallback={<LoadingBlock rows={6} label="Loading the advanced console" />}>
-                <Legacy />
-              </React.Suspense>
-            </Screen>
-          }
-        />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>

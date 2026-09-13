@@ -186,6 +186,7 @@ class ResetReport:
     tables: list[dict[str, Any]] = field(default_factory=list)
     skipped: list[dict[str, str]] = field(default_factory=list)
     failed: list[dict[str, str]] = field(default_factory=list)
+    layers: list[str] = field(default_factory=list)
 
     @property
     def total(self) -> int:
@@ -199,6 +200,7 @@ class ResetReport:
             "tables": self.tables,
             "skipped": self.skipped,
             "failed": self.failed,
+            "layers": list(self.layers) if self.layers else ["all"],
             "protected": list(PROTECTED),
             "confirmation_required": CONFIRMATION,
             "message": self._message(),
@@ -232,19 +234,57 @@ def _count(table: str, where: str, params: dict[str, Any]) -> int:
     return int((row or {}).get("n") or 0)
 
 
+# Which LAYER each table this reset knows and scoped_delete does not belongs
+# to. The shared tables carry their layer in scoped_delete.DERIVED; these are
+# the reset's own — simulations, the diagram registry, run history — and the
+# whole-scope bookkeeping that is not curriculum content at all.
+EXTRA_LAYER: dict[str, str] = {
+    "math_simulations": "activities",
+    "diagram_registry": "diagrams",
+    "question_targets": "questions",
+    "curriculum_nodes": "dataset",
+    "grade_scope": "dataset",
+    "dataset_ingest_status": "dataset",
+    "pipeline_runs": "runs",
+    "generation_costs": "runs",
+    "data_repairs": "runs",
+    "idempotency_cache": "runs",
+}
+LAYERS: dict[str, str] = {
+    "notes": "lesson notes and material",
+    "diagrams": "diagrams, figures and media briefs",
+    "activities": "activities, experiments and simulations",
+    "questions": "questions, their events and targets",
+    "jobs": "queued and failed jobs",
+    "dataset": "the sub-strands, designs and ingest records",
+    "runs": "run history and cost records",
+}
+
+
 def run(
     grade: str = "",
     subject: str = "",
     confirm: str = "",
     include: list[str] | None = None,
+    layers: list[str] | None = None,
 ) -> ResetReport:
-    """Count, and delete only when the confirmation phrase is exact."""
+    """Count, and delete only when the confirmation phrase is exact.
+
+    `layers` narrows the reset to what the operator wants gone — the lesson
+    notes and nothing else, or everything generated with the dataset kept.
+    The tables scoped_delete knows go through it, kind by kind; the reset's
+    own tables are filtered by their layer here. No layers means everything,
+    which is what this always did.
+    """
     from ..infra.db import execute
 
     report = ResetReport(
         scope={k: v for k, v in (("grade", grade), ("subject", subject)) if v},
         dry_run=confirm != CONFIRMATION,
     )
+    chosen = _layers(layers)
+    if chosen is not None:
+        return _run_layered(report, grade, subject, chosen)
 
     if subject and not grade:
         # A subject name is not unique across grades — "Mathematical Activities"
@@ -292,4 +332,87 @@ def run(
         else:
             entry["deleted"] = True
 
+    return report
+
+
+def _layers(requested: list[str] | None) -> tuple[str, ...] | None:
+    """The layer names asked for, or None for "everything"."""
+    if not requested:
+        return None
+    from ..errors import raise_api_error
+
+    out: list[str] = []
+    for raw in requested:
+        name = str(raw or "").strip().lower()
+        if name == "all":
+            return None
+        if name == "generated":
+            for layer in ("notes", "diagrams", "activities", "questions", "jobs"):
+                if layer not in out:
+                    out.append(layer)
+            continue
+        if name not in LAYERS:
+            raise_api_error("VALIDATION_FAILED",
+                            f"'{name}' is not a layer. Layers: {', '.join(LAYERS)}; "
+                            f"presets: all, generated.")
+        if name not in out:
+            out.append(name)
+    return tuple(out) or None
+
+
+def _run_layered(report: ResetReport, grade: str, subject: str,
+                 layers: tuple[str, ...]) -> ResetReport:
+    from ..infra.db import execute
+
+    from . import scoped_delete
+
+    if subject and not grade:
+        report.failed.append({"table": "(scope)",
+                              "error": "A subject reset needs a grade too."})
+        return report
+    report.layers = list(layers)
+
+    shared = [layer for layer in layers if layer in scoped_delete.LAYERS]
+    if shared and grade:
+        scoped = scoped_delete.delete(
+            grade, subject, layers=shared,
+            confirm="" if report.dry_run else scoped_delete.CONFIRMATION,
+            whole_subject=bool(subject), whole_grade=not subject)
+        for entry in scoped.tables:
+            row = {"table": entry["table"], "what": entry["what"], "rows": entry["rows"]}
+            if not report.dry_run and entry["rows"]:
+                row["deleted"] = True
+            report.tables.append(row)
+        report.failed.extend(scoped.failed)
+    elif shared and not grade:
+        # A whole-deployment reset of the shared tables: every grade, in turn.
+        # scoped_delete works one grade at a time by design.
+        report.skipped.append({"table": "(shared)", "why": "a layered reset "
+                               "needs a grade; the whole-deployment reset takes "
+                               "everything or nothing"})
+
+    for target in DERIVED:
+        layer = EXTRA_LAYER.get(target.table)
+        if layer is None or layer not in layers:
+            continue
+        where, params = target.where(grade, subject)
+        if not where:
+            report.skipped.append({"table": target.table,
+                                   "why": "not scoped this narrowly; left untouched"})
+            continue
+        try:
+            rows = _count(target.table, where, params)
+        except Exception as exc:  # noqa: BLE001
+            report.failed.append({"table": target.table, "error": str(exc)[:200]})
+            continue
+        entry = {"table": target.table, "what": target.what, "rows": rows}
+        report.tables.append(entry)
+        if report.dry_run or rows == 0:
+            continue
+        try:
+            execute(f"DELETE FROM {target.table} WHERE {where}", params)
+            entry["deleted"] = True
+        except Exception as exc:  # noqa: BLE001
+            entry["deleted"] = False
+            report.failed.append({"table": target.table, "error": str(exc)[:200]})
     return report

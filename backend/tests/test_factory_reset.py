@@ -168,7 +168,7 @@ def test_the_reset_is_reachable_where_the_content_is() -> None:
 def test_the_console_shows_the_counts_before_deleting() -> None:
     panel = open("../frontend-web/src/views/ResetPanel.tsx").read()
 
-    assert "reset.mutate({ grade, subject })" in panel, "it must dry-run on open"
+    assert "reset.mutate({ grade, subject, layers: chosen() })" in panel, "it must dry-run on open"
     assert "What would be cleared" in panel
     assert "confirm: phrase" in panel
 

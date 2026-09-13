@@ -65,7 +65,6 @@ const NAV: { group: string; items: NavItem[] }[] = [
         right: "review",
         hint: "Every version, its layered review scores, and the approved label",
       },
-      { to: "/legacy", label: "Advanced console", icon: "⚙", hint: "Prompts, providers, pipelines, profiles" },
     ],
   },
 ];
