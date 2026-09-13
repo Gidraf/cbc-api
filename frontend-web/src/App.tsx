@@ -9758,6 +9758,29 @@ export function App() {
               </div>
               <div style={{ display: "flex", gap: "8px" }}>
                 <button
+                  className="ghost"
+                  title="Copy a read-only link to the last hour of backend and worker logs (needs LOG_SHARE_TOKEN in .env)"
+                  onClick={async () => {
+                    await run("Log share link", async () => {
+                      const res = await fetchJson<any>("/api/v1/admin/logs/share-link", { method: "GET" }, auth());
+                      if (!res?.enabled) {
+                        alert(res?.how_to_enable || "Log sharing is not enabled on this deployment.");
+                        return res;
+                      }
+                      try {
+                        await navigator.clipboard.writeText(res.url);
+                        alert("Log link copied. It opens the last hour of logs to anyone holding it — change LOG_SHARE_TOKEN to revoke.");
+                      } catch {
+                        window.prompt("Copy this log link:", res.url);
+                      }
+                      return res;
+                    });
+                  }}
+                  disabled={isRunning}
+                >
+                  📋 Copy log link
+                </button>
+                <button
                   onClick={async () => {
                     await run("Bootstrap OpenAI Bindings", async () => {
                       // No model named: the server binds each stage to its tier's

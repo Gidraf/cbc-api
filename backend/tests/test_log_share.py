@@ -62,3 +62,25 @@ def test_a_short_token_does_not_open_the_link(monkeypatch) -> None:
     monkeypatch.setenv("LOG_SHARE_TOKEN", "short")
     client = _client(monkeypatch, [])
     assert client.get("/api/v1/admin/logs/share?token=short").status_code == 404
+
+
+def test_an_admin_can_read_the_share_link_from_the_console(monkeypatch) -> None:
+    from app.main import app
+    from app.routes import admin_logs
+    from app.services.auth import AuthContext, require_roles
+
+    monkeypatch.setenv("LOG_SHARE_TOKEN", "a-long-random-token-for-tests")
+    app.dependency_overrides.clear()
+    # stand in for a signed-in admin
+    for route in app.routes:
+        if getattr(route, "path", "") == "/api/v1/admin/logs/share-link":
+            for dep in route.dependant.dependencies:
+                app.dependency_overrides[dep.call] = lambda: AuthContext(subject="u", role="admin", auth_type="jwt")
+    try:
+        client = TestClient(app)
+        out = client.get("/api/v1/admin/logs/share-link",
+                         headers={"host": "api.example.test", "x-forwarded-proto": "https"}).json()
+        assert out["enabled"] is True
+        assert out["url"].startswith("https://api.example.test/api/v1/admin/logs/share?token=a-long-random-token-for-tests")
+    finally:
+        app.dependency_overrides.clear()

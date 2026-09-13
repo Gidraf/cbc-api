@@ -12,7 +12,7 @@ from __future__ import annotations
 import hmac
 import os
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import PlainTextResponse
 
 from ..errors import raise_api_error
@@ -56,3 +56,30 @@ def share_logs(
     if not hmac.compare_digest(token.strip(), expected):
         raise_api_error("UNAUTHORIZED_ACCESS", "That link is not valid.")
     return _serve(lines, grep, level, since_minutes, process)
+
+
+@router.get("/share-link")
+def share_link(
+    request: Request,
+    _: AuthContext = Depends(require_roles("admin")),
+) -> dict:
+    """The share link itself, for an admin to copy from the console.
+
+    Built from the address this request arrived on, so it is right for
+    whatever host and scheme the deployment is actually reached at. Only an
+    admin sees it; it is the token, and the token opens the logs.
+    """
+    expected = os.getenv("LOG_SHARE_TOKEN", "").strip()
+    enabled = bool(expected) and len(expected) >= 16
+    forwarded_proto = request.headers.get("x-forwarded-proto", "")
+    forwarded_host = request.headers.get("x-forwarded-host", "")
+    scheme = forwarded_proto.split(",")[0].strip() or request.url.scheme
+    host = forwarded_host.split(",")[0].strip() or request.headers.get("host", "") or request.url.netloc
+    base = f"{scheme}://{host}"
+    return {
+        "enabled": enabled,
+        "url": f"{base}/api/v1/admin/logs/share?token={expected}&since_minutes=60" if enabled else "",
+        "how_to_enable": ("" if enabled else
+                          "Set LOG_SHARE_TOKEN in .env to a random string of at least 16 "
+                          "characters and restart the API."),
+    }
