@@ -3278,3 +3278,93 @@ export function useLogHousekeeping() {
     clear: useMutation({ mutationFn: () => api<{ removed: number }>("/api/v1/admin/logs", { method: "DELETE" }) }),
   };
 }
+
+// ── Papers composed from the bank ───────────────────────────────────────────
+
+export type PaperRequest = {
+  grade: string;
+  subject: string;
+  kind: "topical" | "strand" | "term";
+  strand?: string;
+  sub_strand?: string;
+  marks: number;
+  seed?: string;
+  drafts: boolean;
+  title?: string;
+};
+
+export type ComposedPaper = {
+  kind: string;
+  title: string;
+  total_marks: number;
+  asked_for: number;
+  time_allowed: string;
+  has_drafts: boolean;
+  covers: Record<string, number>;
+  seed: string;
+  shortfall: string;
+  question_count: number;
+  question_ids: string[];
+  sections: { letter: string; heading: string; marks: number; count: number; question_ids: string[] }[];
+  render_urls: Record<string, string>;
+};
+
+function paperQuery(v: PaperRequest): string {
+  const params = new URLSearchParams({
+    grade: v.grade,
+    subject: v.subject,
+    kind: v.kind,
+    strand: v.strand || "",
+    sub_strand: v.sub_strand || "",
+    marks: String(v.marks),
+    seed: v.seed || "",
+    drafts: String(v.drafts),
+    title: v.title || "",
+  });
+  return params.toString();
+}
+
+/** The composition — sections, ids, marks — without opening anything. */
+export function useComposedPaper(v: PaperRequest | null) {
+  const api = useApi();
+  return useQuery({
+    queryKey: ["paper", v],
+    queryFn: () => api<ComposedPaper>(`/api/v1/questions/paper/exam.json?${paperQuery(v!)}`),
+    enabled: Boolean(v && v.grade && v.subject && (v.kind !== "topical" || v.sub_strand) && (v.kind !== "strand" || v.strand)),
+  });
+}
+
+/** Open the composed paper, the scheme, or the booklet in a new tab. */
+export function useOpenPaper() {
+  const { token } = useAuth();
+  return useMutation({
+    mutationFn: async ({ request, answers, withScheme }: { request: PaperRequest; answers?: boolean; withScheme?: boolean }) => {
+      const params = paperQuery(request) + (answers ? "&answers=true" : "") + (withScheme ? "&with_scheme=true" : "");
+      const { blob } = await fetchBlob(`/api/v1/questions/paper/exam.html?${params}`, { bearerToken: token });
+      const url = URL.createObjectURL(new Blob([await blob.text()], { type: "text/html" }));
+      window.open(url, "_blank", "noopener");
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+      return url;
+    },
+  });
+}
+
+/** Download the composed paper as a PDF. */
+export function usePaperPdf() {
+  const { token } = useAuth();
+  return useMutation({
+    mutationFn: async ({ request, answers, withScheme }: { request: PaperRequest; answers?: boolean; withScheme?: boolean }) => {
+      const params = paperQuery(request) + (answers ? "&answers=true" : "") + (withScheme ? "&with_scheme=true" : "");
+      const { blob, filename } = await fetchBlob(`/api/v1/questions/paper/exam.pdf?${params}`, { bearerToken: token });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = filename || "paper.pdf";
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      return filename;
+    },
+  });
+}

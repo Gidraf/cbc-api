@@ -17,6 +17,7 @@ import {
 } from "../ui/components";
 import { apiUrl } from "../api";
 import { gradeOptionLabel, useExams, useGrades } from "../lib/queries";
+import { PaperComposer } from "./PaperComposer";
 
 /**
  * Composed papers. Rendering opens the print-ready HTML in a new tab, where the
@@ -40,7 +41,7 @@ export function ExamBuilder() {
       <PageHeader
         eyebrow="Assess"
         title="Exam builder"
-        description="Papers composed from approved questions. Each one records the exact question versions it contains, so a reprint is identical to the original."
+        description="Compose a topical, strand or term paper from the bank and print it as a booklet. Frozen papers below record the exact question versions they contain, so a reprint is identical to the original."
         actions={
           <Select aria-label="Grade" value={grade} onChange={(e) => setGrade(e.target.value)} style={{ width: "auto" }}>
             <option value="">All grades</option>
@@ -52,6 +53,8 @@ export function ExamBuilder() {
           </Select>
         }
       />
+
+      <PaperComposer />
 
       <QueryState query={exams} label="Loading exams" rows={4} />
 
