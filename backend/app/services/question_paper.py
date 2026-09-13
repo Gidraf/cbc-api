@@ -130,25 +130,80 @@ def _head(question: dict[str, Any], number: int) -> str:
             + "</div>")
 
 
-def _figure(question: dict[str, Any], assets: dict[str, str] | None) -> str:
-    """The diagram this question tests, printed WITH it.
+def _figure(question: dict[str, Any], assets: dict[str, Any] | None,
+            answers: bool = False) -> str:
+    """The diagram this question tests, printed WITH it — as the LEARNER
+    should see it on the paper, and as the MARKER should on the scheme.
 
-    A diagram question whose figure is on another page is a question nobody can
-    answer. The SVG is inlined, so the paper works with no network.
+    A diagram question whose figure is on another page is a question nobody
+    can answer. And a diagram question whose blanks are filled in on the
+    learner's copy is free marks: the binding says which parts were removed,
+    so the paper renders them as lettered gaps and the scheme renders them
+    labelled and highlighted. The SVG is inlined, so the paper works with no
+    network.
+
+    `assets` maps a diagram id or title to either a registry row (svg_markup
+    + scene_document) or a bare SVG string.
     """
     binding = question.get("diagram")
     if not isinstance(binding, dict):
         return ""
-    svg = str(binding.get("svg_markup") or "")
-    if not svg and assets:
+    source: Any = None
+    if assets:
         for key in (binding.get("diagram_id"), binding.get("diagram_title")):
             if key and str(key).lower() in assets:
-                svg = str(assets[str(key).lower()] or "")
+                source = assets[str(key).lower()]
                 break
-    if not svg:
+    if source is None and binding.get("svg_markup"):
+        source = {"svg_markup": binding.get("svg_markup"), "scene_document": {}}
+    if isinstance(source, str):
+        source = {"svg_markup": source, "scene_document": {}}
+    if not isinstance(source, dict) or not (source.get("svg_markup") or source.get("diagram_svg")):
         title = str(binding.get("diagram_title") or "the figure")
-        return (f"<div class='stimulus'>Refer to {_esc(title)}.</div>")
+        return f"<div class='stimulus'>Refer to {_esc(title)}.</div>"
+    try:
+        from .diagram_scene import render_for_question
+
+        svg = render_for_question(source, binding, with_answers=answers)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Could not render the figure for %s: %s",
+                       question.get("question_id") or "?", exc)
+        svg = str(source.get("svg_markup") or source.get("diagram_svg") or "")
     return f"<div class='figure-inline'>{svg}</div>"
+
+
+def figures_for(questions: list[dict[str, Any]]) -> dict[str, Any]:
+    """Every figure the items bind to, from the registry, keyed by id and
+    by title. Never raises: a paper with "refer to the figure" beats no
+    paper."""
+    ids: set[str] = set()
+    for question in questions or []:
+        binding = question.get("diagram") if isinstance(question, dict) else None
+        if isinstance(binding, dict) and binding.get("diagram_id"):
+            ids.add(str(binding["diagram_id"]))
+    if not ids:
+        return {}
+    try:
+        from ..infra.db import fetch_all
+        from . import diagram_svg
+
+        rows = fetch_all(
+            """
+            SELECT diagram_id, title, svg_markup, scene_document, storage_url, alt_text
+            FROM diagram_registry WHERE diagram_id = ANY(:ids)
+            """,
+            {"ids": sorted(ids)},
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Could not load %d figure(s) for the paper: %s", len(ids), exc)
+        return {}
+    out: dict[str, Any] = {}
+    for row in rows or []:
+        full = diagram_svg.with_svg(row)
+        for key in (row.get("diagram_id"), row.get("title")):
+            if key:
+                out[str(key).lower()] = full
+    return out
 
 
 def _body(question: dict[str, Any], *, answers: bool,
@@ -157,7 +212,7 @@ def _body(question: dict[str, Any], *, answers: bool,
     stimulus = str(question.get("stimulus_context") or "").strip()
     if stimulus:
         out.append(f"<div class='stimulus'>{_math(stimulus)}</div>")
-    out.append(_figure(question, assets))
+    out.append(_figure(question, assets, answers=answers))
     out.append(f"<div class='stem'>{_math(question.get('question_text'))}</div>")
 
     options = [o for o in (question.get("options") or []) if isinstance(o, dict)]
@@ -269,4 +324,142 @@ def render_html(questions: list[dict[str, Any]], *, grade: str = "",
         f"<div class='meta'>{meta}</div>"
         f"<div class='{'scheme' if answers else 'paper'}'>{''.join(body)}</div>"
         "</div></body></html>"
+    )
+
+
+# ── a composed paper, as a booklet ──────────────────────────────────────────
+
+EXAM_CSS = """
+.exam .front { border: 1.5px solid #111; padding: 14px 18px 10px; margin: 0 0 16px; }
+.exam .front .school { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+                       font-size: 8pt; letter-spacing: 0.12em; text-transform: uppercase;
+                       color: #555; margin: 0 0 6px; }
+.exam .front h1 { font-size: 19pt; margin: 0 0 4px; }
+.exam .front .meta { margin: 0 0 10px; }
+.exam .front .fill { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px 18px;
+                     margin: 8px 0 10px; font-size: 9pt; }
+.exam .front .fill span { border-bottom: 0.6pt solid #111; padding: 0 0 2px; }
+.exam .front ol { margin: 4px 0 0 1.4em; padding: 0; font-size: 9.5pt; }
+.exam .front ol li { margin: 0 0 2px; }
+.exam .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(46px, 1fr));
+              gap: 3px; margin: 8px 0 0; font-size: 7.5pt; }
+.exam .grid div { border: 0.5pt solid #111; height: 30px; padding: 1px 3px; }
+.exam .section { break-inside: avoid-page; margin: 14px 0 8px; padding: 4px 0 3px;
+                 border-top: 1.5px solid #111; border-bottom: 0.5pt solid #111; }
+.exam .section h2 { font-size: 12pt; margin: 0; display: flex; align-items: baseline; gap: 10px; }
+.exam .section h2 .smarks { margin-left: auto; font-size: 9pt; font-weight: 400; color: #333; }
+.exam .section p { margin: 3px 0 0; font-size: 9pt; color: #333; }
+.exam .draftmark { position: fixed; top: 38%; left: 8%; right: 8%; text-align: center;
+                   font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; font-size: 64pt;
+                   font-weight: 800; letter-spacing: 0.2em; color: rgba(160, 30, 20, 0.11);
+                   transform: rotate(-18deg); pointer-events: none; z-index: 0; }
+.exam .end { text-align: center; font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+             font-size: 8pt; letter-spacing: 0.14em; text-transform: uppercase; color: #555;
+             margin: 18px 0 0; }
+.exam .scheme-start { break-before: page; }
+.exam .key { width: auto; border-collapse: collapse; margin: 6px 0 12px; font-size: 9pt; }
+.exam .key td, .exam .key th { border: 0.5pt solid #999; padding: 2px 8px; text-align: center; }
+.exam .shortfall { border-left: 3px solid #a1281e; background: #fdf3f2; padding: 6px 9px;
+                   margin: 0 0 12px; font-size: 9.5pt; }
+"""
+
+
+def _front(paper: Any, *, answers: bool, grade_label: str) -> str:
+    fill = ("<div class='fill'><span>Name:</span><span>Class / Stream:</span>"
+            "<span>Adm. No.:</span></div>") if not answers else ""
+    rules = "".join(f"<li>{_esc(r)}</li>" for r in (paper.instructions or []))
+    grid = ""
+    if not answers and paper.sections:
+        cells = "".join(
+            f"<div>{s.letter if s.heading else 'Total'}<br>/{s.marks:g}</div>"
+            for s in paper.sections) + f"<div>Total<br>/{paper.total_marks:g}</div>"
+        grid = f"<div class='grid'>{cells}</div>"
+    return (
+        "<div class='front'>"
+        f"<div class='school'>{_esc(paper.subject)} · {_esc(grade_label)} · "
+        f"{'Marking scheme' if answers else 'Question paper'}</div>"
+        f"<h1>{_esc(paper.title)}</h1>"
+        "<div class='meta'>"
+        f"<span>Time: {_esc(paper.time_allowed)}</span>"
+        f"<span>Total: {paper.total_marks:g} marks</span>"
+        f"<span>{len(paper.items)} questions</span>"
+        + (f"<span>Paper {_esc(paper.seed)}</span>" if paper.seed else "")
+        + "</div>"
+        + fill
+        + (f"<b>Instructions</b><ol>{rules}</ol>" if rules and not answers else "")
+        + grid
+        + "</div>"
+    )
+
+
+def render_paper(paper: Any, *, answers: bool = False, with_scheme: bool = False,
+                 assets: dict[str, str] | None = None) -> str:
+    """A composed paper as a booklet: the front, the sections, and — when
+    asked — the marking scheme after a page break, with the Section A key
+    in one table at its head.
+
+    `answers` prints the scheme alone. `with_scheme` prints the paper and
+    then the scheme, for the teacher who wants both in one file.
+    """
+    from .grade_order import grade_label as _grade_label
+
+    grade_label = _grade_label(paper.grade)
+
+    def _items(scheme: bool) -> str:
+        out: list[str] = []
+        number = 0
+        for section in paper.sections:
+            if section.heading:
+                out.append(
+                    "<div class='section'>"
+                    f"<h2>{_esc(section.heading)}"
+                    f"<span class='smarks'>{section.marks:g} marks</span></h2>"
+                    + ("" if scheme else f"<p>{_esc(section.instructions)}</p>")
+                    + "</div>")
+            if scheme and section.letter == "A" and section.heading:
+                keys = []
+                for offset, question in enumerate(section.items, start=number + 1):
+                    key = next((str(o.get("id") or "") for o in (question.get("options") or [])
+                                if isinstance(o, dict) and o.get("is_correct")),
+                               str(question.get("correct_answer") or ""))
+                    keys.append((offset, key))
+                out.append("<table class='key'><tr>" + "".join(f"<th>{n}</th>" for n, _ in keys)
+                           + "</tr><tr>" + "".join(f"<td>{_esc(k)}</td>" for _, k in keys)
+                           + "</tr></table>")
+            for question in section.items:
+                number += 1
+                out.append("<article class='item'>")
+                out.append(_head(question, number))
+                out.append(_body(question, answers=scheme, assets=assets))
+                if scheme:
+                    out.append(_solution(question))
+                out.append("</article>")
+        if not out:
+            out.append("<p class='stem'>This paper has no questions in it.</p>")
+        return "".join(out)
+
+    shortfall = (f"<div class='shortfall'>Incomplete: {_esc(paper.shortfall)}.</div>"
+                 if paper.shortfall else "")
+    draft = "<div class='draftmark'>DRAFT</div>" if paper.has_drafts else ""
+    parts: list[str] = [draft]
+    if not answers:
+        parts.append(_front(paper, answers=False, grade_label=grade_label))
+        parts.append(shortfall)
+        parts.append(f"<div class='paper'>{_items(False)}</div>")
+        parts.append("<div class='end'>End of paper</div>")
+    if answers or with_scheme:
+        parts.append(f"<div class='{'scheme-start' if with_scheme else ''}'>")
+        parts.append(_front(paper, answers=True, grade_label=grade_label))
+        if answers:
+            parts.append(shortfall)
+        parts.append(f"<div class='scheme'>{_items(True)}</div>")
+        parts.append("</div>")
+
+    title = paper.title + (" — marking scheme" if answers else "")
+    return (
+        "<!doctype html><html lang='en'><head><meta charset='utf-8'>"
+        "<meta name='viewport' content='width=device-width, initial-scale=1'>"
+        f"<title>{_esc(title)}</title>"
+        f"<style>{PRINT_CSS}{PAPER_CSS}{EXAM_CSS}{_KATEX_CRITICAL}</style>{_KATEX}</head><body>"
+        f"<div class='sheet exam'>{''.join(parts)}</div></body></html>"
     )

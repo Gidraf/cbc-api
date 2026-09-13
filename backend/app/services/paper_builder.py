@@ -1,0 +1,308 @@
+"""A paper composed from the bank: topical, strand, or term.
+
+The bank is a pile of items. What a school buys is a PAPER — a topical
+test at the end of Integers, an end-of-strand assessment over Numbers, an
+end-of-term examination over everything taught since January — with
+sections, a marks total that adds up, a time allowance, instructions, and a
+marking scheme at the back. Composing that by hand from a list of four
+hundred items is the work nobody does, which is why the exam builder held
+zero exams.
+
+This composes one deterministically from what the bank holds:
+
+- **topical**: one sub-strand. **strand**: every sub-strand under a strand.
+  **term**: every strand with content, weighted by how much of it there is.
+- Three sections, by what the item asks for: A is selected response, one
+  mark each; B is short written work and calculations; C is structured,
+  scenario, diagram and extended work. A paper with nothing for a section
+  simply has no such section.
+- Spread first, then difficulty: items are dealt round the sub-strands
+  and outcomes so no topic is a whole paper, and within a section run
+  easy to hard. The same task set twice — in the bank under two ids — is
+  set once.
+- The same request composes the same paper; a different `seed` deals a
+  different one from the same bank, which is how Paper 1 and Paper 2 for
+  two streams come out of one pool.
+
+Approved items are preferred. Drafts are admitted when asked, and a paper
+carrying any is stamped as such on the page, because a paper printed from
+unsigned items is a proof, not a product.
+"""
+from __future__ import annotations
+
+import hashlib
+import random
+import re
+from dataclasses import dataclass, field
+from typing import Any
+
+from ..question_models import SELECTED_RESPONSE
+
+KINDS = ("topical", "strand", "term")
+
+# Where an item goes on the paper, by the type of work it asks for.
+_SECTION_C = {"structured_inquiry", "structured_scenario", "diagram_based",
+              "experiment_based", "extended_essay", "practical_performance_task"}
+
+SECTIONS = {
+    "A": ("Section A", "Answer ALL the questions in this section. "
+                       "For each question, choose the correct answer."),
+    "B": ("Section B", "Answer ALL the questions in this section. "
+                       "Show all your working in the spaces provided."),
+    "C": ("Section C", "Answer ALL the questions in this section. "
+                       "Answer each part fully; the marks for each part are shown."),
+}
+
+# The marks each section takes of the total, where the bank can supply it.
+_SHARE = {"A": 0.30, "B": 0.35, "C": 0.35}
+
+
+@dataclass
+class Section:
+    letter: str
+    heading: str
+    instructions: str
+    items: list[dict[str, Any]] = field(default_factory=list)
+
+    @property
+    def marks(self) -> float:
+        return sum(_marks_of(q) for q in self.items)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"letter": self.letter, "heading": self.heading,
+                "instructions": self.instructions, "marks": self.marks,
+                "question_ids": [str(q.get("question_id") or "") for q in self.items],
+                "count": len(self.items)}
+
+
+@dataclass
+class Paper:
+    kind: str
+    title: str
+    grade: str
+    subject: str
+    strand: str = ""
+    sub_strand: str = ""
+    sections: list[Section] = field(default_factory=list)
+    time_allowed: str = ""
+    instructions: list[str] = field(default_factory=list)
+    has_drafts: bool = False
+    covers: dict[str, int] = field(default_factory=dict)
+    seed: str = ""
+    asked_for: int = 0
+    shortfall: str = ""
+
+    @property
+    def items(self) -> list[dict[str, Any]]:
+        return [q for s in self.sections for q in s.items]
+
+    @property
+    def total_marks(self) -> float:
+        return sum(s.marks for s in self.sections)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "kind": self.kind, "title": self.title, "grade": self.grade,
+            "subject": self.subject, "strand": self.strand, "sub_strand": self.sub_strand,
+            "total_marks": self.total_marks, "asked_for": self.asked_for,
+            "time_allowed": self.time_allowed, "instructions": list(self.instructions),
+            "has_drafts": self.has_drafts, "covers": dict(self.covers), "seed": self.seed,
+            "shortfall": self.shortfall,
+            "sections": [s.to_dict() for s in self.sections],
+            "question_ids": [str(q.get("question_id") or "") for q in self.items],
+            "question_count": len(self.items),
+        }
+
+
+def _marks_of(question: dict[str, Any]) -> float:
+    pedagogy = question.get("pedagogy") or {}
+    try:
+        total = float(pedagogy.get("max_marks") or 0)
+    except (TypeError, ValueError):
+        total = 0.0
+    if total:
+        return total
+    return sum(float(p.get("marks") or 0) for p in (question.get("structured_parts") or [])
+               if isinstance(p, dict))
+
+
+def _difficulty(question: dict[str, Any]) -> float:
+    try:
+        return float((question.get("pedagogy") or {}).get("difficulty_index") or 0.5)
+    except (TypeError, ValueError):
+        return 0.5
+
+
+def section_of(question: dict[str, Any]) -> str:
+    q_type = str(question.get("question_type") or "").lower()
+    if q_type in SELECTED_RESPONSE:
+        return "A"
+    if q_type in _SECTION_C or len(question.get("structured_parts") or []) >= 2:
+        return "C"
+    if _marks_of(question) >= 5:
+        return "C"
+    return "B"
+
+
+def _stem(question: dict[str, Any]) -> str:
+    return " ".join(str(question.get(k) or "") for k in ("stimulus_context", "question_text")).strip()
+
+
+def _task_key(question: dict[str, Any]) -> str:
+    """One key per task, so the same sum under two ids is set once."""
+    from .question_check import _expression_key
+
+    text = _stem(question)
+    key = _expression_key(text)
+    if key:
+        return "expr:" + key
+    return "text:" + re.sub(r"[^a-z0-9]+", " ", text.lower()).strip()
+
+
+def _topic(question: dict[str, Any]) -> tuple[str, str]:
+    curriculum = question.get("curriculum") or {}
+    return (str(curriculum.get("sub_strand") or "").strip().lower(),
+            str(curriculum.get("slo_id") or curriculum.get("slo_text") or "").strip().lower())
+
+
+def time_for(marks: float, grade: str = "") -> str:
+    """A time allowance from the marks: about a minute and a half a mark,
+    rounded to a quarter hour, never under half an hour or over two and a
+    half."""
+    minutes = int(round(marks * 1.5 / 15.0)) * 15
+    minutes = max(30, min(150, minutes))
+    hours, rest = divmod(minutes, 60)
+    if hours and rest:
+        return f"{hours} hour{'s' if hours > 1 else ''} {rest} minutes"
+    if hours:
+        return f"{hours} hour{'s' if hours > 1 else ''}"
+    return f"{rest} minutes"
+
+
+def _deal(candidates: list[dict[str, Any]], budget: float, rng: random.Random,
+          seen_tasks: set[str], used_topics: dict[tuple[str, str], int]) -> list[dict[str, Any]]:
+    """Items up to the marks budget, dealt round the topics.
+
+    The candidates are first put in DEALING order — one from each topic in
+    turn, the least-used topic first — and then taken in that order while
+    they fit the budget. A sub-strand with forty items and one with four
+    both appear before either appears twice.
+    """
+    by_topic: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for question in candidates:
+        by_topic.setdefault(_topic(question), []).append(question)
+    for pile in by_topic.values():
+        rng.shuffle(pile)
+        # Approved first, then the rest — within the shuffle, so the deal
+        # is still different for a different seed. `pop()` takes the end.
+        pile.sort(key=lambda q: 1 if str(q.get("status") or "") == "approved" else 0)
+
+    taken: dict[tuple[str, str], int] = {}
+    ordered: list[tuple[tuple[str, str], dict[str, Any]]] = []
+    while by_topic:
+        topic = min(by_topic, key=lambda t: (used_topics.get(t, 0) + taken.get(t, 0), rng.random()))
+        pile = by_topic[topic]
+        ordered.append((topic, pile.pop()))
+        taken[topic] = taken.get(topic, 0) + 1
+        if not pile:
+            del by_topic[topic]
+
+    chosen: list[dict[str, Any]] = []
+    spent = 0.0
+    for topic, question in ordered:
+        key = _task_key(question)
+        if key in seen_tasks:
+            continue
+        marks = _marks_of(question)
+        if not marks or spent + marks > budget + 0.5:
+            continue
+        seen_tasks.add(key)
+        used_topics[topic] = used_topics.get(topic, 0) + 1
+        chosen.append(question)
+        spent += marks
+        if spent >= budget:
+            break
+    chosen.sort(key=_difficulty)
+    return chosen
+
+
+def compose(items: list[dict[str, Any]], *, kind: str, grade: str, subject: str,
+            strand: str = "", sub_strand: str = "", marks: int = 50,
+            seed: str = "", title: str = "", allow_drafts: bool = False) -> Paper:
+    """One paper from the bank's items for its scope."""
+    kind = kind if kind in KINDS else "topical"
+    pool = [q for q in (items or []) if isinstance(q, dict) and _stem(q)]
+    # Only the scope's own items, whatever the caller handed over.
+    if kind == "topical" and sub_strand:
+        pool = [q for q in pool
+                if str((q.get("curriculum") or {}).get("sub_strand") or "").strip().lower()
+                == sub_strand.strip().lower()]
+    elif kind == "strand" and strand:
+        pool = [q for q in pool
+                if str((q.get("curriculum") or {}).get("strand") or "").strip().lower()
+                == strand.strip().lower()]
+    if not allow_drafts:
+        pool = [q for q in pool if str(q.get("status") or "") == "approved"]
+    seed = seed or hashlib.sha1(f"{grade}|{subject}|{kind}|{strand}|{sub_strand}|{marks}".encode()).hexdigest()[:8]
+    rng = random.Random(seed)
+
+    scope = sub_strand if kind == "topical" else strand if kind == "strand" else subject
+    paper = Paper(kind=kind, grade=grade, subject=subject, strand=strand, sub_strand=sub_strand,
+                  seed=seed, asked_for=marks,
+                  title=title or {"topical": f"Topical Test: {scope}",
+                                  "strand": f"End of Strand Assessment: {scope}",
+                                  "term": f"End of Term Examination: {scope}"}[kind])
+
+    by_section: dict[str, list[dict[str, Any]]] = {"A": [], "B": [], "C": []}
+    for question in pool:
+        by_section[section_of(question)].append(question)
+
+    # A section the bank cannot fill gives its share to the others.
+    present = [s for s in ("A", "B", "C") if by_section[s]]
+    if not present:
+        paper.shortfall = "the bank holds no usable items for this scope"
+        return paper
+    share_total = sum(_SHARE[s] for s in present)
+    budgets = {s: marks * _SHARE[s] / share_total for s in present}
+
+    seen_tasks: set[str] = set()
+    used_topics: dict[tuple[str, str], int] = {}
+    for letter in present:
+        heading, instructions = SECTIONS[letter]
+        chosen = _deal(by_section[letter], budgets[letter], rng, seen_tasks, used_topics)
+        if chosen:
+            paper.sections.append(Section(letter, heading, instructions, chosen))
+
+    # Whatever the sections left unspent, spend on any section that still has
+    # items — a paper short of its marks is a paper the school pads by hand.
+    remaining = marks - paper.total_marks
+    if remaining >= 1:
+        for section in paper.sections:
+            left = [q for q in by_section[section.letter] if _task_key(q) not in seen_tasks]
+            more = _deal(left, remaining, rng, seen_tasks, used_topics)
+            if more:
+                section.items = sorted(section.items + more, key=_difficulty)
+                remaining = marks - paper.total_marks
+            if remaining < 1:
+                break
+
+    # Only one section: the letter is noise on a five-question quiz.
+    if len(paper.sections) == 1:
+        paper.sections[0].heading = ""
+
+    paper.has_drafts = any(str(q.get("status") or "") != "approved" for q in paper.items)
+    for question in paper.items:
+        name = (question.get("curriculum") or {}).get("sub_strand") or sub_strand or "—"
+        paper.covers[name] = paper.covers.get(name, 0) + 1
+    paper.time_allowed = time_for(paper.total_marks, grade)
+    paper.instructions = [
+        "Write your name, class and admission number in the spaces provided.",
+        f"This paper has {len(paper.items)} questions in "
+        f"{len(paper.sections)} section{'s' if len(paper.sections) != 1 else ''}. Answer ALL questions.",
+        "Show all your working clearly. Marks may be awarded for correct method.",
+        "Do not write in the margins or on the marking column.",
+    ]
+    if paper.total_marks < marks - 0.5:
+        paper.shortfall = (f"the bank supplied {paper.total_marks:g} of the {marks} marks asked for; "
+                           f"generate more items for this scope to fill the paper")
+    return paper

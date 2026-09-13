@@ -361,15 +361,16 @@ def questions_paper_html(
 
     `answers=false` is the paper and carries no answer anywhere on it.
     """
-    from ..services import question_paper
+    from ..services import question_paper, question_rows
 
-    items = question_dna_service.list_questions(
+    items = question_rows.flatten_all(question_dna_service.list_questions(
         grade=grade, subject=subject, strand=strand or None,
-        sub_strand=sub_strand or None, status=status or None, limit=limit)
+        sub_strand=sub_strand or None, status=status or None, limit=limit))
 
     return HTMLResponse(question_paper.render_html(
         items, grade=grade, subject=subject, strand=strand,
-        sub_strand=sub_strand, answers=answers))
+        sub_strand=sub_strand, answers=answers,
+        assets=question_paper.figures_for(items)))
 
 
 @router.get("/paper.pdf")
@@ -386,14 +387,15 @@ def questions_paper_pdf(
     """The same document as a file, for a classroom with no screen in it."""
     from fastapi import Response
 
-    from ..services import pdf, question_paper
+    from ..services import pdf, question_paper, question_rows
 
-    items = question_dna_service.list_questions(
+    items = question_rows.flatten_all(question_dna_service.list_questions(
         grade=grade, subject=subject, strand=strand or None,
-        sub_strand=sub_strand or None, status=status or None, limit=limit)
+        sub_strand=sub_strand or None, status=status or None, limit=limit))
     document = question_paper.render_html(
         items, grade=grade, subject=subject, strand=strand,
-        sub_strand=sub_strand, answers=answers)
+        sub_strand=sub_strand, answers=answers,
+        assets=question_paper.figures_for(items))
     try:
         body = pdf.from_html(document)
     except pdf.PdfUnavailable as exc:
@@ -405,6 +407,127 @@ def questions_paper_pdf(
     return Response(
         content=body, media_type="application/pdf",
         headers={"Content-Disposition": f'inline; filename="{stem or "paper"}.pdf"'},
+    )
+
+
+def _composed_paper(*, grade: str, subject: str, kind: str, strand: str, sub_strand: str,
+                    marks: int, seed: str, drafts: bool, title: str) -> Any:
+    """One paper from the bank, for the scope the kind names."""
+    from ..services import paper_builder, question_rows
+
+    if kind == "topical" and not sub_strand:
+        raise_api_error("SCHEMA_VALIDATION_FAILED", "A topical paper needs a sub_strand.")
+    if kind == "strand" and not strand:
+        raise_api_error("SCHEMA_VALIDATION_FAILED", "A strand paper needs a strand.")
+
+    rows = question_dna_service.list_questions(
+        grade=grade, subject=subject,
+        strand=(strand or None) if kind != "topical" else None,
+        sub_strand=(sub_strand or None) if kind == "topical" else None,
+        limit=2000)
+    items = question_rows.flatten_all(rows)
+    if kind == "topical" and strand:
+        items = [q for q in items
+                 if str((q.get("curriculum") or {}).get("strand") or "").lower() == strand.lower()]
+    return paper_builder.compose(
+        items, kind=kind, grade=grade, subject=subject, strand=strand,
+        sub_strand=sub_strand, marks=marks, seed=seed, title=title, allow_drafts=drafts)
+
+
+@router.get("/paper/exam.json")
+def composed_paper_json(
+    grade: str = Query(...),
+    subject: str = Query(...),
+    kind: str = Query("topical", description="topical, strand or term"),
+    strand: str = Query(""),
+    sub_strand: str = Query(""),
+    marks: int = Query(50, ge=5, le=200),
+    seed: str = Query("", description="Deal a different paper from the same bank"),
+    drafts: bool = Query(True, description="Admit unapproved items, stamped DRAFT"),
+    title: str = Query(""),
+    _: AuthContext = Depends(require_roles("admin", "operator", "reviewer", "developer")),
+) -> dict[str, Any]:
+    """The composition — sections, ids, marks — for the console to show and
+    the exam builder to freeze."""
+    paper = _composed_paper(grade=grade, subject=subject, kind=kind, strand=strand,
+                            sub_strand=sub_strand, marks=marks, seed=seed, drafts=drafts,
+                            title=title)
+    out = paper.to_dict()
+    query = (f"grade={grade}&subject={subject}&kind={kind}&strand={strand}"
+             f"&sub_strand={sub_strand}&marks={marks}&seed={paper.seed}&drafts={str(drafts).lower()}")
+    out["render_urls"] = {
+        "paper": f"/api/v1/questions/paper/exam.html?{query}",
+        "marking_scheme": f"/api/v1/questions/paper/exam.html?{query}&answers=true",
+        "booklet": f"/api/v1/questions/paper/exam.html?{query}&with_scheme=true",
+        "paper_pdf": f"/api/v1/questions/paper/exam.pdf?{query}",
+        "booklet_pdf": f"/api/v1/questions/paper/exam.pdf?{query}&with_scheme=true",
+    }
+    return out
+
+
+@router.get("/paper/exam.html")
+def composed_paper_html(
+    grade: str = Query(...),
+    subject: str = Query(...),
+    kind: str = Query("topical"),
+    strand: str = Query(""),
+    sub_strand: str = Query(""),
+    marks: int = Query(50, ge=5, le=200),
+    seed: str = Query(""),
+    drafts: bool = Query(True),
+    title: str = Query(""),
+    answers: bool = Query(False, description="The marking scheme alone"),
+    with_scheme: bool = Query(False, description="The paper, then the scheme, in one document"),
+    _: AuthContext = Depends(require_roles("admin", "operator", "reviewer", "developer")),
+):
+    """A topical test, a strand assessment or a term examination composed
+    from the bank, as the booklet a school prints: front page, sections,
+    figures beside their questions, and the marking scheme at the back."""
+    from ..services import question_paper
+
+    paper = _composed_paper(grade=grade, subject=subject, kind=kind, strand=strand,
+                            sub_strand=sub_strand, marks=marks, seed=seed, drafts=drafts,
+                            title=title)
+    return HTMLResponse(question_paper.render_paper(
+        paper, answers=answers, with_scheme=with_scheme,
+        assets=question_paper.figures_for(paper.items)))
+
+
+@router.get("/paper/exam.pdf")
+def composed_paper_pdf(
+    grade: str = Query(...),
+    subject: str = Query(...),
+    kind: str = Query("topical"),
+    strand: str = Query(""),
+    sub_strand: str = Query(""),
+    marks: int = Query(50, ge=5, le=200),
+    seed: str = Query(""),
+    drafts: bool = Query(True),
+    title: str = Query(""),
+    answers: bool = Query(False),
+    with_scheme: bool = Query(False),
+    _: AuthContext = Depends(require_roles("admin", "operator", "reviewer")),
+) -> Any:
+    from fastapi import Response
+
+    from ..services import pdf, question_paper
+
+    paper = _composed_paper(grade=grade, subject=subject, kind=kind, strand=strand,
+                            sub_strand=sub_strand, marks=marks, seed=seed, drafts=drafts,
+                            title=title)
+    document = question_paper.render_paper(
+        paper, answers=answers, with_scheme=with_scheme,
+        assets=question_paper.figures_for(paper.items))
+    try:
+        body = pdf.from_html(document)
+    except pdf.PdfUnavailable as exc:
+        raise_api_error("MODEL_ENDPOINT_UNAVAILABLE", str(exc))
+    stem = "-".join(part.lower().replace(" ", "-") for part in
+                    (grade, subject, kind, sub_strand or strand,
+                     "marking-scheme" if answers else "booklet" if with_scheme else "paper") if part)
+    return Response(
+        content=body, media_type="application/pdf",
+        headers={"Content-Disposition": f'inline; filename="{stem}.pdf"'},
     )
 
 

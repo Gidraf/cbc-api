@@ -367,6 +367,11 @@ class QuestionDnaService:
                     "summary": gate_result.get("summary_message"),
                     "risk_flags": (gate_result.get("reviewer") or {}).get("risk_flags", []),
                 }
+                # The batch's own checks — the engine's verdicts, what was
+                # rewritten, what is still outstanding — kept with the item
+                # so a reviewer opening it a week later can see them.
+                if isinstance(gate_result.get("self_check"), dict):
+                    review_audit["self_check"] = gate_result["self_check"]
 
             self.save_question(
                 question_id=question_id,

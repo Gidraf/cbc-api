@@ -147,12 +147,17 @@ def _reason(left: Fraction, op: str, right: Fraction, result: Fraction) -> str:
         return "Divide the two numbers."
     if op == "+":
         if right < 0:
+            if left < 0:
+                return "Both are negative, so they add to a larger negative."
             return "Adding a negative is the same as subtracting."
-        if left < 0 and result >= 0:
-            return (f"Start at {_show(left)} on the number line and move "
-                    f"{_show(abs(right))} to the right.")
         if left < 0:
-            return f"Both are negative, so they add to a larger negative."
+            # The right-hand number is positive here (a negative one was
+            # handled above), so "both are negative" was never true of this
+            # line — and it was printed under `-3 + 1 = -2` in a marking
+            # scheme.
+            return (f"Start at {_show(left)} on the number line and move "
+                    f"{_show(abs(right))} to the right"
+                    + (", which stays below zero." if result < 0 else "."))
         return "Add the two numbers."
     if right < 0:
         return "Subtracting a negative is the same as adding."
