@@ -24,24 +24,14 @@ class ResolvedModelConfig:
 
 logger = logging.getLogger("cbc-provider-router")
 
-OPENAI_VALID_MODELS = {
-    "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5", "gpt-5.4",
-    "gpt-5.4-mini", "gpt-5.4-nano", "gpt-5.2", "gpt-5.1", "gpt-5", "gpt-5-mini",
-    "gpt-5-nano", "gpt-4.1", "gpt-4.1-mini", "o3", "o4-mini",
-    "gpt-4o-mini",
-    "gpt-4o",
-    "gpt-4o-2024-08-06",
-    "gpt-4o-2024-05-13",
-    "gpt-4o-mini-2024-07-18",
-    "gpt-4-turbo",
-    "gpt-4",
-    "gpt-3.5-turbo",
-    "o1",
-    "o1-mini",
-    "o1-preview",
-    "o3-mini",
-    "chatgpt-4o-latest",
-}
+# The advanced models, and nothing older. One list, in model_policy, so the
+# router, the console's catalogue, the second-opinion reviewer and the
+# bootstrap cannot disagree about what is allowed to run.
+from .model_policy import ANTHROPIC as _ANTHROPIC_MODELS
+from .model_policy import GEMINI as _GEMINI_MODELS
+from .model_policy import OPENAI as _OPENAI_MODELS
+
+OPENAI_VALID_MODELS = set(_OPENAI_MODELS)
 
 
 # What each provider is known to serve, for the moment a binding turns out to
@@ -51,14 +41,9 @@ OPENAI_VALID_MODELS = {
 # "not found" can offer somewhere to start rather than a free-text box, which
 # is how `gemini-1.5-pro` came to be bound to a station that never served it.
 KNOWN_MODELS: dict[str, tuple[str, ...]] = {
-    Provider.OPENAI.value: tuple(sorted(OPENAI_VALID_MODELS)),
-    Provider.ANTHROPIC.value: (
-        "claude-3-5-sonnet-20241022", "claude-3-5-haiku-20241022",
-        "claude-3-opus-20240229",
-    ),
-    Provider.GEMINI.value: (
-        "gemini-2.0-flash", "gemini-2.5-pro", "gemini-2.5-flash",
-    ),
+    Provider.OPENAI.value: tuple(_OPENAI_MODELS),
+    Provider.ANTHROPIC.value: tuple(_ANTHROPIC_MODELS),
+    Provider.GEMINI.value: tuple(_GEMINI_MODELS),
     # Deliberately empty: a self-hosted server is the one provider that can be
     # ASKED what it has, and guessing at it is worse than useless. "llama3.1"
     # was the guess here, and it is not a model anybody has — Ollama names are
@@ -131,70 +116,35 @@ def _is_qualified(lower: str, prefix: str) -> bool:
 
 
 def normalize_model_name(provider: str, raw_model: str) -> str:
-    """Normalizes and auto-corrects model names, typos, and version aliases."""
+    """The model to run for a name somebody typed.
+
+    A fully-qualified id passes through; a bare family name ("sonnet",
+    "pro", "terra") becomes the current member of that family; an empty or
+    retired name becomes the provider's default, with a warning. There is no
+    alias here that lands on an old model.
+    """
+    from .model_policy import advanced_for, enforce
+
+    provider = (provider or "").strip().lower()
     cleaned = (raw_model or "").strip()
     lower = cleaned.lower().replace(" ", "-").replace("_", "-")
 
-    if provider == Provider.OPENAI.value:
-        if not cleaned or lower in {"", "null", "undefined", "default", "none"}:
-            from ..state import DEFAULT_OPENAI_MODEL
-
-            return DEFAULT_OPENAI_MODEL
-        if cleaned in OPENAI_VALID_MODELS:
-            return cleaned
-        # A fully-qualified id is passed through before any alias rule runs.
-        # "gpt-5" used to be listed as a typo for gpt-4o-mini, written when no
-        # such model existed. It exists now, and a stage bound to it was
-        # silently served a cheaper one — the failure that is hardest to
-        # notice, because the run succeeds.
-        if _is_qualified(lower, "gpt-") or lower.startswith("o1") or lower.startswith("o3"):
-            return lower
-        # Genuine aliases: a family typed without a version.
-        if "4o-mini" in lower or "gpt-4-mini" in lower or "gpt4-mini" in lower:
-            return "gpt-4o-mini"
-        if "4o" in lower:
-            return "gpt-4o"
-        if "3.5" in lower or "35" in lower:
-            return "gpt-3.5-turbo"
-        from ..state import DEFAULT_OPENAI_MODEL
-
-        return DEFAULT_OPENAI_MODEL
-
-    elif provider == Provider.ANTHROPIC.value:
-        if not cleaned or lower in {"", "null", "undefined", "default", "none"}:
-            return "claude-3-5-sonnet-20241022"
-        if _is_qualified(lower, "claude-"):
-            return cleaned
-        # Bare families only, for a binding typed as "sonnet" or "opus".
-        if "sonnet" in lower:
-            return "claude-3-5-sonnet-20241022"
-        if "opus" in lower:
-            return "claude-3-opus-20240229"
-        if "haiku" in lower:
-            return "claude-3-5-haiku-20241022"
+    if provider == Provider.OLLAMA.value:
         return cleaned
 
-    elif provider == Provider.GEMINI.value:
+    if provider in (Provider.OPENAI.value, Provider.ANTHROPIC.value, Provider.GEMINI.value):
         if not cleaned or lower in {"", "null", "undefined", "default", "none"}:
-            return "gemini-2.0-flash"
-        if _is_qualified(lower, "gemini-"):
-            return cleaned
-        if "pro" in lower:
-            return "gemini-2.5-pro"
-        if "flash" in lower:
-            return "gemini-2.0-flash"
-        return cleaned
+            return enforce(provider, "", where="binding")
+        # A family typed without its version: the current member.
+        if not any(ch.isdigit() for ch in lower):
+            for candidate in advanced_for(provider):
+                if lower in candidate.lower():
+                    return candidate
+            return enforce(provider, "", where=f"binding {cleaned!r}")
+        return enforce(provider, lower if provider != Provider.ANTHROPIC.value else cleaned,
+                       where=f"binding {cleaned!r}")
 
-    elif provider == Provider.OLLAMA.value:
-        if not cleaned or lower in {"", "null", "undefined", "default", "none"}:
-            return "llama3.1"
-        return cleaned
-
-    if cleaned:
-        return cleaned
-    from ..state import DEFAULT_OPENAI_MODEL
-
-    return DEFAULT_OPENAI_MODEL
+    return cleaned
 
 
 class ProviderRouter:

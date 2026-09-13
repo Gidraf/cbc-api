@@ -40,6 +40,7 @@ from .services.provider_router import ProviderRouter
 from .services.validation import validate_grade_dataset
 from .services.workflow import WorkflowService
 from .state import StageBinding, default_model_for, runtime_state
+from .services import model_policy
 
 app = FastAPI(title="CBC API Platform", version="2.1.0", description="Contract-First Educational Content Production System")
 
@@ -159,7 +160,7 @@ class RoleSplitRequest(BaseModel):
     local_model: str
     local_base_url: str | None = None
     hosted_provider: str = "openai"
-    hosted_model: str = "gpt-4o"
+    hosted_model: str = ""   # empty: the configured default for the tier
 
 
 @app.post("/admin/pipeline-bindings/roles")
@@ -188,10 +189,13 @@ def set_stage_roles(
         if stage not in STAGE_NAMES:
             continue
         is_local = role == "local"
+        hosted_model = payload.hosted_model or (
+            default_model_for(stage) if payload.hosted_provider == Provider.OPENAI.value
+            else model_policy.default_for(payload.hosted_provider))
         runtime_state.stage_bindings[stage] = StageBinding(
             pipeline_stage=stage,
             provider=payload.local_provider if is_local else payload.hosted_provider,
-            model=payload.local_model if is_local else payload.hosted_model,
+            model=payload.local_model if is_local else hosted_model,
             # Only the local one carries a URL; a vendor has its own.
             base_url=payload.local_base_url if is_local else None,
         )
@@ -202,11 +206,11 @@ def set_stage_roles(
         "preset": payload.preset,
         "local": {"provider": payload.local_provider, "model": payload.local_model,
                   "base_url": payload.local_base_url, "stages": sorted(local)},
-        "hosted": {"provider": payload.hosted_provider, "model": payload.hosted_model,
+        "hosted": {"provider": payload.hosted_provider, "model": payload.hosted_model or "(tier default)",
                    "stages": sorted(hosted)},
         "note": (
             f"{len(local)} station(s) now run on {payload.local_model} on your own "
-            f"machine; {len(hosted)} stay on {payload.hosted_model}. The review "
+            f"machine; {len(hosted)} stay on {payload.hosted_model or 'the tier default'}. The review "
             f"stays hosted in every preset — a reviewer weaker than the generator "
             f"agrees with it."
         ),

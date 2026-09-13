@@ -14,6 +14,7 @@ from ..services.cost_tracker import TokenUsage
 from ..services.json_latex import repair as repair_latex_json
 from ..services.provider_router import ResolvedModelConfig
 from ..state import DEFAULT_OPENAI_MODEL
+from . import model_policy as _policy
 from ..services.retry import retry_llm
 
 logger = logging.getLogger("cbc-llm")
@@ -375,7 +376,7 @@ class LlmClient:
         user_messages = [{"role": m["role"], "content": m["content"]} for m in messages if m["role"] != "system"]
 
         payload = {
-            "model": config.model or "claude-3-5-sonnet-20241022",
+            "model": _policy.enforce("anthropic", config.model, where="anthropic call"),
             "max_tokens": 8192,
             "system": system_prompt,
             "messages": user_messages,
@@ -405,7 +406,7 @@ class LlmClient:
         temperature: float,
         top_p: float,
     ) -> tuple[str, TokenUsage]:
-        model = config.model or "gemini-2.0-flash"
+        model = _policy.enforce("gemini", config.model, where="gemini call")
         url = f"{config.resolved_base_url.rstrip('/')}/v1beta/models/{model}:generateContent?key={config.api_key}"
 
         contents = []

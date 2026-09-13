@@ -255,7 +255,7 @@ def test_a_self_hosted_server_is_asked_what_it_has_not_guessed_at() -> None:
     assert known_models_for("ollama", "") == ()
 
     # Vendors stay static: their catalogues cannot be enumerated from here.
-    assert "gpt-4o-mini" in known_models_for("openai")
+    assert "gpt-5.6-terra" in known_models_for("openai")
 
 
 def test_the_tag_list_is_read_from_the_server_root_not_the_chat_path() -> None:

@@ -45,7 +45,11 @@ def test_a_bare_family_name_still_becomes_a_real_model():
     assert normalise("gemini", "pro").startswith("gemini-")
     assert normalise("gemini", "flash").startswith("gemini-")
     assert normalise("anthropic", "sonnet").startswith("claude-")
-    assert normalise("openai", "4o") == "gpt-4o"
+    # A retired family typed bare does not come back: it is the default.
+    from app.services.model_policy import is_retired
+    assert not is_retired(normalise("openai", "4o"))
+    assert normalise("openai", "4o").startswith("gpt-5")
+    assert normalise("openai", "terra") == "gpt-5.6-terra"
 
 
 def test_an_empty_binding_falls_back_rather_than_failing():
@@ -68,7 +72,26 @@ def test_the_review_catalogue_does_not_offer_a_retired_gemini_model():
 
 def test_every_vendor_default_is_one_of_its_own_models():
     for vendor, meta in review_vendors.REVIEW_MODELS.items():
+        if not meta["models"]:
+            assert meta["default"] == "", f"{vendor}: no list, so no default to invent"
+            continue
         assert meta["default"] in meta["models"], vendor
+
+
+def test_no_retired_model_is_offered_anywhere():
+    """gpt-4o-mini sat in a dozen fallbacks and ran for two days while the
+    console showed another model. There is no list, alias or default left
+    that lands on a retired family."""
+    from app.services import provider_router
+    from app.services.model_policy import is_retired
+
+    for vendor, meta in review_vendors.REVIEW_MODELS.items():
+        assert not any(is_retired(m) for m in meta["models"]), vendor
+    for provider in ("openai", "anthropic", "gemini"):
+        assert not any(is_retired(m) for m in provider_router.known_models_for(provider)), provider
+        for typo in ("gpt-4o-mini", "gpt-4o", "gpt-3.5-turbo", "4o-mini", "claude-3-5-sonnet-20241022",
+                     "gemini-2.0-flash", "o3-mini"):
+            assert not is_retired(normalise(provider, typo)), (provider, typo)
 
 
 def test_retired_models_keep_their_prices():

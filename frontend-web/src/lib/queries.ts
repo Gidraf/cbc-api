@@ -3066,7 +3066,7 @@ export function useSetStageRoles() {
           local_model: v.local_model,
           local_base_url: v.local_base_url || null,
           hosted_provider: "openai",
-          hosted_model: v.hosted_model || "gpt-4o",
+          hosted_model: v.hosted_model || "",
         }),
       }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["stage-bindings"] }),

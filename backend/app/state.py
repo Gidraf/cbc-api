@@ -60,7 +60,7 @@ class RuntimeState:
             Provider.OLLAMA.value: ProviderCredential(
                 provider=Provider.OLLAMA.value,
                 base_url=settings.ollama_base_url or "http://localhost:11434",
-                ollama_models=["llama3.1", "qwen2.5:7b", "mistral"],
+                ollama_models=[],
             ),
         }
         self.stage_bindings: dict[str, StageBinding] = {}
@@ -183,50 +183,25 @@ class RuntimeState:
             raw_model = (row.get("model") or "").strip()
             lower = raw_model.lower().replace(" ", "-").replace("_", "-")
 
-            # Auto-correct invalid or typo model names
+            # A stored binding names a model. An empty one, or one from a
+            # retired family, becomes the stage's default — the console's
+            # old buttons wrote gpt-4o-mini and gpt-4o into every stage, and
+            # runs on them were read as runs on the model the console showed.
+            from .services.model_policy import enforce, is_retired
+
             if provider == "openai":
-                # An unset or unrecognised model fell to gpt-4o-mini SILENTLY,
-                # including on the stations that write the content. A stage
-                # nobody configured should fall to something that can do the
-                # work, and be visible in the log when it does.
-                # "gpt-5" was on this list as a typo, written when no such
-                # model existed. A stage bound to it was silently served
-                # gpt-4o — the failure hardest to notice, because the run
-                # succeeds.
-                if not raw_model or lower in {"", "null", "undefined", "default", "none"}:
+                if not raw_model or lower in {"", "null", "undefined", "default", "none"} \
+                        or is_retired(raw_model):
                     model = default_model_for(row["pipeline_stage"])
-                    logger.warning(
-                        "Stage %s had no usable model (%r); falling back to %s.",
-                        row["pipeline_stage"], raw_model, model)
-                elif "4o-mini" in lower or "gpt-4-mini" in lower:
-                    # Never gpt-4o-mini. The console wrote it into every
-                    # stage and the content came out of the smaller model.
-                    model = default_model_for(row["pipeline_stage"])
-                    logger.warning(
-                        "Stage %s was bound to %r; using %s — gpt-4o-mini is "
-                        "not used for any stage.", row["pipeline_stage"], raw_model, model)
-                elif "4o" in lower or lower.startswith("gpt-4"):
-                    # The console's old button wrote gpt-4o into every stage.
-                    # The GPT-4 family is not a choice anybody makes now; it
-                    # is what was there before the tiers existed.
-                    model = default_model_for(row["pipeline_stage"])
-                    logger.warning(
-                        "Stage %s was bound to %r; using %s — the GPT-4 family "
-                        "is retired here.", row["pipeline_stage"], raw_model, model)
+                    if raw_model:
+                        logger.warning("Stage %s was bound to %r; using %s — retired here.",
+                                       row["pipeline_stage"], raw_model, model)
                 else:
                     model = raw_model
-            elif provider == "anthropic":
-                if not raw_model or lower in {"", "null", "undefined", "default", "none"} or "3.5" in lower:
-                    model = "claude-3-5-sonnet-20241022"
-                else:
-                    model = raw_model
-            elif provider == "gemini":
-                if not raw_model or lower in {"", "null", "undefined", "default", "none"} or "2.0" in lower or "2-flash" in lower:
-                    model = "gemini-2.0-flash"
-                else:
-                    model = raw_model
+            elif provider in ("anthropic", "gemini"):
+                model = enforce(provider, raw_model, where=f"stage {row['pipeline_stage']}")
             else:
-                model = raw_model or "llama3.1"
+                model = raw_model
 
             self.stage_bindings[row["pipeline_stage"]] = StageBinding(
                 pipeline_stage=row["pipeline_stage"],

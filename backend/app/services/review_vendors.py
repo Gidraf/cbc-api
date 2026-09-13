@@ -12,6 +12,8 @@ genuinely independent third opinion even when it is the weaker model.
 """
 from __future__ import annotations
 
+from . import model_policy as _policy
+
 from typing import Any
 
 # Models known to work for structured JSON review, per vendor. The list is a
@@ -20,33 +22,27 @@ from typing import Any
 REVIEW_MODELS: dict[str, dict[str, Any]] = {
     "anthropic": {
         "label": "Anthropic",
-        "models": [
-            "claude-3-5-sonnet-20241022",
-            "claude-3-5-haiku-20241022",
-            "claude-3-opus-20240229",
-        ],
-        "default": "claude-3-5-sonnet-20241022",
+        "models": list(_policy.ANTHROPIC),
+        "default": _policy.ANTHROPIC[0],
         "notes": "Strong on instruction adherence and on saying what it is unsure of.",
     },
     "openai": {
         "label": "OpenAI",
-        "models": ["gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.4", "gpt-4o"],
-        "default": "gpt-5.6-terra",
+        "models": list(_policy.OPENAI),
+        "default": _policy.OPENAI[0],
         "notes": "Reliable JSON. Usually the generator here, so prefer it on a "
                  "different layer from the one that wrote the content.",
     },
     "gemini": {
         "label": "Google Gemini",
-        # gemini-1.5-pro and gemini-1.5-flash were listed here and are retired:
-        # the API answers 404, and the run fails after paying to reach the call.
-        "models": ["gemini-2.0-flash", "gemini-2.5-pro", "gemini-2.5-flash"],
-        "default": "gemini-2.0-flash",
-        "notes": "Long context, useful when the whole design must be re-read.",
+        "models": list(_policy.GEMINI),
+        "default": _policy.GEMINI[0],
+        "notes": "A different lineage from both of the above, which is the point.",
     },
     "ollama": {
         "label": "Ollama (self-hosted)",
-        "models": ["llama3.1", "qwen2.5:7b", "mistral"],
-        "default": "llama3.1",
+        "models": [],
+        "default": "",
         "notes": "Runs locally: no per-call cost and no shared training data "
                  "with the hosted vendors, so genuinely independent.",
     },

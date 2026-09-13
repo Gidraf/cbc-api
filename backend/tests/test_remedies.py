@@ -73,7 +73,7 @@ def test_approval_is_offered_as_a_place_to_go_not_a_button_to_press() -> None:
 
 def test_a_bad_model_is_offered_as_the_field_it_actually_is() -> None:
     remedy = remedies.set_the_model("notes", current="gemini-1.5-pro",
-                                    options=["gemini-2.0-flash"])
+                                    options=["gemini-2.5-flash"])
 
     assert remedy.kind == "set"
     assert remedy.field_name == "model"
@@ -115,8 +115,8 @@ def test_a_model_that_does_not_exist_offers_the_provider_s_own_list() -> None:
     never served it."""
     from app.services.provider_router import known_models_for
 
-    assert "gemini-2.0-flash" in known_models_for("gemini")
-    assert "gpt-4o-mini" in known_models_for("openai")
+    assert "gemini-2.5-flash" in known_models_for("gemini")
+    assert "gpt-5.6-terra" in known_models_for("openai")
     # Not a gate: providers add models faster than a list is maintained.
     assert known_models_for("something-new") == ()
 
