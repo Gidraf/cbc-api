@@ -176,6 +176,10 @@ class Handoff:
     # A hand-off that named only the previous lesson's tasks let lesson 5 work
     # what lesson 3 had worked, and the duplicate check then sent it back.
     earlier_tasks: list[str] = field(default_factory=list)
+    # And every topic taught before the last lesson. "Understanding the Sign
+    # Rule" was a topic of lessons 3, 4 and 6 of one guide; lesson 6 had only
+    # been told what lesson 5 taught.
+    earlier_taught: list[str] = field(default_factory=list)
 
     @property
     def empty(self) -> bool:
@@ -185,7 +189,8 @@ class Handoff:
         return {"lesson": self.lesson, "title": self.title,
                 "taught": self.taught, "tasks": self.tasks,
                 "ended_on": self.ended_on, "outcomes": self.outcomes,
-                "earlier_tasks": self.earlier_tasks}
+                "earlier_tasks": self.earlier_tasks,
+                "earlier_taught": self.earlier_taught}
 
 
 def read(module: dict[str, Any],
@@ -199,7 +204,7 @@ def read(module: dict[str, Any],
     from . import task_demand
 
     if not isinstance(module, dict):
-        return Handoff(earlier_tasks=_all_tasks(before))
+        return Handoff(earlier_tasks=_all_tasks(before), earlier_taught=_all_taught(before))
 
     segments = [s for s in (module.get("exposition_segments") or [])
                 if isinstance(s, dict)]
@@ -236,7 +241,18 @@ def read(module: dict[str, Any],
         ended_on=ended,
         outcomes=[str(s) for s in (module.get("slos") or [])][:4],
         earlier_tasks=_all_tasks(before),
+        earlier_taught=_all_taught(before),
     )
+
+
+def _all_taught(before: Handoff | None) -> list[str]:
+    if before is None:
+        return []
+    out = list(before.earlier_taught)
+    for topic in before.taught:
+        if topic not in out:
+            out.append(topic)
+    return out[:40]
 
 
 def _all_tasks(before: Handoff | None) -> list[str]:
@@ -273,6 +289,10 @@ def block(previous: Handoff | None, step: Step | None) -> str:
             bits.append("  worked: " + "; ".join(previous.tasks))
         if previous.ended_on:
             bits.append(f"  ended on: \"{previous.ended_on}\"")
+        if previous.earlier_taught:
+            bits.append("Taught by lessons before that (do not teach any of "
+                        "these again under any name): "
+                        + "; ".join(previous.earlier_taught))
         if previous.earlier_tasks:
             bits.append("Worked by lessons before that (do not work any of "
                         "these again either): "

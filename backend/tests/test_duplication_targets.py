@@ -711,9 +711,16 @@ def test_a_lesson_whose_examples_have_no_negative_number_is_a_target() -> None:
     assert any("no negative number" in f for f in findings), findings
 
 
-def test_the_score_is_the_worst_dimension_not_the_mean() -> None:
-    """Three of six lessons below the grade scored 94 because the other
-    three dimensions were clean and the demand was one of four averaged."""
-    import inspect as _inspect_mod
-    source = _inspect_mod.getsource(notes_remediation._inspect)
-    assert "round(min(scores), 1)" in source
+def test_the_score_counts_findings_under_a_measured_ceiling() -> None:
+    """Three of six lessons below the grade scored 94 because the demand was
+    one of four dimensions averaged; then "worst dimension plus penalties"
+    pinned a guide at 0 from its first check and the loop could not tell 41
+    findings from 18. The score is the ceiling the measures allow, brought
+    down three and a half points a finding."""
+    scored = notes_remediation._scored
+    assert scored(94, []) == 94
+    assert scored(94, ["f"] * 6) == 79.0
+    assert scored(94, ["f"] * 18) == 37.0
+    assert scored(94, ["f"] * 41) == 0.0
+    assert scored(60, ["f"] * 2) == 60, "never above what the measures allow"
+    assert scored(94, ["f"] * 22) < scored(94, ["f"] * 18), "fewer findings reads higher"

@@ -32,18 +32,22 @@ MAX_EXAMPLES = 30
 
 _PROMPT = """You are marking the worked examples of a Kenyan CBC teacher's guide: {where}.
 
-For EACH example below, solve it yourself from the statement alone, then compare.
-An example is WRONG if any of these holds:
-  - the answer is not what the statement asks for (a change from A to B is B − A; "rises TO 5" is not "rises BY 5");
-  - the working does not model the story (an expense, a cost, a withdrawal or a payment REDUCES a balance; a donation, a refund or a deposit INCREASES it; a debt is negative);
-  - a quantity is treated as the wrong kind (a list of expenses whose last item is added instead of subtracted);
-  - the context cannot be true (no Kenyan town has a night temperature below 0°C — Nairobi's record low is about 5°C; sub-zero belongs in a cold store, on Mount Kenya, or abroad);
-  - a step's arithmetic is false, or the answer has no unit where the question has one.
-An example is RIGHT if the working is the right working for the question and the answer is correct, even if you would have written it differently.
+For EACH example below, solve it yourself from the statement alone, write down YOUR answer, then compare.
 
-Return ONLY JSON of this shape:
-{{"verdicts": [{{"lesson": 3, "example": 1, "verdict": "wrong", "reason": "one sentence: what is wrong and what the right working is"}}, ...]}}
-List every example, right or wrong. Keep each reason to one sentence.
+Conventions this guide uses — do not mark an example wrong for following them:
+  - A change from A to B is B − A. A drop from 5°C to −3°C is a change of −8°C; "−8°C" and "a drop of 8°C" are both right. Do not ask for an absolute difference.
+  - Subtracting the initial value from the final value IS the method for a change.
+  - Working shown one operation per line is right even if you would combine lines.
+
+An example is WRONG only if one of these holds:
+  - kind "answer": your answer differs from the example's answer as a VALUE (not in form, not in sign convention for a change).
+  - kind "model": the working does not model the story — an expense, a cost, a withdrawal or a payment REDUCES a balance; a donation, a refund or a deposit INCREASES it; a debt is negative; "rises TO 5" is not "rises BY 5".
+  - kind "context": the situation cannot be true — no Kenyan town has a night temperature below 0°C (Nairobi's record low is about 5°C; sub-zero belongs in a cold store, on Mount Kenya, or abroad).
+  - kind "units": the question has a unit and the answer has none.
+
+Return ONLY JSON of this shape, one entry per example, right or wrong:
+{{"verdicts": [{{"lesson": 3, "example": 1, "verdict": "wrong", "kind": "model", "my_answer": "1500", "reason": "one sentence"}}, ...]}}
+For a right example: "verdict": "right", "kind": "", "my_answer": "<your answer>", "reason": "".
 
 {examples}"""
 
@@ -86,8 +90,14 @@ def audit(notes: dict[str, Any], *, generate: Any, model_config: Any,
     where = " · ".join(x for x in (grade, subject, sub_strand) if x) or "this sub-strand"
     prompt = _PROMPT.format(where=where, examples=rendered)
     try:
-        response = generate(model_config, [{"role": "user", "content": prompt}],
-                            temperature=0.0)
+        try:
+            response = generate(model_config, [{"role": "user", "content": prompt}],
+                                temperature=0.0, effort="high")
+        except TypeError:
+            # A generate() that does not take `effort` — a test double, or an
+            # older client.
+            response = generate(model_config, [{"role": "user", "content": prompt}],
+                                temperature=0.0)
         content = response.content if hasattr(response, "content") else response
         if isinstance(content, str):
             content = json.loads(content)
@@ -99,7 +109,7 @@ def audit(notes: dict[str, Any], *, generate: Any, model_config: Any,
     if not isinstance(verdicts, list):
         return [], []
 
-    known = set(index)
+    examples = _examples_by_position(notes)
     findings: list[str] = []
     targets: list[int] = []
     for verdict in verdicts:
@@ -111,9 +121,13 @@ def audit(notes: dict[str, Any], *, generate: Any, model_config: Any,
             lesson, example = int(verdict.get("lesson")), int(verdict.get("example"))
         except (TypeError, ValueError):
             continue
-        if (lesson, example) not in known:
+        found = examples.get((lesson, example))
+        if found is None:
             continue
+        kind = str(verdict.get("kind") or "").strip().lower()
         reason = re.sub(r"\s+", " ", str(verdict.get("reason") or "")).strip()[:300]
+        if not _stands(kind, str(verdict.get("my_answer") or ""), found, reason):
+            continue
         findings.append(
             f"Lesson {lesson} worked example {example} is wrong: {reason or 'the working is not the working for the question'}. "
             f"Rewrite the example so that the working models the situation as stated "
@@ -121,3 +135,50 @@ def audit(notes: dict[str, Any], *, generate: Any, model_config: Any,
         if lesson not in targets:
             targets.append(lesson)
     return findings, targets
+
+
+def _examples_by_position(notes: dict[str, Any]) -> dict[tuple[int, int], dict[str, Any]]:
+    out: dict[tuple[int, int], dict[str, Any]] = {}
+    for i, module in enumerate(notes.get("modules") or [], start=1):
+        if not isinstance(module, dict):
+            continue
+        try:
+            number = int(module.get("module_number") or i)
+        except (TypeError, ValueError):
+            number = i
+        for k, example in enumerate(module.get("worked_examples") or [], start=1):
+            if isinstance(example, dict) and example.get("statement"):
+                out[(number, k)] = example
+    return out
+
+
+def _stands(kind: str, my_answer: str, example: dict[str, Any], reason: str) -> bool:
+    """Whether a "wrong" verdict survives what the engine already knows.
+
+    The reader's first outing marked "the correct answer is 10, not 10",
+    marked −12 wrong for an expression the engine had verified as −12, and
+    marked a temperature drop of −8 wrong for not being 8. A reader that can
+    be wrong is held to the same standard as the writer: a verdict about the
+    VALUE stands only where the engine could not read the statement, and
+    only where the reader's own answer actually differs; a verdict about the
+    story or the setting stands on its own, because those are the questions
+    the engine cannot ask.
+    """
+    from .worked_solutions import _as_number, _comparable, check
+
+    if kind in ("context", "model", "units"):
+        return True
+    statement = str(example.get("statement") or "")
+    answer = str(example.get("answer") or "")
+    verified = check(statement, answer)
+    if verified.get("checked") and verified.get("agrees"):
+        return False  # the engine read the statement and the answer is right
+    mine = _as_number(_comparable(my_answer))
+    theirs = _as_number(_comparable(answer))
+    if mine is None or theirs is None:
+        return bool(reason)
+    if abs(mine - theirs) < 1e-9:
+        return False  # "10, not 10"
+    if abs(abs(mine) - abs(theirs)) < 1e-9:
+        return False  # a sign convention on a change, not an error
+    return True

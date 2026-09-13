@@ -419,6 +419,8 @@ def test_the_handoff_accumulates_what_every_earlier_lesson_worked() -> None:
 
     block = lh.block(third, None)
     assert "5 + (-3)" in block and "lessons before that" in block
+    assert "Introduction to Integers" in third.earlier_taught, "topics carry too"
+    assert "Taught by lessons before that" in block
 
 
 def test_the_fourth_call_is_told_what_the_first_worked() -> None:

@@ -100,3 +100,67 @@ def test_the_loop_takes_the_readers_findings_as_its_own() -> None:
 
     assert seen["called"] >= 1
     assert any("is wrong: an expense is added" in f for f in report.outstanding)
+
+
+# ── a reader that can be wrong is held to what the engine knows ──────────────
+
+
+def _verdict(lesson, example, kind, my_answer, reason="because"):
+    return {"lesson": lesson, "example": example, "verdict": "wrong",
+            "kind": kind, "my_answer": my_answer, "reason": reason}
+
+
+BARE = {"modules": [{"module_number": 1, "title": "L1", "worked_examples": [
+    {"statement": r"Evaluate $\dfrac{-12 + 4 \times (-3)}{2}$.",
+     "steps": [{"working": r"$\dfrac{-12 + (-12)}{2} = -12$", "because": "…"}], "answer": "-12"},
+    {"statement": "A temperature drops from 5°C to -3°C. What is the change?",
+     "steps": [{"working": "$-3 - 5 = -8$", "because": "…"}], "answer": "-8°C"},
+    {"statement": r"Work out $(-3) + 5 - 2 \times (-4)$.",
+     "steps": [{"working": r"$(-3) + 5 + 8 = 10$", "because": "…"}], "answer": "10"},
+]}]}
+
+
+def test_the_reader_cannot_overturn_an_answer_the_engine_verified() -> None:
+    """"It should be 12 instead of −12" on an expression the engine works to −12."""
+    generate, _ = _reader([_verdict(1, 1, "answer", "12", "should be 12 instead of -12")])
+    findings, targets = example_audit.audit(BARE, generate=generate, model_config=object())
+    assert findings == [] and targets == []
+
+
+def test_a_sign_convention_quibble_on_a_change_is_not_a_finding() -> None:
+    """"Should be the absolute difference, 8" on a drop worked as −8."""
+    generate, _ = _reader([_verdict(1, 2, "answer", "8", "should be the absolute difference")])
+    findings, _ = example_audit.audit(BARE, generate=generate, model_config=object())
+    assert findings == []
+
+
+def test_ten_not_ten_is_not_a_finding() -> None:
+    generate, _ = _reader([_verdict(1, 3, "answer", "10", "the correct answer is 10, not 10")])
+    findings, _ = example_audit.audit(BARE, generate=generate, model_config=object())
+    assert findings == []
+
+
+def test_a_story_or_context_verdict_stands_on_its_own() -> None:
+    """The engine cannot read "expenses include"; the reader can."""
+    generate, _ = _reader([
+        _verdict(3, 1, "model", "1500", "Transportation is an expense and is added."),
+        _verdict(6, 1, "context", "-30", "Nairobi does not reach -5°C."),
+    ])
+    findings, targets = example_audit.audit(GUIDE, generate=generate, model_config=object())
+    assert targets == [3, 6] and len(findings) == 2
+
+
+def test_a_value_verdict_on_a_word_problem_stands_when_the_answer_really_differs() -> None:
+    generate, _ = _reader([_verdict(3, 1, "answer", "1500", "5000 - 3500 = 1500, not 4500")])
+    findings, targets = example_audit.audit(GUIDE, generate=generate, model_config=object())
+    assert targets == [3] and "1500" in findings[0]
+
+
+def test_the_reader_is_asked_to_think_hard() -> None:
+    asked: dict = {}
+
+    def generate(config, messages, temperature=0.0, effort=""):
+        asked["effort"] = effort
+        return _Resp({"verdicts": []})
+    example_audit.audit(GUIDE, generate=generate, model_config=object())
+    assert asked["effort"] == "high"

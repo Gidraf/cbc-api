@@ -134,8 +134,13 @@ class LlmClient:
         temperature: float = 0.2,
         top_p: float = 0.9,
         expect: str = "json",
+        effort: str = "",
     ) -> LlmResponse:
         """Call the provider and return what it said, parsed or raw.
+
+        `effort` overrides the reasoning effort for one call on a reasoning
+        model — a marker reading worked examples deserves more thought than
+        a stage reading a strand list — and is ignored everywhere else.
 
         `expect="json"` is the default because almost everything here asks for
         a structured object.
@@ -157,7 +162,7 @@ class LlmClient:
         provider = config.provider
 
         if provider == Provider.OPENAI.value and is_reasoning_model(config.model or DEFAULT_OPENAI_MODEL):
-            raw_text, usage = self._call_openai_responses(config, messages)
+            raw_text, usage = self._call_openai_responses(config, messages, effort=effort)
         elif provider == Provider.OPENAI.value or provider == Provider.OLLAMA.value:
             raw_text, usage = self._call_openai_compatible(config, messages, temperature, top_p)
         elif provider == Provider.ANTHROPIC.value:
@@ -261,6 +266,7 @@ class LlmClient:
         self,
         config: ResolvedModelConfig,
         messages: list[dict[str, str]],
+        effort: str = "",
     ) -> tuple[str, TokenUsage]:
         """POST /responses, and the message text out of its `output` list.
 
@@ -276,6 +282,8 @@ class LlmClient:
         model_name = (config.model or DEFAULT_OPENAI_MODEL).strip() or DEFAULT_OPENAI_MODEL
         payload = openai_payload(model_name, messages, 0.0, 1.0,
                                  stage=config.pipeline_stage)
+        if effort:
+            payload["reasoning"] = {"effort": effort}
 
         with httpx.Client(timeout=self.timeout) as client:
             resp = client.post(url, headers=headers, json=payload)

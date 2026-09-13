@@ -149,6 +149,7 @@ def run(
     """
     report = CycleReport()
     result: dict[str, Any] = {}
+    best: dict[str, Any] = {}
     instructions = base_instructions
     directives: list[str] = []
 
@@ -177,9 +178,10 @@ def run(
             cycle.weakest = str(feedback[0].get("aspect") or "")
         report.cycles.append(cycle)
 
-        if cycle.score > report.best_score:
+        if cycle.score > report.best_score or not best:
             report.best_score = cycle.score
             report.best_cycle = number
+            best = result
 
         if cycle.passed:
             report.stopped_because = "approved"
@@ -190,6 +192,20 @@ def run(
 
         if number >= max_cycles:
             report.stopped_because = "max_cycles"
+            break
+        # A station with its own repair loop has already rewritten and
+        # regenerated what it could. Running the whole station again on top
+        # of that is twelve passes for the price of twelve, and the second run
+        # is not better than the first for having been asked twice — one job
+        # ran two full generations, reached 20/100 on the first and 0 on the
+        # second, and saved the second.
+        remediation = result.get("remediation") if isinstance(result, dict) else None
+        if isinstance(remediation, dict) and remediation.get("attempted") \
+                and int(remediation.get("passes_run") or 0) >= 2:
+            report.stopped_because = "station_exhausted"
+            logger.info("%s stopped after cycle %d: the station's own repair loop "
+                        "ran %s pass(es) and stands at %d/100.",
+                        label, number, remediation.get("passes_run"), cycle.score)
             break
 
         previous = report.cycles[-2] if len(report.cycles) > 1 else None
@@ -217,4 +233,6 @@ def run(
 
     if not report.stopped_because:
         report.stopped_because = "max_cycles"
-    return result, report
+    # The best cycle, not the last. Every cycle saved a version; the caller
+    # is told which one is best and makes it current.
+    return (best or result), report

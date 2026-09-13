@@ -389,11 +389,14 @@ def _inspect(notes: dict[str, Any],
         scores.append(float(provenance.get("score", 100.0)))
     if pitch.checked:
         scores.append(float(pitch.score))
-    # The worst dimension, not the mean. A guide with three of six lessons
-    # below the grade scored 94 because repetition, integrity and provenance
-    # were clean and the demand score was one of four averaged — and 94 is
-    # not what a teacher reading those three lessons would give it.
-    score = round(min(scores), 1)
+    # The mean of the measured dimensions is the ceiling; the number of
+    # findings is what the score reports. "Worst dimension plus penalties"
+    # pinned a guide at 0 from its first check and the loop then could not
+    # tell a better pass from a worse one — 41 findings, 22, 18 and 30 all
+    # read 0.0 — while the plain mean let three lessons below the grade read
+    # 94. Three and a half points a finding: 6 findings is 79, 18 is 37.
+    base = round(sum(scores) / len(scores), 1)
+    score = base
 
     # Which lessons to rewrite: the later member of each repeated pair. The
     # earlier one is the real lesson and rewriting it loses good work.
@@ -842,6 +845,7 @@ def _inspect(notes: dict[str, Any],
     except Exception:  # noqa: BLE001
         pass
 
+    score = _scored(base, findings)
     return score, findings, targets
 
 
@@ -936,6 +940,14 @@ def _multiplies_signed(example: dict[str, Any]) -> bool:
 
     demand = task_demand.measure_item(example)
     return bool(demand.all_kinds & {"×", "÷"}) and demand.negatives > 0
+
+
+PER_FINDING = 3.5
+
+
+def _scored(ceiling: float, findings: list[str]) -> float:
+    """The score a guide with these findings gets, never above its ceiling."""
+    return round(min(ceiling, max(0.0, 100.0 - PER_FINDING * len(findings))), 1)
 
 
 def _pitch(notes: dict[str, Any], design_row: dict[str, Any] | None,
@@ -1287,7 +1299,7 @@ def run(
             if number not in targets:
                 targets.append(number)
         if more:
-            score = max(0.0, score - 10.0 * len(more))
+            score = _scored(score, findings)
             run_log.step("Second reader",
                          f"{len(more)} worked example(s) wrong on a read: "
                          f"{more[0][:120]}", "warn")
