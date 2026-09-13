@@ -271,5 +271,5 @@ def test_generated_questions_are_saved_not_only_returned() -> None:
     assert 'status="draft"' in source, "filed and countable, but not approved"
     assert '"saved": len(saved)' in source, "and the operator is told it was filed"
     # Losing the file is bad; losing the run as well is worse.
-    saving = source.split("5b. SAVED")[1][:1200]
+    saving = source.split("5b. SAVED")[1][:1600]
     assert "except Exception" in saving

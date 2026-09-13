@@ -974,6 +974,20 @@ def factory_generate_questions_batch(
         normalized_questions = [q for q in normalized_questions
                                 if str(q.get("question_id") or "") not in held]
 
+    # 4b-i. Whether the items are RIGHT. The structure gate counts options
+    #     and marks; this solves the answers, reads the set against the guide
+    #     and the bank, and measures it against the grade — then rewrites
+    #     what the findings name, item by item, keeping the rest byte for
+    #     byte. The batch leaves with `self_check` on it and the layer gate
+    #     honours it, as it honours the guide's.
+    from ..services import questions_remediation
+
+    normalized_questions, self_check = _check_and_repair(
+        normalized_questions, payload=payload, context=context, resolved=resolved,
+        notes_obj=notes_obj, design_row=design_row, diagrams_list=diagrams_list,
+        blueprint_slos=blueprint_slos, target_diag_obj=target_diag_obj,
+        hour_title=hour_title, questions_remediation=questions_remediation)
+
     # 4b-ii. The BATCH judgement: whether this set is pitched at the grade at
     #     all. No per-item rule can see it — every item can be well formed and
     #     the whole paper still be four years too easy, which is exactly what a
@@ -1014,7 +1028,7 @@ def factory_generate_questions_batch(
     # 5. Quality gate over the validated items
     gate_result = quality_gate_service.run_layer_gate(
         layer_name="questions",
-        content=normalized_questions,
+        content={"questions": normalized_questions, "self_check": self_check.to_dict()},
         blueprint={"slos": blueprint_slos, "notes_body": notes_text},
         content_type_profile=ct_profile,
         custom_instructions=payload.custom_instructions,
@@ -1034,11 +1048,13 @@ def factory_generate_questions_batch(
     saved: list[dict[str, Any]] = []
     if normalized_questions:
         try:
+            filed_gate = gate_result.to_dict() if hasattr(gate_result, "to_dict") else {}
+            filed_gate["self_check"] = self_check.to_dict()
             saved = question_dna_service.save_batch_questions(
                 grade=payload.grade, subject=payload.subject,
                 strand=payload.strand, sub_strand=payload.sub_strand,
                 questions=normalized_questions, status="draft",
-                gate_result=gate_result.to_dict() if hasattr(gate_result, "to_dict") else None,
+                gate_result=filed_gate,
             )
         except Exception as exc:  # noqa: BLE001
             # The items are in the response either way; losing the file is bad
@@ -1063,7 +1079,91 @@ def factory_generate_questions_batch(
         "research_dossier": dossier.to_dict(),
         "quality_audit": audit_report.to_dict(),
         "quality_gate": gate_result.to_dict(),
+        "self_check": self_check.to_dict(),
     }
+
+
+def _check_and_repair(
+    questions: list[dict[str, Any]], *, payload: QuestionBatchGenerateRequest,
+    context: Any, resolved: Any, notes_obj: Any, design_row: dict[str, Any],
+    diagrams_list: list[Any], blueprint_slos: list[Any], target_diag_obj: Any,
+    hour_title: str, questions_remediation: Any,
+) -> tuple[list[dict[str, Any]], Any]:
+    """The content checks and the aimed rewrite, for one batch.
+
+    The rewrite is one model call per pass carrying only the failed items and
+    the reason each failed. It returns replacements in the same schema, each
+    naming the item it replaces; they are normalised the way the batch was,
+    and one that fails the structure gate is dropped rather than filed.
+    """
+    import json as json_lib
+
+    from ..services import question_structure
+    from ..services.diagram_binding import resolve_binding
+    from ..services.llm_client import llm_client
+    from ..services.question_normalizer import question_normalizer
+
+    def _normalise(raw_items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        out: list[dict[str, Any]] = []
+        for raw in raw_items:
+            if not isinstance(raw, dict):
+                continue
+            replaces = str(raw.get("replaces") or "")
+            batch = question_normalizer.normalize_batch(
+                [raw], grade=payload.grade, subject=payload.subject,
+                strand=payload.strand, sub_strand=payload.sub_strand,
+                slo_id=payload.slo_id, default_difficulty=payload.difficulty,
+                design_row=design_row,
+                diagram_resolver=lambda r, t: resolve_binding(
+                    r, t, diagrams_list, anchored_diagram=target_diag_obj),
+                target_hour=payload.target_hour, target_hour_title=hour_title)
+            for item in batch.items:
+                public = item.to_public_dict(include_answers=True)
+                verdict = question_structure.check(public)
+                if verdict.blocked:
+                    logger.info("Rewritten item for %s dropped by the structure gate: %s",
+                                replaces or "addition",
+                                "; ".join(f.says for f in verdict.findings))
+                    continue
+                if replaces:
+                    public["replaces"] = replaces
+                out.append(public)
+        return out
+
+    def rewrite(items: list[dict[str, Any]], reasons: list[str], asks: list[str]) -> list[dict[str, Any]]:
+        asks_block = ""
+        if asks:
+            asks_block = "ITEMS TO ADD (write one new item for each, no `replaces`):\n" + \
+                "\n".join(f"- {a}" for a in asks)
+        shown = [{k: v for k, v in q.items() if k not in ("dna_id", "status", "family", "version")}
+                 for q in items]
+        directive = prompt_store.render(
+            "questions-rewrite-directive", SEED_PROMPT_BLOCKS["questions-rewrite-directive"],
+            sub_strand=payload.sub_strand, grade=payload.grade, subject=payload.subject,
+            items_json=json_lib.dumps(shown, ensure_ascii=False, indent=1),
+            reasons="\n".join(f"- {r}" for r in reasons) or "(none)",
+            asks_block=asks_block)
+        messages = list(context.messages) + [{"role": "user", "content": directive}]
+        resp = llm_client.generate(resolved, messages, temperature=0.2)
+        raw = resp.content.get("questions", []) if isinstance(resp.content, dict) else resp.content
+        return _normalise(raw if isinstance(raw, list) else [])
+
+    existing: list[dict[str, Any]] = []
+    try:
+        for row in question_dna_service.list_questions(
+                grade=payload.grade, subject=payload.subject,
+                sub_strand=payload.sub_strand, limit=400):
+            content = row.get("content") if isinstance(row, dict) else None
+            if isinstance(content, dict):
+                existing.append({"question_id": row.get("question_id"), **content})
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Could not read the bank for %s: %s", payload.sub_strand, exc)
+
+    return questions_remediation.run(
+        questions, grade=payload.grade, subject=payload.subject,
+        strand=payload.strand, sub_strand=payload.sub_strand,
+        notes=notes_obj, design_row=design_row, existing=existing,
+        diagrams=diagrams_list, rewrite=rewrite)
 
 
 @router.post("/factory/generate-single")

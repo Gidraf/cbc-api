@@ -361,6 +361,24 @@ _BINDS = set("^_{}\\\u00b0")
 _TERM = re.compile(r"(?:\d[A-Za-z]|[A-Za-z]\d)\s*$")
 
 
+_COMMANDS = re.compile(
+    r"^\s*(?:work\s+out|evaluate|calculate|simplify|find(?:\s+the\s+value\s+of)?|"
+    r"compute|solve|determine|what\s+is|the\s+value\s+of|expression|"
+    r"hence|show\s+that|answer|of|the|value|is|and|then|to|by)\b", re.I)
+
+
+def _is_prose(source: str) -> bool:
+    """Whether the sentence carries a SITUATION and not just an instruction.
+
+    "Work out (-3) × 4 + 10." is an instruction and a calculation. "A tank
+    holds 40 litres and loses 3 litres an hour" is a situation, and a run of
+    digits and operators lifted out of it is not the calculation it asks for.
+    """
+    words = re.findall(r"[A-Za-z]{2,}", source)
+    kept = [w for w in words if not _COMMANDS.match(w)]
+    return len(kept) >= 3
+
+
 def _is_a_fragment(source: str, span: tuple[int, int]) -> bool:
     """Whether the run at `span` is part of a larger mathematical object."""
     start, end = span
@@ -371,6 +389,15 @@ def _is_a_fragment(source: str, span: tuple[int, int]) -> bool:
         return True
 
     before, after = source[:start], source[end:]
+
+    # A word problem with figures OUTSIDE the run. "A trader starts with a
+    # balance of -450, earns 3 × 250 and pays 2 × 160" has three quantities
+    # and one operator run; the run `3 × 250` is a part of the problem, and
+    # 750 published as its answer condemned a correct closing balance of
+    # -20. The calculation a word problem asks for is never one of its
+    # spans — it is the sum of them, and that is not written anywhere.
+    if re.search(r"\d", before + after) and _is_prose(source):
+        return True
 
     # Touching, with no space to separate them.
     for edge in (before[-1:], after[:1]):

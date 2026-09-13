@@ -2426,6 +2426,35 @@ Procedure Steps: {{ target_exp_obj_get_procedure_steps }}
 Safety Protocols: {{ target_exp_obj_get_safety_hazards_to_check }}
 CRITICAL RULE: ALL GENERATED QUESTIONS MUST DIRECTLY TEST THIS PRACTICAL INVESTIGATION. Provide empirical observed data tables and multi-part questions (a)-(d) evaluating data analysis, scientific mechanisms, and farmer remediation recommendations.
 """,
+    "questions-rewrite-directive": """=== REWRITE, DO NOT REGENERATE ===
+The batch you wrote for {{ sub_strand }} ({{ grade }}, {{ subject }}) has been checked
+item by item — every answer the maths engine could solve was solved, every item was
+compared with the teacher's guide and the question bank, and the set was measured
+against the grade. The items below FAILED, for the reason given beside each. Every
+other item in the batch passed and is being kept exactly as it is; do not return it.
+
+ITEMS TO REWRITE:
+{{ items_json }}
+
+WHY EACH ONE FAILED:
+{{ reasons }}
+
+{{ asks_block }}
+
+RULES:
+1. Return ONLY the items named above (and any additions asked for), in the same JSON
+   schema as before, each carrying `"replaces": "<question_id>"` with the id of the
+   item it stands in for. An addition carries no `replaces`.
+2. Keep the item's type, outcome (`target_slo`, `serves`), marks and Bloom level unless
+   the reason says otherwise. Fix what the reason names; keep everything else.
+3. Where the engine gave a value, the rewritten item's key or model answer IS that
+   value, and the marking scheme reaches it step by step. Do not argue with it.
+4. A repeat is replaced with a NEW task at the same demand: new figures, a new
+   situation, the same operations. A distractor that was also right becomes a wrong
+   value a learner actually reaches by a named mistake.
+5. Nothing below the grade. Every calculation carries the operations the grade's own
+   paper carries.
+""",
     "anchor-hour-module": """
 === ⏰ TARGET PARENT ANCHOR: LESSON HOUR MODULE {{ hour_idx }} ({{ h_title }}) ===
 Hour Title: {{ h_title }}
