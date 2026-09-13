@@ -395,3 +395,44 @@ def test_a_bare_value_after_an_expression_continues_the_chain() -> None:
     bad = worked_solutions.check_steps([{"working": "$-3 - 5$"}, {"working": "$-2$"}])
     assert good["checked"] and good["agrees"] is True
     assert bad["checked"] and bad["agrees"] is False and bad["step"] == 2
+
+
+# ── brackets that are not round ──────────────────────────────────────────────
+
+
+@pytest.mark.parametrize("expression, answer", [
+    (r"$-18 - [(-4) \times 3 + 6] \div 2$", "-15"),
+    (r"$[(-14 + 8) \times (-3)] \div 2 - (-5)$", "14"),
+    (r"$-180 + [3 \times 250 - 2 \times 160]$", "250"),
+    (r"$\{(-84 \div 7) + 5\} \times (-3) - (-18)$", "39"),
+    (r"$\left[(-30 + 18) \div 2\right] \times (-3)$", "18"),
+])
+def test_square_and_curly_brackets_group_like_round_ones(expression, answer) -> None:
+    """The tokeniser knew only `(`, so the longest run of arithmetic it could
+    find in `-18 - [(-4) × 3 + 6] ÷ 2` was what sat INSIDE the square brackets.
+    It answered −6 for an expression worth −15, condemned a correct example on
+    the page, and sent it back to be "fixed". Three of a guide's eight
+    surviving findings were this."""
+    verdict = worked_solutions.check(expression, answer)
+    assert verdict["checked"], expression
+    assert verdict["agrees"] is True, (expression, verdict["engine_answer"])
+
+
+def test_a_step_that_rewrites_rather_than_reduces_is_judged_by_value() -> None:
+    """`-180 + [3 × 250 - 2 × 160] = -180 + [750 - 320]` is true. Compared as
+    text it was condemned every time."""
+    good = worked_solutions.check_steps(
+        [{"working": r"$-180 + [3 \times 250 - 2 \times 160] = -180 + [750 - 320]$"},
+         {"working": "$= -180 + 430$"}, {"working": "$= 250$"}])
+    bad = worked_solutions.check_steps(
+        [{"working": r"$-180 + [3 \times 250 - 2 \times 160] = -180 + [750 - 330]$"}])
+    assert good["checked"] and good["agrees"] is True
+    assert bad["checked"] and bad["agrees"] is False and bad["step"] == 1
+
+
+def test_every_link_of_a_rewrite_chain_is_checked() -> None:
+    """Only the last link used to be checked; a wrong middle line passed."""
+    bad = worked_solutions.check_steps(
+        [{"working": r"$11 + [3 \times (-2)] + 4$"}, {"working": "$11 + (-6) + 4$"},
+         {"working": "$6 + 4$"}, {"working": "$10$"}])
+    assert bad["agrees"] is False and bad["step"] == 3

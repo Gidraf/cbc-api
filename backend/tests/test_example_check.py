@@ -1388,3 +1388,28 @@ def test_a_story_fault_is_seen_through_the_dollars_and_names_its_lesson() -> Non
     wrong = [f for f in report.findings if f.kind == "models_the_wrong_thing"]
     assert wrong, [f.says for f in report.findings]
     assert wrong[0].lessons == [1]
+
+
+def test_a_lessons_own_prose_walkthrough_is_not_a_repeat_of_its_worked_example() -> None:
+    """Lesson 2's prose set up `(-8) + 3 × (-6) - (-4) ÷ 2` and said "the full
+    working is in the worked example"; the worked example then worked it. The
+    check called that a lesson the guide did not really write."""
+    from app.services import example_check
+
+    notes = {"modules": [
+        {"module_number": 2, "title": "L2",
+         "exposition_segments": [{"topic": "Challenge", "body":
+             r"Use the challenge $(-8) + 3 \times (-6) - (-4) \div 2$ as the recording standard."}],
+         "worked_examples": [{"statement": r"Evaluate $(-8) + 3 \times (-6) - (-4) \div 2$.",
+                              "steps": [{"working": r"$(-8) + (-18) - (-2) = -24$", "because": "…"}],
+                              "answer": "-24"}]},
+        {"module_number": 5, "title": "L5",
+         "exposition_segments": [{"topic": "x", "body": "Temperatures."}],
+         "worked_examples": [{"statement": r"Evaluate $(-8) + 3 \times (-6) - (-4) \div 2$.",
+                              "steps": [{"working": r"$(-8) + (-18) - (-2) = -24$", "because": "…"}],
+                              "answer": "-24"}]},
+    ]}
+    report = example_check.check_notes(notes, grade="grade-9", subject="Mathematics", sub_strand="Integers")
+    repeats = [f for f in report.findings if f.kind == "repeated_example"]
+    assert len(repeats) == 1, [f.says for f in repeats]
+    assert "Example 3" in repeats[0].says, "the cross-lesson copy, not the lesson's own prose"

@@ -42,10 +42,20 @@ _SUPERSCRIPT = str.maketrans({
 _SUPERS = re.compile(r"[\u2070\u00b9\u00b2\u00b3\u2074-\u2079]+")
 
 
+# Square and curly brackets are round brackets to the arithmetic. Textbooks
+# nest them for legibility — `-18 - [(-4) × 3 + 6] ÷ 2` — and the tokeniser
+# knew only `(`, so the longest run of arithmetic it could find was what sat
+# INSIDE the square brackets. It answered −6 for an expression worth −15,
+# condemned a correct example on the page, and sent it back to be "fixed".
+_OTHER_BRACKETS = str.maketrans({"[": "(", "]": ")", "{": "(", "}": ")"})
+_LEFT_RIGHT = re.compile(r"\\(?:left|right|,|;|!)\s*")
+
+
 def _normalise(text: str) -> str:
-    """One spelling for each operator, before anything tries to read them."""
-    out = _SUPERS.sub(lambda m: "^" + m.group(0).translate(_SUPERSCRIPT), text)
-    return out.replace("**", "^")
+    """One spelling for each operator and bracket, before anything reads them."""
+    out = _LEFT_RIGHT.sub("", text).replace("\\{", "(").replace("\\}", ")")
+    out = _SUPERS.sub(lambda m: "^" + m.group(0).translate(_SUPERSCRIPT), out)
+    return out.replace("**", "^").translate(_OTHER_BRACKETS)
 
 
 class NotArithmetic(ValueError):

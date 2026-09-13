@@ -202,6 +202,18 @@ def check(statement: str, claimed_answer: str) -> dict[str, Any]:
             mine, theirs = _as_number(trace.final_answer), _as_number(comp)
             agreed = (mine is not None and theirs is not None
                       and abs(mine - theirs) < 1e-9)
+        if not agreed and mine is not None and theirs is None:
+            # The right-hand side is an EXPRESSION, not a value: the step
+            # `-180 + [3 × 250 - 2 × 160] = -180 + [750 - 320]` rewrites
+            # rather than reduces, and is true if both sides come to the
+            # same thing. Compared as text it was condemned every time.
+            try:
+                other = solve_math_problem(comp)
+                if not other.unsolved and other.final_answer:
+                    value = _as_number(other.final_answer)
+                    agreed = value is not None and abs(mine - value) < 1e-9
+            except Exception:  # noqa: BLE001
+                pass
         out["agrees"] = agreed
     except Exception:  # noqa: BLE001
         out["agrees"] = None
@@ -255,6 +267,11 @@ def check_steps(steps: Any) -> dict[str, Any]:
             # `-3 - 5`, then `-8` on its own line: the value is what the
             # expression before it comes to.
             lhs, rhs = previous, working
+        elif previous and _looks_arithmetic(working):
+            # `11 + [3 × (-2)] + 4`, then `11 + (-6) + 4`, then `5 + 4`: each
+            # line rewrites the one before and is true if they are equal. Only
+            # the last link used to be checked; a wrong middle line passed.
+            lhs, rhs = previous, working
         else:
             previous = working
             continue
@@ -272,6 +289,17 @@ def check_steps(steps: Any) -> dict[str, Any]:
         if out["agrees"] is None:
             out["agrees"] = True
     return out
+
+
+_ARITHMETIC_LINE = re.compile(r"\d")
+_OPERATOR = re.compile(r"[-+×÷*/^]|\\(?:times|div|cdot|d?frac)")
+
+
+def _looks_arithmetic(text: str) -> bool:
+    """A line with a number and an operation in it, and no words to speak of."""
+    stripped = re.sub(r"\\(?:times|div|cdot|d?frac|left|right)", " ", str(text or ""))
+    words = re.findall(r"[A-Za-z]{3,}", stripped)
+    return bool(_ARITHMETIC_LINE.search(text)) and bool(_OPERATOR.search(text)) and len(words) <= 2
 
 
 def check_working(statement: str, claimed_answer: str,

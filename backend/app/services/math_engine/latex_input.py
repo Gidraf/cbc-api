@@ -27,6 +27,11 @@ _WRAPPER = re.compile(r"\\(?:text|textbf|textit|mathrm|mathbf|operatorname)\s*\{
 
 _SYMBOLS: tuple[tuple[str, str], ...] = (
     (r"\left", ""), (r"\right", ""),
+    # Escaped braces and square brackets are grouping, the same as round
+    # brackets. `\{(-84 \div 7) + 5\} \times (-3)` lost its braces to the
+    # command-stripper and became `(-84/7) + 5 * (-3)` — a different sum.
+    (r"\{", "("), (r"\}", ")"),
+    ("[", "("), ("]", ")"),
     (r"\times", "*"), (r"\cdot", "*"), (r"\ast", "*"),
     (r"\div", "/"),
     (r"\pm", "+"),

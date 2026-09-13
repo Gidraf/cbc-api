@@ -146,3 +146,24 @@ def test_an_admin_can_read_the_share_link_from_the_console(monkeypatch) -> None:
         assert out["url"].startswith("https://api.example.test/api/v1/admin/logs/share?token=a-long-random-token-for-tests")
     finally:
         app.dependency_overrides.clear()
+
+
+def test_installing_the_store_lets_info_through(monkeypatch) -> None:
+    """The API process never configured logging; the root logger sat at
+    WARNING and every INFO diagnostic was dropped before the store saw it."""
+    root = logging.getLogger()
+    saved_level, saved_handlers = root.level, list(root.handlers)
+    monkeypatch.setenv("DATABASE_URL", "postgresql://x")
+    monkeypatch.setattr(log_store, "_installed", None)
+    try:
+        root.setLevel(logging.WARNING)
+        log_store.install("test")
+        assert root.level <= logging.INFO
+        assert any(isinstance(h, log_store.DbLogHandler) for h in root.handlers)
+    finally:
+        for h in root.handlers:
+            if isinstance(h, log_store.DbLogHandler):
+                h._stop.set()
+                root.removeHandler(h)
+        root.setLevel(saved_level)
+        monkeypatch.setattr(log_store, "_installed", None)

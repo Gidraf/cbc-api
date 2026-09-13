@@ -61,7 +61,8 @@ class DbLogHandler(logging.Handler):
 
     def emit(self, record: logging.LogRecord) -> None:
         # Never log the database's own chatter back into the database.
-        if record.name.startswith(("sqlalchemy", "psycopg", "urllib3", "httpx", "httpcore")):
+        if record.name.startswith(("sqlalchemy", "psycopg", "urllib3", "httpx", "httpcore",
+                                   "uvicorn.access", "watchfiles", "asyncio")):
             return
         try:
             message = redact(self.format(record))[:4000]
@@ -153,7 +154,14 @@ def install(process: str) -> None:
         return
     handler = DbLogHandler(process)
     handler.setFormatter(logging.Formatter("%(message)s"))
-    logging.getLogger().addHandler(handler)
+    root = logging.getLogger()
+    root.addHandler(handler)
+    # The API process never configured logging, so the root logger sat at
+    # WARNING and dropped every INFO record before any handler saw it — the
+    # meter's cost lines, the raw usage the provider returned, the per-lesson
+    # token counts. The store holds INFO and above.
+    if root.level == logging.NOTSET or root.level > logging.INFO:
+        root.setLevel(logging.INFO)
     _installed = handler
 
 

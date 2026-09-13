@@ -231,7 +231,8 @@ def _duplicates(examples: list[Any], grade: str, subject: str) -> list[Finding]:
 
     seen: dict[str, int] = {}
     findings: list[Finding] = []
-    for index, example in enumerate(examples or [], start=1):
+    examples = list(examples or [])
+    for index, example in enumerate(examples, start=1):
         if not isinstance(example, dict):
             continue
         demand = task_demand.measure_item(example)
@@ -239,6 +240,15 @@ def _duplicates(examples: list[Any], grade: str, subject: str) -> list[Finding]:
         if not key or demand.operations == 0:
             continue
         if key in seen:
+            first = examples[seen[key] - 1]
+            same_lesson = (isinstance(first, dict) and example.get("_lesson") is not None
+                           and first.get("_lesson") == example.get("_lesson"))
+            if same_lesson and (first.get("_prose") or example.get("_prose")):
+                # The lesson's prose walking through the expression its own
+                # worked example then sets out in full is one example shown
+                # once in words and once in working — not a lesson written
+                # twice. Across lessons it is still a repeat.
+                continue
             findings.append(Finding(
                 "repeated_example",
                 f"Example {index} works out \"{demand.expression}\", which "
@@ -1062,19 +1072,28 @@ def check_notes(notes: dict[str, Any], *, grade: str = "",
     the material and not the plan is checking the copy and not the original.
     """
     texts: list[str] = []
-    for module in (notes.get("modules") or notes.get("hour_modules") or []):
+    owned: list[tuple[int, str]] = []
+    for position, module in enumerate(
+            notes.get("modules") or notes.get("hour_modules") or [], start=1):
         if not isinstance(module, dict):
             continue
-        texts.append(str(module.get("teacher_exposition") or ""))
-        for segment in (module.get("exposition_segments") or []):
-            if isinstance(segment, dict):
-                texts.append(str(segment.get("body") or ""))
+        try:
+            number = int(module.get("module_number") or position)
+        except (TypeError, ValueError):
+            number = position
+        for text in [str(module.get("teacher_exposition") or "")] + [
+                str(segment.get("body") or "")
+                for segment in (module.get("exposition_segments") or [])
+                if isinstance(segment, dict)]:
+            texts.append(text)
+            owned.append((number, text))
 
     from . import task_demand
 
     items: list[Any] = []
-    for text in texts:
-        items += task_demand.items_in_prose(text)
+    for number, text in owned:
+        items += [{**item, "_lesson": number, "_prose": True}
+                  for item in task_demand.items_in_prose(text)]
 
     # Worked examples where a plan happens to carry them, judged in full, and
     # each one told which lesson it belongs to.
