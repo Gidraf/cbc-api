@@ -138,22 +138,35 @@ question about:
   - a KEY naming every symbol used, and no symbol that is not in the key,
   - a TITLE saying what area and what theme.
 
-Give the map as data, not as a description:
+Give the map as DATA, not as a drawing. THE MAP IS DRAWN BY THE SYSTEM from
+this data, with the outline of Kenya, the lakes, the rivers, the mountains and
+the towns placed at their real positions from its own gazetteer; the title,
+north arrow, scale bar, key and graticule are added for you. Do not write SVG
+for a map. Return:
   "map": {
-    "extent": "Nyeri County" | "Kenya" | "East Africa" | "the school compound",
-    "projection_note": "sketch map, not to projection" | "topographic",
-    "scale": {"ratio": "1:50 000", "bar_km": 5},
+    "extent": "Kenya" | "Nyeri County" | "the school compound" | "the local area",
+    "title": "Major physical features of Kenya",
     "features": [
-      {"kind": "river|road|railway|settlement|contour|boundary|relief|vegetation",
-       "name": "Chania River", "note": "flows south-east"}
+      {"kind": "capital|town|mountain|lake|river|road|railway|boundary|county_boundary|vegetation|building|feature",
+       "name": "Mount Kenya", "note": "the highest mountain in Kenya, 5 199 m"},
+      {"kind": "river", "name": "Tana", "note": "Kenya's longest river; flows to the Indian Ocean"}
     ],
-    "key": [{"symbol": "blue line", "means": "river"}],
-    "grid": {"kind": "eastings_northings" | "lat_long" | "none"}
+    "grid": {"kind": "lat_long" | "none"}
   }
+  - For "Kenya": name the features and nothing more. A feature the gazetteer
+    knows (every major town, lake, river and mountain) is placed exactly; for
+    one it may not know, add "lat" and "lon" (decimal degrees) so it can be
+    placed, and a river or road as "path": [[lon, lat], ...].
+  - For a county, a compound or a local area — which the gazetteer has no
+    outline for — give every feature "x" and "y" on a 0–100 grid (x east, y
+    south), a road or path as "path": [[x, y], ...], and optionally a
+    "boundary": [[x, y], ...] for the edge of the area.
+  - "note" is what a marking scheme can award for beyond the name: what the
+    feature is, where it flows, why it matters. Write one for every feature.
 
 WHAT THE LEARNER DOES ON IT is what decides what the map must show. If the
 question asks for a distance, the scale must allow it to be measured. If it
-asks for direction, the north arrow must be there. Do not draw a feature the
+asks for direction, the north arrow must be there. Do not name a feature the
 lesson never mentions: a map with six rivers on it when the lesson names one is
 six things to be asked about and one that was taught.""",
     ),

@@ -703,6 +703,19 @@ def factory_generate_questions_batch(
     diagrams_obj = row.get("diagrams") or []
     activities_obj = row.get("activities") or {}
 
+    # The drawings themselves, with their scene documents, from the registry.
+    # The bundle carries the planner's briefs, which have no parts to blank,
+    # so no diagram question was ever authored from them.
+    from ..services import occlusion_questions as _occlusion
+
+    _bundle_figures = [d for d in (diagrams_obj if isinstance(diagrams_obj, list) else [diagrams_obj])
+                       if isinstance(d, dict)]
+    diagrams_obj = _occlusion.merge_figures(
+        _bundle_figures,
+        _occlusion.filed_for_sub_strand(
+            payload.grade, payload.subject, payload.sub_strand,
+            titles=[str(d.get("title") or d.get("diagram_title") or "") for d in _bundle_figures]))
+
     # Questions are the five-layer stage: strand, sub-strand, notes, assets and
     # the teaching skill. The bundle existing is not the same as the bundle
     # being complete — questions written without the diagrams they are supposed

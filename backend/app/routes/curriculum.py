@@ -26,6 +26,7 @@ from ..services import (
     quality_score,
     media_registry,
     media_validators,
+    map_sketch,
     notes_coverage,
     notes_digest,
     notes_integrity,
@@ -1862,6 +1863,18 @@ def factory_generate_diagram(
     resp = llm_client.generate(resolved, context.messages, temperature=0.1)
     svg_markup = resp.content.get("diagram_svg") or resp.content.get("svg") or resp.content.get("svg_code") or "<svg xmlns='http://www.w3.org/2000/svg'></svg>"
     accessibility = resp.content.get("accessibility", {})
+    scene_from_model = resp.content.get("scene_document") or resp.content.get("scene")
+
+    # A map is drawn here from the features the model named, not from the
+    # model's SVG: a model's Kenya has the coast on the wrong side.
+    drawn_map = map_sketch.render_from_model(resp.content) if isinstance(resp.content, dict) else None
+    if drawn_map:
+        svg_markup = drawn_map["svg"]
+        scene_from_model = drawn_map["scene"]
+        accessibility = {**accessibility, "alt_text": drawn_map["alt_text"]}
+        if drawn_map["unplaced"]:
+            run_log.step("Map", f"{len(drawn_map['unplaced'])} feature(s) could not be placed: "
+                         + ", ".join(drawn_map["unplaced"][:6]), "warn")
 
     dedup = diagram_deduplicator.deduplicate_and_store(
         svg_str=svg_markup,
@@ -1871,8 +1884,9 @@ def factory_generate_diagram(
         # The generator's part list carries each part's function, which is what
         # a question needs to ask for more than the bare label. Dropping it here
         # is why diagrams reached the question stage with unnamed parts.
-        scene_document=resp.content.get("scene_document") or resp.content.get("scene"),
-        metadata={"grade": payload.grade, "subject": payload.subject, "strand": payload.strand},
+        scene_document=scene_from_model,
+        metadata={"grade": payload.grade, "subject": payload.subject, "strand": payload.strand,
+                  "sub_strand": payload.sub_strand, "map": bool(drawn_map)},
     )
 
     diagram_data = {
@@ -2390,6 +2404,13 @@ def factory_generate_single_visual(
 
     # 2. Extract newly generated outputs
     new_svg = resp.content.get("diagram_svg") or resp.content.get("svg")
+    # A map is drawn from the features the model named — see map_sketch.
+    drawn_map = map_sketch.render_from_model(resp.content) if isinstance(resp.content, dict) else None
+    if drawn_map:
+        new_svg = drawn_map["svg"]
+        if drawn_map["unplaced"]:
+            run_log.step("Map", f"{len(drawn_map['unplaced'])} feature(s) could not be placed: "
+                         + ", ".join(drawn_map["unplaced"][:6]), "warn")
     new_image_prompt = resp.content.get("image_prompt")
     new_negative_prompt = resp.content.get("negative_prompt")
     new_aspect_ratio = resp.content.get("aspect_ratio")
@@ -2411,11 +2432,13 @@ def factory_generate_single_visual(
         alt_text=new_accessibility.get("alt_text") or item.get("accessibility", {}).get("alt_text", f"Vector diagram of {title}"),
         tactile_description=new_accessibility.get("tactile_description") or item.get("accessibility", {}).get("tactile_description", "Tactile raised-line diagram with embossed contours."),
         scene_document=(
-            resp.content.get("scene_document")
+            (drawn_map or {}).get("scene")
+            or resp.content.get("scene_document")
             or resp.content.get("scene")
             or item.get("scene_document")
         ),
-        metadata={"grade": payload.grade, "subject": payload.subject, "strand": payload.strand},
+        metadata={"grade": payload.grade, "subject": payload.subject, "strand": payload.strand,
+                  "sub_strand": payload.sub_strand, "map": bool(drawn_map)},
     )
 
     # Save to MinIO explicitly and track result
