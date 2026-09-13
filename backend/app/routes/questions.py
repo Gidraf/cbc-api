@@ -412,7 +412,8 @@ def questions_paper_pdf(
 
 def _composed_paper(*, grade: str, subject: str, kind: str, strand: str, sub_strand: str,
                     marks: int, seed: str, drafts: bool, title: str, format_key: str = "auto",
-                    count: int | None = None, series: str = "", year: int | None = None) -> Any:
+                    count: int | None = None, series: str = "", year: int | None = None,
+                    term: int | None = None) -> Any:
     """One paper from the bank, for the scope the kind names."""
     from ..services import paper_builder, question_rows
 
