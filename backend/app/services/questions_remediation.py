@@ -123,6 +123,7 @@ def run(
     existing: list[dict[str, Any]] | None = None,
     diagrams: list[Any] | None = None,
     rewrite: Any = None,
+    audit: Any = None,
     max_passes: int = MAX_PASSES,
 ) -> tuple[list[dict[str, Any]], Report]:
     """Check, repair what can be repaired without a model, rewrite what the
@@ -138,9 +139,32 @@ def run(
     items = [q for q in (questions or []) if isinstance(q, dict)]
 
     def inspect(batch: list[dict[str, Any]]) -> question_check.Report:
-        return question_check.check(batch, grade=grade, subject=subject, strand=strand,
-                                    sub_strand=sub_strand, notes=notes, design_row=design_row,
-                                    existing=existing, diagrams=diagrams)
+        """The mechanical checks, and then the reader.
+
+        The audit is a model call, so it runs once per pass and only on
+        the items the mechanical checks did not already condemn — a reader
+        asked about an item the engine has proved wrong is a reader paid
+        to agree.
+        """
+        report = question_check.check(batch, grade=grade, subject=subject, strand=strand,
+                                      sub_strand=sub_strand, notes=notes, design_row=design_row,
+                                      existing=existing, diagrams=diagrams)
+        if audit is None:
+            return report
+        condemned = report.faulty_items
+        unread = [q for q in batch if _id(q) not in condemned]
+        if not unread:
+            return report
+        try:
+            more = audit(unread) or []
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Question audit failed: %s", exc)
+            return report
+        if more:
+            report.findings += list(more)
+            run_log.step("Second reader",
+                         f"{len(more)} item(s) fail a moderator's read: {more[0].says[:120]}", "warn")
+        return report
 
     report = inspect(items)
     out.repaired += report.repaired

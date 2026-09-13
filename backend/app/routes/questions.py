@@ -1122,7 +1122,8 @@ def factory_generate_questions_batch(
         normalized_questions, payload=payload, context=context, resolved=resolved,
         notes_obj=notes_obj, design_row=design_row, diagrams_list=diagrams_list,
         blueprint_slos=blueprint_slos, target_diag_obj=target_diag_obj,
-        hour_title=hour_title, questions_remediation=questions_remediation)
+        hour_title=hour_title, questions_remediation=questions_remediation,
+        notes_text=notes_text)
 
     # 4b-ii. The BATCH judgement: whether this set is pitched at the grade at
     #     all. No per-item rule can see it — every item can be well formed and
@@ -1223,7 +1224,7 @@ def _check_and_repair(
     questions: list[dict[str, Any]], *, payload: QuestionBatchGenerateRequest,
     context: Any, resolved: Any, notes_obj: Any, design_row: dict[str, Any],
     diagrams_list: list[Any], blueprint_slos: list[Any], target_diag_obj: Any,
-    hour_title: str, questions_remediation: Any,
+    hour_title: str, questions_remediation: Any, notes_text: str = "",
 ) -> tuple[list[dict[str, Any]], Any]:
     """The content checks and the aimed rewrite, for one batch.
 
@@ -1295,11 +1296,21 @@ def _check_and_repair(
     except Exception as exc:  # noqa: BLE001
         logger.warning("Could not read the bank for %s: %s", payload.sub_strand, exc)
 
+    from ..services import question_audit
+
+    # The reader: answers every item cold and says which keys it cannot
+    # reach. The one check that works for a subject with no engine.
+    def audit(items: list[dict[str, Any]]) -> list[Any]:
+        return question_audit.audit(
+            items, generate=llm_client.generate, model_config=resolved,
+            notes_text=notes_text, grade=payload.grade, subject=payload.subject,
+            sub_strand=payload.sub_strand)
+
     return questions_remediation.run(
         questions, grade=payload.grade, subject=payload.subject,
         strand=payload.strand, sub_strand=payload.sub_strand,
         notes=notes_obj, design_row=design_row, existing=existing,
-        diagrams=diagrams_list, rewrite=rewrite)
+        diagrams=diagrams_list, rewrite=rewrite, audit=audit)
 
 
 @router.post("/factory/generate-single")
