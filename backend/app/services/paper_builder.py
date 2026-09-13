@@ -297,7 +297,7 @@ def compose(items: list[dict[str, Any]], *, kind: str, grade: str, subject: str,
             strand: str = "", sub_strand: str = "", marks: int = 50,
             seed: str = "", title: str = "", allow_drafts: bool = False,
             format_key: str = "", count: int | None = None, year: int | None = None,
-            series: str = "") -> Paper:
+            series: str = "", term: int | None = None) -> Paper:
     """One paper from the bank's items for its scope.
 
     `format_key` picks the shape: "auto" (the default) follows the national
@@ -332,7 +332,8 @@ def compose(items: list[dict[str, Any]], *, kind: str, grade: str, subject: str,
 
     fmt = None if (format_key or "auto") == "school" else (
         assessment_format.by_key(format_key) or assessment_format.for_grade(grade))
-    paper.masthead = assessment_format.masthead(grade, subject, year=year, series=series)
+    paper.masthead = assessment_format.masthead(grade, subject, year=year, series=series,
+                                                kind=kind, scope=scope, term=term)
     if not pool:
         paper.shortfall = "the bank holds no usable items for this scope"
         return paper

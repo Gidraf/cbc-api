@@ -329,3 +329,32 @@ def test_a_batch_of_fifty_is_written_in_chunks_that_see_each_other() -> None:
     assert "CHUNK 2 OF 2" in seen[1] and "chunk 1 item 3" in seen[1], "the second chunk sees the first"
     assert "ALREADY WRITTEN" not in seen[0]
     assert resp.usage.total_tokens == 30
+
+
+def test_the_paper_is_headed_with_knecs_own_name_for_the_grade() -> None:
+    """A paper headed "Junior Secondary" is a paper from a different system,
+    and a head teacher sees it at once."""
+    from app.services import assessment_format as af
+
+    assert af.assessment_name("grade-9") == "KENYA JUNIOR SCHOOL EDUCATION ASSESSMENT"
+    assert af.assessment_name("grade-7") == "KENYA JUNIOR SCHOOL EDUCATION ASSESSMENT"
+    assert af.assessment_name("grade-6") == "KENYA PRIMARY SCHOOL EDUCATION ASSESSMENT"
+    assert af.assessment_name("grade-4") == "KENYA PRIMARY SCHOOL EDUCATION ASSESSMENT"
+    assert af.assessment_name("grade-3") == "KENYA EARLY YEARS ASSESSMENT"
+    assert af.assessment_name("grade-1") == "SCHOOL BASED ASSESSMENT"
+    assert "SECONDARY" not in " ".join(af.ASSESSMENT_NAMES.values())
+
+    head = af.masthead("grade-9", "Mathematics", year=2026, kind="term", term=2)
+    assert head["assessment"] == "KENYA JUNIOR SCHOOL EDUCATION ASSESSMENT"
+    assert head["grade_line"] == "GRADE 9 – YEAR 2026"
+    assert head["subject"] == "MATHEMATICS"
+    assert head["kind_line"] == "END OF TERM 2 EXAMINATION 2026"
+    assert af.masthead("grade-6", "Mathematics", kind="topical", scope="Integers")["kind_line"] \
+        == "TOPICAL ASSESSMENT: INTEGERS"
+
+    items = question_rows.flatten_all(_bank())
+    paper = paper_builder.compose(items, kind="strand", count=20, year=2026, **ARGS)
+    html = question_paper.render_paper(paper)
+    order = [html.index(x) for x in ("KENYA JUNIOR SCHOOL EDUCATION ASSESSMENT", "GRADE 9 – YEAR 2026",
+                                     "'subject'>MATHEMATICS<", "END OF STRAND ASSESSMENT: NUMBERS")]
+    assert order == sorted(order), "assessment, grade and year, subject, then the paper's kind"

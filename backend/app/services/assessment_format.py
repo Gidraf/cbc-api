@@ -191,17 +191,73 @@ def by_key(key: str) -> Format | None:
     return _BY_KEY.get((key or "").strip().lower())
 
 
-def masthead(grade: str, subject: str, *, year: int | None = None, series: str = "") -> dict[str, str]:
-    """The lines at the head of the paper, in the order the samples print them."""
+# KNEC's own name for the assessment at each grade. The band's format says
+# how the paper is shaped; the grade says what it is called on the front —
+# a Grade 3 paper is the Kenya Early Years Assessment, a Grade 6 paper the
+# Kenya Primary School Education Assessment, a Grade 9 paper the Kenya
+# Junior School Education Assessment. A paper headed "Junior Secondary" is
+# a paper from a different system, and a head teacher sees it at once.
+ASSESSMENT_NAMES: dict[str, str] = {
+    "grade-pp1": "SCHOOL BASED ASSESSMENT",
+    "grade-pp2": "SCHOOL BASED ASSESSMENT",
+    "grade-1": "SCHOOL BASED ASSESSMENT",
+    "grade-2": "SCHOOL BASED ASSESSMENT",
+    "grade-3": "KENYA EARLY YEARS ASSESSMENT",
+    "grade-4": "KENYA PRIMARY SCHOOL EDUCATION ASSESSMENT",
+    "grade-5": "KENYA PRIMARY SCHOOL EDUCATION ASSESSMENT",
+    "grade-6": "KENYA PRIMARY SCHOOL EDUCATION ASSESSMENT",
+    "grade-7": "KENYA JUNIOR SCHOOL EDUCATION ASSESSMENT",
+    "grade-8": "KENYA JUNIOR SCHOOL EDUCATION ASSESSMENT",
+    "grade-9": "KENYA JUNIOR SCHOOL EDUCATION ASSESSMENT",
+    "grade-10": "KENYA SENIOR SCHOOL EDUCATION ASSESSMENT",
+    "grade-11": "KENYA SENIOR SCHOOL EDUCATION ASSESSMENT",
+    "grade-12": "KENYA SENIOR SCHOOL EDUCATION ASSESSMENT",
+}
+
+
+def assessment_name(grade: str) -> str:
+    from .grade_order import normalize_grade
+
+    return ASSESSMENT_NAMES.get(normalize_grade(grade) or "", for_grade(grade).assessment)
+
+
+def _term_now() -> int:
+    import datetime as _dt
+
+    month = _dt.date.today().month
+    return 1 if month <= 4 else 2 if month <= 8 else 3
+
+
+def kind_line(kind: str, scope: str, *, term: int | None = None, year: int | None = None) -> str:
+    """What this particular paper is, under the assessment's name: the
+    topical test on Integers, the end-of-strand assessment on Numbers, the
+    end of Term 2 examination."""
+    import datetime as _dt
+
+    year = year or _dt.date.today().year
+    scope = (scope or "").strip()
+    if kind == "term":
+        return f"END OF TERM {term or _term_now()} EXAMINATION {year}"
+    if kind == "strand":
+        return f"END OF STRAND ASSESSMENT: {scope.upper()}" if scope else "END OF STRAND ASSESSMENT"
+    return f"TOPICAL ASSESSMENT: {scope.upper()}" if scope else "TOPICAL ASSESSMENT"
+
+
+def masthead(grade: str, subject: str, *, year: int | None = None, series: str = "",
+             kind: str = "", scope: str = "", term: int | None = None) -> dict[str, str]:
+    """The lines at the head of the paper, in the order the samples print
+    them: the series, the assessment's own name for this grade, the grade
+    and year, the learning area as the design names it, the time."""
     import datetime as _dt
 
     fmt = for_grade(grade)
     year = year or _dt.date.today().year
     return {
         "series": series,
-        "assessment": fmt.assessment,
+        "assessment": assessment_name(grade),
         "grade_line": f"{grade_label(grade).upper()} – YEAR {year}",
-        "subject": subject.upper(),
+        "subject": subject.strip().upper(),
+        "kind_line": kind_line(kind, scope, term=term, year=year) if kind else "",
         "time": f"Time: {fmt.time_allowed}",
     }
 

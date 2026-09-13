@@ -3296,6 +3296,8 @@ export type PaperRequest = {
   drafts: boolean;
   title?: string;
   series?: string;
+  /** For an end-of-term paper: 1, 2 or 3. */
+  term?: number;
 };
 
 export type ComposedPaper = {
@@ -3331,6 +3333,7 @@ function paperQuery(v: PaperRequest): string {
     format: v.format || "auto",
   });
   if (v.count) params.set("count", String(v.count));
+  if (v.term) params.set("term", String(v.term));
   return params.toString();
 }
 

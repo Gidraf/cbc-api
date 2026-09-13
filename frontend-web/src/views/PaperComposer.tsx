@@ -39,6 +39,7 @@ export function PaperComposer() {
   const [seed, setSeed] = React.useState("");
   const [drafts, setDrafts] = React.useState(true);
   const [title, setTitle] = React.useState("");
+  const [term, setTerm] = React.useState(1);
   const [frozen, setFrozen] = React.useState<ComposedPaper | null>(null);
 
   const subjects = useSubjects(grade);
@@ -48,7 +49,7 @@ export function PaperComposer() {
 
   const request: PaperRequest | null =
     grade && subject
-      ? { grade, subject, kind, strand, sub_strand: subStrand, marks, count, format, seed, drafts, title }
+      ? { grade, subject, kind, strand, sub_strand: subStrand, marks, count, format, seed, drafts, title, term }
       : null;
   const composed = useComposedPaper(request);
   const open = useOpenPaper();
@@ -128,6 +129,17 @@ export function PaperComposer() {
               </Select>
             )}
           </Field>
+          {kind === "term" && (
+            <Field label="Term">
+              {(p) => (
+                <Select {...p} value={term} onChange={(e) => setTerm(Number(e.target.value))}>
+                  <option value={1}>Term 1</option>
+                  <option value={2}>Term 2</option>
+                  <option value={3}>Term 3</option>
+                </Select>
+              )}
+            </Field>
+          )}
           {kind !== "term" && (
             <Field label="Strand">
               {(p) => (

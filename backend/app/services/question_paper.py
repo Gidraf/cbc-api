@@ -353,6 +353,7 @@ EXAM_CSS = """
                           text-underline-offset: 3px; letter-spacing: 0.02em; margin: 0; }
 .exam .mast .gradeline { font-size: 12pt; font-weight: 700; margin: 2px 0 0; text-decoration: underline; }
 .exam .mast .subject { font-size: 13pt; font-weight: 700; margin: 2px 0 0; text-decoration: underline; }
+.exam .mast .kindline { font-size: 9.5pt; font-weight: 600; margin: 2px 0 0; letter-spacing: 0.03em; }
 .exam .mast .time { position: absolute; right: 0; bottom: 6px; font-size: 9pt; font-weight: 600; }
 .exam .mast .code { position: absolute; left: 0; top: 4px; width: 30px; height: 30px; border: 1.5px solid #111;
                     border-radius: 50%; display: flex; align-items: center; justify-content: center;
@@ -569,6 +570,7 @@ def render_paper(paper: Any, *, answers: bool = False, with_scheme: bool = False
             f"<div class='gradeline'>{_esc(mast.get('grade_line') or grade_label.upper())}</div>"
             f"<div class='subject'>{_esc(mast.get('subject') or paper.subject.upper())}"
             + (" — MARKING SCHEME" if scheme else "") + "</div>"
+            + (f"<div class='kindline'>{_esc(mast['kind_line'])}</div>" if mast.get("kind_line") else "")
             + (f"<div class='time'>{_esc(mast.get('time') or 'Time: ' + paper.time_allowed)}</div>" if not scheme else "")
             + "</div>"
         )

@@ -433,7 +433,7 @@ def _composed_paper(*, grade: str, subject: str, kind: str, strand: str, sub_str
     return paper_builder.compose(
         items, kind=kind, grade=grade, subject=subject, strand=strand,
         sub_strand=sub_strand, marks=marks, seed=seed, title=title, allow_drafts=drafts,
-        format_key=format_key, count=count, series=series or _series_name(), year=year)
+        format_key=format_key, count=count, series=series or _series_name(), year=year, term=term)
 
 
 def _series_name() -> str:
@@ -466,6 +466,7 @@ class PaperFreezeRequest(BaseModel):
     title: str = ""
     series: str = ""
     year: int | None = None
+    term: int | None = None
 
 
 @router.post("/paper/freeze")
@@ -487,7 +488,7 @@ def freeze_paper(
                             strand=payload.strand, sub_strand=payload.sub_strand, marks=payload.marks,
                             seed=payload.seed, drafts=payload.drafts, title=payload.title,
                             format_key=payload.format, count=payload.count, series=payload.series,
-                            year=payload.year)
+                            year=payload.year, term=payload.term)
     if not paper.items:
         raise_api_error("SUBSTRAND_BUNDLE_NOT_FOUND",
                         f"The bank holds no usable items for {payload.subject} · "
@@ -553,13 +554,14 @@ def composed_paper_json(
     title: str = Query(""),
     format: str = Query("auto", description="auto (the grade's national paper), kpsea, kjsea, senior, school"),
     count: int | None = Query(None, ge=5, le=100, description="Items on a formatted paper"),
+    term: int | None = Query(None, ge=1, le=3, description="For an end-of-term paper"),
     _: AuthContext = Depends(require_roles("admin", "operator", "reviewer", "developer")),
 ) -> dict[str, Any]:
     """The composition — sections, ids, marks — for the console to show and
     the exam builder to freeze."""
     paper = _composed_paper(grade=grade, subject=subject, kind=kind, strand=strand,
                             sub_strand=sub_strand, marks=marks, seed=seed, drafts=drafts,
-                            title=title, format_key=format, count=count)
+                            title=title, format_key=format, count=count, term=term)
     out = paper.to_dict()
     query = (f"grade={grade}&subject={subject}&kind={kind}&strand={strand}"
              f"&sub_strand={sub_strand}&marks={marks}&seed={paper.seed}&drafts={str(drafts).lower()}"
@@ -587,6 +589,7 @@ def composed_paper_html(
     title: str = Query(""),
     format: str = Query("auto"),
     count: int | None = Query(None, ge=5, le=100),
+    term: int | None = Query(None, ge=1, le=3),
     answers: bool = Query(False, description="The marking scheme alone"),
     with_scheme: bool = Query(False, description="The paper, then the scheme, in one document"),
     _: AuthContext = Depends(require_roles("admin", "operator", "reviewer", "developer")),
@@ -598,7 +601,7 @@ def composed_paper_html(
 
     paper = _composed_paper(grade=grade, subject=subject, kind=kind, strand=strand,
                             sub_strand=sub_strand, marks=marks, seed=seed, drafts=drafts,
-                            title=title, format_key=format, count=count)
+                            title=title, format_key=format, count=count, term=term)
     return HTMLResponse(question_paper.render_paper(
         paper, answers=answers, with_scheme=with_scheme,
         assets=question_paper.figures_for(paper.items)))
@@ -617,6 +620,7 @@ def composed_paper_pdf(
     title: str = Query(""),
     format: str = Query("auto"),
     count: int | None = Query(None, ge=5, le=100),
+    term: int | None = Query(None, ge=1, le=3),
     answers: bool = Query(False),
     with_scheme: bool = Query(False),
     _: AuthContext = Depends(require_roles("admin", "operator", "reviewer")),
@@ -627,7 +631,7 @@ def composed_paper_pdf(
 
     paper = _composed_paper(grade=grade, subject=subject, kind=kind, strand=strand,
                             sub_strand=sub_strand, marks=marks, seed=seed, drafts=drafts,
-                            title=title, format_key=format, count=count)
+                            title=title, format_key=format, count=count, term=term)
     document = question_paper.render_paper(
         paper, answers=answers, with_scheme=with_scheme,
         assets=question_paper.figures_for(paper.items))
