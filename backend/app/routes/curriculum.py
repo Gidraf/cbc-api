@@ -27,6 +27,7 @@ from ..services import (
     media_registry,
     media_validators,
     notes_coverage,
+    notes_digest,
     notes_integrity,
     notes_remediation,
     redundancy_check,
@@ -1791,9 +1792,12 @@ def factory_generate_diagram(
         extra_query=concept_name,
     )
 
+    # The figures each lesson asked for, with the text around them — a
+    # diagram drawn from the title and 1500 characters of concepts was a
+    # diagram of whatever the model liked, and the plates stayed empty.
     notes_summary_str = ""
     if payload.notes_content:
-        notes_summary_str = f"Title: {payload.notes_content.get('title', '')}\nIntro: {payload.notes_content.get('intro', '')}\nConcepts: {json_lib.dumps(payload.notes_content.get('key_concepts', []), ensure_ascii=False)[:1500]}"
+        notes_summary_str = notes_digest.for_diagrams(payload.notes_content)
 
     context = langfuse_context_service.assemble_agent_context(
         agent_name="diagram-generator",
@@ -1933,7 +1937,7 @@ def factory_generate_activity(
 
     notes_str = ""
     if payload.notes_content:
-        notes_str = json_lib.dumps(payload.notes_content, ensure_ascii=False)[:2000]
+        notes_str = notes_digest.for_activities(payload.notes_content)
 
     diagram_str = ""
     if payload.diagram_info:
@@ -1994,7 +1998,7 @@ def factory_generate_activity(
                 custom_instructions=payload.custom_instructions,
                 diagram_str=diagram_str,
                 dossier_formatted_context=dossier.formatted_context,
-                notes_str_1000=notes_str[:1000])
+                notes_str_1000=notes_digest.index(payload.notes_content) or notes_str[:1000])
         ),
     })
 
@@ -2788,10 +2792,12 @@ def factory_generate_questions(
         topic_type="questions",
     )
 
+    # The lessons as taught, not the first two thousand characters of their
+    # JSON — which was the title, the intro and half of lesson one.
     notes_str = ""
     if payload.notes_content:
-        notes_str = json_lib.dumps(payload.notes_content, ensure_ascii=False)[:2000]
-    elif payload.notes_summary:
+        notes_str = notes_digest.for_questions(payload.notes_content).text
+    if not notes_str and payload.notes_summary:
         notes_str = payload.notes_summary
 
     diagram_str = ""
@@ -2811,7 +2817,7 @@ def factory_generate_questions(
         template_vars={
             # The outcomes themselves, not only their identifier.
             "slos": _blueprint_for(payload.grade, payload.subject, payload.sub_strand).get("slos", []),
-            "notes_summary": payload.notes_summary or notes_str[:2_000],
+            "notes_summary": payload.notes_summary or notes_digest.index(payload.notes_content),
             "diagram_concept": payload.diagram_title or diagram_str,
             "experiments_generated": act_str,
             "level": getattr(payload, "level", None) or grade_level(payload.grade),
@@ -2872,7 +2878,7 @@ def factory_generate_questions(
                 custom_instructions=payload.custom_instructions,
                 diagram_str=diagram_str,
                 dossier_formatted_context=dossier.formatted_context,
-                notes_str_1600=notes_str[:1600],
+                notes_str_1600=notes_digest.index(payload.notes_content) or notes_str[:1600],
                 slo_id_or_f_payload_grade_payload_subject_co=payload.slo_id or f'{payload.grade}-{payload.subject_code}-01',
                 strand=payload.strand,
                 sub_strand=payload.sub_strand)

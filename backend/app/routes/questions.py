@@ -625,19 +625,17 @@ def factory_generate_questions_batch(
     # those refs rather than guessing from shared vocabulary.
     design_row = blueprint_row or {}
 
-    notes_text = ""
-    if notes_obj and isinstance(notes_obj, dict):
-        notes_text = f"Title: {notes_obj.get('title', '')}\nAllocated Hours: {notes_obj.get('allocated_hours', 4)}\nIntro: {notes_obj.get('intro', '')}\n\n"
-        for idx, hm in enumerate(notes_obj.get("hour_modules") or notes_obj.get("key_concepts") or []):
-            h_title = hm.get("hour_title") or hm.get("heading") or f"Hour {idx+1}"
-            h_content = hm.get("full_lecture_notes") or hm.get("detailed_exposition") or hm.get("content") or ""
-            notes_text += f"--- {h_title} ---\n{h_content}\n"
-            for sub in hm.get("subsections") or hm.get("sub_sections") or []:
-                notes_text += f"Sub-topic: {sub.get('title')}: {sub.get('content')}\n"
-            if hm.get("pedagogical_notes"):
-                notes_text += f"PCK Note: {hm.get('pedagogical_notes')}\n"
-            if hm.get("common_misconceptions"):
-                notes_text += f"Misconception: {hm.get('common_misconceptions')}\n"
+    # What the lessons taught, every lesson, with the worked examples marked
+    # as already used. This read `full_lecture_notes` and `hour_title` off
+    # modules that carry `teacher_exposition` and `title`, so every lesson
+    # came through as a heading with nothing under it and the questions were
+    # written from the design alone.
+    from ..services import notes_digest
+
+    digest = notes_digest.for_questions(notes_obj)
+    notes_text = digest.text
+    if digest.chars_dropped:
+        logger.info("Notes digest for %s cut by %d chars.", payload.sub_strand, digest.chars_dropped)
 
     diagrams_text = ""
     if isinstance(diagrams_obj, list):
@@ -752,8 +750,7 @@ def factory_generate_questions_batch(
             # string — which is what the gate means by "no SLO text on the
             # curriculum link", and why slo congruence never scored.
             "slos": blueprint_slos,
-            "notes_summary": str((notes_obj or {}).get("summary")
-                                 or (notes_obj or {}).get("intro") or "")[:2_000],
+            "notes_summary": notes_digest.index(notes_obj),
             "diagram_concept": ", ".join(
                 str(d.get("diagram_title") or d.get("title") or "")
                 for d in (diagrams_obj if isinstance(diagrams_obj, list) else [])[:6]
@@ -790,7 +787,7 @@ def factory_generate_questions_batch(
                 lesson_hours=str((notes_obj or {}).get("allocated_hours") or "")),
             "faith_scope": faith_prompt_block(payload.subject),
             "content_type_directives": ct_profile.format_for_prompt(),
-            "notes_content": notes_text[:3000] or payload.sub_strand,
+            "notes_content": notes_text or payload.sub_strand,
             "diagram_id": target_diag_obj.get("asset_id", "diag_01") if target_diag_obj else "diag_01",
             "diagram_info": diagrams_text[:1500] or "Visual models available.",
             "activity_info": experiments_text[:1500] or "Practical experiments available.",
@@ -818,7 +815,8 @@ def factory_generate_questions_batch(
                 experiments_text_2000=experiments_text[:2000],
                 grade=payload.grade,
                 grade_3_upper=payload.grade[:3].upper(),
-                notes_text_4000=notes_text[:4000],
+                notes_text_4000=("Lessons (full content under LAYER 1 above):\n"
+                                 + notes_digest.index(notes_obj)) if notes_text else "",
                 parent_anchor_directive=parent_anchor_directive,
                 strand=payload.strand,
                 sub_strand=payload.sub_strand,
