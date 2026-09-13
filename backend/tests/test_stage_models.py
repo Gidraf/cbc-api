@@ -453,3 +453,36 @@ def test_a_stored_gpt_4o_binding_moves_to_its_tier(monkeypatch) -> None:
 
     assert rs.stage_bindings["notes_generation"].model == state_mod.DEFAULT_OPENAI_MODEL
     assert rs.stage_bindings["ingest_extraction"].model == state_mod.LIGHT_OPENAI_MODEL
+
+
+def test_an_unbound_stage_runs_on_the_configured_default_not_a_hardcoded_model(monkeypatch) -> None:
+    """The Celery worker never loaded its bindings, so every stage fell to the
+    router's hard-coded gpt-4o-mini while the console showed another model —
+    and runs the API's own thread picked up were compared with runs this
+    worker picked up as if they were the same pipeline."""
+    from app.services import provider_router as pr
+    from app.state import DEFAULT_OPENAI_MODEL, ProviderCredential, RuntimeState
+
+    state = RuntimeState()
+    state.stage_bindings.clear()
+    state.provider_credentials["openai"] = ProviderCredential(provider="openai", encrypted_api_key="x")
+    monkeypatch.setattr(state, "decrypt_api_key", lambda p: "sk-test")
+    router = pr.ProviderRouter(state)
+    monkeypatch.setattr(router, "_check_endpoint_reachability", lambda url: None)
+
+    resolved = router.resolve_for_stage("notes_generation")
+
+    assert resolved.model == DEFAULT_OPENAI_MODEL
+    assert "4o-mini" not in resolved.model
+
+
+def test_the_worker_loads_its_bindings_before_the_first_job(monkeypatch) -> None:
+    from app import tasks
+    from app.state import runtime_state
+
+    called = {"n": 0}
+    monkeypatch.setattr(runtime_state, "load_from_db", lambda: called.__setitem__("n", called["n"] + 1))
+    monkeypatch.setattr(tasks, "_state_loaded", False)
+    tasks._load_state_once()
+    tasks._load_state_once()
+    assert called["n"] == 1, "once per process"

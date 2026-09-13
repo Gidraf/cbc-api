@@ -137,7 +137,9 @@ def normalize_model_name(provider: str, raw_model: str) -> str:
 
     if provider == Provider.OPENAI.value:
         if not cleaned or lower in {"", "null", "undefined", "default", "none"}:
-            return "gpt-4o-mini"
+            from ..state import DEFAULT_OPENAI_MODEL
+
+            return DEFAULT_OPENAI_MODEL
         if cleaned in OPENAI_VALID_MODELS:
             return cleaned
         # A fully-qualified id is passed through before any alias rule runs.
@@ -154,7 +156,9 @@ def normalize_model_name(provider: str, raw_model: str) -> str:
             return "gpt-4o"
         if "3.5" in lower or "35" in lower:
             return "gpt-3.5-turbo"
-        return "gpt-4o-mini"
+        from ..state import DEFAULT_OPENAI_MODEL
+
+        return DEFAULT_OPENAI_MODEL
 
     elif provider == Provider.ANTHROPIC.value:
         if not cleaned or lower in {"", "null", "undefined", "default", "none"}:
@@ -186,7 +190,11 @@ def normalize_model_name(provider: str, raw_model: str) -> str:
             return "llama3.1"
         return cleaned
 
-    return cleaned or "gpt-4o-mini"
+    if cleaned:
+        return cleaned
+    from ..state import DEFAULT_OPENAI_MODEL
+
+    return DEFAULT_OPENAI_MODEL
 
 
 class ProviderRouter:
@@ -217,12 +225,20 @@ class ProviderRouter:
                 break
 
         if not binding:
-            # Fallback to default binding if stage not explicitly bound
+            # An unbound stage runs on the configured default for its tier,
+            # never on a hard-coded model. "gpt-4o-mini" sat here for a year
+            # and every process that had not loaded its bindings — the Celery
+            # worker — wrote content with it while the console showed a
+            # different model.
+            from ..state import default_model_for
+
             provider = provider or Provider.OPENAI.value
-            model = model or "gpt-4o-mini"
+            model = model or (default_model_for(stage)
+                              if provider == Provider.OPENAI.value else "")
             resolved_base_url = OFFICIAL_BASE_URLS[Provider.OPENAI]
             binding_base_url = None
             model = normalize_model_name(provider, model)
+            logger.warning("Stage %s is not bound; using %s/%s.", stage, provider, model)
         else:
             provider = provider or binding.provider
             raw_model = (model or binding.model or "").strip()

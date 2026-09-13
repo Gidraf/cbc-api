@@ -14,6 +14,34 @@ from .celery_app import celery_app
 logger = logging.getLogger("cbc-tasks")
 
 
+_state_loaded = False
+
+
+def _load_state_once() -> None:
+    """The stage bindings and provider credentials, from the database.
+
+    The API loads them at startup; this process never did. It started with
+    the credentials from the environment and no bindings at all, so every
+    stage fell to the router's hard-coded fallback — gpt-4o-mini — whatever
+    the console said. The runs the API's own thread picked up used the
+    bound model; the runs this worker picked up used a 2024 model, and the
+    two were compared as if they were the same pipeline.
+    """
+    global _state_loaded
+    if _state_loaded:
+        return
+    from .state import runtime_state
+
+    try:
+        runtime_state.load_from_db()
+        _state_loaded = True
+        logger.info("Worker loaded %d stage binding(s): %s",
+                    len(runtime_state.stage_bindings),
+                    ", ".join(sorted({b.model for b in runtime_state.stage_bindings.values()})) or "none")
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Worker could not load stage bindings; falling back to defaults: %s", exc)
+
+
 @celery_app.task(
     name="cbc.run_job",
     bind=True,
@@ -34,6 +62,7 @@ def run_job(self, job_id: str) -> dict:
     from .routes import curriculum  # noqa: F401  (registers the job handlers)
     from .services import job_queue
 
+    _load_state_once()
     outcome = job_queue.run_job_by_id(job_id)
 
     # Sent back to the queue for its second attempt: dispatch it again, because

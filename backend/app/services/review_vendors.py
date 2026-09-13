@@ -30,8 +30,8 @@ REVIEW_MODELS: dict[str, dict[str, Any]] = {
     },
     "openai": {
         "label": "OpenAI",
-        "models": ["gpt-4o", "gpt-4o-mini", "o3-mini", "o1-mini"],
-        "default": "gpt-4o",
+        "models": ["gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.4", "gpt-4o"],
+        "default": "gpt-5.6-terra",
         "notes": "Reliable JSON. Usually the generator here, so prefer it on a "
                  "different layer from the one that wrote the content.",
     },
