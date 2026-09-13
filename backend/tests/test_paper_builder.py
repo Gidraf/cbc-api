@@ -301,3 +301,31 @@ def test_the_composed_paper_routes_exist_and_flatten_the_bank() -> None:
     assert '@router.get("/paper/exam.json")' in source
     assert source.count("question_rows.flatten_all(") >= 3, "the bank paper must flatten its rows"
     assert "question_paper.figures_for(" in source
+
+
+def test_a_batch_of_fifty_is_written_in_chunks_that_see_each_other() -> None:
+    from app.routes.questions import _generate_in_chunks
+
+    class Usage:
+        def __init__(self):
+            self.prompt_tokens, self.completion_tokens, self.total_tokens = 10, 5, 15
+
+    class Resp:
+        def __init__(self, items):
+            self.content, self.usage, self.model = {"questions": items}, Usage(), "m"
+
+    seen = []
+
+    class Client:
+        def generate(self, config, messages, temperature=0.0):
+            seen.append(messages[-1]["content"])
+            n = len(seen)
+            return Resp([{"question_text": f"chunk {n} item {i}"} for i in range(25 if n == 1 else 25)])
+
+    resp, items = _generate_in_chunks(Client(), object(), [{"role": "system", "content": "s"},
+                                                            {"role": "user", "content": "directive"}], 50)
+
+    assert len(seen) == 2 and len(items) == 50
+    assert "CHUNK 2 OF 2" in seen[1] and "chunk 1 item 3" in seen[1], "the second chunk sees the first"
+    assert "ALREADY WRITTEN" not in seen[0]
+    assert resp.usage.total_tokens == 30

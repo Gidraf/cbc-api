@@ -1080,8 +1080,8 @@ def factory_generate_questions_batch(
         ),
     })
 
-    resp = llm_client.generate(resolved, context.messages, temperature=0.25)
-    raw_questions = resp.content.get("questions", []) if isinstance(resp.content, dict) else (resp.content if isinstance(resp.content, list) else [])
+    resp, raw_questions = _generate_in_chunks(
+        llm_client, resolved, context.messages, payload.batch_count)
 
     # Questions written from the figures themselves. A diagram question written
     # from a *description* can only say "study the diagram"; these blank named
@@ -1336,6 +1336,57 @@ def factory_generate_questions_batch(
         "quality_gate": gate_result.to_dict(),
         "self_check": self_check.to_dict(),
     }
+
+
+CHUNK = 25
+
+
+def _generate_in_chunks(llm_client: Any, resolved: Any, messages: list[dict[str, Any]],
+                        wanted: int) -> tuple[Any, list[Any]]:
+    """Fifty items in one call is fifty items written in a hurry — the last
+    twenty repeat the first ten and the JSON runs past the output budget.
+    Batches above CHUNK are written in chunks, each shown the stems already
+    written so it sets new tasks, and the chunks are one batch downstream."""
+    import json as json_lib
+
+    chunks = [CHUNK] * (wanted // CHUNK) + ([wanted % CHUNK] if wanted % CHUNK else [])
+    if len(chunks) <= 1:
+        resp = llm_client.generate(resolved, messages, temperature=0.25)
+        content = resp.content
+        return resp, (content.get("questions", []) if isinstance(content, dict)
+                      else (content if isinstance(content, list) else []))
+
+    written: list[dict[str, Any]] = []
+    last = None
+    usage_total: dict[str, int] = {}
+    for number, size in enumerate(chunks, start=1):
+        already = "\n".join(f"- {str(q.get('question_text') or '')[:160]}" for q in written[-60:]
+                            if isinstance(q, dict))
+        extra = (f"\n\n=== THIS IS CHUNK {number} OF {len(chunks)}: WRITE EXACTLY {size} ITEMS ===\n"
+                 + ("These items are ALREADY WRITTEN for this sub-strand; do not set them or "
+                    "anything on the same figures with the same task:\n" + already if already else ""))
+        chunk_messages = list(messages[:-1]) + [
+            {"role": "user", "content": str(messages[-1].get("content") or "") + extra}]
+        resp = llm_client.generate(resolved, chunk_messages, temperature=0.25)
+        content = resp.content
+        items = (content.get("questions", []) if isinstance(content, dict)
+                 else (content if isinstance(content, list) else []))
+        written += [q for q in items if isinstance(q, dict)]
+        last = resp
+        usage = getattr(resp, "usage", None)
+        for key in ("prompt_tokens", "completion_tokens", "total_tokens"):
+            value = getattr(usage, key, None) if usage is not None else None
+            if isinstance(value, int):
+                usage_total[key] = usage_total.get(key, 0) + value
+        logger.info("Questions chunk %d/%d: %d item(s), %d so far.", number, len(chunks), len(items), len(written))
+    if last is not None and getattr(last, "usage", None) is not None:
+        for key, value in usage_total.items():
+            try:
+                setattr(last.usage, key, value)
+            except Exception:  # noqa: BLE001
+                pass
+        last.content = {"questions": written}
+    return last, written
 
 
 def _check_and_repair(
