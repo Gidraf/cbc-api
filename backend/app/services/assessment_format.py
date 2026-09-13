@@ -243,6 +243,22 @@ def kind_line(kind: str, scope: str, *, term: int | None = None, year: int | Non
     return f"TOPICAL ASSESSMENT: {scope.upper()}" if scope else "TOPICAL ASSESSMENT"
 
 
+# KICD files three learning areas by their initials; the paper prints them
+# in full, as the samples do.
+PAPER_NAMES = {
+    "cre": "Christian Religious Education",
+    "ire": "Islamic Religious Education",
+    "hre": "Hindu Religious Education",
+    "pte": "Pre-Technical Studies",
+}
+
+
+def paper_name(subject: str) -> str:
+    """The learning area as it is printed on the paper."""
+    key = (subject or "").strip().lower()
+    return PAPER_NAMES.get(key, (subject or "").strip())
+
+
 def masthead(grade: str, subject: str, *, year: int | None = None, series: str = "",
              kind: str = "", scope: str = "", term: int | None = None) -> dict[str, str]:
     """The lines at the head of the paper, in the order the samples print
@@ -256,17 +272,51 @@ def masthead(grade: str, subject: str, *, year: int | None = None, series: str =
         "series": series,
         "assessment": assessment_name(grade),
         "grade_line": f"{grade_label(grade).upper()} – YEAR {year}",
-        "subject": subject.strip().upper(),
+        "subject": paper_name(subject).upper(),
         "kind_line": kind_line(kind, scope, term=term, year=year) if kind else "",
         "time": f"Time: {fmt.time_allowed}",
     }
 
 
-def prompt_block(grade: str, count: int | None = None) -> str:
+# What the subject's own examiner will check mechanically, told to the
+# writer in advance — see subject_checks for the checks themselves.
+_SUBJECT_RULES = {
+    "science": (
+        "SCIENCE ITEMS: every numerical answer carries its unit, in the question's own "
+        "units or one made from them (m and s give m/s), written as the SI symbol — kg, "
+        "km, cm, s, min, h, g, l, ml, km/h, N, J, W, °C — never Kg, KM, sec or hrs. A "
+        "chemical equation given as an answer is balanced. A calculation states the "
+        "formula, substitutes, and gives the answer with its unit in the marking scheme."),
+    "language": (
+        "LANGUAGE ITEMS: write every item, its options and its marking scheme entirely in "
+        "the paper's language. A comprehension passage goes in `stimulus_context` in FULL, "
+        "at the length this grade reads (Grades 1–3: 30–140 words; 4–6: 100–320; 7–9: "
+        "180–480), in sentences of the length the grade reads, and the same passage is "
+        "repeated on every item set on it, five to eight items per passage. A word asked "
+        "about 'as used in the passage' must be in the passage. A cloze item has exactly "
+        "one gap. Mix comprehension, vocabulary, grammar (tenses, agreement, punctuation), "
+        "and writing as the design's strands do."),
+    "social": (
+        "SOCIAL STUDIES ITEMS: dates, places and names exactly as the design and the notes "
+        "give them; a map or figure where the design uses one, with three to five items "
+        "set on it; a civic or historical fact stated once and correctly."),
+    "mathematics": (
+        "MATHEMATICS ITEMS: every calculation is one the maths engine will solve, so the "
+        "key must be its exact value; a word problem's figures are stated in the stem; "
+        "units written as SI symbols."),
+}
+
+
+def prompt_block(grade: str, count: int | None = None, subject: str = "") -> str:
     """What the generator is told about the paper its items will sit on."""
+    from .subject_checks import family_of
+
     fmt = for_grade(grade)
-    lines = [f"=== THE PAPER THESE ITEMS ARE FOR: {fmt.assessment} ({fmt.band}) ==="]
+    lines = [f"=== THE PAPER THESE ITEMS ARE FOR: {assessment_name(grade)} ({fmt.band}) ==="]
     lines.append(fmt.pitch)
+    rule = _SUBJECT_RULES.get(family_of(subject))
+    if rule:
+        lines.append(rule)
     if fmt.sections and len(fmt.sections) > 1:
         share = ", ".join(f"{s.heading}: {s.count} × {'/'.join(k.replace('_', ' ') for k in s.kinds[:3])}"
                           for s in fmt.sections)

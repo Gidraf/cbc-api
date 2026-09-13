@@ -259,11 +259,13 @@ def test_the_generator_is_told_what_paper_its_items_are_for() -> None:
     from app.routes import questions
     from app.services import assessment_format
 
-    assert "assessment_format.prompt_block(payload.grade, payload.batch_count)" in inspect.getsource(questions)
+    assert "assessment_format.prompt_block(payload.grade, payload.batch_count, payload.subject)" in inspect.getsource(questions)
     block = assessment_format.prompt_block("grade-6", 50)
     assert "KENYA PRIMARY SCHOOL EDUCATION ASSESSMENT" in block
     assert "Nothing a Grade 3 learner could answer" in block
     assert "50 items" in block
+    assert "SCIENCE ITEMS" in assessment_format.prompt_block("grade-8", 30, "Integrated Science")
+    assert "entirely in" in assessment_format.prompt_block("grade-6", 30, "Kiswahili")
     assert assessment_format.for_grade("grade-8").key == "kjsea"
     assert assessment_format.for_grade("grade-2").key == "lower_primary"
     assert assessment_format.for_grade("grade-11").key == "senior"

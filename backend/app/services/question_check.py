@@ -535,6 +535,11 @@ def check(questions: list[dict[str, Any]], *, grade: str = "", subject: str = ""
                         sub_strand=sub_strand, findings=findings)
     _answer_in_the_stem(items, findings)
     _refers_to_a_figure_it_lacks(items, findings)
+    # What the subject's own examiner checks: units and equations in the
+    # sciences, passages and the paper's language in the languages.
+    from . import subject_checks
+
+    findings += subject_checks.check(items, subject=subject, grade=grade)
     _outcomes_uncovered(items, design_row, findings)
     _all_recall(items, findings)
     _figures_unused(items, diagrams or [], findings)

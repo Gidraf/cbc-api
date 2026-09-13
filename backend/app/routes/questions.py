@@ -1081,7 +1081,7 @@ def factory_generate_questions_batch(
             # a KPSEA or KJSEA item is like — so the items are the items a
             # moderator would keep. Appended rather than slotted, so a prompt
             # edited in Langfuse before this existed still receives it.
-            + "\n\n" + assessment_format.prompt_block(payload.grade, payload.batch_count)
+            + "\n\n" + assessment_format.prompt_block(payload.grade, payload.batch_count, payload.subject)
         ),
     })
 
