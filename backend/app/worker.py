@@ -18,6 +18,9 @@ logger = logging.getLogger("cbc-worker")
 def main() -> None:
     try:
         run_migrations()
+        from .services import log_store
+
+        log_store.install("worker")
         runtime_state.sync_users_from_env()
         runtime_state.load_from_db()
     except Exception as exc:

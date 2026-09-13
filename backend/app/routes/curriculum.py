@@ -1093,7 +1093,9 @@ def _plan_lesson_by_lesson(context: Any, resolved: Any, *, lessons: int,
         previous = lesson_handoff.read(module, previous)
         run_log.step(
             f"Lesson {number}/{lessons}",
-            str(module.get("module_title") or module.get("title") or "written"),
+            str(module.get("module_title") or module.get("title") or "written")
+            + f" · {resp.usage.prompt_tokens:,} in ({resp.usage.cached_tokens:,} cached) · "
+              f"{resp.usage.completion_tokens:,} out",
             "ok")
 
     if not modules:

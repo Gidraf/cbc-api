@@ -97,6 +97,10 @@ def add(usage: Any, model: str, provider: str) -> None:
 
         cost = calculate_cost(model, provider, usage)
         meter.cost_usd += float(getattr(cost, "total_cost_usd", 0.0) or 0.0)
+        logger.info(
+            "metered %s/%s: in=%d (cached %d) out=%d cost=$%.4f",
+            provider, model, prompt, int(getattr(usage, "cached_tokens", 0) or 0),
+            completion, float(getattr(cost, "total_cost_usd", 0.0) or 0.0))
     except Exception as exc:  # noqa: BLE001
         # A meter that raises would fail a generation that otherwise worked.
         # Losing a cost figure is the lesser harm by a wide margin.

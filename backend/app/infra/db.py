@@ -1001,6 +1001,24 @@ MIGRATIONS: list[tuple[str, str]] = [
             ON demand_profiles(grade, subject, strand, sub_strand);
         """,
     ),
+    (
+        "032_service_logs",
+        """
+        -- The last few thousand log lines from every process, so the operator
+        -- (or a tool reading a link they hand out) can see what the worker did
+        -- without a shell on the box. The API and the worker are different
+        -- processes; a buffer in one never sees the other's lines.
+        CREATE TABLE IF NOT EXISTS service_logs (
+            id BIGSERIAL PRIMARY KEY,
+            at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            process TEXT NOT NULL DEFAULT '',
+            level TEXT NOT NULL DEFAULT '',
+            logger TEXT NOT NULL DEFAULT '',
+            message TEXT NOT NULL DEFAULT ''
+        );
+        CREATE INDEX IF NOT EXISTS idx_service_logs_at ON service_logs(at DESC);
+        """,
+    ),
 ]
 
 
