@@ -9,8 +9,8 @@ from fastapi.responses import HTMLResponse, StreamingResponse
 from pydantic import BaseModel
 
 from ..errors import raise_api_error
-from ..services import (assessment_format, demand_profile, design_elements, notation,
-                        prompt_fragments, prompt_store)
+from ..services import (assessment_format, demand_profile, design_elements, figure_sketch,
+                        notation, prompt_fragments, prompt_store)
 from ..services.auth import AuthContext, require_roles
 from ..services.level_register import language_block, register_block, teacher_block
 from ..services.faith_scope import prompt_block as faith_prompt_block
@@ -1082,6 +1082,7 @@ def factory_generate_questions_batch(
             # moderator would keep. Appended rather than slotted, so a prompt
             # edited in Langfuse before this existed still receives it.
             + "\n\n" + assessment_format.prompt_block(payload.grade, payload.batch_count, payload.subject)
+            + "\n\n" + figure_sketch.PROMPT_BLOCK
         ),
     })
 
@@ -1160,8 +1161,16 @@ def factory_generate_questions_batch(
     elif target_exp_obj:
         hour_title = str(target_exp_obj.get("hour_title") or "")
 
+    # The figures the questions themselves need — a triangle with its sides
+    # marked, a bar graph, a clock — drawn from the data the writer attached,
+    # registered like any drawing, and bound to their items.
+    raw_questions = _draw_question_figures(
+        raw_questions if isinstance(raw_questions, list) else [], diagrams_list,
+        grade=payload.grade, subject=payload.subject, strand=payload.strand,
+        sub_strand=payload.sub_strand)
+
     batch = question_normalizer.normalize_batch(
-        raw_questions if isinstance(raw_questions, list) else [],
+        raw_questions,
         grade=payload.grade,
         subject=payload.subject,
         strand=payload.strand,
@@ -1169,7 +1178,7 @@ def factory_generate_questions_batch(
         slo_id=payload.slo_id,
         default_difficulty=payload.difficulty,
         design_row=design_row,
-        diagram_resolver=lambda raw_q, q_type: resolve_binding(
+        diagram_resolver=lambda raw_q, q_type: _bind_figure(raw_q) or resolve_binding(
             raw_q, q_type, diagrams_list, anchored_diagram=target_diag_obj
         ),
         target_hour=payload.target_hour,
@@ -1346,6 +1355,61 @@ def factory_generate_questions_batch(
 CHUNK = 25
 
 
+def _draw_question_figures(raw_items: list[Any], diagrams_list: list[Any], *, grade: str,
+                           subject: str, strand: str, sub_strand: str) -> list[Any]:
+    """Draw every `figure` the writer attached, file it in the registry and
+    leave a binding on the item. An item whose figure will not draw keeps
+    going without one — and says so, so the checks can hold it."""
+    from ..services import figure_sketch
+    from ..services.diagram_dedup import diagram_deduplicator
+
+    out: list[Any] = []
+    for raw in raw_items:
+        if not isinstance(raw, dict):
+            continue
+        spec = raw.get("figure")
+        if isinstance(spec, dict) and spec:
+            drawn = figure_sketch.render(spec)
+            if drawn is None:
+                logger.info("Item %s asked for a %s figure that could not be drawn.",
+                            raw.get("question_id") or "?", spec.get("kind"))
+                raw["_figure_failed"] = str(spec.get("kind") or "figure")
+            else:
+                try:
+                    dedup = diagram_deduplicator.deduplicate_and_store(
+                        svg_str=drawn["svg"], diagram_title=drawn["title"],
+                        alt_text=drawn["alt_text"], scene_document=drawn["scene"],
+                        metadata={"grade": grade, "subject": subject, "strand": strand,
+                                  "sub_strand": sub_strand, "question_figure": True,
+                                  "kind": drawn["kind"]})
+                    figure = {"asset_id": dedup.diagram_id, "diagram_id": dedup.diagram_id,
+                              "title": dedup.diagram_title, "diagram_title": dedup.diagram_title,
+                              "svg_markup": dedup.diagram_svg, "storage_url": dedup.storage_url,
+                              "scene_document": dedup.scene_document, "question_figure": True}
+                    diagrams_list.append(figure)
+                    raw["_figure"] = {"diagram_id": dedup.diagram_id, "diagram_title": dedup.diagram_title,
+                                      "storage_url": dedup.storage_url}
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("Could not file a question figure: %s", exc)
+                    raw["_figure_failed"] = str(spec.get("kind") or "figure")
+        out.append(raw)
+    return out
+
+
+def _bind_figure(raw: dict[str, Any]) -> Any:
+    """The binding for a figure drawn for THIS item: shown whole, nothing
+    hidden — its labels are the question's givens."""
+    from ..question_models import DiagramBinding
+
+    figure = raw.get("_figure") if isinstance(raw, dict) else None
+    if not isinstance(figure, dict) or not figure.get("diagram_id"):
+        return None
+    return DiagramBinding(diagram_id=str(figure["diagram_id"]),
+                         diagram_title=str(figure.get("diagram_title") or ""),
+                         storage_url=str(figure.get("storage_url") or ""),
+                         binding_method="explicit", binding_confidence=1.0, variant_mode="full")
+
+
 def _generate_in_chunks(llm_client: Any, resolved: Any, messages: list[dict[str, Any]],
                         wanted: int) -> tuple[Any, list[Any]]:
     """Fifty items in one call is fifty items written in a hurry — the last
@@ -1420,12 +1484,15 @@ def _check_and_repair(
             if not isinstance(raw, dict):
                 continue
             replaces = str(raw.get("replaces") or "")
+            raw = _draw_question_figures([raw], diagrams_list, grade=payload.grade,
+                                         subject=payload.subject, strand=payload.strand,
+                                         sub_strand=payload.sub_strand)[0]
             batch = question_normalizer.normalize_batch(
                 [raw], grade=payload.grade, subject=payload.subject,
                 strand=payload.strand, sub_strand=payload.sub_strand,
                 slo_id=payload.slo_id, default_difficulty=payload.difficulty,
                 design_row=design_row,
-                diagram_resolver=lambda r, t: resolve_binding(
+                diagram_resolver=lambda r, t: _bind_figure(r) or resolve_binding(
                     r, t, diagrams_list, anchored_diagram=target_diag_obj),
                 target_hour=payload.target_hour, target_hour_title=hour_title)
             for item in batch.items:

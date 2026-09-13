@@ -4761,7 +4761,35 @@ def _run_queued(job: dict[str, Any]) -> dict[str, Any]:
     out["quality"] = quality_score.score(
         result if isinstance(result, dict) else {}, kind
     ).to_dict()
+    if kind == "diagram" and not payload.get("plan_only"):
+        # The station PLANS; the drawing was a button per visual in the
+        # console, so a queued run left every plate hatched and the questions
+        # station with nothing to set a diagram question on. Draw them here.
+        out["drawings"] = _draw_planned_visuals(result)
     return out
+
+
+def _draw_planned_visuals(plan: Any) -> dict[str, Any]:
+    """Every visual the plan lists, drawn and filed. A drawing that fails
+    is reported, not fatal: the plan and the other drawings stand."""
+    artifact_id = str(((plan or {}).get("artifact") or {}).get("artifact_id") or "") \
+        if isinstance(plan, dict) else ""
+    visuals = (plan or {}).get("visuals") if isinstance(plan, dict) else None
+    if not artifact_id or not isinstance(visuals, list):
+        return {"drawn": 0, "failed": [], "reason": "no plan artifact to draw from"}
+    drawn, failed = 0, []
+    for index, visual in enumerate(visuals):
+        title = str((visual or {}).get("title") or f"visual {index + 1}") if isinstance(visual, dict) else f"visual {index + 1}"
+        try:
+            run_log.step("Draw", f"{title}")
+            factory_draw_visual(DrawVisualRequest(artifact_id=artifact_id, index=index), None)
+            drawn += 1
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Could not draw %r from %s: %s", title, artifact_id, exc)
+            failed.append({"index": index, "title": title, "error": str(exc)[:300]})
+    run_log.step("Draw", f"{drawn} of {len(visuals)} visual(s) drawn" + (f", {len(failed)} failed" if failed else ""),
+                 "warn" if failed else "ok")
+    return {"drawn": drawn, "failed": failed, "of": len(visuals)}
 
 
 # A station's output has to survive the refresh that used to lose it, so the
