@@ -1090,7 +1090,10 @@ export function useExportBundle(grade: string, subject?: string) {
       document.body.appendChild(link);
       link.click();
       link.remove();
-      URL.revokeObjectURL(url);
+      // Not revoked at once: Chrome starts reading the blob after the click
+      // returns, and a URL revoked first leaves the download sitting at
+      // "about:blank", paused, for ever.
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
       return filename;
     },
   });
@@ -1221,7 +1224,10 @@ export function useNotesPdf() {
       document.body.appendChild(link);
       link.click();
       link.remove();
-      URL.revokeObjectURL(url);
+      // Not revoked at once: Chrome starts reading the blob after the click
+      // returns, and a URL revoked first leaves the download sitting at
+      // "about:blank", paused, for ever.
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
       return filename;
     },
   });
@@ -2957,7 +2963,10 @@ export function useExportPrompts() {
       document.body.appendChild(link);
       link.click();
       link.remove();
-      URL.revokeObjectURL(url);
+      // Not revoked at once: Chrome starts reading the blob after the click
+      // returns, and a URL revoked first leaves the download sitting at
+      // "about:blank", paused, for ever.
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
       return filename;
     },
   });
@@ -3376,7 +3385,10 @@ export function usePaperPdf() {
       document.body.appendChild(link);
       link.click();
       link.remove();
-      URL.revokeObjectURL(url);
+      // Not revoked at once: Chrome starts reading the blob after the click
+      // returns, and a URL revoked first leaves the download sitting at
+      // "about:blank", paused, for ever.
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
       return filename;
     },
   });
@@ -3430,7 +3442,10 @@ export function useFrozenPaperPdf() {
       document.body.appendChild(link);
       link.click();
       link.remove();
-      URL.revokeObjectURL(url);
+      // Not revoked at once: Chrome starts reading the blob after the click
+      // returns, and a URL revoked first leaves the download sitting at
+      // "about:blank", paused, for ever.
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
       return filename;
     },
   });
@@ -3503,7 +3518,10 @@ export function useAgentPack() {
       document.body.appendChild(link);
       link.click();
       link.remove();
-      URL.revokeObjectURL(url);
+      // Not revoked at once: Chrome starts reading the blob after the click
+      // returns, and a URL revoked first leaves the download sitting at
+      // "about:blank", paused, for ever.
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
       return filename;
     },
   });
