@@ -162,7 +162,17 @@ class LlmClient:
         """
         provider = config.provider
 
-        if provider == Provider.OPENAI.value and is_reasoning_model(config.model or DEFAULT_OPENAI_MODEL):
+        # A task driven by an outside agent: the prompt goes out through the
+        # API and the answer comes back the same way. No provider, no
+        # credential, no bill on this side — see services/byom.py.
+        from . import byom
+
+        model_used, provider_used = config.model, config.provider
+        if byom.current() is not None:
+            raw_text, model_used = byom.defer(config, messages, temperature=temperature,
+                                              expect=expect, effort=effort)
+            usage, provider_used = TokenUsage(), "agent"
+        elif provider == Provider.OPENAI.value and is_reasoning_model(config.model or DEFAULT_OPENAI_MODEL):
             raw_text, usage = self._call_openai_responses(config, messages, effort=effort)
         elif provider == Provider.OPENAI.value or provider == Provider.OLLAMA.value:
             raw_text, usage = self._call_openai_compatible(config, messages, temperature, top_p)
@@ -185,8 +195,8 @@ class LlmClient:
         return LlmResponse(
             content=content,
             usage=usage,
-            model=config.model,
-            provider=config.provider,
+            model=model_used,
+            provider=provider_used,
         )
 
     def _classify_http_error(self, config: ResolvedModelConfig, resp: httpx.Response) -> None:

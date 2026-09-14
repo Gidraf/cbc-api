@@ -1029,6 +1029,28 @@ MIGRATIONS: list[tuple[str, str]] = [
         CREATE INDEX IF NOT EXISTS idx_exams_share_token ON exams(share_token);
         """,
     ),
+    (
+        "034_agent_tasks",
+        """
+        -- Stations driven by an outside agent that answers the prompts on its
+        -- own model. The live step lives in the API process; this is the
+        -- ledger of what ran, on what, and what came of it.
+        CREATE TABLE IF NOT EXISTS agent_tasks (
+            task_id TEXT PRIMARY KEY,
+            station TEXT NOT NULL DEFAULT '',
+            params JSONB NOT NULL DEFAULT '{}'::jsonb,
+            status TEXT NOT NULL DEFAULT '',
+            created_by TEXT NOT NULL DEFAULT '',
+            steps INT NOT NULL DEFAULT 0,
+            model_used TEXT NOT NULL DEFAULT '',
+            error TEXT NOT NULL DEFAULT '',
+            result JSONB NOT NULL DEFAULT '{}'::jsonb,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            finished_at TIMESTAMPTZ NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_agent_tasks_created ON agent_tasks(created_at DESC);
+        """,
+    ),
 ]
 
 
