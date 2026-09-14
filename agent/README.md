@@ -27,7 +27,13 @@ Agent: `cbc_produce {grade: "grade-7", subject: "Mathematics", kind: "term", ter
 and keep answering the steps it hands you until it is `done`; the result
 carries `render_urls`.
 
-**The context pack.** `GET /api/v1/agent/pack?grade=grade-7&subject=Mathematics`
+**The kit — pick your agent like an OS.** Console → API keys → *Get the kit for
+your agent* → Antigravity / Claude Code / Codex / Ollama → Download. The zip
+carries the playbook, the MCP server, a fresh operator key already in its
+config, and `install.sh`. Unzip, `sh install.sh`, open the folder in the agent,
+ask for a paper. (`GET /api/v1/agent/pack?agent=antigravity&grade=…&subject=…`.)
+
+**The context pack (no key).** `GET /api/v1/agent/pack?grade=grade-7&subject=Mathematics`
 (console: Providers → API keys → *Download agent pack*, or `cbc_fetch`) is a
 zip with `AGENTS.md`/`CLAUDE.md` (the playbook: what each one-line request
 maps to, how the loop works, the rules for answering), `manifest.json`,
@@ -42,14 +48,14 @@ Console → Providers → *API keys* → create one with the `operator` role. Pu
 
 ## 2a. Claude Code / Codex / Antigravity — the MCP server
 
-`agent/cbc_mcp.py` is a stdio MCP server with no dependencies. Register it:
+`backend/app/agent_clients/cbc_mcp.py` is a stdio MCP server with no dependencies. Register it:
 
 ```json
 {
   "mcpServers": {
     "cbc": {
       "command": "python3",
-      "args": ["/path/to/cbc-api/agent/cbc_mcp.py"],
+      "args": ["/path/to/cbc-api/backend/app/agent_clients/cbc_mcp.py"],
       "env": { "CBC_API_URL": "https://your-platform", "CBC_API_KEY": "cbc_live_..." }
     }
   }
@@ -82,9 +88,9 @@ No agent needed:
 
 ```bash
 export CBC_API_URL=https://your-platform CBC_API_KEY=cbc_live_...
-python3 agent/cbc_agent.py run --station notes --grade grade-9 --subject Mathematics \
+python3 backend/app/agent_clients/cbc_agent.py run --station notes --grade grade-9 --subject Mathematics \
     --strand Numbers --sub-strand Integers --model qwen2.5:32b --llm-url http://localhost:11434/v1
-python3 agent/cbc_agent.py run --station questions --grade grade-9 --subject Mathematics \
+python3 backend/app/agent_clients/cbc_agent.py run --station questions --grade grade-9 --subject Mathematics \
     --strand Numbers --sub-strand Integers --count 50 --model qwen2.5:32b
 ```
 

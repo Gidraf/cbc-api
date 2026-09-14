@@ -3490,10 +3490,11 @@ export function useOrderJob(jobId: string) {
 export function useAgentPack() {
   const { token } = useAuth();
   return useMutation({
-    mutationFn: async (v?: { grade?: string; subject?: string }) => {
+    mutationFn: async (v?: { grade?: string; subject?: string; agent?: string }) => {
       const params = new URLSearchParams();
       if (v?.grade) params.set("grade", v.grade);
       if (v?.subject) params.set("subject", v.subject);
+      if (v?.agent) params.set("agent", v.agent);
       const { blob, filename } = await fetchBlob(`/api/v1/agent/pack?${params}`, { bearerToken: token });
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");

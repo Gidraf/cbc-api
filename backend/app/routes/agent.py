@@ -143,22 +143,50 @@ def manifest(_: AuthContext = Depends(require_roles("admin", "operator", "develo
 
 @router.get("/pack")
 def download_pack(request: Request, grade: str = Query(""), subject: str = Query(""),
-                  _: AuthContext = Depends(require_roles("admin", "operator", "developer"))) -> Any:
-    """The context pack: AGENTS.md/CLAUDE.md playbook, the manifest, the
-    formats, every prompt, and — with grade and subject — the design and
-    its term split. Unzip it into the folder your agent works in."""
+                  agent: str = Query("", description="antigravity, claude, codex or ollama: a kit ready to open"),
+                  auth: AuthContext = Depends(require_roles("admin", "operator", "developer"))) -> Any:
+    """The context pack — or, with `agent`, the KIT for that agent: the
+    pack plus its MCP config, the server, a fresh operator key already
+    inside, and a one-line installer. Choose the agent the way you choose
+    an OS to download for; unzip; run install.sh; open; ask for a paper."""
     from fastapi import Response
 
-    from ..services import agent_pack
+    from ..services import agent_pack, platform_settings
 
-    forwarded_proto = request.headers.get("x-forwarded-proto", "")
-    forwarded_host = request.headers.get("x-forwarded-host", "")
-    scheme = forwarded_proto.split(",")[0].strip() or request.url.scheme
-    host = forwarded_host.split(",")[0].strip() or request.headers.get("host", "") or request.url.netloc
-    body = agent_pack.build(base_url=f"{scheme}://{host}", grade=grade, subject=subject)
-    stem = "-".join(p for p in ("cbc-agent-pack", grade, subject.lower().replace(" ", "-")) if p)
+    base = platform_settings.public_base_url(request)
+    if agent:
+        if agent not in agent_pack.AGENTS:
+            raise_api_error("SCHEMA_VALIDATION_FAILED", f"agent must be one of {', '.join(agent_pack.AGENTS)}")
+        if auth.role not in ("admin", "operator"):
+            raise_api_error("FORBIDDEN", "Only an admin or operator can mint the key a kit carries.")
+        key = _mint_key(auth, label=f"kit-{agent}" + (f"-{grade}" if grade else ""))
+        body = agent_pack.build_kit(agent=agent, base_url=base, api_key=key, grade=grade, subject=subject)
+        stem = "-".join(p for p in ("cbc", agent, grade, subject.lower().replace(" ", "-")) if p)
+    else:
+        body = agent_pack.build(base_url=base, grade=grade, subject=subject)
+        stem = "-".join(p for p in ("cbc-agent-pack", grade, subject.lower().replace(" ", "-")) if p)
     return Response(content=body, media_type="application/zip",
                     headers={"Content-Disposition": f'attachment; filename="{stem}.zip"'})
+
+
+def _mint_key(auth: AuthContext, *, label: str) -> str:
+    """An operator key for a kit, filed like one made on the keys page."""
+    import hashlib
+    import secrets
+
+    from ..infra.db import execute
+
+    raw_key = f"cbc_live_{secrets.token_urlsafe(32)}"
+    execute(
+        """
+        INSERT INTO api_keys (key_id, key_hash, user_id, role, label, is_active, created_at)
+        VALUES (:kid, :khash, :uid, 'operator', :label, TRUE, NOW())
+        """,
+        {"kid": f"key_{secrets.token_hex(6)}", "khash": hashlib.sha256(raw_key.encode("utf-8")).hexdigest(),
+         "uid": auth.subject, "label": label},
+    )
+    logger.info("Kit key minted by %s: %s", auth.subject, label)
+    return raw_key
 
 
 @router.post("/tasks")

@@ -33,9 +33,10 @@ through the platform's normaliser, maths engine, checks and rewrites.
 
 ## Setup (once)
 
-MCP server: `agent/cbc_mcp.py` (in the platform repo) over stdio, with
-`CBC_API_URL={base_url}` and `CBC_API_KEY=<an operator API key>`. Or call the
-REST API directly — see `manifest.json` in this pack.
+MCP server: `cbc/cbc_mcp.py` in a kit (or `backend/app/agent_clients/cbc_mcp.py`
+in the platform repo) over stdio, with `CBC_API_URL={base_url}` and
+`CBC_API_KEY=<an operator API key>`. A kit's `install.sh` writes that config for
+its agent. Or call the REST API directly — see `manifest.json` in this pack.
 
 ## The one-line products
 
@@ -174,3 +175,183 @@ def _design(grade: str, subject: str) -> dict[str, Any]:
         pass
     return {"grade": grade, "subject": subject, "terms": terms,
             "sub_strands": [dict(r) for r in rows]}
+
+
+# ── the per-agent kit ────────────────────────────────────────────────────────
+#
+# The pack above is the context. The KIT is the pack plus what the chosen
+# agent needs to open it and start: its own MCP config with the key and the
+# server path already in it, the server itself (no repo to clone), a
+# one-line installer, and an AGENTS.md whose first section is written for
+# that agent. Choose the agent the way you choose an OS to download for.
+
+AGENTS = ("antigravity", "claude", "codex", "ollama")
+
+_AGENT_TITLE = {"antigravity": "Antigravity", "claude": "Claude Code", "codex": "Codex CLI", "ollama": "Ollama"}
+
+
+def _mcp_json(server_path: str, base_url: str, key: str) -> str:
+    return json.dumps({"mcpServers": {"cbc": {"command": "python3", "args": [server_path],
+                                              "env": {"CBC_API_URL": base_url, "CBC_API_KEY": key}}}},
+                      indent=2)
+
+
+def _codex_toml(server_path: str, base_url: str, key: str) -> str:
+    return (f'[mcp_servers.cbc]\ncommand = "python3"\nargs = ["{server_path}"]\n'
+            f'[mcp_servers.cbc.env]\nCBC_API_URL = "{base_url}"\nCBC_API_KEY = "{key}"\n')
+
+
+def _installer(agent: str) -> str:
+    return f"""#!/bin/sh
+# Installs the CBC MCP server for {_AGENT_TITLE[agent]}. Run from this folder:  sh install.sh
+set -e
+HERE="$(cd "$(dirname "$0")" && pwd)"
+SERVER="$HERE/cbc/cbc_mcp.py"
+BASE="$(sed -n 's/^CBC_API_URL=//p' "$HERE/cbc/.env")"
+KEY="$(sed -n 's/^CBC_API_KEY=//p' "$HERE/cbc/.env")"
+write_json() {{ # $1 = target file
+  mkdir -p "$(dirname "$1")"
+  if [ -s "$1" ] && grep -q '"mcpServers"' "$1" && ! grep -q '"cbc"' "$1"; then
+    python3 - "$1" "$SERVER" "$BASE" "$KEY" <<'PY'
+import json, sys
+path, server, base, key = sys.argv[1:5]
+cfg = json.load(open(path))
+cfg.setdefault("mcpServers", {{}})["cbc"] = {{"command": "python3", "args": [server],
+    "env": {{"CBC_API_URL": base, "CBC_API_KEY": key}}}}
+json.dump(cfg, open(path, "w"), indent=2)
+PY
+  else
+    python3 - "$1" "$SERVER" "$BASE" "$KEY" <<'PY'
+import json, sys
+path, server, base, key = sys.argv[1:5]
+json.dump({{"mcpServers": {{"cbc": {{"command": "python3", "args": [server],
+    "env": {{"CBC_API_URL": base, "CBC_API_KEY": key}}}}}}}}, open(path, "w"), indent=2)
+PY
+  fi
+  echo "wrote $1"
+}}
+case "{agent}" in
+  antigravity) write_json "$HOME/.gemini/antigravity/mcp_config.json"
+               echo "Now: open THIS folder in Antigravity, then Agent panel -> MCP Servers -> Refresh. You should see 'cbc' with 14 tools." ;;
+  claude)      write_json "$HERE/.mcp.json"
+               echo "Now: cd \"$HERE\" && claude   (Claude Code reads .mcp.json and CLAUDE.md here; approve the cbc server when asked)" ;;
+  codex)       mkdir -p "$HOME/.codex"
+               if grep -q 'mcp_servers.cbc' "$HOME/.codex/config.toml" 2>/dev/null; then echo "cbc already in ~/.codex/config.toml"; else
+                 printf '\n[mcp_servers.cbc]\ncommand = "python3"\nargs = ["%s"]\n[mcp_servers.cbc.env]\nCBC_API_URL = "%s"\nCBC_API_KEY = "%s"\n' "$SERVER" "$BASE" "$KEY" >> "$HOME/.codex/config.toml"
+                 echo "wrote ~/.codex/config.toml"; fi
+               echo "Now: cd \"$HERE\" && codex   (Codex reads AGENTS.md here)" ;;
+  ollama)      echo "Nothing to install. Run:  sh run.sh questions grade-9 Mathematics Numbers Integers 50 qwen2.5:32b" ;;
+esac
+"""
+
+
+def _ollama_runner() -> str:
+    return """#!/bin/sh
+# sh run.sh <station|order> <grade> <subject> [strand] [sub_strand] [count] [model] [llm_url]
+#   sh run.sh order grade-7 Mathematics "" "" 30 qwen2.5:32b
+#   sh run.sh questions grade-9 Mathematics Numbers Integers 50 qwen2.5:32b http://localhost:11434/v1
+HERE="$(cd "$(dirname "$0")" && pwd)"
+set -a; . "$HERE/cbc/.env"; set +a
+STATION="${1:-order}"; GRADE="$2"; SUBJECT="$3"; STRAND="${4:-}"; SUB="${5:-}"; COUNT="${6:-30}"
+MODEL="${7:-qwen2.5:32b}"; URL="${8:-http://localhost:11434/v1}"
+exec python3 "$HERE/cbc/cbc_agent.py" run --station "$STATION" --grade "$GRADE" --subject "$SUBJECT" \
+  --strand "$STRAND" --sub-strand "$SUB" --count "$COUNT" --model "$MODEL" --llm-url "$URL"
+"""
+
+
+def _agent_preface(agent: str, base_url: str) -> str:
+    title = _AGENT_TITLE[agent]
+    steps = {
+        "antigravity": ("Run `sh install.sh` once (it writes `~/.gemini/antigravity/mcp_config.json`), open this "
+                        "folder in Antigravity, and refresh MCP Servers in the agent panel. Then type your "
+                        "request in the agent chat."),
+        "claude": ("Run `sh install.sh` once (it writes `.mcp.json` here), then `claude` in this folder. Claude "
+                   "Code reads `CLAUDE.md` and the `cbc` server. Then type your request."),
+        "codex": ("Run `sh install.sh` once (it adds `[mcp_servers.cbc]` to `~/.codex/config.toml`), then "
+                  "`codex` in this folder. Codex reads `AGENTS.md`. Then type your request."),
+        "ollama": ("No agent: `sh run.sh order grade-7 Mathematics \"\" \"\" 30 qwen2.5:32b` runs a whole "
+                   "order on your local model and prints the print links. 32B+ models hold up; 7B ones "
+                   "are sent back by the checks often."),
+    }[agent]
+    return f"""# Start here — {title}
+
+This folder is ready for {title}. The platform at {base_url} assembles every
+prompt and runs every check; {title} answers the prompts on its own model.
+Your API key is in `cbc/.env` and already inside the config the installer
+writes — keep this folder private.
+
+**Setup (once):** {steps}
+
+**Then say what you want, in words:**
+
+- "Give me a Grade 7 Mathematics mid-term 1 assessment, 30 questions."
+- "Topical test on Integers for Grade 9, 30 questions, and the marking scheme."
+- "Write the teacher's guide for Grade 8 Integrated Science, Living things, Cells."
+
+The agent calls `cbc_produce` (or `cbc_start_task`), answers each step the
+platform hands it, and gives you the **print links** at the end: the paper,
+the marking scheme, the booklet PDF. Open them in a browser; print.
+
+**Improving what came back.** Every result carries the platform's own review:
+`result.self_check` (what the engine and the checks found, what was rewritten,
+what is still outstanding) and `result.quality_gate` (the score and the next
+actions). Ask the agent to read them and act — "read the self_check on that
+task and fix the outstanding items", or "run it again with these instructions:
+harder Section B, more Kenyan situations" — and it re-runs the station with
+`custom_instructions`. Nothing is filed as approved until you approve it in
+the console; the DRAFT stamp comes off when every item on the paper is.
+
+---
+
+"""
+
+
+def build_kit(*, agent: str, base_url: str, api_key: str, grade: str = "", subject: str = "") -> bytes:
+    """The pack for one agent, ready to open: config, server, key, playbook."""
+    import pathlib
+
+    if agent not in AGENTS:
+        raise ValueError(f"unknown agent {agent!r}; one of {', '.join(AGENTS)}")
+    here = pathlib.Path(__file__).resolve().parents[1] / "agent_clients"
+    mcp_src = (here / "cbc_mcp.py").read_text(encoding="utf-8")
+    loop_src = (here / "cbc_agent.py").read_text(encoding="utf-8")
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        playbook = _agent_preface(agent, base_url) + _playbook(base_url, grade, subject)
+        zf.writestr("AGENTS.md", playbook)
+        zf.writestr("CLAUDE.md", playbook)
+        zf.writestr("README.md", playbook)
+        zf.writestr("cbc/cbc_mcp.py", mcp_src)
+        zf.writestr("cbc/cbc_agent.py", loop_src)
+        zf.writestr("cbc/.env", f"CBC_API_URL={base_url}\nCBC_API_KEY={api_key}\n")
+        zf.writestr("install.sh", _installer(agent))
+        if agent == "ollama":
+            zf.writestr("run.sh", _ollama_runner())
+        if agent == "claude":
+            zf.writestr(".mcp.json", _mcp_json("./cbc/cbc_mcp.py", base_url, api_key))
+        if agent == "antigravity":
+            zf.writestr("mcp_config.example.json", _mcp_json("/ABSOLUTE/PATH/TO/THIS/FOLDER/cbc/cbc_mcp.py", base_url, api_key))
+        if agent == "codex":
+            zf.writestr("codex-config.example.toml", _codex_toml("/ABSOLUTE/PATH/TO/THIS/FOLDER/cbc/cbc_mcp.py", base_url, api_key))
+        zf.writestr("manifest.json", json.dumps(_manifest(base_url), ensure_ascii=False, indent=1))
+        from . import assessment_format, figure_sketch
+
+        formats = {"assessment_formats": {f.key: f.to_dict() for f in
+                                          (assessment_format.LOWER_PRIMARY, assessment_format.KPSEA,
+                                           assessment_format.KJSEA, assessment_format.SENIOR)},
+                   "assessment_names": assessment_format.ASSESSMENT_NAMES,
+                   "figure_contract": figure_sketch.prompt_block()}
+        zf.writestr("formats.json", json.dumps(formats, ensure_ascii=False, indent=1))
+        from .prompt_sync import _all_prompts
+
+        seen: set[str] = set()
+        for name, text in sorted(_all_prompts().items()):
+            if "/" in name or text in seen:
+                continue
+            seen.add(text)
+            zf.writestr(f"prompts/{name}.md", f"# {name}\n\n{text}")
+        if grade and subject:
+            zf.writestr(f"design/{grade}-{subject.lower().replace(' ', '-')}.json",
+                        json.dumps(_design(grade, subject), ensure_ascii=False, indent=1))
+    return buf.getvalue()

@@ -109,3 +109,36 @@ def test_the_pack_carries_a_playbook_the_prompts_and_the_formats() -> None:
     assert "mid-term 1 assessment" in playbook and 'station: "order"' in playbook
     assert "https://p.example" in playbook
     assert "KENYA JUNIOR SCHOOL EDUCATION ASSESSMENT" in z.read("formats.json").decode()
+
+
+def test_a_kit_is_ready_to_open_for_each_agent() -> None:
+    import io
+    import zipfile
+
+    from app.services import agent_pack
+
+    for agent in agent_pack.AGENTS:
+        z = zipfile.ZipFile(io.BytesIO(agent_pack.build_kit(agent=agent, base_url="http://p.example", api_key="cbc_live_K")))
+        names = z.namelist()
+        assert {"AGENTS.md", "CLAUDE.md", "README.md", "cbc/cbc_mcp.py", "cbc/cbc_agent.py", "cbc/.env",
+                "install.sh", "manifest.json", "formats.json"} <= set(names), agent
+        env = z.read("cbc/.env").decode()
+        assert "CBC_API_KEY=cbc_live_K" in env and "CBC_API_URL=http://p.example" in env
+        assert f'case "{agent}" in' in z.read("install.sh").decode()
+        playbook = z.read("AGENTS.md").decode()
+        assert "Start here" in playbook and "Improving what came back" in playbook
+        assert "cbc_produce" in playbook
+    assert ".mcp.json" in zipfile.ZipFile(io.BytesIO(agent_pack.build_kit(agent="claude", base_url="u", api_key="k"))).namelist()
+    assert "run.sh" in zipfile.ZipFile(io.BytesIO(agent_pack.build_kit(agent="ollama", base_url="u", api_key="k"))).namelist()
+    assert "cbc/cbc_mcp.py" in zipfile.ZipFile(io.BytesIO(agent_pack.build_kit(agent="antigravity", base_url="u", api_key="k"))).namelist()
+
+
+def test_the_kit_route_mints_a_key_only_for_admins_and_operators() -> None:
+    import inspect
+
+    from app.routes import agent
+
+    source = inspect.getsource(agent.download_pack)
+    assert 'if auth.role not in ("admin", "operator")' in source
+    assert "_mint_key(auth, label=" in source
+    assert "'operator'" in inspect.getsource(agent._mint_key), "a kit key is an operator key, never admin"

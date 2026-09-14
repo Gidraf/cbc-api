@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Run a station with a model of your own — Ollama, or any OpenAI-compatible endpoint.
 
-    python3 agent/cbc_agent.py run --station questions --grade grade-9 --subject Mathematics \\
+    python3 backend/app/agent_clients/cbc_agent.py run --station questions --grade grade-9 --subject Mathematics \\
         --strand Numbers --sub-strand Integers --count 50 \\
         --model llama3.1:70b --llm-url http://localhost:11434/v1
 

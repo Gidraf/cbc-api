@@ -4,7 +4,7 @@
 The platform assembles every prompt; the agent's own model answers it. Run
 this over stdio from the agent's MCP config:
 
-    {"mcpServers": {"cbc": {"command": "python3", "args": ["agent/cbc_mcp.py"],
+    {"mcpServers": {"cbc": {"command": "python3", "args": ["backend/app/agent_clients/cbc_mcp.py"],
                             "env": {"CBC_API_URL": "https://your-server",
                                     "CBC_API_KEY": "cbc_live_..."}}}}
 

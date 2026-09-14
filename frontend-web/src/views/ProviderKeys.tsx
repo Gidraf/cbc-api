@@ -18,6 +18,10 @@ import { useAuth } from "../lib/auth";
 import {
   useCreatePortalKey,
   useAgentPack,
+  useGrades,
+  useSubjects,
+  gradeOptionLabel,
+  subjectOptionLabel,
   useLogHousekeeping,
   usePortalKeys,
   useProviders,
@@ -165,6 +169,68 @@ const ROLE_LABEL: Record<string, string> = {
   reviewer: "reviewer — review only",
 };
 const ROLE_RANK: Record<string, number> = { reviewer: 1, developer: 2, operator: 3, admin: 4 };
+
+const AGENT_KITS: { id: string; title: string; blurb: string; icon: string }[] = [
+  { id: "antigravity", title: "Antigravity", icon: "◈", blurb: "Unzip, run install.sh, open the folder in Antigravity, refresh MCP servers, ask for a paper." },
+  { id: "claude", title: "Claude Code", icon: "✦", blurb: "Unzip, run install.sh, then `claude` in the folder. It reads CLAUDE.md and the cbc server." },
+  { id: "codex", title: "Codex CLI", icon: "▣", blurb: "Unzip, run install.sh (adds the server to ~/.codex/config.toml), then `codex` in the folder." },
+  { id: "ollama", title: "Ollama / local model", icon: "◉", blurb: "No agent needed: `sh run.sh order grade-7 Mathematics \"\" \"\" 30 qwen2.5:32b`." },
+];
+
+function AgentKits() {
+  const { role } = useAuth();
+  const grades = useGrades();
+  const [grade, setGrade] = React.useState("");
+  const subjects = useSubjects(grade);
+  const [subject, setSubject] = React.useState("");
+  const pack = useAgentPack();
+  const canMint = role === "admin" || role === "operator";
+
+  return (
+    <Card
+      title="Get the kit for your agent"
+      description="Pick the agent the way you pick an OS. The zip carries the playbook, the MCP server, a fresh operator key already in its config, and a one-line installer — unzip, install, open, ask for a paper. Your agent's model answers the prompts; this platform assembles them, checks the answers, draws the figures and prints the PDF."
+    >
+      <Stack gap="var(--s3)">
+        <Stack direction="row" gap="var(--s2)" wrap>
+          <Field label="Design to include (optional)" hint="Adds the strands, sub-strands, outcomes and the term split, so the agent knows the scope.">
+            {(a11y) => (
+              <Stack direction="row" gap="var(--s2)">
+                <Select {...a11y} value={grade} onChange={(e) => { setGrade(e.target.value); setSubject(""); }}>
+                  <option value="">Any grade</option>
+                  {(grades.data || []).map((g) => <option key={g.slug || g.name} value={g.slug || g.name}>{gradeOptionLabel(g)}</option>)}
+                </Select>
+                <Select value={subject} disabled={!grade} onChange={(e) => setSubject(e.target.value)}>
+                  <option value="">Any subject</option>
+                  {(subjects.data || []).map((s) => <option key={s.name} value={s.name}>{subjectOptionLabel(s)}</option>)}
+                </Select>
+              </Stack>
+            )}
+          </Field>
+        </Stack>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "var(--s3)" }}>
+          {AGENT_KITS.map((kit) => (
+            <div key={kit.id} style={{ border: "1px solid var(--line)", borderRadius: "var(--radius-sm)", padding: "var(--s3)" }}>
+              <Stack gap="var(--s2)">
+                <div style={{ fontSize: "var(--text-lg)" }}>{kit.icon} <b>{kit.title}</b></div>
+                <div style={{ fontSize: "var(--text-sm)", color: "var(--ink-2)", minHeight: "3.6em" }}>{kit.blurb}</div>
+                <Button variant="primary" size="sm" disabled={!canMint || pack.isPending}
+                        title={canMint ? "Downloads a zip with a NEW operator key inside — treat it as a secret." : "An admin or operator key is needed to mint the key the kit carries."}
+                        onClick={() => pack.mutate({ agent: kit.id, grade, subject })}>
+                  {pack.isPending ? "Packing…" : "Download kit"}
+                </Button>
+              </Stack>
+            </div>
+          ))}
+        </div>
+        <div style={{ fontSize: "var(--text-xs)", color: "var(--ink-3)" }}>
+          Each download mints a key labelled <code>kit-&lt;agent&gt;</code>; revoke it below when the laptop is gone. The context-only pack (no key) is the button on the keys card.
+        </div>
+      </Stack>
+    </Card>
+  );
+}
+
 
 function PortalKeys() {
   const { role } = useAuth();
@@ -322,6 +388,7 @@ export function ProviderKeys() {
 
   return (
     <Stack gap="var(--s4)">
+      {(role === "admin" || role === "operator" || role === "developer") && <AgentKits />}
       {(role === "admin" || role === "developer") && <PortalKeys />}
       <LogHousekeeping />
       <Card

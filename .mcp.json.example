@@ -2,7 +2,7 @@
   "mcpServers": {
     "cbc": {
       "command": "python3",
-      "args": ["agent/cbc_mcp.py"],
+      "args": ["backend/app/agent_clients/cbc_mcp.py"],
       "env": {
         "CBC_API_URL": "https://your-platform.example",
         "CBC_API_KEY": "cbc_live_..."
