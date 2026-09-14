@@ -1065,6 +1065,23 @@ MIGRATIONS: list[tuple[str, str]] = [
         );
         """,
     ),
+    (
+        "036_download_links",
+        """
+        -- A link copied from the console that fetches a kit once, within a
+        -- short while, with no API key in the command. The key the kit
+        -- carries is minted when the link is used, as the person who made it.
+        CREATE TABLE IF NOT EXISTS download_links (
+            token TEXT PRIMARY KEY,
+            what TEXT NOT NULL DEFAULT 'kit',
+            params JSONB NOT NULL DEFAULT '{}'::jsonb,
+            created_by TEXT NOT NULL DEFAULT '',
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            expires_at TIMESTAMPTZ NOT NULL,
+            used_at TIMESTAMPTZ NULL
+        );
+        """,
+    ),
 ]
 
 

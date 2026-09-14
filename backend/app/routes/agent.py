@@ -169,6 +169,77 @@ def download_pack(request: Request, grade: str = Query(""), subject: str = Query
                     headers={"Content-Disposition": f'attachment; filename="{stem}.zip"'})
 
 
+class PackLinkRequest(BaseModel):
+    agent: str
+    grade: str = ""
+    subject: str = ""
+    minutes: int = Field(default=30, ge=1, le=1440)
+
+
+@router.post("/pack/link")
+def make_pack_link(payload: PackLinkRequest, request: Request,
+                   auth: AuthContext = Depends(require_roles("admin", "operator"))) -> dict[str, Any]:
+    """A download link for a kit that needs no key in the command: one
+    use, expiring in `minutes`. The kit's own key is minted when the link
+    is used, as the person who made the link."""
+    import secrets
+
+    from ..infra.db import execute, to_json
+    from ..services import agent_pack, platform_settings
+
+    if payload.agent not in agent_pack.AGENTS:
+        raise_api_error("SCHEMA_VALIDATION_FAILED", f"agent must be one of {', '.join(agent_pack.AGENTS)}")
+    token = secrets.token_urlsafe(24)
+    execute(
+        """
+        INSERT INTO download_links (token, what, params, created_by, expires_at)
+        VALUES (:token, 'kit', CAST(:params AS jsonb), :by, NOW() + (:minutes || ' minutes')::interval)
+        """,
+        {"token": token, "params": to_json({"agent": payload.agent, "grade": payload.grade,
+                                             "subject": payload.subject}),
+         "by": auth.subject, "minutes": str(payload.minutes)},
+    )
+    base = platform_settings.public_base_url(request)
+    url = f"{base}/api/v1/agent/pack/dl/{token}"
+    stem = "-".join(p for p in ("cbc", payload.agent, payload.grade) if p) + ".zip"
+    return {"url": url, "expires_in_minutes": payload.minutes, "single_use": True,
+            "curl": f'curl -fsSL "{url}" -o {stem} && unzip -o {stem} -d ~/cbc-papers && cd ~/cbc-papers && sh install.sh',
+            "note": "Anyone with this link can fetch the kit once before it expires, and the kit carries an "
+                    "operator key. Paste it into a terminal or a browser; do not post it anywhere."}
+
+
+@router.get("/pack/dl/{token}")
+def download_by_link(token: str) -> Any:
+    """Fetch a kit with a link from the console. No sign-in: the link is
+    the credential — once, and only while it lasts."""
+    from fastapi import Response
+
+    from ..infra.db import execute, fetch_one
+    from ..services import agent_pack, platform_settings
+
+    row = fetch_one("SELECT * FROM download_links WHERE token = :token", {"token": token})
+    if not row or row.get("used_at") is not None:
+        raise_api_error("NOT_FOUND", "This download link has been used or does not exist. Make a new one in the console.")
+    expires = row.get("expires_at")
+    import datetime as _dt
+
+    if expires is not None and expires < _dt.datetime.now(tz=expires.tzinfo):
+        raise_api_error("NOT_FOUND", "This download link has expired. Make a new one in the console.")
+    params = row.get("params") or {}
+    agent = str(params.get("agent") or "")
+    if agent not in agent_pack.AGENTS:
+        raise_api_error("NOT_FOUND", "This link names no kit.")
+    execute("UPDATE download_links SET used_at = NOW() WHERE token = :token AND used_at IS NULL", {"token": token})
+    maker = AuthContext(subject=str(row.get("created_by") or "link"), role="operator", auth_type="link")
+    grade, subject = str(params.get("grade") or ""), str(params.get("subject") or "")
+    key = _mint_key(maker, label=f"kit-{agent}" + (f"-{grade}" if grade else "") + " (link)")
+    body = agent_pack.build_kit(agent=agent, base_url=platform_settings.public_base_url(), api_key=key,
+                                grade=grade, subject=subject)
+    stem = "-".join(p for p in ("cbc", agent, grade, subject.lower().replace(" ", "-")) if p)
+    return Response(content=body, media_type="application/zip",
+                    headers={"Content-Disposition": f'attachment; filename="{stem}.zip"'})
+
+
 def _mint_key(auth: AuthContext, *, label: str) -> str:
     """An operator key for a kit, filed like one made on the keys page."""
     import hashlib

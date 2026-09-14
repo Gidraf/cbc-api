@@ -142,3 +142,17 @@ def test_the_kit_route_mints_a_key_only_for_admins_and_operators() -> None:
     assert 'if auth.role not in ("admin", "operator")' in source
     assert "_mint_key(auth, label=" in source
     assert "'operator'" in inspect.getsource(agent._mint_key), "a kit key is an operator key, never admin"
+
+
+def test_a_kit_link_is_one_use_short_lived_and_needs_no_key_to_fetch() -> None:
+    import inspect
+
+    from app.routes import agent
+
+    make = inspect.getsource(agent.make_pack_link)
+    fetch = inspect.getsource(agent.download_by_link)
+    assert 'require_roles("admin", "operator")' in make, "only those who could mint a key can make a link"
+    assert "Depends(require_roles" not in fetch, "the link is the credential"
+    assert "used_at" in fetch and "expires_at" in fetch
+    assert "UPDATE download_links SET used_at = NOW() WHERE token = :token AND used_at IS NULL" in fetch
+    assert "_mint_key(maker" in fetch, "the kit's key is minted when the link is used"

@@ -3560,3 +3560,13 @@ export function useTestWebhook() {
       "/api/v1/admin/settings/webhook/test", { method: "POST" }),
   });
 }
+
+/** A one-use, short-lived link that fetches a kit with no key in the command. */
+export function useKitLink() {
+  const api = useApi();
+  return useMutation({
+    mutationFn: (v: { agent: string; grade?: string; subject?: string; minutes?: number }) =>
+      api<{ url: string; curl: string; expires_in_minutes: number; note: string }>(
+        "/api/v1/agent/pack/link", { method: "POST", body: JSON.stringify(v) }),
+  });
+}

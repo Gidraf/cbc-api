@@ -13,11 +13,13 @@ import {
   Table,
   Td,
   Th,
+  useToast,
 } from "../ui/components";
 import { useAuth } from "../lib/auth";
 import {
   useCreatePortalKey,
   useAgentPack,
+  useKitLink,
   useGrades,
   useSubjects,
   gradeOptionLabel,
@@ -184,7 +186,21 @@ function AgentKits() {
   const subjects = useSubjects(grade);
   const [subject, setSubject] = React.useState("");
   const pack = useAgentPack();
+  const link = useKitLink();
+  const toast = useToast();
+  const [made, setMade] = React.useState<{ agent: string; url: string; curl: string; minutes: number } | null>(null);
   const canMint = role === "admin" || role === "operator";
+
+  async function makeLink(agent: string) {
+    try {
+      const res = await link.mutateAsync({ agent, grade, subject });
+      setMade({ agent, url: res.url, curl: res.curl, minutes: res.expires_in_minutes });
+      try { await navigator.clipboard.writeText(res.curl); toast("Command copied — paste it in a terminal.", "ok"); }
+      catch { toast("Link made — copy it below.", "ok"); }
+    } catch (err) {
+      toast(err instanceof Error ? err.message : "Could not make the link.", "danger");
+    }
+  }
 
   return (
     <Card
@@ -214,17 +230,36 @@ function AgentKits() {
               <Stack gap="var(--s2)">
                 <div style={{ fontSize: "var(--text-lg)" }}>{kit.icon} <b>{kit.title}</b></div>
                 <div style={{ fontSize: "var(--text-sm)", color: "var(--ink-2)", minHeight: "3.6em" }}>{kit.blurb}</div>
-                <Button variant="primary" size="sm" disabled={!canMint || pack.isPending}
-                        title={canMint ? "Downloads a zip with a NEW operator key inside — treat it as a secret." : "An admin or operator key is needed to mint the key the kit carries."}
-                        onClick={() => pack.mutate({ agent: kit.id, grade, subject })}>
-                  {pack.isPending ? "Packing…" : "Download kit"}
-                </Button>
+                <Stack direction="row" gap="var(--s2)" wrap>
+                  <Button variant="primary" size="sm" disabled={!canMint || pack.isPending}
+                          title={canMint ? "Downloads a zip with a NEW operator key inside — treat it as a secret." : "An admin or operator key is needed to mint the key the kit carries."}
+                          onClick={() => pack.mutate({ agent: kit.id, grade, subject })}>
+                    {pack.isPending ? "Packing…" : "Download kit"}
+                  </Button>
+                  <Button variant="secondary" size="sm" disabled={!canMint || link.isPending}
+                          title="A one-use link that fetches this kit from a terminal with no key in the command; expires in 30 minutes."
+                          onClick={() => makeLink(kit.id)}>
+                    Copy link for CLI
+                  </Button>
+                </Stack>
               </Stack>
             </div>
           ))}
         </div>
+        {made && (
+          <div style={{ border: "1px solid var(--line)", borderRadius: "var(--radius-sm)", padding: "var(--s3)", fontSize: "var(--text-sm)" }}>
+            <Stack gap="var(--s2)">
+              <div><b>{AGENT_KITS.find((k) => k.id === made.agent)?.title} kit link</b> — one use, expires in {made.minutes} minutes. Paste in a terminal:</div>
+              <code style={{ display: "block", whiteSpace: "pre-wrap", wordBreak: "break-all", padding: "var(--s2)", background: "var(--surface-2)", borderRadius: "var(--radius-sm)" }}>{made.curl}</code>
+              <Stack direction="row" gap="var(--s2)">
+                <Button size="sm" onClick={() => navigator.clipboard.writeText(made.curl).then(() => toast("Copied.", "ok"))}>Copy command</Button>
+                <Button size="sm" variant="ghost" onClick={() => navigator.clipboard.writeText(made.url).then(() => toast("Copied.", "ok"))}>Copy URL only</Button>
+              </Stack>
+            </Stack>
+          </div>
+        )}
         <div style={{ fontSize: "var(--text-xs)", color: "var(--ink-3)" }}>
-          Each download mints a key labelled <code>kit-&lt;agent&gt;</code>; revoke it below when the laptop is gone. The context-only pack (no key) is the button on the keys card.
+          Each download or used link mints a key labelled <code>kit-&lt;agent&gt;</code>; revoke it below when the laptop is gone. The context-only pack (no key) is the button on the keys card.
         </div>
       </Stack>
     </Card>
