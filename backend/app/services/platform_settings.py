@@ -182,17 +182,48 @@ def describe() -> list[dict[str, Any]]:
     return out
 
 
+_INTERNAL_HOST = ("api", "backend", "localhost", "127.0.0.1", "0.0.0.0", "web", "frontend", "nginx")
+
+
+def _reachable(host: str) -> bool:
+    """A host a person's machine could resolve: not a compose service
+    name, not the loopback. `api:8000` is what the console's proxy calls
+    the API and nothing outside the box can."""
+    name = host.split(":")[0].strip().lower()
+    if not name or name in _INTERNAL_HOST:
+        return False
+    return "." in name
+
+
 def public_base_url(request: Any = None) -> str:
-    """The address to write into a link: the request's own where there is
-    one, else the configured public address, else localhost."""
+    """The address to write into a link.
+
+    The configured public address first — it exists for exactly this. Then
+    what the request can tell us, most trustworthy first: the forwarded
+    host a proxy set, the browser's Origin or Referer, and only then the
+    bare Host — which behind the console's proxy is `api:8000`, and was
+    written into a download link nobody could use.
+    """
+    configured = str(get("public_base_url") or "").rstrip("/")
+    if configured:
+        return configured
     if request is not None:
         try:
-            forwarded_proto = request.headers.get("x-forwarded-proto", "")
-            forwarded_host = request.headers.get("x-forwarded-host", "")
-            scheme = forwarded_proto.split(",")[0].strip() or request.url.scheme
-            host = forwarded_host.split(",")[0].strip() or request.headers.get("host", "") or request.url.netloc
-            if host:
-                return f"{scheme}://{host}".rstrip("/")
+            headers = request.headers
+            forwarded_proto = headers.get("x-forwarded-proto", "").split(",")[0].strip()
+            forwarded_host = headers.get("x-forwarded-host", "").split(",")[0].strip()
+            if forwarded_host and _reachable(forwarded_host):
+                return f"{forwarded_proto or request.url.scheme}://{forwarded_host}".rstrip("/")
+            for header in ("origin", "referer"):
+                value = str(headers.get(header) or "").strip()
+                if value.startswith(("http://", "https://")):
+                    scheme, rest = value.split("://", 1)
+                    host = rest.split("/", 1)[0]
+                    if _reachable(host):
+                        return f"{scheme}://{host}"
+            host = headers.get("host", "") or request.url.netloc
+            if host and _reachable(host):
+                return f"{request.url.scheme}://{host}".rstrip("/")
         except Exception:  # noqa: BLE001
             pass
-    return str(get("public_base_url") or "").rstrip("/") or "http://localhost:8000"
+    return "http://localhost:8000"

@@ -37,21 +37,34 @@ def test_values_are_coerced_to_their_kind(monkeypatch) -> None:
     assert ps.get("log_retention_days") == 7
 
 
-def test_the_public_base_url_prefers_the_request_then_the_setting(monkeypatch) -> None:
+def test_the_public_base_url_never_writes_a_compose_service_name(monkeypatch) -> None:
+    """Behind the console's proxy the API sees Host: api:8000, and wrote
+    http://api:8000/… into a download link nobody outside the box could use."""
     _no_db(monkeypatch)
     monkeypatch.delenv("PUBLIC_BASE_URL", raising=False)
 
     class Req:
-        headers = {"x-forwarded-proto": "https", "x-forwarded-host": "papers.example.co.ke"}
+        headers = {"host": "api:8000", "origin": "http://5.78.137.59:5173"}
 
         class url:
             scheme = "http"
-            netloc = "10.0.0.5:8000"
+            netloc = "api:8000"
 
-    assert ps.public_base_url(Req()) == "https://papers.example.co.ke"
+    assert ps.public_base_url(Req()) == "http://5.78.137.59:5173", "the browser's origin, not the proxy's host"
+
+    class Forwarded(Req):
+        headers = {"host": "api:8000", "x-forwarded-proto": "https", "x-forwarded-host": "papers.example.co.ke"}
+
+    assert ps.public_base_url(Forwarded()) == "https://papers.example.co.ke"
+
+    class Bare(Req):
+        headers = {"host": "api:8000"}
+
+    assert ps.public_base_url(Bare()) == "http://localhost:8000", "an unusable host is not written"
     assert ps.public_base_url() == "http://localhost:8000"
+
     ps._cache["public_base_url"] = "https://set.example/"
-    assert ps.public_base_url() == "https://set.example"
+    assert ps.public_base_url(Forwarded()) == "https://set.example", "the configured address wins over any request"
 
 
 def test_the_secret_is_never_described_in_clear(monkeypatch) -> None:

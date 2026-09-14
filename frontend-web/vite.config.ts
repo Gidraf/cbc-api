@@ -31,7 +31,11 @@ export default defineConfig(({ mode }) => {
   const proxy = Object.fromEntries(
     API_PREFIXES.map((path) => [
       `^${path}(?:[/?]|$)`,
-      { target: proxyTarget, changeOrigin: true },
+      // `xfwd` sends X-Forwarded-Host/Proto with the address the browser
+      // used. With changeOrigin the API sees Host: api:8000 — the compose
+      // service name — and a link it wrote for a download read
+      // http://api:8000/…, which resolves nowhere outside the box.
+      { target: proxyTarget, changeOrigin: true, xfwd: true },
     ])
   );
 
