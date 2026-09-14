@@ -209,7 +209,7 @@ def make_pack_link(payload: PackLinkRequest, request: Request,
 
 
 @router.get("/pack/dl/{token}")
-def download_by_link(token: str) -> Any:
+def download_by_link(token: str, request: Request) -> Any:
     """Fetch a kit with a link from the console. No sign-in: the link is
     the credential — once, and only while it lasts."""
     from fastapi import Response
@@ -233,8 +233,13 @@ def download_by_link(token: str) -> Any:
     maker = AuthContext(subject=str(row.get("created_by") or "link"), role="operator", auth_type="link")
     grade, subject = str(params.get("grade") or ""), str(params.get("subject") or "")
     key = _mint_key(maker, label=f"kit-{agent}" + (f"-{grade}" if grade else "") + " (link)")
-    body = agent_pack.build_kit(agent=agent, base_url=platform_settings.public_base_url(), api_key=key,
-                                grade=grade, subject=subject)
+    # The address the kit will call: the configured public address, else the
+    # one this very download arrived on — a kit that says localhost drives
+    # the operator's own laptop, where nothing is listening.
+    base = platform_settings.public_base_url(request)
+    if base.startswith("http://localhost"):
+        logger.warning("Kit built with CBC_API_URL=%s — set the public address in Settings.", base)
+    body = agent_pack.build_kit(agent=agent, base_url=base, api_key=key, grade=grade, subject=subject)
     stem = "-".join(p for p in ("cbc", agent, grade, subject.lower().replace(" ", "-")) if p)
     return Response(content=body, media_type="application/zip",
                     headers={"Content-Disposition": f'attachment; filename="{stem}.zip"'})

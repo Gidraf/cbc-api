@@ -278,7 +278,10 @@ def _agent_preface(agent: str, base_url: str) -> str:
 This folder is ready for {title}. The platform at {base_url} assembles every
 prompt and runs every check; {title} answers the prompts on its own model.
 Your API key is in `cbc/.env` and already inside the config the installer
-writes — keep this folder private.
+writes — keep this folder private. `cbc/.env` also carries `CBC_API_URL`; if
+it says `localhost`, the platform's public address was not set when this kit
+was made — edit it to the address you open the console at, and run
+`sh install.sh` again.
 
 **Setup (once):** {steps}
 
