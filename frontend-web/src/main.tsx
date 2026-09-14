@@ -16,6 +16,7 @@ import { Datasets } from "./views/Datasets";
 import { DesignCoverageScreen } from "./views/DesignCoverageScreen";
 import { Profiles } from "./views/Profiles";
 import { ProviderKeys } from "./views/ProviderKeys";
+import { PlatformSettings } from "./views/PlatformSettings";
 import { StageModels } from "./views/StageModels";
 import { DiagramLibrary } from "./views/DiagramLibrary";
 import { ExamBuilder } from "./views/ExamBuilder";
@@ -104,6 +105,7 @@ function Router() {
         <Route path="skills" element={<Screen name="Teaching skills"><Profiles /></Screen>} />
         <Route path="models" element={<Screen name="Model per station"><StageModels /></Screen>} />
         <Route path="keys" element={<Screen name="API keys"><ProviderKeys /></Screen>} />
+        <Route path="settings" element={<Screen name="Settings"><PlatformSettings /></Screen>} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>

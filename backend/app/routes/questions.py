@@ -447,18 +447,16 @@ def _composed_paper(*, grade: str, subject: str, kind: str, strand: str, sub_str
 
 def _series_name() -> str:
     """The name printed at the head and foot of every paper — the seller's."""
-    import os
+    from ..services import platform_settings
 
-    return os.getenv("PAPER_SERIES_NAME", "").strip()
+    return str(platform_settings.get("paper_series_name") or "").strip()
 
 
 def _public_base(request: Any) -> str:
     """The address this deployment is reached at, for the link on the paper."""
-    forwarded_proto = request.headers.get("x-forwarded-proto", "")
-    forwarded_host = request.headers.get("x-forwarded-host", "")
-    scheme = forwarded_proto.split(",")[0].strip() or request.url.scheme
-    host = forwarded_host.split(",")[0].strip() or request.headers.get("host", "") or request.url.netloc
-    return f"{scheme}://{host}"
+    from ..services import platform_settings
+
+    return platform_settings.public_base_url(request)
 
 
 class PaperFreezeRequest(BaseModel):
@@ -493,15 +491,16 @@ def freeze_paper(
 
 def freeze_paper_now(params: dict[str, Any], *, created_by: str, base: str) -> dict[str, Any]:
     """The freeze, callable from an order as well as from the route."""
-    import os
     import secrets
 
     from ..infra.db import execute, to_json
     from ..models import now_iso
     from ..services.ids import mint_exam_id
 
+    from ..services import platform_settings
+
     payload = PaperFreezeRequest(**{k: v for k, v in params.items() if k in PaperFreezeRequest.model_fields})
-    base = base or os.getenv("PUBLIC_BASE_URL", "").rstrip("/") or "http://localhost:8000"
+    base = base or platform_settings.public_base_url()
     paper = _composed_paper(grade=payload.grade, subject=payload.subject, kind=payload.kind,
                             strand=payload.strand, sub_strand=payload.sub_strand, marks=payload.marks,
                             seed=payload.seed, drafts=payload.drafts, title=payload.title,
@@ -555,6 +554,16 @@ def freeze_paper_now(params: dict[str, Any], *, created_by: str, base: str) -> d
         "booklet_pdf": f"{base}/api/v1/exams/{exam_id}/paper.pdf?with_scheme=true",
         "scheme_public": paper.scheme_url,
     }
+    try:
+        from ..services import webhooks
+
+        webhooks.emit("paper.frozen", {"exam_id": exam_id, "title": paper.title, "grade": grade_slug,
+                                       "subject": payload.subject, "kind": payload.kind,
+                                       "question_count": len(paper.items), "total_marks": paper.total_marks,
+                                       "has_drafts": paper.has_drafts, "created_by": created_by,
+                                       "render_urls": out["render_urls"]})
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("Webhook not sent: %s", exc)
     return out
 
 

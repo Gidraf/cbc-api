@@ -1051,6 +1051,20 @@ MIGRATIONS: list[tuple[str, str]] = [
         CREATE INDEX IF NOT EXISTS idx_agent_tasks_created ON agent_tasks(created_at DESC);
         """,
     ),
+    (
+        "035_platform_settings",
+        """
+        -- Knobs an operator turns from the console: the public address, the
+        -- name on papers, log retention, webhooks. Each falls back to an
+        -- environment variable; see services/platform_settings.py.
+        CREATE TABLE IF NOT EXISTS platform_settings (
+            key TEXT PRIMARY KEY,
+            value JSONB NOT NULL DEFAULT 'null'::jsonb,
+            updated_by TEXT NOT NULL DEFAULT '',
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        """,
+    ),
 ]
 
 

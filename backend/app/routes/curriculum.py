@@ -4903,10 +4903,7 @@ def _run_queued_order(job: dict[str, Any]) -> dict[str, Any]:
                                     if k not in ("grade", "subject", "strand", "sub_strand")}})
 
     def freeze(freeze_params: dict[str, Any]) -> dict[str, Any]:
-        import os
-
-        return freeze_paper_now(freeze_params, created_by=str(job.get("queued_by") or "order"),
-                                base=os.getenv("PUBLIC_BASE_URL", "").rstrip("/"))
+        return freeze_paper_now(freeze_params, created_by=str(job.get("queued_by") or "order"), base="")
 
     return product_orders.run(params, run_station, freeze)
 

@@ -50,6 +50,7 @@ const NAV: { group: string; items: NavItem[] }[] = [
       { to: "/skills", label: "Teaching skills", icon: "◎", right: "generate", hint: "Per-subject expertise injected into every prompt" },
       { to: "/models", label: "Model per station", icon: "⚙", right: "generate", hint: "Which model runs the notes, the diagrams, the ingest — and what each costs you" },
       { to: "/keys", label: "API keys", icon: "🔑", right: "generate", hint: "Add or rotate a provider key without rebuilding anything" },
+      { to: "/settings", label: "Settings", icon: "⚙", right: "generate", hint: "Public address, the name on papers, log retention, webhooks" },
       {
         to: "/prompts",
         label: "Domain prompts",

@@ -162,9 +162,11 @@ def defer(config: Any, messages: list[dict[str, str]], *, temperature: float,
     logger.info("BYOM task %s step %d (%s) awaiting the agent: %d chars of prompt",
                 task.task_id, step.number, step.stage, sum(len(m["content"]) for m in step.messages))
 
-    if not task.wake.wait(STEP_TIMEOUT_SECONDS):
-        raise TimeoutError(f"the agent did not answer step {step.number} within "
-                           f"{STEP_TIMEOUT_SECONDS // 60} minutes")
+    from . import platform_settings
+
+    timeout = int(platform_settings.get("byom_step_timeout_seconds") or STEP_TIMEOUT_SECONDS)
+    if not task.wake.wait(timeout):
+        raise TimeoutError(f"the agent did not answer step {step.number} within {timeout // 60} minutes")
     if task.cancel:
         raise StepCancelled("cancelled")
     raw, model = task.answer if isinstance(task.answer, tuple) else (task.answer, "")
@@ -242,6 +244,15 @@ def start(station: str, params: dict[str, Any], *, created_by: str, runner: Any)
             _current.reset(token)
             _record(task)
             _notify(task)
+            try:
+                from . import webhooks
+
+                webhooks.emit("agent_task.done" if task.status == DONE else "agent_task.failed",
+                              {"task_id": task.task_id, "station": task.station, "params": task.params,
+                               "status": task.status, "steps": len(task.steps), "error": task.error,
+                               "result": _summary(task.result)})
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("Webhook not sent: %s", exc)
 
     threading.Thread(target=_run, name=f"byom-{task.task_id}", daemon=True).start()
     return task

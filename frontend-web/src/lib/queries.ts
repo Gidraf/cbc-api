@@ -3507,3 +3507,37 @@ export function useAgentPack() {
     },
   });
 }
+
+/* ── Global settings ──────────────────────────────────────────────────── */
+
+export type PlatformSetting = {
+  key: string; title: string; help: string; kind: "string" | "int" | "bool" | "list" | "secret";
+  group: string; env: string; value: any; source: "console" | "environment" | "default"; default: any;
+};
+
+export function usePlatformSettings() {
+  const api = useApi();
+  return useQuery({
+    queryKey: ["platform-settings"],
+    queryFn: () => api<{ settings: PlatformSetting[]; webhook_events: string[] }>("/api/v1/admin/settings"),
+    staleTime: 10_000,
+  });
+}
+
+export function useSavePlatformSettings() {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (values: Record<string, any>) =>
+      api<{ written: Record<string, any> }>("/api/v1/admin/settings", { method: "PUT", body: JSON.stringify({ values }) }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["platform-settings"] }),
+  });
+}
+
+export function useTestWebhook() {
+  const api = useApi();
+  return useMutation({
+    mutationFn: () => api<{ url: string; ok: boolean; status: number; error: string }>(
+      "/api/v1/admin/settings/webhook/test", { method: "POST" }),
+  });
+}

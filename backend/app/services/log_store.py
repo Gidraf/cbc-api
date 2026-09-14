@@ -111,10 +111,17 @@ class DbLogHandler(logging.Handler):
             return
 
 
-def prune(keep: int = KEEP, retention_days: int = RETENTION_DAYS) -> int:
+def prune(keep: int | None = None, retention_days: int | None = None) -> int:
     """Drop lines older than the retention, and any beyond the row cap.
-    Returns how many went."""
+    Returns how many went. The limits come from the Settings page, then
+    the environment, then the defaults."""
     from ..infra.db import execute, fetch_one
+    from . import platform_settings
+
+    if keep is None:
+        keep = int(platform_settings.get("log_keep_rows") or KEEP)
+    if retention_days is None:
+        retention_days = int(platform_settings.get("log_retention_days") or RETENTION_DAYS)
 
     before = int((fetch_one("SELECT COUNT(*) AS n FROM service_logs") or {}).get("n") or 0)
     execute("DELETE FROM service_logs WHERE at < NOW() - (:days || ' days')::interval",

@@ -490,6 +490,8 @@ def _execute(job: dict[str, Any]) -> dict[str, Any]:
              "calls": meter.calls, "tokens": meter.total_tokens,
              "cost": round(meter.cost_usd, 6)},
         )
+        if status == FAILED:
+            _announce("job.failed", job, {}, error=str(exc)[:300])
         return {"job_id": job_id, "status": status, "error": str(exc)[:300]}
 
     run_log.step("Done", f"{meter.calls} model call(s), "
@@ -509,7 +511,26 @@ def _execute(job: dict[str, Any]) -> dict[str, Any]:
          "calls": meter.calls, "tokens": meter.total_tokens,
          "cost": round(meter.cost_usd, 6)},
     )
+    _announce("job.done", job, result if isinstance(result, dict) else {}, cost_usd=round(meter.cost_usd, 6))
+    if kind == "order":
+        _announce("order.done", job, result if isinstance(result, dict) else {}, cost_usd=round(meter.cost_usd, 6))
     return {"job_id": job_id, "status": DONE, "cost_usd": round(meter.cost_usd, 6)}
+
+
+def _announce(event: str, job: dict[str, Any], result: dict[str, Any], **extra: Any) -> None:
+    """A webhook, where one is configured. Never lets a delivery problem
+    reach the job."""
+    try:
+        from . import webhooks
+
+        summary = {k: result.get(k) for k in ("artifact", "saved", "batch_count", "quality_gate", "self_check",
+                                               "quality", "paper", "render_urls", "scope", "drawings")
+                   if k in result}
+        webhooks.emit(event, {"job_id": job.get("job_id"), "kind": job.get("kind"), "grade": job.get("grade"),
+                              "subject": job.get("subject"), "strand": job.get("strand"),
+                              "sub_strand": job.get("sub_strand"), "result": summary, **extra})
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("Webhook not sent: %s", exc)
 
 
 # A job whose worker was killed mid-generation leaves a row saying "running"
