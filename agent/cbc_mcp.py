@@ -71,6 +71,18 @@ TOOLS: list[dict[str, Any]] = [
                                     "custom_instructions": {"type": "string"},
                                     "review_cycles": {"type": "integer"},
                                     "extra": {"type": "object"}}}},
+    {"name": "cbc_produce",
+     "description": ("ONE REQUEST, ONE PRODUCT. Start an order: works out the sub-strands (a term, a strand, or one sub-strand), "
+                     "runs the guides/figures/questions still missing, composes the paper in the national format, freezes it "
+                     "with a QR code to its marking scheme, and returns print links in result.render_urls. Then keep "
+                     "answering steps with cbc_complete_task until status is 'done'."),
+     "inputSchema": {"type": "object", "required": ["grade", "subject"],
+                     "properties": {"grade": {"type": "string"}, "subject": {"type": "string"},
+                                    "kind": {"type": "string", "enum": ["term", "topical", "strand"]},
+                                    "term": {"type": "integer"}, "strand": {"type": "string"},
+                                    "sub_strand": {"type": "string"}, "sub_strands": {"type": "array"},
+                                    "count": {"type": "integer"}, "format": {"type": "string"},
+                                    "title": {"type": "string"}}}},
     {"name": "cbc_get_task", "description": "The task's state and its pending step (messages to answer).",
      "inputSchema": {"type": "object", "required": ["task_id"], "properties": {"task_id": {"type": "string"},
                                                                               "wait_seconds": {"type": "number"}}}},
@@ -88,14 +100,14 @@ TOOLS: list[dict[str, Any]] = [
      "inputSchema": {"type": "object", "required": ["expression"],
                      "properties": {"expression": {"type": "string"}, "claimed_answer": {"type": "string"}}}},
     {"name": "cbc_draw_figure",
-     "description": "Draw a question figure from data (number_line, bar_chart, pie_chart, line_graph, table, clock, thermometer, shape, fraction, angle). Returns SVG; register=true files it and returns a diagram_id.",
+     "description": "Draw a question figure from data (number_line, bar_chart, pie_chart, line_graph, table, clock, thermometer, shape, fraction, angle). Returns SVG; save=true files it and returns a diagram_id.",
      "inputSchema": {"type": "object", "required": ["figure"],
-                     "properties": {"figure": {"type": "object"}, "register": {"type": "boolean"},
+                     "properties": {"figure": {"type": "object"}, "save": {"type": "boolean"},
                                     "grade": {"type": "string"}, "subject": {"type": "string"}, "sub_strand": {"type": "string"}}}},
     {"name": "cbc_draw_map",
-     "description": "Draw a sketch map of Kenya (or a schematic area) from the map contract: extent, features (name/kind, lat/lon or x/y), key. Returns SVG; register=true files it.",
+     "description": "Draw a sketch map of Kenya (or a schematic area) from the map contract: extent, features (name/kind, lat/lon or x/y), key. Returns SVG; save=true files it.",
      "inputSchema": {"type": "object", "required": ["map"],
-                     "properties": {"map": {"type": "object"}, "title": {"type": "string"}, "register": {"type": "boolean"},
+                     "properties": {"map": {"type": "object"}, "title": {"type": "string"}, "save": {"type": "boolean"},
                                     "grade": {"type": "string"}, "subject": {"type": "string"}, "sub_strand": {"type": "string"}}}},
     {"name": "cbc_check_questions", "description": "Run the question checks (engine, repeats, demand, coverage) on items in the API shape without filing them.",
      "inputSchema": {"type": "object", "required": ["grade", "subject", "questions"],
@@ -124,6 +136,10 @@ def _tool(name: str, args: dict[str, Any]) -> Any:
         return _call("GET", "/api/v1/agent/manifest")
     if name == "cbc_start_task":
         return _trim_task(_call("POST", "/api/v1/agent/tasks", args))
+    if name == "cbc_produce":
+        body = {"station": "order", **args}
+        body.setdefault("kind", "term")
+        return _trim_task(_call("POST", "/api/v1/agent/tasks", body))
     if name == "cbc_get_task":
         wait = args.get("wait_seconds")
         if wait:

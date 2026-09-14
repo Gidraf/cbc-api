@@ -26,7 +26,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel, Field
 
 from ..errors import raise_api_error
@@ -36,7 +36,7 @@ from ..services.auth import AuthContext, require_roles
 logger = logging.getLogger("cbc-agent-api")
 router = APIRouter(prefix="/api/v1/agent", tags=["Agent (bring your own model)"])
 
-STATIONS = ("notes", "diagram", "activity", "material", "media", "simulation", "questions",
+STATIONS = ("order", "notes", "diagram", "activity", "material", "media", "simulation", "questions",
             "strands", "substrands")
 
 
@@ -46,6 +46,10 @@ class StartTaskRequest(BaseModel):
     subject: str
     strand: str = ""
     sub_strand: str = ""
+    # For an order: which paper. kind term|topical|strand, term 1–3, count items.
+    kind: str = ""
+    term: int | None = None
+    sub_strands: list[str] = []
     count: int | None = None
     custom_instructions: str = ""
     review_cycles: int | None = None
@@ -68,7 +72,7 @@ def _runner(station: str, params: dict[str, Any]) -> Any:
            "strand": params.get("strand") or "", "sub_strand": params.get("sub_strand") or "",
            "payload": {k: v for k, v in params.items()
                        if k not in ("grade", "subject", "strand", "sub_strand")}}
-    handler = curriculum._PIPELINE_HANDLERS.get(station)
+    handler = curriculum._PIPELINE_HANDLERS.get(station) or curriculum._BUNDLE_HANDLERS.get(station)
     if handler is None:
         raise ValueError(f"'{station}' is not a station")
     return handler(job)
@@ -105,6 +109,9 @@ def manifest(_: AuthContext = Depends(require_roles("admin", "operator", "develo
             "and a wrong answer is caught, rewritten (another prompt to you) or held.",
         ],
         "stations": {
+            "order": ("ONE REQUEST, ONE PRODUCT: {station: 'order', grade, subject, kind: 'term'|'topical'|'strand', "
+                      "term: 1, count: 30}. Works out the sub-strands, runs notes/diagram/questions where missing, "
+                      "composes and freezes the paper, returns print links. Answer every step until done."),
             "notes": "the teacher's guide for a sub-strand (per-lesson prompts, then checks and rewrites)",
             "diagram": "plan the sub-strand's figures, then draw each (maps are drawn by the platform)",
             "activity": "activities and experiments",
@@ -134,6 +141,26 @@ def manifest(_: AuthContext = Depends(require_roles("admin", "operator", "develo
     }
 
 
+@router.get("/pack")
+def download_pack(request: Request, grade: str = Query(""), subject: str = Query(""),
+                  _: AuthContext = Depends(require_roles("admin", "operator", "developer"))) -> Any:
+    """The context pack: AGENTS.md/CLAUDE.md playbook, the manifest, the
+    formats, every prompt, and — with grade and subject — the design and
+    its term split. Unzip it into the folder your agent works in."""
+    from fastapi import Response
+
+    from ..services import agent_pack
+
+    forwarded_proto = request.headers.get("x-forwarded-proto", "")
+    forwarded_host = request.headers.get("x-forwarded-host", "")
+    scheme = forwarded_proto.split(",")[0].strip() or request.url.scheme
+    host = forwarded_host.split(",")[0].strip() or request.headers.get("host", "") or request.url.netloc
+    body = agent_pack.build(base_url=f"{scheme}://{host}", grade=grade, subject=subject)
+    stem = "-".join(p for p in ("cbc-agent-pack", grade, subject.lower().replace(" ", "-")) if p)
+    return Response(content=body, media_type="application/zip",
+                    headers={"Content-Disposition": f'attachment; filename="{stem}.zip"'})
+
+
 @router.post("/tasks")
 def start_task(payload: StartTaskRequest,
                auth: AuthContext = Depends(require_roles("admin", "operator", "developer"))) -> dict[str, Any]:
@@ -145,6 +172,12 @@ def start_task(payload: StartTaskRequest,
                               "custom_instructions": payload.custom_instructions, **payload.extra}
     if payload.count:
         params["count"] = payload.count
+    if payload.kind:
+        params["kind"] = payload.kind
+    if payload.term:
+        params["term"] = payload.term
+    if payload.sub_strands:
+        params["sub_strands"] = payload.sub_strands
     if payload.review_cycles is not None:
         params["review_cycles"] = payload.review_cycles
     task = byom.start(payload.station, params, created_by=auth.subject, runner=_runner)
@@ -236,7 +269,7 @@ def engine_solve(payload: SolveRequest,
 
 class FigureRequest(BaseModel):
     figure: dict[str, Any]
-    register: bool = Field(default=False, description="File it in the diagram registry and return its id")
+    save: bool = Field(default=False, description="File it in the diagram registry and return its id")
     grade: str = ""
     subject: str = ""
     sub_strand: str = ""
@@ -253,7 +286,7 @@ def engine_figure(payload: FigureRequest,
         raise_api_error("SCHEMA_VALIDATION_FAILED",
                         "That figure could not be drawn. " + figure_sketch.prompt_block()[:600])
     out = {"svg": drawn["svg"], "title": drawn["title"], "kind": drawn["kind"]}
-    if payload.register:
+    if payload.save:
         from ..services.diagram_dedup import diagram_deduplicator
 
         dedup = diagram_deduplicator.deduplicate_and_store(
@@ -269,7 +302,7 @@ def engine_figure(payload: FigureRequest,
 class MapRequest(BaseModel):
     map: dict[str, Any]
     title: str = ""
-    register: bool = False
+    save: bool = False
     grade: str = ""
     subject: str = ""
     sub_strand: str = ""
@@ -287,7 +320,7 @@ def engine_map(payload: MapRequest,
     drawn = map_sketch.render(spec)
     out = {"svg": drawn["svg"], "title": drawn["title"], "unplaced": drawn.get("unplaced") or [],
            "parts": len((drawn.get("scene") or {}).get("parts") or [])}
-    if payload.register:
+    if payload.save:
         from ..services.diagram_dedup import diagram_deduplicator
 
         dedup = diagram_deduplicator.deduplicate_and_store(

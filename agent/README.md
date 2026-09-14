@@ -12,6 +12,29 @@ QR-coded marking scheme, the PDF.
 Your side pulls prompts and pushes answers. The platform never needs to reach
 your machine, and it never sees a model credential.
 
+## 0. The one-line product
+
+> Give me a Grade 7 Mathematics mid-term 1 assessment.
+
+Console: Content factory → choose the grade and subject → **Produce a paper**
+→ Term 1, 30 questions → Produce. The order works out the sub-strands Term 1
+covers, writes the guides, figures and items that don't exist yet, composes
+the paper in the national format, freezes it, and shows the print links on
+the same panel. (Provider mode: your bound models pay. Agent mode, below: your
+subscription pays.)
+
+Agent: `cbc_produce {grade: "grade-7", subject: "Mathematics", kind: "term", term: 1, count: 30}`
+and keep answering the steps it hands you until it is `done`; the result
+carries `render_urls`.
+
+**The context pack.** `GET /api/v1/agent/pack?grade=grade-7&subject=Mathematics`
+(console: Providers → API keys → *Download agent pack*, or `cbc_fetch`) is a
+zip with `AGENTS.md`/`CLAUDE.md` (the playbook: what each one-line request
+maps to, how the loop works, the rules for answering), `manifest.json`,
+`formats.json` (paper formats, figure and map contracts), every prompt the
+platform sends, and the design with its term split. Unzip it into the folder
+your agent works in and the agent knows the job.
+
 ## 1. An API key
 
 Console → Providers → *API keys* → create one with the `operator` role. Put it in
@@ -95,8 +118,8 @@ questions → compose/freeze a paper.
 
 ```
 POST /api/v1/agent/engines/solve            {expression, claimed_answer?}
-POST /api/v1/agent/engines/figure           {figure: {kind: "bar_chart", ...}, register?}
-POST /api/v1/agent/engines/map              {map: {extent, features, key}, register?}
+POST /api/v1/agent/engines/figure           {figure: {kind: "bar_chart", ...}, save?}
+POST /api/v1/agent/engines/map              {map: {extent, features, key}, save?}
 POST /api/v1/agent/engines/check-questions  {grade, subject, sub_strand, questions: [...]}
 GET  /api/v1/questions/paper/exam.json      compose;  POST /api/v1/questions/paper/freeze  freeze
 GET  /api/v1/exams/{exam_id}/paper.html|paper.pdf    print

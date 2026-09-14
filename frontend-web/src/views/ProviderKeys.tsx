@@ -17,6 +17,7 @@ import {
 import { useAuth } from "../lib/auth";
 import {
   useCreatePortalKey,
+  useAgentPack,
   useLogHousekeeping,
   usePortalKeys,
   useProviders,
@@ -178,6 +179,7 @@ function PortalKeys() {
   const roles = Object.keys(ROLE_LABEL).filter((r) => ROLE_RANK[r] <= mine);
   const origin = window.location.origin.replace(/\/$/, "");
   const logLink = (key: string) => `${origin}/api/v1/admin/logs/share?token=${encodeURIComponent(key)}&since_minutes=60`;
+  const pack = useAgentPack();
 
   function submit(event: React.FormEvent) {
     event.preventDefault();
@@ -191,6 +193,12 @@ function PortalKeys() {
     <Card
       title="Keys for this API"
       description="For scripts, tools and anyone diagnosing a run without signing in. A key does everything its role can do; an admin key also opens the log link. A key is shown once, when it is made."
+      actions={
+        <Button size="sm" variant="secondary" disabled={pack.isPending} onClick={() => pack.mutate()}
+                title="A zip with AGENTS.md/CLAUDE.md, the manifest, the paper formats, every prompt — unzip it where your agent (Claude Code, Codex, Antigravity) works, add the MCP server with a key from here, and ask it for a paper.">
+          {pack.isPending ? "Packing…" : "Download agent pack"}
+        </Button>
+      }
     >
       <form onSubmit={submit}>
         <Stack direction="row" gap="var(--s2)" style={{ alignItems: "flex-end", flexWrap: "wrap" }}>

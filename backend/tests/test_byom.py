@@ -110,5 +110,5 @@ def test_the_agent_routes_exist_and_run_the_queues_own_handlers() -> None:
     for path in ('"/tasks"', '"/tasks/{task_id}/complete"', '"/tasks/{task_id}/wait"', '"/manifest"',
                  '"/engines/solve"', '"/engines/figure"', '"/engines/map"', '"/engines/check-questions"'):
         assert path in source
-    assert "curriculum._PIPELINE_HANDLERS.get(station)" in source, "the same code the queue runs"
+    assert "curriculum._PIPELINE_HANDLERS.get(station) or curriculum._BUNDLE_HANDLERS.get(station)" in source
     assert "require_roles(" in source

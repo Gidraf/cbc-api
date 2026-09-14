@@ -4880,6 +4880,37 @@ def _run_queued_questions(job: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+def _run_queued_order(job: dict[str, Any]) -> dict[str, Any]:
+    """One request, one printed product: every station the scope still
+    needs, in order, then a frozen paper. See services/product_orders.py."""
+    from ..services import product_orders
+    from .questions import freeze_paper_now
+
+    payload = dict(job.get("payload") or {})
+    params = {**payload, "grade": job.get("grade") or "", "subject": job.get("subject") or "",
+              "strand": payload.get("strand") or job.get("strand") or "",
+              "sub_strand": payload.get("sub_strand") or job.get("sub_strand") or ""}
+
+    def run_station(kind: str, station_params: dict[str, Any]) -> Any:
+        handler = _PIPELINE_HANDLERS.get(kind)
+        if handler is None:
+            raise ValueError(f"'{kind}' is not a station")
+        return handler({"kind": kind, "grade": station_params.get("grade") or "",
+                        "subject": station_params.get("subject") or "",
+                        "strand": station_params.get("strand") or "",
+                        "sub_strand": station_params.get("sub_strand") or "",
+                        "payload": {k: v for k, v in station_params.items()
+                                    if k not in ("grade", "subject", "strand", "sub_strand")}})
+
+    def freeze(freeze_params: dict[str, Any]) -> dict[str, Any]:
+        import os
+
+        return freeze_paper_now(freeze_params, created_by=str(job.get("queued_by") or "order"),
+                                base=os.getenv("PUBLIC_BASE_URL", "").rstrip("/"))
+
+    return product_orders.run(params, run_station, freeze)
+
+
 def _run_queued_substrands(job: dict[str, Any]) -> dict[str, Any]:
     """Generate one strand's sub-strands and keep the result as a DRAFT.
 
@@ -5342,6 +5373,7 @@ def _register_queue_handlers() -> None:
         job_queue.register(kind, _run_queued)
     job_queue.register("substrands", _run_queued_substrands)
     job_queue.register("questions", _run_queued_questions)
+    job_queue.register("order", _run_queued_order)
     job_queue.register("review", _run_queued_review)
     job_queue.register("approval", _run_queued_approval)
     job_queue.register("ingest", _run_queued_ingest)
@@ -5372,6 +5404,11 @@ _PIPELINE_HANDLERS: dict[str, Any] = {
     "material": _run_queued,
     "questions": _run_queued_questions,
 }
+
+# An order is not a pipeline STAGE — it is a sequence of them, followed by
+# a paper — so it is a queue kind and an agent station, and not a step the
+# pipeline advances through.
+_BUNDLE_HANDLERS: dict[str, Any] = {"order": _run_queued_order}
 
 
 _register_queue_handlers()
@@ -5460,6 +5497,73 @@ def factory_queue_work(
         "jobs": queued,
         "note": "Running one at a time. Poll /factory/queue/status for progress.",
     }
+
+
+class OrderRequest(BaseModel):
+    """One request, one printed product."""
+
+    grade: str
+    subject: str
+    kind: str = "term"            # term | topical | strand
+    term: int | None = None
+    strand: str = ""
+    sub_strand: str = ""
+    sub_strands: list[str] = []
+    count: int = 30
+    format: str = "auto"
+    title: str = ""
+    seed: str = ""
+    diagrams: bool = True
+    custom_instructions: str = ""
+
+
+@router.post("/factory/orders")
+def factory_place_order(
+    payload: OrderRequest,
+    auth: AuthContext = Depends(require_roles("admin", "operator")),
+) -> dict[str, Any]:
+    """Queue an ORDER: everything the paper needs that does not exist yet
+    (guides, figures, items), in order, then the paper composed, frozen and
+    ready to print. One job; the queue panel shows its progress and its
+    result carries the print links."""
+    from ..services import job_queue, product_orders
+
+    scope = product_orders.scope_for(payload.model_dump())
+    if not scope:
+        raise_api_error("VALIDATION_FAILED",
+                        f"No sub-strands for {payload.subject} at {payload.grade} in that scope. "
+                        f"Ingest the design first, or name the sub-strands.")
+    job = job_queue.enqueue(
+        "order", payload.grade, payload.subject,
+        {k: v for k, v in payload.model_dump().items() if k not in ("grade", "subject")},
+        strand=payload.strand, sub_strand=payload.sub_strand or (scope[0]["sub_strand"] if len(scope) == 1 else ""),
+        queued_by=getattr(auth, "subject", ""),
+    )
+    job_queue.start_worker()
+    return {"status": "queued", "job": job.to_dict(),
+            "scope": [r["sub_strand"] for r in scope],
+            "note": "Poll /factory/queue/status; the finished job's result carries render_urls."}
+
+
+@router.get("/factory/orders/scope")
+def factory_order_scope(
+    grade: str, subject: str, kind: str = "term", term: int | None = None,
+    strand: str = "", sub_strand: str = "",
+    _: AuthContext = Depends(require_roles("admin", "operator", "reviewer", "developer")),
+) -> dict[str, Any]:
+    """What an order would cover, and what of it already exists."""
+    from ..services import product_orders
+
+    scope = product_orders.scope_for({"grade": grade, "subject": subject, "kind": kind, "term": term,
+                                      "strand": strand, "sub_strand": sub_strand})
+    out = []
+    for row in scope:
+        out.append({**row,
+                    "has_notes": product_orders._has_notes(grade, subject, row["sub_strand"]),
+                    "figures": product_orders._drawn_figures(grade, subject, row["sub_strand"]),
+                    "items": product_orders._items_in_bank(grade, subject, row["sub_strand"])})
+    return {"scope": out, "terms": {n: [r["sub_strand"] for r in product_orders.term_scope(grade, subject, n)]
+                                    for n in (1, 2, 3)} if kind == "term" else {}}
 
 
 @router.post("/factory/queue-substrands")

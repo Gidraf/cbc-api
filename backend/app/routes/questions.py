@@ -413,22 +413,30 @@ def questions_paper_pdf(
 def _composed_paper(*, grade: str, subject: str, kind: str, strand: str, sub_strand: str,
                     marks: int, seed: str, drafts: bool, title: str, format_key: str = "auto",
                     count: int | None = None, series: str = "", year: int | None = None,
-                    term: int | None = None) -> Any:
-    """One paper from the bank, for the scope the kind names."""
+                    term: int | None = None, sub_strands: list[str] | None = None) -> Any:
+    """One paper from the bank, for the scope the kind names — or for the
+    sub-strands named in `sub_strands` (a term's worth, as an order works
+    them out)."""
     from ..services import paper_builder, question_rows
 
-    if kind == "topical" and not sub_strand:
+    if kind == "topical" and not sub_strand and not sub_strands:
         raise_api_error("SCHEMA_VALIDATION_FAILED", "A topical paper needs a sub_strand.")
-    if kind == "strand" and not strand:
+    if kind == "strand" and not strand and not sub_strands:
         raise_api_error("SCHEMA_VALIDATION_FAILED", "A strand paper needs a strand.")
 
     rows = question_dna_service.list_questions(
         grade=grade, subject=subject,
-        strand=(strand or None) if kind != "topical" else None,
-        sub_strand=(sub_strand or None) if kind == "topical" else None,
+        strand=(strand or None) if kind != "topical" and not sub_strands else None,
+        sub_strand=(sub_strand or None) if kind == "topical" and not sub_strands else None,
         limit=2000)
     items = question_rows.flatten_all(rows)
-    if kind == "topical" and strand:
+    if sub_strands:
+        wanted = {str(x).strip().lower() for x in sub_strands}
+        items = [q for q in items
+                 if str((q.get("curriculum") or {}).get("sub_strand") or "").strip().lower() in wanted]
+        # The scope is the named list; the kind's own filter would empty it.
+        kind = "term" if kind not in ("topical", "strand") or len(wanted) > 1 else kind
+    elif kind == "topical" and strand:
         items = [q for q in items
                  if str((q.get("curriculum") or {}).get("strand") or "").lower() == strand.lower()]
     return paper_builder.compose(
@@ -459,6 +467,7 @@ class PaperFreezeRequest(BaseModel):
     kind: str = "topical"
     strand: str = ""
     sub_strand: str = ""
+    sub_strands: list[str] = []
     marks: int = 50
     count: int | None = None
     format: str = "auto"
@@ -479,17 +488,25 @@ def freeze_paper(
     """Compose a paper and FREEZE it: the exact items, in their order, with a
     share token for the marking scheme, so the printed paper's QR code opens
     the scheme and next term's reprint is this paper and not a redeal."""
+    return freeze_paper_now(payload.model_dump(), created_by=auth.subject, base=_public_base(request))
+
+
+def freeze_paper_now(params: dict[str, Any], *, created_by: str, base: str) -> dict[str, Any]:
+    """The freeze, callable from an order as well as from the route."""
+    import os
     import secrets
 
     from ..infra.db import execute, to_json
     from ..models import now_iso
     from ..services.ids import mint_exam_id
 
+    payload = PaperFreezeRequest(**{k: v for k, v in params.items() if k in PaperFreezeRequest.model_fields})
+    base = base or os.getenv("PUBLIC_BASE_URL", "").rstrip("/") or "http://localhost:8000"
     paper = _composed_paper(grade=payload.grade, subject=payload.subject, kind=payload.kind,
                             strand=payload.strand, sub_strand=payload.sub_strand, marks=payload.marks,
                             seed=payload.seed, drafts=payload.drafts, title=payload.title,
                             format_key=payload.format, count=payload.count, series=payload.series,
-                            year=payload.year, term=payload.term)
+                            year=payload.year, term=payload.term, sub_strands=payload.sub_strands or None)
     if not paper.items:
         raise_api_error("SUBSTRAND_BUNDLE_NOT_FOUND",
                         f"The bank holds no usable items for {payload.subject} · "
@@ -498,7 +515,6 @@ def freeze_paper(
     grade_slug = normalize_grade(payload.grade)
     exam_id = mint_exam_id(grade_slug, payload.subject)
     token = secrets.token_urlsafe(18)
-    base = _public_base(request)
     paper.exam_id = exam_id
     paper.scheme_url = f"{base}/api/v1/exams/{exam_id}/scheme?token={token}"
 
@@ -525,18 +541,18 @@ def freeze_paper(
             "time_allowed": paper.time_allowed, "total_marks": int(round(paper.total_marks)),
             "instructions": to_json(paper.instructions),
             "question_ids": to_json([q.get("question_id") for q in paper.items]),
-            "snapshot": to_json(snapshot), "created_by": auth.subject, "share_token": token,
+            "snapshot": to_json(snapshot), "created_by": created_by, "share_token": token,
         },
     )
     logger.info("Paper %s frozen by %s: %d item(s), %s marks, %s",
-                exam_id, auth.subject, len(paper.items), paper.total_marks, paper.title)
+                exam_id, created_by, len(paper.items), paper.total_marks, paper.title)
     out = paper.to_dict()
     out["render_urls"] = {
-        "paper": f"/api/v1/exams/{exam_id}/paper.html",
-        "booklet": f"/api/v1/exams/{exam_id}/paper.html?with_scheme=true",
-        "marking_scheme": f"/api/v1/exams/{exam_id}/paper.html?answers=true",
-        "paper_pdf": f"/api/v1/exams/{exam_id}/paper.pdf",
-        "booklet_pdf": f"/api/v1/exams/{exam_id}/paper.pdf?with_scheme=true",
+        "paper": f"{base}/api/v1/exams/{exam_id}/paper.html",
+        "booklet": f"{base}/api/v1/exams/{exam_id}/paper.html?with_scheme=true",
+        "marking_scheme": f"{base}/api/v1/exams/{exam_id}/paper.html?answers=true",
+        "paper_pdf": f"{base}/api/v1/exams/{exam_id}/paper.pdf",
+        "booklet_pdf": f"{base}/api/v1/exams/{exam_id}/paper.pdf?with_scheme=true",
         "scheme_public": paper.scheme_url,
     }
     return out

@@ -3435,3 +3435,75 @@ export function useFrozenPaperPdf() {
     },
   });
 }
+
+/* ── Orders: one request, one printed product ──────────────────────────── */
+
+export type OrderScopeRow = {
+  strand: string; sub_strand: string; hours: number;
+  has_notes: boolean; figures: number; items: number;
+};
+
+export function useOrderScope(v: { grade: string; subject: string; kind: string; term?: number; strand?: string; sub_strand?: string }) {
+  const api = useApi();
+  return useQuery({
+    queryKey: ["order-scope", v],
+    queryFn: () => {
+      const params = new URLSearchParams({ grade: v.grade, subject: v.subject, kind: v.kind });
+      if (v.term) params.set("term", String(v.term));
+      if (v.strand) params.set("strand", v.strand);
+      if (v.sub_strand) params.set("sub_strand", v.sub_strand);
+      return api<{ scope: OrderScopeRow[]; terms: Record<string, string[]> }>(
+        `/api/v1/curriculum/factory/orders/scope?${params}`);
+    },
+    enabled: Boolean(v.grade && v.subject),
+    staleTime: 15_000,
+  });
+}
+
+export function usePlaceOrder() {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { grade: string; subject: string; kind: string; term?: number; strand?: string;
+                      sub_strand?: string; count: number; format?: string; title?: string; diagrams?: boolean }) =>
+      api<{ status: string; job: { job_id: string }; scope: string[] }>(
+        "/api/v1/curriculum/factory/orders", { method: "POST", body: JSON.stringify(v) }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["queue"] }),
+  });
+}
+
+export function useOrderJob(jobId: string) {
+  const api = useApi();
+  return useQuery({
+    queryKey: ["order-job", jobId],
+    queryFn: () => api<{ job_id: string; status: string; error?: string; result?: any }>(
+      `/api/v1/curriculum/factory/queue/job/${encodeURIComponent(jobId)}`),
+    enabled: Boolean(jobId),
+    refetchInterval: (query) => {
+      const status = (query.state.data as any)?.status;
+      return status && status !== "queued" && status !== "running" && status !== "waiting" ? false : 4000;
+    },
+  });
+}
+
+/** The agent context pack: playbook, manifest, formats, prompts, as a zip. */
+export function useAgentPack() {
+  const { token } = useAuth();
+  return useMutation({
+    mutationFn: async (v?: { grade?: string; subject?: string }) => {
+      const params = new URLSearchParams();
+      if (v?.grade) params.set("grade", v.grade);
+      if (v?.subject) params.set("subject", v.subject);
+      const { blob, filename } = await fetchBlob(`/api/v1/agent/pack?${params}`, { bearerToken: token });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = filename || "cbc-agent-pack.zip";
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      return filename;
+    },
+  });
+}

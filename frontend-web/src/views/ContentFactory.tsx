@@ -15,6 +15,7 @@ import { NotesReader } from "./NotesReader";
 import { PromptInspector, type Inspection } from "./PromptInspector";
 import { QueuePanel } from "./QueuePanel";
 import { ResetPanel } from "./ResetPanel";
+import { ProducePanel } from "./ProducePanel";
 import { VersionReview } from "./VersionReview";
 import { stationToText } from "../lib/serialize";
 import { useArtifact, useArtifacts, useDesigns, useExportBundle, useInspect, profileFor, useProfiles, gradeOptionLabel, subjectOptionLabel, useApi, useGrades, useProgress, useQueuedJob, useSavedSubstrands, useStoredStructure, useSubjects, STATION_KIND, useNotesDocument, useQuestionPaper } from "../lib/queries";
@@ -700,6 +701,10 @@ export function ContentFactory() {
 
       {!substrand && effectiveGrade && (
         <AutoRunPanel grade={effectiveGrade} />
+      )}
+
+      {!substrand && subject && allSubstrands.length > 0 && (
+        <ProducePanel grade={effectiveGrade} subject={subject} />
       )}
 
       {!substrand && subject && allSubstrands.length > 0 && (
