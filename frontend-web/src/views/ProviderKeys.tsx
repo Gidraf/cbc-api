@@ -191,6 +191,20 @@ function AgentKits() {
   const [made, setMade] = React.useState<{ agent: string; url: string; curl: string; minutes: number } | null>(null);
   const canMint = role === "admin" || role === "operator";
 
+  const [downloaded, setDownloaded] = React.useState<{ agent: string; file: string } | null>(null);
+  const afterDownload = (file: string) =>
+    `unzip -o ~/Downloads/${file} -d ~/cbc-papers && cd ~/cbc-papers && sh install.sh`;
+
+  async function download(agent: string) {
+    try {
+      const file = await pack.mutateAsync({ agent, grade, subject });
+      setDownloaded({ agent, file: String(file || `cbc-${agent}.zip`) });
+      toast("Downloaded. Now run the unzip command shown below.", "ok");
+    } catch (err) {
+      toast(err instanceof Error ? err.message : "Could not download the kit.", "danger");
+    }
+  }
+
   async function makeLink(agent: string) {
     try {
       const res = await link.mutateAsync({ agent, grade, subject });
@@ -233,7 +247,7 @@ function AgentKits() {
                 <Stack direction="row" gap="var(--s2)" wrap>
                   <Button variant="primary" size="sm" disabled={!canMint || pack.isPending}
                           title={canMint ? "Downloads a zip with a NEW operator key inside — treat it as a secret." : "An admin or operator key is needed to mint the key the kit carries."}
-                          onClick={() => pack.mutate({ agent: kit.id, grade, subject })}>
+                          onClick={() => download(kit.id)}>
                     {pack.isPending ? "Packing…" : "Download kit"}
                   </Button>
                   <Button variant="secondary" size="sm" disabled={!canMint || link.isPending}
@@ -246,6 +260,18 @@ function AgentKits() {
             </div>
           ))}
         </div>
+        {downloaded && (
+          <div style={{ border: "1px solid var(--line)", borderRadius: "var(--radius-sm)", padding: "var(--s3)", fontSize: "var(--text-sm)" }}>
+            <Stack gap="var(--s2)">
+              <div><b>{AGENT_KITS.find((k) => k.id === downloaded.agent)?.title} kit downloaded.</b> Unzip it and install, in a terminal:</div>
+              <code style={{ display: "block", whiteSpace: "pre-wrap", wordBreak: "break-all", padding: "var(--s2)", background: "var(--surface-2)", borderRadius: "var(--radius-sm)" }}>{afterDownload(downloaded.file)}</code>
+              <Stack direction="row" gap="var(--s2)">
+                <Button size="sm" onClick={() => navigator.clipboard.writeText(afterDownload(downloaded.file)).then(() => toast("Copied.", "ok"))}>Copy command</Button>
+              </Stack>
+              <div style={{ color: "var(--ink-3)", fontSize: "var(--text-xs)" }}>Then open ~/cbc-papers in the agent (Antigravity: refresh MCP servers; Claude Code: run `claude` there; Codex: run `codex` there) and ask for a paper.</div>
+            </Stack>
+          </div>
+        )}
         {made && (
           <div style={{ border: "1px solid var(--line)", borderRadius: "var(--radius-sm)", padding: "var(--s3)", fontSize: "var(--text-sm)" }}>
             <Stack gap="var(--s2)">
