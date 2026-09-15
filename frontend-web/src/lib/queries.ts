@@ -1942,10 +1942,34 @@ export type QuestionFilters = {
   sub_strand?: string;
   question_type?: string;
   status?: string;
+  source?: string;
   order?: "curriculum" | "recent";
   limit?: number;
   offset?: number;
 };
+
+export type QuestionSources = {
+  total: number;
+  by_status: Record<string, number>;
+  sources: { provider: string; model: string; label: string; total: number; by_status: Record<string, number> }[];
+  by_grade_subject: { grade: string; subject: string; n: number }[];
+};
+
+/** What the bank holds and who wrote it — every generation is filed here,
+ * whichever model answered, and a paper composed from it spends nothing. */
+export function useQuestionSources(grade?: string, subject?: string) {
+  const api = useApi();
+  return useQuery({
+    queryKey: ["question-sources", grade || "", subject || ""],
+    queryFn: () => {
+      const params = new URLSearchParams();
+      if (grade) params.set("grade", grade);
+      if (subject) params.set("subject", subject);
+      return api<QuestionSources>(`/api/v1/questions/sources?${params.toString()}`);
+    },
+    staleTime: 15_000,
+  });
+}
 
 export function useQuestions(filters: QuestionFilters) {
   const api = useApi();

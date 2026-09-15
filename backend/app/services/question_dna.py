@@ -17,6 +17,28 @@ logger = logging.getLogger("cbc-question-dna")
 MINTED_PREFIX = "q-"
 
 
+def _source_label(provider: str, model: str) -> str:
+    if not provider and not model:
+        return "unrecorded"
+    if provider == "agent":
+        return f"agent · {model}" if model and model != "agent" else "agent"
+    return f"{provider} · {model}" if model else provider
+
+
+def _source_fields(written_by: dict[str, Any] | None) -> dict[str, Any]:
+    """Provenance fields naming the writer, from what the batch route knows."""
+    if not written_by:
+        return {}
+    provider = str(written_by.get("provider") or "")
+    model = str(written_by.get("model") or "")
+    out: dict[str, Any] = {"provider": provider, "model": model,
+                           "written_by": _source_label(provider, model)}
+    for key in ("agent_task", "agent_key", "station"):
+        if written_by.get(key):
+            out[key] = str(written_by[key])
+    return out
+
+
 class QuestionDnaService:
     def save_question(
         self,
@@ -90,6 +112,7 @@ class QuestionDnaService:
         limit: int = 50,
         offset: int = 0,
         order: str = "curriculum",
+        source: str | None = None,
     ) -> list[dict[str, Any]]:
         """List questions, filtered in SQL and ordered low grade to high by default.
 
@@ -121,6 +144,14 @@ class QuestionDnaService:
         if status:
             conditions.append("status = :status")
             params["status"] = status
+        if source:
+            # 'agent' matches every outside agent; 'openai', 'gemini' … one
+            # provider; anything else is matched against the model name.
+            conditions.append(
+                "(provenance->>'provider' = :source "
+                " OR LOWER(COALESCE(provenance->>'model', '')) LIKE LOWER(:source_like))")
+            params["source"] = source.strip()
+            params["source_like"] = f"%{source.strip()}%"
         if not include_superseded:
             conditions.append("superseded_by IS NULL")
 
@@ -147,6 +178,57 @@ class QuestionDnaService:
             LIMIT :limit OFFSET :offset
         """
         return fetch_all(sql, params)
+
+    def sources(self, grade: str | None = None, subject: str | None = None) -> dict[str, Any]:
+        """What the bank holds and who wrote it: counts by status and by
+        source (provider + model), so the operator can see what is there to
+        reuse before spending anything."""
+        conditions = ["superseded_by IS NULL"]
+        params: dict[str, Any] = {}
+        if grade:
+            conditions.append("curriculum_link->>'grade' = :grade")
+            params["grade"] = normalize_grade(grade)
+        if subject:
+            conditions.append("LOWER(curriculum_link->>'subject') = LOWER(:subject)")
+            params["subject"] = subject.strip()
+        where = " AND ".join(conditions)
+        by_status = {
+            str(r["status"]): int(r["n"]) for r in (fetch_all(
+                f"SELECT status, COUNT(*) AS n FROM question_dna WHERE {where} GROUP BY status",
+                params) or [])
+        }
+        rows = fetch_all(
+            f"""
+            SELECT COALESCE(provenance->>'provider', '') AS provider,
+                   COALESCE(provenance->>'model', '') AS model,
+                   status, COUNT(*) AS n
+            FROM question_dna WHERE {where}
+            GROUP BY provider, model, status ORDER BY n DESC
+            """, params) or []
+        by_source: dict[str, dict[str, Any]] = {}
+        for r in rows:
+            provider = str(r["provider"] or "")
+            model = str(r["model"] or "")
+            key = f"{provider}:{model}" if provider or model else "unrecorded"
+            entry = by_source.setdefault(key, {
+                "provider": provider, "model": model,
+                "label": _source_label(provider, model), "total": 0, "by_status": {},
+            })
+            entry["total"] += int(r["n"])
+            entry["by_status"][str(r["status"])] = int(r["n"])
+        by_grade_subject = fetch_all(
+            f"""
+            SELECT curriculum_link->>'grade' AS grade, curriculum_link->>'subject' AS subject,
+                   COUNT(*) AS n
+            FROM question_dna WHERE {where}
+            GROUP BY grade, subject ORDER BY grade, subject
+            """, params) or []
+        return {
+            "total": sum(by_status.values()),
+            "by_status": by_status,
+            "sources": sorted(by_source.values(), key=lambda e: -e["total"]),
+            "by_grade_subject": [dict(r) for r in by_grade_subject],
+        }
 
     def count_questions(self, **filters: Any) -> int:
         """Total matching rows, for pagination metadata."""
@@ -273,8 +355,14 @@ class QuestionDnaService:
         questions: list[dict[str, Any]],
         status: str = "approved",
         gate_result: dict[str, Any] | None = None,
+        written_by: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
-        """Persist a reviewed batch with real audit data and unique IDs."""
+        """Persist a reviewed batch with real audit data and unique IDs.
+
+        ``written_by`` says which model answered — provider, model, and for a
+        task driven by an outside agent, the task — so the bank can be read
+        by source: what Antigravity wrote beside what Gemini wrote, and
+        neither paid for twice."""
         from .artifact_dna import artifact_dna_service
         from .dna_scoring import score_question
 
@@ -344,6 +432,7 @@ class QuestionDnaService:
                 "parent_substrand": sub_strand,
                 "generated_by": "questions_factory",
                 "verified_at": now_iso(),
+                **_source_fields(written_by),
             }
 
             # The measured result, not an assertion. Previously this row was

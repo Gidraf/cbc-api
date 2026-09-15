@@ -692,6 +692,7 @@ def list_questions(
     slo_id: str | None = Query(default=None),
     question_type: str | None = Query(default=None),
     status: str | None = Query(default=None),
+    source: str | None = Query(default=None, description="Who wrote it: agent, openai, anthropic, gemini, ollama, or a model name"),
     order: Literal["curriculum", "recent"] = Query(
         default="curriculum",
         description="curriculum walks PP1 to Grade 12; recent is newest first, for review queues",
@@ -708,6 +709,7 @@ def list_questions(
         slo_id=slo_id,
         question_type=question_type,
         status=status,
+        source=source,
         order=order,
         limit=limit,
         offset=offset,
@@ -720,6 +722,18 @@ def list_questions(
         "order": order,
         "items": items,
     }
+
+
+@router.get("/sources")
+def question_sources(
+    grade: str | None = Query(default=None),
+    subject: str | None = Query(default=None),
+    _: AuthContext = Depends(require_roles("admin", "operator", "reviewer", "developer")),
+) -> dict[str, Any]:
+    """What the bank holds and who wrote it — every item ever generated is
+    filed here whichever model answered, a provider or an outside agent, and
+    a paper composed from the bank spends nothing."""
+    return question_dna_service.sources(grade=grade, subject=subject)
 
 
 @router.get("/by-substrand")
@@ -1357,7 +1371,7 @@ def factory_generate_questions_batch(
                 grade=payload.grade, subject=payload.subject,
                 strand=payload.strand, sub_strand=payload.sub_strand,
                 questions=normalized_questions, status="draft",
-                gate_result=filed_gate,
+                gate_result=filed_gate, written_by=_written_by(resp),
             )
         except Exception as exc:  # noqa: BLE001
             # The items are in the response either way; losing the file is bad
@@ -1387,6 +1401,26 @@ def factory_generate_questions_batch(
 
 
 CHUNK = 25
+
+
+def _written_by(resp: Any) -> dict[str, Any]:
+    """Who answered: the provider and model, or the agent's task when the
+    prompt went out through the API. Filed beside every item so the bank
+    can be read by source."""
+    from ..services import byom
+
+    out = {"provider": str(getattr(resp, "provider", "") or ""),
+           "model": str(getattr(resp, "model", "") or "")}
+    task = byom.current()
+    if task is not None:
+        out["provider"] = "agent"
+        out["agent_task"] = task.task_id
+        out["agent_key"] = task.created_by
+        out["station"] = task.station
+        # The agent names what answered on each step; the last one wins.
+        if task.steps and getattr(task.steps[-1], "model_used", ""):
+            out["model"] = str(task.steps[-1].model_used).replace(" (replayed)", "")
+    return out
 
 
 def _draw_question_figures(raw_items: list[Any], diagrams_list: list[Any], *, grade: str,

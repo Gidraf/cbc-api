@@ -18,7 +18,7 @@ import {
   Th,
   useToast,
 } from "../ui/components";
-import { gradeOptionLabel, subjectOptionLabel, useGrades, useQuestionActions, useQuestions, useSubjects } from "../lib/queries";
+import { gradeOptionLabel, subjectOptionLabel, useGrades, useQuestionActions, useQuestions, useQuestionSources, useSubjects } from "../lib/queries";
 import { QueuePanel } from "./QueuePanel";
 import { useComposeExam } from "../lib/queries";
 
@@ -31,7 +31,11 @@ export function QuestionBank() {
 
   const grade = params.get("grade") || "";
   const subject = params.get("subject") || "";
-  const status = params.get("status") || "approved";
+  // Every status by default: a batch is filed as `draft` the moment it is
+  // generated, whichever model wrote it, and defaulting to Approved hid all
+  // of it — the bank looked empty while it was holding hundreds of items.
+  const status = params.get("status") || "";
+  const source = params.get("source") || "";
   const order = (params.get("order") as "curriculum" | "recent") || "curriculum";
   const page = Number(params.get("page") || 0);
 
@@ -40,6 +44,7 @@ export function QuestionBank() {
     grade: grade || undefined,
     subject: subject || undefined,
     status: status || undefined,
+    source: source || undefined,
     order,
     limit: PAGE_SIZE,
     offset: page * PAGE_SIZE,
@@ -47,6 +52,7 @@ export function QuestionBank() {
 
   const actions = useQuestionActions();
   const composeExam = useComposeExam();
+  const sources = useQuestionSources(grade || undefined, subject || undefined);
 
   const [selected, setSelected] = React.useState<Set<string>>(new Set());
   const [preview, setPreview] = React.useState<any | null>(null);
@@ -116,9 +122,21 @@ export function QuestionBank() {
               ))}
             </Select>
             <Select aria-label="Status" value={status} onChange={(e) => setParam({ status: e.target.value })} style={{ width: "auto" }}>
+              <option value="">Any status</option>
+              <option value="draft">Draft (as generated)</option>
               <option value="approved">Approved</option>
               <option value="needs_review">Needs review</option>
-              <option value="">Any status</option>
+            </Select>
+            <Select aria-label="Written by" value={source} onChange={(e) => setParam({ source: e.target.value })} style={{ width: "auto" }}>
+              <option value="">Any writer</option>
+              <option value="agent">Any agent (BYOM)</option>
+              {(sources.data?.sources || [])
+                .filter((s) => s.provider || s.model)
+                .map((s) => (
+                  <option key={`${s.provider}:${s.model}`} value={s.model || s.provider}>
+                    {s.label} ({s.total})
+                  </option>
+                ))}
             </Select>
             <Select aria-label="Order" value={order} onChange={(e) => setParam({ order: e.target.value })} style={{ width: "auto" }}>
               <option value="curriculum">Curriculum order</option>
@@ -127,6 +145,29 @@ export function QuestionBank() {
           </>
         }
       />
+
+      {sources.data && (
+        <div role="status"
+             style={{ border: "1px solid var(--line)", background: "var(--surface-2, var(--surface))",
+                      borderRadius: "var(--radius)", padding: "var(--s3)", fontSize: "var(--text-sm)" }}>
+          <strong>{sources.data.total} item{sources.data.total === 1 ? "" : "s"} in the bank</strong>
+          {grade && <> for {grade}{subject ? ` · ${subject}` : ""}</>}
+          {Object.keys(sources.data.by_status).length > 0 && (
+            <> — {Object.entries(sources.data.by_status).map(([k, v]) => `${v} ${k.replace(/_/g, " ")}`).join(", ")}</>
+          )}
+          {sources.data.sources.length > 0 && (
+            <div style={{ marginTop: "var(--s1)", color: "var(--ink-2)" }}>
+              Written by:{" "}
+              {sources.data.sources.map((s) => `${s.label} (${s.total})`).join(" · ")}
+            </div>
+          )}
+          <div style={{ marginTop: "var(--s1)", color: "var(--ink-3)" }}>
+            Every generation is filed here whichever model answered — a provider or an agent — and
+            a paper composed from the bank spends no tokens. Orders skip any sub-strand that
+            already has enough items.
+          </div>
+        </div>
+      )}
 
       {/* The same queue the content factory runs on. Question generation is a
           model call like every other one and used to be held open on the
@@ -188,6 +229,7 @@ export function QuestionBank() {
                 <Th>Grade</Th>
                 <Th>Subject</Th>
                 <Th>Type</Th>
+                <Th>Status · written by</Th>
                 <Th numeric>Marks</Th>
                 <Th numeric>Quality</Th>
                 <Th />
@@ -235,6 +277,17 @@ export function QuestionBank() {
                     <Td>{cl.subject}</Td>
                     <Td>
                       <Badge tone="neutral">{(content.question_type || "").replace(/_/g, " ")}</Badge>
+                    </Td>
+                    <Td>
+                      <Stack gap="2px">
+                        <Badge tone={q.status === "approved" ? "ok" : q.status === "draft" ? "neutral" : "warn"}>
+                          {String(q.status || "").replace(/_/g, " ")}
+                        </Badge>
+                        <span style={{ fontSize: "var(--text-xs)", color: "var(--ink-3)" }}
+                              title={q.provenance?.agent_task ? `task ${q.provenance.agent_task}` : undefined}>
+                          {q.provenance?.written_by || "—"}
+                        </span>
+                      </Stack>
                     </Td>
                     <Td numeric>{ped.max_marks ?? "—"}</Td>
                     <Td numeric>
