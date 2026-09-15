@@ -44,6 +44,152 @@ def list_datasets(_: AuthContext = Depends(require_roles("admin", "operator", "r
     return {"datasets": datasets}
 
 
+# Fixed paths first: FastAPI matches routes in declaration order, and
+# `/datasets/{grade}` declared above these would read 'progress' as a grade.
+class IngestEverythingRequest(BaseModel):
+    """Every design in every grade's dataset, then the structure under each."""
+
+    force: bool = False
+    # Build strands and sub-strands afterwards for any learning area the
+    # ingest left without them (the extractor writes them itself when the
+    # design is legible; this catches the rest).
+    then_structure: bool = True
+
+
+@router.post("/datasets/ingest-everything")
+def ingest_everything(
+    payload: IngestEverythingRequest,
+    auth: AuthContext = Depends(require_roles("admin", "operator")),
+) -> dict[str, Any]:
+    """One button: sync every grade's dataset from Langfuse, queue every
+    document not yet ingested, and — as each finishes — queue strands and
+    sub-strands for any learning area that came out without a spine.
+
+    Documents run one at a time in the worker, so a whole curriculum is an
+    afternoon, not a click; the queue panel follows it grade by grade. The
+    same pass runs on a schedule when auto-ingest is on in Settings.
+    """
+    from ..services import dataset_watch
+
+    return dataset_watch.run_pass(
+        force=payload.force, then_structure=payload.then_structure,
+        queued_by=getattr(auth, "subject", "") or "datasets", trigger="manual",
+    )
+
+
+@router.get("/datasets/auto-ingest")
+def auto_ingest_status(
+    _: AuthContext = Depends(require_roles("admin", "operator", "reviewer")),
+) -> dict[str, Any]:
+    """Whether the Langfuse watch is on, how often, and what it last did."""
+    from ..services import dataset_watch
+
+    return dataset_watch.status()
+
+
+class AutoIngestRequest(BaseModel):
+    enabled: bool
+    interval_minutes: int | None = None
+
+
+@router.post("/datasets/auto-ingest")
+def set_auto_ingest(
+    payload: AutoIngestRequest,
+    auth: AuthContext = Depends(require_roles("admin", "operator")),
+) -> dict[str, Any]:
+    """Turn the watch on or off from the Datasets screen (it is the same
+    setting as on the Settings page)."""
+    from ..services import dataset_watch, platform_settings
+
+    values: dict[str, Any] = {"auto_ingest_enabled": "true" if payload.enabled else "false"}
+    if payload.interval_minutes is not None:
+        values["auto_ingest_interval_minutes"] = max(5, int(payload.interval_minutes))
+    platform_settings.set_many(values, updated_by=getattr(auth, "subject", ""))
+    if payload.enabled:
+        dataset_watch.start()
+    return dataset_watch.status()
+
+
+@router.get("/datasets/progress")
+def ingest_progress(
+    _: AuthContext = Depends(require_roles("admin", "operator", "reviewer")),
+) -> dict[str, Any]:
+    """Every grade's ingest on one screen: counts per status, what is running,
+    what waits, and whether the run is paused."""
+    from ..services import dataset_watch
+
+    return dataset_watch.progress()
+
+
+class IngestControlRequest(BaseModel):
+    action: str                 # pause | resume | skip | stop
+    job_id: str = ""            # skip: one job
+    item_id: str = ""           # skip: one document
+    grade: str = ""             # skip: one grade's documents
+
+
+@router.post("/datasets/control")
+def ingest_control(
+    payload: IngestControlRequest,
+    _: AuthContext = Depends(require_roles("admin", "operator")),
+) -> dict[str, Any]:
+    """Pause, resume, skip or stop the ingest. The document being read finishes;
+    the controls take effect at the next one."""
+    from ..services import dataset_watch
+
+    action = payload.action.strip().lower()
+    if action == "pause":
+        n = dataset_watch.pause()
+    elif action == "resume":
+        n = dataset_watch.resume()
+    elif action == "skip":
+        if not (payload.job_id or payload.item_id or payload.grade):
+            raise_api_error("SCHEMA_VALIDATION_FAILED", "skip needs a job_id, an item_id or a grade.")
+        n = dataset_watch.skip(job_id=payload.job_id, item_id=payload.item_id, grade=payload.grade)
+    elif action == "stop":
+        n = dataset_watch.stop()
+    else:
+        raise_api_error("SCHEMA_VALIDATION_FAILED",
+                        f"'{payload.action}' is not a control. Use pause, resume, skip or stop.")
+    return {"action": action, "affected": n, **dataset_watch.progress()}
+
+
+class UningestEverythingRequest(BaseModel):
+    purge_generated: bool = False
+    purge_orphans: bool = True
+    # The word, typed. Every design, every sub-strand, in every grade.
+    confirm: str = ""
+
+
+@router.post("/datasets/uningest-everything")
+def uningest_everything(
+    payload: UningestEverythingRequest,
+    _: AuthContext = Depends(require_roles("admin")),
+) -> dict[str, Any]:
+    """Undo every ingest in every grade. Waiting jobs are stopped first."""
+    from ..services import dataset_watch
+
+    if payload.confirm.strip().upper() != "EVERYTHING":
+        raise_api_error("SCHEMA_VALIDATION_FAILED",
+                        "Type EVERYTHING in confirm to un-ingest every grade.")
+    return dataset_watch.uningest_all(
+        purge_generated=payload.purge_generated, purge_orphans=payload.purge_orphans,
+    )
+
+
+@router.post("/datasets/structure-everything")
+def structure_everything(
+    _: AuthContext = Depends(require_roles("admin", "operator")),
+) -> dict[str, Any]:
+    """Strands and sub-strands for every ingested learning area that has none."""
+    from ..services import dataset_watch, job_queue
+
+    queued = dataset_watch.queue_missing_structure()
+    if queued:
+        job_queue.start_worker()
+    return {"queued": len(queued), "jobs": queued}
+
+
 @router.get("/datasets/{grade}")
 def get_grade_dataset(
     grade: str,
@@ -267,150 +413,6 @@ def process_grade_items(
         ),
         **list_grade(grade_slug),
     }
-
-
-class IngestEverythingRequest(BaseModel):
-    """Every design in every grade's dataset, then the structure under each."""
-
-    force: bool = False
-    # Build strands and sub-strands afterwards for any learning area the
-    # ingest left without them (the extractor writes them itself when the
-    # design is legible; this catches the rest).
-    then_structure: bool = True
-
-
-@router.post("/datasets/ingest-everything")
-def ingest_everything(
-    payload: IngestEverythingRequest,
-    auth: AuthContext = Depends(require_roles("admin", "operator")),
-) -> dict[str, Any]:
-    """One button: sync every grade's dataset from Langfuse, queue every
-    document not yet ingested, and — as each finishes — queue strands and
-    sub-strands for any learning area that came out without a spine.
-
-    Documents run one at a time in the worker, so a whole curriculum is an
-    afternoon, not a click; the queue panel follows it grade by grade. The
-    same pass runs on a schedule when auto-ingest is on in Settings.
-    """
-    from ..services import dataset_watch
-
-    return dataset_watch.run_pass(
-        force=payload.force, then_structure=payload.then_structure,
-        queued_by=getattr(auth, "subject", "") or "datasets", trigger="manual",
-    )
-
-
-@router.get("/datasets/auto-ingest")
-def auto_ingest_status(
-    _: AuthContext = Depends(require_roles("admin", "operator", "reviewer")),
-) -> dict[str, Any]:
-    """Whether the Langfuse watch is on, how often, and what it last did."""
-    from ..services import dataset_watch
-
-    return dataset_watch.status()
-
-
-class AutoIngestRequest(BaseModel):
-    enabled: bool
-    interval_minutes: int | None = None
-
-
-@router.post("/datasets/auto-ingest")
-def set_auto_ingest(
-    payload: AutoIngestRequest,
-    auth: AuthContext = Depends(require_roles("admin", "operator")),
-) -> dict[str, Any]:
-    """Turn the watch on or off from the Datasets screen (it is the same
-    setting as on the Settings page)."""
-    from ..services import dataset_watch, platform_settings
-
-    values: dict[str, Any] = {"auto_ingest_enabled": "true" if payload.enabled else "false"}
-    if payload.interval_minutes is not None:
-        values["auto_ingest_interval_minutes"] = max(5, int(payload.interval_minutes))
-    platform_settings.set_many(values, updated_by=getattr(auth, "subject", ""))
-    if payload.enabled:
-        dataset_watch.start()
-    return dataset_watch.status()
-
-
-@router.get("/datasets/progress")
-def ingest_progress(
-    _: AuthContext = Depends(require_roles("admin", "operator", "reviewer")),
-) -> dict[str, Any]:
-    """Every grade's ingest on one screen: counts per status, what is running,
-    what waits, and whether the run is paused."""
-    from ..services import dataset_watch
-
-    return dataset_watch.progress()
-
-
-class IngestControlRequest(BaseModel):
-    action: str                 # pause | resume | skip | stop
-    job_id: str = ""            # skip: one job
-    item_id: str = ""           # skip: one document
-    grade: str = ""             # skip: one grade's documents
-
-
-@router.post("/datasets/control")
-def ingest_control(
-    payload: IngestControlRequest,
-    _: AuthContext = Depends(require_roles("admin", "operator")),
-) -> dict[str, Any]:
-    """Pause, resume, skip or stop the ingest. The document being read finishes;
-    the controls take effect at the next one."""
-    from ..services import dataset_watch
-
-    action = payload.action.strip().lower()
-    if action == "pause":
-        n = dataset_watch.pause()
-    elif action == "resume":
-        n = dataset_watch.resume()
-    elif action == "skip":
-        if not (payload.job_id or payload.item_id or payload.grade):
-            raise_api_error("SCHEMA_VALIDATION_FAILED", "skip needs a job_id, an item_id or a grade.")
-        n = dataset_watch.skip(job_id=payload.job_id, item_id=payload.item_id, grade=payload.grade)
-    elif action == "stop":
-        n = dataset_watch.stop()
-    else:
-        raise_api_error("SCHEMA_VALIDATION_FAILED",
-                        f"'{payload.action}' is not a control. Use pause, resume, skip or stop.")
-    return {"action": action, "affected": n, **dataset_watch.progress()}
-
-
-class UningestEverythingRequest(BaseModel):
-    purge_generated: bool = False
-    purge_orphans: bool = True
-    # The word, typed. Every design, every sub-strand, in every grade.
-    confirm: str = ""
-
-
-@router.post("/datasets/uningest-everything")
-def uningest_everything(
-    payload: UningestEverythingRequest,
-    _: AuthContext = Depends(require_roles("admin")),
-) -> dict[str, Any]:
-    """Undo every ingest in every grade. Waiting jobs are stopped first."""
-    from ..services import dataset_watch
-
-    if payload.confirm.strip().upper() != "EVERYTHING":
-        raise_api_error("SCHEMA_VALIDATION_FAILED",
-                        "Type EVERYTHING in confirm to un-ingest every grade.")
-    return dataset_watch.uningest_all(
-        purge_generated=payload.purge_generated, purge_orphans=payload.purge_orphans,
-    )
-
-
-@router.post("/datasets/structure-everything")
-def structure_everything(
-    _: AuthContext = Depends(require_roles("admin", "operator")),
-) -> dict[str, Any]:
-    """Strands and sub-strands for every ingested learning area that has none."""
-    from ..services import dataset_watch, job_queue
-
-    queued = dataset_watch.queue_missing_structure()
-    if queued:
-        job_queue.start_worker()
-    return {"queued": len(queued), "jobs": queued}
 
 
 @router.get("/datasets/{grade}/items/{item_id}/text")

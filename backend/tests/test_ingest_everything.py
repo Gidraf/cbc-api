@@ -407,3 +407,17 @@ def test_uningest_everything_needs_the_word_then_undoes_every_grade(jobs, monkey
     assert out["uningested"] == 2 and out["failed"] == 0
     assert out["removed"] == {"design": 3, "substrands": 12}
     assert out["orphans_purged"] == {"grade-4": {"designs": 1, "substrands": 2}}
+
+
+def test_fixed_dataset_paths_are_matched_before_the_grade_route():
+    """`/datasets/{grade}` declared first would read 'progress' as a grade."""
+    from app.main import app
+
+    seen_grade = False
+    for route in app.routes:
+        path = getattr(route, "path", "")
+        methods = getattr(route, "methods", set()) or set()
+        if path.endswith("/langfuse/datasets/{grade}") and "GET" in methods:
+            seen_grade = True
+        if path.endswith(("/datasets/progress", "/datasets/auto-ingest")) and "GET" in methods:
+            assert not seen_grade, f"{path} is declared after /datasets/{{grade}}"
