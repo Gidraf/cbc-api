@@ -416,6 +416,23 @@ EXAM_CSS = """
 
 /* ── the marking scheme ── */
 .exam .scheme { font-size: 8.6pt; line-height: 1.28; }
+
+/* ── the answer sheet ── */
+.exam .sheetpage { break-before: page; }
+.exam .sheetpage .cand { grid-template-columns: 1.2fr 1.4fr 1fr; margin-top: 6px; }
+.exam .omr-rules { font-size: 8.6pt; margin: 6px 0 8px; }
+.exam .omr-rules ol { margin: 2px 0 0 1.3em; padding: 0; }
+.exam .omr { display: flex; gap: 12mm; justify-content: flex-start; margin: 4px 0 0; }
+.exam .omr table { border-collapse: collapse; font-size: 9.5pt; }
+.exam .omr th { font-family: Helvetica, Arial, sans-serif; font-size: 7.5pt; font-weight: 600; color: #333;
+                padding: 0 0 3px; text-align: center; }
+.exam .omr td { padding: 2.1px 3px; text-align: center; }
+.exam .omr td.qn { font-weight: 700; text-align: right; padding-right: 8px; width: 2.2em; }
+.exam .bubble { display: inline-block; width: 7.2mm; height: 4.6mm; border: 0.9pt solid #111; border-radius: 2.4mm;
+                     font-family: Helvetica, Arial, sans-serif; font-size: 6.6pt; line-height: 4.6mm; color: #666; margin: 0 1.2mm; }
+.exam .omr tr:nth-child(5n) td { padding-bottom: 6px; }
+.exam .sheetpage .official { margin-top: 12px; }
+.exam .demo .bubble.filled { background: #111; color: #111; }
 .exam .keygrid { border-collapse: collapse; margin: 0 0 6px; width: 100%; font-size: 8.4pt; column-span: all; }
 .exam .keygrid td, .exam .keygrid th { border: 0.6pt solid #111; padding: 1px 2px; text-align: center; }
 .exam .keygrid th { font-weight: 400; background: #eee; }
@@ -430,6 +447,7 @@ EXAM_CSS = """
 .exam .a ol.w li { margin: 0; }
 .exam .a ol.w .r { color: #555; font-style: italic; }
 .exam .a .sc { color: #333; }
+.exam .a .unexplained { color: #a1281e; font-style: italic; }
 """
 
 
@@ -518,39 +536,132 @@ def _reason_for(question: dict[str, Any]) -> tuple[str, str, list[Any], str]:
 
 
 def _scheme_item(question: dict[str, Any], number: int) -> str:
-    answer, why, steps, scheme = _reason_for(question)
-    out = [f"<div class='a'><span class='n'>{number}.</span><div>"]
+    """One item on the marking scheme: the answer, the WORKING or the reason,
+    and why each wrong option is wrong.
+
+    A scheme that said "6. B" told a marker what to tick and told nobody
+    why. Every item now carries the working where the engine or the writer
+    gave it, the model answer where there is no working, the marking
+    scheme's own lines, and the distractors' rationales — so a learner
+    marking their own paper learns from the item they got wrong.
+    """
+    from . import solution_builder
+
+    worked = solution_builder.build(question)
+    answer = worked.chosen or worked.answer or str(question.get("model_answer") or "")
+    scheme = str(question.get("marking_scheme") or "").strip()
+    model_answer = str(question.get("model_answer") or "").strip()
     parts = [p for p in (question.get("structured_parts") or []) if isinstance(p, dict)]
-    options = question.get("options")
+    options = [o for o in (question.get("options") or []) if isinstance(o, dict)]
+    key = next((o for o in options if o.get("is_correct")), None)
+
+    out = [f"<div class='a'><span class='n'>{number}.</span><div>"]
     if options:
         out.append(f"<span class='ans'>{_math(answer)}</span>")
-        if why:
-            out.append(f" <span class='why'>— {_math(why[:360])}</span>")
     elif parts:
         for part in parts:
             pm = _marks(float(part.get("marks") or 0))
             out.append(f"<div><span class='ans'>{_esc(part.get('part_id') or '')}</span> "
                        f"{_math(part.get('model_answer') or '')}"
                        + (f" <span class='m'>{_esc(pm)}</span>" if pm else "") + "</div>")
-        if scheme:
-            out.append(f"<div class='sc'>{_math(scheme[:500])}</div>")
     else:
         out.append(f"<span class='ans'>{_math(answer)}</span>")
-        if scheme:
-            out.append(f"<div class='sc'>{_math(scheme[:500])}</div>")
-    if steps:
+
+    # The working: the engine's where it has it, else the writer's.
+    if worked.steps:
         out.append("<ol class='w'>")
-        for step in steps[:8]:
+        for step in worked.steps[:8]:
             out.append(f"<li>{_math(step.text)}"
                        + (f" <span class='r'>{_math(step.why)}</span>" if step.why else "") + "</li>")
         out.append("</ol>")
+    explained = False
+    if scheme and not (worked.steps and worked.source == "engine" and _same_text(scheme, model_answer)):
+        out.append(f"<div class='sc'>{_math(scheme[:700])}</div>")
+        explained = True
+    if model_answer and not _same_text(model_answer, scheme) and not _same_text(model_answer, answer):
+        out.append(f"<div class='why'>{_math(model_answer[:500])}</div>")
+        explained = True
+    if key is not None:
+        reason = str(key.get("distractor_rationale") or key.get("rationale") or "").strip()
+        if reason and not _same_text(reason, model_answer):
+            out.append(f"<div class='why'><b>Why {_esc(key.get('id') or '')}:</b> {_math(reason[:300])}</div>")
+            explained = True
+    wrong = [o for o in options if not o.get("is_correct")
+             and str(o.get("distractor_rationale") or o.get("rationale") or "").strip()]
+    if wrong:
+        out.append("<div class='why'><b>Why not:</b> " + " ".join(
+            f"<b>{_esc(o.get('id') or '')}</b> {_math(str(o.get('distractor_rationale') or o.get('rationale'))[:160])}"
+            for o in wrong) + "</div>")
+        explained = True
+    if not explained and not worked.steps:
+        out.append("<div class='why unexplained'>No working or reason was recorded for this item.</div>")
     out.append("</div></div>")
     return "".join(out)
 
 
+def _same_text(a: str, b: str) -> bool:
+    norm = lambda x: re.sub(r"[^a-z0-9]", "", str(x or "").lower())  # noqa: E731
+    return bool(a) and bool(b) and (norm(a) == norm(b) or norm(a) in norm(b) or norm(b) in norm(a))
+
+
+def _answer_sheet(paper: Any, mast: dict[str, str], series: str) -> str:
+    """The ANSWER SHEET for the selected-response section: one bubble row
+    per question, A–D, in columns of twenty, with the candidate's lines,
+    the instructions KNEC prints, and a worked example of how to shade.
+    A paper that says "answer on the answer sheet provided" has to provide
+    it."""
+    selected = [(number, q) for number, q in _numbered(paper) if q.get("options")]
+    if not selected:
+        return ""
+    numbers = [n for n, _ in selected]
+    per_column = 20 if len(numbers) > 20 else max(10, len(numbers))
+    columns = [numbers[i:i + per_column] for i in range(0, len(numbers), per_column)]
+
+    def bubble(letter: str, filled: bool = False) -> str:
+        return f"<span class='bubble{' filled' if filled else ''}'>{letter}</span>"
+
+    tables = []
+    for chunk in columns:
+        rows = "".join(f"<tr><td class='qn'>{n}</td>" + "".join(f"<td>{bubble(k)}</td>" for k in "ABCD") + "</tr>"
+                       for n in chunk)
+        tables.append(f"<table><tr><th></th><th>A</th><th>B</th><th>C</th><th>D</th></tr>{rows}</table>")
+    demo = ("<span class='demo'>" + bubble("A") + bubble("B", True) + bubble("C") + bubble("D") + "</span>")
+    heading = mast.get("assessment") or paper.title
+    return (
+        "<div class='sheetpage'>"
+        "<div class='mast'>"
+        + (f"<div class='series'>{_esc(series)}</div>" if series else "")
+        + f"<div class='assessment'>{_esc(heading)}</div>"
+        f"<div class='gradeline'>{_esc(mast.get('grade_line') or '')}</div>"
+        f"<div class='subject'>{_esc(mast.get('subject') or paper.subject.upper())} — ANSWER SHEET</div>"
+        "</div>"
+        "<div class='cand'><span>(i) Your name</span><span>(ii) Name of your school</span>"
+        "<span>(iii) Assessment number</span></div>"
+        "<div class='omr-rules'><b>HOW TO USE THIS ANSWER SHEET</b><ol>"
+        "<li>Use an ordinary HB pencil.</li>"
+        "<li>For each question there are four boxes, lettered A, B, C and D. Shade the ONE box for the "
+        "answer you have chosen, so that the letter cannot be seen.</li>"
+        f"<li>Example — if the answer to a question is B, shade it like this: {demo}</li>"
+        "<li>If you change your mind, rub out the shading completely before shading another box.</li>"
+        "<li>Shade only ONE box for each question. A question with two boxes shaded scores nothing.</li>"
+        "<li>Keep this sheet clean and flat. Do not fold it.</li></ol></div>"
+        f"<div class='omr'>{''.join(tables)}</div>"
+        "</div>"
+    )
+
+
+def _numbered(paper: Any) -> list[tuple[int, dict[str, Any]]]:
+    out, number = [], 0
+    for section in paper.sections:
+        for question in section.items:
+            number += 1
+            out.append((number, question))
+    return out
+
+
 def render_paper(paper: Any, *, answers: bool = False, with_scheme: bool = False,
                  assets: dict[str, Any] | None = None, scheme_url: str = "",
-                 series: str = "") -> str:
+                 series: str = "", answer_sheet: bool = False) -> str:
     """A composed paper as the national paper prints it, or its marking
     scheme. `with_scheme` prints both, the scheme after a page break."""
     from .grade_order import grade_label as _grade_label
@@ -662,6 +773,8 @@ def render_paper(paper: Any, *, answers: bool = False, with_scheme: bool = False
         parts.append(masthead(False) + candidate_lines() + rules() + official() + shortfall)
         parts.append(f"<div class='cols{' one' if columns == 1 else ''}'>{body(False)}"
                      "<div class='end'>This is the last printed page</div></div>")
+        if answer_sheet or with_scheme:
+            parts.append(_answer_sheet(paper, mast, series))
     if answers or with_scheme:
         parts.append("<div style='break-before: page'>" if with_scheme else "<div>")
         parts.append(masthead(True) + (shortfall if answers else ""))

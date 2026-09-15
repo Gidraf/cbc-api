@@ -51,7 +51,8 @@ def _sound_batch() -> list[dict]:
                  "$\\frac{7}{10}$", "Numerator $-5 - 8 + 6 = -7$; denominator $-6 - 4 = -10$; $-7 \\div -10 = 0.7$"),
         _mcq("Q5", "The temperature at a highland station was $-3^\\circ$C at dawn, rose by $9^\\circ$C "
                    "by noon and fell by $14^\\circ$C by midnight. What was the midnight temperature?",
-             {"A": "$-8^\\circ$C", "B": "$8^\\circ$C", "C": "$-2^\\circ$C", "D": "$20^\\circ$C"}, "A"),
+             {"A": "$-8^\\circ$C", "B": "$8^\\circ$C", "C": "$-2^\\circ$C", "D": "$20^\\circ$C"}, "A",
+             marking_scheme="$-3 + 9 = 6$; $6 - 14 = -8$, so $-8^\\circ$C."),
         _written("Q6", "Work out $(-3)^2 - 4 \\times (-5) + (-30) \\div 6$.", "$24$",
                  "$9 + 20 - 5 = 24$", bloom="Analysis"),
     ]
@@ -322,7 +323,8 @@ def test_an_uncovered_outcome_asks_for_an_item_to_be_added() -> None:
         seen["asks"] = asks
         return [_mcq("Q7", "Which inequality correctly compares the integers $-7$ and $-2$ on a number line?",
                      {"A": "$-7 < -2$", "B": "$-7 > -2$", "C": "$-7 = -2$", "D": "$-2 < -7$"}, "A",
-                     serves=["grade-9-Mat-1.1-2"], question_id="q-q7")]
+                     serves=["grade-9-Mat-1.1-2"], question_id="q-q7",
+                     marking_scheme="$-7$ lies to the left of $-2$ on the number line, so $-7 < -2$.")]
 
     kept, report = questions_remediation.run(_serving(_sound_batch(), "grade-9-Mat-1.1-1"),
                                              design_row=SLOS, rewrite=rewrite, **GRADE9)
@@ -395,3 +397,20 @@ def test_trivial_items_beyond_the_allowance_fail_on_their_own() -> None:
 def test_a_subject_with_no_floor_is_not_placed_on_rungs() -> None:
     item = _mcq("Q1", "State the main cause of soil erosion in Kenya.", {"A": "a", "B": "b", "C": "c", "D": "d"}, "A")
     assert question_check.rung_of(item, grade="grade-6", subject="Agriculture and Nutrition") == question_check.UNMEASURED
+
+
+def test_an_item_with_no_working_or_reason_is_a_finding() -> None:
+    bare = _mcq("Q7", "A lift starts at floor $-2$, goes up 5 floors, then down 9. Which floor is it on?",
+                {"A": "$-6$", "B": "$6$", "C": "$-2$", "D": "$12$"}, "A")
+    report = question_check.check(_sound_batch() + [bare], **GRADE9)
+    assert any(f.kind == "no_explanation" and f.items == ["q-q7"] for f in report.findings)
+
+    explained = dict(bare, marking_scheme="$-2 + 5 = 3$ (M1); $3 - 9 = -6$ (A1)")
+    report = question_check.check(_sound_batch() + [explained], **GRADE9)
+    assert not any(f.kind == "no_explanation" for f in report.findings)
+
+    # A bare expression the engine works needs no written reason: the
+    # scheme prints the engine's working.
+    worked = _mcq("Q8", "Work out $(-3) \\times (-4) + 2$.", {"A": "14", "B": "-14", "C": "10", "D": "-10"}, "A")
+    report = question_check.check(_sound_batch() + [worked], **GRADE9)
+    assert not any(f.kind == "no_explanation" for f in report.findings)

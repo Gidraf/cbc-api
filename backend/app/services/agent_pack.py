@@ -220,20 +220,20 @@ echo "server installed at $HOME_KIT (removed from this folder so the agent has n
 write_json() {{ # $1 = target file
   mkdir -p "$(dirname "$1")"
   if [ -s "$1" ] && grep -q '"mcpServers"' "$1" && ! grep -q '"cbc"' "$1"; then
-    python3 - "$1" "$SERVER" "$BASE" "$KEY" <<'PY'
+    python3 - "$1" "$SERVER" "$BASE" "$KEY" "$HERE" <<'PY'
 import json, sys
-path, server, base, key = sys.argv[1:5]
+path, server, base, key, here = sys.argv[1:6]
 cfg = json.load(open(path))
 cfg.setdefault("mcpServers", {{}})["cbc"] = {{"command": "python3", "args": [server],
-    "env": {{"CBC_API_URL": base, "CBC_API_KEY": key}}}}
+    "env": {{"CBC_API_URL": base, "CBC_API_KEY": key, "CBC_DOWNLOAD_DIR": here + "/papers"}}}}
 json.dump(cfg, open(path, "w"), indent=2)
 PY
   else
-    python3 - "$1" "$SERVER" "$BASE" "$KEY" <<'PY'
+    python3 - "$1" "$SERVER" "$BASE" "$KEY" "$HERE" <<'PY'
 import json, sys
-path, server, base, key = sys.argv[1:5]
+path, server, base, key, here = sys.argv[1:6]
 json.dump({{"mcpServers": {{"cbc": {{"command": "python3", "args": [server],
-    "env": {{"CBC_API_URL": base, "CBC_API_KEY": key}}}}}}}}, open(path, "w"), indent=2)
+    "env": {{"CBC_API_URL": base, "CBC_API_KEY": key, "CBC_DOWNLOAD_DIR": here + "/papers"}}}}}}}}, open(path, "w"), indent=2)
 PY
   fi
   echo "wrote $1"
@@ -245,7 +245,7 @@ case "{agent}" in
                echo "Now: cd \"$HERE\" && claude   (Claude Code reads .mcp.json and CLAUDE.md here; approve the cbc server when asked)" ;;
   codex)       mkdir -p "$HOME/.codex"
                if grep -q 'mcp_servers.cbc' "$HOME/.codex/config.toml" 2>/dev/null; then echo "cbc already in ~/.codex/config.toml"; else
-                 printf '\n[mcp_servers.cbc]\ncommand = "python3"\nargs = ["%s"]\n[mcp_servers.cbc.env]\nCBC_API_URL = "%s"\nCBC_API_KEY = "%s"\n' "$SERVER" "$BASE" "$KEY" >> "$HOME/.codex/config.toml"
+                 printf '\n[mcp_servers.cbc]\ncommand = "python3"\nargs = ["%s"]\n[mcp_servers.cbc.env]\nCBC_API_URL = "%s"\nCBC_API_KEY = "%s"\nCBC_DOWNLOAD_DIR = "%s/papers"\n' "$SERVER" "$BASE" "$KEY" "$HERE" >> "$HOME/.codex/config.toml"
                  echo "wrote ~/.codex/config.toml"; fi
                echo "Now: cd \"$HERE\" && codex   (Codex reads AGENTS.md here)" ;;
   ollama)      echo "Run:  sh run.sh order grade-7 Mathematics \"\" \"\" 30 qwen2.5:32b" ;;
@@ -307,8 +307,10 @@ was made — edit it to the address you open the console at, and run
 - "Write the teacher's guide for Grade 8 Integrated Science, Living things, Cells."
 
 The agent calls `cbc_produce` (or `cbc_start_task`), answers each step the
-platform hands it, and gives you the **print links** at the end: the paper,
-the marking scheme, the booklet PDF. Open them in a browser; print.
+platform hands it, and then **downloads the files** with `cbc_download_paper`
+(exam_id from the result, `token` from `result.render_urls`; what = paper,
+scheme, booklet or answer_sheet) into `papers/` in this folder, and opens
+them for you. The links in `result.render_urls` open in any browser too.
 
 **Improving what came back.** Every result carries the platform's own review:
 `result.self_check` (what the engine and the checks found, what was rewritten,

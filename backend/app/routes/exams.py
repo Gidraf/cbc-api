@@ -316,12 +316,12 @@ def _thawed(row: dict[str, Any]) -> Any:
     return paper_builder.thaw(snapshot, questions)
 
 
-def _print(row: dict[str, Any], *, answers: bool, with_scheme: bool) -> str:
+def _print(row: dict[str, Any], *, answers: bool, with_scheme: bool, answer_sheet: bool = False) -> str:
     from ..services import question_paper
 
     paper = _thawed(row)
     return question_paper.render_paper(
-        paper, answers=answers, with_scheme=with_scheme,
+        paper, answers=answers, with_scheme=with_scheme, answer_sheet=answer_sheet,
         assets=question_paper.figures_for(paper.items))
 
 
@@ -330,6 +330,7 @@ def print_exam(
     exam_id: str,
     answers: bool = Query(default=False),
     with_scheme: bool = Query(default=False),
+    answer_sheet: bool = Query(default=False, description="Append the OMR answer sheet for Section A"),
     _: AuthContext = Depends(require_roles("admin", "operator", "reviewer", "developer")),
 ) -> Any:
     """A frozen paper in the national paper's design — or its marking scheme."""
@@ -338,7 +339,7 @@ def print_exam(
     row = fetch_one("SELECT * FROM exams WHERE exam_id = :eid", {"eid": exam_id})
     if not row:
         raise_api_error("NOT_FOUND", f"No exam with id {exam_id}")
-    return HTMLResponse(_print(row, answers=answers, with_scheme=with_scheme))
+    return HTMLResponse(_print(row, answers=answers, with_scheme=with_scheme, answer_sheet=answer_sheet))
 
 
 @router.get("/exams/{exam_id}/paper.pdf")
@@ -346,6 +347,7 @@ def print_exam_pdf(
     exam_id: str,
     answers: bool = Query(default=False),
     with_scheme: bool = Query(default=False),
+    answer_sheet: bool = Query(default=False, description="Append the OMR answer sheet for Section A"),
     _: AuthContext = Depends(require_roles("admin", "operator", "reviewer")),
 ) -> Any:
     from ..services import pdf
@@ -354,7 +356,7 @@ def print_exam_pdf(
     if not row:
         raise_api_error("NOT_FOUND", f"No exam with id {exam_id}")
     try:
-        body = pdf.from_html(_print(row, answers=answers, with_scheme=with_scheme))
+        body = pdf.from_html(_print(row, answers=answers, with_scheme=with_scheme, answer_sheet=answer_sheet))
     except pdf.PdfUnavailable as exc:
         raise_api_error("MODEL_ENDPOINT_UNAVAILABLE", str(exc))
     suffix = "marking-scheme" if answers else "booklet" if with_scheme else "paper"
@@ -376,23 +378,23 @@ def _by_share_token(exam_id: str, token: str) -> dict[str, Any]:
 
 @router.get("/exams/{exam_id}/print")
 def public_print(exam_id: str, token: str = Query(default=""), answers: bool = Query(default=False),
-                 with_scheme: bool = Query(default=False)) -> Any:
+                 with_scheme: bool = Query(default=False), answer_sheet: bool = Query(default=False)) -> Any:
     """The paper (or its scheme, or both) by its share link — no sign-in,
     so a link an order hands back opens in any browser."""
     from fastapi.responses import HTMLResponse
 
     row = _by_share_token(exam_id, token)
-    return HTMLResponse(_print(row, answers=answers, with_scheme=with_scheme))
+    return HTMLResponse(_print(row, answers=answers, with_scheme=with_scheme, answer_sheet=answer_sheet))
 
 
 @router.get("/exams/{exam_id}/print.pdf")
 def public_print_pdf(exam_id: str, token: str = Query(default=""), answers: bool = Query(default=False),
-                     with_scheme: bool = Query(default=False)) -> Any:
+                     with_scheme: bool = Query(default=False), answer_sheet: bool = Query(default=False)) -> Any:
     from ..services import pdf
 
     row = _by_share_token(exam_id, token)
     try:
-        body = pdf.from_html(_print(row, answers=answers, with_scheme=with_scheme))
+        body = pdf.from_html(_print(row, answers=answers, with_scheme=with_scheme, answer_sheet=answer_sheet))
     except pdf.PdfUnavailable as exc:
         raise_api_error("MODEL_ENDPOINT_UNAVAILABLE", str(exc))
     suffix = "marking-scheme" if answers else "booklet" if with_scheme else "paper"

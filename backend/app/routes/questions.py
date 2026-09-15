@@ -553,6 +553,7 @@ def freeze_paper_now(params: dict[str, Any], *, created_by: str, base: str) -> d
     share_pdf = f"{base}/api/v1/exams/{exam_id}/print.pdf?token={token}"
     out["render_urls"] = {
         "paper": share,
+        "answer_sheet": f"{share}&answer_sheet=true",
         "booklet": f"{share}&with_scheme=true",
         "marking_scheme": f"{share}&answers=true",
         "paper_pdf": share_pdf,
@@ -624,6 +625,7 @@ def composed_paper_html(
     term: int | None = Query(None, ge=1, le=3),
     answers: bool = Query(False, description="The marking scheme alone"),
     with_scheme: bool = Query(False, description="The paper, then the scheme, in one document"),
+    answer_sheet: bool = Query(False, description="Append the OMR answer sheet for Section A"),
     _: AuthContext = Depends(require_roles("admin", "operator", "reviewer", "developer")),
 ):
     """A topical test, a strand assessment or a term examination composed
@@ -635,7 +637,7 @@ def composed_paper_html(
                             sub_strand=sub_strand, marks=marks, seed=seed, drafts=drafts,
                             title=title, format_key=format, count=count, term=term)
     return HTMLResponse(question_paper.render_paper(
-        paper, answers=answers, with_scheme=with_scheme,
+        paper, answers=answers, with_scheme=with_scheme, answer_sheet=answer_sheet,
         assets=question_paper.figures_for(paper.items)))
 
 
@@ -655,6 +657,7 @@ def composed_paper_pdf(
     term: int | None = Query(None, ge=1, le=3),
     answers: bool = Query(False),
     with_scheme: bool = Query(False),
+    answer_sheet: bool = Query(False),
     _: AuthContext = Depends(require_roles("admin", "operator", "reviewer")),
 ) -> Any:
     from fastapi import Response
@@ -665,7 +668,7 @@ def composed_paper_pdf(
                             sub_strand=sub_strand, marks=marks, seed=seed, drafts=drafts,
                             title=title, format_key=format, count=count, term=term)
     document = question_paper.render_paper(
-        paper, answers=answers, with_scheme=with_scheme,
+        paper, answers=answers, with_scheme=with_scheme, answer_sheet=answer_sheet,
         assets=question_paper.figures_for(paper.items))
     try:
         body = pdf.from_html(document)

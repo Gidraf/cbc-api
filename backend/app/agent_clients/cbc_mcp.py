@@ -128,7 +128,80 @@ TOOLS: list[dict[str, Any]] = [
                                     "drafts": {"type": "boolean"}, "title": {"type": "string"}, "term": {"type": "integer"}}}},
     {"name": "cbc_fetch", "description": "GET any platform path (a rendered guide, a paper's HTML, a JSON endpoint) with the API key.",
      "inputSchema": {"type": "object", "required": ["path"], "properties": {"path": {"type": "string"}}}},
+    {"name": "cbc_download",
+     "description": ("Download a file the platform produced — a paper's PDF or HTML from result.render_urls, a guide — "
+                     "into the local folder CBC_DOWNLOAD_DIR (default ./papers) and return its path, so it can be opened "
+                     "or shown to the user. Accepts a full URL or a platform path. The HTML of a paper prints as A4."),
+     "inputSchema": {"type": "object", "required": ["url"],
+                     "properties": {"url": {"type": "string"}, "filename": {"type": "string", "description": "optional name"}}}},
+    {"name": "cbc_download_paper",
+     "description": ("Download a frozen paper by exam_id as PDF (or HTML) into CBC_DOWNLOAD_DIR: what = paper | scheme | "
+                     "booklet | answer_sheet. Uses the paper's share token from render_urls if you pass it, else your key."),
+     "inputSchema": {"type": "object", "required": ["exam_id"],
+                     "properties": {"exam_id": {"type": "string"},
+                                    "what": {"type": "string", "enum": ["paper", "scheme", "booklet", "answer_sheet"]},
+                                    "format": {"type": "string", "enum": ["pdf", "html"]},
+                                    "token": {"type": "string"}}}},
 ]
+
+DOWNLOAD_DIR = os.getenv("CBC_DOWNLOAD_DIR", os.path.join(os.getcwd(), "papers"))
+
+
+def _download(url: str, filename: str = "") -> dict[str, Any]:
+    """Fetch bytes to a local file; a platform path gets the key, a share
+    link needs none. A JSON error body is reported, not saved as a file."""
+    full = url if url.startswith(("http://", "https://")) else API + "/" + url.lstrip("/")
+    headers = {"Accept": "application/pdf, text/html, application/json"}
+    if full.startswith(API):
+        headers["X-API-Key"] = KEY
+    req = urllib.request.Request(full, headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=300) as resp:
+            body = resp.read()
+            kind = resp.headers.get("Content-Type", "")
+            disposition = resp.headers.get("Content-Disposition", "")
+    except urllib.error.HTTPError as exc:
+        return {"ok": False, "status": exc.code, "error": exc.read().decode("utf-8", "replace")[:400]}
+    if "json" in kind:
+        return {"ok": False, "status": 200, "error": body.decode("utf-8", "replace")[:400]}
+    os.makedirs(DOWNLOAD_DIR, exist_ok=True)
+    name = filename
+    if not name:
+        import re
+
+        match = re.search(r'filename="?([^";]+)"?', disposition)
+        name = match.group(1) if match else (urllib.parse.urlparse(full).path.rsplit("/", 1)[-1] or "download")
+        if "pdf" in kind and not name.endswith(".pdf"):
+            name += ".pdf"
+        elif "html" in kind and not name.endswith(".html"):
+            name += ".html"
+    path = os.path.join(DOWNLOAD_DIR, os.path.basename(name))
+    with open(path, "wb") as fh:
+        fh.write(body)
+    return {"ok": True, "path": path, "bytes": len(body), "content_type": kind,
+            "how_to_show": ("Open it for the user (it is a PDF) — or, for HTML, open it in a browser and print "
+                            "to PDF; the page is laid out for A4.")}
+
+
+def _download_paper(args: dict[str, Any]) -> dict[str, Any]:
+    exam_id = args["exam_id"]
+    what = args.get("what") or "paper"
+    fmt = args.get("format") or "pdf"
+    token = args.get("token") or ""
+    query = {"paper": "", "scheme": "answers=true", "booklet": "with_scheme=true",
+             "answer_sheet": "answer_sheet=true"}[what]
+    if token:
+        path = f"/api/v1/exams/{exam_id}/print{'.pdf' if fmt == 'pdf' else ''}?token={token}"
+        path += ("&" + query) if query else ""
+    else:
+        path = f"/api/v1/exams/{exam_id}/paper.{fmt}" + ("?" + query if query else "")
+    out = _download(path, filename=f"{exam_id}-{what}.{fmt}")
+    if not out.get("ok") and fmt == "pdf":
+        # The PDF service may be down; the HTML prints the same page.
+        fallback = _download_paper({**args, "format": "html"})
+        fallback["note"] = f"PDF failed ({out.get('error', '')[:120]}); saved the HTML instead — print it to PDF."
+        return fallback
+    return out
 
 
 def _tool(name: str, args: dict[str, Any]) -> Any:
@@ -166,6 +239,10 @@ def _tool(name: str, args: dict[str, Any]) -> Any:
         return _call("POST", "/api/v1/questions/paper/freeze", args)
     if name == "cbc_fetch":
         return _call("GET", args["path"])
+    if name == "cbc_download":
+        return _download(args["url"], args.get("filename") or "")
+    if name == "cbc_download_paper":
+        return _download_paper(args)
     raise ValueError(f"unknown tool {name}")
 
 

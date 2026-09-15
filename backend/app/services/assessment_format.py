@@ -325,4 +325,8 @@ def prompt_block(grade: str, count: int | None = None, subject: str = "") -> str
         lines.append(f"This batch is {count} items; keep the proportion above within it.")
     lines.append("Every item records `bloom_level` honestly and `difficulty_index` between 0.35 "
                  "and 0.80 — an item outside that band is either below the grade or above it.")
+    lines.append("Every item — multiple choice included — carries its WORKING or REASON: `marking_scheme` "
+                 "with the steps (M1/A1) or the explanation, `model_answer`, and on every option a "
+                 "`distractor_rationale` saying why it is right or which mistake produces it. A marking "
+                 "scheme that reads \"6. B\" teaches nobody anything.")
     return "\n".join(lines)

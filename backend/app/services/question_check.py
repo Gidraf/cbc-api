@@ -450,6 +450,33 @@ def _refers_to_a_figure_it_lacks(questions: list[dict[str, Any]], findings: list
                 [_id(question)]))
 
 
+def _unexplained(questions: list[dict[str, Any]], findings: list[Finding]) -> None:
+    """An answer with no working and no reason. The marking scheme printed
+    "6. B" for such items, and a learner marking their own work learned
+    nothing from the ones they got wrong."""
+    for index, question in enumerate(questions, start=1):
+        options = [o for o in (question.get("options") or []) if isinstance(o, dict)]
+        key = next((o for o in options if o.get("is_correct")), None)
+        has = bool(_text(question.get("marking_scheme")) or _text(question.get("model_answer")))
+        if key is not None and _text(key.get("distractor_rationale") or key.get("rationale")):
+            has = True
+        if not has and key is not None:
+            # A bare expression the engine can work prints the engine's own
+            # working on the scheme; that is an explanation.
+            from . import worked_solutions
+
+            if worked_solutions.check(_stem(question), _text(key.get("text")))["checked"]:
+                has = True
+        if not has:
+            findings.append(Finding(
+                "no_explanation",
+                f"{_label(question, index)} gives an answer and no working or reason for it.",
+                "Put the working (M1/A1 lines) or the reason in `marking_scheme`, and a one-line "
+                "rationale on every option — why the key is right, why each distractor is the "
+                "mistake a learner makes.",
+                [_id(question)]))
+
+
 def _answer_in_the_stem(questions: list[dict[str, Any]], findings: list[Finding]) -> None:
     for index, question in enumerate(questions, start=1):
         answer = _answer_of(question)
@@ -619,6 +646,7 @@ def check(questions: list[dict[str, Any]], *, grade: str = "", subject: str = ""
     _as_worked_examples(items, grade=grade, subject=subject, strand=strand,
                         sub_strand=sub_strand, findings=findings)
     _answer_in_the_stem(items, findings)
+    _unexplained(items, findings)
     try:
         _weak_items(items, grade=grade, subject=subject, findings=findings)
     except Exception as exc:  # noqa: BLE001

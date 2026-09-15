@@ -177,7 +177,10 @@ def test_the_booklet_prints_the_paper_then_the_scheme_with_the_key_up_front() ->
     assert "Correct option" not in learner and "MARKING SCHEME" not in learner
     assert "MARKING SCHEME" in scheme and "class='keygrid'" in scheme
     assert "(i) Your name" not in scheme
-    assert booklet.count("class='mast'") == 2 and "break-before: page" in booklet
+    # Paper, answer sheet, scheme: three mastheads.
+    assert booklet.count("class='mast'") == 3 and "break-before: page" in booklet
+    assert "<div class='sheetpage'>" in booklet and booklet.count("class='bubble'") >= 4 * 10
+    assert "<div class='sheetpage'>" not in learner, "the sheet is a page you ask for"
     # Continuous numbering across sections.
     assert "<span class='n'>1.</span>" in learner
     assert f"<span class='n'>{len(paper.items)}.</span>" in learner
@@ -375,3 +378,21 @@ def test_a_papers_share_links_open_with_no_sign_in() -> None:
     assert "hmac.compare_digest" in inspect.getsource(exams._by_share_token)
     freeze = inspect.getsource(questions.freeze_paper_now)
     assert '/print?token={token}' in freeze and '/print.pdf?token={token}' in freeze
+
+
+def test_the_marking_scheme_shows_working_and_why_not_the_others() -> None:
+    q = {"question_id": "m1", "question_type": "multiple_choice", "question_text": "Work out $(-3) \\times (-4) + 2$.",
+         "options": [{"id": "A", "text": "14", "is_correct": True, "distractor_rationale": "Two negatives give a positive product; 12 + 2."},
+                     {"id": "B", "text": "-14", "distractor_rationale": "Kept the product negative."},
+                     {"id": "C", "text": "10", "distractor_rationale": "Subtracted 2 instead of adding."},
+                     {"id": "D", "text": "-10"}],
+         "correct_answer": "A", "marking_scheme": "$(-3)\\times(-4)=12$ (M1); $12+2=14$ (A1)",
+         "pedagogy": {"max_marks": 1}, "curriculum": {}}
+    html = question_paper._scheme_item(q, 6)
+    assert "class='w'" in html, "the engine's working"
+    assert "Why A:" in html and "Why not:" in html and "Kept the product negative" in html
+    assert "No working or reason" not in html
+
+    bare = dict(q, marking_scheme="", options=[{"id": "A", "text": "hippo", "is_correct": True}, {"id": "B", "text": "lion"}],
+                question_text="Which animal lives in Lake Naivasha?")
+    assert "No working or reason was recorded" in question_paper._scheme_item(bare, 7)
