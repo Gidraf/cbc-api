@@ -81,6 +81,10 @@ _NOT_A_PROMPT = {
     # A README written INTO an export bundle, read by a person unpacking a zip.
     "prompt_bundle.py",
     "export_bundle.py",
+    # The playbook written into an agent's kit — read by the agent the operator
+    # runs, never sent by this platform to a model. Its prompts are the seeded
+    # ones, included as files.
+    "agent_pack.py",
     # The master context a fresh deployment falls back to when no prompt store
     # is configured at all. Seeding it is what it is a fallback FOR.
     "langfuse_context.py",
