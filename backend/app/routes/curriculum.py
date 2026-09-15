@@ -4969,7 +4969,19 @@ def _run_queued_dataset_item(job: dict[str, Any]) -> dict[str, Any]:
     item_id = str(payload.get("item_id") or "")
     if not item_id:
         raise ValueError("A dataset-item job carries no item_id.")
-    return process_item(item_id, force=bool(payload.get("force")))
+    result = process_item(item_id, force=bool(payload.get("force")))
+    if payload.get("then_structure"):
+        # The extractor writes strands and sub-strands itself when the design
+        # is legible; a learning area it left bare gets them generated.
+        try:
+            from .admin_langfuse import _queue_missing_structure
+
+            followed = _queue_missing_structure(grade=str(job.get("grade") or ""))
+            if followed:
+                result = {**(result if isinstance(result, dict) else {}), "structure_queued": followed}
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Could not queue structure after ingesting %s: %s", item_id, exc)
+    return result
 
 
 def _run_queued_ingest(job: dict[str, Any]) -> dict[str, Any]:

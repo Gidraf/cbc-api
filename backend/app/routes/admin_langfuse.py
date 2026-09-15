@@ -269,6 +269,114 @@ def process_grade_items(
     }
 
 
+class IngestEverythingRequest(BaseModel):
+    """Every design in every grade's dataset, then the structure under each."""
+
+    force: bool = False
+    # Build strands and sub-strands afterwards for any learning area the
+    # ingest left without them (the extractor writes them itself when the
+    # design is legible; this catches the rest).
+    then_structure: bool = True
+
+
+@router.post("/datasets/ingest-everything")
+def ingest_everything(
+    payload: IngestEverythingRequest,
+    auth: AuthContext = Depends(require_roles("admin", "operator")),
+) -> dict[str, Any]:
+    """One button: sync every grade's dataset from Langfuse, queue every
+    document not yet ingested, and — as each finishes — queue strands and
+    sub-strands for any learning area that came out without a spine.
+
+    Documents run one at a time in the worker, so a whole curriculum is an
+    afternoon, not a click; the queue panel follows it grade by grade.
+    """
+    from ..infra.db import fetch_all
+    from ..services import grade_sql, job_queue
+    from ..services.dataset_ingest import INGESTED, PROCESSING, SELECTED, sync_grade
+    from ..services.grade_order import GRADE_SEQUENCE
+
+    synced: dict[str, dict[str, int]] = {}
+    queued: list[dict[str, Any]] = []
+    skipped = 0
+    for slug, _label, _band in GRADE_SEQUENCE:
+        try:
+            synced[slug] = sync_grade(slug)
+        except Exception as exc:  # noqa: BLE001
+            synced[slug] = {"error": str(exc)[:120]}
+            continue
+        rows = fetch_all(
+            "SELECT item_id, status, resolved_subject, declared_subject, title "
+            f"FROM dataset_ingest_status WHERE {grade_sql.clause()} ORDER BY title",
+            {"grade": slug},
+        ) or []
+        for row in rows:
+            status = str(row.get("status") or "")
+            if status in (PROCESSING, SELECTED) or (status == INGESTED and not payload.force):
+                skipped += 1
+                continue
+            job = job_queue.enqueue(
+                "dataset_item", grade=slug,
+                subject=str(row.get("resolved_subject") or row.get("declared_subject") or row.get("title") or row["item_id"]),
+                payload={"item_id": str(row["item_id"]), "force": bool(payload.force),
+                         "then_structure": bool(payload.then_structure)},
+                queued_by=getattr(auth, "subject", "") or "datasets",
+            )
+            queued.append({"grade": slug, "item_id": row["item_id"], "job_id": job.job_id,
+                           "title": row.get("title", "")})
+    if queued:
+        job_queue.start_worker()
+    return {"queued": len(queued), "skipped": skipped, "grades_synced": len(synced),
+            "jobs": queued, "synced": synced,
+            "note": (f"{len(queued)} document(s) queued across {len(synced)} grade(s); they run one at a "
+                     f"time. Strands and sub-strands follow each document automatically where the "
+                     f"extractor left a learning area without them.")}
+
+
+@router.post("/datasets/structure-everything")
+def structure_everything(
+    _: AuthContext = Depends(require_roles("admin", "operator")),
+) -> dict[str, Any]:
+    """Strands and sub-strands for every ingested learning area that has none."""
+    from ..services import job_queue
+
+    queued = _queue_missing_structure()
+    if queued:
+        job_queue.start_worker()
+    return {"queued": len(queued), "jobs": queued}
+
+
+def _queue_missing_structure(grade: str = "", subject: str = "") -> list[dict[str, Any]]:
+    """A strands → sub-strands pipeline for each ingested learning area with
+    no sub-strands — the spine every station reads."""
+    from ..infra.db import fetch_all
+    from ..services import job_queue
+
+    rows = fetch_all(
+        """
+        SELECT d.grade, d.subject, COUNT(s.id) AS n
+        FROM curriculum_designs d
+        LEFT JOIN curriculum_substrands s ON s.design_id = d.design_id
+        WHERE d.subject <> ''
+          AND (:grade = '' OR REPLACE(LOWER(d.grade), 'grade-', '') = REPLACE(LOWER(:grade), 'grade-', ''))
+          AND (:subject = '' OR LOWER(d.subject) = LOWER(:subject))
+        GROUP BY d.grade, d.subject
+        HAVING COUNT(s.id) = 0
+        ORDER BY d.grade, d.subject
+        """,
+        {"grade": grade, "subject": subject},
+    ) or []
+    queued = []
+    for row in rows:
+        job = job_queue.enqueue(
+            "pipeline", str(row["grade"]), str(row["subject"]),
+            {"steps": ["strands", "substrands"], "index": 0, "custom_instructions": ""},
+            queued_by="datasets",
+        )
+        queued.append({"grade": row["grade"], "subject": row["subject"], "job_id": job.job_id})
+    return queued
+
+
 @router.get("/datasets/{grade}/items/{item_id}/text")
 def get_item_text(
     grade: str,

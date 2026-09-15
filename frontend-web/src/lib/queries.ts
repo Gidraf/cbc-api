@@ -2164,6 +2164,47 @@ export function useIngestActions(grade: string) {
 }
 
 
+// ── Everything at once ───────────────────────────────────────────────────────
+// Every grade's dataset synced, every document not yet ingested queued, and
+// strands + sub-strands queued behind each document for any learning area the
+// extractor left without them. One press, then the queue board.
+
+export type IngestEverythingResult = {
+  queued: number;
+  skipped: number;
+  grades_synced: number;
+  jobs: { grade: string; item_id: string; job_id: string; title: string }[];
+  synced: Record<string, Record<string, number | string>>;
+  note: string;
+};
+
+export function useIngestEverything() {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { force?: boolean; then_structure?: boolean }) =>
+      api<IngestEverythingResult>(`/api/v1/admin/langfuse/datasets/ingest-everything`, {
+        method: "POST",
+        body: JSON.stringify(v),
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["ingest-status"] });
+      qc.invalidateQueries({ queryKey: keys.grades });
+    },
+  });
+}
+
+export function useStructureEverything() {
+  const api = useApi();
+  return useMutation({
+    mutationFn: () =>
+      api<{ queued: number; jobs: { grade: string; subject: string; job_id: string }[] }>(
+        `/api/v1/admin/langfuse/datasets/structure-everything`,
+        { method: "POST", body: "{}" }
+      ),
+  });
+}
+
 // ── Curriculum structure (strands and sub-strands) ──────────────────────────
 // These fill curriculum_substrands when a design's layout defeats the text
 // parser, which is the usual case for Pre-Primary. Without them a grade can be

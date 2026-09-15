@@ -20,7 +20,9 @@ import {
   gradeOptionLabel,
   useGrades,
   useIngestActions,
+  useIngestEverything,
   useIngestStatus,
+  useStructureEverything,
   type DatasetItem,
   type IngestStatus,
 } from "../lib/queries";
@@ -53,6 +55,21 @@ export function Datasets() {
 
   const status = useIngestStatus(effectiveGrade);
   const actions = useIngestActions(effectiveGrade);
+  const everything = useIngestEverything();
+  const structure = useStructureEverything();
+
+  function ingestEverything() {
+    const ok = window.confirm(
+      "Ingest everything?\n\n" +
+        "Every grade's dataset is synced from Langfuse and every document not yet " +
+        "ingested is queued — PP1 to Grade 12, every subject. Strands and sub-strands " +
+        "are generated behind each document for any learning area that comes out " +
+        "without them.\n\n" +
+        "Documents run one at a time in the worker; a whole curriculum is hours, " +
+        "not minutes. Follow it on the Queue board."
+    );
+    if (ok) everything.mutate({ then_structure: true });
+  }
 
   const state = status.data;
   const items = state?.items ?? [];
@@ -134,6 +151,23 @@ export function Datasets() {
               onClick={() => actions.sync.mutate()}
             >
               {actions.sync.isPending ? "Syncing…" : "Sync from Langfuse"}
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              disabled={busy || structure.isPending}
+              title="Strands and sub-strands for every ingested learning area that has none"
+              onClick={() => structure.mutate()}
+            >
+              {structure.isPending ? "Queuing…" : "Fill missing structure"}
+            </Button>
+            <Button
+              size="sm"
+              disabled={busy || everything.isPending}
+              title="Sync every grade from Langfuse, ingest every design, then build strands and sub-strands"
+              onClick={ingestEverything}
+            >
+              {everything.isPending ? "Queuing everything…" : "Ingest everything"}
             </Button>
           </Stack>
         }
@@ -237,6 +271,49 @@ export function Datasets() {
         </div>
       )}
       {actions.sync.error && <ErrorNotice error={actions.sync.error} />}
+      {everything.error && <ErrorNotice error={everything.error} />}
+      {structure.error && <ErrorNotice error={structure.error} />}
+      {everything.data && (
+        <div
+          role="status"
+          style={{
+            border: "1px solid var(--line)",
+            background: "var(--surface-2, var(--surface))",
+            borderRadius: "var(--radius)",
+            padding: "var(--s3)",
+            fontSize: "var(--text-sm)",
+          }}
+        >
+          <strong>{everything.data.queued} document{everything.data.queued === 1 ? "" : "s"} queued</strong>{" "}
+          across {everything.data.grades_synced} grades
+          {everything.data.skipped > 0 && <> ({everything.data.skipped} already ingested or in progress, left alone)</>}.
+          {" "}{everything.data.note}
+          {Object.entries(everything.data.synced)
+            .filter(([, v]) => "error" in v)
+            .map(([g, v]) => (
+              <div key={g} style={{ color: "var(--danger)" }}>{g}: {String(v.error)}</div>
+            ))}
+        </div>
+      )}
+      {structure.data && (
+        <div
+          role="status"
+          style={{
+            border: "1px solid var(--line)",
+            background: "var(--surface-2, var(--surface))",
+            borderRadius: "var(--radius)",
+            padding: "var(--s3)",
+            fontSize: "var(--text-sm)",
+          }}
+        >
+          <strong>{structure.data.queued} learning area{structure.data.queued === 1 ? "" : "s"}</strong>{" "}
+          queued for strands and sub-strands
+          {structure.data.jobs.length > 0 && (
+            <>: {structure.data.jobs.map((j) => `${j.grade} ${j.subject}`).join(", ")}</>
+          )}
+          {structure.data.queued === 0 && <> — every ingested learning area already has its spine.</>}
+        </div>
+      )}
 
       <QueryState query={status} label="Loading dataset" rows={4} />
 
