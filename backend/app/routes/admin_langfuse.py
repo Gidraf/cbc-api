@@ -289,48 +289,115 @@ def ingest_everything(
     sub-strands for any learning area that came out without a spine.
 
     Documents run one at a time in the worker, so a whole curriculum is an
-    afternoon, not a click; the queue panel follows it grade by grade.
+    afternoon, not a click; the queue panel follows it grade by grade. The
+    same pass runs on a schedule when auto-ingest is on in Settings.
     """
-    from ..infra.db import fetch_all
-    from ..services import grade_sql, job_queue
-    from ..services.dataset_ingest import INGESTED, PROCESSING, SELECTED, sync_grade
-    from ..services.grade_order import GRADE_SEQUENCE
+    from ..services import dataset_watch
 
-    synced: dict[str, dict[str, int]] = {}
-    queued: list[dict[str, Any]] = []
-    skipped = 0
-    for slug, _label, _band in GRADE_SEQUENCE:
-        try:
-            synced[slug] = sync_grade(slug)
-        except Exception as exc:  # noqa: BLE001
-            synced[slug] = {"error": str(exc)[:120]}
-            continue
-        rows = fetch_all(
-            "SELECT item_id, status, resolved_subject, declared_subject, title "
-            f"FROM dataset_ingest_status WHERE {grade_sql.clause()} ORDER BY title",
-            {"grade": slug},
-        ) or []
-        for row in rows:
-            status = str(row.get("status") or "")
-            if status in (PROCESSING, SELECTED) or (status == INGESTED and not payload.force):
-                skipped += 1
-                continue
-            job = job_queue.enqueue(
-                "dataset_item", grade=slug,
-                subject=str(row.get("resolved_subject") or row.get("declared_subject") or row.get("title") or row["item_id"]),
-                payload={"item_id": str(row["item_id"]), "force": bool(payload.force),
-                         "then_structure": bool(payload.then_structure)},
-                queued_by=getattr(auth, "subject", "") or "datasets",
-            )
-            queued.append({"grade": slug, "item_id": row["item_id"], "job_id": job.job_id,
-                           "title": row.get("title", "")})
-    if queued:
-        job_queue.start_worker()
-    return {"queued": len(queued), "skipped": skipped, "grades_synced": len(synced),
-            "jobs": queued, "synced": synced,
-            "note": (f"{len(queued)} document(s) queued across {len(synced)} grade(s); they run one at a "
-                     f"time. Strands and sub-strands follow each document automatically where the "
-                     f"extractor left a learning area without them.")}
+    return dataset_watch.run_pass(
+        force=payload.force, then_structure=payload.then_structure,
+        queued_by=getattr(auth, "subject", "") or "datasets", trigger="manual",
+    )
+
+
+@router.get("/datasets/auto-ingest")
+def auto_ingest_status(
+    _: AuthContext = Depends(require_roles("admin", "operator", "reviewer")),
+) -> dict[str, Any]:
+    """Whether the Langfuse watch is on, how often, and what it last did."""
+    from ..services import dataset_watch
+
+    return dataset_watch.status()
+
+
+class AutoIngestRequest(BaseModel):
+    enabled: bool
+    interval_minutes: int | None = None
+
+
+@router.post("/datasets/auto-ingest")
+def set_auto_ingest(
+    payload: AutoIngestRequest,
+    auth: AuthContext = Depends(require_roles("admin", "operator")),
+) -> dict[str, Any]:
+    """Turn the watch on or off from the Datasets screen (it is the same
+    setting as on the Settings page)."""
+    from ..services import dataset_watch, platform_settings
+
+    values: dict[str, Any] = {"auto_ingest_enabled": "true" if payload.enabled else "false"}
+    if payload.interval_minutes is not None:
+        values["auto_ingest_interval_minutes"] = max(5, int(payload.interval_minutes))
+    platform_settings.set_many(values, updated_by=getattr(auth, "subject", ""))
+    if payload.enabled:
+        dataset_watch.start()
+    return dataset_watch.status()
+
+
+@router.get("/datasets/progress")
+def ingest_progress(
+    _: AuthContext = Depends(require_roles("admin", "operator", "reviewer")),
+) -> dict[str, Any]:
+    """Every grade's ingest on one screen: counts per status, what is running,
+    what waits, and whether the run is paused."""
+    from ..services import dataset_watch
+
+    return dataset_watch.progress()
+
+
+class IngestControlRequest(BaseModel):
+    action: str                 # pause | resume | skip | stop
+    job_id: str = ""            # skip: one job
+    item_id: str = ""           # skip: one document
+    grade: str = ""             # skip: one grade's documents
+
+
+@router.post("/datasets/control")
+def ingest_control(
+    payload: IngestControlRequest,
+    _: AuthContext = Depends(require_roles("admin", "operator")),
+) -> dict[str, Any]:
+    """Pause, resume, skip or stop the ingest. The document being read finishes;
+    the controls take effect at the next one."""
+    from ..services import dataset_watch
+
+    action = payload.action.strip().lower()
+    if action == "pause":
+        n = dataset_watch.pause()
+    elif action == "resume":
+        n = dataset_watch.resume()
+    elif action == "skip":
+        if not (payload.job_id or payload.item_id or payload.grade):
+            raise_api_error("SCHEMA_VALIDATION_FAILED", "skip needs a job_id, an item_id or a grade.")
+        n = dataset_watch.skip(job_id=payload.job_id, item_id=payload.item_id, grade=payload.grade)
+    elif action == "stop":
+        n = dataset_watch.stop()
+    else:
+        raise_api_error("SCHEMA_VALIDATION_FAILED",
+                        f"'{payload.action}' is not a control. Use pause, resume, skip or stop.")
+    return {"action": action, "affected": n, **dataset_watch.progress()}
+
+
+class UningestEverythingRequest(BaseModel):
+    purge_generated: bool = False
+    purge_orphans: bool = True
+    # The word, typed. Every design, every sub-strand, in every grade.
+    confirm: str = ""
+
+
+@router.post("/datasets/uningest-everything")
+def uningest_everything(
+    payload: UningestEverythingRequest,
+    _: AuthContext = Depends(require_roles("admin")),
+) -> dict[str, Any]:
+    """Undo every ingest in every grade. Waiting jobs are stopped first."""
+    from ..services import dataset_watch
+
+    if payload.confirm.strip().upper() != "EVERYTHING":
+        raise_api_error("SCHEMA_VALIDATION_FAILED",
+                        "Type EVERYTHING in confirm to un-ingest every grade.")
+    return dataset_watch.uningest_all(
+        purge_generated=payload.purge_generated, purge_orphans=payload.purge_orphans,
+    )
 
 
 @router.post("/datasets/structure-everything")
@@ -338,43 +405,12 @@ def structure_everything(
     _: AuthContext = Depends(require_roles("admin", "operator")),
 ) -> dict[str, Any]:
     """Strands and sub-strands for every ingested learning area that has none."""
-    from ..services import job_queue
+    from ..services import dataset_watch, job_queue
 
-    queued = _queue_missing_structure()
+    queued = dataset_watch.queue_missing_structure()
     if queued:
         job_queue.start_worker()
     return {"queued": len(queued), "jobs": queued}
-
-
-def _queue_missing_structure(grade: str = "", subject: str = "") -> list[dict[str, Any]]:
-    """A strands → sub-strands pipeline for each ingested learning area with
-    no sub-strands — the spine every station reads."""
-    from ..infra.db import fetch_all
-    from ..services import job_queue
-
-    rows = fetch_all(
-        """
-        SELECT d.grade, d.subject, COUNT(s.id) AS n
-        FROM curriculum_designs d
-        LEFT JOIN curriculum_substrands s ON s.design_id = d.design_id
-        WHERE d.subject <> ''
-          AND (:grade = '' OR REPLACE(LOWER(d.grade), 'grade-', '') = REPLACE(LOWER(:grade), 'grade-', ''))
-          AND (:subject = '' OR LOWER(d.subject) = LOWER(:subject))
-        GROUP BY d.grade, d.subject
-        HAVING COUNT(s.id) = 0
-        ORDER BY d.grade, d.subject
-        """,
-        {"grade": grade, "subject": subject},
-    ) or []
-    queued = []
-    for row in rows:
-        job = job_queue.enqueue(
-            "pipeline", str(row["grade"]), str(row["subject"]),
-            {"steps": ["strands", "substrands"], "index": 0, "custom_instructions": ""},
-            queued_by="datasets",
-        )
-        queued.append({"grade": row["grade"], "subject": row["subject"], "job_id": job.job_id})
-    return queued
 
 
 @router.get("/datasets/{grade}/items/{item_id}/text")

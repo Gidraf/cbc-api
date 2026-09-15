@@ -43,6 +43,7 @@ const STATUS_TONE: Record<string, "ok" | "warn" | "danger" | "accent" | "neutral
   done: "ok",
   running: "accent",
   queued: "neutral",
+  paused: "warn",
   failed: "danger",
   cancelled: "warn",
 };

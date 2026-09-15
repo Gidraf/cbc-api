@@ -55,6 +55,12 @@ SETTINGS: tuple[Setting, ...] = (
     Setting("byom_step_timeout_seconds", "BYOM_STEP_TIMEOUT_SECONDS", "int", "Agent step timeout (seconds)",
             "How long a station driven by an outside agent waits for one prompt to be answered.",
             2700, "Agents"),
+    Setting("auto_ingest_enabled", "AUTO_INGEST_ENABLED", "bool", "Auto-ingest from Langfuse",
+            "When on, every grade's dataset is synced from Langfuse on a schedule and any design not yet "
+            "ingested is queued, with strands and sub-strands built behind it — the same pass as the "
+            "Datasets screen's Ingest everything, without the press.", False, "Datasets"),
+    Setting("auto_ingest_interval_minutes", "AUTO_INGEST_INTERVAL_MINUTES", "int", "Auto-ingest every (minutes)",
+            "How often the watch looks at Langfuse. Five at the least.", 30, "Datasets"),
     Setting("webhook_url", "WEBHOOK_URL", "string", "Webhook URL",
             "Where to POST an event when something finishes: a job, an order, a frozen paper, an agent task. "
             "Empty means no webhooks.", "", "Webhooks"),

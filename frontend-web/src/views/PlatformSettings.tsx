@@ -53,11 +53,20 @@ export function PlatformSettings() {
                      hint={`${row.help}${row.env ? ` (env: ${row.env})` : ""}`}>
                 {(p) => (
                   <Stack direction="row" gap="var(--s2)" align="center" wrap>
+                    {row.kind === "bool" ? (
+                      <select {...p} value={(shown(row) || String(row.default ?? "false")).toLowerCase() === "true" ? "true" : "false"}
+                              onChange={(e) => setDraft({ ...draft, [row.key]: e.target.value })}
+                              style={{ minWidth: "22rem" }}>
+                        <option value="false">Off</option>
+                        <option value="true">On</option>
+                      </select>
+                    ) : (
                     <Input {...p} type={row.kind === "secret" ? "password" : row.kind === "int" ? "number" : "text"}
                            value={shown(row)}
                            placeholder={row.kind === "secret" && row.value ? "(set — type to replace)" : String(row.default ?? "")}
                            onChange={(e) => setDraft({ ...draft, [row.key]: e.target.value })}
                            style={{ minWidth: "22rem" }} />
+                    )}
                     <Badge tone={row.source === "console" ? "ok" : row.source === "environment" ? "info" : "neutral"}>
                       {row.source}
                     </Badge>

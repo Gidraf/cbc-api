@@ -308,6 +308,16 @@ def startup() -> None:
     except Exception as exc:  # noqa: BLE001
         logger.error("Job worker did not start; queued work will not run: %s", exc)
 
+    # The Langfuse watch: idle unless Settings → Auto-ingest is on, and cheap
+    # when it is (one sync per grade per interval). It only QUEUES; the jobs
+    # run wherever jobs run, so it is safe beside Celery.
+    try:
+        from .services import dataset_watch
+
+        dataset_watch.start()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Dataset watch did not start: %s", exc)
+
     try:
         _bootstrap_default_stage_bindings()
         for provider in runtime_state.provider_credentials:

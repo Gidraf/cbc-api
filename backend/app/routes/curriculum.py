@@ -4974,9 +4974,9 @@ def _run_queued_dataset_item(job: dict[str, Any]) -> dict[str, Any]:
         # The extractor writes strands and sub-strands itself when the design
         # is legible; a learning area it left bare gets them generated.
         try:
-            from .admin_langfuse import _queue_missing_structure
+            from ..services.dataset_watch import queue_missing_structure
 
-            followed = _queue_missing_structure(grade=str(job.get("grade") or ""))
+            followed = queue_missing_structure(grade=str(job.get("grade") or ""))
             if followed:
                 result = {**(result if isinstance(result, dict) else {}), "structure_queued": followed}
         except Exception as exc:  # noqa: BLE001

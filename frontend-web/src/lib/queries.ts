@@ -2205,6 +2205,108 @@ export function useStructureEverything() {
   });
 }
 
+export type IngestGradeProgress = {
+  grade: string;
+  label: string;
+  counts: Record<IngestStatus, number>;
+  total: number;
+  structure_queued: number;
+  structure_running: number;
+};
+
+export type AutoIngestStatus = {
+  enabled: boolean;
+  interval_minutes: number;
+  running: boolean;
+  last_run_at: number | null;
+  last_trigger: string;
+  last_error: string;
+  last_queued: number | null;
+  last_skipped: number | null;
+  next_run_in_seconds: number | null;
+};
+
+export type IngestProgress = {
+  grades: IngestGradeProgress[];
+  total: number;
+  ingested: number;
+  failed: number;
+  percentage: number;
+  jobs: Record<string, number>;
+  active: boolean;
+  paused: boolean;
+  current: { job_id: string; kind: string; grade: string; subject: string; started_at: string; progress: any } | null;
+  waiting: { job_id: string; kind: string; grade: string; subject: string; status: string; item_id: string | null }[];
+  watch: AutoIngestStatus;
+};
+
+export function useIngestProgress() {
+  const api = useApi();
+  return useQuery({
+    queryKey: ["ingest-progress"],
+    queryFn: () => api<IngestProgress>(`/api/v1/admin/langfuse/datasets/progress`),
+    refetchInterval: (q) => (q.state.data?.active ? 3000 : 30000),
+  });
+}
+
+export function useIngestControl() {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { action: "pause" | "resume" | "skip" | "stop"; job_id?: string; item_id?: string; grade?: string }) =>
+      api<IngestProgress & { action: string; affected: number }>(`/api/v1/admin/langfuse/datasets/control`, {
+        method: "POST",
+        body: JSON.stringify(v),
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["ingest-progress"] });
+      qc.invalidateQueries({ queryKey: ["ingest-status"] });
+      qc.invalidateQueries({ queryKey: ["queue"] });
+    },
+  });
+}
+
+export function useAutoIngest() {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { enabled: boolean; interval_minutes?: number }) =>
+      api<AutoIngestStatus>(`/api/v1/admin/langfuse/datasets/auto-ingest`, {
+        method: "POST",
+        body: JSON.stringify(v),
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["ingest-progress"] });
+      qc.invalidateQueries({ queryKey: ["platform-settings"] });
+    },
+  });
+}
+
+export type UningestEverythingResult = {
+  stopped: number;
+  uningested: number;
+  failed: number;
+  removed: Record<string, number>;
+  orphans_purged: Record<string, Record<string, number | string>>;
+};
+
+export function useUningestEverything() {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { purge_generated: boolean; purge_orphans?: boolean; confirm: string }) =>
+      api<UningestEverythingResult>(`/api/v1/admin/langfuse/datasets/uningest-everything`, {
+        method: "POST",
+        body: JSON.stringify(v),
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["ingest-progress"] });
+      qc.invalidateQueries({ queryKey: ["ingest-status"] });
+      qc.invalidateQueries({ queryKey: keys.grades });
+    },
+  });
+}
+
 // ── Curriculum structure (strands and sub-strands) ──────────────────────────
 // These fill curriculum_substrands when a design's layout defeats the text
 // parser, which is the usual case for Pre-Primary. Without them a grade can be
