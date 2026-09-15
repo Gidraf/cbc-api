@@ -362,6 +362,44 @@ def print_exam_pdf(
                     headers={"Content-Disposition": f'inline; filename="{exam_id}-{suffix}.pdf"'})
 
 
+def _by_share_token(exam_id: str, token: str) -> dict[str, Any]:
+    """The exam, if the token printed on its paper matches. A wrong or
+    missing token is a 404, so the route does not confirm the exam exists."""
+    import hmac
+
+    row = fetch_one("SELECT * FROM exams WHERE exam_id = :eid", {"eid": exam_id})
+    expected = str((row or {}).get("share_token") or "")
+    if not row or not expected or not token or not hmac.compare_digest(expected, token):
+        raise_api_error("NOT_FOUND", "No such paper, or the link is wrong.")
+    return row
+
+
+@router.get("/exams/{exam_id}/print")
+def public_print(exam_id: str, token: str = Query(default=""), answers: bool = Query(default=False),
+                 with_scheme: bool = Query(default=False)) -> Any:
+    """The paper (or its scheme, or both) by its share link — no sign-in,
+    so a link an order hands back opens in any browser."""
+    from fastapi.responses import HTMLResponse
+
+    row = _by_share_token(exam_id, token)
+    return HTMLResponse(_print(row, answers=answers, with_scheme=with_scheme))
+
+
+@router.get("/exams/{exam_id}/print.pdf")
+def public_print_pdf(exam_id: str, token: str = Query(default=""), answers: bool = Query(default=False),
+                     with_scheme: bool = Query(default=False)) -> Any:
+    from ..services import pdf
+
+    row = _by_share_token(exam_id, token)
+    try:
+        body = pdf.from_html(_print(row, answers=answers, with_scheme=with_scheme))
+    except pdf.PdfUnavailable as exc:
+        raise_api_error("MODEL_ENDPOINT_UNAVAILABLE", str(exc))
+    suffix = "marking-scheme" if answers else "booklet" if with_scheme else "paper"
+    return Response(content=body, media_type="application/pdf",
+                    headers={"Content-Disposition": f'inline; filename="{exam_id}-{suffix}.pdf"'})
+
+
 @router.get("/exams/{exam_id}/scheme")
 def public_marking_scheme(exam_id: str, token: str = Query(default="")) -> Any:
     """The marking scheme the QR code on the printed paper opens.

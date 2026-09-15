@@ -546,13 +546,19 @@ def freeze_paper_now(params: dict[str, Any], *, created_by: str, base: str) -> d
     logger.info("Paper %s frozen by %s: %d item(s), %s marks, %s",
                 exam_id, created_by, len(paper.items), paper.total_marks, paper.title)
     out = paper.to_dict()
+    # Share links: they carry the paper's own token, so they open in any
+    # browser with no sign-in — which is what a link handed back by an
+    # agent, or pasted to a colleague, has to do.
+    share = f"{base}/api/v1/exams/{exam_id}/print?token={token}"
+    share_pdf = f"{base}/api/v1/exams/{exam_id}/print.pdf?token={token}"
     out["render_urls"] = {
-        "paper": f"{base}/api/v1/exams/{exam_id}/paper.html",
-        "booklet": f"{base}/api/v1/exams/{exam_id}/paper.html?with_scheme=true",
-        "marking_scheme": f"{base}/api/v1/exams/{exam_id}/paper.html?answers=true",
-        "paper_pdf": f"{base}/api/v1/exams/{exam_id}/paper.pdf",
-        "booklet_pdf": f"{base}/api/v1/exams/{exam_id}/paper.pdf?with_scheme=true",
+        "paper": share,
+        "booklet": f"{share}&with_scheme=true",
+        "marking_scheme": f"{share}&answers=true",
+        "paper_pdf": share_pdf,
+        "booklet_pdf": f"{share_pdf}&with_scheme=true",
         "scheme_public": paper.scheme_url,
+        "console": f"{base}/api/v1/exams/{exam_id}/paper.html",
     }
     try:
         from ..services import webhooks

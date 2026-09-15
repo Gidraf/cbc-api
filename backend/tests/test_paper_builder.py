@@ -360,3 +360,18 @@ def test_the_paper_is_headed_with_knecs_own_name_for_the_grade() -> None:
     order = [html.index(x) for x in ("KENYA JUNIOR SCHOOL EDUCATION ASSESSMENT", "GRADE 9 – YEAR 2026",
                                      "'subject'>MATHEMATICS<", "END OF STRAND ASSESSMENT: NUMBERS")]
     assert order == sorted(order), "assessment, grade and year, subject, then the paper's kind"
+
+
+def test_a_papers_share_links_open_with_no_sign_in() -> None:
+    import inspect
+
+    from app.routes import exams, questions
+
+    e = inspect.getsource(exams)
+    for route in ('@router.get("/exams/{exam_id}/print")', '@router.get("/exams/{exam_id}/print.pdf")'):
+        assert route in e
+    body = e[e.index("def public_print("):e.index("def public_marking_scheme(")]
+    assert "Depends(require_roles" not in body, "the share token is the credential"
+    assert "hmac.compare_digest" in inspect.getsource(exams._by_share_token)
+    freeze = inspect.getsource(questions.freeze_paper_now)
+    assert '/print?token={token}' in freeze and '/print.pdf?token={token}' in freeze
