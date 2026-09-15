@@ -112,3 +112,53 @@ def test_the_agent_routes_exist_and_run_the_queues_own_handlers() -> None:
         assert path in source
     assert "curriculum._PIPELINE_HANDLERS.get(station) or curriculum._BUNDLE_HANDLERS.get(station)" in source
     assert "require_roles(" in source
+
+
+def test_a_task_started_again_replays_the_prompts_already_answered(monkeypatch) -> None:
+    """A restart mid-run lost an hour of answered prompts once."""
+    journal: dict[tuple[str, str], tuple[str, str]] = {}
+    monkeypatch.setattr(byom, "_journal_get", lambda k, h: journal.get((k, h)))
+    monkeypatch.setattr(byom, "_journal_put", lambda k, h, s, a, m: journal.__setitem__((k, h), (a, m)))
+
+    def station(kind: str, params: dict) -> dict:
+        one = llm_client.generate(_config(), [{"role": "user", "content": "lesson 1"}])
+        two = llm_client.generate(_config(), [{"role": "user", "content": "lesson 2 after " + one.content["t"]}])
+        return {"t": [one.content["t"], two.content["t"]]}
+
+    first = byom.start("notes", {"grade": "grade-9", "sub_strand": "Integers"}, created_by="a", runner=station)
+    byom.wait(first, 5, since_steps=0)
+    byom.complete(first.task_id, {"t": "L1"}, model="antigravity")
+    byom.wait(first, 5, since_steps=1)
+    assert first.status == byom.AWAITING and first.pending.number == 2
+    # …and here the platform restarts: the task is gone, the journal is not.
+    byom.cancel(first.task_id)
+
+    again = byom.start("notes", {"grade": "grade-9", "sub_strand": "Integers"}, created_by="a", runner=station)
+    byom.wait(again, 5, since_steps=1)
+
+    assert again.status == byom.AWAITING and again.pending.number == 2, "step 1 was replayed, step 2 is asked"
+    assert again.replayed == 1 and again.steps[0].model_used == "antigravity (replayed)"
+    assert "after L1" in again.pending.messages[0]["content"]
+    byom.complete(again.task_id, {"t": "L2"}, model="antigravity")
+    byom.wait(again, 5, since_steps=2)
+    assert again.status == byom.DONE and again.result == {"t": ["L1", "L2"]}
+    assert again.to_dict()["replayed"] == 1
+
+
+def test_a_different_scope_never_replays_another_tasks_answers(monkeypatch) -> None:
+    journal: dict[tuple[str, str], tuple[str, str]] = {}
+    monkeypatch.setattr(byom, "_journal_get", lambda k, h: journal.get((k, h)))
+    monkeypatch.setattr(byom, "_journal_put", lambda k, h, s, a, m: journal.__setitem__((k, h), (a, m)))
+
+    def station(kind: str, params: dict) -> dict:
+        return llm_client.generate(_config(), [{"role": "user", "content": "same prompt"}]).content
+
+    one = byom.start("notes", {"sub_strand": "Integers"}, created_by="a", runner=station)
+    byom.wait(one, 5, since_steps=0)
+    byom.complete(one.task_id, {"x": 1})
+    byom.wait(one, 5, since_steps=1)
+
+    other = byom.start("notes", {"sub_strand": "Fractions"}, created_by="a", runner=station)
+    byom.wait(other, 5, since_steps=0)
+    assert other.status == byom.AWAITING, "another sub-strand's answer is not this one's"
+    byom.cancel(other.task_id)

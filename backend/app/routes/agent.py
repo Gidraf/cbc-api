@@ -104,6 +104,9 @@ def manifest(_: AuthContext = Depends(require_roles("admin", "operator", "develo
             "A station may ask several prompts in a row (a guide is six lessons; a batch of fifty "
             "questions is two chunks plus rewrites). Keep answering until status is 'done'.",
             "GET /api/v1/agent/tasks/{task_id}/wait?seconds=30 long-polls for the next prompt.",
+            "If a task is lost (the platform restarted; GET says 'No live task'), start the SAME task again "
+            "with the same parameters: every prompt already answered is replayed from the journal and you "
+            "are asked only for what is new. Never answer the same prompt twice by hand.",
             "Prompts are the platform's own, assembled from the design, the demand profile and what "
             "was written before. Answer them faithfully — the checks downstream are the platform's "
             "and a wrong answer is caught, rewritten (another prompt to you) or held.",
@@ -311,7 +314,8 @@ def list_tasks(_: AuthContext = Depends(require_roles("admin", "operator", "deve
 def get_task(task_id: str, _: AuthContext = Depends(require_roles("admin", "operator", "developer"))) -> dict[str, Any]:
     task = byom.get(task_id)
     if task is None:
-        raise_api_error("NOT_FOUND", f"No live task {task_id}. If the API restarted, start it again.")
+        raise_api_error("NOT_FOUND", f"No live task {task_id}. The platform restarted; start the same task "
+                                     f"again with the same parameters — answered prompts are replayed.")
     return _view(task)
 
 

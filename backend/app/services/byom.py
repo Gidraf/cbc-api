@@ -71,6 +71,53 @@ class Step:
         return out
 
 
+def task_key(station: str, params: dict[str, Any]) -> str:
+    """One key for 'this station on this scope with these settings', so a
+    task started again after a restart finds the answers its first run
+    collected."""
+    import hashlib
+
+    canon = json.dumps({"station": station, "params": params}, sort_keys=True, ensure_ascii=False, default=str)
+    return hashlib.sha256(canon.encode("utf-8")).hexdigest()[:32]
+
+
+def _prompt_hash(messages: list[dict[str, str]]) -> str:
+    import hashlib
+
+    canon = json.dumps(messages, sort_keys=True, ensure_ascii=False)
+    return hashlib.sha256(canon.encode("utf-8")).hexdigest()[:32]
+
+
+def _journal_get(key: str, prompt_hash: str) -> tuple[str, str] | None:
+    try:
+        from ..infra.db import fetch_one
+
+        row = fetch_one("SELECT answer, model FROM agent_answers WHERE task_key = :k AND prompt_hash = :h",
+                        {"k": key, "h": prompt_hash})
+        if row and row.get("answer"):
+            return str(row["answer"]), str(row.get("model") or "replay")
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("Answer journal not readable: %s", exc)
+    return None
+
+
+def _journal_put(key: str, prompt_hash: str, step: int, answer: str, model: str) -> None:
+    try:
+        from ..infra.db import execute
+
+        execute(
+            """
+            INSERT INTO agent_answers (task_key, prompt_hash, step, answer, model)
+            VALUES (:k, :h, :s, :a, :m)
+            ON CONFLICT (task_key, prompt_hash) DO UPDATE SET answer = EXCLUDED.answer, model = EXCLUDED.model,
+                                                             step = EXCLUDED.step, created_at = NOW()
+            """,
+            {"k": key, "h": prompt_hash, "s": step, "a": answer, "m": model},
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("Answer journal not writable: %s", exc)
+
+
 @dataclass
 class Task:
     task_id: str
@@ -78,6 +125,7 @@ class Task:
     params: dict[str, Any]
     created_by: str
     status: str = RUNNING
+    replayed: int = 0
     steps: list[Step] = field(default_factory=list)
     pending: Step | None = None
     answer: Any = None
@@ -94,7 +142,7 @@ class Task:
             "task_id": self.task_id, "station": self.station, "params": self.params,
             "status": self.status, "created_by": self.created_by,
             "created_at": self.created_at, "finished_at": self.finished_at,
-            "steps_completed": len(self.steps), "error": self.error,
+            "steps_completed": len(self.steps), "replayed": self.replayed, "error": self.error,
             "step": self.pending.to_dict() if self.pending else None,
             "history": [s.to_dict(with_messages=False) for s in self.steps],
         }
@@ -154,6 +202,24 @@ def defer(config: Any, messages: list[dict[str, str]], *, temperature: float,
                 messages=[{"role": str(m.get("role") or "user"), "content": str(m.get("content") or "")}
                           for m in messages], temperature=temperature, expect=expect,
                 effort=effort, asked_at=time.time())
+
+    # Answered before, for this task on this scope? A restart mid-run — a
+    # deploy, a crash — lost an hour of answered prompts once. The prompts
+    # are deterministic given the earlier answers, so the journal replays
+    # them and the agent is asked only for what is new.
+    key = task_key(task.station, task.params)
+    prompt_hash = _prompt_hash(step.messages)
+    journaled = _journal_get(key, prompt_hash)
+    if journaled is not None:
+        raw, model = journaled
+        step.answered_at = time.time()
+        step.model_used = f"{model} (replayed)"
+        step.chars = len(raw)
+        task.steps.append(step)
+        task.replayed += 1
+        _notify(task)
+        logger.info("BYOM task %s step %d replayed from the journal.", task.task_id, step.number)
+        return raw, model
     task.pending = step
     task.answer = None
     task.wake.clear()
@@ -174,6 +240,7 @@ def defer(config: Any, messages: list[dict[str, str]], *, temperature: float,
     step.model_used = model or "agent"
     step.chars = len(raw or "")
     task.steps.append(step)
+    _journal_put(key, prompt_hash, step.number, raw or "", model or "agent")
     task.pending = None
     task.status = RUNNING
     _notify(task)

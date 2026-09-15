@@ -1082,6 +1082,24 @@ MIGRATIONS: list[tuple[str, str]] = [
         );
         """,
     ),
+    (
+        "037_agent_answers",
+        """
+        -- Every prompt an outside agent answered, keyed by the task it was
+        -- for and the prompt itself. A task lost to a restart is started
+        -- again and REPLAYS these instead of asking the agent twice.
+        CREATE TABLE IF NOT EXISTS agent_answers (
+            task_key TEXT NOT NULL,
+            prompt_hash TEXT NOT NULL,
+            step INT NOT NULL DEFAULT 0,
+            answer TEXT NOT NULL DEFAULT '',
+            model TEXT NOT NULL DEFAULT '',
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            PRIMARY KEY (task_key, prompt_hash)
+        );
+        CREATE INDEX IF NOT EXISTS idx_agent_answers_created ON agent_answers(created_at);
+        """,
+    ),
 ]
 
 
