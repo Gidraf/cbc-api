@@ -29,6 +29,7 @@ item and not at the batch.
 from __future__ import annotations
 
 import logging
+import math
 import re
 from dataclasses import dataclass, field
 from typing import Any
@@ -503,6 +504,90 @@ def _as_worked_examples(questions: list[dict[str, Any]], *, grade: str, subject:
         findings.append(Finding(found.kind, says, found.fix, sorted(set(items))))
 
 
+# ── how hard each item is, for the paper as a whole ─────────────────────────
+#
+# A KJSEA paper whose Section A opened with "identify what the integer −3
+# represents" and "state the integer for a debt of KSh 3,400" passed every
+# check: each item was well formed, the keys were right, and the set-level
+# demand rule only failed a paper where NOTHING reached the grade. A paper
+# is judged on its typical item. So each item is placed on a rung, and the
+# weak ones beyond a small allowance fail on their own — which is what sends
+# them back to be rewritten, and what lets the composer pass over them.
+
+_RECALL_STEM = re.compile(
+    r"\b(state|identify|name|write|give)\b.{0,60}\b(integer|sign|directed number)\b"
+    r"|\bwhat (does|is) (the )?(integer|sign)\b.{0,40}\brepresent"
+    r"|\bwhich (integer|sign) represents\b", re.I)
+
+TRIVIAL, BELOW, AT, UNMEASURED = "trivial", "below", "at", "unmeasured"
+_DEGREES = re.compile(r"\^\s*\\?\{?\\circ\}?|°")
+_QUANTITY = re.compile(r"(?<![A-Za-z])[-−+]?\d+(?:[.,]\d+)?")
+
+
+def rung_of(question: dict[str, Any], *, grade: str, subject: str) -> str:
+    """Where one item sits against the grade's floor."""
+    from . import task_demand
+
+    if not task_demand.has_floor(subject):
+        return UNMEASURED
+    example = _as_examples([question])[0]
+    # A degree sign is not an exponent: `$-3^\\circ$C` measured as "-3 ^".
+    example["statement"] = _DEGREES.sub("", example["statement"])
+    demand = task_demand.measure_item(example)
+    floor = task_demand.floor_for(grade, subject)
+    stem = _stem(question)
+    # "State the integer that represents…", "identify what −3 represents":
+    # reading a sign, whatever situation it is dressed in.
+    if _RECALL_STEM.search(stem) and demand.operations <= 1 \
+            and len(question.get("structured_parts") or []) < 2:
+        return TRIVIAL
+    if demand.word_problem or not demand.measurable:
+        # A situation is judged by the work it holds, not by the lines of
+        # working a question does not carry: "was −3°C, rose 9, fell 14" is
+        # three quantities and two operations of real work with no operator
+        # in sight, and `−450 + 750 − 320` set as a trader's day is a
+        # three-step problem whatever one line of scheme says.
+        quantities = len(_QUANTITY.findall(_DEGREES.sub("", stem)))
+        operations = max(demand.total_operations, quantities - 1)
+        needed = floor.operations if floor else 2
+        if quantities >= 3 or operations >= needed:
+            return AT
+        return BELOW if (demand.measurable or quantities >= 2) else UNMEASURED
+    return BELOW if task_demand.check_item(example, grade, subject).below else AT
+
+
+# The share of a paper that may sit below the grade: an easy opener or two.
+WEAK_SHARE = 0.25
+
+
+def _weak_items(questions: list[dict[str, Any]], *, grade: str, subject: str,
+                findings: list[Finding]) -> None:
+    rungs = {_id(q): rung_of(q, grade=grade, subject=subject) for q in questions}
+    weak = [q for q in questions if rungs[_id(q)] in (TRIVIAL, BELOW)]
+    if len(questions) < 4 or not weak:
+        return
+    allowed = max(1, int(math.ceil(WEAK_SHARE * len(questions))))
+    if len(weak) <= allowed:
+        return
+    # The trivial ones first, then the merely-below, so the allowance is
+    # spent on the least bad.
+    # The allowance goes to the least bad, so the trivial ones are the
+    # ones sent back.
+    weak.sort(key=lambda q: 0 if rungs[_id(q)] == BELOW else 1)
+    for question in weak[allowed:]:
+        label = _label(question, questions.index(question) + 1)
+        why = ("asks the learner to read a sign, not to work anything"
+               if rungs[_id(question)] == TRIVIAL else
+               "is a one-step calculation below what this grade's paper sets")
+        findings.append(Finding(
+            "below_the_grade_item",
+            f"{label} {why}. {len(weak)} of {len(questions)} items sit below the grade; "
+            f"a paper may carry {allowed}.",
+            "Set it at the grade: a combined operation with a bracket or a sign rule that decides "
+            "the answer, or a two-step situation with the figures given.",
+            [_id(question)]))
+
+
 # ── entry ────────────────────────────────────────────────────────────────────
 
 def check(questions: list[dict[str, Any]], *, grade: str = "", subject: str = "",
@@ -534,6 +619,10 @@ def check(questions: list[dict[str, Any]], *, grade: str = "", subject: str = ""
     _as_worked_examples(items, grade=grade, subject=subject, strand=strand,
                         sub_strand=sub_strand, findings=findings)
     _answer_in_the_stem(items, findings)
+    try:
+        _weak_items(items, grade=grade, subject=subject, findings=findings)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Could not place the items on the grade's rungs: %s", exc)
     _refers_to_a_figure_it_lacks(items, findings)
     # What the subject's own examiner checks: units and equations in the
     # sciences, passages and the paper's language in the languages.

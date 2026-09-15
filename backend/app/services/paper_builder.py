@@ -203,7 +203,11 @@ def _deal(candidates: list[dict[str, Any]], budget: float, rng: random.Random,
         rng.shuffle(pile)
         # Approved first, then the rest — within the shuffle, so the deal
         # is still different for a different seed. `pop()` takes the end.
-        pile.sort(key=lambda q: 1 if str(q.get("status") or "") == "approved" else 0)
+        # And within that, items AT the grade before items below it: a bank
+        # with seventy items dealt a Section A that opened with "identify
+        # what −3 represents" while harder items sat unused.
+        pile.sort(key=lambda q: (1 if str(q.get("status") or "") == "approved" else 0,
+                                 0 if q.get("_weak") else 1))
 
     taken: dict[tuple[str, str], int] = {}
     ordered: list[tuple[tuple[str, str], dict[str, Any]]] = []
@@ -309,6 +313,15 @@ def compose(items: list[dict[str, Any]], *, kind: str, grade: str, subject: str,
 
     kind = kind if kind in KINDS else "topical"
     pool = [q for q in (items or []) if isinstance(q, dict) and _stem(q)]
+    # Which items sit below the grade, so the deal reaches for them last.
+    try:
+        from . import question_check
+
+        for q in pool:
+            q["_weak"] = question_check.rung_of(q, grade=grade, subject=subject) in (
+                question_check.TRIVIAL, question_check.BELOW)
+    except Exception:  # noqa: BLE001
+        pass
     # Only the scope's own items, whatever the caller handed over.
     if kind == "topical" and sub_strand:
         pool = [q for q in pool
@@ -339,7 +352,7 @@ def compose(items: list[dict[str, Any]], *, kind: str, grade: str, subject: str,
         return paper
     if fmt is not None:
         _compose_to_format(pool, paper, fmt, count, rng)
-        _finish(paper, kind, sub_strand, grade, fmt.time_allowed, list(fmt.instructions),
+        _finish(paper, kind, sub_strand, grade, fmt.time_allowed, _instructions_for(paper, fmt),
                 asked_items=count or fmt.total_items)
         return paper
 
@@ -393,6 +406,36 @@ def compose(items: list[dict[str, Any]], *, kind: str, grade: str, subject: str,
         paper.shortfall = (f"the bank supplied {paper.total_marks:g} of the {marks} marks asked for; "
                            f"generate more items for this scope to fill the paper")
     return paper
+
+
+def _instructions_for(paper: Paper, fmt: Any) -> list[str]:
+    """The format's instructions, with THIS paper's counts in them. The
+    format says a full KJSEA paper has thirty in Section A; a paper with
+    twenty-two must not tell the candidate to answer thirty."""
+    by_letter = {s.letter: s for s in paper.sections}
+    lines: list[str] = ["Write your name, school and assessment number in the spaces provided."]
+    if len(paper.sections) > 1:
+        words = {2: "TWO", 3: "THREE", 4: "FOUR"}.get(len(paper.sections), str(len(paper.sections)))
+        lines.append(f"This paper has {words} sections: "
+                     + " and ".join(s.letter for s in paper.sections) + ". Answer ALL the questions.")
+    else:
+        lines.append(f"This paper has {len(paper.items)} questions. Answer ALL the questions.")
+    for spec in fmt.sections:
+        section = by_letter.get(spec.letter)
+        if section is None:
+            continue
+        n = len(section.items)
+        if spec.marks_each:
+            where = "on the answer sheet provided" if spec.on_answer_sheet else "on this paper"
+            lines.append((f"{spec.heading}: " if spec.heading else "")
+                         + f"{n} multiple choice question{'s' if n != 1 else ''}, answered {where}. "
+                         f"Each has four choices, A, B, C and D; only ONE is correct.")
+        else:
+            lines.append((f"{spec.heading}: " if spec.heading else "")
+                         + f"{n} structured question{'s' if n != 1 else ''} ({section.marks:g} marks), answered "
+                         f"in the spaces provided in this paper. Show your working where marks are given for it.")
+    lines.append("Do NOT remove any page from this paper.")
+    return lines
 
 
 def _finish(paper: Paper, kind: str, sub_strand: str, grade: str, time_allowed: str,

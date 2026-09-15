@@ -382,14 +382,16 @@ EXAM_CSS = """
 .exam .sec { column-span: all; border-top: 1.2px solid #111; border-bottom: 0.6pt solid #111;
              margin: 4px 0 4px; padding: 2px 0; font-weight: 700; font-size: 10pt; text-align: center; }
 .exam .sec small { display: block; font-weight: 400; font-size: 8.2pt; font-style: italic; }
-.exam .q { break-inside: avoid; margin: 0 0 6px; display: grid; grid-template-columns: 1.6em 1fr; gap: 0 3px; }
-.exam .q .n { font-weight: 700; }
-.exam .q .body { min-width: 0; }
+.exam .q { break-inside: avoid; page-break-inside: avoid; -webkit-column-break-inside: avoid;
+           display: block; position: relative; margin: 0 0 7px; padding-left: 1.9em; }
+.exam .q .n { position: absolute; left: 0; top: 0; font-weight: 700; }
+.exam .q .qbody { display: block; column-count: 1; }
 .exam .q .marks { float: right; font-size: 8pt; color: #333; margin-left: 6px; }
-.exam .q .stim { font-style: italic; margin: 0 0 2px; }
+.exam .q .stim { font-style: italic; margin: 0 0 1px; }
+.exam .q .stem + .opts { margin-top: 2px; }
 .exam .q .stem { margin: 0 0 2px; }
 .exam .opts { list-style: none; margin: 1px 0 0; padding: 0; }
-.exam .opts.grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 8px; }
+.exam .opts.grid li { display: inline-block; width: 48%; vertical-align: top; }
 .exam .opts li { padding-left: 1.5em; text-indent: -1.5em; margin: 0; }
 .exam .opts .oid { font-weight: 600; display: inline-block; width: 1.5em; text-indent: 0; }
 .exam .parts { list-style: none; margin: 2px 0 0; padding: 0; }
@@ -418,8 +420,9 @@ EXAM_CSS = """
 .exam .keygrid td, .exam .keygrid th { border: 0.6pt solid #111; padding: 1px 2px; text-align: center; }
 .exam .keygrid th { font-weight: 400; background: #eee; }
 .exam .keygrid td { font-weight: 700; }
-.exam .a { break-inside: avoid; margin: 0 0 4px; display: grid; grid-template-columns: 1.6em 1fr; gap: 0 3px; }
-.exam .a .n { font-weight: 700; }
+.exam .a { break-inside: avoid; page-break-inside: avoid; display: block; position: relative;
+           margin: 0 0 5px; padding-left: 1.9em; }
+.exam .a .n { position: absolute; left: 0; top: 0; font-weight: 700; }
 .exam .a .ans { font-weight: 700; }
 .exam .a .why { color: #222; }
 .exam .a .why .m { font-weight: 600; color: #444; }
@@ -442,7 +445,7 @@ def _figure_key(question: dict[str, Any]) -> str:
 
 
 def _item(question: dict[str, Any], number: int, *, answers: bool, written_space: bool) -> str:
-    out = [f"<div class='q'><span class='n'>{number}.</span><div class='body'>"]
+    out = [f"<div class='q'><span class='n'>{number}.</span><div class='qbody'>"]
     marks = _marks_of(question)
     q_type = str(question.get("question_type") or "").lower()
     if marks and q_type not in ("multiple_choice", "true_false", "matching", "assertion_reason"):

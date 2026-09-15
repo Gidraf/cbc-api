@@ -364,3 +364,34 @@ def inspect_source(fn):
     import inspect
 
     return inspect.getsource(fn)
+
+
+def test_trivial_items_beyond_the_allowance_fail_on_their_own() -> None:
+    """A KJSEA Section A that opened with "identify what −3 represents"
+    passed every check, because only a set where NOTHING reached the
+    grade failed."""
+    batch = _sound_batch() + [
+        _mcq("Q7", "A thermometer records $-3^\\circ$C. Identify what the integer $-3$ represents.",
+             {"A": "3 below zero", "B": "3 above zero", "C": "a fall of 3", "D": "no reading"}, "A"),
+        _mcq("Q8", "State the directed integer that represents an outstanding debt of KSh 3,400.",
+             {"A": "$-3400$", "B": "$+3400$", "C": "$0$", "D": "$\\pm 3400$"}, "A"),
+        _mcq("Q9", "State the integer that represents a deposit of KSh 500.",
+             {"A": "$+500$", "B": "$-500$", "C": "$0$", "D": "$50$"}, "A"),
+        _mcq("Q10", "Work out $7 - 4$.", {"A": "3", "B": "11", "C": "-3", "D": "4"}, "A"),
+    ]
+
+    report = question_check.check(batch, **GRADE9)
+
+    weak = [f for f in report.findings if f.kind == "below_the_grade_item"]
+    names = sorted(i for f in weak for i in f.items)
+    # 4 of 10 sit below the grade; a paper may carry 3 — one has to go, and
+    # it is a trivial one, not the one-step calculation.
+    assert len(names) == 1 and names[0] in ("q-q7", "q-q8", "q-q9")
+    assert question_check.rung_of(batch[9], grade="grade-9", subject="Mathematics") == question_check.BELOW
+    assert question_check.rung_of(batch[6], grade="grade-9", subject="Mathematics") == question_check.TRIVIAL
+    assert question_check.rung_of(batch[0], grade="grade-9", subject="Mathematics") == question_check.AT
+
+
+def test_a_subject_with_no_floor_is_not_placed_on_rungs() -> None:
+    item = _mcq("Q1", "State the main cause of soil erosion in Kenya.", {"A": "a", "B": "b", "C": "c", "D": "d"}, "A")
+    assert question_check.rung_of(item, grade="grade-6", subject="Agriculture and Nutrition") == question_check.UNMEASURED
