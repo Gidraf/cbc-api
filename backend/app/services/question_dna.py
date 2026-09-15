@@ -335,6 +335,7 @@ class QuestionDnaService:
                 "diagram": item.get("diagram"),
                 "model_answer": item.get("model_answer", ""),
                 "marking_scheme": item.get("marking_scheme", ""),
+                "expression": item.get("expression", ""),
                 "rubric": item.get("rubric") or item.get("marking_guide") or {},
             }
 

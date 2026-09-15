@@ -343,6 +343,7 @@ class QuestionNormalizer:
             structured_parts=_normalize_parts(raw.get("structured_parts")),
             model_answer=str(raw.get("model_answer") or raw.get("explanation") or "").strip(),
             marking_scheme=marking_scheme,
+            expression=str(raw.get("expression") or "").strip(),
             rubric=_normalize_rubric(raw.get("kicd_rubric") or raw.get("marking_guide"), marking_scheme),
             diagram=diagram,
             activity_ref=str(raw.get("activity_ref") or "").strip(),

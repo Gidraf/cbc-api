@@ -325,6 +325,12 @@ def prompt_block(grade: str, count: int | None = None, subject: str = "") -> str
         lines.append(f"This batch is {count} items; keep the proportion above within it.")
     lines.append("Every item records `bloom_level` honestly and `difficulty_index` between 0.35 "
                  "and 0.80 — an item outside that band is either below the grade or above it.")
+    lines.append("Every item set in a SITUATION (money, temperature, depth, scores, a journey) also carries "
+                 "`expression`: the whole situation translated into ONE expression the maths engine can "
+                 "work, in LaTeX, using every figure the situation gives — e.g. a trader who starts at "
+                 "−450, earns 3 × 250 and pays 2 × 160 is `-450 + 3\\\\times 250 - 2\\\\times 160`. The engine "
+                 "works it and its value is the key; your job is the translation, and the first line of "
+                 "your marking_scheme says how the situation became that expression (M1).")
     lines.append("Every item — multiple choice included — carries its WORKING or REASON: `marking_scheme` "
                  "with the steps (M1/A1) or the explanation, `model_answer`, and on every option a "
                  "`distractor_rationale` saying why it is right or which mistake produces it. A marking "

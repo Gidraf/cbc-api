@@ -235,7 +235,19 @@ def build(question: dict[str, Any]) -> Solution:
                     ("question_text", "stimulus_context")).strip()
     q_type = str(question.get("question_type") or "").strip().lower()
 
-    solution = _from_engine(stem) if stem else None
+    # The writer's translation of the situation, where it gave one: the
+    # engine works THAT, and the first line of the working says how the
+    # situation became the expression — the mark a scheme awards for
+    # setting up (M1) before any arithmetic.
+    expression = str(question.get("expression") or "").strip()
+    solution = _from_engine(expression) if expression else None
+    if solution is not None:
+        solution.steps.insert(0, Step(n=0, text=f"${expression}$" if "$" not in expression else expression,
+                                      kind=STATEMENT, why="The situation, written as one expression."))
+        for i, step in enumerate(solution.steps, start=1):
+            step.n = i
+    if solution is None:
+        solution = _from_engine(stem) if stem else None
     if solution is None:
         solution = _from_author(question)
     else:

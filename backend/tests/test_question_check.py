@@ -414,3 +414,33 @@ def test_an_item_with_no_working_or_reason_is_a_finding() -> None:
     worked = _mcq("Q8", "Work out $(-3) \\times (-4) + 2$.", {"A": "14", "B": "-14", "C": "10", "D": "-10"}, "A")
     report = question_check.check(_sound_batch() + [worked], **GRADE9)
     assert not any(f.kind == "no_explanation" for f in report.findings)
+
+
+def test_the_writer_translates_and_the_engine_works_the_expression() -> None:
+    """The model does the modelling; the engine does the arithmetic."""
+    item = _mcq("Q7", "A trader starts the day with a balance of $-450$ shillings, earns $3 \\times 250$ "
+                      "shillings and pays $2 \\times 160$ shillings. What is the closing balance?",
+                {"A": "$-20$", "B": "$20$", "C": "$-140$", "D": "$580$"}, "A",
+                expression="-450 + 3\\times 250 - 2\\times 160")
+    report = question_check.check(_sound_batch() + [item], **GRADE9)
+    assert report.clean, [f.says for f in report.findings]
+    assert question_check.rung_of(item, grade="grade-9", subject="Mathematics") == question_check.AT
+
+    wrong_key = dict(item, options=[{**o, "is_correct": o["id"] == "C"} for o in item["options"]], correct_answer="C")
+    report = question_check.check(_sound_batch() + [wrong_key], **GRADE9)
+    assert report.repaired and "-20" in report.repaired[0], "the key moved to the engine's value"
+
+    mistranslated = dict(item, expression="-450 + 750 - 160")
+    report = question_check.check(_sound_batch() + [mistranslated], **GRADE9)
+    assert any(f.kind == "expression_ignores_the_figures" and "250" in f.says for f in report.findings)
+
+
+def test_the_scheme_shows_the_setup_line_then_the_engines_working() -> None:
+    from app.services import solution_builder
+
+    item = _mcq("Q1", "A diver at $-18$ m descends $7$ m, then ascends $8$ m. Where is she?",
+                {"A": "$-17$ m", "B": "$-33$ m", "C": "$17$ m", "D": "$-3$ m"}, "A", expression="-18 - 7 + 8")
+    sol = solution_builder.build(item)
+    assert sol.source == "engine" and sol.answer == "-17"
+    assert "written as one expression" in sol.steps[0].why
+    assert any("-25 + 8" in s.text or "-25" in s.text for s in sol.steps[1:])

@@ -157,12 +157,48 @@ def _as_examples(questions: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 # ── the arithmetic ───────────────────────────────────────────────────────────
 
+_FIGURE = re.compile(r"(?<![A-Za-z\d])\d+(?:[.,]\d+)?")
+
+
+def _translation_faults(question: dict[str, Any], label: str, findings: list[Finding]) -> bool:
+    """Whether the writer's `expression` is an honest translation of the
+    stem: every figure the situation gives must appear in it. A trader who
+    "pays 2 × 160" translated as `-450 + 750 - 160` is a wrong model with
+    right arithmetic, and the engine would bless it. Returns True when the
+    expression is usable."""
+    expression = _text(question.get("expression"))
+    if not expression:
+        return False
+    stem_figures = {f.replace(",", "") for f in _FIGURE.findall(_stem(question))}
+    used = {f.replace(",", "") for f in _FIGURE.findall(expression)}
+    # Numbers the stem uses as labels — a year, "Grade 9", "3 marks" — are
+    # not quantities; only insist on the figures that look like quantities
+    # (two or more of them, at least one absent).
+    missing = sorted(f for f in stem_figures if f not in used and f not in ("1", "2", "0"))
+    if len(stem_figures) >= 2 and missing and len(missing) >= max(1, len(stem_figures) // 2):
+        findings.append(Finding(
+            "expression_ignores_the_figures",
+            f"{label}'s expression \"{expression[:80]}\" leaves out figure(s) the situation gives: "
+            f"{', '.join(missing[:4])}.",
+            "Translate the whole situation into one expression using every figure it gives; the "
+            "engine works the expression and its value is the key.",
+            [_id(question)]))
+        return False
+    return True
+
+
 def _check_key(question: dict[str, Any], label: str, findings: list[Finding],
                report: Report) -> None:
-    """The key against the engine; then every distractor against it too."""
+    """The key against the engine; then every distractor against it too.
+
+    Where the writer translated the situation into `expression`, that is
+    what the engine works — the model did the modelling, the engine does
+    the arithmetic — and the key must be its value."""
     from . import worked_solutions
 
     stem = _stem(question)
+    if _translation_faults(question, label, findings):
+        stem = _text(question.get("expression"))
     key = _key_option(question)
     qid = _id(question)
 
@@ -457,7 +493,8 @@ def _unexplained(questions: list[dict[str, Any]], findings: list[Finding]) -> No
     for index, question in enumerate(questions, start=1):
         options = [o for o in (question.get("options") or []) if isinstance(o, dict)]
         key = next((o for o in options if o.get("is_correct")), None)
-        has = bool(_text(question.get("marking_scheme")) or _text(question.get("model_answer")))
+        has = bool(_text(question.get("marking_scheme")) or _text(question.get("model_answer"))
+                   or _text(question.get("expression")))
         if key is not None and _text(key.get("distractor_rationale") or key.get("rationale")):
             has = True
         if not has and key is not None:
@@ -560,6 +597,20 @@ def rung_of(question: dict[str, Any], *, grade: str, subject: str) -> str:
     example = _as_examples([question])[0]
     # A degree sign is not an exponent: `$-3^\\circ$C` measured as "-3 ^".
     example["statement"] = _DEGREES.sub("", example["statement"])
+    # The writer's translation of a situation is the calculation it holds:
+    # measure that, not the prose around it.
+    if _text(question.get("expression")):
+        # A situation's expression is judged as a situation: the operations
+        # and kinds it holds, not whether a bracket appears — a trader's day
+        # is `-450 + 3 × 250 - 2 × 160`, three steps of real work, no bracket.
+        example["statement"] = _text(question.get("expression"))
+        demand = task_demand.measure_item(example)
+        floor = task_demand.floor_for(grade, subject)
+        needed_ops = floor.operations if floor else 2
+        needed_kinds = floor.kinds if floor else 2
+        enough = (max(demand.operations, demand.total_operations) >= needed_ops
+                  and len(demand.all_kinds or demand.kinds) >= needed_kinds)
+        return AT if enough else BELOW
     demand = task_demand.measure_item(example)
     floor = task_demand.floor_for(grade, subject)
     stem = _stem(question)

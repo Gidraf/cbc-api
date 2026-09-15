@@ -203,6 +203,12 @@ class QuestionItem(BaseModel):
 
     model_answer: str = ""
     marking_scheme: str = ""
+    # The situation, translated into ONE expression the engine can work:
+    # `-450 + 3\\times250 - 2\\times160` for a trader's day. The writer
+    # does the translating — the part a model is good at — and the engine
+    # does the arithmetic — the part it is not. Empty where the item has
+    # no single calculation in it.
+    expression: str = ""
     rubric: KicdRubric = Field(default_factory=KicdRubric)
 
     diagram: DiagramBinding | None = None
@@ -337,6 +343,7 @@ class QuestionItem(BaseModel):
             data["correct_answer"] = self.correct_answer
             data["model_answer"] = self.model_answer
             data["marking_scheme"] = self.marking_scheme
+            data["expression"] = self.expression
             data["rubric"] = self.rubric.model_dump()
             for src, dst in zip(self.structured_parts, data["structured_parts"]):
                 dst["model_answer"] = src.model_answer
