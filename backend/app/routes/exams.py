@@ -302,6 +302,17 @@ def _thawed(row: dict[str, Any]) -> Any:
     snapshot = {**snapshot, "exam_id": row.get("exam_id"), "title": row.get("title"),
                 "grade": row.get("grade"), "subject": row.get("subject"),
                 "time_allowed": row.get("time_allowed"), "instructions": row.get("instructions") or []}
+    # A paper frozen before the public address was set carries a scheme
+    # link — and a QR code — pointing at localhost. The token is right; only
+    # the host is wrong, so it is re-based on the configured address at
+    # print time rather than asking for the paper to be frozen again.
+    from ..services import platform_settings
+
+    scheme_url = str(snapshot.get("scheme_url") or "")
+    if scheme_url and row.get("share_token"):
+        base = platform_settings.public_base_url()
+        if not base.startswith("http://localhost"):
+            snapshot["scheme_url"] = f"{base}/api/v1/exams/{row.get('exam_id')}/scheme?token={row.get('share_token')}"
     return paper_builder.thaw(snapshot, questions)
 
 
