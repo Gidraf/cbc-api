@@ -206,9 +206,17 @@ def _installer(agent: str) -> str:
 # Installs the CBC MCP server for {_AGENT_TITLE[agent]}. Run from this folder:  sh install.sh
 set -e
 HERE="$(cd "$(dirname "$0")" && pwd)"
-SERVER="$HERE/cbc/cbc_mcp.py"
-BASE="$(sed -n 's/^CBC_API_URL=//p' "$HERE/cbc/.env")"
-KEY="$(sed -n 's/^CBC_API_KEY=//p' "$HERE/cbc/.env")"
+# The server lives OUTSIDE the workspace. A coding agent that finds a
+# Python file in its project folder "fixes" it instead of using the tools
+# it provides; a folder holding only the playbook leaves it nothing to edit.
+HOME_KIT="$HOME/.cbc/{agent}"
+mkdir -p "$HOME_KIT"
+cp "$HERE/cbc/cbc_mcp.py" "$HERE/cbc/cbc_agent.py" "$HERE/cbc/.env" "$HOME_KIT/"
+SERVER="$HOME_KIT/cbc_mcp.py"
+BASE="$(sed -n 's/^CBC_API_URL=//p' "$HOME_KIT/.env")"
+KEY="$(sed -n 's/^CBC_API_KEY=//p' "$HOME_KIT/.env")"
+rm -rf "$HERE/cbc"
+echo "server installed at $HOME_KIT (removed from this folder so the agent has nothing to edit)"
 write_json() {{ # $1 = target file
   mkdir -p "$(dirname "$1")"
   if [ -s "$1" ] && grep -q '"mcpServers"' "$1" && ! grep -q '"cbc"' "$1"; then
@@ -240,7 +248,7 @@ case "{agent}" in
                  printf '\n[mcp_servers.cbc]\ncommand = "python3"\nargs = ["%s"]\n[mcp_servers.cbc.env]\nCBC_API_URL = "%s"\nCBC_API_KEY = "%s"\n' "$SERVER" "$BASE" "$KEY" >> "$HOME/.codex/config.toml"
                  echo "wrote ~/.codex/config.toml"; fi
                echo "Now: cd \"$HERE\" && codex   (Codex reads AGENTS.md here)" ;;
-  ollama)      echo "Nothing to install. Run:  sh run.sh questions grade-9 Mathematics Numbers Integers 50 qwen2.5:32b" ;;
+  ollama)      echo "Run:  sh run.sh order grade-7 Mathematics \"\" \"\" 30 qwen2.5:32b" ;;
 esac
 """
 
@@ -250,11 +258,11 @@ def _ollama_runner() -> str:
 # sh run.sh <station|order> <grade> <subject> [strand] [sub_strand] [count] [model] [llm_url]
 #   sh run.sh order grade-7 Mathematics "" "" 30 qwen2.5:32b
 #   sh run.sh questions grade-9 Mathematics Numbers Integers 50 qwen2.5:32b http://localhost:11434/v1
-HERE="$(cd "$(dirname "$0")" && pwd)"
-set -a; . "$HERE/cbc/.env"; set +a
+KIT="$HOME/.cbc/ollama"; [ -f "$KIT/.env" ] || KIT="$(cd "$(dirname "$0")" && pwd)/cbc"
+set -a; . "$KIT/.env"; set +a
 STATION="${1:-order}"; GRADE="$2"; SUBJECT="$3"; STRAND="${4:-}"; SUB="${5:-}"; COUNT="${6:-30}"
 MODEL="${7:-qwen2.5:32b}"; URL="${8:-http://localhost:11434/v1}"
-exec python3 "$HERE/cbc/cbc_agent.py" run --station "$STATION" --grade "$GRADE" --subject "$SUBJECT" \
+exec python3 "$KIT/cbc_agent.py" run --station "$STATION" --grade "$GRADE" --subject "$SUBJECT" \
   --strand "$STRAND" --sub-strand "$SUB" --count "$COUNT" --model "$MODEL" --llm-url "$URL"
 """
 
@@ -274,6 +282,13 @@ def _agent_preface(agent: str, base_url: str) -> str:
                    "are sent back by the checks often."),
     }[agent]
     return f"""# Start here — {title}
+
+**You are an OPERATOR of a platform, not a developer of one.** Talk to the
+platform only through the `cbc` MCP tools (`cbc_manifest`, `cbc_produce`,
+`cbc_start_task`, `cbc_complete_task`, …). Never write or run Python, curl or
+urllib against the API, never edit or "fix" any file in this folder or in
+`~/.cbc/`, and never try to reach `localhost` — there is no server on this
+machine. If a tool is missing, stop and tell the user to refresh MCP servers.
 
 This folder is ready for {title}. The platform at {base_url} assembles every
 prompt and runs every check; {title} answers the prompts on its own model.
