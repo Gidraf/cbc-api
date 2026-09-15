@@ -66,8 +66,10 @@ marking scheme, and returns `result.render_urls` — the paper, the booklet
    50-item batch is 2 chunks plus a rewrite or two; a guide is one per lesson.
 3. If a step's prompt says items FAILED a check and names why, fix exactly
    what is named — the engine's value is right; do not argue with it.
-4. When `status` is `failed`, read `error`, fix the cause (usually: the design
-   is not ingested, or notes are missing for a sub-strand), and start again.
+4. When `status` is `failed`, read `error`. "No sub-strands found" means the
+   design is not ingested: run `cbc_start_task {{station: "ingest", grade, subject}}`
+   (the design document must be in the console's Datasets screen), then start
+   the order again. Notes missing for a sub-strand: the order writes them.
 
 ## Rules for answering prompts
 

@@ -36,8 +36,8 @@ from ..services.auth import AuthContext, require_roles
 logger = logging.getLogger("cbc-agent-api")
 router = APIRouter(prefix="/api/v1/agent", tags=["Agent (bring your own model)"])
 
-STATIONS = ("order", "notes", "diagram", "activity", "material", "media", "simulation", "questions",
-            "strands", "substrands")
+STATIONS = ("order", "ingest", "notes", "diagram", "activity", "material", "media", "simulation",
+            "questions", "strands", "substrands")
 
 
 class StartTaskRequest(BaseModel):
@@ -115,6 +115,11 @@ def manifest(_: AuthContext = Depends(require_roles("admin", "operator", "develo
             "order": ("ONE REQUEST, ONE PRODUCT: {station: 'order', grade, subject, kind: 'term'|'topical'|'strand', "
                       "term: 1, count: 30}. Works out the sub-strands, runs notes/diagram/questions where missing, "
                       "composes and freezes the paper, returns print links. Answer every step until done."),
+            "ingest": ("read a grade's KICD design for one learning area into strands, sub-strands, outcomes, "
+                       "experiences and rubrics — the spine every other station reads. Needs the design document "
+                       "in the Datasets screen first. {station: 'ingest', grade, subject}. Run this before an "
+                       "order on a subject that has never been ingested; an order on one refuses with "
+                       "'No sub-strands found'."),
             "notes": "the teacher's guide for a sub-strand (per-lesson prompts, then checks and rewrites)",
             "diagram": "plan the sub-strand's figures, then draw each (maps are drawn by the platform)",
             "activity": "activities and experiments",
@@ -123,7 +128,7 @@ def manifest(_: AuthContext = Depends(require_roles("admin", "operator", "develo
             "media": "media prompts", "simulation": "simulation briefs",
             "strands": "read the design's strands", "substrands": "one strand's sub-strands (draft)",
         },
-        "order": ["ingest (console)", "strands", "substrands", "notes", "diagram", "questions",
+        "order": ["ingest (design document uploaded in Datasets)", "strands", "substrands", "notes", "diagram", "questions",
                   "then compose and freeze a paper: GET /api/v1/questions/paper/exam.json, "
                   "POST /api/v1/questions/paper/freeze"],
         "engines": {
