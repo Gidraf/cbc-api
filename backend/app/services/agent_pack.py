@@ -213,12 +213,31 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 # it provides; a folder holding only the playbook leaves it nothing to edit.
 HOME_KIT="$HOME/.cbc/{agent}"
 mkdir -p "$HOME_KIT"
-cp "$HERE/cbc/cbc_mcp.py" "$HERE/cbc/cbc_agent.py" "$HERE/cbc/.env" "$HOME_KIT/"
+# Run twice, and there is nothing left to copy: the folder is removed below.
+# A second run is the common case — after a fix, or when the config was lost —
+# so it rewrites the config from what is already installed rather than failing
+# with three cp errors and leaving the agent pointing at nothing.
+if [ -f "$HERE/cbc/cbc_mcp.py" ]; then
+  cp "$HERE/cbc/cbc_mcp.py" "$HERE/cbc/cbc_agent.py" "$HERE/cbc/.env" "$HOME_KIT/"
+  rm -rf "$HERE/cbc"
+  echo "server installed at $HOME_KIT (removed from this folder so the agent has nothing to edit)"
+elif [ -f "$HOME_KIT/cbc_mcp.py" ]; then
+  echo "server already at $HOME_KIT — keeping it and rewriting the config."
+  echo "To UPDATE the server, download a fresh kit from the console, unzip it over this folder, and run this again."
+else
+  echo "Nothing to install: this folder has no cbc/ and there is no server at $HOME_KIT."
+  echo "Download the kit again from the console (Providers -> Agent kits -> Download kit),"
+  echo "unzip it into this folder, then run: sh install.sh"
+  exit 1
+fi
 SERVER="$HOME_KIT/cbc_mcp.py"
 BASE="$(sed -n 's/^CBC_API_URL=//p' "$HOME_KIT/.env")"
 KEY="$(sed -n 's/^CBC_API_KEY=//p' "$HOME_KIT/.env")"
-rm -rf "$HERE/cbc"
-echo "server installed at $HOME_KIT (removed from this folder so the agent has nothing to edit)"
+if [ -z "$KEY" ]; then
+  echo "No API key in $HOME_KIT/.env — download a fresh kit and unzip it here."
+  exit 1
+fi
+echo "server version: $(grep -o '"version": "[0-9.]*"' "$SERVER" | head -1 | cut -d'"' -f4)"
 write_json() {{ # $1 = target file
   mkdir -p "$(dirname "$1")"
   if [ -s "$1" ] && grep -q '"mcpServers"' "$1" && ! grep -q '"cbc"' "$1"; then
