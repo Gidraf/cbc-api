@@ -210,8 +210,18 @@ def make_pack_link(payload: PackLinkRequest, request: Request,
     base = platform_settings.public_base_url(request)
     url = f"{base}/api/v1/agent/pack/dl/{token}"
     stem = "-".join(p for p in ("cbc", payload.agent, payload.grade) if p) + ".zip"
+    # One line that both installs and UPDATES. The zip goes to /tmp, not the
+    # workspace: the installer removes `cbc/` after installing (an agent that
+    # finds Python in its folder edits it), so `sh install.sh` on its own in an
+    # already-installed folder has nothing to copy — the fix is to fetch the
+    # kit again, which this does, rather than to re-run the script alone.
+    folder = "~/cbc-papers"
+    command = (f'mkdir -p {folder} && curl -fsSL "{url}" -o /tmp/{stem}'
+               f' && unzip -o /tmp/{stem} -d {folder} && rm -f /tmp/{stem}'
+               f' && cd {folder} && sh install.sh')
     return {"url": url, "expires_in_minutes": payload.minutes, "single_use": True,
-            "curl": f'curl -fsSL "{url}" -o {stem} && unzip -o {stem} -d ~/cbc-papers && cd ~/cbc-papers && sh install.sh',
+            "folder": folder,
+            "curl": command,
             "note": "Anyone with this link can fetch the kit once before it expires, and the kit carries an "
                     "operator key. Paste it into a terminal or a browser; do not post it anywhere."}
 

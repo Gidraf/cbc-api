@@ -179,6 +179,25 @@ const AGENT_KITS: { id: string; title: string; blurb: string; icon: string }[] =
   { id: "ollama", title: "Ollama / local model", icon: "◉", blurb: "No agent needed: `sh run.sh order grade-7 Mathematics \"\" \"\" 30 qwen2.5:32b`." },
 ];
 
+/** The one error everybody hits, and its cure, beside the commands. */
+function InstallerHelp() {
+  return (
+    <details style={{ fontSize: "var(--text-xs)", color: "var(--ink-3)" }}>
+      <summary style={{ cursor: "pointer" }}>
+        Seeing <code>cp: …/cbc/cbc_mcp.py: No such file or directory</code>?
+      </summary>
+      <div style={{ marginTop: "var(--s2)" }}>
+        That means <code>sh install.sh</code> was run on its own in a folder that was already installed
+        from. The installer copies the MCP server to <code>~/.cbc/&lt;agent&gt;/</code> and then removes
+        it from the folder, so your agent has no Python in its workspace to "fix" — which leaves nothing
+        to copy on a second run. Don't re-run the script by itself: use <b>Copy link for CLI</b> above,
+        which fetches a fresh kit, unzips it over the folder and installs in one line. Your key is not
+        affected. Then refresh MCP servers in the agent.
+      </div>
+    </details>
+  );
+}
+
 function AgentKits() {
   const { role } = useAuth();
   const grades = useGrades();
@@ -192,8 +211,14 @@ function AgentKits() {
   const canMint = role === "admin" || role === "operator";
 
   const [downloaded, setDownloaded] = React.useState<{ agent: string; file: string } | null>(null);
+  // Unzip AND install in one line. `install.sh` removes the server from the
+  // folder after installing (an agent that finds Python in its workspace edits
+  // it instead of using the tools), so running the script on its own in a
+  // folder that was installed from once fails with
+  // `cp: …/cbc/cbc_mcp.py: No such file or directory`. The cure is always to
+  // unzip a kit over the folder first — which is what these commands do.
   const afterDownload = (file: string) =>
-    `unzip -o ~/Downloads/${file} -d ~/cbc-papers && cd ~/cbc-papers && sh install.sh`;
+    `mkdir -p ~/cbc-papers && unzip -o ~/Downloads/${file} -d ~/cbc-papers && cd ~/cbc-papers && sh install.sh`;
 
   async function download(agent: string) {
     try {
@@ -269,6 +294,7 @@ function AgentKits() {
                 <Button size="sm" onClick={() => navigator.clipboard.writeText(afterDownload(downloaded.file)).then(() => toast("Copied.", "ok"))}>Copy command</Button>
               </Stack>
               <div style={{ color: "var(--ink-3)", fontSize: "var(--text-xs)" }}>Then open ~/cbc-papers in the agent (Antigravity: refresh MCP servers; Claude Code: run `claude` there; Codex: run `codex` there) and ask for a paper.</div>
+              <InstallerHelp />
             </Stack>
           </div>
         )}
@@ -281,6 +307,11 @@ function AgentKits() {
                 <Button size="sm" onClick={() => navigator.clipboard.writeText(made.curl).then(() => toast("Copied.", "ok"))}>Copy command</Button>
                 <Button size="sm" variant="ghost" onClick={() => navigator.clipboard.writeText(made.url).then(() => toast("Copied.", "ok"))}>Copy URL only</Button>
               </Stack>
+              <div style={{ color: "var(--ink-3)", fontSize: "var(--text-xs)" }}>
+                This one line both installs and updates: it fetches the kit, unzips it over ~/cbc-papers and
+                runs the installer. Use it again whenever the platform is redeployed, then refresh MCP servers.
+              </div>
+              <InstallerHelp />
             </Stack>
           </div>
         )}

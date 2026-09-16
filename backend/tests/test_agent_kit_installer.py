@@ -91,3 +91,26 @@ def test_an_empty_folder_says_what_to_do_rather_than_writing_a_broken_config(tmp
     assert out.returncode == 1
     assert "Download the kit again" in out.stdout
     assert not (home / ".gemini" / "antigravity" / "mcp_config.json").exists()
+
+
+def test_the_cli_command_fetches_a_kit_before_installing(monkeypatch):
+    """`sh install.sh` alone cannot work twice, so the copied command must
+    always unzip a fresh kit over the folder first."""
+    from app.infra import db
+    from app.routes import agent as agent_routes
+    from app.services import platform_settings
+
+    monkeypatch.setattr(platform_settings, "public_base_url",
+                        lambda request=None: "https://papers.example.co.ke")
+    monkeypatch.setattr(db, "execute", lambda *a, **k: None)
+
+    out = agent_routes.make_pack_link(
+        agent_routes.PackLinkRequest(agent="antigravity", grade="grade-9"),
+        request=None,
+        auth=type("A", (), {"subject": "ops@example.com", "role": "operator", "auth_type": "session"})(),
+    )
+    command = out["curl"]
+    assert command.index("curl") < command.index("unzip") < command.index("sh install.sh")
+    assert "-d ~/cbc-papers" in command and "mkdir -p ~/cbc-papers" in command
+    assert "/tmp/" in command, "the zip is not left in the agent's workspace"
+    assert out["url"] in command and out["folder"] == "~/cbc-papers"
