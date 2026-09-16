@@ -133,8 +133,17 @@ def _from_engine(stem: str) -> Solution | None:
         why = str(getattr(step, "explanation", "") or "").strip()
         if not text.strip():
             continue
+        # The engine writes LaTeX — `\times`, `\div`, `5^3`. Handed to the
+        # page unmarked, the renderer treats each command as a loose fragment
+        # and typesets "(2 \times" and "150) \div" as separate spans, so a
+        # step printed with its brackets unclosed, its operands out of order
+        # and its powers as carets. One span per step, as the writer's own
+        # `$…$` lines already are.
+        text = text.strip()
+        if "$" not in text:
+            text = f"${text}$"
         solution.steps.append(
-            Step(n=n, text=text.strip(), kind=CALCULATION, why=why,
+            Step(n=n, text=text, kind=CALCULATION, why=why,
                  # The engine derives the route; it does not award marks.
                  marks=0.0))
     if not solution.steps:

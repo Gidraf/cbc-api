@@ -144,14 +144,22 @@ def _reason(left: Fraction, op: str, right: Fraction, result: Fraction) -> str:
     if op == "*":
         if left < 0 and right < 0:
             return "A negative multiplied by a negative gives a positive."
-        if left < 0 or right < 0:
+        # Say which side is negative. "A positive multiplied by a negative"
+        # printed under (−28) ÷ 4 describes a different sum from the one on
+        # the line, and a learner checking the rule against the numbers finds
+        # they do not match.
+        if left < 0:
+            return "A negative multiplied by a positive gives a negative."
+        if right < 0:
             return "A positive multiplied by a negative gives a negative."
         return "Multiply the two numbers."
     if op == "/":
-        if (left < 0) != (right < 0):
-            return "A positive divided by a negative gives a negative."
         if left < 0 and right < 0:
             return "A negative divided by a negative gives a positive."
+        if left < 0:
+            return "A negative divided by a positive gives a negative."
+        if right < 0:
+            return "A positive divided by a negative gives a negative."
         return "Divide the two numbers."
     if op == "+":
         if right < 0:

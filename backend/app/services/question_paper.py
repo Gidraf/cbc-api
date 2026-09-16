@@ -574,11 +574,19 @@ def _scheme_item(question: dict[str, Any], number: int) -> str:
             out.append(f"<li>{_math(step.text)}"
                        + (f" <span class='r'>{_math(step.why)}</span>" if step.why else "") + "</li>")
         out.append("</ol>")
+    # What the working already says is not said again. The author's scheme is
+    # often what BECAME the steps — the item then printed "M1 for setting up
+    # −18 + 12 − 5 + 8; A1 for final position −3 m" as step one and again
+    # underneath it, word for word.
+    shown = " ".join(step.text for step in worked.steps[:8])
     explained = False
-    if scheme and not (worked.steps and worked.source == "engine" and _same_text(scheme, model_answer)):
+    if (scheme
+            and not (worked.steps and worked.source == "engine" and _same_text(scheme, model_answer))
+            and not _same_text(scheme, shown)):
         out.append(f"<div class='sc'>{_math(scheme[:700])}</div>")
         explained = True
-    if model_answer and not _same_text(model_answer, scheme) and not _same_text(model_answer, answer):
+    if model_answer and not _same_text(model_answer, shown) \
+            and not _same_text(model_answer, scheme) and not _same_text(model_answer, answer):
         out.append(f"<div class='why'>{_math(model_answer[:500])}</div>")
         explained = True
     if key is not None:
