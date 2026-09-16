@@ -460,8 +460,19 @@ class CurriculumExtractorService:
         probe_grade, _probe_level = _grade_from_text(raw_text, payload_meta)
         published = expected_subjects(probe_grade) if probe_grade else []
 
+        # What the dataset says this document is. From Grade 1 up KICD
+        # publishes one design per subject, and the title is the only thing
+        # that says which — the pages themselves name every other subject in
+        # their links and lesson tables.
+        declared_subject = str(
+            payload_meta.get("subject")
+            or payload_meta.get("declared_subject")
+            or payload_meta.get("title")
+            or ""
+        )
         try:
-            sections = split_learning_areas(raw_text, published)
+            sections = split_learning_areas(raw_text, published,
+                                            declared_subject=declared_subject)
         except Exception as exc:  # noqa: BLE001
             logger.warning("Could not test for combined learning areas: %s", exc)
             sections = []
@@ -470,9 +481,18 @@ class CurriculumExtractorService:
             return self._ingest_one(raw_text, payload_meta)
 
         grade = probe_grade
-        from .design_sections import missing_learning_areas
+        from .design_sections import announced_areas, missing_learning_areas
 
-        absent = missing_learning_areas(sections, published) if published else []
+        # Judge the document on what IT says it holds. A grade's catalogue
+        # lists every subject KICD publishes for that grade, which is the
+        # right yardstick for the one combined design that carries them all
+        # (Pre-Primary) and the wrong one for a single subject's design — it
+        # reported twelve areas "missing" from a German document and failed
+        # the item over them.
+        announced = announced_areas(raw_text, published)
+        expected = announced if len(announced) >= 2 else published
+        published = expected
+        absent = missing_learning_areas(sections, expected) if expected else []
         if absent:
             # The catalogue says these exist for this grade and the document did
             # not yield them. Saying so at ingest is the difference between a

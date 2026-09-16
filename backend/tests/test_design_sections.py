@@ -455,8 +455,8 @@ def test_ingest_reports_which_learning_areas_are_missing(monkeypatch) -> None:
     # Force one area to be undiscoverable, as if it were absent from the PDF.
     real_split = design_sections.split_learning_areas
 
-    def split_without_maths(text, published=None):
-        return [s for s in real_split(text, published)
+    def split_without_maths(text, published=None, **kwargs):
+        return [s for s in real_split(text, published, **kwargs)
                 if s.learning_area != "Mathematical Activities"]
 
     monkeypatch.setattr(extractor, "split_learning_areas", split_without_maths, raising=False)
@@ -547,7 +547,7 @@ def test_a_partial_ingest_raises_but_keeps_the_work(monkeypatch) -> None:
     original = ds.split_learning_areas
     monkeypatch.setattr(
         ds, "split_learning_areas",
-        lambda text, published=None: [
+        lambda text, published=None, **kwargs: [
             s for s in original(text, published)
             if s.learning_area != "Mathematical Activities"
         ],
@@ -582,7 +582,7 @@ def test_strict_can_be_turned_off_for_a_caller_that_wants_the_payload() -> None:
     import pytest as _pytest
     with _pytest.MonkeyPatch.context() as mp:
         mp.setattr(ds, "split_learning_areas",
-                   lambda text, published=None: [
+                   lambda text, published=None, **kwargs: [
                        s for s in original(text, published)
                        if s.learning_area != "Mathematical Activities"])
         mp.setattr(extractor.CurriculumExtractorService, "_ingest_one",

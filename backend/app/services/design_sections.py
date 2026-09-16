@@ -245,6 +245,26 @@ def _recover_missing_areas(
     return sorted(banners + recovered, key=lambda entry: entry[2])
 
 
+def announced_areas(text_or_pages: Any, published: list[str] | None = None) -> list[str]:
+    """The published learning areas the document's own contents page lists.
+
+    This is the difference between a document that IS a grade's combined
+    design — Pre-Primary prints all seven on its contents page — and one
+    subject's design that merely mentions other subjects in a "Link to other
+    Learning Areas" row. Only the first can be judged on whether every
+    published area came out of it.
+    """
+    if not published:
+        return []
+    pages = text_or_pages if isinstance(text_or_pages, list) else parse_pages(str(text_or_pages))
+    out: list[str] = []
+    for title in _contents_titles(pages):
+        name = canonical_area_name(title, published)
+        if name in published and name not in out:
+            out.append(name)
+    return out
+
+
 def missing_learning_areas(sections: list[DesignSection], published: list[str]) -> list[str]:
     """Published areas the split did not produce. Empty is the correct answer."""
     got = {_squash(_normalise(s.learning_area)) for s in sections}
@@ -269,11 +289,23 @@ def _cover_area(pages: list[Page], published: list[str]) -> str:
     return ""
 
 
-def split_learning_areas(text: str, published: list[str] | None = None) -> list[DesignSection]:
+def split_learning_areas(text: str, published: list[str] | None = None, *,
+                         declared_subject: str = "") -> list[DesignSection]:
     """The learning areas a combined design contains, in document order.
 
     Returns [] when the document holds a single learning area — the ordinary
     case — so callers can treat "not combined" as the default.
+
+    ``declared_subject`` is what the catalogue entry says this document is
+    (its title or subject in the dataset). KICD publishes one design per
+    subject from Grade 1 up, and every one of them names other subjects
+    inside itself — the lesson-allocation table lists all sixteen, and every
+    sub-strand carries "Link to other Learning Areas". Searching the pages
+    for published names therefore finds subjects that are references, not
+    sections: a Grade 9 GERMAN design was split into German, Mathematics,
+    Agriculture and Kiswahili, filing three designs made of cross-references
+    and then failing the item for the twelve areas a German document was
+    never going to contain.
     """
     pages = parse_pages(text)
     if len(pages) < 4:
@@ -325,6 +357,24 @@ def split_learning_areas(text: str, published: list[str] | None = None) -> list[
     # So the cover has the final say: if it declares an area and the split does
     # not contain it, the split is reading cross-references, not sections.
     declared = _cover_area(pages, published or [])
+    if not declared and declared_subject:
+        # No usable cover — a Kiswahili design's cover is Swahili prose — so
+        # fall back on what the dataset says this document is.
+        name = canonical_area_name(declared_subject, published or [])
+        declared = name if published and name in published else ""
+
+    # A document that lists several learning areas on its own contents page is
+    # the grade's combined design and the split is real. One that does not, but
+    # declares a subject, is that subject's design whatever names appear inside.
+    announced = announced_areas(pages, published or [])
+    if declared and len(announced) < 2:
+        logger.info(
+            "Document declares '%s' and lists no contents of its own; treating it as a "
+            "single-area design rather than the %d section(s) the search found: %s",
+            declared, len(banners), ", ".join(t for _n, t, _i in banners)[:120],
+        )
+        return []
+
     if declared:
         squashed = _squash(_normalise(declared))
         if not any(
