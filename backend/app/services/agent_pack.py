@@ -292,6 +292,13 @@ urllib against the API, never edit or "fix" any file in this folder or in
 `~/.cbc/`, and never try to reach `localhost` — there is no server on this
 machine. If a tool is missing, stop and tell the user to refresh MCP servers.
 
+**A task outlives the connection.** Every tool call answers within about a
+minute; a task runs for hours on the platform behind them. If a call comes
+back with `ok: false` and a `task_id`, or the MCP server is reloaded, do not
+start over: call `cbc_get_task` with that `task_id` (or `cbc_list_tasks` to
+find it) and carry on answering its steps. A finished task keeps its result
+and print links. Only start a new `cbc_produce` for a new paper.
+
 This folder is ready for {title}. The platform at {base_url} assembles every
 prompt and runs every check; {title} answers the prompts on its own model.
 Your API key is in `cbc/.env` and already inside the config the installer
