@@ -170,3 +170,21 @@ def test_a_thinking_models_reasoning_is_stripped_from_the_answer(monkeypatch):
     out = cbc_agent._model("http://localhost:11434/v1", "qwen3:14b", [{"role": "user", "content": "x"}],
                            expect="json", temperature=0.3)
     assert out == '{"questions": []}'
+
+
+def test_a_prompt_wider_than_ollamas_window_is_warned_about_once(capsys, monkeypatch):
+    monkeypatch.setattr(cbc_agent, "_context_warned", False)
+    monkeypatch.delenv("OLLAMA_CONTEXT_LENGTH", raising=False)
+    cbc_agent._warn_if_prompt_exceeds_context(40_000, "http://localhost:11434/v1")
+    cbc_agent._warn_if_prompt_exceeds_context(40_000, "http://localhost:11434/v1")
+    out = capsys.readouterr().out
+    assert out.count("WARNING") == 1 and "OLLAMA_CONTEXT_LENGTH=16384" in out
+
+    monkeypatch.setattr(cbc_agent, "_context_warned", False)
+    monkeypatch.setenv("OLLAMA_CONTEXT_LENGTH", "16384")
+    cbc_agent._warn_if_prompt_exceeds_context(40_000, "http://localhost:11434/v1")
+    assert "WARNING" not in capsys.readouterr().out, "a window that fits is not warned about"
+
+    monkeypatch.setattr(cbc_agent, "_context_warned", False)
+    cbc_agent._warn_if_prompt_exceeds_context(40_000, "https://api.deepseek.com/v1")
+    assert "WARNING" not in capsys.readouterr().out, "only Ollama has the small default"

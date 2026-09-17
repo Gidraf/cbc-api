@@ -120,6 +120,27 @@ def download_paper(result: dict[str, Any], folder: str, label: str) -> list[str]
     return saved
 
 
+_context_warned = False
+
+
+def _warn_if_prompt_exceeds_context(chars: int, llm_url: str) -> None:
+    """Ollama's window is 4,096 tokens unless told otherwise, and a prompt
+    longer than it is cut short WITHOUT an error: the model answers a
+    prompt it never saw the end of, and every check downstream fails it.
+    The platform's prompts run to 6–12k tokens."""
+    global _context_warned
+    if _context_warned or "11434" not in llm_url:
+        return
+    tokens = chars // 4
+    limit = int(os.getenv("OLLAMA_CONTEXT_LENGTH") or 0)
+    if tokens > 3500 and (not limit or tokens > limit - 500):
+        _context_warned = True
+        print(f"\n  WARNING: this prompt is about {tokens:,} tokens. Ollama's default window is 4,096 and "
+              f"it truncates silently. Start Ollama with a bigger window before trusting any output:\n"
+              f"    OLLAMA_CONTEXT_LENGTH=16384 OLLAMA_KEEP_ALIVE=-1 ollama serve\n"
+              f"  (set the same variable in this shell so this check can see it)")
+
+
 def run(args: argparse.Namespace) -> dict[str, Any]:
     started = time.time()
     body: dict[str, Any] = {
@@ -140,6 +161,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         if status == "awaiting" and task.get("step"):
             step = task["step"]
             chars = sum(len(m["content"]) for m in step["messages"])
+            _warn_if_prompt_exceeds_context(chars, args.llm_url)
             print(f"  step {step['number']} ({step['stage']}, {chars:,} chars) → {args.model} …", end="", flush=True)
             t0 = time.time()
             answer = _model(args.llm_url, args.model, step["messages"], expect=step["expect"],
