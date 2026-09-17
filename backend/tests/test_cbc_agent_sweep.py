@@ -68,7 +68,7 @@ def fakes(monkeypatch, tmp_path):
 
 def _args(tmp_path, **over):
     base = dict(from_grade="grade-6", to_grade="grade-7", grades=None, subjects=None, terms=[1, 2],
-                count=30, instructions="", download=str(tmp_path / "papers"), redo=False,
+                order="given", count=30, instructions="", download=str(tmp_path / "papers"), redo=False,
                 model="qwen2.5:32b", llm_url="http://localhost:11434/v1")
     base.update(over)
     return argparse.Namespace(**base)
@@ -139,3 +139,34 @@ def test_the_pdf_falls_back_to_html_when_the_pdf_service_is_down(fakes, capsys):
                               "booklet": "http://x/9/print?token=a&with_scheme=true"}}
     saved = cbc_agent.download_paper(result, str(tmp_path / "p"), "g")
     assert [os.path.basename(s) for s in saved] == ["g-exam-9-booklet.html"]
+
+
+def test_middle_out_starts_in_the_middle_and_widens_a_step_each_way():
+    grades = [f"grade-{n}" for n in range(6, 13)]
+    assert cbc_agent.middle_out(grades) == ["grade-9", "grade-10", "grade-8", "grade-11", "grade-7", "grade-12", "grade-6"]
+    assert cbc_agent.middle_out(["grade-7", "grade-8"]) == ["grade-7", "grade-8"]
+
+
+def test_a_grade_finishes_before_the_next_and_a_term_before_the_next_term(fakes):
+    platform, fetched, tmp_path = fakes
+    platform.fail.clear()
+    cbc_agent.sweep(_args(tmp_path, from_grade="grade-6", to_grade="grade-7", terms=[3, 1]))
+    order = [(b["grade"], b["term"], b["subject"]) for b in platform.started]
+    assert order == [("grade-6", 3, "Mathematics"), ("grade-6", 3, "English"),
+                     ("grade-6", 1, "Mathematics"), ("grade-6", 1, "English"),
+                     ("grade-7", 3, "Mathematics"), ("grade-7", 1, "Mathematics")]
+
+
+def test_a_thinking_models_reasoning_is_stripped_from_the_answer(monkeypatch):
+    import io
+    import urllib.request
+
+    class _Resp(io.BytesIO):
+        headers = {}
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+    body = {"choices": [{"message": {"content": "<think>\nlet me see\n</think>\n{\"questions\": []}"}}]}
+    monkeypatch.setattr(urllib.request, "urlopen", lambda req, timeout=0: _Resp(json.dumps(body).encode()))
+    out = cbc_agent._model("http://localhost:11434/v1", "qwen3:14b", [{"role": "user", "content": "x"}],
+                           expect="json", temperature=0.3)
+    assert out == '{"questions": []}'

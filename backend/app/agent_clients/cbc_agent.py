@@ -15,6 +15,12 @@ PDFs in ./papers and a ledger there so a stopped sweep resumes:
 
     python3 cbc_agent.py sweep --from grade-6 --to grade-12 --model qwen2.5:32b --download ./papers
 
+Middle-out — Grade 9 first, then 10, 8, 11, 7, 12, 6 — each grade finished
+before the next, and every subject's Term 3 paper before any Term 1:
+
+    python3 cbc_agent.py sweep --from grade-6 --to grade-12 --order middle-out --terms 3 1 2 \\
+        --model qwen3:14b --download ./papers
+
 The platform assembles each prompt; this answers it on the model you name
 and posts the answer back; the platform checks, repairs, draws and files.
 Your machine only needs to reach the platform and the model — the platform
@@ -63,7 +69,14 @@ def _model(llm_url: str, model: str, messages: list[dict[str, str]], *, expect: 
                                  method="POST", headers=headers)
     with urllib.request.urlopen(req, timeout=1800) as resp:
         out = json.loads(resp.read().decode())
-    return str(((out.get("choices") or [{}])[0].get("message") or {}).get("content") or "")
+    content = str(((out.get("choices") or [{}])[0].get("message") or {}).get("content") or "")
+    # Thinking models (qwen3, deepseek-r1) may put their reasoning in the
+    # content; the platform wants the answer.
+    if "<think>" in content:
+        import re
+
+        content = re.sub(r"<think>.*?</think>", "", content, flags=re.S).strip()
+    return content
 
 
 def _fetch(url: str, path: str) -> int:
@@ -171,6 +184,24 @@ def _grades_between(first: str, last: str) -> list[str]:
     return _GRADES[lo:hi + 1]
 
 
+def middle_out(grades: list[str]) -> list[str]:
+    """Grade 9, 10, 8, 11, 7, 12, 6: start where the market is and widen a
+    step each way, so there is something to sell after the first day
+    rather than after the last."""
+    if len(grades) < 3:
+        return list(grades)
+    mid = len(grades) // 2
+    out = [grades[mid]]
+    step = 1
+    while len(out) < len(grades):
+        if mid + step < len(grades):
+            out.append(grades[mid + step])
+        if mid - step >= 0:
+            out.append(grades[mid - step])
+        step += 1
+    return out
+
+
 def _ingested_subjects(grade: str) -> list[str]:
     out = _platform("GET", f"/api/v1/admin/langfuse/datasets/{grade}/subjects")
     return [str(s["name"]) for s in out.get("subjects") or [] if s.get("ingested")]
@@ -189,6 +220,9 @@ def sweep(args: argparse.Namespace) -> None:
     grades = _grades_between(args.from_grade, args.to_grade) if args.from_grade else list(args.grades or [])
     if not grades:
         raise SystemExit("name the grades: --from grade-6 --to grade-12, or --grades grade-7 grade-8")
+    if getattr(args, "order", "") == "middle-out":
+        grades = middle_out(grades)
+    print("grade order: " + " → ".join(grades))
     os.makedirs(args.download, exist_ok=True)
     ledger_path = os.path.join(args.download, "sweep-ledger.json")
     ledger: dict[str, Any] = {}
@@ -201,6 +235,9 @@ def sweep(args: argparse.Namespace) -> None:
         with open(ledger_path, "w", encoding="utf-8") as fh:
             json.dump(ledger, fh, indent=1)
 
+    # A grade is finished before the next begins, and within a grade every
+    # subject's paper for the first term named comes before any second-term
+    # paper — a complete set for one term is what a school buys.
     plan: list[tuple[str, str, int]] = []
     for grade in grades:
         try:
@@ -208,8 +245,8 @@ def sweep(args: argparse.Namespace) -> None:
         except SystemExit as exc:
             print(f"{grade}: could not list subjects — {exc}")
             continue
-        for subject in subjects:
-            for term in args.terms:
+        for term in args.terms:
+            for subject in subjects:
                 plan.append((grade, subject, term))
     print(f"{len(plan)} paper(s) planned across {len(grades)} grade(s); ledger at {ledger_path}")
 
@@ -274,7 +311,10 @@ def main() -> None:
     w.add_argument("--to", dest="to_grade", default="grade-12", help="last grade, e.g. grade-12")
     w.add_argument("--grades", nargs="*", help="or an explicit list: grade-7 grade-8")
     w.add_argument("--subjects", nargs="*", help="only these subjects (default: every ingested one)")
-    w.add_argument("--terms", nargs="*", type=int, default=[1, 2, 3])
+    w.add_argument("--terms", nargs="*", type=int, default=[1, 2, 3],
+                   help="in priority order: --terms 3 1 2 does every subject's Term 3 paper first")
+    w.add_argument("--order", choices=["given", "middle-out"], default="given",
+                   help="middle-out: start in the middle of the range and widen a step each way (9, 10, 8, 11, 7, 12, 6)")
     w.add_argument("--count", type=int, default=30)
     w.add_argument("--instructions", default="")
     w.add_argument("--download", default=os.getenv("CBC_DOWNLOAD_DIR", os.path.join(os.getcwd(), "papers")))

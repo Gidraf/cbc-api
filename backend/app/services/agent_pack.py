@@ -286,8 +286,10 @@ set -a; . "$KIT/.env"; set +a
 HERE="$(cd "$(dirname "$0")" && pwd)"
 if [ "$1" = "sweep" ]; then
   FROM="${2:-grade-6}"; TO="${3:-grade-12}"; MODEL="${4:-qwen2.5:32b}"; URL="${5:-${LLM_URL:-http://localhost:11434/v1}}"
+  # Middle-out (9, 10, 8, 11, 7, 12, 6), each grade finished before the next;
+  # TERMS="3 1 2" puts every subject's Term 3 paper before any Term 1.
   exec python3 "$KIT/cbc_agent.py" sweep --from "$FROM" --to "$TO" --model "$MODEL" --llm-url "$URL" \
-    --download "$HERE/papers"
+    --order "${ORDER:-middle-out}" --terms ${TERMS:-1 2 3} --download "$HERE/papers"
 fi
 STATION="${1:-order}"; GRADE="$2"; SUBJECT="$3"; STRAND="${4:-}"; SUB="${5:-}"; COUNT="${6:-30}"
 MODEL="${7:-qwen2.5:32b}"; URL="${8:-${LLM_URL:-http://localhost:11434/v1}}"
