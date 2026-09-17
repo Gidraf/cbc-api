@@ -276,15 +276,25 @@ esac
 
 def _ollama_runner() -> str:
     return """#!/bin/sh
-# sh run.sh <station|order> <grade> <subject> [strand] [sub_strand] [count] [model] [llm_url]
-#   sh run.sh order grade-7 Mathematics "" "" 30 qwen2.5:32b
-#   sh run.sh questions grade-9 Mathematics Numbers Integers 50 qwen2.5:32b http://localhost:11434/v1
+# One paper:    sh run.sh order grade-7 Mathematics "" "" 30 qwen2.5:32b            (Term 1; TERM=2 sh run.sh … for Term 2)
+# One station:  sh run.sh questions grade-9 Mathematics Numbers Integers 50 qwen2.5:32b http://localhost:11434/v1
+# Everything:   sh run.sh sweep grade-6 grade-12 qwen2.5:32b                        (every ingested subject, Terms 1-3,
+#                                                                                    PDFs into ./papers, resumes if stopped)
+# The model can be any OpenAI-compatible endpoint: set LLM_URL and LLM_API_KEY in cbc/.env.
 KIT="$HOME/.cbc/ollama"; [ -f "$KIT/.env" ] || KIT="$(cd "$(dirname "$0")" && pwd)/cbc"
 set -a; . "$KIT/.env"; set +a
+HERE="$(cd "$(dirname "$0")" && pwd)"
+if [ "$1" = "sweep" ]; then
+  FROM="${2:-grade-6}"; TO="${3:-grade-12}"; MODEL="${4:-qwen2.5:32b}"; URL="${5:-${LLM_URL:-http://localhost:11434/v1}}"
+  exec python3 "$KIT/cbc_agent.py" sweep --from "$FROM" --to "$TO" --model "$MODEL" --llm-url "$URL" \
+    --download "$HERE/papers"
+fi
 STATION="${1:-order}"; GRADE="$2"; SUBJECT="$3"; STRAND="${4:-}"; SUB="${5:-}"; COUNT="${6:-30}"
-MODEL="${7:-qwen2.5:32b}"; URL="${8:-http://localhost:11434/v1}"
+MODEL="${7:-qwen2.5:32b}"; URL="${8:-${LLM_URL:-http://localhost:11434/v1}}"
+EXTRA=""
+if [ "$STATION" = "order" ]; then EXTRA="--kind term --term ${TERM:-1} --download $HERE/papers"; fi
 exec python3 "$KIT/cbc_agent.py" run --station "$STATION" --grade "$GRADE" --subject "$SUBJECT" \
-  --strand "$STRAND" --sub-strand "$SUB" --count "$COUNT" --model "$MODEL" --llm-url "$URL"
+  --strand "$STRAND" --sub-strand "$SUB" --count "$COUNT" --model "$MODEL" --llm-url "$URL" $EXTRA
 """
 
 
@@ -299,6 +309,9 @@ def _agent_preface(agent: str, base_url: str) -> str:
         "codex": ("Run `sh install.sh` once (it adds `[mcp_servers.cbc]` to `~/.codex/config.toml`), then "
                   "`codex` in this folder. Codex reads `AGENTS.md`. Then type your request."),
         "ollama": ("No agent: `sh run.sh order grade-7 Mathematics \"\" \"\" 30 qwen2.5:32b` runs a whole "
+                   "order on your local model and saves the PDFs in ./papers; `sh run.sh sweep grade-6 grade-12 "
+                   "qwen2.5:32b` does every ingested subject of every grade, Terms 1–3, unattended, resuming "
+                   "where it stopped. Runs a whole "
                    "order on your local model and prints the print links. 32B+ models hold up; 7B ones "
                    "are sent back by the checks often."),
     }[agent]

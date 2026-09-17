@@ -5,6 +5,16 @@
         --strand Numbers --sub-strand Integers --count 50 \\
         --model llama3.1:70b --llm-url http://localhost:11434/v1
 
+One paper, saved as PDFs:
+
+    python3 cbc_agent.py run --station order --grade grade-9 --subject Mathematics --kind term --term 1 \\
+        --count 30 --model qwen2.5:32b --download ./papers
+
+Every grade from 6 to 12, every ingested subject, every term, unattended —
+PDFs in ./papers and a ledger there so a stopped sweep resumes:
+
+    python3 cbc_agent.py sweep --from grade-6 --to grade-12 --model qwen2.5:32b --download ./papers
+
 The platform assembles each prompt; this answers it on the model you name
 and posts the answer back; the platform checks, repairs, draws and files.
 Your machine only needs to reach the platform and the model — the platform
@@ -56,14 +66,62 @@ def _model(llm_url: str, model: str, messages: list[dict[str, str]], *, expect: 
     return str(((out.get("choices") or [{}])[0].get("message") or {}).get("content") or "")
 
 
-def run(args: argparse.Namespace) -> None:
+def _fetch(url: str, path: str) -> int:
+    """A print link (tokenised; no key needed) to a local file. Bytes written."""
+    req = urllib.request.Request(url, headers={"Accept": "application/pdf, text/html"})
+    with urllib.request.urlopen(req, timeout=180) as resp:
+        body = resp.read()
+        kind = resp.headers.get("Content-Type", "")
+    if "json" in kind:
+        raise RuntimeError(body.decode("utf-8", "replace")[:200])
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    with open(path, "wb") as fh:
+        fh.write(body)
+    return len(body)
+
+
+def download_paper(result: dict[str, Any], folder: str, label: str) -> list[str]:
+    """The booklet (paper + scheme) and the answer sheet, as PDFs, into
+    `folder`. The PDF service may be down; the HTML prints the same page."""
+    urls = (result.get("render_urls") or {}) if isinstance(result, dict) else {}
+    paper = (result.get("paper") or {}) if isinstance(result, dict) else {}
+    exam_id = str(paper.get("exam_id") or "paper")
+    saved: list[str] = []
+    wanted = [("booklet_pdf", "booklet", ".pdf"), ("booklet", "booklet", ".html"),
+              ("answer_sheet", "answer-sheet", ".html"), ("paper_pdf", "paper", ".pdf")]
+    got_booklet = False
+    for key, what, ext in wanted:
+        url = urls.get(key)
+        if not url or (what == "booklet" and got_booklet):
+            continue
+        path = os.path.join(folder, f"{label}-{exam_id}-{what}{ext}")
+        try:
+            size = _fetch(url, path)
+        except Exception as exc:  # noqa: BLE001
+            print(f"  could not save {what}{ext}: {str(exc)[:120]}")
+            continue
+        saved.append(path)
+        print(f"  saved {path} ({size:,} bytes)")
+        if what == "booklet":
+            got_booklet = True
+    return saved
+
+
+def run(args: argparse.Namespace) -> dict[str, Any]:
     started = time.time()
-    task = _platform("POST", "/api/v1/agent/tasks", {
+    body: dict[str, Any] = {
         "station": args.station, "grade": args.grade, "subject": args.subject,
         "strand": args.strand, "sub_strand": args.sub_strand, "count": args.count,
         "custom_instructions": args.instructions, "wait_seconds": 30,
-    })
-    print(f"task {task['task_id']} — {args.station} for {args.grade} {args.subject} {args.sub_strand or args.strand}")
+    }
+    if getattr(args, "kind", ""):
+        body["kind"] = args.kind
+    if getattr(args, "term", None):
+        body["term"] = args.term
+    task = _platform("POST", "/api/v1/agent/tasks", body)
+    print(f"task {task['task_id']} — {args.station} for {args.grade} {args.subject} "
+          f"{args.sub_strand or args.strand or (f'term {args.term}' if getattr(args, 'term', None) else '')}"
+          + (" (joined a task already running)" if task.get("joined_existing") else ""))
     while True:
         status = task.get("status")
         if status == "awaiting" and task.get("step"):
@@ -91,6 +149,107 @@ def run(args: argparse.Namespace) -> None:
                 value = {k: value[k] for k in ("artifact_id", "version", "passed", "overall_score", "score",
                                                "clean", "drawn", "of") if k in value}
             print(f"  {key}: {value}")
+    for line in (result.get("progress") or [])[-6:] if isinstance(result, dict) else []:
+        print(f"  {line.get('what')}: {line.get('detail')}")
+    if isinstance(result, dict) and result.get("render_urls"):
+        for key in ("booklet_pdf", "booklet", "answer_sheet"):
+            if result["render_urls"].get(key):
+                print(f"  {key}: {result['render_urls'][key]}")
+        if getattr(args, "download", ""):
+            label = f"{args.grade}-{args.subject.lower().replace(' ', '-')}" + (f"-term{args.term}" if getattr(args, "term", None) else "")
+            download_paper(result, args.download, label)
+    return task
+
+
+# ── Every grade, every subject, every term, unattended ───────────────────────
+
+_GRADES = ["grade-pp1", "grade-pp2"] + [f"grade-{n}" for n in range(1, 13)]
+
+
+def _grades_between(first: str, last: str) -> list[str]:
+    lo, hi = _GRADES.index(first), _GRADES.index(last)
+    return _GRADES[lo:hi + 1]
+
+
+def _ingested_subjects(grade: str) -> list[str]:
+    out = _platform("GET", f"/api/v1/admin/langfuse/datasets/{grade}/subjects")
+    return [str(s["name"]) for s in out.get("subjects") or [] if s.get("ingested")]
+
+
+def sweep(args: argparse.Namespace) -> None:
+    """Every ingested subject of every grade in the range, one paper per
+    term, one after another, each saved as PDFs — and a ledger in the
+    download folder so a sweep stopped overnight picks up where it was.
+
+    A subject with no sub-strands yet is skipped and named; a paper that
+    fails is recorded and the sweep moves on. Nothing here needs a person
+    at the keyboard: the platform assembles the prompts, the model you
+    name answers them, and the PDFs land in the folder.
+    """
+    grades = _grades_between(args.from_grade, args.to_grade) if args.from_grade else list(args.grades or [])
+    if not grades:
+        raise SystemExit("name the grades: --from grade-6 --to grade-12, or --grades grade-7 grade-8")
+    os.makedirs(args.download, exist_ok=True)
+    ledger_path = os.path.join(args.download, "sweep-ledger.json")
+    ledger: dict[str, Any] = {}
+    if os.path.exists(ledger_path):
+        with open(ledger_path, encoding="utf-8") as fh:
+            ledger = json.load(fh)
+
+    def remember(key: str, entry: dict[str, Any]) -> None:
+        ledger[key] = {**entry, "at": time.strftime("%Y-%m-%d %H:%M")}
+        with open(ledger_path, "w", encoding="utf-8") as fh:
+            json.dump(ledger, fh, indent=1)
+
+    plan: list[tuple[str, str, int]] = []
+    for grade in grades:
+        try:
+            subjects = args.subjects or _ingested_subjects(grade)
+        except SystemExit as exc:
+            print(f"{grade}: could not list subjects — {exc}")
+            continue
+        for subject in subjects:
+            for term in args.terms:
+                plan.append((grade, subject, term))
+    print(f"{len(plan)} paper(s) planned across {len(grades)} grade(s); ledger at {ledger_path}")
+
+    done = failed = skipped = 0
+    for grade, subject, term in plan:
+        key = f"{grade}|{subject}|term{term}"
+        if key in ledger and ledger[key].get("status") == "done" and not args.redo:
+            skipped += 1
+            continue
+        print(f"\n=== {grade} · {subject} · Term {term} ===")
+        run_args = argparse.Namespace(
+            station="order", grade=grade, subject=subject, strand="", sub_strand="",
+            count=args.count, instructions=args.instructions, model=args.model, llm_url=args.llm_url,
+            kind="term", term=term, download=args.download,
+        )
+        try:
+            task = run(run_args)
+        except SystemExit as exc:
+            # The platform refused the start (no sub-strands, bad key…).
+            failed += 1
+            remember(key, {"status": "refused", "error": str(exc)[:300]})
+            print(f"  refused: {str(exc)[:200]}")
+            continue
+        except Exception as exc:  # noqa: BLE001
+            failed += 1
+            remember(key, {"status": "error", "error": str(exc)[:300]})
+            print(f"  error: {str(exc)[:200]}")
+            continue
+        result = task.get("result") or {}
+        if task.get("status") == "done" and isinstance(result, dict) and (result.get("paper") or {}).get("exam_id"):
+            done += 1
+            remember(key, {"status": "done", "exam_id": result["paper"]["exam_id"],
+                           "questions": result["paper"].get("question_count"),
+                           "links": result.get("render_urls") or {}})
+        else:
+            failed += 1
+            remember(key, {"status": task.get("status") or "failed", "error": str(task.get("error") or "")[:300],
+                           "task_id": task.get("task_id")})
+    print(f"\nsweep finished: {done} paper(s) saved, {failed} failed, {skipped} already done. "
+          f"Run the same command again to retry the failures.")
 
 
 def main() -> None:
@@ -104,13 +263,31 @@ def main() -> None:
     p.add_argument("--sub-strand", dest="sub_strand", default="")
     p.add_argument("--count", type=int, default=None)
     p.add_argument("--instructions", default="")
+    p.add_argument("--kind", default="", help="order: term | topical | strand")
+    p.add_argument("--term", type=int, default=None, help="order: 1, 2 or 3")
+    p.add_argument("--download", default="", help="folder to save the paper's PDFs into when the order is done")
     p.add_argument("--model", required=True, help="e.g. llama3.1:70b, qwen2.5:32b, gpt-4.1")
     p.add_argument("--llm-url", dest="llm_url", default=os.getenv("LLM_URL", "http://localhost:11434/v1"),
                    help="OpenAI-compatible base URL; Ollama serves /v1")
+    w = sub.add_parser("sweep", help="every ingested subject of every grade in a range, one paper per term, unattended")
+    w.add_argument("--from", dest="from_grade", default="", help="first grade, e.g. grade-6")
+    w.add_argument("--to", dest="to_grade", default="grade-12", help="last grade, e.g. grade-12")
+    w.add_argument("--grades", nargs="*", help="or an explicit list: grade-7 grade-8")
+    w.add_argument("--subjects", nargs="*", help="only these subjects (default: every ingested one)")
+    w.add_argument("--terms", nargs="*", type=int, default=[1, 2, 3])
+    w.add_argument("--count", type=int, default=30)
+    w.add_argument("--instructions", default="")
+    w.add_argument("--download", default=os.getenv("CBC_DOWNLOAD_DIR", os.path.join(os.getcwd(), "papers")))
+    w.add_argument("--redo", action="store_true", help="re-run papers the ledger already marks done")
+    w.add_argument("--model", required=True)
+    w.add_argument("--llm-url", dest="llm_url", default=os.getenv("LLM_URL", "http://localhost:11434/v1"))
     args = parser.parse_args()
     if not KEY:
         sys.exit("set CBC_API_KEY (an API key from the console's Providers page)")
-    run(args)
+    if args.command == "sweep":
+        sweep(args)
+    else:
+        run(args)
 
 
 if __name__ == "__main__":
