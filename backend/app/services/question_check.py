@@ -471,6 +471,49 @@ def _figures_unused(questions: list[dict[str, Any]], diagrams: list[Any],
             "read a value off it, or say what it shows."))
 
 
+# The share of a batch set on a figure, a table or a chart in a subject whose
+# papers carry them. A Grade 9 Mathematics paper came out 2 figures in 29 —
+# the writer had the contract and used it twice — while the KNEC sample it
+# is modelled on reads values off number lines, thermometers, tables and
+# graphs every few items. Nothing asked for more, so nothing was sent back.
+FIGURE_SHARE = 0.15
+_FIGURE_FAMILIES = ("mathematics", "science", "social", "other")
+
+
+def _has_figure(question: dict[str, Any]) -> bool:
+    return bool(question.get("diagram") or question.get("figure")
+                or question.get("question_type") == "diagram_based")
+
+
+def _few_figures(questions: list[dict[str, Any]], *, subject: str, findings: list[Finding]) -> None:
+    """Too few items on a figure for a subject whose papers are full of them."""
+    from .subject_checks import family_of
+
+    if len(questions) < 10 or family_of(subject) not in _FIGURE_FAMILIES:
+        return
+    if any(f.kind == "figure_not_supplied" for f in findings):
+        return  # fix what asked for a figure and lacks one first
+    have = sum(1 for q in questions if _has_figure(q))
+    want = int(math.ceil(FIGURE_SHARE * len(questions)))
+    if have >= want:
+        return
+    # Send back the items easiest to re-set on data: expression-only items
+    # with no situation, from the end of the batch, as many as are short.
+    bare = [q for q in questions if not _has_figure(q) and not _text(q.get("stimulus_context"))]
+    chosen = (bare or [q for q in questions if not _has_figure(q)])[-(want - have):]
+    for question in chosen:
+        label = _label(question, questions.index(question) + 1)
+        findings.append(Finding(
+            "few_figures",
+            f"{label}: only {have} of {len(questions)} items are set on a figure, a table or a "
+            f"chart; a paper in this subject carries at least {want}.",
+            "Re-set this item on data the learner reads: a number line, a thermometer, a table, "
+            "a bar or line graph, a shape with its dimensions — given as `figure` data so it is "
+            "drawn. The question must need the figure: read a value off it, compare two, or "
+            "work from what it shows.",
+            [_id(question)]))
+
+
 def _refers_to_a_figure_it_lacks(questions: list[dict[str, Any]], findings: list[Finding]) -> None:
     for index, question in enumerate(questions, start=1):
         if question.get("diagram"):
@@ -711,6 +754,7 @@ def check(questions: list[dict[str, Any]], *, grade: str = "", subject: str = ""
     _outcomes_uncovered(items, design_row, findings)
     _all_recall(items, findings)
     _figures_unused(items, diagrams or [], findings)
+    _few_figures(items, subject=subject, findings=findings)
 
     # One finding per (kind, item set): the example reading and the engine
     # can name the same repeat twice.

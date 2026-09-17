@@ -2443,7 +2443,11 @@ the question uses. Kinds and their fields:
   {"kind": "fraction", "parts": 8, "shaded": 3, "form": "bar"}
   {"kind": "angle", "degrees": 135, "label": "x"}
 The stem then says "Study the figure below" or "In the figure below, …". A figure that is a lesson
-diagram already drawn for this sub-strand is referred to by `diagram_ref` instead.""",
+diagram already drawn for this sub-strand is referred to by `diagram_ref` instead.
+HOW MANY: at least one item in six is set on a figure, a table or a chart wherever the topic
+allows — a number line or thermometer for directed numbers, a table of prices or readings, a bar
+or line graph, a shape with its dimensions, a clock. The national papers read values off figures
+every few items; a batch that carries fewer is sent back with items to re-set.""",
     "questions-rewrite-directive": """=== REWRITE, DO NOT REGENERATE ===
 The batch you wrote for {{ sub_strand }} ({{ grade }}, {{ subject }}) has been checked
 item by item — every answer the maths engine could solve was solved, every item was

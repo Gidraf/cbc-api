@@ -444,3 +444,72 @@ def test_the_scheme_shows_the_setup_line_then_the_engines_working() -> None:
     assert sol.source == "engine" and sol.answer == "-17"
     assert "written as one expression" in sol.steps[0].why
     assert any("-25 + 8" in s.text or "-25" in s.text for s in sol.steps[1:])
+
+
+# ── figures: a share, not a mention ─────────────────────────────────────────
+
+def _bare_items(n: int, with_figures: int = 0) -> list[dict]:
+    items = []
+    for i in range(n):
+        q = {"question_id": f"q{i}", "display_label": f"Q{i + 1}",
+             "question_type": "multiple_choice",
+             "question_text": f"Work out $({i} - 7) \\times (-2)$",
+             "options": [{"id": "A", "text": str((i - 7) * -2), "is_correct": True},
+                         {"id": "B", "text": "0"}],
+             "marking_scheme": "M1 A1"}
+        if i < with_figures:
+            q["diagram"] = {"diagram_id": f"d{i}"}
+            q["question_text"] = "Study the number line below and read P."
+        items.append(q)
+    return items
+
+
+def test_a_mathematics_batch_with_almost_no_figures_is_sent_back_for_some():
+    from app.services import question_check as qc
+
+    findings: list = []
+    qc._few_figures(_bare_items(29, with_figures=2), subject="Mathematics", findings=findings)
+    few = [f for f in findings if f.kind == "few_figures"]
+    assert len(few) == 3, "2 of 29 → 5 wanted → 3 items re-set"
+    assert all(len(f.items) == 1 for f in few)
+    assert "at least 5" in few[0].says and "figure" in few[0].fix
+    assert {f.items[0] for f in few} == {"q26", "q27", "q28"}, "the last bare items go back"
+
+
+def test_a_batch_with_its_share_of_figures_passes():
+    from app.services import question_check as qc
+
+    findings: list = []
+    qc._few_figures(_bare_items(20, with_figures=3), subject="Mathematics", findings=findings)
+    assert findings == []
+
+
+def test_languages_and_small_batches_are_not_asked_for_figures():
+    from app.services import question_check as qc
+
+    findings: list = []
+    qc._few_figures(_bare_items(30), subject="English", findings=findings)
+    qc._few_figures(_bare_items(30), subject="Kiswahili", findings=findings)
+    qc._few_figures(_bare_items(6), subject="Mathematics", findings=findings)
+    assert findings == []
+
+
+def test_few_figures_waits_until_missing_figures_are_bound():
+    from app.services import question_check as qc
+
+    findings = [qc.Finding("figure_not_supplied", "Q3 says study a figure", "", ["q2"])]
+    qc._few_figures(_bare_items(30), subject="Mathematics", findings=findings)
+    assert [f.kind for f in findings] == ["figure_not_supplied"]
+
+
+def test_few_figures_is_an_item_finding_the_rewrite_loop_acts_on():
+    from app.services import question_check as qc
+    from app.services import questions_remediation as qr
+
+    items = _bare_items(20)
+    findings: list = []
+    qc._few_figures(items, subject="Integrated Science", findings=findings)
+    targets = [f.items[0] for f in findings]
+    to_rewrite, lines, asks = qr.instruction(items, findings, targets)
+    assert len(to_rewrite) == 3 and len(lines) == 3 and asks == []
+    assert "Re-set this item on data" in lines[0]
