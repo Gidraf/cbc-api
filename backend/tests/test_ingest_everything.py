@@ -123,18 +123,15 @@ def test_nothing_to_do_does_not_start_the_worker(queue, monkeypatch):
 
 
 def test_missing_structure_is_queued_as_a_strands_then_substrands_pipeline(queue, monkeypatch):
-    from app.infra import db
-
-    def fetch_all(sql, params=None):
-        assert "HAVING COUNT(s.id) = 0" in sql
-        return [{"grade": "grade-7", "subject": "Mathematics", "n": 0}]
-    monkeypatch.setattr(db, "fetch_all", fetch_all)
+    monkeypatch.setattr(dw, "missing_structure", lambda grade="", subject="": [
+        {"grade": "grade-7", "subject": "Mathematics", "needs": "strands", "strands": []}])
 
     out = al.structure_everything(_auth())
     assert out["queued"] == 1
     kind, grade, subject, payload = queue.jobs[0]
     assert (kind, grade, subject) == ("pipeline", "grade-7", "Mathematics")
     assert payload["steps"] == ["strands", "substrands"] and payload["index"] == 0
+    assert payload["auto_save"] is True, "saved as it goes — nobody is at the console to accept sixteen subjects"
     assert queue.started == 1
 
 

@@ -66,11 +66,17 @@ def run_pass(*, force: bool = False, then_structure: bool = True,
             )
             queued.append({"grade": slug, "item_id": row["item_id"], "job_id": job.job_id,
                            "title": row.get("title", "")})
-    if queued:
+    structure: list[dict[str, Any]] = []
+    if then_structure:
+        try:
+            structure = queue_missing_structure()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Could not queue missing structure: %s", exc)
+    if queued or structure:
         job_queue.start_worker()
     result = {
         "queued": len(queued), "skipped": skipped, "grades_synced": len(synced),
-        "jobs": queued, "synced": synced,
+        "jobs": queued, "synced": synced, "structure_queued": structure,
         "note": (f"{len(queued)} document(s) queued across {len(synced)} grade(s); they run one at a "
                  f"time. Strands and sub-strands follow each document automatically where the "
                  f"extractor left a learning area without them."),
@@ -79,34 +85,85 @@ def run_pass(*, force: bool = False, then_structure: bool = True,
     return result
 
 
-def queue_missing_structure(grade: str = "", subject: str = "") -> list[dict[str, Any]]:
-    """A strands → sub-strands pipeline for each ingested learning area with
-    no sub-strands — the spine every station reads."""
-    from ..infra.db import fetch_all
-    from . import job_queue
+def missing_structure(grade: str = "", subject: str = "") -> list[dict[str, Any]]:
+    """Every ingested learning area whose spine is incomplete, and what it lacks.
 
-    rows = fetch_all(
+    Two shapes. A design with no strands at all (the extractor could not read
+    its summary table) needs strands, then sub-strands. A design whose strands
+    are known but some have no sub-strands — Grade 9 Mathematics had Term 1's
+    and none after — needs sub-strands for just those strands. The second was
+    invisible to a count of zero, and orders for Terms 2 and 3 were refused
+    while the console read "ingested".
+    """
+    from ..infra.db import fetch_all
+
+    designs = fetch_all(
         """
-        SELECT d.grade, d.subject, COUNT(s.id) AS n
-        FROM curriculum_designs d
-        LEFT JOIN curriculum_substrands s ON s.design_id = d.design_id
-        WHERE d.subject <> ''
-          AND (:grade = '' OR REPLACE(LOWER(d.grade), 'grade-', '') = REPLACE(LOWER(:grade), 'grade-', ''))
-          AND (:subject = '' OR LOWER(d.subject) = LOWER(:subject))
-        GROUP BY d.grade, d.subject
-        HAVING COUNT(s.id) = 0
-        ORDER BY d.grade, d.subject
+        SELECT design_id, grade, subject, metadata FROM curriculum_designs
+        WHERE subject <> ''
+          AND (:grade = '' OR REPLACE(LOWER(grade), 'grade-', '') = REPLACE(LOWER(:grade), 'grade-', ''))
+          AND (:subject = '' OR LOWER(subject) = LOWER(:subject))
+        ORDER BY grade, subject, updated_at DESC
         """,
         {"grade": grade, "subject": subject},
     ) or []
-    queued = []
-    for row in rows:
-        job = job_queue.enqueue(
-            "pipeline", str(row["grade"]), str(row["subject"]),
-            {"steps": ["strands", "substrands"], "index": 0, "custom_instructions": ""},
-            queued_by="datasets",
-        )
-        queued.append({"grade": row["grade"], "subject": row["subject"], "job_id": job.job_id})
+    counts: dict[tuple[str, str, str], int] = {}
+    for row in fetch_all(
+        "SELECT LOWER(grade) AS grade, LOWER(subject) AS subject, LOWER(strand_name) AS strand, "
+        "COUNT(*) AS n FROM curriculum_substrands GROUP BY 1, 2, 3"
+    ) or []:
+        counts[(str(row["grade"]), str(row["subject"]), str(row["strand"]))] = int(row["n"])
+
+    seen: set[tuple[str, str]] = set()
+    out: list[dict[str, Any]] = []
+    for d in designs:
+        key = (str(d["grade"]).lower(), str(d["subject"]).lower())
+        if key in seen:
+            continue  # the newest design for the area is the one that counts
+        seen.add(key)
+        strands = [s for s in ((d.get("metadata") or {}).get("strands") or []) if isinstance(s, dict)]
+        names = [str(s.get("strand_name") or s.get("name") or "") for s in strands]
+        names = [n for n in names if n]
+        if not names:
+            out.append({"grade": d["grade"], "subject": d["subject"], "needs": "strands",
+                        "strands": []})
+            continue
+        bare = [{"strand": n, "strand_id": str(next((s.get("strand_id") for s in strands
+                                                       if str(s.get("strand_name") or s.get("name") or "") == n), "") or "")}
+                for n in names if counts.get((key[0], key[1], n.lower()), 0) == 0]
+        if bare:
+            out.append({"grade": d["grade"], "subject": d["subject"], "needs": "substrands",
+                        "strands": bare, "of": len(names)})
+    return out
+
+
+def queue_missing_structure(grade: str = "", subject: str = "") -> list[dict[str, Any]]:
+    """Queue what `missing_structure` names, saving as it goes — the spine
+    every station reads, with nobody needed at the console to accept it."""
+    from . import job_queue
+
+    queued: list[dict[str, Any]] = []
+    for area in missing_structure(grade, subject):
+        g, s = str(area["grade"]), str(area["subject"])
+        if area["needs"] == "strands":
+            job = job_queue.enqueue(
+                "pipeline", g, s,
+                {"steps": ["strands", "substrands"], "index": 0, "custom_instructions": "",
+                 "auto_save": True},
+                queued_by="datasets",
+            )
+            queued.append({"grade": g, "subject": s, "job_id": job.job_id, "needs": "strands + sub-strands"})
+            continue
+        for strand in area["strands"]:
+            job = job_queue.enqueue(
+                "pipeline", g, s,
+                {"steps": ["substrands"], "index": 0, "custom_instructions": "",
+                 "auto_save": True, "strand_id": strand.get("strand_id") or ""},
+                strand=str(strand["strand"]),
+                queued_by="datasets",
+            )
+            queued.append({"grade": g, "subject": s, "strand": strand["strand"], "job_id": job.job_id,
+                           "needs": "sub-strands"})
     return queued
 
 

@@ -655,6 +655,27 @@ def get_grade_subjects(
     """Subjects KICD publishes for this grade, each marked ingested or missing."""
     grade_slug = validate_grade_dataset(grade)
     summary = langfuse_context_service.get_grade_subject_summary(grade_slug)
+    # "Ingested" means a design exists. An order needs SUB-STRANDS, and a
+    # design can be ingested with none (the extractor could not read its
+    # tables) or with some strands' only — an agent that ordered every
+    # 'ingested' subject of Grade 9 was refused on fourteen of sixteen. Say
+    # how many sub-strands each area has, and whether it is ready to order.
+    try:
+        from ..infra.db import fetch_all
+        from ..services import grade_sql
+
+        counts = {
+            str(r["subject"]).lower(): int(r["n"]) for r in (fetch_all(
+                f"SELECT subject, COUNT(*) AS n FROM curriculum_substrands "
+                f"WHERE {grade_sql.clause()} GROUP BY subject", {"grade": grade_slug}) or [])
+        }
+        for row in summary.get("subjects") or []:
+            n = counts.get(str(row.get("name") or "").lower(), 0)
+            row["sub_strands"] = n
+            row["ready"] = bool(row.get("ingested")) and n > 0
+        summary["ready_count"] = sum(1 for r in summary.get("subjects") or [] if r.get("ready"))
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("Could not count sub-strands for %s: %s", grade_slug, exc)
     return {"grade": grade_slug, **summary}
 
 

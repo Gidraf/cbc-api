@@ -52,9 +52,30 @@ def test_the_substrand_handler_keeps_the_generated_sub_strands():
 def test_a_queued_strand_carries_its_own_strand_id():
     """Sub-strand ids hang off it; defaulting every strand to 1.0 renumbers the
     curriculum."""
-    source = _read("app/routes/curriculum.py")
-    handler = source[source.index("def _run_queued_substrands"):]
-    assert 'strand_id=str(payload.get("strand_id")' in handler[:2000]
+    from app.routes import curriculum as cur
+
+    seen = {}
+    def generate(req, _):
+        seen["strand_id"] = req.strand_id
+        return {"strand_name": req.strand_name, "sub_strands": []}
+    import pytest
+    mp = pytest.MonkeyPatch()
+    try:
+        mp.setattr(cur, "factory_generate_substrands", generate)
+        mp.setattr(cur, "_stored_strands",
+                   lambda g, s: [{"strand_name": "Numbers", "strand_id": "1.0"},
+                                 {"strand_name": "Geometry", "strand_id": "3.0"}])
+        # The payload's own id wins…
+        out = cur._run_queued_substrands({"grade": "grade-9", "subject": "Mathematics", "strand": "Geometry",
+                                          "payload": {"strand_id": "3.0"}})
+        assert seen["strand_id"] == "3.0" and out["strand_id"] == "3.0"
+        # …and a job queued per strand by the pipeline, carrying only the
+        # name, takes the saved strand's number rather than 1.0.
+        out = cur._run_queued_substrands({"grade": "grade-9", "subject": "Mathematics", "strand": "Geometry",
+                                          "payload": {}})
+        assert seen["strand_id"] == "3.0" and out["strand_id"] == "3.0"
+    finally:
+        mp.undo()
 
 
 # ── drafts are held server-side ─────────────────────────────────────────────

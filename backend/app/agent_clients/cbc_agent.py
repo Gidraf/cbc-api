@@ -203,8 +203,17 @@ def middle_out(grades: list[str]) -> list[str]:
 
 
 def _ingested_subjects(grade: str) -> list[str]:
+    """Subjects an order can run on: ingested AND with sub-strands. A
+    platform that does not yet say `ready` is read on `ingested`."""
     out = _platform("GET", f"/api/v1/admin/langfuse/datasets/{grade}/subjects")
-    return [str(s["name"]) for s in out.get("subjects") or [] if s.get("ingested")]
+    rows = out.get("subjects") or []
+    if any("ready" in s for s in rows):
+        skipped = [str(s["name"]) for s in rows if s.get("ingested") and not s.get("ready")]
+        if skipped:
+            print(f"{grade}: {len(skipped)} ingested subject(s) have no sub-strands yet and are left "
+                  f"for the next run: {', '.join(skipped)}")
+        return [str(s["name"]) for s in rows if s.get("ready")]
+    return [str(s["name"]) for s in rows if s.get("ingested")]
 
 
 def sweep(args: argparse.Namespace) -> None:

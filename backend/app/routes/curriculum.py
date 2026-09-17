@@ -4918,12 +4918,19 @@ def _run_queued_substrands(job: dict[str, Any]) -> dict[str, Any]:
     on its own.
     """
     payload = dict(job.get("payload") or {})
+    grade = str(job.get("grade") or "")
+    subject = str(job.get("subject") or "")
+    strand_name = str(job.get("strand") or "")
+    # The strand's own number from the saved strands, so "2.0 Algebra" does
+    # not file its sub-strands as 1.1, 1.2 beside Numbers'. A job queued per
+    # strand by the pipeline carries only the name.
+    strand_id = str(payload.get("strand_id") or "")
+    if not strand_id:
+        strand_id = next((s["strand_id"] for s in _stored_strands(grade, subject)
+                          if s["strand_name"].lower() == strand_name.lower()), "1.0")
     result = factory_generate_substrands(
         FactoryGenerateSubstrandsRequest(
-            grade=str(job.get("grade") or ""),
-            subject=str(job.get("subject") or ""),
-            strand_name=str(job.get("strand") or ""),
-            strand_id=str(payload.get("strand_id") or "1.0"),
+            grade=grade, subject=subject, strand_name=strand_name, strand_id=strand_id,
             custom_instructions=str(payload.get("custom_instructions") or ""),
         ),
         None,
@@ -4931,11 +4938,29 @@ def _run_queued_substrands(job: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(result, dict):
         raise ValueError("The sub-strand generator returned nothing usable.")
 
+    # A draft by default — the operator accepts each strand's in the console.
+    # `auto_save` writes them straight to the spine: what the whole-curriculum
+    # pass and the auto-ingest watch ask for, since nobody is at the console
+    # to accept sixteen subjects' worth, and an order on a learning area with
+    # a draft and no saved sub-strands still says "No sub-strands found".
+    saved_count = 0
+    if payload.get("auto_save") and result.get("sub_strands"):
+        stored = factory_save_substrands(
+            FactorySaveSubstrandsRequest(
+                grade=grade, subject=subject, strand_name=strand_name, strand_id=strand_id,
+                substrands=list(result.get("sub_strands") or []),
+            ),
+            None,
+        )
+        saved_count = int((stored or {}).get("saved_count") or 0)
+        logger.info("Saved %d sub-strand(s) for %s / %s / %s.", saved_count, grade, subject, strand_name)
+
     # The whole result carries the rubric writer's trace and token usage; a
     # draft needs what the operator reads and then saves.
     return {
-        "strand_name": result.get("strand_name") or job.get("strand") or "",
-        "strand_id": str(payload.get("strand_id") or "1.0"),
+        "strand_name": result.get("strand_name") or strand_name,
+        "strand_id": strand_id,
+        "saved_count": saved_count,
         "sub_strands": result.get("sub_strands") or [],
         "refused": result.get("refused") or [],
         "grounded": bool(result.get("grounded")),
