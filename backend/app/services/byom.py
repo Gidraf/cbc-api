@@ -136,6 +136,13 @@ class Task:
     wake: threading.Event = field(default_factory=threading.Event)
     changed: threading.Condition = field(default_factory=threading.Condition)
     cancel: bool = False
+    # What the station is doing, in words, as it goes: "Notes — Integers:
+    # writing the guide". An order is hours of steps and the only thing an
+    # agent or an operator could see was a step number.
+    notes: list[dict[str, Any]] = field(default_factory=list)
+    # How many times an agent asked to start this same task while it was
+    # already live and was handed this one instead of a rival.
+    joined: int = 0
 
     def to_dict(self, *, with_result: bool = True) -> dict[str, Any]:
         out: dict[str, Any] = {
@@ -145,6 +152,9 @@ class Task:
             "steps_completed": len(self.steps), "replayed": self.replayed, "error": self.error,
             "step": self.pending.to_dict() if self.pending else None,
             "history": [s.to_dict(with_messages=False) for s in self.steps],
+            "progress": self.notes[-40:],
+            "joined": self.joined,
+            "elapsed_seconds": int((self.finished_at or time.time()) - self.created_at),
         }
         if with_result and self.status == DONE:
             out["result"] = self.result
@@ -167,6 +177,33 @@ def current() -> Task | None:
 def get(task_id: str) -> Task | None:
     with _LOCK:
         return _TASKS.get(task_id)
+
+
+def note(what: str, detail: str = "", status: str = "ok") -> None:
+    """Record what the station driving the current task is doing."""
+    task = _current.get()
+    if task is None:
+        return
+    task.notes.append({"at": time.time(), "what": what, "detail": detail, "status": status})
+    _notify(task)
+
+
+def find_live(station: str, params: dict[str, Any]) -> Task | None:
+    """A task for this station on this scope that is still going.
+
+    Nothing stopped an agent starting the same order twice — after an MCP
+    reload, or because its own plan said "produce" again — and every start
+    was a new task on its own thread. Rivals wrote the same sub-strands,
+    each waited on the agent for prompts the agent was answering for
+    another, and each timed out in turn. A whole night of that saves
+    nothing.
+    """
+    key = task_key(station, params)
+    with _LOCK:
+        for task in sorted(_TASKS.values(), key=lambda t: t.created_at, reverse=True):
+            if task.status in (RUNNING, AWAITING) and task_key(task.station, task.params) == key:
+                return task
+    return None
 
 
 def all_tasks() -> list[Task]:
@@ -343,7 +380,13 @@ def _record(task: Task) -> None:
              "status": task.status, "created_by": task.created_by, "steps": len(task.steps),
              "model_used": ", ".join(sorted({s.model_used for s in task.steps if s.model_used})),
              "error": task.error,
-             "result": to_json(_summary(task.result)), "created_at": task.created_at,
+             "result": to_json({**_summary(task.result),
+                                # Where an order got to, so a failed one says
+                                # which sub-strand it died on, not only that it died.
+                                "progress": task.notes[-40:],
+                                "render_urls": (task.result or {}).get("render_urls")
+                                if isinstance(task.result, dict) else None}),
+             "created_at": task.created_at,
              "finished_at": task.finished_at or time.time()},
         )
     except Exception as exc:  # noqa: BLE001

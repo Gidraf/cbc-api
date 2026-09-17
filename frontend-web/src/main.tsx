@@ -9,6 +9,7 @@ import { PageHeader } from "./ui/components";
 import { AuthProvider, useAuth } from "./lib/auth";
 import { LoadingBlock, ToastProvider } from "./ui/components";
 
+import { AgentTasks } from "./views/AgentTasks";
 import { Approvals } from "./views/Approvals";
 import { Coverage } from "./views/Coverage";
 import { ContentFactory } from "./views/ContentFactory";
@@ -104,6 +105,7 @@ function Router() {
         <Route path="datasets" element={<Screen name="Datasets"><Datasets /></Screen>} />
         <Route path="skills" element={<Screen name="Teaching skills"><Profiles /></Screen>} />
         <Route path="models" element={<Screen name="Model per station"><StageModels /></Screen>} />
+        <Route path="agents" element={<Screen name="Agent tasks"><AgentTasks /></Screen>} />
         <Route path="keys" element={<Screen name="API keys"><ProviderKeys /></Screen>} />
         <Route path="settings" element={<Screen name="Settings"><PlatformSettings /></Screen>} />
         <Route path="*" element={<Navigate to="/" replace />} />

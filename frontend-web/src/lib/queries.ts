@@ -3668,6 +3668,73 @@ export function useOrderJob(jobId: string) {
   });
 }
 
+// ── Agent tasks (BYOM) ───────────────────────────────────────────────────────
+// What outside agents are doing right now, and what they did. An order is
+// hours of steps; without this the only place to see it was the agent's own
+// chat window.
+
+export type AgentTaskStep = {
+  number: number; stage: string; model_hint?: string; model_used?: string;
+  asked_at?: number; answered_at?: number; chars?: number; expect?: string;
+};
+
+export type AgentTaskProgress = { at: number; what: string; detail: string; status: string };
+
+export type AgentTask = {
+  task_id: string;
+  station: string;
+  params: Record<string, any>;
+  status: "running" | "awaiting" | "done" | "failed" | "cancelled" | string;
+  created_by: string;
+  created_at: number;
+  finished_at: number;
+  steps_completed: number;
+  replayed: number;
+  error: string;
+  step?: { number: number; stage: string; model_hint?: string; expect?: string } | null;
+  history: AgentTaskStep[];
+  progress: AgentTaskProgress[];
+  joined: number;
+  elapsed_seconds: number;
+};
+
+export type AgentLedgerRow = {
+  task_id: string; station: string; params: Record<string, any>; status: string;
+  created_by: string; steps: number; model_used: string; error: string;
+  created_at: string; finished_at: string | null;
+  result?: { progress?: AgentTaskProgress[]; render_urls?: Record<string, string> | null } & Record<string, any>;
+};
+
+export function useAgentTasks() {
+  const api = useApi();
+  return useQuery({
+    queryKey: ["agent-tasks"],
+    queryFn: () => api<{ live: AgentTask[]; ledger: AgentLedgerRow[] }>(`/api/v1/agent/tasks`),
+    refetchInterval: (q) => ((q.state.data?.live?.length ?? 0) > 0 ? 5000 : 30000),
+  });
+}
+
+export function useAgentTask(taskId: string) {
+  const api = useApi();
+  return useQuery({
+    queryKey: ["agent-task", taskId],
+    queryFn: () => api<AgentTask>(`/api/v1/agent/tasks/${encodeURIComponent(taskId)}`),
+    enabled: Boolean(taskId),
+    refetchInterval: 5000,
+  });
+}
+
+export function useCancelAgentTask() {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (taskId: string) =>
+      api<AgentTask>(`/api/v1/agent/tasks/${encodeURIComponent(taskId)}`, { method: "DELETE" }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["agent-tasks"] }),
+  });
+}
+
+
 /** The agent context pack: playbook, manifest, formats, prompts, as a zip. */
 export function useAgentPack() {
   const { token } = useAuth();

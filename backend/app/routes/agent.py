@@ -302,6 +302,19 @@ def start_task(payload: StartTaskRequest,
         params["sub_strands"] = payload.sub_strands
     if payload.review_cycles is not None:
         params["review_cycles"] = payload.review_cycles
+    twin = byom.find_live(payload.station, params)
+    if twin is not None:
+        twin.joined += 1
+        logger.info("BYOM task %s joined by %s instead of a second %s for %s/%s",
+                    twin.task_id, auth.subject, payload.station, payload.grade, payload.subject)
+        byom.wait(twin, payload.wait_seconds, since_steps=len(twin.steps))
+        out = _view(twin)
+        out["joined_existing"] = True
+        out["note"] = (f"This exact task is already running as {twin.task_id} "
+                       f"({len(twin.steps)} steps answered so far). You have been handed it "
+                       f"rather than a second copy: answer ITS steps. To start over instead, "
+                       f"cancel it first.")
+        return out
     task = byom.start(payload.station, params, created_by=auth.subject, runner=_runner)
     logger.info("BYOM task %s started by %s: %s for %s/%s/%s", task.task_id, auth.subject,
                 payload.station, payload.grade, payload.subject, payload.sub_strand or payload.strand)

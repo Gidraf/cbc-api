@@ -162,3 +162,57 @@ def test_a_different_scope_never_replays_another_tasks_answers(monkeypatch) -> N
     byom.wait(other, 5, since_steps=0)
     assert other.status == byom.AWAITING, "another sub-strand's answer is not this one's"
     byom.cancel(other.task_id)
+
+
+def test_starting_the_same_order_again_joins_the_live_task_instead_of_a_rival() -> None:
+    """After an MCP reload an agent called cbc_produce again for the same
+    paper; every call was a new task on its own thread, all writing the same
+    sub-strands and each waiting on the agent for prompts it was answering
+    for another. A night of that saved nothing."""
+    def station(kind: str, params: dict) -> dict:
+        byom.note("Scope", "Integers, Fractions")
+        llm_client.generate(_config("notes_generation"), [{"role": "user", "content": "lesson 1"}])
+        return {"paper": {"exam_id": "x"}}
+
+    params = {"grade": "grade-9", "subject": "Mathematics", "kind": "term", "term": 1, "count": 30}
+    first = byom.start("order", params, created_by="kit-antigravity", runner=station)
+    byom.wait(first, 5, since_steps=0)
+    assert first.status == byom.AWAITING
+
+    assert byom.find_live("order", dict(params)) is first
+    assert byom.find_live("order", {**params, "term": 2}) is None, "a different paper is a different task"
+    assert byom.find_live("notes", params) is None
+
+    # The progress the order wrote is on the task, live, not only in a result.
+    view = first.to_dict()
+    assert view["progress"][0]["what"] == "Scope" and view["progress"][0]["detail"] == "Integers, Fractions"
+    assert view["elapsed_seconds"] >= 0
+
+    byom.complete(first.task_id, {"ok": True})
+    byom.wait(first, 5, since_steps=1)
+    assert first.status == byom.DONE
+    assert byom.find_live("order", params) is None, "a finished task is not joined"
+
+
+def test_the_start_route_hands_back_the_live_twin() -> None:
+    from types import SimpleNamespace
+
+    from app.routes import agent as agent_routes
+
+    def station(kind: str, params: dict) -> dict:
+        llm_client.generate(_config("notes_generation"), [{"role": "user", "content": "lesson 1"}])
+        return {}
+
+    params = {"grade": "grade-7", "subject": "Mathematics", "strand": "", "sub_strand": "",
+              "custom_instructions": "", "kind": "term", "term": 1, "count": 30}
+    live = byom.start("order", params, created_by="kit-claude", runner=station)
+    byom.wait(live, 5, since_steps=0)
+
+    out = agent_routes.start_task(
+        agent_routes.StartTaskRequest(station="order", grade="grade-7", subject="Mathematics",
+                                      kind="term", term=1, count=30, wait_seconds=0),
+        auth=SimpleNamespace(subject="kit-claude", role="operator", auth_type="api_key"),
+    )
+    assert out["task_id"] == live.task_id and out["joined_existing"] is True
+    assert "already running" in out["note"] and live.joined == 1
+    byom.cancel(live.task_id)

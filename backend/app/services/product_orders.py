@@ -41,6 +41,14 @@ class Progress:
     def note(self, what: str, detail: str = "", status: str = "ok") -> None:
         self.steps.append({"what": what, "detail": detail, "status": status})
         logger.info("Order: %s — %s", what, detail)
+        # Live, on the task, for the agent and the console — not only in the
+        # result at the end, which an order that never ends never returns.
+        try:
+            from . import byom
+
+            byom.note(what, detail, status)
+        except Exception:  # noqa: BLE001
+            pass
 
 
 def sub_strands_for(grade: str, subject: str) -> list[dict[str, Any]]:
