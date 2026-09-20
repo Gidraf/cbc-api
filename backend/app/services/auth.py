@@ -15,7 +15,7 @@ from ..infra.db import execute, fetch_one
 from ..settings import settings
 from ..state import runtime_state
 
-ROLES = {"admin", "operator", "reviewer", "developer"}
+ROLES = {"admin", "operator", "reviewer", "developer", "user"}
 
 
 @dataclass(slots=True)

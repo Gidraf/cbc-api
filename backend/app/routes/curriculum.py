@@ -9021,7 +9021,7 @@ def factory_repair_status(
 def factory_read_structure(
     grade: str = Query(..., description="Grade slug, e.g. grade-pp1"),
     subject: str = Query(..., description="Learning area or subject name"),
-    _: AuthContext = Depends(require_roles("admin", "operator", "reviewer")),
+    _: AuthContext = Depends(require_roles("admin", "operator", "reviewer", "developer", "user")),
 ) -> dict[str, Any]:
     """The strands and sub-strands already stored for a learning area.
 

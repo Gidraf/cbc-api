@@ -55,6 +55,10 @@ SETTINGS: tuple[Setting, ...] = (
     Setting("byom_step_timeout_seconds", "BYOM_STEP_TIMEOUT_SECONDS", "int", "Agent step timeout (seconds)",
             "How long a station driven by an outside agent waits for one prompt to be answered.",
             2700, "Agents"),
+    Setting("users_may_generate", "USERS_MAY_GENERATE", "bool", "User accounts may generate",
+            "When on, a signed-up user can ask the builder to write new questions and to run an AI review — "
+            "both spend this platform's provider tokens. Off, users compose from the bank only.",
+            False, "Builder"),
     Setting("auto_ingest_enabled", "AUTO_INGEST_ENABLED", "bool", "Auto-ingest from Langfuse",
             "When on, every grade's dataset is synced from Langfuse on a schedule and any design not yet "
             "ingested is queued, with strands and sub-strands built behind it — the same pass as the "

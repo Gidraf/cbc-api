@@ -39,7 +39,7 @@ class UpdateMasterContextRequest(BaseModel):
 
 
 @router.get("/datasets")
-def list_datasets(_: AuthContext = Depends(require_roles("admin", "operator", "reviewer", "developer"))) -> dict[str, Any]:
+def list_datasets(_: AuthContext = Depends(require_roles("admin", "operator", "reviewer", "developer", "user"))) -> dict[str, Any]:
     datasets = langfuse_context_service.list_datasets()
     return {"datasets": datasets}
 
@@ -650,7 +650,7 @@ def retry_failed_items(
 @router.get("/datasets/{grade}/subjects")
 def get_grade_subjects(
     grade: str,
-    _: AuthContext = Depends(require_roles("admin", "operator", "reviewer", "developer")),
+    _: AuthContext = Depends(require_roles("admin", "operator", "reviewer", "developer", "user")),
 ) -> dict[str, Any]:
     """Subjects KICD publishes for this grade, each marked ingested or missing."""
     grade_slug = validate_grade_dataset(grade)

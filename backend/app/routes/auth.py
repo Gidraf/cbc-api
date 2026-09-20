@@ -81,7 +81,9 @@ def register(payload: RegisterRequest) -> dict[str, Any]:
         {
             "uname": payload.username,
             "phash": pwd_hash,
-            "role": payload.role if payload.role in {"developer", "operator", "reviewer"} else "developer",
+            # A signup is a USER: the builder, their own drafts and papers,
+            # nothing of the factory. Staff roles are given by an admin.
+            "role": payload.role if payload.role in {"developer", "reviewer"} else "user",
             "email": payload.email,
         },
     )

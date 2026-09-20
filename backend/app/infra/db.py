@@ -1100,6 +1100,33 @@ MIGRATIONS: list[tuple[str, str]] = [
         CREATE INDEX IF NOT EXISTS idx_agent_answers_created ON agent_answers(created_at);
         """,
     ),
+    (
+        "038_exam_drafts",
+        """
+        -- A paper being built: scope, the items chosen (with the builder's
+        -- own edits to them), the print settings, and the composition
+        -- snapshot — everything the builder needs to come back to tomorrow
+        -- and everything the freeze needs to make an exam of it.
+        CREATE TABLE IF NOT EXISTS exam_drafts (
+            draft_id TEXT PRIMARY KEY,
+            owner TEXT NOT NULL DEFAULT '',
+            title TEXT NOT NULL DEFAULT '',
+            grade TEXT NOT NULL DEFAULT '',
+            subject TEXT NOT NULL DEFAULT '',
+            kind TEXT NOT NULL DEFAULT 'topical',
+            term INT NULL,
+            scope JSONB NOT NULL DEFAULT '{}'::jsonb,
+            items JSONB NOT NULL DEFAULT '[]'::jsonb,
+            snapshot JSONB NOT NULL DEFAULT '{}'::jsonb,
+            settings JSONB NOT NULL DEFAULT '{}'::jsonb,
+            status TEXT NOT NULL DEFAULT 'draft',
+            exam_id TEXT NULL,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS idx_exam_drafts_owner ON exam_drafts(owner, updated_at DESC);
+        """,
+    ),
 ]
 
 
