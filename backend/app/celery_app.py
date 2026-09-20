@@ -81,6 +81,12 @@ celery_app.conf.update(
             "task": "app.tasks.prune_service_logs",
             "schedule": 3600.0,
         },
+        # What a deploy, a crash or a lost message left behind — running with
+        # no heartbeat, queued with no message — put back every two minutes.
+        "sweep-jobs": {
+            "task": "app.tasks.sweep_jobs",
+            "schedule": 120.0,
+        },
     },
 )
 

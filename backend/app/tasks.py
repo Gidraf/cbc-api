@@ -63,7 +63,8 @@ def run_job(self, job_id: str) -> dict:
     from .services import job_queue
 
     _load_state_once()
-    outcome = job_queue.run_job_by_id(job_id)
+    info = getattr(self.request, "delivery_info", None) or {}
+    outcome = job_queue.run_job_by_id(job_id, redelivered=bool(info.get("redelivered")))
 
     # Sent back to the queue for its second attempt: dispatch it again, because
     # nothing else will. Under the in-process worker the poll loop picked it
@@ -79,6 +80,16 @@ def run_job(self, job_id: str) -> dict:
         run_job.apply_async((job_id,), countdown=15)
 
     return outcome
+
+
+@celery_app.task(name="app.tasks.sweep_jobs")
+def sweep_jobs() -> dict:
+    """Abandoned and stranded jobs back on the road, every few minutes."""
+    from . import routes  # noqa: F401
+    from .routes import curriculum  # noqa: F401
+    from .services import job_queue
+
+    return job_queue.sweep()
 
 
 @celery_app.task(name="app.tasks.prune_service_logs")

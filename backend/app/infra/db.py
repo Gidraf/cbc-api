@@ -1127,6 +1127,17 @@ MIGRATIONS: list[tuple[str, str]] = [
         CREATE INDEX IF NOT EXISTS idx_exam_drafts_owner ON exam_drafts(owner, updated_at DESC);
         """,
     ),
+    (
+        "039_job_heartbeat",
+        """
+        -- A running job says it is alive every half minute. A deploy, a crash
+        -- or an OOM kill leaves the row 'running' with a heartbeat that stops,
+        -- and the sweeper puts it back in the queue minutes later — not after
+        -- the next restart, not never.
+        ALTER TABLE jobs ADD COLUMN IF NOT EXISTS heartbeat_at TIMESTAMPTZ NULL;
+        CREATE INDEX IF NOT EXISTS idx_jobs_heartbeat ON jobs(status, heartbeat_at);
+        """,
+    ),
 ]
 
 

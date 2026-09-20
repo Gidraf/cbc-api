@@ -399,14 +399,28 @@ def _claim_by_id(job_id: str) -> dict[str, Any] | None:
     )
 
 
-def run_job_by_id(job_id: str) -> dict[str, Any]:
+def run_job_by_id(job_id: str, *, redelivered: bool = False) -> dict[str, Any]:
     """Run the job Celery was handed. Returns what happened.
 
     Celery is given a job id and never sees the queue, so it cannot skip past a
     blocked job the way the poller does. With concurrency above one it would
     otherwise start the material for a sub-strand whose notes are still being
     written. Told to wait, the task re-dispatches itself.
+
+    `redelivered`: the broker handed this message out before and the worker
+    that took it never acknowledged it — it was killed mid-run. The row still
+    says 'running' with that worker's name on it, and a claim that insists on
+    'queued' would drop the message and leave the row running for ever. So a
+    redelivered message may reclaim its own job.
     """
+    if redelivered:
+        from ..infra.db import execute
+
+        execute(
+            "UPDATE jobs SET status = 'queued', started_at = NULL, heartbeat_at = NULL "
+            "WHERE job_id = :job_id AND status = 'running' AND attempts < :max",
+            {"job_id": job_id, "max": MAX_ATTEMPTS},
+        )
     if scope_is_busy(job_id):
         logger.info("Job %s waits: its sub-strand is already being built.", job_id)
         return {"job_id": job_id, "status": WAITING}
@@ -457,9 +471,12 @@ def _execute(job: dict[str, Any]) -> dict[str, Any]:
         )
         return {"job_id": job_id, "status": FAILED}
 
+    beat = _Heartbeat(job_id)
+    beat.start()
     try:
         result = handler(dict(job))
     except Exception as exc:  # noqa: BLE001
+        beat.stop()
         attempts = int(job.get("attempts") or 1)
         # Back to the queue once. A job that has crashed twice will crash a
         # third time, and retrying spends money to learn nothing.
@@ -494,6 +511,7 @@ def _execute(job: dict[str, Any]) -> dict[str, Any]:
             _announce("job.failed", job, {}, error=str(exc)[:300])
         return {"job_id": job_id, "status": status, "error": str(exc)[:300]}
 
+    beat.stop()
     run_log.step("Done", f"{meter.calls} model call(s), "
                          f"${round(meter.cost_usd, 4)}")
     finished = run_log.stop()
@@ -539,13 +557,56 @@ def _announce(event: str, job: dict[str, Any], result: dict[str, Any], **extra: 
 STALLED_MINUTES = int(__import__("os").getenv("JOB_STALLED_MINUTES", "75"))
 
 
+HEARTBEAT_SECONDS = 30
+# A running job whose heartbeat is older than this has no process behind it.
+ABANDONED_MINUTES = int(__import__("os").getenv("JOB_ABANDONED_MINUTES", "5"))
+# A queued job older than this with nothing running it is dispatched again:
+# its broker message went with a deploy, a flushed Redis, or a worker that
+# never came back. The claim is atomic, so a second message is harmless.
+STRANDED_MINUTES = int(__import__("os").getenv("JOB_STRANDED_MINUTES", "3"))
+
+
+class _Heartbeat:
+    """Writes heartbeat_at on the job's row every half minute while it runs."""
+
+    def __init__(self, job_id: str) -> None:
+        self.job_id = job_id
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    def _run(self) -> None:
+        from ..infra.db import execute
+
+        while not self._stop.wait(HEARTBEAT_SECONDS):
+            try:
+                execute("UPDATE jobs SET heartbeat_at = NOW() WHERE job_id = :job_id AND status = 'running'",
+                        {"job_id": self.job_id})
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("Heartbeat for %s not written: %s", self.job_id, exc)
+
+    def start(self) -> None:
+        from ..infra.db import execute
+
+        try:
+            execute("UPDATE jobs SET heartbeat_at = NOW() WHERE job_id = :job_id", {"job_id": self.job_id})
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("Heartbeat for %s not written: %s", self.job_id, exc)
+        self._thread = threading.Thread(target=self._run, name=f"heartbeat-{self.job_id}", daemon=True)
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+
+
 def recover_stalled() -> int:
     """Return abandoned work to the queue and dispatch it again.
 
     Deploys, crashes and OOM kills all leave the same trace: status 'running',
-    started_at in the past, nothing running it. Under the in-process worker
-    that row was invisible for ever; the console showed a job in progress that
-    had died with the process that owned it.
+    a heartbeat that stopped, nothing running it. This ran once at API
+    startup and only for rows older than seventy-five minutes, so a job cut
+    down by a deploy sat 'running' until the deploy after that — and if the
+    worker alone was restarted, for ever. It now runs every few minutes,
+    from the API and from the worker's beat, on the heartbeat.
 
     Only jobs with attempts left are recovered. One that has already burned its
     attempts is marked failed with a reason, because retrying it a third time
@@ -557,10 +618,13 @@ def recover_stalled() -> int:
         """
         SELECT job_id, kind, attempts FROM jobs
         WHERE status = 'running'
-          AND started_at < NOW() - (:minutes * INTERVAL '1 minute')
+          AND COALESCE(heartbeat_at, started_at) < NOW() - (:minutes * INTERVAL '1 minute')
         """,
-        {"minutes": STALLED_MINUTES},
+        # Rows from before the heartbeat column have only started_at; those
+        # are judged by the old, longer patience.
+        {"minutes": ABANDONED_MINUTES},
     ) or []
+    stalled = [j for j in stalled if _abandoned(j)]
     if not stalled:
         return 0
 
@@ -586,6 +650,79 @@ def recover_stalled() -> int:
 
     logger.info("Recovered %d stalled job(s) of %d abandoned.", requeued, len(stalled))
     return requeued
+
+
+def _abandoned(job: dict[str, Any]) -> bool:
+    """A running row with no heartbeat column value yet is judged by
+    started_at against the old patience, so a long job from before the
+    heartbeat existed is not cut down on the first sweep."""
+    from ..infra.db import fetch_one
+
+    row = fetch_one("SELECT heartbeat_at, started_at < NOW() - (:m * INTERVAL '1 minute') AS old "
+                    "FROM jobs WHERE job_id = :job_id", {"job_id": job["job_id"], "m": STALLED_MINUTES})
+    if not row:
+        return False
+    return bool(row.get("heartbeat_at")) or bool(row.get("old"))
+
+
+def redispatch_stranded() -> int:
+    """Queued jobs nobody is going to run: older than STRANDED_MINUTES with no
+    worker having claimed them. Their broker message is gone — a deploy
+    between enqueue and pick-up, a Redis flush, an in-process worker that
+    died with its API — so it is sent again. A job that is merely waiting its
+    turn behind a running one is sent again too, harmlessly: the claim is
+    atomic and a second message finds it running or done and leaves it."""
+    from ..infra.db import fetch_all
+
+    rows = fetch_all(
+        """
+        SELECT job_id FROM jobs
+        WHERE status = 'queued' AND started_at IS NULL
+          AND created_at < NOW() - (:minutes * INTERVAL '1 minute')
+        ORDER BY created_at ASC LIMIT 200
+        """,
+        {"minutes": STRANDED_MINUTES},
+    ) or []
+    for row in rows:
+        dispatch(str(row["job_id"]))
+    if rows:
+        logger.info("Re-dispatched %d stranded queued job(s).", len(rows))
+    return len(rows)
+
+
+def sweep() -> dict[str, int]:
+    """Everything a restart, a crash or a lost message leaves behind, put
+    right. Called on a clock by the API and by the worker's beat."""
+    out = {"recovered": 0, "redispatched": 0}
+    try:
+        out["recovered"] = recover_stalled()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Sweep could not recover stalled jobs: %s", exc)
+    try:
+        out["redispatched"] = redispatch_stranded()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Sweep could not re-dispatch stranded jobs: %s", exc)
+    return out
+
+
+_sweeper: threading.Thread | None = None
+SWEEP_SECONDS = int(__import__("os").getenv("JOB_SWEEP_SECONDS", "120"))
+
+
+def start_sweeper() -> bool:
+    """A thread in the API that sweeps every two minutes. The worker sweeps
+    on its beat as well; both are idempotent."""
+    global _sweeper
+    if _sweeper is not None and _sweeper.is_alive():
+        return False
+
+    def _loop_sweep() -> None:
+        while not _stop.wait(SWEEP_SECONDS):
+            sweep()
+
+    _sweeper = threading.Thread(target=_loop_sweep, name="job-sweeper", daemon=True)
+    _sweeper.start()
+    return True
 
 
 def _loop() -> None:

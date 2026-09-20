@@ -113,7 +113,7 @@ def test_the_api_does_not_start_a_thread_when_celery_is_up():
     startup = source[source.index("def startup()"):]
     startup = startup[: startup.index("_bootstrap_default_stage_bindings")]
 
-    assert "recover_stalled()" in startup
+    assert "job_queue.sweep()" in startup and "start_sweeper()" in startup
     assert "if broker_available():" in startup
     assert "no in-process worker started" in startup
 

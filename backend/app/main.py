@@ -290,7 +290,10 @@ def startup() -> None:
         # Work abandoned by a killed worker says "running" for ever otherwise:
         # the console shows a job in progress that died with the process that
         # owned it, and nothing ever picks it up.
-        job_queue.recover_stalled()
+        job_queue.sweep()
+        # And keeps sweeping: a deploy that restarts only the worker, a
+        # crash at 3 a.m., a Redis flush — none of them restart this API.
+        job_queue.start_sweeper()
 
         # Celery runs the work in its own container, so a refresh, a
         # navigation or this very restart cannot touch a generation in flight.
