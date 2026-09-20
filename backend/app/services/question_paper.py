@@ -462,8 +462,11 @@ def _figure_key(question: dict[str, Any]) -> str:
     return ""
 
 
-def _item(question: dict[str, Any], number: int, *, answers: bool, written_space: bool) -> str:
-    out = [f"<div class='q'><span class='n'>{number}.</span><div class='qbody'>"]
+def _item(question: dict[str, Any], number: int, *, answers: bool, written_space: bool,
+          settings: Any = None) -> str:
+    parts_n = len([p for p in (question.get("structured_parts") or []) if isinstance(p, dict)])
+    long = parts_n >= 2 or float((question.get("pedagogy") or {}).get("max_marks") or question.get("max_marks") or 0) >= 4
+    out = [f"<div class='q{' long' if long else ''}'><span class='n'>{number}.</span><div class='qbody'>"]
     marks = _marks_of(question)
     q_type = str(question.get("question_type") or "").lower()
     if marks and q_type not in ("multiple_choice", "true_false", "matching", "assertion_reason"):
@@ -489,8 +492,9 @@ def _item(question: dict[str, Any], number: int, *, answers: bool, written_space
                        + (f"<span class='pm'>{_esc(pm)}</span>" if pm else "") + "</li>")
         out.append("</ul>")
     if written_space and not options and not answers:
-        lines = 2 if marks <= 2 else min(6, int(marks) + 1)
-        out.append("<div class='lines'>" + "<div></div>" * lines + "</div>")
+        lines = settings.lines_for(marks) if settings is not None else (2 if marks <= 2 else min(6, int(marks) + 1))
+        if lines:
+            out.append("<div class='lines'>" + "<div></div>" * lines + "</div>")
     out.append("</div></div>")
     return "".join(out)
 
@@ -535,7 +539,7 @@ def _reason_for(question: dict[str, Any]) -> tuple[str, str, list[Any], str]:
     return answer, why, worked.steps, scheme
 
 
-def _scheme_item(question: dict[str, Any], number: int) -> str:
+def _scheme_item(question: dict[str, Any], number: int, settings: Any = None) -> str:
     """One item on the marking scheme: the answer, the WORKING or the reason,
     and why each wrong option is wrong.
 
@@ -555,6 +559,8 @@ def _scheme_item(question: dict[str, Any], number: int) -> str:
     options = [o for o in (question.get("options") or []) if isinstance(o, dict)]
     key = next((o for o in options if o.get("is_correct")), None)
 
+    detail = str(getattr(settings, "scheme_detail", "full") or "full")
+
     out = [f"<div class='a'><span class='n'>{number}.</span><div>"]
     if options:
         out.append(f"<span class='ans'>{_math(answer)}</span>")
@@ -566,6 +572,24 @@ def _scheme_item(question: dict[str, Any], number: int) -> str:
                        + (f" <span class='m'>{_esc(pm)}</span>" if pm else "") + "</div>")
     else:
         out.append(f"<span class='ans'>{_math(answer)}</span>")
+
+    # The key alone — for a marker, not a learner. The grid at the head of
+    # the scheme already lists Section A; this keeps the written answers.
+    if detail == "key":
+        out.append("</div></div>")
+        return "".join(out)
+
+    # Brief: the marking scheme's own lines (the marks and what earns them)
+    # and nothing else — no engine steps, no rationale, no "why not".
+    if detail == "brief":
+        if scheme:
+            out.append(f"<div class='sc'>{_math(scheme[:400])}</div>")
+        elif worked.steps:
+            out.append(f"<div class='sc'>{_math(worked.steps[-1].text)}</div>")
+        elif model_answer and not _same_text(model_answer, answer):
+            out.append(f"<div class='why'>{_math(model_answer[:240])}</div>")
+        out.append("</div></div>")
+        return "".join(out)
 
     # The working: the engine's where it has it, else the writer's.
     if worked.steps:
@@ -669,10 +693,14 @@ def _numbered(paper: Any) -> list[tuple[int, dict[str, Any]]]:
 
 def render_paper(paper: Any, *, answers: bool = False, with_scheme: bool = False,
                  assets: dict[str, Any] | None = None, scheme_url: str = "",
-                 series: str = "", answer_sheet: bool = False) -> str:
+                 series: str = "", answer_sheet: bool = False, settings: Any = None) -> str:
     """A composed paper as the national paper prints it, or its marking
-    scheme. `with_scheme` prints both, the scheme after a page break."""
+    scheme. `with_scheme` prints both, the scheme after a page break.
+    `settings` (PrintSettings) sets how dense it prints."""
     from .grade_order import grade_label as _grade_label
+    from .print_settings import PRESETS
+
+    settings = settings or PRESETS["standard"]
 
     grade_label = _grade_label(paper.grade)
     mast = dict(getattr(paper, "masthead", {}) or {})
@@ -766,9 +794,10 @@ def render_paper(paper: Any, *, answers: bool = False, with_scheme: bool = False
                     covered = j
                     out.append(_figure_block(question, number, number + (j - i), assets, answers=False))
                 if scheme:
-                    out.append(_scheme_item(question, number))
+                    out.append(_scheme_item(question, number, settings))
                 else:
-                    out.append(_item(question, number, answers=False, written_space=True))
+                    out.append(_item(question, number, answers=False, written_space=True,
+                                     settings=settings))
                 i += 1
         if not out:
             out.append("<p>This paper has no questions in it.</p>")
@@ -794,7 +823,7 @@ def render_paper(paper: Any, *, answers: bool = False, with_scheme: bool = False
         "<!doctype html><html lang='en'><head><meta charset='utf-8'>"
         "<meta name='viewport' content='width=device-width, initial-scale=1'>"
         f"<title>{_esc(title)}</title>"
-        f"<style>{PRINT_CSS}{PAPER_CSS}{EXAM_CSS}{_KATEX_CRITICAL}</style>{_KATEX}</head>"
+        f"<style>{PRINT_CSS}{PAPER_CSS}{EXAM_CSS}{settings.css()}{_KATEX_CRITICAL}</style>{_KATEX}</head>"
         f"<body class='exam'><span style='string-set: paper-foot \"{foot}\"; position:absolute; left:-9999px'>{foot}</span>"
         f"<div class='sheet exam'>{''.join(parts)}</div></body></html>"
     )

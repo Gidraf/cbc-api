@@ -16,6 +16,7 @@ from ..services.level_register import language_block, register_block, teacher_bl
 from ..services.faith_scope import prompt_block as faith_prompt_block
 from ..services.grade_scope import notes_for as grade_scope_notes
 from ..services.grade_order import grade_label, grade_level, grade_ordinal, normalize_grade
+from .exams import print_settings
 from ..services.langfuse_seed import SEED_PROMPT_BLOCKS
 from ..services.question_dna import question_dna_service
 from ..services import diagram_svg
@@ -626,6 +627,7 @@ def composed_paper_html(
     answers: bool = Query(False, description="The marking scheme alone"),
     with_scheme: bool = Query(False, description="The paper, then the scheme, in one document"),
     answer_sheet: bool = Query(False, description="Append the OMR answer sheet for Section A"),
+    settings: Any = Depends(print_settings),
     _: AuthContext = Depends(require_roles("admin", "operator", "reviewer", "developer")),
 ):
     """A topical test, a strand assessment or a term examination composed
@@ -638,7 +640,7 @@ def composed_paper_html(
                             title=title, format_key=format, count=count, term=term)
     return HTMLResponse(question_paper.render_paper(
         paper, answers=answers, with_scheme=with_scheme, answer_sheet=answer_sheet,
-        assets=question_paper.figures_for(paper.items)))
+        assets=question_paper.figures_for(paper.items), settings=settings))
 
 
 @router.get("/paper/exam.pdf")
@@ -658,6 +660,7 @@ def composed_paper_pdf(
     answers: bool = Query(False),
     with_scheme: bool = Query(False),
     answer_sheet: bool = Query(False),
+    settings: Any = Depends(print_settings),
     _: AuthContext = Depends(require_roles("admin", "operator", "reviewer")),
 ) -> Any:
     from fastapi import Response
@@ -669,7 +672,7 @@ def composed_paper_pdf(
                             title=title, format_key=format, count=count, term=term)
     document = question_paper.render_paper(
         paper, answers=answers, with_scheme=with_scheme, answer_sheet=answer_sheet,
-        assets=question_paper.figures_for(paper.items))
+        assets=question_paper.figures_for(paper.items), settings=settings)
     try:
         body = pdf.from_html(document)
     except pdf.PdfUnavailable as exc:

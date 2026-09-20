@@ -14,7 +14,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Literal
 
-from fastapi import APIRouter, Depends, Query, Response
+from fastapi import APIRouter, Depends, Query, Request, Response
 from pydantic import BaseModel, Field
 
 from ..errors import raise_api_error
@@ -316,13 +316,22 @@ def _thawed(row: dict[str, Any]) -> Any:
     return paper_builder.thaw(snapshot, questions)
 
 
-def _print(row: dict[str, Any], *, answers: bool, with_scheme: bool, answer_sheet: bool = False) -> str:
+def print_settings(request: Request) -> Any:
+    """How dense the paper prints, from the query string: ?density=compact,
+    or any knob by name (font_pt, margins_mm, answer_lines, columns…)."""
+    from ..services.print_settings import from_params
+
+    return from_params(request.query_params)
+
+
+def _print(row: dict[str, Any], *, answers: bool, with_scheme: bool, answer_sheet: bool = False,
+           settings: Any = None) -> str:
     from ..services import question_paper
 
     paper = _thawed(row)
     return question_paper.render_paper(
         paper, answers=answers, with_scheme=with_scheme, answer_sheet=answer_sheet,
-        assets=question_paper.figures_for(paper.items))
+        assets=question_paper.figures_for(paper.items), settings=settings)
 
 
 @router.get("/exams/{exam_id}/paper.html")
@@ -331,6 +340,7 @@ def print_exam(
     answers: bool = Query(default=False),
     with_scheme: bool = Query(default=False),
     answer_sheet: bool = Query(default=False, description="Append the OMR answer sheet for Section A"),
+    settings: Any = Depends(print_settings),
     _: AuthContext = Depends(require_roles("admin", "operator", "reviewer", "developer")),
 ) -> Any:
     """A frozen paper in the national paper's design — or its marking scheme."""
@@ -339,7 +349,7 @@ def print_exam(
     row = fetch_one("SELECT * FROM exams WHERE exam_id = :eid", {"eid": exam_id})
     if not row:
         raise_api_error("NOT_FOUND", f"No exam with id {exam_id}")
-    return HTMLResponse(_print(row, answers=answers, with_scheme=with_scheme, answer_sheet=answer_sheet))
+    return HTMLResponse(_print(row, answers=answers, with_scheme=with_scheme, answer_sheet=answer_sheet, settings=settings))
 
 
 @router.get("/exams/{exam_id}/paper.pdf")
@@ -348,6 +358,7 @@ def print_exam_pdf(
     answers: bool = Query(default=False),
     with_scheme: bool = Query(default=False),
     answer_sheet: bool = Query(default=False, description="Append the OMR answer sheet for Section A"),
+    settings: Any = Depends(print_settings),
     _: AuthContext = Depends(require_roles("admin", "operator", "reviewer")),
 ) -> Any:
     from ..services import pdf
@@ -356,7 +367,7 @@ def print_exam_pdf(
     if not row:
         raise_api_error("NOT_FOUND", f"No exam with id {exam_id}")
     try:
-        body = pdf.from_html(_print(row, answers=answers, with_scheme=with_scheme, answer_sheet=answer_sheet))
+        body = pdf.from_html(_print(row, answers=answers, with_scheme=with_scheme, answer_sheet=answer_sheet, settings=settings))
     except pdf.PdfUnavailable as exc:
         raise_api_error("MODEL_ENDPOINT_UNAVAILABLE", str(exc))
     suffix = "marking-scheme" if answers else "booklet" if with_scheme else "paper"
@@ -378,23 +389,25 @@ def _by_share_token(exam_id: str, token: str) -> dict[str, Any]:
 
 @router.get("/exams/{exam_id}/print")
 def public_print(exam_id: str, token: str = Query(default=""), answers: bool = Query(default=False),
-                 with_scheme: bool = Query(default=False), answer_sheet: bool = Query(default=False)) -> Any:
+                 with_scheme: bool = Query(default=False), answer_sheet: bool = Query(default=False),
+                 settings: Any = Depends(print_settings)) -> Any:
     """The paper (or its scheme, or both) by its share link — no sign-in,
     so a link an order hands back opens in any browser."""
     from fastapi.responses import HTMLResponse
 
     row = _by_share_token(exam_id, token)
-    return HTMLResponse(_print(row, answers=answers, with_scheme=with_scheme, answer_sheet=answer_sheet))
+    return HTMLResponse(_print(row, answers=answers, with_scheme=with_scheme, answer_sheet=answer_sheet, settings=settings))
 
 
 @router.get("/exams/{exam_id}/print.pdf")
 def public_print_pdf(exam_id: str, token: str = Query(default=""), answers: bool = Query(default=False),
-                     with_scheme: bool = Query(default=False), answer_sheet: bool = Query(default=False)) -> Any:
+                     with_scheme: bool = Query(default=False), answer_sheet: bool = Query(default=False),
+                     settings: Any = Depends(print_settings)) -> Any:
     from ..services import pdf
 
     row = _by_share_token(exam_id, token)
     try:
-        body = pdf.from_html(_print(row, answers=answers, with_scheme=with_scheme, answer_sheet=answer_sheet))
+        body = pdf.from_html(_print(row, answers=answers, with_scheme=with_scheme, answer_sheet=answer_sheet, settings=settings))
     except pdf.PdfUnavailable as exc:
         raise_api_error("MODEL_ENDPOINT_UNAVAILABLE", str(exc))
     suffix = "marking-scheme" if answers else "booklet" if with_scheme else "paper"
@@ -403,7 +416,8 @@ def public_print_pdf(exam_id: str, token: str = Query(default=""), answers: bool
 
 
 @router.get("/exams/{exam_id}/scheme")
-def public_marking_scheme(exam_id: str, token: str = Query(default="")) -> Any:
+def public_marking_scheme(exam_id: str, token: str = Query(default=""),
+                          settings: Any = Depends(print_settings)) -> Any:
     """The marking scheme the QR code on the printed paper opens.
 
     No sign-in: the token printed on the paper is the credential, and it
@@ -419,7 +433,7 @@ def public_marking_scheme(exam_id: str, token: str = Query(default="")) -> Any:
     expected = str((row or {}).get("share_token") or "")
     if not row or not expected or not token or not hmac.compare_digest(expected, token):
         raise_api_error("NOT_FOUND", "No such marking scheme.")
-    return HTMLResponse(_print(row, answers=True, with_scheme=False))
+    return HTMLResponse(_print(row, answers=True, with_scheme=False, settings=settings))
 
 
 def _strip_answers(content: dict[str, Any]) -> dict[str, Any]:
