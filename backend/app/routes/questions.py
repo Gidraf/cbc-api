@@ -724,6 +724,28 @@ def list_questions(
     }
 
 
+class BankRecheckRequest(BaseModel):
+    grade: str = ""
+    subject: str = ""
+    sub_strand: str = ""
+    dry_run: bool = False
+
+
+@router.post("/bank/recheck")
+def bank_recheck(
+    payload: BankRecheckRequest,
+    _: AuthContext = Depends(require_roles("admin", "operator")),
+) -> dict[str, Any]:
+    """Today's checks over what the bank already holds: schemes and stems
+    repaired in place, keys the engine can prove moved, the same task under
+    two ids and every other finding marked needs_review with the reasons on
+    the row. No model is called. `dry_run` reports without writing."""
+    from ..services import bank_recheck
+
+    return bank_recheck.run(grade=payload.grade, subject=payload.subject,
+                            sub_strand=payload.sub_strand, dry_run=payload.dry_run)
+
+
 @router.get("/sources")
 def question_sources(
     grade: str | None = Query(default=None),

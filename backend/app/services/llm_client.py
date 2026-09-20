@@ -82,6 +82,20 @@ def responses_output_text(data: dict[str, Any]) -> str:
     return "".join(parts)
 
 
+def _bare_svg(text: str) -> str:
+    """An SVG document standing on its own in the model's reply, or ''."""
+    start = text.find("<svg")
+    end = text.rfind("</svg>")
+    if start == -1 or end == -1 or end < start:
+        return ""
+    before = text[:start].strip()
+    # Prose or a fence before it is fine; another tag or a brace means this
+    # was something else that happened to contain an SVG.
+    if "{" in before or "<" in before.replace("```", ""):
+        return ""
+    return text[start:end + len("</svg>")]
+
+
 @dataclass(slots=True)
 class LlmResponse:
     """Structured response from an LLM call, including parsed content and token usage."""
@@ -520,6 +534,15 @@ class LlmClient:
                     return json.loads(candidate[start:end + 1])
                 except json.JSONDecodeError:
                     continue
+
+        # The drawing prompt asks for JSON with the SVG inside it; a smaller
+        # model hands back the SVG on its own. That is the answer, not a
+        # refusal — a 14B run failed every figure over it. Take the document
+        # as the field it was meant to fill.
+        svg = _bare_svg(cleaned)
+        if svg:
+            logger.info("The model returned bare SVG where JSON was asked for; taking it as diagram_svg.")
+            return {"diagram_svg": svg, "svg": svg, "bare_svg": True}
 
         logger.error("JSON parsing failed on LLM output: %s", cleaned[:300])
         raise_api_error(

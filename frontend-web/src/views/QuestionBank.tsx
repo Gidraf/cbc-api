@@ -18,7 +18,7 @@ import {
   Th,
   useToast,
 } from "../ui/components";
-import { gradeOptionLabel, subjectOptionLabel, useGrades, useQuestionActions, useQuestions, useQuestionSources, useSubjects } from "../lib/queries";
+import { gradeOptionLabel, subjectOptionLabel, useGrades, useQuestionActions, useBankRecheck, useQuestions, useQuestionSources, useSubjects } from "../lib/queries";
 import { QueuePanel } from "./QueuePanel";
 import { useComposeExam } from "../lib/queries";
 
@@ -53,6 +53,19 @@ export function QuestionBank() {
   const actions = useQuestionActions();
   const composeExam = useComposeExam();
   const sources = useQuestionSources(grade || undefined, subject || undefined);
+  const recheck = useBankRecheck();
+
+  function recheckBank() {
+    const scope = grade ? `${grade}${subject ? ` · ${subject}` : ""}` : "the whole bank";
+    const ok = window.confirm(
+      `Re-check ${scope} with today's checks?\n\n` +
+        "Marking schemes and stems are repaired in place, keys the engine can prove are moved, " +
+        "and items that fail a check — the same task under two ids, an unexplained key, an item " +
+        "below the grade — are marked Needs review with the reasons. Approved items are never demoted. " +
+        "No model is called; this costs nothing."
+    );
+    if (ok) recheck.mutate({ grade: grade || undefined, subject: subject || undefined });
+  }
 
   const [selected, setSelected] = React.useState<Set<string>>(new Set());
   const [preview, setPreview] = React.useState<any | null>(null);
@@ -142,10 +155,32 @@ export function QuestionBank() {
               <option value="curriculum">Curriculum order</option>
               <option value="recent">Newest first</option>
             </Select>
+            <Button size="sm" variant="secondary" disabled={recheck.isPending} onClick={recheckBank}
+                    title="Run today's checks over what is already filed; repairs what needs no model, flags the rest">
+              {recheck.isPending ? "Re-checking…" : "Re-check bank"}
+            </Button>
           </>
         }
       />
 
+      {recheck.error && <ErrorNotice error={recheck.error} />}
+      {recheck.data && (
+        <div role="status"
+             style={{ border: "1px solid var(--line)", background: "var(--surface-2, var(--surface))",
+                      borderRadius: "var(--radius)", padding: "var(--s3)", fontSize: "var(--text-sm)" }}>
+          <strong>Re-checked {recheck.data.checked} item{recheck.data.checked === 1 ? "" : "s"}</strong>
+          {" — "}{recheck.data.repaired_count} repaired in place, {recheck.data.flagged_count} marked Needs review
+          {recheck.data.cleared.length > 0 && <>, {recheck.data.cleared.length} cleared</>}.
+          {Object.keys(recheck.data.findings_by_kind).length > 0 && (
+            <div style={{ marginTop: "var(--s1)", color: "var(--ink-2)" }}>
+              {Object.entries(recheck.data.findings_by_kind).map(([k, v]) => `${v} × ${k.replace(/_/g, " ")}`).join(" · ")}
+            </div>
+          )}
+          <div style={{ marginTop: "var(--s1)", color: "var(--ink-3)" }}>
+            Filter Status → Needs review to read each item's reasons; a paper composed from the bank leaves them out.
+          </div>
+        </div>
+      )}
       {sources.data && (
         <div role="status"
              style={{ border: "1px solid var(--line)", background: "var(--surface-2, var(--surface))",

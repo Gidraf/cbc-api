@@ -219,16 +219,26 @@ def _deal(candidates: list[dict[str, Any]], budget: float, rng: random.Random,
         if not pile:
             del by_topic[topic]
 
+    from .task_shape import same_task, stem_of
+
     chosen: list[dict[str, Any]] = []
     spent = 0.0
     for topic, question in ordered:
         key = _task_key(question)
         if key in seen_tasks:
             continue
+        # Not the same task wearing different numbers either. The bank holds
+        # several batches on a sub-strand and each wrote "a diver at −18 m";
+        # a paper dealt from it printed two — and Section B is dealt after
+        # Section A, so the stems already on the paper travel in `seen_tasks`.
+        stem = stem_of(question)
+        if any(same_task(stem, picked[5:]) for picked in seen_tasks if picked.startswith("stem:")):
+            continue
         marks = _marks_of(question)
         if not marks or spent + marks > budget + 0.5:
             continue
         seen_tasks.add(key)
+        seen_tasks.add("stem:" + stem)
         used_topics[topic] = used_topics.get(topic, 0) + 1
         chosen.append(question)
         spent += marks
@@ -333,6 +343,12 @@ def compose(items: list[dict[str, Any]], *, kind: str, grade: str, subject: str,
                 == strand.strip().lower()]
     if not allow_drafts:
         pool = [q for q in pool if str(q.get("status") or "") == "approved"]
+    else:
+        # Drafts are dealt; items a check has held are not. A re-check of
+        # the bank marks the same task under two ids, an unexplained key,
+        # an item below the grade — and a paper must not print them while
+        # the console says they need review.
+        pool = [q for q in pool if str(q.get("status") or "") not in ("needs_review", "rejected", "superseded")]
     seed = seed or hashlib.sha1(f"{grade}|{subject}|{kind}|{strand}|{sub_strand}|{marks}".encode()).hexdigest()[:8]
     rng = random.Random(seed)
 

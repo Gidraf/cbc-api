@@ -396,3 +396,18 @@ def test_the_marking_scheme_shows_working_and_why_not_the_others() -> None:
     bare = dict(q, marking_scheme="", options=[{"id": "A", "text": "hippo", "is_correct": True}, {"id": "B", "text": "lion"}],
                 question_text="Which animal lives in Lake Naivasha?")
     assert "No working or reason was recorded" in question_paper._scheme_item(bare, 7)
+
+
+def test_items_held_for_review_are_not_dealt_even_when_drafts_are():
+    from app.services import paper_builder as pb
+
+    def item(qid, status):
+        return {"question_id": qid, "status": status, "question_type": "multiple_choice",
+                "question_text": f"Work out ${qid} + 1$.", "pedagogy": {"max_marks": 1},
+                "curriculum": {"strand": "Numbers", "sub_strand": "Integers"},
+                "options": [{"id": "A", "text": "1", "is_correct": True}, {"id": "B", "text": "2"}]}
+    pool = [item("a", "approved"), item("b", "draft"), item("c", "needs_review"), item("d", "rejected")]
+    paper = pb.compose(pool, kind="topical", grade="grade-9", subject="Mathematics",
+                       sub_strand="Integers", marks=4, allow_drafts=True)
+    ids = {q["question_id"] for q in paper.items}
+    assert ids == {"a", "b"}, ids

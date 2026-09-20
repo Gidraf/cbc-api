@@ -36,13 +36,22 @@ def answering(monkeypatch):
     return reply
 
 
-def test_an_svg_is_rejected_as_json(answering) -> None:
-    """The failure, kept: this is what the station saw."""
+def test_a_bare_svg_where_json_was_asked_for_is_taken_as_the_drawing(answering) -> None:
+    """The drawing prompt asks for JSON with the SVG inside it; a smaller
+    model hands back the SVG on its own. A 14B run failed every figure with
+    SCHEMA_VALIDATION_FAILED over it — the document IS the answer."""
+    out = answering(SVG).generate(CONFIG, [{"role": "user", "content": "draw"}])
+
+    assert out.content["diagram_svg"].startswith("<svg") and out.content["diagram_svg"].endswith("</svg>")
+    assert out.content["bare_svg"] is True
+
+
+def test_prose_that_merely_contains_an_svg_is_still_not_json(answering) -> None:
     from app.errors import ApiError
 
     with pytest.raises(ApiError) as raised:
-        answering(SVG).generate(CONFIG, [{"role": "user", "content": "draw"}])
-
+        answering("<html><body>" + SVG + "</body></html>").generate(
+            CONFIG, [{"role": "user", "content": "draw"}])
     assert raised.value.code == "SCHEMA_VALIDATION_FAILED"
 
 

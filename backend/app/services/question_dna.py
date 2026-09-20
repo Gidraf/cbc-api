@@ -257,6 +257,24 @@ class QuestionDnaService:
             "message": "Question refinement initiated.",
         }
 
+    def set_status(self, question_id: str, status: str,
+                   review_audit: dict[str, Any] | None = None) -> None:
+        """Move an item between draft, needs_review and approved, with the
+        audit that says why. An approved item is never demoted here — that
+        is a person's decision to unmake."""
+        if status not in ("draft", "needs_review", "approved", "rejected"):
+            raise ValueError(f"'{status}' is not a question status")
+        params: dict[str, Any] = {"qid": question_id, "status": status}
+        set_audit = ""
+        if review_audit is not None:
+            set_audit = ", review_audit = CAST(:review_audit AS jsonb)"
+            params["review_audit"] = to_json({**review_audit, "updated_at": now_iso()})
+        execute(
+            f"UPDATE question_dna SET status = :status{set_audit}, updated_at = NOW() "
+            f"WHERE question_id = :qid AND status <> 'approved'",
+            params,
+        )
+
     def action_rereview(self, question_id: str) -> dict[str, Any]:
         """Re-scores the item against the current metric set."""
         from .dna_scoring import score_question

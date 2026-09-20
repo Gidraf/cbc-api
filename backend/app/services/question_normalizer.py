@@ -7,6 +7,8 @@ answer key became "option A".
 """
 from __future__ import annotations
 
+import re
+
 import logging
 from typing import Any
 
@@ -127,6 +129,68 @@ def _normalize_options(raw: Any, stated_correct: str) -> list[AnswerOption]:
             )
 
     return [o for o in options if o.text]
+
+
+def scheme_text(raw: Any) -> str:
+    """The marking scheme as lines of text, whatever shape the writer sent.
+
+    A writer answered with an object — {"step_1": "M1: …", "step_2": "A1: …"}
+    — and it was filed as its Python repr, so the printed scheme read
+    "1. {'step_1': 'A1: Selects option B.', …}" braces, quotes and all.
+    """
+    if raw is None:
+        return ""
+    if isinstance(raw, str):
+        text = raw.strip()
+        # The same object arriving as a JSON or Python literal in a string.
+        if text[:1] in "{[" and text[-1:] in "}]":
+            import ast
+            import json
+
+            for loader in (json.loads, ast.literal_eval):
+                try:
+                    parsed = loader(text)
+                except Exception:  # noqa: BLE001
+                    continue
+                if isinstance(parsed, (dict, list)):
+                    return scheme_text(parsed)
+        return text
+    if isinstance(raw, dict):
+        lines = []
+        for key, value in raw.items():
+            line = scheme_text(value)
+            if not line:
+                continue
+            label = str(key).replace("_", " ").strip()
+            # "step 1" is the numbering the renderer adds; a named key such
+            # as "part_a" is worth keeping.
+            lines.append(line if label.lower().startswith("step") or label.isdigit() else f"{label}: {line}")
+        return "\n".join(lines)
+    if isinstance(raw, list):
+        return "\n".join(l for l in (scheme_text(v) for v in raw) if l)
+    return str(raw).strip()
+
+
+_INLINE_PARTS = re.compile(r"\(\s*[a-h]\s*\)\s*.*?\(\s*\d+\s*marks?\s*\)", re.I | re.S)
+
+
+def strip_inline_parts(text: str, parts: list["StructuredPart"]) -> str:
+    """A stem that lists its parts — "(a) Write a signed expression … (2 marks)
+    (b) Calculate … (3 marks)" — when the parts are also carried in
+    `structured_parts`. The paper printed every part twice."""
+    if not parts or not text:
+        return text
+    first = _INLINE_PARTS.search(text)
+    if not first:
+        return text
+    # Only when what follows really is the part list, i.e. it mentions the
+    # first part's own words; a "(a)" inside an expression is left alone.
+    head = re.sub(r"\s+", " ", parts[0].sub_question.lower())[:30]
+    tail = re.sub(r"\s+", " ", text[first.start():].lower())
+    if head[:20] not in tail:
+        return text
+    head = text[:first.start()].rstrip(" ;:")
+    return head if not head or head.endswith((".", "?", "!")) else head + "."
 
 
 def _normalize_parts(raw: Any) -> list[StructuredPart]:
@@ -327,7 +391,8 @@ class QuestionNormalizer:
         if diagram_resolver is not None:
             diagram = diagram_resolver(raw, q_type)
 
-        marking_scheme = str(raw.get("marking_scheme") or "").strip()
+        marking_scheme = scheme_text(raw.get("marking_scheme"))
+        parts = _normalize_parts(raw.get("structured_parts"))
 
         return QuestionItem(
             question_id=question_id,
@@ -337,10 +402,10 @@ class QuestionNormalizer:
             curriculum=curriculum,
             pedagogy=pedagogy,
             stimulus_context=str(raw.get("stimulus_context") or raw.get("scenario_context") or "").strip(),
-            question_text=str(raw.get("question_text") or "").strip(),
+            question_text=strip_inline_parts(str(raw.get("question_text") or "").strip(), parts),
             options=_normalize_options(raw.get("options"), str(raw.get("correct_answer") or "")),
             correct_answer=str(raw.get("correct_answer") or "").strip() or None,
-            structured_parts=_normalize_parts(raw.get("structured_parts")),
+            structured_parts=parts,
             model_answer=str(raw.get("model_answer") or raw.get("explanation") or "").strip(),
             marking_scheme=marking_scheme,
             expression=str(raw.get("expression") or "").strip(),

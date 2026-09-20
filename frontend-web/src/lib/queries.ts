@@ -1971,6 +1971,29 @@ export function useQuestionSources(grade?: string, subject?: string) {
   });
 }
 
+export type BankRecheck = {
+  checked: number; repaired_count: number; flagged_count: number; dry_run: boolean;
+  repaired: { question_id?: string; sub_strand?: string; what: string }[];
+  flagged: { question_id: string; sub_strand: string; why: string[] }[];
+  cleared: string[];
+  findings_by_kind: Record<string, number>;
+};
+
+/** Today's checks over what the bank already holds — repairs shapes and
+ * engine-provable keys in place, marks the rest needs_review. No model. */
+export function useBankRecheck() {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { grade?: string; subject?: string; sub_strand?: string; dry_run?: boolean }) =>
+      api<BankRecheck>(`/api/v1/questions/bank/recheck`, { method: "POST", body: JSON.stringify(v) }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["questions"] });
+      qc.invalidateQueries({ queryKey: ["question-sources"] });
+    },
+  });
+}
+
 export function useQuestions(filters: QuestionFilters) {
   const api = useApi();
   return useQuery({

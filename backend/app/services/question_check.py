@@ -365,6 +365,10 @@ def _against_the_bank(questions: list[dict[str, Any]], existing: list[dict[str, 
             known_expr.setdefault(key, _id(item))
     if not known_text:
         return
+    from .task_shape import same_task
+
+    bank_stems = [(_stem(item), _id(item)) for item in (existing or [])
+                  if isinstance(item, dict) and _id(item) not in ids and _stem(item)]
     for index, question in enumerate(questions, start=1):
         stem = _stem(question).lower()
         twin = known_text.get(stem)
@@ -377,12 +381,27 @@ def _against_the_bank(questions: list[dict[str, Any]], existing: list[dict[str, 
                 f"{_label(question, index)} is already in the question bank as {twin}.",
                 "Drop it, or set a different task.",
                 [_id(question)]))
+            continue
+        # The same task wearing different numbers: "an outstanding debt of
+        # KSh 3,400" beside the bank's "KSh 3,500". A paper dealt from the
+        # bank printed both.
+        near = next((qid for text, qid in bank_stems if same_task(_stem(question), text)), None)
+        if near:
+            findings.append(Finding(
+                "same_task_as_bank",
+                f"{_label(question, index)} is the bank's {near} with the numbers or the place changed.",
+                "Set a different task: a different situation and a different demand, not the same "
+                "sentence with new figures.",
+                [_id(question)]))
 
 
 def _within_the_batch(questions: list[dict[str, Any]], findings: list[Finding]) -> None:
     """Two items with the same stem. The expression-level repeat is found by
     the worked-example reading; this is the plain copy."""
+    from .task_shape import same_task
+
     seen: dict[str, int] = {}
+    kept: list[tuple[int, str]] = []
     for index, question in enumerate(questions, start=1):
         stem = _stem(question).lower()
         if not stem:
@@ -394,8 +413,20 @@ def _within_the_batch(questions: list[dict[str, Any]], findings: list[Finding]) 
                 f"{_label(questions[seen[stem] - 1], seen[stem])}.",
                 "One of them goes.",
                 [_id(question)]))
-        else:
-            seen[stem] = index
+            continue
+        seen[stem] = index
+        # Same task, different numbers — the paper had "fair scoring in a
+        # classroom game" twice and a diver at −18 m twice.
+        earlier = next((i for i, text in kept if same_task(_stem(question), text)), None)
+        if earlier is not None:
+            findings.append(Finding(
+                "same_task_in_batch",
+                f"{_label(question, index)} is {_label(questions[earlier - 1], earlier)} again with "
+                f"the numbers or the place changed.",
+                "Set a different task: a different situation and a different demand.",
+                [_id(question)]))
+            continue
+        kept.append((index, _stem(question)))
 
 
 # ── the set ──────────────────────────────────────────────────────────────────

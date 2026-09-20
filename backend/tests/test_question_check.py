@@ -418,8 +418,11 @@ def test_an_item_with_no_working_or_reason_is_a_finding() -> None:
 
 def test_the_writer_translates_and_the_engine_works_the_expression() -> None:
     """The model does the modelling; the engine does the arithmetic."""
-    item = _mcq("Q7", "A trader starts the day with a balance of $-450$ shillings, earns $3 \\times 250$ "
-                      "shillings and pays $2 \\times 160$ shillings. What is the closing balance?",
+    # A different situation from the batch's own trader (Q3): the same
+    # sentence with new figures is what the same-task check exists to catch.
+    item = _mcq("Q7", "Amina's mobile money wallet is overdrawn by $450$ shillings. She receives $3$ "
+                      "payments of $250$ shillings each and buys $2$ bundles at $160$ shillings each. "
+                      "How much is in the wallet afterwards?",
                 {"A": "$-20$", "B": "$20$", "C": "$-140$", "D": "$580$"}, "A",
                 expression="-450 + 3\\times 250 - 2\\times 160")
     report = question_check.check(_sound_batch() + [item], **GRADE9)
@@ -513,3 +516,81 @@ def test_few_figures_is_an_item_finding_the_rewrite_loop_acts_on():
     to_rewrite, lines, asks = qr.instruction(items, findings, targets)
     assert len(to_rewrite) == 3 and len(lines) == 3 and asks == []
     assert "Re-set this item on data" in lines[0]
+
+
+# ── what the paper printed wrong that was not arithmetic ─────────────────────
+
+def test_a_marking_scheme_sent_as_an_object_is_filed_as_lines():
+    from app.services.question_normalizer import scheme_text
+
+    assert scheme_text({"step_1": "A1: Selects option B.", "step_2": "M1: Explains why."}) == \
+        "A1: Selects option B.\nM1: Explains why."
+    # The same object arriving as a Python literal in a string — the paper
+    # printed "1. {'step_1': 'A1: Selects option B.', …}".
+    assert scheme_text("{'step_1': 'A1: Selects option B.', 'step_2': 'M1: Explains why.'}") == \
+        "A1: Selects option B.\nM1: Explains why."
+    assert scheme_text({"part_a": "M1 for the bracket", "part_b": "A1 for 13"}) == \
+        "part a: M1 for the bracket\npart b: A1 for 13"
+    assert scheme_text("M1 for the bracket; A1 for 13") == "M1 for the bracket; A1 for 13"
+    assert scheme_text(None) == ""
+
+
+def test_a_stem_that_lists_its_own_parts_is_trimmed_when_the_parts_are_structured():
+    from app.services.question_normalizer import StructuredPart, strip_inline_parts
+
+    parts = [StructuredPart(part_id="(a)", sub_question="Write a signed expression for the final balance.", marks=2),
+             StructuredPart(part_id="(b)", sub_question="Calculate the final balance.", marks=3)]
+    text = ("A club has an opening deficit of KSh 120. Use signed integers to determine the final balance. "
+            "(a) Write a signed expression for the final balance, including the opening deficit. (2 marks) "
+            "(b) Calculate the final balance. (3 marks) (c) Explain the sign. (1 mark)")
+    assert strip_inline_parts(text, parts) == \
+        "A club has an opening deficit of KSh 120. Use signed integers to determine the final balance."
+    # Left alone when there are no structured parts, or when the "(a)" is not a part list.
+    assert strip_inline_parts(text, []) == text
+    assert strip_inline_parts("Evaluate (a) 3 + (b) where b = 2 (2 marks)", parts) == \
+        "Evaluate (a) 3 + (b) where b = 2 (2 marks)"
+
+
+def test_the_same_task_with_new_numbers_is_caught_in_the_batch_and_against_the_bank():
+    from app.services import question_check as qc
+
+    debt_a = _mcq("Q2", "A school cooperative society in Nairobi records daily financial transactions in its "
+                        "ledger. State the directed integer that represents an outstanding debt of KSh 3,400 "
+                        "owed by a school canteen.", {"A": "+3,400", "B": "-3,400", "C": "0", "D": "±3,400"}, "B")
+    debt_b = _mcq("Q3", "Learners in Nakuru County participate in an integer change activity using opposite "
+                        "cards on a horizontal number line. State the directed integer that represents an "
+                        "outstanding debt of KSh 3,500 in a school canteen ledger.",
+                  {"A": "+3500", "B": "-3500", "C": "3500 without sign", "D": "0"}, "B")
+    findings: list = []
+    qc._within_the_batch([debt_a, debt_b], findings)
+    assert [f.kind for f in findings] == ["same_task_in_batch"] and findings[0].items == ["q-q3"]
+
+    findings = []
+    qc._against_the_bank([debt_b], [{**debt_a, "question_id": "bank-77"}], findings)
+    assert [f.kind for f in findings] == ["same_task_as_bank"]
+    assert "bank-77" in findings[0].says
+
+
+def test_a_paper_is_not_dealt_the_same_task_twice():
+    import random
+
+    from app.services import paper_builder as pb
+
+    def item(qid, text):
+        return {"question_id": qid, "question_type": "multiple_choice", "question_text": text,
+                "pedagogy": {"max_marks": 1}, "curriculum": {"strand": "Numbers", "sub_strand": "Integers"},
+                "options": [{"id": "A", "text": "x", "is_correct": True}, {"id": "B", "text": "y"}]}
+    diver_a = item("d1", "Marine biology learners in Mombasa County record diving depths relative to sea level. "
+                         "A diver starts at a depth of 18 m below sea level. She ascends 3 m per minute for 4 "
+                         "minutes, then descends 5 m to inspect a reef, and finally ascends 8 m. Calculate her "
+                         "final position relative to sea level.")
+    diver_b = item("d2", "During a STEM project in Kisii County, learners use directed numbers along a valley "
+                         "trail. A diver starts at a depth of 18 m below sea level. She ascends 7 m, descends "
+                         "12 m, and finally ascends 5 m. What is her final depth?")
+    bank = item("b1", "A school canteen bank account has an overdraft of KSh 750. The club deposits 4 payments "
+                      "of KSh 350 each, pays 2 invoices of KSh 500 each, and is charged KSh 120. Calculate the "
+                      "final bank balance.")
+    seen: set = set()
+    chosen = pb._deal([diver_a, diver_b, bank], 3.0, random.Random(1), seen, {})
+    ids = {q["question_id"] for q in chosen}
+    assert "b1" in ids and len(ids & {"d1", "d2"}) == 1, ids
