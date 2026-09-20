@@ -7,7 +7,7 @@
 import React from "react";
 import { AUTH_EXPIRED_EVENT, fetchJson } from "../api";
 
-export type Role = "admin" | "operator" | "reviewer" | "developer";
+export type Role = "admin" | "operator" | "reviewer" | "developer" | "user";
 
 const KEYS = {
   token: "cbc_token",
@@ -18,10 +18,12 @@ const KEYS = {
 
 /** Rights by role, mirroring the backend's require_roles decorators. */
 const RIGHTS: Record<Role, string[]> = {
-  admin: ["generate", "review", "approve", "publish", "configure", "read"],
-  operator: ["generate", "review", "read"],
-  reviewer: ["review", "approve", "read"],
-  developer: ["read"],
+  admin: ["generate", "review", "approve", "publish", "configure", "read", "build"],
+  operator: ["generate", "review", "read", "build"],
+  reviewer: ["review", "approve", "read", "build"],
+  developer: ["read", "build"],
+  // A signup: the exam studio and their own papers, nothing of the factory.
+  user: ["build"],
 };
 
 export type AuthState = {

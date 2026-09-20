@@ -3772,6 +3772,152 @@ export function useCancelAgentTask() {
 }
 
 
+// ── Exam builder ─────────────────────────────────────────────────────────────
+// A paper built step by step and previewed as it will print. Drafts live on
+// the platform; the preview is the platform's own renderer, fetched as HTML
+// and shown in an iframe, so what the builder sees is the page that prints.
+
+export type DraftScope = { mode: "smart" | "topical" | "topics"; sub_strand?: string; strand?: string; sub_strands?: string[] };
+
+export type ExamDraft = {
+  draft_id: string; owner: string; title: string; grade: string; subject: string; kind: string; term: number | null;
+  scope: DraftScope; items: { question_id: string; overrides: Record<string, any> }[];
+  snapshot: Record<string, any>; settings: Record<string, any>; status: "draft" | "frozen"; exam_id: string | null;
+  created_at: string; updated_at: string; item_count?: number;
+  scope_sub_strands?: { strand: string; sub_strand: string }[];
+};
+
+export type DraftItemDetail = {
+  question_id: string; missing?: boolean; status?: string; version?: number;
+  question: Record<string, any>; overrides: Record<string, any>;
+  curriculum: Record<string, any>; pedagogy: Record<string, any>; provenance: Record<string, any>;
+  review_audit: Record<string, any>;
+  working: { source: string; answer: string; steps: { text: string; why: string }[] };
+  findings: { kind: string; says: string; fix: string; items: string[] }[];
+  rung: string;
+};
+
+export function useBuilderKinds() {
+  const api = useApi();
+  return useQuery({
+    queryKey: ["builder-kinds"],
+    queryFn: () => api<{ kinds: Record<string, string>; print_presets: Record<string, Record<string, any>> }>(`/api/v1/builder/kinds`),
+    staleTime: 10 * 60_000,
+  });
+}
+
+export function useDrafts() {
+  const api = useApi();
+  return useQuery({ queryKey: ["drafts"], queryFn: () => api<{ drafts: ExamDraft[] }>(`/api/v1/builder/drafts`).then((r) => r.drafts) });
+}
+
+export function useDraft(draftId: string) {
+  const api = useApi();
+  return useQuery({
+    queryKey: ["draft", draftId],
+    queryFn: () => api<ExamDraft>(`/api/v1/builder/drafts/${draftId}`),
+    enabled: Boolean(draftId),
+  });
+}
+
+function draftMutation<TVars>(path: (v: TVars) => string, method: string, body?: (v: TVars) => unknown) {
+  return function useIt() {
+    const api = useApi();
+    const qc = useQueryClient();
+    return useMutation({
+      mutationFn: (v: TVars) => api<any>(path(v), { method, body: body ? JSON.stringify(body(v)) : undefined }),
+      onSuccess: (_d, v: any) => {
+        qc.invalidateQueries({ queryKey: ["drafts"] });
+        if (v?.draft_id) {
+          qc.invalidateQueries({ queryKey: ["draft", v.draft_id] });
+          qc.invalidateQueries({ queryKey: ["draft-items", v.draft_id] });
+          qc.invalidateQueries({ queryKey: ["draft-bank", v.draft_id] });
+          qc.invalidateQueries({ queryKey: ["draft-preview", v.draft_id] });
+          qc.invalidateQueries({ queryKey: ["draft-candidates", v.draft_id] });
+        }
+      },
+    });
+  };
+}
+
+export const useCreateDraft = draftMutation<{ grade: string; subject: string; kind: string; title: string; term?: number | null; scope: DraftScope; settings?: Record<string, any> }>(
+  () => `/api/v1/builder/drafts`, "POST", (v) => v);
+export const usePatchDraft = draftMutation<{ draft_id: string; patch: Record<string, any> }>(
+  (v) => `/api/v1/builder/drafts/${v.draft_id}`, "PATCH", (v) => v.patch);
+export const useDeleteDraft = draftMutation<{ draft_id: string }>((v) => `/api/v1/builder/drafts/${v.draft_id}`, "DELETE");
+export const useDuplicateDraft = draftMutation<{ draft_id: string }>((v) => `/api/v1/builder/drafts/${v.draft_id}/duplicate`, "POST");
+export const useFillDraft = draftMutation<{ draft_id: string; count: number; diagram_count?: number | null; seed?: string; format?: string }>(
+  (v) => `/api/v1/builder/drafts/${v.draft_id}/fill`, "POST", (v) => ({ count: v.count, diagram_count: v.diagram_count, seed: v.seed || "", format: v.format || "auto" }));
+export const useGenerateForDraft = draftMutation<{ draft_id: string; count: number }>(
+  (v) => `/api/v1/builder/drafts/${v.draft_id}/generate`, "POST", (v) => ({ count: v.count }));
+export const useOverrideItem = draftMutation<{ draft_id: string; question_id: string; fields: Record<string, any> }>(
+  (v) => `/api/v1/builder/drafts/${v.draft_id}/items/${encodeURIComponent(v.question_id)}`, "PUT", (v) => ({ fields: v.fields }));
+export const useReorderDraft = draftMutation<{ draft_id: string; question_ids: string[] }>(
+  (v) => `/api/v1/builder/drafts/${v.draft_id}/order`, "POST", (v) => ({ question_ids: v.question_ids }));
+export const useReviewDraft = draftMutation<{ draft_id: string; provider?: string; model?: string; fix?: boolean }>(
+  (v) => `/api/v1/builder/drafts/${v.draft_id}/review`, "POST", (v) => ({ provider: v.provider || "", model: v.model || "", fix: v.fix ?? true }));
+export const useFreezeDraft = draftMutation<{ draft_id: string }>((v) => `/api/v1/builder/drafts/${v.draft_id}/freeze`, "POST");
+
+export function useDraftBank(draftId: string) {
+  const api = useApi();
+  return useQuery({
+    queryKey: ["draft-bank", draftId],
+    queryFn: () => api<{ sub_strands: { strand: string; sub_strand: string; items: number; with_figures: number; held: number; has_notes: boolean }[] }>(
+      `/api/v1/builder/drafts/${draftId}/bank`).then((r) => r.sub_strands),
+    enabled: Boolean(draftId),
+  });
+}
+
+export function useDraftItems(draftId: string) {
+  const api = useApi();
+  return useQuery({
+    queryKey: ["draft-items", draftId],
+    queryFn: () => api<{ items: DraftItemDetail[] }>(`/api/v1/builder/drafts/${draftId}/items`).then((r) => r.items),
+    enabled: Boolean(draftId),
+  });
+}
+
+export function useDraftCandidates(draftId: string, subStrand: string) {
+  const api = useApi();
+  return useQuery({
+    queryKey: ["draft-candidates", draftId, subStrand],
+    queryFn: () => api<{ items: any[] }>(`/api/v1/builder/drafts/${draftId}/candidates?sub_strand=${encodeURIComponent(subStrand)}`).then((r) => r.items),
+    enabled: Boolean(draftId),
+  });
+}
+
+/** The preview page as HTML, for an iframe's srcdoc — the same renderer the
+ * print uses, with the query string's settings over the draft's own. */
+export function useDraftPreview(draftId: string, params: Record<string, string | number | boolean | undefined>) {
+  const { token } = useAuth();
+  const qs = Object.entries(params).filter(([, v]) => v !== undefined && v !== "").map(([k, v]) => `${k}=${encodeURIComponent(String(v))}`).join("&");
+  return useQuery({
+    queryKey: ["draft-preview", draftId, qs],
+    queryFn: async () => {
+      const { blob } = await fetchBlob(`/api/v1/builder/drafts/${draftId}/preview.html?${qs}`, { bearerToken: token });
+      return await blob.text();
+    },
+    enabled: Boolean(draftId),
+    staleTime: 5_000,
+  });
+}
+
+export function useDraftPdf() {
+  const { token } = useAuth();
+  return useMutation({
+    mutationFn: async ({ draft_id, params }: { draft_id: string; params: Record<string, string | number | boolean | undefined> }) => {
+      const qs = Object.entries(params).filter(([, v]) => v !== undefined && v !== "").map(([k, v]) => `${k}=${encodeURIComponent(String(v))}`).join("&");
+      const { blob, filename } = await fetchBlob(`/api/v1/builder/drafts/${draft_id}/preview.pdf?${qs}`, { bearerToken: token });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url; link.download = filename || "paper.pdf"; document.body.appendChild(link); link.click(); link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+      return filename;
+    },
+  });
+}
+
+
 /** The agent context pack: playbook, manifest, formats, prompts, as a zip. */
 export function useAgentPack() {
   const { token } = useAuth();

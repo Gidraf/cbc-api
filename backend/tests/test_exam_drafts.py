@@ -191,3 +191,52 @@ def test_a_user_sees_only_their_drafts_and_staff_see_all(world):
     with pytest.raises(Exception):
         ed.get(other, "user:amina")
     assert ed.get(other, "admin:gm")["owner"] == "user:otieno"
+
+
+# ── the routes, as a signed-up user ─────────────────────────────────────────
+
+@pytest.fixture
+def client(world, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+    from app.services.auth import AuthContext, get_auth_context
+
+    monkeypatch.setattr("app.services.platform_settings.get", lambda key, default=None: default)
+    app.dependency_overrides[get_auth_context] = lambda: AuthContext(subject="amina", role="user", auth_type="session")
+    try:
+        yield TestClient(app)
+    finally:
+        app.dependency_overrides.pop(get_auth_context, None)
+
+
+def test_a_user_builds_a_paper_through_the_api_but_may_not_spend_tokens(client):
+    r = client.post("/api/v1/builder/drafts", json={"grade": "grade-9", "subject": "Mathematics", "kind": "cat",
+                                                    "title": "CAT 1", "scope": {"mode": "topical", "sub_strand": "Integers"}})
+    assert r.status_code == 200, r.text
+    draft_id = r.json()["draft_id"]
+    assert r.json()["owner"] == "user:amina"
+
+    assert client.get("/api/v1/builder/drafts").json()["drafts"][0]["draft_id"] == draft_id
+    assert client.get(f"/api/v1/builder/drafts/{draft_id}/bank").json()["sub_strands"][0]["items"] == 16
+
+    r = client.post(f"/api/v1/builder/drafts/{draft_id}/fill", json={"count": 6, "diagram_count": 2})
+    assert r.status_code == 200 and r.json()["items"] > 0
+
+    r = client.get(f"/api/v1/builder/drafts/{draft_id}/preview.html?density=dense")
+    assert r.status_code == 200 and "font-size: 7.8pt" in r.text, "a knob on the query string"
+
+    items = client.get(f"/api/v1/builder/drafts/{draft_id}/items").json()["items"]
+    assert items and "working" in items[0] and "curriculum" in items[0]
+
+    r = client.put(f"/api/v1/builder/drafts/{draft_id}/items/{items[0]['question_id']}",
+                   json={"fields": {"question_text": "Corrected."}})
+    assert r.status_code == 200 and r.json()["items"][0]["overrides"] == {"question_text": "Corrected."}
+
+    # Generating and AI review spend the platform's tokens: off for users by default.
+    assert client.post(f"/api/v1/builder/drafts/{draft_id}/generate", json={"count": 30}).status_code == 403
+    assert client.post(f"/api/v1/builder/drafts/{draft_id}/review", json={}).status_code == 403
+
+    r = client.post(f"/api/v1/builder/drafts/{draft_id}/freeze")
+    assert r.status_code == 200 and r.json()["exam_id"].startswith("exam-")
+    assert client.get(f"/api/v1/builder/drafts/{draft_id}").json()["status"] == "frozen"

@@ -1,13 +1,34 @@
 import React from "react";
 import { useAuth } from "../lib/auth";
 import { Button, Card, Field, Input } from "../ui/components";
+import { fetchJson } from "../api";
 
 export function SignIn() {
   const { signIn, expiredReason } = useAuth();
-  const [username, setUsername] = React.useState("admin");
+  const [username, setUsername] = React.useState("");
   const [password, setPassword] = React.useState("");
   const [error, setError] = React.useState<string | null>(null);
   const [busy, setBusy] = React.useState(false);
+  const [mode, setMode] = React.useState<"signin" | "signup">("signin");
+  const [email, setEmail] = React.useState("");
+
+  // A signup is a USER account: the exam studio and their own papers.
+  async function signUp(e: React.FormEvent) {
+    e.preventDefault();
+    setError(null);
+    setBusy(true);
+    try {
+      await fetchJson<any>("/api/v1/auth/register", {
+        method: "POST",
+        body: JSON.stringify({ username, password, email: email || null, role: "user" }),
+      });
+      await signIn(username, password);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Sign-up failed.");
+    } finally {
+      setBusy(false);
+    }
+  }
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -57,7 +78,21 @@ export function SignIn() {
         )}
 
         <Card>
-          <form onSubmit={submit} style={{ display: "flex", flexDirection: "column", gap: "var(--s4)" }}>
+          <form onSubmit={mode === "signup" ? signUp : submit} style={{ display: "flex", flexDirection: "column", gap: "var(--s4)" }}>
+            <div role="tablist" style={{ display: "flex", gap: 4, borderBottom: "1px solid var(--line)" }}>
+              {(["signin", "signup"] as const).map((m) => (
+                <button key={m} type="button" role="tab" aria-selected={mode === m} onClick={() => { setMode(m); setError(null); }}
+                        style={{ background: "transparent", border: "none", padding: "6px 10px", cursor: "pointer", color: "var(--ink)",
+                                 borderBottom: `2px solid ${mode === m ? "var(--accent)" : "transparent"}`, fontWeight: mode === m ? 650 : 500 }}>
+                  {m === "signin" ? "Sign in" : "Create an account"}
+                </button>
+              ))}
+            </div>
+            {mode === "signup" && (
+              <Field label="Email (optional)">
+                {(props) => <Input {...props} type="email" value={email} autoComplete="email" onChange={(e) => setEmail(e.target.value)} />}
+              </Field>
+            )}
             <Field label="Username">
               {(props) => (
                 <Input
@@ -84,8 +119,14 @@ export function SignIn() {
             </Field>
 
             <Button type="submit" variant="primary" loading={busy} style={{ justifyContent: "center" }}>
-              Sign in
+              {mode === "signup" ? "Create account and open the studio" : "Sign in"}
             </Button>
+            {mode === "signup" && (
+              <p style={{ fontSize: "var(--text-xs)", color: "var(--ink-3)", margin: 0 }}>
+                An account builds exam papers from the question bank — topical, mid-term, end of term, with figures,
+                marking schemes and answer sheets — and prints them.
+              </p>
+            )}
           </form>
         </Card>
 

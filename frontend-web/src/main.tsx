@@ -11,6 +11,7 @@ import { LoadingBlock, ToastProvider } from "./ui/components";
 
 import { AgentTasks } from "./views/AgentTasks";
 import { Approvals } from "./views/Approvals";
+import { ExamStudio } from "./views/ExamStudio";
 import { Coverage } from "./views/Coverage";
 import { ContentFactory } from "./views/ContentFactory";
 import { Datasets } from "./views/Datasets";
@@ -63,6 +64,12 @@ function Screen({ name, children }: { name: string; children: React.ReactNode })
   );
 }
 
+function Home() {
+  const { role } = useAuth();
+  if (role === "user") return <Navigate to="/studio" replace />;
+  return <Screen name="Overview"><Overview /></Screen>;
+}
+
 function Router() {
   const { token } = useAuth();
 
@@ -71,7 +78,7 @@ function Router() {
   return (
     <Routes>
       <Route element={<AppShell />}>
-        <Route index element={<Screen name="Overview"><Overview /></Screen>} />
+        <Route index element={<Home />} />
         <Route path="pipelines" element={<Screen name="Pipelines"><Pipelines /></Screen>} />
         <Route
           path="prompts"
@@ -91,6 +98,8 @@ function Router() {
         <Route path="factory" element={<Screen name="Content factory"><ContentFactory /></Screen>} />
         <Route path="questions" element={<Screen name="Question bank"><QuestionBank /></Screen>} />
         <Route path="exams" element={<Screen name="Exam builder"><ExamBuilder /></Screen>} />
+        <Route path="studio" element={<Screen name="Exam studio"><ExamStudio /></Screen>} />
+        <Route path="studio/:draftId" element={<Screen name="Exam studio"><ExamStudio /></Screen>} />
         <Route path="diagrams" element={<Screen name="Diagram library"><DiagramLibrary /></Screen>} />
         <Route path="media" element={<Screen name="Photo and video library"><MediaLibrary /></Screen>} />
         <Route path="review" element={<Screen name="Review queue"><Review /></Screen>} />

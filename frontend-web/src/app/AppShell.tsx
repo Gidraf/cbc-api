@@ -9,18 +9,20 @@ const NAV: { group: string; items: NavItem[] }[] = [
   {
     group: "Produce",
     items: [
-      { to: "/", label: "Overview", icon: "◇", hint: "Where the factory stands today" },
+      { to: "/", label: "Overview", icon: "◇", right: "read", hint: "Where the factory stands today" },
       {
         to: "/pipelines",
         label: "Pipelines",
         icon: "⛓",
+        right: "read",
         hint: "Every grade as a project, stage by stage — what is built, what passed, what is stuck",
       },
-      { to: "/coverage", label: "Curriculum coverage", icon: "▤", hint: "What is done and what is left, per grade" },
+      { to: "/coverage", label: "Curriculum coverage", icon: "▤", right: "read", hint: "What is done and what is left, per grade" },
       {
         to: "/design-coverage",
         label: "KICD design coverage",
         icon: "◫",
+        right: "read",
         hint: "Which outcomes, inquiry questions and competencies have a question against them",
       },
       { to: "/factory", label: "Content factory", icon: "⚒", right: "generate", hint: "Notes, diagrams, activities, questions" },
@@ -29,9 +31,10 @@ const NAV: { group: string; items: NavItem[] }[] = [
   {
     group: "Assess",
     items: [
-      { to: "/questions", label: "Question bank", icon: "?", hint: "Every approved item, in curriculum order" },
-      { to: "/exams", label: "Exam builder", icon: "▦", hint: "Compose and print papers" },
-      { to: "/diagrams", label: "Diagram library", icon: "◈", hint: "Reusable visuals and their parts" },
+      { to: "/studio", label: "Exam studio", icon: "✎", right: "build", hint: "Build a paper step by step and see it as it prints" },
+      { to: "/questions", label: "Question bank", icon: "?", right: "read", hint: "Every approved item, in curriculum order" },
+      { to: "/exams", label: "Exam builder", icon: "▦", right: "read", hint: "Compose and print papers" },
+      { to: "/diagrams", label: "Diagram library", icon: "◈", right: "read", hint: "Reusable visuals and their parts" },
       {
         to: "/media",
         label: "Photos & videos",
