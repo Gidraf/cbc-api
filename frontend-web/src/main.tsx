@@ -12,6 +12,7 @@ import { LoadingBlock, ToastProvider } from "./ui/components";
 import { AgentTasks } from "./views/AgentTasks";
 import { Approvals } from "./views/Approvals";
 import { ExamStudio } from "./views/ExamStudio";
+import { QueueBoard } from "./views/QueueBoard";
 import { Coverage } from "./views/Coverage";
 import { ContentFactory } from "./views/ContentFactory";
 import { Datasets } from "./views/Datasets";
@@ -114,6 +115,7 @@ function Router() {
         <Route path="datasets" element={<Screen name="Datasets"><Datasets /></Screen>} />
         <Route path="skills" element={<Screen name="Teaching skills"><Profiles /></Screen>} />
         <Route path="models" element={<Screen name="Model per station"><StageModels /></Screen>} />
+        <Route path="queue" element={<Screen name="Queue"><QueueBoard /></Screen>} />
         <Route path="agents" element={<Screen name="Agent tasks"><AgentTasks /></Screen>} />
         <Route path="keys" element={<Screen name="API keys"><ProviderKeys /></Screen>} />
         <Route path="settings" element={<Screen name="Settings"><PlatformSettings /></Screen>} />

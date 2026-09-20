@@ -1904,6 +1904,44 @@ export function useRetryFailed(grade: string, subject?: string) {
   });
 }
 
+export type QueueBoardFilters = { status?: string; kind?: string; grade?: string; subject?: string; search?: string; limit?: number };
+
+export type QueueBoardJob = QueueStatus["jobs"][number] & {
+  grade?: string; created_at?: string; started_at?: string | null; finished_at?: string | null;
+  heartbeat_at?: string | null; heartbeat_age_s?: number | null; age_s?: number | null;
+  queued_by?: string; llm_calls?: number; total_tokens?: number; cost_usd?: number | string;
+  count?: string | null; last_step?: { at?: number; step?: string; detail?: string; status?: string } | null;
+  elapsed_s?: string | null;
+};
+
+/** The whole queue, every scope, for the board — filtered, polled while
+ * anything is queued or running. */
+export function useQueueBoard(filters: QueueBoardFilters) {
+  const api = useApi();
+  return useQuery({
+    queryKey: ["queue", "board", filters],
+    queryFn: () => {
+      const qs = new URLSearchParams();
+      Object.entries(filters).forEach(([k, v]) => { if (v !== undefined && v !== "" && v !== null) qs.set(k, String(v)); });
+      return api<QueueStatus & { jobs: QueueBoardJob[] }>(`/api/v1/curriculum/factory/queue/status?${qs}`);
+    },
+    refetchInterval: (query) => {
+      const data = query.state.data as QueueStatus | undefined;
+      if (!data) return 3000;
+      return (data.counts.queued ?? 0) + (data.counts.running ?? 0) + (data.counts.paused ?? 0) > 0 ? 3000 : 15000;
+    },
+  });
+}
+
+export function useSweepQueue() {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api<{ recovered: number; redispatched: number }>(`/api/v1/curriculum/factory/queue/sweep`, { method: "POST" }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["queue"] }),
+  });
+}
+
 export function useCancelQueue() {
   const api = useApi();
   const qc = useQueryClient();

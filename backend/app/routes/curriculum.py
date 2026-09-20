@@ -8246,12 +8246,29 @@ def factory_queue_status(
     batch_id: str = Query(""),
     grade: str = Query(""),
     subject: str = Query(""),
+    status: str = Query("", description="queued,running,failed… — several, comma-separated"),
+    kind: str = Query(""),
+    search: str = Query(""),
+    limit: int = Query(200, ge=1, le=500),
     _: AuthContext = Depends(require_roles("admin", "operator", "reviewer")),
 ) -> dict[str, Any]:
     """What the queue is doing, for the console to poll."""
     from ..services import job_queue
 
-    return job_queue.status(batch_id=batch_id, grade=grade, subject=subject)
+    return job_queue.status(batch_id=batch_id, grade=grade, subject=subject, limit=limit,
+                            job_status=status, kind=kind, search=search)
+
+
+@router.post("/factory/queue/sweep")
+def factory_queue_sweep(
+    _: AuthContext = Depends(require_roles("admin", "operator")),
+) -> dict[str, Any]:
+    """Put back what a restart or a lost message left behind, now rather
+    than at the next tick: running rows with no heartbeat back to queued,
+    queued rows nothing claimed dispatched again."""
+    from ..services import job_queue
+
+    return job_queue.sweep()
 
 
 @router.post("/factory/queue/retry")

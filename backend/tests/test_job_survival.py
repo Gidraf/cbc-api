@@ -134,3 +134,30 @@ def test_the_worker_sweeps_on_its_beat_and_the_task_reads_redelivery():
     import inspect
     src = inspect.getsource(tasks.run_job)
     assert "redelivered=bool(info.get(\"redelivered\"))" in src
+
+
+def test_the_board_filters_by_status_kind_and_search_and_reports_heartbeats(monkeypatch):
+    from app.infra import db
+
+    seen = {}
+
+    def fetch_all(sql, params=None):
+        seen.setdefault("sqls", []).append(sql)
+        if "ORDER BY (status = 'running') DESC" in sql:
+            seen["params"] = params
+            return [{"job_id": "j1", "kind": "pipeline", "status": "running", "heartbeat_age_s": 12, "age_s": 400,
+                     "last_step": {"step": "Lesson 3", "detail": "written", "status": "ok"}, "queued_by": "gm",
+                     "llm_calls": 4, "cost_usd": 0.12}]
+        return []
+    monkeypatch.setattr(db, "fetch_all", fetch_all)
+    monkeypatch.setattr(db, "fetch_one", lambda sql, params=None: None)
+    monkeypatch.setattr(jq, "worker_running", lambda: False)
+    monkeypatch.setattr(jq, "_celery_reachable", lambda: True)
+
+    out = jq.status(job_status="running,queued", kind="pipeline", search="Integers", limit=50)
+    assert seen["params"]["statuses"] == ["running", "queued"] and seen["params"]["kind"] == "pipeline"
+    assert seen["params"]["search"] == "%Integers%"
+    sql = [q for q in seen["sqls"] if "ORDER BY (status = 'running') DESC" in q][0]
+    assert "heartbeat_age_s" in sql and "last_step" in sql and "queued_by" in sql
+    assert out["jobs"][0]["heartbeat_age_s"] == 12 and out["jobs"][0]["last_step"]["step"] == "Lesson 3"
+    assert out["runs_on"] == "celery"

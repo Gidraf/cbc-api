@@ -808,6 +808,7 @@ def _celery_reachable() -> bool:
 
 def status(
     batch_id: str = "", grade: str = "", subject: str = "", limit: int = 200,
+    job_status: str = "", kind: str = "", search: str = "",
 ) -> dict[str, Any]:
     """What the queue is doing, for the console to poll."""
     from ..infra.db import fetch_all, fetch_one
@@ -817,6 +818,16 @@ def status(
     if batch_id:
         where.append("batch_id = :batch_id")
         params["batch_id"] = batch_id
+    if job_status:
+        where.append("status = ANY(:statuses)")
+        params["statuses"] = [s.strip() for s in job_status.split(",") if s.strip()]
+    if kind:
+        where.append("kind = :kind")
+        params["kind"] = kind
+    if search:
+        where.append("(LOWER(sub_strand) LIKE LOWER(:search) OR LOWER(strand) LIKE LOWER(:search) "
+                     "OR LOWER(subject) LIKE LOWER(:search) OR job_id LIKE :search OR LOWER(error) LIKE LOWER(:search))")
+        params["search"] = f"%{search.strip()}%"
     if grade:
         where.append("(REPLACE(LOWER(grade), 'grade-', '') = REPLACE(LOWER(:grade), 'grade-', ''))")
         params["grade"] = grade
@@ -830,14 +841,24 @@ def status(
         f"""
         SELECT job_id, batch_id, kind, grade, subject, strand, sub_strand,
                status, attempts, error, created_at, started_at, finished_at,
+               heartbeat_at, queued_by, llm_calls, total_tokens, cost_usd,
                -- Which step of the chain a pipeline job is on. Without it every
                -- stage of a full run reads as "pipeline" and the operator
                -- cannot tell reading the design from writing the questions.
                (payload->'steps'->>COALESCE((payload->>'index')::int, 0)) AS step,
+               (payload->>'count') AS count,
                -- Which build produced a failure, so a stale one is visibly stale.
-               (result->>'failed_under_build') AS failed_under_build
+               (result->>'failed_under_build') AS failed_under_build,
+               -- The last thing the station said, for a board that shows every
+               -- running job at once rather than one.
+               (result->'progress'->'steps'->-1) AS last_step,
+               (result->'progress'->>'elapsed_s') AS elapsed_s,
+               -- Seconds since the heartbeat: the difference between a job
+               -- that is working and one whose process is gone.
+               EXTRACT(EPOCH FROM (NOW() - heartbeat_at))::int AS heartbeat_age_s,
+               EXTRACT(EPOCH FROM (NOW() - COALESCE(started_at, created_at)))::int AS age_s
         FROM jobs WHERE {clause}
-        ORDER BY created_at DESC LIMIT :limit
+        ORDER BY (status = 'running') DESC, (status = 'queued') DESC, created_at DESC LIMIT :limit
         """,
         params,
     ) or []
