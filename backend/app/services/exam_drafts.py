@@ -175,8 +175,37 @@ def bank_summary(row: dict[str, Any]) -> list[dict[str, Any]]:
         figures = sum(1 for i in usable if (i.get("content") or {}).get("diagram"))
         out.append({"strand": entry.get("strand", ""), "sub_strand": ss, "items": len(usable),
                     "with_figures": figures, "held": len(items) - len(usable),
-                    "has_notes": product_orders._has_notes(grade, subject, ss) if ss else False})
+                    "has_notes": product_orders._has_notes(grade, subject, ss) if ss else False,
+                    "writing": _writing(grade, subject, ss)})
     return out
+
+
+def _writing(grade: str, subject: str, sub_strand: str) -> dict[str, Any] | None:
+    """The queue's work on this sub-strand right now — so the row can say
+    "writing the guide, then the questions" rather than only 0 items."""
+    from ..infra.db import fetch_all
+
+    try:
+        rows = fetch_all(
+            """
+            SELECT job_id, kind, status, created_at,
+                   (payload->'steps'->>COALESCE((payload->>'index')::int, 0)) AS step
+            FROM jobs
+            WHERE REPLACE(LOWER(grade), 'grade-', '') = REPLACE(LOWER(:grade), 'grade-', '')
+              AND LOWER(subject) = LOWER(:subject) AND LOWER(sub_strand) = LOWER(:ss)
+              AND kind IN ('pipeline', 'notes', 'questions', 'diagram')
+              AND status IN ('queued', 'running', 'paused')
+            ORDER BY created_at ASC LIMIT 5
+            """,
+            {"grade": grade, "subject": subject, "ss": sub_strand},
+        ) or []
+    except Exception:  # noqa: BLE001
+        return None
+    if not rows:
+        return None
+    running = next((r for r in rows if r["status"] == "running"), rows[0])
+    stage = str(running.get("step") or running.get("kind") or "")
+    return {"status": running["status"], "stage": stage, "jobs": len(rows), "job_id": running["job_id"]}
 
 
 # ── filling it ──────────────────────────────────────────────────────────────
@@ -248,9 +277,11 @@ def _raise_figure_floor(paper: Any, pool: list[dict[str, Any]], floor: int) -> N
             have += 1
 
 
-def generate(draft_id: str, *, count: int = 30, owner: str = "", queued_by: str = "") -> dict[str, Any]:
+def generate(draft_id: str, *, count: int = 30, sub_strand: str = "", owner: str = "",
+             queued_by: str = "") -> dict[str, Any]:
     """Queue the questions the scope lacks, one job per sub-strand short
-    of its share, the way an order does — then `fill` again when they land."""
+    of its share, the way an order does — or for the one sub-strand named,
+    there and then. `fill` again when they land (the bank row says when)."""
     import math
 
     from . import job_queue, product_orders
@@ -263,20 +294,26 @@ def generate(draft_id: str, *, count: int = 30, owner: str = "", queued_by: str 
 
         raise_api_error("NOT_FOUND", f"No sub-strands for {subject} at {grade} in this scope.")
     per = max(product_orders.MIN_ITEMS_PER_SUB_STRAND, math.ceil(2 * count / len(scope)))
+    if sub_strand:
+        scope = [e for e in scope if str(e.get("sub_strand") or "").lower() == sub_strand.lower()] or \
+                [{"strand": "", "sub_strand": sub_strand}]
     queued = []
     for entry in scope:
         ss = str(entry.get("sub_strand") or "")
         have = product_orders._items_in_bank(grade, subject, ss)
-        if have >= per:
+        if have >= per and not sub_strand:
+            continue
+        if _writing(grade, subject, ss):
+            queued.append({"sub_strand": ss, "already": True})
             continue
         steps = ["questions"] if product_orders._has_notes(grade, subject, ss) else ["notes", "questions"]
         job = job_queue.enqueue(
             "pipeline", grade, subject,
-            {"steps": steps, "index": 0, "custom_instructions": "", "count": per - have,
+            {"steps": steps, "index": 0, "custom_instructions": "", "count": max(per - have, 5),
              "scope_strand": str(entry.get("strand") or "")},
             strand=str(entry.get("strand") or ""), sub_strand=ss, queued_by=queued_by or "builder",
         )
-        queued.append({"sub_strand": ss, "writing": per - have, "job_id": job.job_id, "steps": steps})
+        queued.append({"sub_strand": ss, "writing": max(per - have, 5), "job_id": job.job_id, "steps": steps})
     if queued:
         job_queue.start_worker()
     return {"queued": queued, "per_sub_strand": per}

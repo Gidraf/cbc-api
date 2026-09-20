@@ -240,3 +240,33 @@ def test_a_user_builds_a_paper_through_the_api_but_may_not_spend_tokens(client):
     r = client.post(f"/api/v1/builder/drafts/{draft_id}/freeze")
     assert r.status_code == 200 and r.json()["exam_id"].startswith("exam-")
     assert client.get(f"/api/v1/builder/drafts/{draft_id}").json()["status"] == "frozen"
+
+
+def test_one_sub_strand_can_be_written_there_and_then_and_the_row_says_so(world, monkeypatch):
+    from app.infra import db
+    from app.services import job_queue
+
+    jobs = []
+    monkeypatch.setattr(job_queue, "enqueue", lambda kind, g, s, payload, **kw: jobs.append((payload, kw)) or SimpleNamespace(job_id=f"j{len(jobs)}"))
+    monkeypatch.setattr(job_queue, "start_worker", lambda: True)
+    d = ed.create(owner="user:amina", grade="grade-9", subject="Mathematics", kind="endterm",
+                  scope={"mode": "topics", "sub_strands": ["Integers", "Equations"]})
+
+    # Nothing in the queue: Equations shows 0 items, no guide, not writing.
+    rows = {r["sub_strand"]: r for r in ed.bank_summary(d)}
+    assert rows["Equations"]["items"] == 0 and rows["Equations"]["writing"] is None
+
+    out = ed.generate(d["draft_id"], count=30, sub_strand="Equations")
+    assert [q["sub_strand"] for q in out["queued"]] == ["Equations"], "only the row asked for"
+    assert jobs[0][0]["steps"] == ["notes", "questions"] and jobs[0][1]["sub_strand"] == "Equations"
+
+    # The queue now holds the job: the row reports it, and asking again does not double it.
+    real = db.fetch_all
+    monkeypatch.setattr(db, "fetch_all", lambda sql, params=None: (
+        [{"job_id": "j1", "kind": "pipeline", "status": "running", "created_at": "t", "step": "notes"}]
+        if "FROM jobs" in sql and params and params.get("ss") == "Equations" else real(sql, params)))
+    rows = {r["sub_strand"]: r for r in ed.bank_summary(d)}
+    assert rows["Equations"]["writing"] == {"status": "running", "stage": "notes", "jobs": 1, "job_id": "j1"}
+    assert rows["Integers"]["writing"] is None
+    again = ed.generate(d["draft_id"], count=30, sub_strand="Equations")
+    assert again["queued"] == [{"sub_strand": "Equations", "already": True}] and len(jobs) == 1

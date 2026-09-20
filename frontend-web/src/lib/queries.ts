@@ -3848,8 +3848,8 @@ export const useDeleteDraft = draftMutation<{ draft_id: string }>((v) => `/api/v
 export const useDuplicateDraft = draftMutation<{ draft_id: string }>((v) => `/api/v1/builder/drafts/${v.draft_id}/duplicate`, "POST");
 export const useFillDraft = draftMutation<{ draft_id: string; count: number; diagram_count?: number | null; seed?: string; format?: string }>(
   (v) => `/api/v1/builder/drafts/${v.draft_id}/fill`, "POST", (v) => ({ count: v.count, diagram_count: v.diagram_count, seed: v.seed || "", format: v.format || "auto" }));
-export const useGenerateForDraft = draftMutation<{ draft_id: string; count: number }>(
-  (v) => `/api/v1/builder/drafts/${v.draft_id}/generate`, "POST", (v) => ({ count: v.count }));
+export const useGenerateForDraft = draftMutation<{ draft_id: string; count: number; sub_strand?: string }>(
+  (v) => `/api/v1/builder/drafts/${v.draft_id}/generate`, "POST", (v) => ({ count: v.count, sub_strand: v.sub_strand || "" }));
 export const useOverrideItem = draftMutation<{ draft_id: string; question_id: string; fields: Record<string, any> }>(
   (v) => `/api/v1/builder/drafts/${v.draft_id}/items/${encodeURIComponent(v.question_id)}`, "PUT", (v) => ({ fields: v.fields }));
 export const useReorderDraft = draftMutation<{ draft_id: string; question_ids: string[] }>(
@@ -3858,13 +3858,19 @@ export const useReviewDraft = draftMutation<{ draft_id: string; provider?: strin
   (v) => `/api/v1/builder/drafts/${v.draft_id}/review`, "POST", (v) => ({ provider: v.provider || "", model: v.model || "", fix: v.fix ?? true }));
 export const useFreezeDraft = draftMutation<{ draft_id: string }>((v) => `/api/v1/builder/drafts/${v.draft_id}/freeze`, "POST");
 
+export type BankRow = {
+  strand: string; sub_strand: string; items: number; with_figures: number; held: number; has_notes: boolean;
+  writing: { status: string; stage: string; jobs: number; job_id: string } | null;
+};
+
 export function useDraftBank(draftId: string) {
   const api = useApi();
   return useQuery({
     queryKey: ["draft-bank", draftId],
-    queryFn: () => api<{ sub_strands: { strand: string; sub_strand: string; items: number; with_figures: number; held: number; has_notes: boolean }[] }>(
-      `/api/v1/builder/drafts/${draftId}/bank`).then((r) => r.sub_strands),
+    queryFn: () => api<{ sub_strands: BankRow[] }>(`/api/v1/builder/drafts/${draftId}/bank`).then((r) => r.sub_strands),
     enabled: Boolean(draftId),
+    // While the worker writes for any row, keep the counts moving.
+    refetchInterval: (q) => ((q.state.data || []).some((r) => r.writing) ? 5000 : false),
   });
 }
 

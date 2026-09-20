@@ -55,6 +55,8 @@ class FillRequest(BaseModel):
 
 class GenerateRequest(BaseModel):
     count: int = Field(default=30, ge=1, le=120)
+    # One sub-strand, there and then — the row's own button.
+    sub_strand: str = ""
 
 
 class OverrideRequest(BaseModel):
@@ -153,7 +155,8 @@ def generate_for_draft(draft_id: str, payload: GenerateRequest, auth: AuthContex
     if auth.role == "user" and not platform_settings.get("users_may_generate", False):
         raise_api_error("FORBIDDEN", "Generating new questions is not enabled for user accounts on this platform; "
                                      "choose from the bank, or ask the operator.")
-    return exam_drafts.generate(draft_id, count=payload.count, owner=_owner(auth), queued_by=auth.subject)
+    return exam_drafts.generate(draft_id, count=payload.count, sub_strand=payload.sub_strand,
+                                owner=_owner(auth), queued_by=auth.subject)
 
 
 @router.get("/drafts/{draft_id}/items")

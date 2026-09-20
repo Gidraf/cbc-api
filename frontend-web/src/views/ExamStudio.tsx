@@ -382,12 +382,26 @@ function QuestionsSection({ d, frozen }: { d: ExamDraft; frozen: boolean }) {
       toast(`${out.items} questions on the paper, ${out.with_figures} with figures${out.shortfall ? ` — ${out.shortfall}` : ""}.`, out.shortfall ? "info" : "ok");
     } catch (err) { toast(err instanceof Error ? err.message : "Could not fill.", "danger"); }
   }
-  async function doGenerate() {
+  async function doGenerate(sub_strand?: string) {
     try {
-      const out = await generate.mutateAsync({ draft_id: d.draft_id, count });
-      toast(out.queued.length ? `Writing questions for ${out.queued.map((q: any) => q.sub_strand).join(", ")} — follow the Queue board, then fill again.` : "The bank already has enough for this scope.", "ok");
+      const out = await generate.mutateAsync({ draft_id: d.draft_id, count, sub_strand });
+      const fresh = out.queued.filter((q: any) => !q.already);
+      toast(fresh.length
+        ? `Writing ${sub_strand ? "for " + sub_strand : "for " + fresh.map((q: any) => q.sub_strand).join(", ")} — the row shows progress; fill again when it lands.`
+        : out.queued.length ? "Already being written." : "The bank already has enough for this scope.", "ok");
     } catch (err) { toast(err instanceof Error ? err.message : "Could not queue.", "danger"); }
   }
+  const anyWriting = (bank.data || []).some((s) => s.writing);
+  const wasWriting = React.useRef(false);
+  React.useEffect(() => {
+    // The moment the worker finishes, the counts are new: refill an empty
+    // paper on its own, and say so.
+    if (wasWriting.current && !anyWriting) {
+      if (!(items.data || []).length) doFill();
+      else toast("New questions landed in the bank. Deal again to bring them onto the paper.", "info");
+    }
+    wasWriting.current = anyWriting;
+  }, [anyWriting]);  // eslint-disable-line react-hooks/exhaustive-deps
   function move(qid: string, dir: -1 | 1) {
     const ids = (items.data || []).map((i) => i.question_id);
     const i = ids.indexOf(qid); const j = i + dir;
@@ -404,12 +418,26 @@ function QuestionsSection({ d, frozen }: { d: ExamDraft; frozen: boolean }) {
       <Card title="From the bank" description="What already exists for this scope, checked and engine-verified. Pick from it, or write more.">
         <Stack gap="var(--s2)">
           {(bank.data || []).map((s) => (
-            <div key={s.sub_strand} style={{ display: "flex", gap: "var(--s2)", alignItems: "center", fontSize: "var(--text-sm)" }}>
-              <span style={{ flex: 1 }}>{s.sub_strand}</span>
+            <div key={s.sub_strand} style={{ display: "flex", gap: "var(--s2)", alignItems: "center", fontSize: "var(--text-sm)", flexWrap: "wrap" }}>
+              <span style={{ flex: 1, minWidth: "10rem" }}>{s.sub_strand}</span>
               <Badge tone={s.items >= 10 ? "ok" : s.items ? "warn" : "danger"}>{s.items} items</Badge>
               <Badge tone="neutral">{s.with_figures} with figures</Badge>
-              {!s.has_notes && <Badge tone="warn">no guide</Badge>}
-              <Button size="sm" variant="ghost" disabled={frozen || !s.items} onClick={() => setAdding(s.sub_strand)}>Pick by hand</Button>
+              {!s.has_notes && !s.writing && <Badge tone="warn">no guide</Badge>}
+              {s.writing && (
+                <Badge tone="accent">
+                  {s.writing.status === "running" ? "writing" : "queued"} · {s.writing.stage === "notes" ? "the guide first" : s.writing.stage || "…"}
+                </Badge>
+              )}
+              {s.items ? (
+                <Button size="sm" variant="ghost" disabled={frozen} onClick={() => setAdding(s.sub_strand)}>Pick by hand</Button>
+              ) : null}
+              {s.items < 10 && !s.writing && (
+                <Button size="sm" variant={s.items ? "ghost" : "secondary"} disabled={frozen || generate.isPending}
+                        title={s.has_notes ? "Write questions for this sub-strand now" : "Writes the teacher's guide first, then the questions — a longer job"}
+                        onClick={() => doGenerate(s.sub_strand)}>
+                  {s.items ? "Write more" : "Write questions"}
+                </Button>
+              )}
             </div>
           ))}
           <Stack direction="row" gap="var(--s3)" align="end" wrap>
@@ -417,7 +445,7 @@ function QuestionsSection({ d, frozen }: { d: ExamDraft; frozen: boolean }) {
             <label style={lbl}>With figures (at least)<Input type="number" min={0} max={60} value={diagrams} onChange={(e) => setDiagrams(Number(e.target.value))} style={{ width: "6rem" }} /></label>
             <Button variant="primary" disabled={frozen || fill.isPending || !total} onClick={() => doFill()}>{fill.isPending ? "Filling…" : "Fill from the bank"}</Button>
             <Button variant="secondary" disabled={frozen || fill.isPending || !(items.data || []).length} onClick={() => doFill(Math.random().toString(36).slice(2, 8))}>Deal again</Button>
-            <Button variant="ghost" disabled={frozen || generate.isPending} onClick={doGenerate}
+            <Button variant="ghost" disabled={frozen || generate.isPending} onClick={() => doGenerate()}
                     title={role === "user" ? "Writes new questions with the platform's model; the operator decides whether user accounts may" : "Write the questions this scope is short of"}>
               {generate.isPending ? "Queuing…" : "Generate more"}
             </Button>
