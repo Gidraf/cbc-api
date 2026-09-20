@@ -16,7 +16,7 @@ from ..services.level_register import language_block, register_block, teacher_bl
 from ..services.faith_scope import prompt_block as faith_prompt_block
 from ..services.grade_scope import notes_for as grade_scope_notes
 from ..services.grade_order import grade_label, grade_level, grade_ordinal, normalize_grade
-from .exams import print_settings
+from .exams import finish_pdf, page_selection, print_settings
 from ..services.langfuse_seed import SEED_PROMPT_BLOCKS
 from ..services.question_dna import question_dna_service
 from ..services import diagram_svg
@@ -661,6 +661,7 @@ def composed_paper_pdf(
     with_scheme: bool = Query(False),
     answer_sheet: bool = Query(False),
     settings: Any = Depends(print_settings),
+    selection: dict[str, Any] = Depends(page_selection),
     _: AuthContext = Depends(require_roles("admin", "operator", "reviewer")),
 ) -> Any:
     from fastapi import Response
@@ -674,7 +675,7 @@ def composed_paper_pdf(
         paper, answers=answers, with_scheme=with_scheme, answer_sheet=answer_sheet,
         assets=question_paper.figures_for(paper.items), settings=settings)
     try:
-        body = pdf.from_html(document)
+        body = finish_pdf(pdf.from_html(document), selection)
     except pdf.PdfUnavailable as exc:
         raise_api_error("MODEL_ENDPOINT_UNAVAILABLE", str(exc))
     stem = "-".join(part.lower().replace(" ", "-") for part in

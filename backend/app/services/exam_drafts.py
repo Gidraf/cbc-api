@@ -34,6 +34,11 @@ EDITABLE = ("question_text", "stimulus_context", "options", "structured_parts", 
             "model_answer", "expression", "max_marks")
 
 
+# Compact pages, but the full worked scheme — the depth is the product —
+# and no DRAFT stamp: the studio's paper is the seller's paper.
+DEFAULT_SETTINGS: dict[str, Any] = {"density": "compact", "scheme_detail": "full", "watermark": False}
+
+
 def _now() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%S")
 
@@ -54,7 +59,8 @@ def create(*, owner: str, grade: str, subject: str, kind: str = "topical", title
         """,
         {"id": draft_id, "owner": owner, "title": title, "grade": normalize_grade(grade), "subject": subject,
          "kind": kind if kind in KINDS else "custom", "term": term,
-         "scope": to_json(scope or {"mode": "smart"}), "settings": to_json(settings or {"density": "compact"})},
+         "scope": to_json(scope or {"mode": "smart"}),
+         "settings": to_json(settings or dict(DEFAULT_SETTINGS))},
     )
     return get(draft_id)
 
@@ -277,8 +283,21 @@ def _raise_figure_floor(paper: Any, pool: list[dict[str, Any]], floor: int) -> N
             have += 1
 
 
-def generate(draft_id: str, *, count: int = 30, sub_strand: str = "", owner: str = "",
-             queued_by: str = "") -> dict[str, Any]:
+DIFFICULTY = {
+    # default_difficulty for the writer, and the words that go with it.
+    "easy": (0.35, "Set the batch at the EASIER end for this grade: single-step and two-step items, "
+                   "familiar situations, no trick; still nothing below the grade."),
+    "medium": (0.55, ""),
+    "hard": (0.8, "Set the batch at the HARDER end for this grade: multi-step items, combined operations, "
+                  "situations that must be translated before they can be worked, and at least a third "
+                  "at analysis or evaluation."),
+    "mixed": (0.6, "Spread the batch across the grade's range: a quarter easier, half at the grade, "
+                   "a quarter stretching, in that proportion."),
+}
+
+
+def generate(draft_id: str, *, count: int = 30, sub_strand: str = "", difficulty: str = "mixed",
+             figures: int | None = None, owner: str = "", queued_by: str = "") -> dict[str, Any]:
     """Queue the questions the scope lacks, one job per sub-strand short
     of its share, the way an order does — or for the one sub-strand named,
     there and then. `fill` again when they land (the bank row says when)."""
@@ -307,16 +326,88 @@ def generate(draft_id: str, *, count: int = 30, sub_strand: str = "", owner: str
             queued.append({"sub_strand": ss, "already": True})
             continue
         steps = ["questions"] if product_orders._has_notes(grade, subject, ss) else ["notes", "questions"]
+        level, words = DIFFICULTY.get(difficulty, DIFFICULTY["mixed"])
+        if figures:
+            words = (words + " " if words else "") + \
+                    f"Set at least {figures} of the items on a figure, a table or a chart, given as `figure` data."
         job = job_queue.enqueue(
             "pipeline", grade, subject,
-            {"steps": steps, "index": 0, "custom_instructions": "", "count": max(per - have, 5),
-             "scope_strand": str(entry.get("strand") or "")},
+            {"steps": steps, "index": 0, "custom_instructions": words, "count": max(per - have, 5),
+             "difficulty": level, "scope_strand": str(entry.get("strand") or "")},
             strand=str(entry.get("strand") or ""), sub_strand=ss, queued_by=queued_by or "builder",
         )
         queued.append({"sub_strand": ss, "writing": max(per - have, 5), "job_id": job.job_id, "steps": steps})
     if queued:
         job_queue.start_worker()
     return {"queued": queued, "per_sub_strand": per}
+
+
+def live(row: dict[str, Any], sub_strand: str) -> dict[str, Any]:
+    """What is happening for one sub-strand right now, for a screen that
+    keeps the builder company while the worker writes: the job's own
+    narration, the figures as each is filed, the questions as they land."""
+    from ..infra.db import fetch_all, fetch_one
+    from . import diagram_svg, question_rows
+    from .question_dna import question_dna_service
+
+    grade, subject = str(row.get("grade") or ""), str(row.get("subject") or "")
+    job = fetch_one(
+        """
+        SELECT job_id, kind, status, created_at, started_at, finished_at, error,
+               (payload->'steps'->>COALESCE((payload->>'index')::int, 0)) AS step,
+               result->'progress' AS progress
+        FROM jobs
+        WHERE REPLACE(LOWER(grade), 'grade-', '') = REPLACE(LOWER(:grade), 'grade-', '')
+          AND LOWER(subject) = LOWER(:subject) AND LOWER(sub_strand) = LOWER(:ss)
+          AND kind IN ('pipeline', 'notes', 'questions', 'diagram')
+        ORDER BY (status IN ('running', 'queued', 'paused')) DESC, created_at DESC LIMIT 1
+        """,
+        {"grade": grade, "subject": subject, "ss": sub_strand},
+    )
+    since = str((job or {}).get("created_at") or "") if job else ""
+    narration: list[dict[str, Any]] = []
+    if job and isinstance(job.get("progress"), dict):
+        narration = list((job["progress"] or {}).get("steps") or [])[-30:]
+    elif job and isinstance(job.get("progress"), list):
+        narration = list(job["progress"])[-30:]
+
+    figures = []
+    try:
+        for r in fetch_all(
+            """
+            SELECT diagram_id, title, alt_text, created_at, svg_markup, storage_url, scene_document
+            FROM diagram_registry
+            WHERE REPLACE(LOWER(grade), 'grade-', '') = REPLACE(LOWER(:grade), 'grade-', '')
+              AND LOWER(subject) = LOWER(:subject)
+              AND (LOWER(COALESCE(metadata->>'sub_strand', '')) = LOWER(:ss) OR LOWER(title) LIKE LOWER(:like))
+            ORDER BY created_at DESC LIMIT 12
+            """,
+            {"grade": grade, "subject": subject, "ss": sub_strand, "like": f"%{sub_strand}%"},
+        ) or []:
+            svg = diagram_svg.svg_for(r) if hasattr(diagram_svg, "svg_for") else str(r.get("svg_markup") or "")
+            figures.append({"diagram_id": r["diagram_id"], "title": r.get("title") or r.get("alt_text") or "",
+                            "created_at": str(r.get("created_at") or ""), "svg": svg[:120_000],
+                            "new": bool(since and str(r.get("created_at") or "") >= since)})
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("No figures for %s: %s", sub_strand, exc)
+
+    questions = []
+    try:
+        rows = question_dna_service.list_questions(grade=grade, subject=subject, sub_strand=sub_strand,
+                                                   order="recent", limit=40)
+        for q in question_rows.flatten_all(rows):
+            questions.append({**q, "new": bool(since and str(q.get("created_at") or "") >= since)})
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("No questions for %s: %s", sub_strand, exc)
+
+    return {
+        "sub_strand": sub_strand,
+        "job": {k: (str(v) if k in ("created_at", "started_at", "finished_at") else v)
+                for k, v in (job or {}).items() if k != "progress"} if job else None,
+        "narration": narration,
+        "figures": figures,
+        "questions": questions,
+    }
 
 
 # ── the paper as it stands ──────────────────────────────────────────────────

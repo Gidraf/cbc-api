@@ -68,3 +68,73 @@ def from_html(html: str) -> bytes:
             f"be printed from the reader, and saved as PDF from the print "
             f"dialog."
         ) from exc
+
+
+# ── which pages ──────────────────────────────────────────────────────────────
+#
+# A school printing forty copies on an L3250 prints the odd pages, turns the
+# stack, and prints the even pages. The attendant wants those two PDFs, not
+# one PDF and a printer dialog forty times.
+
+def parse_pages(spec: str, total: int) -> list[int]:
+    """1-based page numbers for a spec: '', 'all', 'odd', 'even', or ranges
+    like '1-4,7,10-'. Out-of-range numbers are dropped; empty means all."""
+    spec = (spec or "").strip().lower()
+    if not spec or spec == "all":
+        return list(range(1, total + 1))
+    if spec == "odd":
+        return list(range(1, total + 1, 2))
+    if spec == "even":
+        return list(range(2, total + 1, 2))
+    out: list[int] = []
+    for part in spec.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        if "-" in part:
+            lo, _, hi = part.partition("-")
+            try:
+                start = int(lo) if lo.strip() else 1
+                end = int(hi) if hi.strip() else total
+            except ValueError:
+                continue
+            out += [n for n in range(max(1, start), min(total, end) + 1)]
+        else:
+            try:
+                n = int(part)
+            except ValueError:
+                continue
+            if 1 <= n <= total:
+                out.append(n)
+    seen: set[int] = set()
+    return [n for n in out if not (n in seen or seen.add(n))]
+
+
+def select_pages(data: bytes, spec: str = "", *, reverse: bool = False) -> bytes:
+    """The PDF with only the pages the spec names, in order — reversed when
+    the printer stacks face-up and the second pass must run backwards."""
+    from io import BytesIO
+
+    from pypdf import PdfReader, PdfWriter
+
+    reader = PdfReader(BytesIO(data))
+    total = len(reader.pages)
+    wanted = parse_pages(spec, total)
+    if wanted == list(range(1, total + 1)) and not reverse:
+        return data
+    if reverse:
+        wanted = list(reversed(wanted))
+    writer = PdfWriter()
+    for n in wanted:
+        writer.add_page(reader.pages[n - 1])
+    out = BytesIO()
+    writer.write(out)
+    return out.getvalue()
+
+
+def page_count(data: bytes) -> int:
+    from io import BytesIO
+
+    from pypdf import PdfReader
+
+    return len(PdfReader(BytesIO(data)).pages)

@@ -103,7 +103,7 @@ def world(monkeypatch):
 def test_a_draft_is_created_scoped_filled_and_previewed(world):
     d = ed.create(owner="user:amina", grade="grade-9", subject="Mathematics", kind="topical",
                   title="Integers CAT", scope={"mode": "topical", "sub_strand": "Integers"})
-    assert d["status"] == "draft" and d["settings"] == {"density": "compact"}
+    assert d["status"] == "draft" and d["settings"] == {"density": "compact", "scheme_detail": "full", "watermark": False}
     assert [s["sub_strand"] for s in ed.scope_sub_strands(d)] == ["Integers"]
 
     summary = ed.bank_summary(d)
@@ -270,3 +270,49 @@ def test_one_sub_strand_can_be_written_there_and_then_and_the_row_says_so(world,
     assert rows["Integers"]["writing"] is None
     again = ed.generate(d["draft_id"], count=30, sub_strand="Equations")
     assert again["queued"] == [{"sub_strand": "Equations", "already": True}] and len(jobs) == 1
+
+
+def test_generate_carries_the_difficulty_and_the_figure_ask(world, monkeypatch):
+    from app.services import job_queue
+
+    jobs = []
+    monkeypatch.setattr(job_queue, "enqueue", lambda kind, g, s, payload, **kw: jobs.append(payload) or SimpleNamespace(job_id="j1"))
+    monkeypatch.setattr(job_queue, "start_worker", lambda: True)
+    d = ed.create(owner="user:amina", grade="grade-9", subject="Mathematics", scope={"mode": "topics", "sub_strands": ["Equations"]})
+    ed.generate(d["draft_id"], count=30, sub_strand="Equations", difficulty="hard", figures=5)
+    assert jobs[0]["difficulty"] == 0.8
+    assert "HARDER end" in jobs[0]["custom_instructions"] and "at least 5 of the items on a figure" in jobs[0]["custom_instructions"]
+
+
+def test_live_reports_the_job_its_narration_new_figures_and_new_questions(world, monkeypatch):
+    from app.infra import db
+
+    real = db.fetch_all
+    real_one = db.fetch_one
+
+    def fetch_one(sql, params=None):
+        if "FROM jobs" in sql:
+            return {"job_id": "j9", "kind": "pipeline", "status": "running", "created_at": "2026-09-20T10:00:00",
+                    "started_at": None, "finished_at": None, "error": "", "step": "questions",
+                    "progress": {"steps": [{"what": "Chunk 1/2", "detail": "25 items", "status": "ok"},
+                                           {"what": "Self-check", "detail": "3 findings", "status": "warn"}]}}
+        return real_one(sql, params)
+
+    def fetch_all(sql, params=None):
+        if "FROM diagram_registry" in sql:
+            return [{"diagram_id": "d1", "title": "Number line for Integers", "alt_text": "", "created_at": "2026-09-20T10:05:00",
+                     "svg_markup": "<svg xmlns='http://www.w3.org/2000/svg'></svg>", "storage_url": "", "scene_document": {}},
+                    {"diagram_id": "d0", "title": "Old thermometer", "alt_text": "", "created_at": "2026-09-01T00:00:00",
+                     "svg_markup": "<svg/>", "storage_url": "", "scene_document": {}}]
+        return real(sql, params)
+    monkeypatch.setattr(db, "fetch_one", fetch_one)
+    monkeypatch.setattr(db, "fetch_all", fetch_all)
+    for q in BANK[:2]:
+        q["created_at"] = "2026-09-20T10:07:00"
+
+    d = ed.create(owner="user:amina", grade="grade-9", subject="Mathematics", scope={"mode": "topical", "sub_strand": "Integers"})
+    out = ed.live(d, "Integers")
+    assert out["job"]["job_id"] == "j9" and out["job"]["step"] == "questions"
+    assert [n["what"] for n in out["narration"]] == ["Chunk 1/2", "Self-check"]
+    assert [f["new"] for f in out["figures"]] == [True, False]
+    assert sum(1 for q in out["questions"] if q["new"]) == 2

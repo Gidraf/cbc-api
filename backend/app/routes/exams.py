@@ -324,6 +324,22 @@ def print_settings(request: Request) -> Any:
     return from_params(request.query_params)
 
 
+def page_selection(request: Request) -> dict[str, Any]:
+    """?pages=odd|even|1-4,7 and ?reverse=true — the two passes of a
+    two-sided print on a single-sided printer."""
+    q = request.query_params
+    return {"pages": str(q.get("pages") or ""),
+            "reverse": str(q.get("reverse") or "").lower() in ("1", "true", "yes", "on")}
+
+
+def finish_pdf(body: bytes, selection: dict[str, Any] | None) -> bytes:
+    from ..services import pdf
+
+    if not selection or not (selection.get("pages") or selection.get("reverse")):
+        return body
+    return pdf.select_pages(body, str(selection.get("pages") or ""), reverse=bool(selection.get("reverse")))
+
+
 def _print(row: dict[str, Any], *, answers: bool, with_scheme: bool, answer_sheet: bool = False,
            settings: Any = None) -> str:
     from ..services import question_paper
@@ -359,6 +375,7 @@ def print_exam_pdf(
     with_scheme: bool = Query(default=False),
     answer_sheet: bool = Query(default=False, description="Append the OMR answer sheet for Section A"),
     settings: Any = Depends(print_settings),
+    selection: dict[str, Any] = Depends(page_selection),
     _: AuthContext = Depends(require_roles("admin", "operator", "reviewer")),
 ) -> Any:
     from ..services import pdf
@@ -367,7 +384,7 @@ def print_exam_pdf(
     if not row:
         raise_api_error("NOT_FOUND", f"No exam with id {exam_id}")
     try:
-        body = pdf.from_html(_print(row, answers=answers, with_scheme=with_scheme, answer_sheet=answer_sheet, settings=settings))
+        body = finish_pdf(pdf.from_html(_print(row, answers=answers, with_scheme=with_scheme, answer_sheet=answer_sheet, settings=settings)), selection)
     except pdf.PdfUnavailable as exc:
         raise_api_error("MODEL_ENDPOINT_UNAVAILABLE", str(exc))
     suffix = "marking-scheme" if answers else "booklet" if with_scheme else "paper"
@@ -402,12 +419,13 @@ def public_print(exam_id: str, token: str = Query(default=""), answers: bool = Q
 @router.get("/exams/{exam_id}/print.pdf")
 def public_print_pdf(exam_id: str, token: str = Query(default=""), answers: bool = Query(default=False),
                      with_scheme: bool = Query(default=False), answer_sheet: bool = Query(default=False),
-                     settings: Any = Depends(print_settings)) -> Any:
+                     settings: Any = Depends(print_settings),
+                     selection: dict[str, Any] = Depends(page_selection)) -> Any:
     from ..services import pdf
 
     row = _by_share_token(exam_id, token)
     try:
-        body = pdf.from_html(_print(row, answers=answers, with_scheme=with_scheme, answer_sheet=answer_sheet, settings=settings))
+        body = finish_pdf(pdf.from_html(_print(row, answers=answers, with_scheme=with_scheme, answer_sheet=answer_sheet, settings=settings)), selection)
     except pdf.PdfUnavailable as exc:
         raise_api_error("MODEL_ENDPOINT_UNAVAILABLE", str(exc))
     suffix = "marking-scheme" if answers else "booklet" if with_scheme else "paper"

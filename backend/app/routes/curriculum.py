@@ -4852,6 +4852,11 @@ def _run_queued_questions(job: dict[str, Any]) -> dict[str, Any]:
         # One name from the console, whatever the station calls it.
         "batch_count": int(payload.get("count") or payload.get("batch_count") or 5),
     }
+    if payload.get("difficulty") not in (None, ""):
+        try:
+            fields["difficulty"] = min(1.0, max(0.0, float(payload["difficulty"])))
+        except (TypeError, ValueError):
+            pass
     allowed = set(QuestionBatchGenerateRequest.model_fields)
 
     def produce(instructions: str) -> dict[str, Any]:

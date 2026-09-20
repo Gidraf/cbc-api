@@ -33,6 +33,9 @@ class PrintSettings:
     # A long Section B item may continue in the next column rather than
     # leave the rest of a page blank to stay whole.
     split_long_items: bool = False
+    # The DRAFT stamp across a paper with unapproved items on it. Off for the
+    # studio's preview and for a seller who stands behind the bank.
+    watermark: bool = True
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -63,6 +66,7 @@ class PrintSettings:
 .exam .rules {{ font-size: {8.4 * min(1.0, m):g}pt; }}
 .exam .qno {{ font-size: {self.font_pt * 1.1:g}pt; }}
 {".exam .q.long { break-inside: auto; page-break-inside: auto; -webkit-column-break-inside: auto; }" if self.split_long_items else ""}
+{".exam .draftmark { display: none; }" if not self.watermark else ""}
 """
 
 
@@ -110,6 +114,9 @@ def from_params(params: Any) -> PrintSettings:
     split = get("split_long_items")
     if split not in (None, ""):
         changes["split_long_items"] = str(split).lower() in ("1", "true", "yes", "on")
+    mark = get("watermark")
+    if mark not in (None, ""):
+        changes["watermark"] = str(mark).lower() in ("1", "true", "yes", "on")
     if changes:
         settings = replace(settings, **changes)
         if preset not in PRESETS:
@@ -125,7 +132,7 @@ def query_string(settings: PrintSettings) -> str:
 
     base = PRESETS.get(settings.density.rstrip("*"), PRESETS["standard"])
     out: dict[str, Any] = {"density": settings.density.rstrip("*") if settings.density.rstrip("*") in PRESETS else "standard"}
-    for key in list(_LIMITS) + ["scheme_detail", "split_long_items"]:
+    for key in list(_LIMITS) + ["scheme_detail", "split_long_items", "watermark"]:
         if getattr(settings, key) != getattr(base, key):
             out[key] = getattr(settings, key)
     return urlencode(out)

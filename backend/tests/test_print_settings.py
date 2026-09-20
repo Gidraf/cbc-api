@@ -68,3 +68,27 @@ def test_the_paper_renders_with_settings_and_the_scheme_detail_changes_what_prin
     assert "class='q long'" in brief
     # Working lines under the written item shrink with the preset.
     assert full.count("<div></div>") > brief.count("<div></div>") > 0
+
+
+def test_pages_odd_even_and_ranges_and_the_watermark_knob():
+    from app.services import pdf
+
+    assert pdf.parse_pages("odd", 7) == [1, 3, 5, 7]
+    assert pdf.parse_pages("even", 7) == [2, 4, 6]
+    assert pdf.parse_pages("1-3,6,9-", 10) == [1, 2, 3, 6, 9, 10]
+    assert pdf.parse_pages("", 3) == [1, 2, 3] and pdf.parse_pages("x,40", 3) == []
+
+    from pypdf import PdfWriter
+    from io import BytesIO
+    w = PdfWriter()
+    for _ in range(6):
+        w.add_blank_page(width=200, height=300)
+    buf = BytesIO(); w.write(buf); data = buf.getvalue()
+    assert pdf.page_count(pdf.select_pages(data, "odd")) == 3
+    assert pdf.page_count(pdf.select_pages(data, "even", reverse=True)) == 3
+    assert pdf.select_pages(data, "all") is data, "nothing to do → the same bytes"
+
+    off = ps.from_params({"watermark": "false"})
+    assert off.watermark is False and ".exam .draftmark { display: none; }" in off.css()
+    assert "draftmark { display: none" not in ps.PRESETS["standard"].css()
+    assert "watermark=False" in ps.query_string(off)

@@ -3848,8 +3848,29 @@ export const useDeleteDraft = draftMutation<{ draft_id: string }>((v) => `/api/v
 export const useDuplicateDraft = draftMutation<{ draft_id: string }>((v) => `/api/v1/builder/drafts/${v.draft_id}/duplicate`, "POST");
 export const useFillDraft = draftMutation<{ draft_id: string; count: number; diagram_count?: number | null; seed?: string; format?: string }>(
   (v) => `/api/v1/builder/drafts/${v.draft_id}/fill`, "POST", (v) => ({ count: v.count, diagram_count: v.diagram_count, seed: v.seed || "", format: v.format || "auto" }));
-export const useGenerateForDraft = draftMutation<{ draft_id: string; count: number; sub_strand?: string }>(
-  (v) => `/api/v1/builder/drafts/${v.draft_id}/generate`, "POST", (v) => ({ count: v.count, sub_strand: v.sub_strand || "" }));
+export const useGenerateForDraft = draftMutation<{ draft_id: string; count: number; sub_strand?: string; difficulty?: string; figures?: number | null }>(
+  (v) => `/api/v1/builder/drafts/${v.draft_id}/generate`, "POST",
+  (v) => ({ count: v.count, sub_strand: v.sub_strand || "", difficulty: v.difficulty || "mixed", figures: v.figures ?? null }));
+
+export type LiveView = {
+  sub_strand: string;
+  job: { job_id: string; kind: string; status: string; step?: string; created_at: string; error?: string } | null;
+  narration: { what?: string; name?: string; detail: string; status: string; at?: string }[];
+  figures: { diagram_id: string; title: string; created_at: string; svg: string; new: boolean }[];
+  questions: (Record<string, any> & { new: boolean })[];
+};
+
+/** The worker's narration, the figures as each is filed, the questions as
+ * they land — polled while the job runs. */
+export function useDraftLive(draftId: string, subStrand: string, active: boolean) {
+  const api = useApi();
+  return useQuery({
+    queryKey: ["draft-live", draftId, subStrand],
+    queryFn: () => api<LiveView>(`/api/v1/builder/drafts/${draftId}/live?sub_strand=${encodeURIComponent(subStrand)}`),
+    enabled: Boolean(draftId && subStrand),
+    refetchInterval: active ? 4000 : false,
+  });
+}
 export const useOverrideItem = draftMutation<{ draft_id: string; question_id: string; fields: Record<string, any> }>(
   (v) => `/api/v1/builder/drafts/${v.draft_id}/items/${encodeURIComponent(v.question_id)}`, "PUT", (v) => ({ fields: v.fields }));
 export const useReorderDraft = draftMutation<{ draft_id: string; question_ids: string[] }>(

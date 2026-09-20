@@ -33,7 +33,7 @@ class DraftCreate(BaseModel):
     title: str = ""
     term: int | None = Field(default=None, ge=1, le=3)
     scope: dict[str, Any] = Field(default_factory=lambda: {"mode": "smart"})
-    settings: dict[str, Any] = Field(default_factory=lambda: {"density": "compact"})
+    settings: dict[str, Any] | None = None
 
 
 class DraftPatch(BaseModel):
@@ -57,6 +57,8 @@ class GenerateRequest(BaseModel):
     count: int = Field(default=30, ge=1, le=120)
     # One sub-strand, there and then — the row's own button.
     sub_strand: str = ""
+    difficulty: str = "mixed"          # easy | medium | hard | mixed
+    figures: int | None = Field(default=None, ge=0, le=60)
 
 
 class OverrideRequest(BaseModel):
@@ -156,7 +158,18 @@ def generate_for_draft(draft_id: str, payload: GenerateRequest, auth: AuthContex
         raise_api_error("FORBIDDEN", "Generating new questions is not enabled for user accounts on this platform; "
                                      "choose from the bank, or ask the operator.")
     return exam_drafts.generate(draft_id, count=payload.count, sub_strand=payload.sub_strand,
+                                difficulty=payload.difficulty, figures=payload.figures,
                                 owner=_owner(auth), queued_by=auth.subject)
+
+
+@router.get("/drafts/{draft_id}/live")
+def live(draft_id: str, sub_strand: str = Query(...), auth: AuthContext = Depends(ANY)) -> dict[str, Any]:
+    """What is happening for one sub-strand right now: the job's narration,
+    the figures as each is filed, the questions as they land."""
+    from ..services import exam_drafts
+
+    row = exam_drafts.get(draft_id, _owner(auth))
+    return exam_drafts.live(row, sub_strand)
 
 
 @router.get("/drafts/{draft_id}/items")
@@ -222,8 +235,10 @@ def preview_pdf(draft_id: str, request: Request, answers: bool = Query(False), w
     merged = {**(row.get("settings") or {}), **dict(request.query_params)}
     html = exam_drafts.render(row, answers=answers, with_scheme=with_scheme, answer_sheet=answer_sheet,
                               settings=print_settings.from_params(merged))
+    from .exams import finish_pdf, page_selection
+
     try:
-        body = pdf.from_html(html)
+        body = finish_pdf(pdf.from_html(html), page_selection(request))
     except pdf.PdfUnavailable as exc:
         raise_api_error("MODEL_ENDPOINT_UNAVAILABLE", str(exc))
     name = (str(row.get("title") or draft_id).lower().replace(" ", "-")) + ("-booklet" if with_scheme else "") + ".pdf"

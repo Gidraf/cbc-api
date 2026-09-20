@@ -22,8 +22,8 @@ import {
   useDeleteDraft,
   useDraft,
   useDraftBank,
-  useDraftCandidates,
   useDraftItems,
+  useDraftLive,
   useDraftPdf,
   useDraftPreview,
   useDrafts,
@@ -371,8 +371,9 @@ function QuestionsSection({ d, frozen }: { d: ExamDraft; frozen: boolean }) {
   const { role } = useAuth();
   const [count, setCount] = React.useState<number>(d.settings?.count || 30);
   const [diagrams, setDiagrams] = React.useState<number>(d.settings?.diagram_count ?? 4);
+  const [difficulty, setDifficulty] = React.useState<string>("mixed");
   const [editing, setEditing] = React.useState<DraftItemDetail | null>(null);
-  const [adding, setAdding] = React.useState<string | null>(null);
+  const [watching, setWatching] = React.useState<string | null>(null);
   const total = (bank.data || []).reduce((n, s) => n + s.items, 0);
   const figures = (bank.data || []).reduce((n, s) => n + s.with_figures, 0);
 
@@ -384,8 +385,9 @@ function QuestionsSection({ d, frozen }: { d: ExamDraft; frozen: boolean }) {
   }
   async function doGenerate(sub_strand?: string) {
     try {
-      const out = await generate.mutateAsync({ draft_id: d.draft_id, count, sub_strand });
+      const out = await generate.mutateAsync({ draft_id: d.draft_id, count, sub_strand, difficulty, figures: diagrams });
       const fresh = out.queued.filter((q: any) => !q.already);
+      if (sub_strand && fresh.length) setWatching(sub_strand);
       toast(fresh.length
         ? `Writing ${sub_strand ? "for " + sub_strand : "for " + fresh.map((q: any) => q.sub_strand).join(", ")} — the row shows progress; fill again when it lands.`
         : out.queued.length ? "Already being written." : "The bank already has enough for this scope.", "ok");
@@ -418,31 +420,46 @@ function QuestionsSection({ d, frozen }: { d: ExamDraft; frozen: boolean }) {
       <Card title="From the bank" description="What already exists for this scope, checked and engine-verified. Pick from it, or write more.">
         <Stack gap="var(--s2)">
           {(bank.data || []).map((s) => (
-            <div key={s.sub_strand} style={{ display: "flex", gap: "var(--s2)", alignItems: "center", fontSize: "var(--text-sm)", flexWrap: "wrap" }}>
-              <span style={{ flex: 1, minWidth: "10rem" }}>{s.sub_strand}</span>
-              <Badge tone={s.items >= 10 ? "ok" : s.items ? "warn" : "danger"}>{s.items} items</Badge>
-              <Badge tone="neutral">{s.with_figures} with figures</Badge>
-              {!s.has_notes && !s.writing && <Badge tone="warn">no guide</Badge>}
-              {s.writing && (
-                <Badge tone="accent">
-                  {s.writing.status === "running" ? "writing" : "queued"} · {s.writing.stage === "notes" ? "the guide first" : s.writing.stage || "…"}
-                </Badge>
-              )}
-              {s.items ? (
-                <Button size="sm" variant="ghost" disabled={frozen} onClick={() => setAdding(s.sub_strand)}>Pick by hand</Button>
-              ) : null}
-              {s.items < 10 && !s.writing && (
-                <Button size="sm" variant={s.items ? "ghost" : "secondary"} disabled={frozen || generate.isPending}
-                        title={s.has_notes ? "Write questions for this sub-strand now" : "Writes the teacher's guide first, then the questions — a longer job"}
-                        onClick={() => doGenerate(s.sub_strand)}>
-                  {s.items ? "Write more" : "Write questions"}
-                </Button>
-              )}
+            <div key={s.sub_strand} style={{ display: "flex", gap: "var(--s2)", alignItems: "center", fontSize: "var(--text-sm)", flexWrap: "wrap", padding: "2px 0", borderBottom: "1px solid var(--line-2)" }}>
+              <span style={{ flex: "1 1 10rem" }}>{s.sub_strand}</span>
+              <span style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+                <Badge tone={s.items >= 10 ? "ok" : s.items ? "warn" : "danger"}>{s.items} items</Badge>
+                <Badge tone="neutral">{s.with_figures} figures</Badge>
+                {!s.has_notes && !s.writing && <Badge tone="warn">no guide</Badge>}
+                {s.writing && (
+                  <Badge tone="accent">
+                    {s.writing.status === "running" ? "writing" : "queued"} · {s.writing.stage === "notes" ? "the guide first" : s.writing.stage || "…"}
+                  </Badge>
+                )}
+              </span>
+              <span style={{ display: "flex", gap: 2, whiteSpace: "nowrap" }}>
+                {(s.writing || s.items > 0) && (
+                  <Button size="sm" variant={watching === s.sub_strand ? "primary" : "ghost"}
+                          onClick={() => setWatching(watching === s.sub_strand ? null : s.sub_strand)}>
+                    {watching === s.sub_strand ? "Hide" : s.writing ? "Watch" : "Browse"}
+                  </Button>
+                )}
+                {s.items < 10 && !s.writing && (
+                  <Button size="sm" variant={s.items ? "ghost" : "secondary"} disabled={frozen || generate.isPending}
+                          title={s.has_notes ? "Write questions for this sub-strand now" : "Writes the teacher's guide first, then the questions — a longer job"}
+                          onClick={() => doGenerate(s.sub_strand)}>
+                    {s.items ? "Write more" : "Write questions"}
+                  </Button>
+                )}
+              </span>
             </div>
           ))}
           <Stack direction="row" gap="var(--s3)" align="end" wrap>
             <label style={lbl}>Questions<Input type="number" min={1} max={120} value={count} onChange={(e) => setCount(Number(e.target.value))} style={{ width: "6rem" }} /></label>
             <label style={lbl}>With figures (at least)<Input type="number" min={0} max={60} value={diagrams} onChange={(e) => setDiagrams(Number(e.target.value))} style={{ width: "6rem" }} /></label>
+            <label style={lbl}>Difficulty when writing
+              <Select value={difficulty} onChange={(e) => setDifficulty(e.target.value)} style={{ width: "auto" }}>
+                <option value="mixed">Mixed — a quarter easier, half at the grade, a quarter stretching</option>
+                <option value="easy">Easier end of the grade</option>
+                <option value="medium">At the grade</option>
+                <option value="hard">Harder end of the grade</option>
+              </Select>
+            </label>
             <Button variant="primary" disabled={frozen || fill.isPending || !total} onClick={() => doFill()}>{fill.isPending ? "Filling…" : "Fill from the bank"}</Button>
             <Button variant="secondary" disabled={frozen || fill.isPending || !(items.data || []).length} onClick={() => doFill(Math.random().toString(36).slice(2, 8))}>Deal again</Button>
             <Button variant="ghost" disabled={frozen || generate.isPending} onClick={() => doGenerate()}
@@ -453,6 +470,12 @@ function QuestionsSection({ d, frozen }: { d: ExamDraft; frozen: boolean }) {
           <div style={{ fontSize: "var(--text-xs)", color: "var(--ink-3)" }}>{total} usable items in scope, {figures} with figures.</div>
         </Stack>
       </Card>
+
+      {watching && (
+        <LivePanel d={d} subStrand={watching} active={Boolean((bank.data || []).find((s) => s.sub_strand === watching)?.writing)}
+                   onPaper={new Set((items.data || []).map((i) => i.question_id))}
+                   onAdd={(qid) => reorder.mutate({ draft_id: d.draft_id, question_ids: [...(items.data || []).map((i) => i.question_id), qid] })} />
+      )}
 
       <Card title={`On the paper (${(items.data || []).length})`} description="Open any question to read it with its DNA and correct it; corrections print here and reach the bank when you freeze.">
         {(items.data || []).length === 0 && <EmptyState title="Nothing on the paper yet" description="Fill from the bank above." />}
@@ -489,35 +512,86 @@ function QuestionsSection({ d, frozen }: { d: ExamDraft; frozen: boolean }) {
       </Card>
 
       {editing && <ItemEditor d={d} item={editing} frozen={frozen} onClose={() => setEditing(null)} />}
-      {adding && <Picker d={d} subStrand={adding} onClose={() => setAdding(null)} />}
     </Stack>
   );
 }
 
-function Picker({ d, subStrand, onClose }: { d: ExamDraft; subStrand: string; onClose: () => void }) {
-  const cands = useDraftCandidates(d.draft_id, subStrand);
-  const reorder = useReorderDraft();
-  const items = useDraftItems(d.draft_id);
-  function add(qid: string) {
-    reorder.mutate({ draft_id: d.draft_id, question_ids: [...(items.data || []).map((i) => i.question_id), qid] });
-  }
+/** Keeps the builder company while the worker writes: the job's own
+ * narration line by line, each figure the moment it is filed, each question
+ * as it lands — and a way to read one and put it on the paper. */
+function LivePanel({ d, subStrand, active, onPaper, onAdd }: {
+  d: ExamDraft; subStrand: string; active: boolean; onPaper: Set<string>; onAdd: (qid: string) => void;
+}) {
+  const live = useDraftLive(d.draft_id, subStrand, active);
+  const [open, setOpen] = React.useState<string | null>(null);
+  const v = live.data;
+  const job = v?.job;
   return (
-    <Modal open onClose={onClose} title={`Pick from the bank — ${subStrand}`}>
-      <Stack gap="var(--s2)">
-        {(cands.data || []).length === 0 && <div style={{ color: "var(--ink-3)" }}>Nothing left to add for this sub-strand.</div>}
-        {(cands.data || []).map((q: any) => (
-          <div key={q.question_id} style={{ display: "flex", gap: "var(--s2)", alignItems: "flex-start", borderBottom: "1px solid var(--line-2)", padding: "var(--s2) 0" }}>
-            <div style={{ flex: 1, fontSize: "var(--text-sm)" }}>
-              {String(q.question_text || "").slice(0, 160)}
-              <div style={{ fontSize: "var(--text-xs)", color: "var(--ink-3)" }}>
-                {String(q.question_type || "").replace(/_/g, " ")} · {q.pedagogy?.max_marks ?? 1} mk {q.diagram ? "· figure" : ""} · {q.status}
+    <Card title={`${active ? "Writing" : "In the bank"} — ${subStrand}`}
+          description={job ? `${job.kind}${job.step ? ` · ${job.step}` : ""} · ${job.status}${job.error ? ` · ${job.error}` : ""}` : "No job on this sub-strand right now."}>
+      <Stack gap="var(--s3)">
+        {(v?.narration || []).length > 0 && (
+          <div style={{ fontSize: "var(--text-xs)", fontFamily: "ui-monospace, monospace", background: "var(--surface-2)", borderRadius: "var(--radius-sm)", padding: "var(--s2)", maxHeight: "10rem", overflowY: "auto" }}>
+            {(v?.narration || []).map((n, i) => (
+              <div key={i} style={{ color: n.status === "warn" ? "var(--warn)" : n.status === "error" ? "var(--danger)" : undefined }}>
+                <b>{n.what || n.name}</b> {n.detail}
               </div>
-            </div>
-            <Button size="sm" onClick={() => add(q.question_id)}>Add</Button>
+            ))}
+            {active && <div style={{ color: "var(--ink-3)" }}>…</div>}
           </div>
-        ))}
+        )}
+        {(v?.figures || []).length > 0 && (
+          <div>
+            <div style={{ fontSize: "var(--text-sm)", fontWeight: 600, marginBottom: 4 }}>Figures{active ? " — drawn as they come" : ""}</div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(9rem, 1fr))", gap: "var(--s2)" }}>
+              {(v?.figures || []).map((f) => (
+                <div key={f.diagram_id} title={f.title}
+                     style={{ border: `1px solid ${f.new ? "var(--accent)" : "var(--line)"}`, borderRadius: "var(--radius-sm)", padding: 4, background: "#fff", minHeight: "6rem" }}>
+                  <div style={{ maxHeight: "9rem", overflow: "hidden" }} dangerouslySetInnerHTML={{ __html: f.svg }} />
+                  <div style={{ fontSize: "var(--text-xs)", color: "#333", marginTop: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{f.title}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+        <div>
+          <div style={{ fontSize: "var(--text-sm)", fontWeight: 600, marginBottom: 4 }}>
+            Questions{active ? " — newest first, as they land" : ""} ({(v?.questions || []).length})
+          </div>
+          {(v?.questions || []).map((q) => {
+            const qid = String(q.question_id);
+            const shown = open === qid;
+            return (
+              <div key={qid} style={{ borderLeft: `3px solid ${q.new ? "var(--accent)" : "var(--line)"}`, padding: "4px 8px", marginBottom: 4, fontSize: "var(--text-sm)" }}>
+                <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
+                  <button onClick={() => setOpen(shown ? null : qid)} style={{ flex: 1, background: "none", border: "none", padding: 0, textAlign: "left", cursor: "pointer", color: "var(--ink)", font: "inherit" }}>
+                    {String(q.question_text || "").slice(0, shown ? 10000 : 140)}{!shown && String(q.question_text || "").length > 140 ? "…" : ""}
+                  </button>
+                  {q.diagram && <Badge tone="info">figure</Badge>}
+                  {q.new && <Badge tone="accent">new</Badge>}
+                  {onPaper.has(qid) ? <Badge tone="ok">on the paper</Badge> : <Button size="sm" onClick={() => onAdd(qid)}>Add to paper</Button>}
+                </div>
+                {shown && (
+                  <div style={{ marginTop: 4, color: "var(--ink-2)" }}>
+                    {Array.isArray(q.options) && q.options.map((o: any) => (
+                      <div key={o.id}><b>{o.id}.</b> {o.text} {o.is_correct && <Badge tone="ok">key</Badge>}</div>
+                    ))}
+                    {Array.isArray(q.structured_parts) && q.structured_parts.map((p: any) => (
+                      <div key={p.part_id}><b>{p.part_id}</b> {p.sub_question} <i>({p.marks} mk)</i> — {p.model_answer}</div>
+                    ))}
+                    {q.marking_scheme && <div style={{ marginTop: 4 }}><b>Scheme:</b> {q.marking_scheme}</div>}
+                    {q.model_answer && <div><b>Answer:</b> {q.model_answer}</div>}
+                    <div style={{ fontSize: "var(--text-xs)", color: "var(--ink-3)", marginTop: 4 }}>
+                      {String(q.question_type || "").replace(/_/g, " ")} · {q.pedagogy?.max_marks ?? 1} mk · {q.status}{q.provenance?.written_by ? ` · ${q.provenance.written_by}` : ""}
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
       </Stack>
-    </Modal>
+    </Card>
   );
 }
 
@@ -704,6 +778,10 @@ function DesignSection({ d, tryout, setTryout, save, frozen }: {
             <input type="checkbox" checked={!!current.split_long_items} disabled={frozen} onChange={(e) => set("split_long_items", e.target.checked)} />
             Let long questions continue in the next column
           </label>
+          <label style={{ ...lbl, flexDirection: "row", alignItems: "center", gap: 8 }}>
+            <input type="checkbox" checked={current.watermark !== false && current.watermark !== "false" && current.watermark !== "False"} disabled={frozen} onChange={(e) => set("watermark", e.target.checked)} />
+            DRAFT stamp across a paper with unapproved items
+          </label>
         </Stack>
         <Stack direction="row" gap="var(--s2)">
           <Button variant="primary" disabled={frozen || !dirty} onClick={async () => { await save({ settings: { ...(d.settings || {}), ...tryout } }); setTryout({}); }}>Save design</Button>
@@ -782,14 +860,37 @@ function PrintSection({ d, params }: { d: ExamDraft; params: Record<string, any>
       toast(`Frozen as ${out.exam_id}: ${out.question_count} questions, ${out.total_marks} marks.`, "ok");
     } catch (err) { toast(err instanceof Error ? err.message : "Could not freeze.", "danger"); }
   }
-  const base = { ...params };
+  const [pages, setPages] = React.useState<"all" | "odd" | "even" | "range">("all");
+  const [range, setRange] = React.useState("1-4");
+  const [reverse, setReverse] = React.useState(false);
+  const base = { ...params, pages: pages === "range" ? range : pages === "all" ? "" : pages, reverse: reverse ? "true" : "" };
   return (
     <Stack gap="var(--s3)">
       <Card title="Download" description="PDFs of the paper as previewed. Freezing is what makes the links a school can be handed.">
-        <Stack direction="row" gap="var(--s2)" wrap>
-          <Button onClick={() => pdf.mutate({ draft_id: d.draft_id, params: { ...base, answers: false, with_scheme: false, answer_sheet: false } })}>Question paper PDF</Button>
-          <Button onClick={() => pdf.mutate({ draft_id: d.draft_id, params: { ...base, answers: true, with_scheme: false, answer_sheet: false } })}>Marking scheme PDF</Button>
-          <Button onClick={() => pdf.mutate({ draft_id: d.draft_id, params: { ...base, answers: false, with_scheme: true, answer_sheet: true } })}>Booklet + answer sheet PDF</Button>
+        <Stack gap="var(--s3)">
+          <Stack direction="row" gap="var(--s3)" align="end" wrap>
+            <label style={lbl}>Pages
+              <Select value={pages} onChange={(e) => setPages(e.target.value as any)} style={{ width: "auto" }}>
+                <option value="all">All pages</option>
+                <option value="odd">Odd pages (front sides)</option>
+                <option value="even">Even pages (back sides)</option>
+                <option value="range">A range</option>
+              </Select>
+            </label>
+            {pages === "range" && <label style={lbl}>Range<Input value={range} onChange={(e) => setRange(e.target.value)} placeholder="1-4, 7" style={{ width: "8rem" }} /></label>}
+            <label style={{ ...lbl, flexDirection: "row", alignItems: "center", gap: 8 }}>
+              <input type="checkbox" checked={reverse} onChange={(e) => setReverse(e.target.checked)} />
+              Reverse order (for the second pass on a printer that stacks face up)
+            </label>
+          </Stack>
+          <Stack direction="row" gap="var(--s2)" wrap>
+            <Button onClick={() => pdf.mutate({ draft_id: d.draft_id, params: { ...base, answers: false, with_scheme: false, answer_sheet: false } })}>Question paper PDF</Button>
+            <Button onClick={() => pdf.mutate({ draft_id: d.draft_id, params: { ...base, answers: true, with_scheme: false, answer_sheet: false } })}>Marking scheme PDF</Button>
+            <Button onClick={() => pdf.mutate({ draft_id: d.draft_id, params: { ...base, answers: false, with_scheme: true, answer_sheet: true } })}>Booklet + answer sheet PDF</Button>
+          </Stack>
+          <div style={{ fontSize: "var(--text-xs)", color: "var(--ink-3)" }}>
+            Two-sided on a single-sided printer (an L3250): download <b>odd</b>, print the stack; put it back, download <b>even</b> — with <i>reverse</i> if your printer stacks face up — and print again.
+          </div>
         </Stack>
         {pdf.error && <ErrorNotice error={pdf.error} />}
       </Card>
