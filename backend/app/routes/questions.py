@@ -746,6 +746,56 @@ def bank_recheck(
                             sub_strand=payload.sub_strand, dry_run=payload.dry_run)
 
 
+class BankReviewRequest(BaseModel):
+    grade: str
+    subject: str = ""
+    sub_strand: str = ""
+    # A different vendor from the writer, or the default review binding.
+    provider: str = ""
+    model: str = ""
+    fix: bool = True
+    approve_clean: bool = False
+
+
+@router.post("/bank/review")
+def bank_review_queue(
+    payload: BankReviewRequest,
+    auth: AuthContext = Depends(require_roles("admin", "operator")),
+) -> dict[str, Any]:
+    """Queue a second model's review of the bank: every item in the scope
+    is read cold, checked against the engine and the story, and fixed —
+    rewrites replace their originals, what still fails is held, what passes
+    is stamped reviewed (and approved, if asked). One job per subject."""
+    from ..services import job_queue
+
+    subjects = [payload.subject] if payload.subject else _subjects_with_items(payload.grade)
+    if not subjects:
+        raise_api_error("NOT_FOUND", f"The bank holds nothing for {payload.grade}.")
+    jobs = []
+    for subject in subjects:
+        job = job_queue.enqueue(
+            "review", payload.grade, subject,
+            {"sub_strand": payload.sub_strand, "provider": payload.provider, "model": payload.model,
+             "fix": payload.fix, "approve_clean": payload.approve_clean},
+            sub_strand=payload.sub_strand, queued_by=getattr(auth, "subject", "") or "bank",
+        )
+        jobs.append({"subject": subject, "job_id": job.job_id})
+    job_queue.start_worker()
+    return {"queued": len(jobs), "jobs": jobs,
+            "note": "Follow it on the Queue board; each item's outcome is written on its row."}
+
+
+def _subjects_with_items(grade: str) -> list[str]:
+    from ..infra.db import fetch_all
+
+    rows = fetch_all(
+        "SELECT DISTINCT curriculum_link->>'subject' AS subject FROM question_dna "
+        "WHERE curriculum_link->>'grade' = :grade AND superseded_by IS NULL ORDER BY 1",
+        {"grade": normalize_grade(grade)},
+    ) or []
+    return [str(r["subject"]) for r in rows if r.get("subject")]
+
+
 @router.get("/sources")
 def question_sources(
     grade: str | None = Query(default=None),

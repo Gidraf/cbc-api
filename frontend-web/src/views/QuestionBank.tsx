@@ -18,7 +18,7 @@ import {
   Th,
   useToast,
 } from "../ui/components";
-import { gradeOptionLabel, subjectOptionLabel, useGrades, useQuestionActions, useBankRecheck, useQuestions, useQuestionSources, useSubjects } from "../lib/queries";
+import { gradeOptionLabel, subjectOptionLabel, useGrades, useQuestionActions, useBankRecheck, useBankReview, useProviders, useQuestions, useQuestionSources, useSubjects } from "../lib/queries";
 import { QueuePanel } from "./QueuePanel";
 import { useComposeExam } from "../lib/queries";
 
@@ -54,6 +54,9 @@ export function QuestionBank() {
   const composeExam = useComposeExam();
   const sources = useQuestionSources(grade || undefined, subject || undefined);
   const recheck = useBankRecheck();
+  const review = useBankReview();
+  const providers = useProviders();
+  const [reviewing, setReviewing] = React.useState(false);
 
   function recheckBank() {
     const scope = grade ? `${grade}${subject ? ` · ${subject}` : ""}` : "the whole bank";
@@ -159,11 +162,24 @@ export function QuestionBank() {
                     title="Run today's checks over what is already filed; repairs what needs no model, flags the rest">
               {recheck.isPending ? "Re-checking…" : "Re-check bank"}
             </Button>
+            <Button size="sm" variant="primary" disabled={!grade || review.isPending} onClick={() => setReviewing(true)}
+                    title={grade ? "A second model reads every item in this scope, fixes what fails, holds what still fails" : "Pick a grade first"}>
+              Review with AI
+            </Button>
           </>
         }
       />
 
       {recheck.error && <ErrorNotice error={recheck.error} />}
+      {review.error && <ErrorNotice error={review.error} />}
+      {review.data && (
+        <div role="status"
+             style={{ border: "1px solid var(--line)", background: "var(--surface-2, var(--surface))",
+                      borderRadius: "var(--radius)", padding: "var(--s3)", fontSize: "var(--text-sm)" }}>
+          <strong>Review queued</strong> — {review.data.queued} job{review.data.queued === 1 ? "" : "s"}
+          {review.data.jobs.length > 0 && <>: {review.data.jobs.map((j) => j.subject).join(", ")}</>}. {review.data.note}
+        </div>
+      )}
       {recheck.data && (
         <div role="status"
              style={{ border: "1px solid var(--line)", background: "var(--surface-2, var(--surface))",
@@ -369,6 +385,17 @@ export function QuestionBank() {
 
       <QuestionPreview question={preview} onClose={() => setPreview(null)} />
       <ComposeDialog open={composing} count={selected.size} onClose={() => setComposing(false)} onCompose={compose} busy={composeExam.isPending} />
+      <ReviewDialog
+        open={reviewing}
+        scope={grade ? `${grade}${subject ? ` · ${subject}` : " · every subject"}` : ""}
+        providers={(providers.data?.providers || []).filter((p) => p.has_api_key || p.provider === "ollama")}
+        busy={review.isPending}
+        onClose={() => setReviewing(false)}
+        onReview={(v) => {
+          review.mutate({ grade, subject: subject || undefined, ...v });
+          setReviewing(false);
+        }}
+      />
     </>
   );
 }
@@ -449,6 +476,74 @@ function QuestionPreview({ question, onClose }: { question: any | null; onClose:
     </Modal>
   );
 }
+
+function ReviewDialog({
+  open, scope, providers, busy, onClose, onReview,
+}: {
+  open: boolean;
+  scope: string;
+  providers: { provider: string; ollama_models?: string[] | null }[];
+  busy: boolean;
+  onClose: () => void;
+  onReview: (v: { provider?: string; model?: string; fix: boolean; approve_clean: boolean }) => void;
+}) {
+  const [provider, setProvider] = React.useState("");
+  const [model, setModel] = React.useState("");
+  const [fix, setFix] = React.useState(true);
+  const [approve, setApprove] = React.useState(false);
+  const hint: Record<string, string> = {
+    openai: "e.g. gpt-5.6-terra", anthropic: "e.g. claude-opus-5", gemini: "e.g. gemini-2.5-pro", ollama: "e.g. qwen3:32b",
+  };
+  return (
+    <Modal open={open} onClose={onClose} title="Review with AI" width="min(34rem, 94vw)"
+           footer={<>
+             <Button onClick={onClose}>Cancel</Button>
+             <Button variant="primary" loading={busy}
+                     onClick={() => onReview({ provider: provider || undefined, model: model || undefined, fix, approve_clean: approve })}>
+               Queue review of {scope}
+             </Button>
+           </>}>
+      <Stack gap="var(--s4)">
+        <p style={{ fontSize: "var(--text-sm)", color: "var(--ink-2)" }}>
+          A second model reads every item in the scope cold: answers it, checks the key, checks that the
+          story and the sum say the same thing, judges the distractors and the scheme. With <b>fix</b> on, what
+          fails is rewritten and the rewrite replaces the original (an approved item is versioned); what still
+          fails is held as <i>Needs review</i> with the reasons. Pick a <b>different vendor</b> from the one
+          that wrote the items — the same model asked twice agrees with itself. One job per subject, on the
+          queue; it spends that vendor's tokens.
+        </p>
+        <label style={{ fontSize: "var(--text-sm)", fontWeight: 550 }}>
+          Reader
+          <Select value={provider} onChange={(e) => { setProvider(e.target.value); setModel(""); }}>
+            <option value="">Review binding (Model per station → Review layers)</option>
+            {providers.map((p) => <option key={p.provider} value={p.provider}>{p.provider}</option>)}
+          </Select>
+        </label>
+        {provider && (
+          <label style={{ fontSize: "var(--text-sm)", fontWeight: 550 }}>
+            Model
+            <Input value={model} placeholder={hint[provider] || "model name"} onChange={(e) => setModel(e.target.value)}
+                   list={provider === "ollama" ? "ollama-models" : undefined} />
+            {provider === "ollama" && (
+              <datalist id="ollama-models">
+                {(providers.find((p) => p.provider === "ollama")?.ollama_models || []).map((m) => <option key={m} value={m} />)}
+              </datalist>
+            )}
+          </label>
+        )}
+        <label style={{ fontSize: "var(--text-sm)", display: "flex", gap: "var(--s2)", alignItems: "center" }}>
+          <input type="checkbox" checked={fix} onChange={(e) => setFix(e.target.checked)} />
+          Fix what fails (rewrite and replace); off = report and hold only
+        </label>
+        <label style={{ fontSize: "var(--text-sm)", display: "flex", gap: "var(--s2)", alignItems: "center" }}>
+          <input type="checkbox" checked={approve} onChange={(e) => setApprove(e.target.checked)} />
+          Approve every item that passes (the DRAFT stamp comes off a paper when all its items are approved)
+        </label>
+      </Stack>
+    </Modal>
+  );
+}
+
 
 function ComposeDialog({
   open,

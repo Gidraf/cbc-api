@@ -1994,6 +1994,20 @@ export function useBankRecheck() {
   });
 }
 
+/** Queue a second model's review of the bank — read cold, checked against
+ * the engine and the story, rewritten, held or stamped — one job per subject. */
+export function useBankReview() {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { grade: string; subject?: string; sub_strand?: string; provider?: string; model?: string;
+                      fix?: boolean; approve_clean?: boolean }) =>
+      api<{ queued: number; jobs: { subject: string; job_id: string }[]; note: string }>(
+        `/api/v1/questions/bank/review`, { method: "POST", body: JSON.stringify(v) }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["queue"] }),
+  });
+}
+
 export function useQuestions(filters: QuestionFilters) {
   const api = useApi();
   return useQuery({

@@ -5439,10 +5439,30 @@ _PIPELINE_HANDLERS: dict[str, Any] = {
     "questions": _run_queued_questions,
 }
 
+def _run_queued_review(job: dict[str, Any]) -> dict[str, Any]:
+    """A second model reads a scope of the bank and fixes what it can.
+
+    Queued like every other station so a subject's worth of review runs
+    in the worker and survives the tab; the reader is whichever vendor the
+    operator chose, so it is a second opinion and not the writer asked
+    twice."""
+    from ..services import bank_review, run_log
+
+    payload = dict(job.get("payload") or {})
+    return bank_review.review(
+        grade=str(job.get("grade") or ""), subject=str(job.get("subject") or ""),
+        sub_strand=str(job.get("sub_strand") or payload.get("sub_strand") or ""),
+        provider=str(payload.get("provider") or "") or None,
+        model=str(payload.get("model") or "") or None,
+        fix=bool(payload.get("fix", True)), approve_clean=bool(payload.get("approve_clean", False)),
+        progress=run_log.step,
+    )
+
+
 # An order is not a pipeline STAGE — it is a sequence of them, followed by
 # a paper — so it is a queue kind and an agent station, and not a step the
-# pipeline advances through.
-_BUNDLE_HANDLERS: dict[str, Any] = {"order": _run_queued_order}
+# pipeline advances through. A review of the bank is the same shape.
+_BUNDLE_HANDLERS: dict[str, Any] = {"order": _run_queued_order, "review": _run_queued_review}
 
 
 _register_queue_handlers()

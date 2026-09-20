@@ -46,9 +46,15 @@ An item FAILS only if one of these holds:
   - kind "untaught": the item needs knowledge the lessons above never taught and the design does not list — a Grade 6 item on a Grade 9 idea, or a fact from outside the sub-strand.
   - kind "wrong": the stem asserts something false (a false fact about Kenya, a wrong date, a misstated law or definition).
 
+For an item that is a SITUATION to be worked (money, temperature, depth, scores, distances — a story with
+numbers in it), also write "expression": ONE arithmetic expression that models the story exactly as told,
+using every figure the story gives, in plain notation with brackets, e.g. "-250 + 600 - 180 + 120/4".
+Read the words literally: a refund "shared among four members who each return their share" comes back
+whole; "shared among four members" and kept by them does not. Leave "expression" empty for anything else.
+
 Return ONLY JSON, one entry per item, pass or fail:
-{{"verdicts": [{{"item": "Q3", "verdict": "fail", "kind": "key", "my_answer": "B", "reason": "one sentence"}}, ...]}}
-For a passing item: "verdict": "pass", "kind": "", "my_answer": "<your answer>", "reason": "".
+{{"verdicts": [{{"item": "Q3", "verdict": "fail", "kind": "key", "my_answer": "B", "expression": "", "reason": "one sentence"}}, ...]}}
+For a passing item: "verdict": "pass", "kind": "", "my_answer": "<your answer>", "expression": "<or empty>", "reason": "".
 
 ITEMS:
 {items}"""
@@ -80,6 +86,46 @@ def _render(questions: list[dict[str, Any]]) -> tuple[str, dict[str, dict[str, A
             lines.append(f"Marking scheme: {scheme[:600]}")
         lines.append(f"Marks: {(question.get('pedagogy') or {}).get('max_marks') or ''}")
     return "\n".join(lines), by_label
+
+
+def _value_of(expression: str) -> float | None:
+    """The engine's value for an expression, or None if it cannot work it."""
+    from .worked_solutions import _as_number, _comparable, _is_a_value
+    from .math_engine import solve_math_problem
+
+    text = str(expression or "").strip().strip("$")
+    if not text or len(text) > 200:
+        return None
+    try:
+        trace = solve_math_problem(text)
+    except Exception:  # noqa: BLE001
+        return None
+    if trace.unsolved or not trace.final_answer or not _is_a_value(trace.final_answer):
+        return None
+    return _as_number(_comparable(trace.final_answer))
+
+
+def story_vs_expression(question: dict[str, Any], readers_expression: str) -> str:
+    """Two independent translations of the story, worked by the engine.
+
+    A club "receives a KSh 200 refund, shared equally among four members,
+    and each member returns their share to the fund": the writer wrote
+    `+ 200 / 4`, the engine blessed the arithmetic, and the key was 230 —
+    for a fund that, as told, gained 200. The engine cannot read; a second
+    reader can, and where the two sums differ in VALUE the item is held.
+    Returns the finding text, or '' when they agree or nothing is workable.
+    """
+    theirs = str(question.get("expression") or "").strip()
+    mine = str(readers_expression or "").strip()
+    if not theirs or not mine:
+        return ""
+    a, b = _value_of(theirs), _value_of(mine)
+    if a is None or b is None:
+        return ""
+    if abs(a - b) < 1e-9:
+        return ""
+    return (f"reads the story as `{mine[:80]}` = {b:g}, but the item's own expression "
+            f"`{theirs[:80]}` = {a:g} — the sum and the story do not say the same thing.")
 
 
 def _stands(kind: str, my_answer: str, question: dict[str, Any], reason: str) -> bool:
@@ -140,11 +186,23 @@ def audit(questions: list[dict[str, Any]], *, generate: Any, model_config: Any,
     for verdict in verdicts:
         if not isinstance(verdict, dict):
             continue
-        if str(verdict.get("verdict") or "").strip().lower() not in ("fail", "wrong"):
-            continue
         label = str(verdict.get("item") or "").strip()
         question = by_label.get(label)
         if question is None:
+            continue
+        # The story against the sum, whatever the verdict says. The engine
+        # proves the writer's arithmetic; nothing proved the writer's reading
+        # of the story until a second reader wrote the sum from the words.
+        disagreement = story_vs_expression(question, str(verdict.get("expression") or ""))
+        if disagreement:
+            findings.append(question_check.Finding(
+                "story_expression_disagree",
+                f"{label} {disagreement}",
+                "Make the story and the sum say the same thing: either rewrite the situation so the "
+                "expression models it exactly as told, or correct the expression and the key to what "
+                "the words say.",
+                [question_check._id(question)]))
+        if str(verdict.get("verdict") or "").strip().lower() not in ("fail", "wrong"):
             continue
         kind = str(verdict.get("kind") or "").strip().lower()
         reason = re.sub(r"\s+", " ", str(verdict.get("reason") or "")).strip()[:300]

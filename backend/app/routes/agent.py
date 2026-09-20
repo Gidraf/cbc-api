@@ -37,7 +37,7 @@ logger = logging.getLogger("cbc-agent-api")
 router = APIRouter(prefix="/api/v1/agent", tags=["Agent (bring your own model)"])
 
 STATIONS = ("order", "ingest", "notes", "diagram", "activity", "material", "media", "simulation",
-            "questions", "strands", "substrands")
+            "questions", "strands", "substrands", "review")
 
 
 class StartTaskRequest(BaseModel):
@@ -115,6 +115,10 @@ def manifest(_: AuthContext = Depends(require_roles("admin", "operator", "develo
             "order": ("ONE REQUEST, ONE PRODUCT: {station: 'order', grade, subject, kind: 'term'|'topical'|'strand', "
                       "term: 1, count: 30}. Works out the sub-strands, runs notes/diagram/questions where missing, "
                       "composes and freezes the paper, returns print links. Answer every step until done."),
+            "review": ("read a scope of the question bank cold, check every key against the engine and every "
+                       "story against its sum, rewrite what fails, hold what still fails, stamp what passes: "
+                       "{station: 'review', grade, subject, sub_strand?, extra: {fix: true, approve_clean: false}}. "
+                       "Your model is the second reader."),
             "ingest": ("read a grade's KICD design for one learning area into strands, sub-strands, outcomes, "
                        "experiences and rubrics — the spine every other station reads. Needs the design document "
                        "in the Datasets screen first. {station: 'ingest', grade, subject}. Run this before an "
