@@ -134,15 +134,39 @@ services:
   # CONCURRENCY IS 1 ON PURPOSE. These calls cost money and hit provider rate
   # limits, and ten at once is how a run fails halfway with no way to tell
   # which half. Raise it only with a rate limiter in front of the providers.
+  # CELERY_CONCURRENCY is how many jobs this worker runs at once. Each job
+  # spends its time waiting on a provider, not on this CPU, so 6–8 on a
+  # small box is fine; the ceiling is the provider's tokens-per-minute tier
+  # and the bill, which scale with it. Two workers never build the same
+  # sub-strand — the queue serialises that — so more workers means more
+  # sub-strands in flight, not the same one twice.
+  #
+  # Scale out: `docker compose up -d --scale generation-worker=3`, or run
+  # this one service on another machine with the same DATABASE_URL and
+  # CELERY_BROKER_URL. The beat lives in `scheduler`, once.
   generation-worker:
     build: *backend-build
     command: >
       celery -A app.celery_app worker
-      --beat
       --loglevel=info
       --concurrency=${CELERY_CONCURRENCY:-1}
       --queues=${CELERY_TASK_QUEUE:-cbc_generation}
       --hostname=generation@%h
+    environment:
+      <<: *backend-env
+      CELERY_BROKER_URL: ${CELERY_BROKER_URL:-redis://redis:6379/1}
+      CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND:-redis://redis:6379/1}
+      CELERY_TASK_QUEUE: ${CELERY_TASK_QUEUE:-cbc_generation}
+    depends_on: *backend-depends
+    extra_hosts: *extra-hosts
+    restart: unless-stopped
+
+  # The clock: the job sweep every two minutes, the log prune every hour.
+  # One of these, however many workers — a beat in every worker replica
+  # would run every schedule N times.
+  scheduler:
+    build: *backend-build
+    command: celery -A app.celery_app beat --loglevel=info
     environment:
       <<: *backend-env
       CELERY_BROKER_URL: ${CELERY_BROKER_URL:-redis://redis:6379/1}

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+
 import logging
 from typing import Any, Callable
 
@@ -60,11 +62,21 @@ def retry_langfuse(func: Callable[..., Any]) -> Callable[..., Any]:
     )(func)
 
 
-# LLM retry: 3 attempts, exponential backoff with jitter
+# LLM retry: six attempts, exponential back-off with jitter up to a minute.
+#
+# Three attempts and seven seconds was enough for one worker. At eight
+# workers a provider's tokens-per-minute ceiling answers 429 for longer than
+# that, and a job that has already burned its attempts on rate limits fails
+# without one real error in it. The waits are what a 429 asks for.
+LLM_ATTEMPTS = int(os.getenv("LLM_RETRY_ATTEMPTS", "6"))
+LLM_MAX_WAIT = float(os.getenv("LLM_RETRY_MAX_WAIT", "60"))
+LLM_MIN_WAIT = float(os.getenv("LLM_RETRY_MIN_WAIT", "2"))
+
+
 def retry_llm(func: Callable[..., Any]) -> Callable[..., Any]:
     return retry(
-        stop=stop_after_attempt(3),
-        wait=wait_random_exponential(min=1, max=7),
+        stop=stop_after_attempt(LLM_ATTEMPTS),
+        wait=wait_random_exponential(multiplier=2, min=LLM_MIN_WAIT, max=LLM_MAX_WAIT),
         retry=retry_if_exception(is_retryable_api_error),
         reraise=True,
     )(func)

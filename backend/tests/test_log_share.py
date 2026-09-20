@@ -123,7 +123,11 @@ def test_the_hourly_job_is_scheduled_and_the_worker_runs_beat() -> None:
 
     assert "prune-service-logs" in celery_app.conf.beat_schedule
     compose = (pathlib.Path(__file__).resolve().parents[2] / "docker-compose.yml").read_text()
-    assert "--beat" in compose.split("generation-worker")[1].split("environment")[0]
+    # The beat runs ONCE, in its own service: a beat inside every worker
+    # replica would run every schedule N times.
+    scheduler = compose.split("\n  scheduler:")[1].split("\n  postgres-gateway:")[0]
+    assert "celery -A app.celery_app beat" in scheduler
+    assert "--beat" not in compose.split("generation-worker:")[1].split("environment")[0]
 
 
 def test_an_admin_can_read_the_share_link_from_the_console(monkeypatch) -> None:

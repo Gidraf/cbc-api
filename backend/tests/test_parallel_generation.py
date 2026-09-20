@@ -173,22 +173,27 @@ def test_a_permanent_failure_is_not_retried() -> None:
         assert calls["n"] == 1, f"{code} was retried"
 
 
-def test_a_transient_failure_is_still_retried() -> None:
+def test_a_transient_failure_is_still_retried(monkeypatch) -> None:
     from app.errors import ApiError, raise_api_error
-    from app.services.retry import retry_llm
+    from app.services import retry as retry_mod
 
+    # Six attempts with waits up to a minute in production — a 429 from a
+    # provider's tokens-per-minute tier lasts longer than seven seconds when
+    # eight workers are running. The waits are skipped here.
+    monkeypatch.setattr(retry_mod, "LLM_MAX_WAIT", 0.01)
+    monkeypatch.setattr(retry_mod, "LLM_MIN_WAIT", 0.0)
     for code in ("LLM_RATE_LIMITED", "LLM_PROVIDER_TIMEOUT",
                  "LLM_PROVIDER_ERROR", "MODEL_ENDPOINT_UNAVAILABLE"):
         calls = {"n": 0}
 
-        @retry_llm
+        @retry_mod.retry_llm
         def _call():
             calls["n"] += 1
             raise_api_error(code, "later")
 
         with pytest.raises(ApiError):
             _call()
-        assert calls["n"] == 3, f"{code} gave up too early"
+        assert calls["n"] == retry_mod.LLM_ATTEMPTS == 6, f"{code} gave up too early"
 
 
 def test_httpx_transport_errors_are_retried() -> None:

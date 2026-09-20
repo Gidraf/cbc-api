@@ -74,8 +74,8 @@ celery_app.conf.update(
     task_default_retry_delay=30,
 
     broker_connection_retry_on_startup=True,
-    # Housekeeping on a clock. Runs when the worker is started with -B (beat
-    # embedded), which the compose file does; without it these are dormant.
+    # Housekeeping on a clock. Runs in the `scheduler` service (celery beat),
+    # once, however many workers there are; without a beat these are dormant.
     beat_schedule={
         "prune-service-logs": {
             "task": "app.tasks.prune_service_logs",
