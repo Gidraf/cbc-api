@@ -57,7 +57,14 @@ STAGE_LAYERS: dict[str, tuple[str, ...]] = {
 # said, which is the failure mode this pipeline exists to prevent — so a stage
 # missing one refuses rather than producing something that reads fine and rests
 # on nothing.
-OPTIONAL_LAYERS = frozenset({"skill"})
+#
+# Assets — the sub-strand's lesson diagrams — are grounding for questions,
+# not a precondition. A question that uses a figure draws its own from the
+# figure contract, and a Social Studies sub-strand whose lessons needed no
+# diagram was refused questions for ever over a layer that could never
+# exist. The `figures_unused` check still holds a batch that ignores the
+# figures that ARE there.
+OPTIONAL_LAYERS = frozenset({"skill", "assets"})
 
 
 def required_layers(stage: str) -> tuple[str, ...]:

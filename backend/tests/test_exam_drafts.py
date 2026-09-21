@@ -96,6 +96,7 @@ def world(monkeypatch):
         {"strand": "Algebra", "sub_strand": "Equations", "hours": 10}])
     monkeypatch.setattr(product_orders, "term_scope", lambda g, s, t: [{"strand": "Numbers", "sub_strand": "Integers"}] if t == 1 else [])
     monkeypatch.setattr(product_orders, "_has_notes", lambda g, s, ss: ss == "Integers")
+    monkeypatch.setattr(product_orders, "_drawn_figures", lambda g, s, ss: 3 if ss == "Integers" else 0)
     monkeypatch.setattr(product_orders, "_items_in_bank", lambda g, s, ss: len(list_questions(sub_strand=ss)))
     return SimpleNamespace(db=fake, updated=updated)
 
@@ -179,7 +180,7 @@ def test_generate_queues_only_the_sub_strands_short_of_their_share(world, monkey
     by = {j[2]["sub_strand"]: j for j in jobs}
     assert set(by) == {"Integers", "Equations"}
     assert by["Integers"][1]["steps"] == ["questions"] and by["Integers"][1]["count"] == 14
-    assert by["Equations"][1]["steps"] == ["notes", "questions"]
+    assert by["Equations"][1]["steps"] == ["notes", "diagram", "questions"]
 
 
 def test_a_user_sees_only_their_drafts_and_staff_see_all(world):
@@ -258,7 +259,7 @@ def test_one_sub_strand_can_be_written_there_and_then_and_the_row_says_so(world,
 
     out = ed.generate(d["draft_id"], count=30, sub_strand="Equations")
     assert [q["sub_strand"] for q in out["queued"]] == ["Equations"], "only the row asked for"
-    assert jobs[0][0]["steps"] == ["notes", "questions"] and jobs[0][1]["sub_strand"] == "Equations"
+    assert jobs[0][0]["steps"] == ["notes", "diagram", "questions"] and jobs[0][1]["sub_strand"] == "Equations"
 
     # The queue now holds the job: the row reports it, and asking again does not double it.
     real = db.fetch_all

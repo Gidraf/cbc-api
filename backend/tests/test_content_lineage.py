@@ -149,12 +149,14 @@ def test_a_diagram_refuses_without_the_hour_it_belongs_to(chain):
     assert exc.value.missing == ["hour_note"]
 
 
-def test_questions_refuse_without_notes_or_assets(chain):
+def test_questions_refuse_without_notes_but_not_without_assets(chain):
+    """The lesson diagrams ground the questions where they exist; a sub-strand
+    whose lessons needed none must still be able to have questions."""
     with pytest.raises(cl.MissingParentContext) as exc:
         cl.build_context(
             cl.QUESTION, strand=chain["strand"], substrand=chain["substrand"], skill=Skill()
         )
-    assert exc.value.missing == ["notes", "assets"]
+    assert exc.value.missing == ["notes"]
 
 
 def test_substrands_refuse_without_the_design(chain):
@@ -185,5 +187,5 @@ def test_the_check_can_be_relaxed_for_inspection(chain):
 
 
 def test_required_layers_exclude_the_skill():
-    assert cl.required_layers(cl.QUESTION) == ("strand", "substrand", "notes", "assets")
+    assert cl.required_layers(cl.QUESTION) == ("strand", "substrand", "notes")
     assert cl.required_layers(cl.DIAGRAM) == ("strand", "substrand", "hour_note")

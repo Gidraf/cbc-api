@@ -79,12 +79,19 @@ def test_asking_for_an_hour_that_has_no_notes_is_refused():
     assert "Hour 4 has no lesson notes" in exc.value.message
 
 
-def test_questions_need_both_notes_and_assets():
+def test_questions_need_notes_and_use_assets_where_they_exist():
+    """The lesson diagrams ground the questions where they exist; a sub-strand
+    whose lessons needed none is not refused questions for ever."""
     with pytest.raises(ApiError):
         sg.require_context(
             QUESTION, grade="grade-7", subject="Science",
-            strand="1.0 Living Things", sub_strand="1.1 Cells", notes_content=NOTES,
+            strand="1.0 Living Things", sub_strand="1.1 Cells",
         )
+    without = sg.require_context(
+        QUESTION, grade="grade-7", subject="Science",
+        strand="1.0 Living Things", sub_strand="1.1 Cells", notes_content=NOTES,
+    )
+    assert "Plant cell diagram" not in without["context"]
 
     ctx = sg.require_context(
         QUESTION, grade="grade-7", subject="Science",

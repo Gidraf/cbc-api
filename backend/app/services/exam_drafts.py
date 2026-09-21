@@ -325,7 +325,15 @@ def generate(draft_id: str, *, count: int = 30, sub_strand: str = "", difficulty
         if _writing(grade, subject, ss):
             queued.append({"sub_strand": ss, "already": True})
             continue
-        steps = ["questions"] if product_orders._has_notes(grade, subject, ss) else ["notes", "questions"]
+        # The chain an order runs: the guide where none exists, the lesson
+        # figures where none are drawn, then the questions. A shortcut straight
+        # to questions failed with "assets is missing".
+        steps = []
+        if not product_orders._has_notes(grade, subject, ss):
+            steps.append("notes")
+        if product_orders._drawn_figures(grade, subject, ss) == 0:
+            steps.append("diagram")
+        steps.append("questions")
         level, words = DIFFICULTY.get(difficulty, DIFFICULTY["mixed"])
         if figures:
             words = (words + " " if words else "") + \
