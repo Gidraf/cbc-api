@@ -56,10 +56,49 @@ def _platform(method: str, path: str, body: Any = None) -> dict[str, Any]:
         raise SystemExit(f"{method} {path} → {exc.code}: {detail[:400]}")
 
 
+NUM_CTX = int(os.getenv("LLM_NUM_CTX", "16384"))
+_ollama_native: dict[str, bool] = {}
+
+
+def _is_ollama(llm_url: str) -> bool:
+    """Whether the endpoint is an Ollama server (its native API answers).
+    Cached per URL; one probe, not one per prompt."""
+    base = llm_url.rstrip("/")
+    base = base[:-3] if base.endswith("/v1") else base
+    if base in _ollama_native:
+        return _ollama_native[base]
+    try:
+        with urllib.request.urlopen(urllib.request.Request(base + "/api/tags"), timeout=10) as resp:
+            _ollama_native[base] = resp.status == 200
+    except Exception:  # noqa: BLE001
+        _ollama_native[base] = False
+    return _ollama_native[base]
+
+
 def _model(llm_url: str, model: str, messages: list[dict[str, str]], *, expect: str,
            temperature: float) -> str:
-    """One OpenAI-compatible chat completion. Ollama serves this at /v1."""
-    body: dict[str, Any] = {"model": model, "messages": messages, "temperature": temperature, "stream": False}
+    """One chat completion. Ollama gets its native API, so the context window
+    is set per request (LLM_NUM_CTX, default 16k) — over /v1 it cannot be,
+    and Ollama's default of 4,096 truncates the platform's prompts silently.
+    Anything else gets the OpenAI-compatible call."""
+    if _is_ollama(llm_url):
+        base = llm_url.rstrip("/")
+        base = base[:-3] if base.endswith("/v1") else base
+        body: dict[str, Any] = {"model": model, "messages": messages, "stream": False,
+                                "options": {"temperature": temperature, "num_ctx": NUM_CTX}}
+        if expect == "json":
+            body["format"] = "json"
+        req = urllib.request.Request(base + "/api/chat", data=json.dumps(body).encode(), method="POST",
+                                     headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=1800) as resp:
+            out = json.loads(resp.read().decode())
+        content = str((out.get("message") or {}).get("content") or "")
+        if "<think>" in content:
+            import re
+
+            content = re.sub(r"<think>.*?</think>", "", content, flags=re.S).strip()
+        return content
+    body = {"model": model, "messages": messages, "temperature": temperature, "stream": False}
     if expect == "json":
         body["response_format"] = {"type": "json_object"}
     headers = {"Content-Type": "application/json"}
@@ -129,7 +168,7 @@ def _warn_if_prompt_exceeds_context(chars: int, llm_url: str) -> None:
     prompt it never saw the end of, and every check downstream fails it.
     The platform's prompts run to 6–12k tokens."""
     global _context_warned
-    if _context_warned or "11434" not in llm_url:
+    if _context_warned or "11434" not in llm_url or _is_ollama(llm_url):
         return
     tokens = chars // 4
     limit = int(os.getenv("OLLAMA_CONTEXT_LENGTH") or 0)

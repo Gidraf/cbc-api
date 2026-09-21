@@ -157,14 +157,17 @@ def test_a_grade_finishes_before_the_next_and_a_term_before_the_next_term(fakes)
                      ("grade-7", 3, "Mathematics"), ("grade-7", 1, "Mathematics")]
 
 
+class _Resp(__import__("io").BytesIO):
+    headers = {}
+    status = 200
+    def __enter__(self): return self
+    def __exit__(self, *a): return False
+
+
 def test_a_thinking_models_reasoning_is_stripped_from_the_answer(monkeypatch):
-    import io
     import urllib.request
 
-    class _Resp(io.BytesIO):
-        headers = {}
-        def __enter__(self): return self
-        def __exit__(self, *a): return False
+    monkeypatch.setattr(cbc_agent, "_is_ollama", lambda url: False)   # the OpenAI-compatible path
     body = {"choices": [{"message": {"content": "<think>\nlet me see\n</think>\n{\"questions\": []}"}}]}
     monkeypatch.setattr(urllib.request, "urlopen", lambda req, timeout=0: _Resp(json.dumps(body).encode()))
     out = cbc_agent._model("http://localhost:11434/v1", "qwen3:14b", [{"role": "user", "content": "x"}],
@@ -172,7 +175,29 @@ def test_a_thinking_models_reasoning_is_stripped_from_the_answer(monkeypatch):
     assert out == '{"questions": []}'
 
 
+def test_ollama_gets_its_native_api_with_the_context_window_set(monkeypatch):
+    """Over /v1 the window cannot be set and Ollama's 4,096 default cuts the
+    platform's prompts silently; the native call carries num_ctx."""
+    import urllib.request
+
+    seen = {}
+
+    def urlopen(req, timeout=0):
+        seen["url"] = req.full_url
+        seen["body"] = json.loads(req.data.decode())
+        return _Resp(json.dumps({"message": {"content": "<think>hm</think>{\"ok\": 1}"}}).encode())
+    monkeypatch.setattr(cbc_agent, "_is_ollama", lambda url: True)
+    monkeypatch.setattr(cbc_agent, "NUM_CTX", 16384)
+    monkeypatch.setattr(urllib.request, "urlopen", urlopen)
+    out = cbc_agent._model("https://ollama.gidraf.dev/v1", "qwen3:14b", [{"role": "user", "content": "x"}],
+                           expect="json", temperature=0.2)
+    assert out == '{"ok": 1}'
+    assert seen["url"] == "https://ollama.gidraf.dev/api/chat"
+    assert seen["body"]["options"] == {"temperature": 0.2, "num_ctx": 16384} and seen["body"]["format"] == "json"
+
+
 def test_a_prompt_wider_than_ollamas_window_is_warned_about_once(capsys, monkeypatch):
+    monkeypatch.setattr(cbc_agent, "_is_ollama", lambda url: False)   # only the /v1 path has the trap
     monkeypatch.setattr(cbc_agent, "_context_warned", False)
     monkeypatch.delenv("OLLAMA_CONTEXT_LENGTH", raising=False)
     cbc_agent._warn_if_prompt_exceeds_context(40_000, "http://localhost:11434/v1")
