@@ -519,25 +519,67 @@ function QuestionsSection({ d, frozen }: { d: ExamDraft; frozen: boolean }) {
 /** Keeps the builder company while the worker writes: the job's own
  * narration line by line, each figure the moment it is filed, each question
  * as it lands — and a way to read one and put it on the paper. */
+const WRITING_TONE: Record<string, "ok" | "warn" | "danger" | "accent" | "neutral" | "info"> = {
+  written: "info", checking: "accent", flagged: "warn", rewritten: "accent", dropped: "danger", checked: "ok", saved: "ok",
+};
+
 function LivePanel({ d, subStrand, active, onPaper, onAdd }: {
   d: ExamDraft; subStrand: string; active: boolean; onPaper: Set<string>; onAdd: (qid: string) => void;
 }) {
   const live = useDraftLive(d.draft_id, subStrand, active);
   const [open, setOpen] = React.useState<string | null>(null);
+  const [autoAdd, setAutoAdd] = React.useState(true);
   const v = live.data;
   const job = v?.job;
+  // Put each new question on the paper the moment it lands, if asked to.
+  const added = React.useRef<Set<string>>(new Set());
+  React.useEffect(() => {
+    if (!autoAdd || !v) return;
+    for (const q of v.questions) {
+      const qid = String(q.question_id);
+      if (q.new && !onPaper.has(qid) && !added.current.has(qid)) {
+        added.current.add(qid);
+        onAdd(qid);
+      }
+    }
+  }, [v?.questions?.length, autoAdd]);  // eslint-disable-line react-hooks/exhaustive-deps
+  const writing = (v?.writing || []);
   return (
     <Card title={`${active ? "Writing" : "In the bank"} — ${subStrand}`}
           description={job ? `${job.kind}${job.step ? ` · ${job.step}` : ""} · ${job.status}${job.error ? ` · ${job.error}` : ""}` : "No job on this sub-strand right now."}>
       <Stack gap="var(--s3)">
+        {active && (
+          <label style={{ fontSize: "var(--text-sm)", display: "flex", gap: 8, alignItems: "center" }}>
+            <input type="checkbox" checked={autoAdd} onChange={(e) => setAutoAdd(e.target.checked)} />
+            Put each new question on the paper as it lands (the page on the right grows as they arrive)
+          </label>
+        )}
         {(v?.narration || []).length > 0 && (
           <div style={{ fontSize: "var(--text-xs)", fontFamily: "ui-monospace, monospace", background: "var(--surface-2)", borderRadius: "var(--radius-sm)", padding: "var(--s2)", maxHeight: "10rem", overflowY: "auto" }}>
             {(v?.narration || []).map((n, i) => (
-              <div key={i} style={{ color: n.status === "warn" ? "var(--warn)" : n.status === "error" ? "var(--danger)" : undefined }}>
-                <b>{n.what || n.name}</b> {n.detail}
+              <div key={i} style={{ color: n.status === "warn" ? "var(--warn)" : n.status === "error" || n.status === "fail" ? "var(--danger)" : undefined }}>
+                <b>{n.what || n.name || n.step}</b> {n.detail}
               </div>
             ))}
             {active && <div style={{ color: "var(--ink-3)" }}>…</div>}
+          </div>
+        )}
+        {writing.length > 0 && (
+          <div>
+            <div style={{ fontSize: "var(--text-sm)", fontWeight: 600, marginBottom: 4 }}>
+              Being written ({writing.length}) — each item as the writer hands it over, then what the checks make of it
+            </div>
+            {writing.map((w) => (
+              <div key={w.key} style={{ display: "flex", gap: 8, alignItems: "flex-start", fontSize: "var(--text-sm)", padding: "3px 0", borderBottom: "1px solid var(--line-2)" }}>
+                <b style={{ minWidth: "2.4em" }}>{w.key}</b>
+                <span style={{ flex: 1, minWidth: 0 }}>
+                  {w.stem || <i style={{ color: "var(--ink-3)" }}>…</i>}
+                  {w.why && <div style={{ fontSize: "var(--text-xs)", color: "var(--warn)" }}>{w.why}</div>}
+                </span>
+                {w.figure && <Badge tone="info">{w.figure}</Badge>}
+                <Badge tone={WRITING_TONE[w.status] || "neutral"}>{w.status}</Badge>
+              </div>
+            ))}
           </div>
         )}
         {(v?.figures || []).length > 0 && (

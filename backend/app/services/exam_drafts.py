@@ -374,8 +374,10 @@ def live(row: dict[str, Any], sub_strand: str) -> dict[str, Any]:
     )
     since = str((job or {}).get("created_at") or "") if job else ""
     narration: list[dict[str, Any]] = []
+    previews: list[dict[str, Any]] = []
     if job and isinstance(job.get("progress"), dict):
         narration = list((job["progress"] or {}).get("steps") or [])[-30:]
+        previews = list((job["progress"] or {}).get("items") or [])
     elif job and isinstance(job.get("progress"), list):
         narration = list(job["progress"])[-30:]
 
@@ -413,6 +415,9 @@ def live(row: dict[str, Any], sub_strand: str) -> dict[str, Any]:
         "job": {k: (str(v) if k in ("created_at", "started_at", "finished_at") else v)
                 for k, v in (job or {}).items() if k != "progress"} if job else None,
         "narration": narration,
+        # The batch as the writer hands it over and as the checks work it —
+        # every item with its status, before any of it reaches the bank.
+        "writing": previews,
         "figures": figures,
         "questions": questions,
     }

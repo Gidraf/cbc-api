@@ -2442,6 +2442,11 @@ the question uses. Kinds and their fields:
   {"kind": "shape", "shape": "rectangle|square|triangle|right_triangle|circle|parallelogram|trapezium", "dimensions": {"length": 12, "width": 5}, "unit": "cm", "labels": {"vertices": ["A","B","C","D"]}, "shaded": false}
   {"kind": "fraction", "parts": 8, "shaded": 3, "form": "bar"}
   {"kind": "angle", "degrees": 135, "label": "x"}
+  {"kind": "emoji", "items": [{"glyph": "🥭", "count": 7, "label": "mangoes"}, {"glyph": "🍌", "count": 5, "label": "bananas"}]}
+     — groups of things to count, compare, add or share (lower primary; any subject).
+  {"kind": "image", "query": "maize plant Kenya farm"}
+     — a PHOTOGRAPH, when no drawing would do: a plant, an animal, a tool, a landform, a building,
+       a person at work. Name what the picture must show in plain words; a credited photo is fetched.
 The stem then says "Study the figure below" or "In the figure below, …". A figure that is a lesson
 diagram already drawn for this sub-strand is referred to by `diagram_ref` instead.
 HOW MANY: at least one item in six is set on a figure, a table or a chart wherever the topic

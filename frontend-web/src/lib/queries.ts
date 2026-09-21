@@ -3893,7 +3893,9 @@ export const useGenerateForDraft = draftMutation<{ draft_id: string; count: numb
 export type LiveView = {
   sub_strand: string;
   job: { job_id: string; kind: string; status: string; step?: string; created_at: string; error?: string } | null;
-  narration: { what?: string; name?: string; detail: string; status: string; at?: string }[];
+  narration: { what?: string; name?: string; step?: string; detail: string; status: string; at?: string | number }[];
+  writing: { key: string; status: string; stem?: string; question_type?: string; figure?: string; marks?: number;
+             question_id?: string | null; why?: string; at?: number }[];
   figures: { diagram_id: string; title: string; created_at: string; svg: string; new: boolean }[];
   questions: (Record<string, any> & { new: boolean })[];
 };

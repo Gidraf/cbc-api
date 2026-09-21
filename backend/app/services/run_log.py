@@ -41,6 +41,12 @@ class Step:
                 "detail": self.detail, "status": self.status}
 
 
+# A run that writes items — questions, figures — keeps a short preview of
+# each as it appears, so a screen can show the work question by question
+# while the checks are still running, not only a count at the end.
+MAX_ITEMS = 80
+
+
 @dataclass(slots=True)
 class RunLog:
     job_id: str = ""
@@ -48,6 +54,17 @@ class RunLog:
     started_at: float = field(default_factory=time.monotonic)
     steps: list[Step] = field(default_factory=list)
     finished: bool = False
+    items: list[dict[str, Any]] = field(default_factory=list)
+
+    def preview(self, key: str, **fields: Any) -> None:
+        """Add or update one item's preview by key (its label or id)."""
+        for item in self.items:
+            if item.get("key") == key:
+                item.update({k: v for k, v in fields.items() if v is not None})
+                item["at"] = round(time.monotonic() - self.started_at, 2)
+                return
+        self.items.append({"key": key, "at": round(time.monotonic() - self.started_at, 2), **fields})
+        del self.items[:-MAX_ITEMS]
 
     def add(self, step: str, detail: str = "", status: str = "ok") -> Step:
         entry = Step(at=time.monotonic() - self.started_at, step=step,
@@ -60,6 +77,7 @@ class RunLog:
         return {"job_id": self.job_id, "run_id": self.run_id,
                 "elapsed_s": round(time.monotonic() - self.started_at, 1),
                 "steps": [s.to_dict() for s in self.steps],
+                "items": list(self.items),
                 "finished": self.finished}
 
 
@@ -104,6 +122,36 @@ def step(name: str, detail: str = "", status: str = "ok") -> None:
     log.add(name, detail, status)
     logger.info("%s%s", name, f": {detail}" if detail else "")
     _flush(log)
+
+
+def preview(key: str, **fields: Any) -> None:
+    """Record or update one written item's preview — safe with no run."""
+    log = _current.get()
+    if log is None:
+        return
+    log.preview(key, **fields)
+    _flush(log)
+
+
+def preview_questions(questions: list[dict[str, Any]], status: str, *, replaces: dict[str, str] | None = None) -> None:
+    """The batch as it stands: each item's label, stem, type and figure,
+    with a status — written, checking, kept, rewritten, dropped, saved."""
+    for q in questions:
+        if not isinstance(q, dict):
+            continue
+        key = str(q.get("display_label") or q.get("question_id") or q.get("id") or "")
+        if not key:
+            continue
+        figure = q.get("figure") if isinstance(q.get("figure"), dict) else None
+        # Empty values are "not said", not "cleared": a later call carrying
+        # only the id must not blank the stem the first call recorded.
+        preview(key, status=status,
+                stem=str(q.get("question_text") or "")[:220] or None,
+                question_type=str(q.get("question_type") or "") or None,
+                figure=(str(figure.get("kind") or "") if figure else ("bound" if q.get("diagram") else "")) or None,
+                marks=(q.get("pedagogy") or {}).get("max_marks", q.get("max_marks")),
+                question_id=q.get("question_id"),
+                replaces=(replaces or {}).get(key))
 
 
 # How long a finished run's progress stays readable. Long enough that a poller

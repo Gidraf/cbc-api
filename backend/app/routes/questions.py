@@ -1439,6 +1439,9 @@ def factory_generate_questions_batch(
     #     Saved as `draft`: filed, countable and readable, but not approved.
     #     Approval is a person's signature and this is not it.
     saved: list[dict[str, Any]] = []
+    from ..services import run_log as _run_log
+
+    _run_log.preview_questions(normalized_questions, "checked")
     if normalized_questions:
         try:
             filed_gate = gate_result.to_dict() if hasattr(gate_result, "to_dict") else {}
@@ -1449,6 +1452,9 @@ def factory_generate_questions_batch(
                 questions=normalized_questions, status="draft",
                 gate_result=filed_gate, written_by=_written_by(resp),
             )
+            _run_log.preview_questions(
+                [{**q, "question_id": (s or {}).get("question_id")} for q, s in zip(normalized_questions, saved)],
+                "saved")
         except Exception as exc:  # noqa: BLE001
             # The items are in the response either way; losing the file is bad
             # and losing the run as well is worse.
@@ -1585,6 +1591,13 @@ def _generate_in_chunks(llm_client: Any, resolved: Any, messages: list[dict[str,
         items = (content.get("questions", []) if isinstance(content, dict)
                  else (content if isinstance(content, list) else []))
         written += [q for q in items if isinstance(q, dict)]
+        # Each item on the screen the moment the writer hands it over, while
+        # the figures, the engine and the rewrites are still to come.
+        from ..services import run_log as _run_log
+
+        _run_log.preview_questions(
+            [{**q, "display_label": q.get("display_label") or q.get("id") or f"Q{len(written) - len(items) + i + 1}"}
+             for i, q in enumerate(q for q in items if isinstance(q, dict))], "written")
         last = resp
         usage = getattr(resp, "usage", None)
         for key in ("prompt_tokens", "completion_tokens", "total_tokens"):

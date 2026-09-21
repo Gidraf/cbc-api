@@ -383,10 +383,63 @@ def _angle(f: dict[str, Any]) -> tuple[str, str]:
     return _svg("".join(out), "Angle", 320, 260), "Angle"
 
 
+def _emoji(f: dict[str, Any]) -> tuple[str, str]:
+    """Groups of things to count, compare or share — drawn as large glyphs.
+
+    Lower primary counts mangoes and chickens; a photograph of eleven
+    mangoes does not exist and a drawn mango is a blob. The system's own
+    emoji font prints the same on every page. `items`: [{"glyph": "🥭",
+    "count": 7, "label": "mangoes"}, …]; `per_row` optional."""
+    items = [i for i in (f.get("items") or []) if isinstance(i, dict) and i.get("glyph")]
+    if not items:
+        raise ValueError("an emoji figure needs items with a glyph")
+    per_row = max(1, min(12, int(_num(f.get("per_row"), 6))))
+    size = 34
+    gap = 6
+    out: list[str] = []
+    y = 20
+    for item in items[:6]:
+        glyph = str(item.get("glyph"))[:4]
+        count = max(1, min(60, int(_num(item.get("count"), 1))))
+        label = str(item.get("label") or "")
+        if label:
+            out.append(_text(12, y + 14, label, size=13, anchor="start", weight="bold"))
+            y += 22
+        for n in range(count):
+            row, col = divmod(n, per_row)
+            out.append(f"<text x='{12 + col * (size + gap)}' y='{y + size + row * (size + gap)}' "
+                       f"font-size='{size}'>{_esc(glyph)}</text>")
+        y += ((count - 1) // per_row + 1) * (size + gap) + 12
+    width = max(W, 12 + per_row * (size + gap) + 12)
+    title = str(f.get("title") or ", ".join(f"{i.get('count', 1)} {i.get('label') or i.get('glyph')}" for i in items[:3]))
+    return _svg("".join(out), title, width=width, height=max(120, y + 10)), title
+
+
+def _image(f: dict[str, Any]) -> tuple[str, str]:
+    """A photograph from Wikimedia Commons, credited. `query` names it:
+    {"kind": "image", "query": "maize plant Kenya farm"}. Fetched once and
+    filed; a query with nothing reusable fails like any figure that will
+    not draw, and the item goes on without it."""
+    from . import open_images, platform_settings
+
+    if not platform_settings.get("open_images_enabled", True):
+        raise ValueError("open images are switched off in Settings")
+    query = str(f.get("query") or f.get("title") or "").strip()
+    if not query:
+        raise ValueError("an image figure needs a query")
+    got = open_images.fetch(query)
+    if not got:
+        raise ValueError(f"no reusable photograph on Commons for {query!r}")
+    f["_credit"] = got["credit"]
+    f["_source"] = got["source"]
+    return got["svg"], str(f.get("title") or query)
+
+
 _KINDS = {
     "number_line": _number_line, "bar_chart": _bar_chart, "bar_graph": _bar_chart,
     "pie_chart": _pie_chart, "line_graph": _line_graph, "table": _table, "clock": _clock,
     "thermometer": _thermometer, "shape": _shape, "fraction": _fraction, "angle": _angle,
+    "emoji": _emoji, "image": _image, "photo": _image,
 }
 
 

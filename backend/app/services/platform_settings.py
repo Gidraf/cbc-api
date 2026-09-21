@@ -55,6 +55,10 @@ SETTINGS: tuple[Setting, ...] = (
     Setting("byom_step_timeout_seconds", "BYOM_STEP_TIMEOUT_SECONDS", "int", "Agent step timeout (seconds)",
             "How long a station driven by an outside agent waits for one prompt to be answered.",
             2700, "Agents"),
+    Setting("open_images_enabled", "OPEN_IMAGES_ENABLED", "bool", "Photographs from Wikimedia Commons",
+            "A question figure of kind 'image' fetches a credited, freely-licensed photograph from Wikimedia "
+            "Commons (no key) and files it for reuse. Off, such figures are dropped and the item goes on "
+            "without one.", True, "Builder"),
     Setting("users_may_generate", "USERS_MAY_GENERATE", "bool", "User accounts may generate",
             "When on, a signed-up user can ask the builder to write new questions and to run an AI review — "
             "both spend this platform's provider tokens. Off, users compose from the bank only.",

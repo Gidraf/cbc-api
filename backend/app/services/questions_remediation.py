@@ -169,10 +169,18 @@ def run(
     report = inspect(items)
     out.repaired += report.repaired
     trimmed = _drop_copies(items, report, out)
+    run_log.preview_questions(items, "checking")
     if trimmed is not items:
         # A copy gone changes what the set-level checks see; read it again.
+        for gone in [q for q in items if _id(q) in set(out.dropped)]:
+            run_log.preview(str(gone.get("display_label") or _id(gone)), status="dropped")
         items = trimmed
         report = inspect(items)
+    for found in report.findings:
+        for qid in found.items:
+            hit = next((q for q in items if _id(q) == qid), None)
+            if hit is not None:
+                run_log.preview(str(hit.get("display_label") or qid), status="flagged", why=found.says[:160])
     out.score_before = out.score_after = report.score
     out.findings_before = [f.says for f in report.findings]
     out.engine = {"checked": report.engine_checked, "agreed": report.engine_agreed}
@@ -223,6 +231,7 @@ def run(
                 swap.setdefault("display_label", question.get("display_label"))
                 out.rewritten.append(_id(question))
                 merged.append(swap)
+                run_log.preview_questions([swap], "rewritten")
             else:
                 merged.append(question)
         merged += added
