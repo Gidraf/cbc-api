@@ -1532,8 +1532,8 @@ question may refer to by name:
 === LAYER 3: PRACTICAL ACTIVITIES & EXPERIMENTS ===
 {{ activity_info }}
 
-Subject Dataset Context:
-{{ subject_context }}
+(The sub-strand's blueprint — outcomes, experiences, inquiry questions — is the
+system message above this prompt; it is not repeated here.)
 
 Mandatory Directives:
 1. Cover Bloom's Taxonomy: Emphasize Application, Analysis, and Evaluation.
@@ -2856,7 +2856,7 @@ Return JSON format:
 }
 
 "ADDITIONAL INSTRUCTIONS: {{ custom_instructions }}""",
-    "questions-factory-directive": """{{ ct_profile_format_for_prompt }}
+    "questions-factory-directive": """(The content-type directives for this subject are in the prompt above; they apply here in full.)
 
 {{ dossier_formatted_context }}
 
@@ -2870,15 +2870,9 @@ Difficulty Index: {{ difficulty }} (0.10 to 0.99)
 
 {{ parent_anchor_directive }}
 
-=== 📖 GROUND TRUTH KNOWLEDGE BASE (FROM SAVED FOUNDATION LAYERS) ===
-LAYER 1 MASTER LESSON NOTES & CITATIONS:
+=== 📖 GROUND TRUTH (FROM SAVED FOUNDATION LAYERS) ===
 {{ notes_text_4000 }}
-
-LAYER 2 DIAGRAMS & VISUAL REPOSITORIES:
-{{ diagrams_text_2000 }}
-
-LAYER 3 EXPERIMENTS, LAB PRACTICUMS & SAFETY:
-{{ experiments_text_2000 }}
+(The diagrams and practicals are listed under LAYER 2 and LAYER 3 above; write against those.)
 
 CRITICAL ASSESSMENT DESIGN RULES (ZERO HALLUCINATION & FULL DNA):
 1. YOU MUST GENERATE EXACTLY {{ batch_count }} INDEPENDENT, COMPLETE QUESTIONS.

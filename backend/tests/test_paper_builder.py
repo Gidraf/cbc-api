@@ -325,15 +325,17 @@ def test_a_batch_of_fifty_is_written_in_chunks_that_see_each_other() -> None:
         def generate(self, config, messages, temperature=0.0):
             seen.append(messages[-1]["content"])
             n = len(seen)
-            return Resp([{"question_text": f"chunk {n} item {i}"} for i in range(25 if n == 1 else 25)])
+            return Resp([{"question_text": f"chunk {n} item {i}"} for i in range(15)])
 
     resp, items = _generate_in_chunks(Client(), object(), [{"role": "system", "content": "s"},
                                                             {"role": "user", "content": "directive"}], 50)
 
-    assert len(seen) == 2 and len(items) == 50
-    assert "CHUNK 2 OF 2" in seen[1] and "chunk 1 item 3" in seen[1], "the second chunk sees the first"
+    # Fifteen per call: a chunk's answer stays near 6k tokens, which a local
+    # model's window can hold beside the prompt.
+    assert len(seen) == 4 and len(items) == 60
+    assert "CHUNK 2 OF 4" in seen[1] and "chunk 1 item 3" in seen[1], "the second chunk sees the first"
     assert "ALREADY WRITTEN" not in seen[0]
-    assert resp.usage.total_tokens == 30
+    assert resp.usage.total_tokens == 60, "usage is summed across the four calls"
 
 
 def test_the_paper_is_headed_with_knecs_own_name_for_the_grade() -> None:

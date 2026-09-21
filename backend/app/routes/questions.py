@@ -1116,6 +1116,14 @@ def factory_generate_questions_batch(
         agent_name="question-generator",
         grade_slug=payload.grade,
         subject=payload.subject,
+        # ONE sub-strand's blueprint, its siblings by name only. The whole
+        # subject's — every outcome of every sub-strand — went in as a
+        # system message AND again inside the prompt: 80,000 of the 149,000
+        # characters a batch of twenty questions was asked with, none of it
+        # about the sub-strand being written. A 16k local model never saw
+        # the end of the prompt.
+        focus_strand=payload.strand,
+        focus_sub_strand=payload.sub_strand,
         template_vars={
             "level": getattr(payload, "level", None) or grade_level(payload.grade),
             "notes_title": getattr(payload, "notes_title", "") or payload.sub_strand,
@@ -1164,7 +1172,9 @@ def factory_generate_questions_batch(
                 payload.sub_strand, count=payload.batch_count,
                 lesson_hours=str((notes_obj or {}).get("allocated_hours") or "")),
             "faith_scope": faith_prompt_block(payload.subject),
-            "content_type_directives": ct_profile.format_for_prompt(),
+            # Capped: the subject's pedagogy directives ran to 10,000
+            # characters and were the second-largest thing in the prompt.
+            "content_type_directives": ct_profile.format_for_prompt()[:4500],
             "notes_content": notes_text or payload.sub_strand,
             "diagram_id": target_diag_obj.get("asset_id", "diag_01") if target_diag_obj else "diag_01",
             "diagram_info": diagrams_text[:1500] or "Visual models available.",
@@ -1482,7 +1492,11 @@ def factory_generate_questions_batch(
     }
 
 
-CHUNK = 25
+# Items per model call. Twenty-five made one 10k-token answer; a local model
+# with a 16k window had no room for the prompt and that. Fifteen keeps a
+# chunk's answer near 6k tokens; an API provider pays a second call per
+# forty items and nothing else changes.
+CHUNK = int(__import__("os").getenv("QUESTIONS_CHUNK", "15"))
 
 
 def _written_by(resp: Any) -> dict[str, Any]:

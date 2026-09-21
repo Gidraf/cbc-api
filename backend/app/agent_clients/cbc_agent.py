@@ -56,7 +56,9 @@ def _platform(method: str, path: str, body: Any = None) -> dict[str, Any]:
         raise SystemExit(f"{method} {path} → {exc.code}: {detail[:400]}")
 
 
-NUM_CTX = int(os.getenv("LLM_NUM_CTX", "16384"))
+# The platform's largest prompt plus a chunk's answer: about 12k tokens in
+# and 6k out. 24k leaves room; a Mac with 24 GB runs a 14B at this.
+NUM_CTX = int(os.getenv("LLM_NUM_CTX", "24576"))
 _ollama_native: dict[str, bool] = {}
 
 
