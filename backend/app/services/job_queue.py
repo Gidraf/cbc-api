@@ -523,8 +523,11 @@ def _execute(job: dict[str, Any]) -> dict[str, Any]:
         result = {**result, "progress": finished.to_dict()}
     execute(
         "UPDATE jobs SET status = 'done', result = CAST(:result AS jsonb), "
-        "finished_at = NOW(), llm_calls = :calls, total_tokens = :tokens, "
-        "cost_usd = :cost WHERE job_id = :job_id",
+        # Added, not set: a job that failed once and then succeeded paid for
+        # both attempts, and the failure path already added the first.
+        "finished_at = NOW(), llm_calls = llm_calls + :calls, "
+        "total_tokens = total_tokens + :tokens, "
+        "cost_usd = cost_usd + :cost WHERE job_id = :job_id",
         {"job_id": job_id, "result": to_json(result if isinstance(result, dict) else {}),
          "calls": meter.calls, "tokens": meter.total_tokens,
          "cost": round(meter.cost_usd, 6)},

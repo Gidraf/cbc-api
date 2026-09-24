@@ -4,7 +4,7 @@ import logging
 from datetime import date
 from typing import Any
 
-from ..infra.db import execute, fetch_one, to_json
+from ..infra.db import execute, fetch_all, fetch_one, to_json
 from ..services.notifications import notification_service
 
 logger = logging.getLogger("cbc-targets")
@@ -32,7 +32,40 @@ class TargetService:
                 {"tdate": today},
             )
 
-        return row or {"target_date": str(today), "target_count": 100, "completed_count": 0, "approved_count": 0, "rejected_count": 0}
+        row = dict(row or {"target_date": str(today), "target_count": 100, "completed_count": 0,
+                           "approved_count": 0, "rejected_count": 0})
+        row.update(self._counted_from_events(today))
+        return row
+
+    def _counted_from_events(self, day: date) -> dict[str, Any]:
+        """The day's questions, from the events the questions station records.
+
+        The counters on this row are only moved by `record_generation`, which
+        the legacy pipeline calls and the stations never do — so the overview
+        read "0/100" on a day forty runs wrote hundreds of questions. The
+        events are what the questions board counts; both now say one thing.
+        """
+        from datetime import datetime, time, timedelta
+
+        from .question_throughput import APPROVED, GENERATED, REJECTED, _tz
+
+        start = datetime.combine(day, time.min, tzinfo=_tz())
+        try:
+            rows = fetch_all(
+                """
+                SELECT event, COUNT(DISTINCT question_id) AS n
+                FROM question_events
+                WHERE happened_at >= :start AND happened_at < :end AND question_id <> ''
+                GROUP BY event
+                """,
+                {"start": start, "end": start + timedelta(days=1)},
+            ) or []
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Could not count %s from question events: %s", day, exc)
+            return {}
+        n = {str(r.get("event")): int(r.get("n") or 0) for r in rows}
+        return {"completed_count": n.get(GENERATED, 0), "approved_count": n.get(APPROVED, 0),
+                "rejected_count": n.get(REJECTED, 0), "counted_from": "question_events"}
 
     def configure_target(self, target_date: date, target_count: int, grade_breakdown: dict[str, int] | None = None) -> dict[str, Any]:
         execute(

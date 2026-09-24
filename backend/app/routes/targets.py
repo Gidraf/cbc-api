@@ -20,8 +20,10 @@ class ConfigureTargetRequest(BaseModel):
 
 @router.get("/today")
 def get_today_target(_: AuthContext = Depends(require_roles("admin", "operator", "reviewer", "developer"))) -> dict[str, Any]:
-    today = date.today()
-    return target_service.get_or_create_daily_target(today)
+    # Nairobi's today, not the server's: the counts are Nairobi days.
+    from ..services.question_throughput import today as business_today
+
+    return target_service.get_or_create_daily_target(date.fromisoformat(business_today()))
 
 
 @router.get("/{target_date}")

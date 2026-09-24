@@ -906,6 +906,11 @@ def factory_generate_questions_batch(
     from ..services.quality_gate import quality_gate_service
     from ..services.question_normalizer import question_normalizer
     from ..services.web_research import web_research_agent
+    from ..services import run_meter
+
+    # Priced from here, so each saved item carries its share of EVERY call the
+    # run made — research, generation, repairs, checks — not only the first.
+    priced = run_meter.begin()
 
     resolved = pipeline_orchestrator.router.resolve_for_stage("question_generation")
     ct_profile = classify_content_type(payload.subject, payload.grade, payload.sub_strand)
@@ -1410,21 +1415,19 @@ def factory_generate_questions_batch(
             "stage": "demand",
         })
         question_throughput.record_batch(
-            question_throughput.BLOCKED, [{"question_id": "batch"}],
+            question_throughput.BLOCKED, [{"question_id": question_throughput.unsaved_id("batch")}],
             grade=payload.grade, subject=payload.subject, strand=payload.strand,
             sub_strand=payload.sub_strand, detail={"gate": "demand"})
 
-    # 4c. Counted per ITEM, not per run: the target is written in questions,
-    #     and a run of 4 would otherwise look like a run of 400.
-    question_throughput.record_batch(
-        question_throughput.GENERATED, normalized_questions,
-        grade=payload.grade, subject=payload.subject, strand=payload.strand,
-        sub_strand=payload.sub_strand,
-        detail={"model": resolved.model})
+    # 4c. What the gate held back. Each gets an id of its own: these items
+    #     were never saved, so the ids they carry are the model's positional
+    #     labels ("Q1", "Q2"), the same in every run, and a day counted by
+    #     distinct id saw twelve runs' held items as one run's.
+    #     "Generated" is recorded after the save, below.
     if held:
         question_throughput.record_batch(
             question_throughput.BLOCKED,
-            [{"question_id": qid} for qid in held],
+            [{"question_id": question_throughput.unsaved_id(qid)} for qid in held],
             grade=payload.grade, subject=payload.subject, strand=payload.strand,
             sub_strand=payload.sub_strand, detail={"gate": "structure"})
 
@@ -1470,6 +1473,21 @@ def factory_generate_questions_batch(
             # and losing the run as well is worse.
             logger.warning("Generated %d item(s) for %s but could not save them: %s",
                            len(normalized_questions), payload.sub_strand, exc)
+
+    # 5c. Counted per SAVED item, by the id the bank gave it. This was recorded
+    #     before the save, under the model's positional labels — "Q1".."Q15"
+    #     in every run — so a day of forty runs counted fifteen questions, and
+    #     no reviewer's event (filed under the real id) ever met its item.
+    #     Each item carries its share of what the run cost, so the board can
+    #     say what a question costs and not only how many were written.
+    run_meter.end(priced)
+    per_item_usd = round(priced.cost_usd / len(saved), 6) if saved else 0.0
+    question_throughput.record_batch(
+        question_throughput.GENERATED, [s for s in saved if isinstance(s, dict)],
+        grade=payload.grade, subject=payload.subject, strand=payload.strand,
+        sub_strand=payload.sub_strand,
+        detail={"model": resolved.model, "cost_usd": per_item_usd,
+                "run_cost_usd": round(priced.cost_usd, 6), "run_items": len(saved)})
 
     return {
         "saved": len(saved),

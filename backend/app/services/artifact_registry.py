@@ -406,15 +406,21 @@ def search(
             "REPLACE(LOWER(a.grade), 'grade-', '') = REPLACE(LOWER(:grade), 'grade-', '')"
         )
         params["grade"] = grade
+    # Names compared the way the Content Factory board keys them
+    # (`scope_key`), not by LOWER() alone. The board showed a guide filed under
+    # "Whole  Numbers"; this search, asked for "Whole Numbers", found nothing,
+    # and the questions studio said "no guide" beside it.
+    from . import scope_key
+
     if subject:
-        conditions.append("LOWER(a.subject) = LOWER(:subject)")
-        params["subject"] = subject
+        conditions.append(f"{scope_key.sql('a.subject')} = :subject")
+        params["subject"] = scope_key.norm(subject)
     if kind:
         conditions.append("a.kind = :kind")
         params["kind"] = kind
     if sub_strand:
-        conditions.append("LOWER(a.sub_strand_name) = LOWER(:sub_strand)")
-        params["sub_strand"] = sub_strand
+        conditions.append(f"{scope_key.sql('a.sub_strand_name')} = :sub_strand")
+        params["sub_strand"] = scope_key.norm(sub_strand)
     join = ""
     if label:
         join = "JOIN artifact_labels l ON l.artifact_id = a.artifact_id AND l.label = :label"

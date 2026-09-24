@@ -378,7 +378,12 @@ class PipelineService:
     ) -> tuple[StageRunResult, CostResult]:
         start = time.time()
         resolved = self.router.resolve_for_stage(stage)
-        llm_response: LlmResponse = fn(request, resolved)
+        # This stage files its own cost below; the meter only stops the
+        # model client filing the same call a second time.
+        from .run_meter import measure
+
+        with measure(accounted=True):
+            llm_response: LlmResponse = fn(request, resolved)
         latency_ms = (time.time() - start) * 1000
         metrics_service.record_stage_latency(stage, latency_ms)
 

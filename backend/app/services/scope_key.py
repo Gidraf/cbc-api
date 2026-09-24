@@ -32,6 +32,23 @@ def norm(value: object) -> str:
     return _NOT_WORD.sub(" ", text).strip()
 
 
+def sql(column: str) -> str:
+    """`norm()` in SQL, for comparing a column to a `norm()`-ed bind value.
+
+    The board keyed coverage with `norm()`; the stations asked the database
+    with `LOWER(a.sub_strand_name) = LOWER(:sub_strand)`. A sub-strand filed as
+    "Whole  Numbers" or "Learner’s Book" was on the board as a guide and, to the
+    questions studio, "no guide" — the same row, read two ways.
+
+    Same steps as `norm()`: drop quote marks, lowercase, runs of anything but
+    a-z/0-9 to one space, trim. Postgres has no NFKD without `unaccent`, so an
+    accented letter is a separator here where `norm()` keeps its base letter;
+    curriculum names are English and Kiswahili, which have none.
+    """
+    return (f"BTRIM(REGEXP_REPLACE(LOWER(REGEXP_REPLACE({column}, '[‘’“”`'']', '', 'g')), "
+            f"'[^a-z0-9]+', ' ', 'g'))")
+
+
 def key(subject: object, sub_strand: object) -> tuple[str, str]:
     """The scope key. Both sides of every coverage join build it with this."""
     return (norm(subject), norm(sub_strand))

@@ -416,10 +416,18 @@ class LlmClient:
             data = resp.json()
             text = data["content"][0]["text"]
             raw_usage = data.get("usage", {})
+            # Anthropic reports cache reads and writes APART from input_tokens,
+            # so input_tokens alone left every cached prompt token unbilled.
+            # Writes are priced as plain input here (they cost 1.25x).
+            cache_read = int(raw_usage.get("cache_read_input_tokens") or 0)
+            prompt = (int(raw_usage.get("input_tokens") or 0) + cache_read
+                      + int(raw_usage.get("cache_creation_input_tokens") or 0))
+            completion = int(raw_usage.get("output_tokens") or 0)
             usage = TokenUsage(
-                prompt_tokens=raw_usage.get("input_tokens", 0),
-                completion_tokens=raw_usage.get("output_tokens", 0),
-                total_tokens=raw_usage.get("input_tokens", 0) + raw_usage.get("output_tokens", 0),
+                prompt_tokens=prompt,
+                completion_tokens=completion,
+                total_tokens=prompt + completion,
+                cached_tokens=cache_read,
             )
             return text, usage
 

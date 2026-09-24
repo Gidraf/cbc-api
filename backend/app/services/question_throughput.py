@@ -24,13 +24,45 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
+import uuid
 from dataclasses import dataclass, field
-from datetime import date, date as _date, timedelta as _timedelta
+from datetime import date as _date, datetime as _datetime, time as _time, timedelta as _timedelta
+from typing import Any
+from zoneinfo import ZoneInfo
+
+from .grade_sql import clause as _grade_clause
 
 _day = _timedelta(days=1)
-from typing import Any
 
 logger = logging.getLogger("cbc-question-throughput")
+
+# Whose day a "day" is. The database keeps UTC; the people writing and reading
+# these questions are in Nairobi, three hours ahead, so a UTC day moved the
+# first three hours of every working day onto yesterday's line.
+BUSINESS_TZ = os.getenv("BUSINESS_TIMEZONE", "Africa/Nairobi")
+
+
+def _tz() -> ZoneInfo:
+    return ZoneInfo(BUSINESS_TZ)
+
+
+def today() -> str:
+    """Today, in the business's own time zone."""
+    return _datetime.now(_tz()).date().isoformat()
+
+
+def _day_start(day: _date) -> _datetime:
+    return _datetime.combine(day, _time.min, tzinfo=_tz())
+
+
+def unsaved_id(label: str = "") -> str:
+    """An id for an event about an item that never reached the bank.
+
+    Such an item has only the model's positional label ("Q3"), which every run
+    reuses. Counted by distinct id, a day's held items collapsed into one run's.
+    """
+    return f"unsaved:{uuid.uuid4().hex[:12]}:{label}"
 
 GENERATED = "generated"
 REVIEWED = "reviewed"
@@ -88,6 +120,13 @@ class DayProgress:
     awaiting_review: int = 0
     awaiting_approval: int = 0
     blocked_today: int = 0
+    # What today's writing cost: each saved item carries its share of its run.
+    generated_cost_usd: float = 0.0
+
+    @property
+    def cost_per_question(self) -> float:
+        written = self.done.get(GENERATED, 0)
+        return round(self.generated_cost_usd / written, 4) if written else 0.0
 
     def share(self, stage: str) -> float:
         goal = self.target.per_day(stage)
@@ -131,6 +170,8 @@ class DayProgress:
             "awaiting_review": self.awaiting_review,
             "awaiting_approval": self.awaiting_approval,
             "blocked_today": self.blocked_today,
+            "generated_cost_usd": round(self.generated_cost_usd, 4),
+            "cost_per_question": self.cost_per_question,
             "warnings": self.warnings,
             "target": self.target.to_dict(),
         }
@@ -234,11 +275,11 @@ def get_target(grade: str, subject: str, strand: str = "") -> Target:
 
     try:
         rows = fetch_all(
-            """
+            f"""
             SELECT grade, subject, strand, generate_per_day, review_per_day,
                    approve_per_day, active
             FROM question_targets
-            WHERE LOWER(grade) = LOWER(:grade) AND LOWER(subject) = LOWER(:subject)
+            WHERE {_grade_clause("grade", "grade")} AND LOWER(subject) = LOWER(:subject)
               AND (LOWER(strand) = LOWER(:strand) OR strand = '')
             ORDER BY LENGTH(strand) DESC
             """,
@@ -260,7 +301,8 @@ def get_target(grade: str, subject: str, strand: str = "") -> Target:
     )
 
 
-def _counts_today(grade: str, subject: str, strand: str, on: str) -> dict[str, int]:
+def _counts_today(grade: str, subject: str, strand: str, on: str) -> tuple[dict[str, int], float]:
+    """Distinct items per event on one day, and what the day's writing cost."""
     from ..infra.db import fetch_all
 
     # The day's boundaries are computed HERE, not cast in SQL. `:on::date` is
@@ -268,9 +310,12 @@ def _counts_today(grade: str, subject: str, strand: str, on: str) -> dict[str, i
     # `n::date` — so the query asked for a parameter nothing supplies, raised,
     # was swallowed by the guard below, and every count came back zero. The
     # board read "Written 0 / 500" beside "22 waiting", which is impossible.
-    start = _date.fromisoformat(on)
-    conditions = ["LOWER(grade) = LOWER(:grade)", "LOWER(subject) = LOWER(:subject)",
-                  "happened_at >= :start", "happened_at < :end"]
+    #
+    # The grade through `grade_sql`, because the studio records "grade-9" and
+    # the board may ask for "9"; and the day in Nairobi time, not UTC.
+    start = _day_start(_date.fromisoformat(on))
+    conditions = [_grade_clause("grade", "grade"), "LOWER(subject) = LOWER(:subject)",
+                  "happened_at >= :start", "happened_at < :end", "question_id <> ''"]
     params: dict[str, Any] = {"grade": grade, "subject": subject,
                               "start": start, "end": start + _day}
     if strand:
@@ -280,15 +325,18 @@ def _counts_today(grade: str, subject: str, strand: str, on: str) -> dict[str, i
     try:
         rows = fetch_all(
             f"""
-            SELECT event, COUNT(DISTINCT question_id) AS n
+            SELECT event, COUNT(DISTINCT question_id) AS n,
+                   COALESCE(SUM(CAST(NULLIF(detail->>'cost_usd', '') AS NUMERIC)), 0) AS cost
             FROM question_events
             WHERE {' AND '.join(conditions)}
             GROUP BY event
             """, params) or []
     except Exception as exc:  # noqa: BLE001
         logger.warning("Could not count today's work for %s/%s: %s", grade, subject, exc)
-        return {}
-    return {str(r.get("event")): int(r.get("n") or 0) for r in rows}
+        return {}, 0.0
+    counts = {str(r.get("event")): int(r.get("n") or 0) for r in rows}
+    cost = sum(float(r.get("cost") or 0) for r in rows if r.get("event") == GENERATED)
+    return counts, cost
 
 
 def _waiting(grade: str, subject: str, strand: str) -> tuple[int, int]:
@@ -301,7 +349,7 @@ def _waiting(grade: str, subject: str, strand: str) -> tuple[int, int]:
     """
     from ..infra.db import fetch_all
 
-    conditions = ["LOWER(grade) = LOWER(:grade)", "LOWER(subject) = LOWER(:subject)"]
+    conditions = [_grade_clause("grade", "grade"), "LOWER(subject) = LOWER(:subject)"]
     params: dict[str, Any] = {"grade": grade, "subject": subject}
     if strand:
         conditions.append("LOWER(strand) = LOWER(:strand)")
@@ -329,8 +377,8 @@ def _waiting(grade: str, subject: str, strand: str) -> tuple[int, int]:
 def progress(grade: str, subject: str, strand: str = "",
              on: str | None = None) -> DayProgress:
     """One scope's day: what was done, against what was meant to be."""
-    when = on or date.today().isoformat()
-    counts = _counts_today(grade, subject, strand, when)
+    when = on or today()
+    counts, cost = _counts_today(grade, subject, strand, when)
     awaiting_review, awaiting_approval = _waiting(grade, subject, strand)
 
     return DayProgress(
@@ -340,6 +388,7 @@ def progress(grade: str, subject: str, strand: str = "",
         awaiting_review=awaiting_review,
         awaiting_approval=awaiting_approval,
         blocked_today=counts.get(BLOCKED, 0),
+        generated_cost_usd=cost,
     )
 
 
@@ -351,10 +400,11 @@ def history(grade: str, subject: str, strand: str = "", days: int = 14) -> list[
     """
     from ..infra.db import fetch_all
 
-    since = _date.today() - _timedelta(days=int(days))
-    conditions = ["LOWER(grade) = LOWER(:grade)", "LOWER(subject) = LOWER(:subject)",
-                  "happened_at >= :since"]
-    params: dict[str, Any] = {"grade": grade, "subject": subject, "since": since}
+    since = _day_start(_date.fromisoformat(today()) - _timedelta(days=int(days)))
+    conditions = [_grade_clause("grade", "grade"), "LOWER(subject) = LOWER(:subject)",
+                  "happened_at >= :since", "question_id <> ''"]
+    params: dict[str, Any] = {"grade": grade, "subject": subject, "since": since,
+                              "tz": BUSINESS_TZ}
     if strand:
         conditions.append("LOWER(strand) = LOWER(:strand)")
         params["strand"] = strand
@@ -362,8 +412,9 @@ def history(grade: str, subject: str, strand: str = "", days: int = 14) -> list[
     try:
         rows = fetch_all(
             f"""
-            SELECT CAST(happened_at AS DATE) AS on, event,
-                   COUNT(DISTINCT question_id) AS n
+            SELECT CAST(happened_at AT TIME ZONE :tz AS DATE) AS on, event,
+                   COUNT(DISTINCT question_id) AS n,
+                   COALESCE(SUM(CAST(NULLIF(detail->>'cost_usd', '') AS NUMERIC)), 0) AS cost
             FROM question_events
             WHERE {' AND '.join(conditions)}
             GROUP BY 1, 2 ORDER BY 1
@@ -373,9 +424,13 @@ def history(grade: str, subject: str, strand: str = "", days: int = 14) -> list[
         return []
 
     by_day: dict[str, dict[str, int]] = {}
+    cost_by_day: dict[str, float] = {}
     for row in rows:
         day = str(row.get("on"))
         by_day.setdefault(day, {})[str(row.get("event"))] = int(row.get("n") or 0)
+        if row.get("event") == GENERATED:
+            cost_by_day[day] = float(row.get("cost") or 0)
     return [{"on": day, **{stage: counts.get(stage, 0) for stage in STAGES},
-             BLOCKED: counts.get(BLOCKED, 0)}
+             BLOCKED: counts.get(BLOCKED, 0),
+             "generated_cost_usd": round(cost_by_day.get(day, 0.0), 4)}
             for day, counts in sorted(by_day.items())]

@@ -177,6 +177,12 @@ export function QuestionPipeline({
       <Stack direction="row" gap="var(--s2)" style={{ alignItems: "center", flexWrap: "wrap" }}>
         <strong style={{ fontSize: "var(--text-sm)" }}>Today&rsquo;s pipeline</strong>
         <Badge tone="neutral">{data.on}</Badge>
+        {data.generated_cost_usd > 0 && (
+          <Badge tone="neutral"
+                 title="What today's question writing cost: every model call in each run, shared across the items it saved">
+            ${data.generated_cost_usd.toFixed(2)} today · ${data.cost_per_question.toFixed(4)} a question
+          </Badge>
+        )}
         <Button size="sm" variant="ghost" onClick={() => setEditing(!editing)}>
           {editing ? "Cancel" : "Set the day's plan"}
         </Button>

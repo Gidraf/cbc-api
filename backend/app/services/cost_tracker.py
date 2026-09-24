@@ -51,7 +51,21 @@ MODEL_PRICING: dict[str, dict[str, float]] = {
     "gpt-4-turbo": {"input": 10.00, "output": 30.00},
     "gpt-4": {"input": 30.00, "output": 60.00},
     "gpt-3.5-turbo": {"input": 0.50, "output": 1.50},
-    # Anthropic
+    # Anthropic, current models (list prices per 1M tokens, 2026). `cached`
+    # is the cache-read rate. More specific ids sit ABOVE their family id,
+    # because lookup falls back to prefix. Without these, a Claude run was
+    # priced at $0 — the unknown-model default.
+    "claude-fable-5-1": {"input": 10.00, "cached": 0.25, "output": 50.00},
+    "claude-fable-5": {"input": 10.00, "cached": 1.00, "output": 50.00},
+    "claude-opus-5-5": {"input": 4.00, "cached": 0.20, "output": 20.00},
+    "claude-opus-5": {"input": 5.00, "cached": 0.50, "output": 25.00},
+    "claude-opus-4-8": {"input": 5.00, "cached": 0.50, "output": 25.00},
+    "claude-opus-4-7": {"input": 5.00, "cached": 0.50, "output": 25.00},
+    "claude-opus-4-6": {"input": 5.00, "cached": 0.50, "output": 25.00},
+    "claude-sonnet-5": {"input": 2.00, "cached": 0.20, "output": 10.00},
+    "claude-sonnet-4-6": {"input": 3.00, "cached": 0.30, "output": 15.00},
+    "claude-haiku-4-5": {"input": 1.00, "cached": 0.10, "output": 5.00},
+    # Anthropic, older
     "claude-sonnet-4-20250514": {"input": 3.00, "output": 15.00},
     "claude-3-5-sonnet-20241022": {"input": 3.00, "output": 15.00},
     "claude-3-5-sonnet-20240620": {"input": 3.00, "output": 15.00},
@@ -98,7 +112,8 @@ class CostResult:
 def calculate_cost(model: str, provider: str, usage: TokenUsage) -> CostResult:
     """Calculate USD cost for a single LLM call based on token usage and model pricing."""
     pricing = _lookup_pricing(model, provider)
-    cached = max(0, min(usage.cached_tokens, usage.prompt_tokens))
+    # getattr: a provider's own usage object may not carry the field at all.
+    cached = max(0, min(int(getattr(usage, "cached_tokens", 0) or 0), usage.prompt_tokens))
     input_cost = ((usage.prompt_tokens - cached) / 1_000_000) * pricing["input"] \
         + (cached / 1_000_000) * pricing.get("cached", pricing["input"])
     output_cost = (usage.completion_tokens / 1_000_000) * pricing["output"]
@@ -114,6 +129,11 @@ def calculate_cost(model: str, provider: str, usage: TokenUsage) -> CostResult:
 
 def _lookup_pricing(model: str, provider: str) -> dict[str, float]:
     """Look up pricing for a model. Tries exact match, then prefix match, then provider default."""
+    # A model on this machine costs nothing per token, whatever it is called.
+    # Checked FIRST: an Ollama tag that happens to share a prefix with a paid
+    # id ("gpt-4o..." pulled locally) was billed at the paid rate.
+    if provider == "ollama":
+        return {"input": 0.0, "output": 0.0}
     # Exact match
     if model in MODEL_PRICING:
         return MODEL_PRICING[model]
@@ -129,12 +149,12 @@ def _lookup_pricing(model: str, provider: str) -> dict[str, float]:
         logger.info("Pricing '%s' as %s (no exact entry).", model, family)
         return MODEL_PRICING[family]
     # Prefix match (e.g. 'gpt-4o-mini-2024-07-18' matches 'gpt-4o-mini')
+    # One direction only: a dated id starts with its family's id. The reverse
+    # ("gpt" is a prefix of "gpt-6-astra") priced a vague name as whichever
+    # entry came first.
     for known_model, pricing in MODEL_PRICING.items():
-        if model.startswith(known_model) or known_model.startswith(model):
+        if model.startswith(known_model):
             return pricing
-    # Ollama is always free
-    if provider == "ollama":
-        return {"input": 0.0, "output": 0.0}
     # Unknown model — log and return zero
     logger.warning("No pricing found for model '%s' (provider: %s). Cost will be $0.", model, provider)
     return {"input": 0.0, "output": 0.0}

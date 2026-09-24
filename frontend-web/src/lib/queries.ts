@@ -1501,12 +1501,15 @@ export function useQuestionThroughput(v: { grade: string; subject: string; stran
         awaiting_review: number;
         awaiting_approval: number;
         blocked_today: number;
+        /** What today's writing cost, and that over the items it saved. */
+        generated_cost_usd: number;
+        cost_per_question: number;
         warnings: string[];
         target: {
           generate_per_day: number; review_per_day: number;
           approve_per_day: number; active: boolean;
         };
-        history: Array<{ on: string; generated: number; reviewed: number; approved: number; blocked: number }>;
+        history: Array<{ on: string; generated: number; reviewed: number; approved: number; blocked: number; generated_cost_usd: number }>;
         /** How much of the CURRICULUM is done. 500 questions written is a good
          *  day and still 3% of a grade, and the funnel alone cannot tell those
          *  two apart. */

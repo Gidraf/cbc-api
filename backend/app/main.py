@@ -816,8 +816,31 @@ def get_cost_summary(_: AuthContext = Depends(require_roles("admin", "operator",
         """
     ) or []
 
-    total_runs = totals.get("total_runs", 0)
-    total_cost = float(totals.get("total_cost_usd", 0))
+    # Queued work files its cost on its job row, not in `generation_costs` —
+    # which only the legacy pipeline and direct calls write. Reading one table
+    # left every station run from the queue out of "spend to date".
+    jobs = fetch_one(
+        """
+        SELECT COALESCE(SUM(total_tokens), 0) AS total_tokens,
+               COALESCE(SUM(cost_usd), 0) AS total_cost_usd,
+               COUNT(*) FILTER (WHERE cost_usd > 0 OR total_tokens > 0) AS runs
+        FROM jobs
+        """
+    ) or {}
+    job_stages = fetch_all(
+        """
+        SELECT kind AS pipeline_stage,
+               AVG(total_tokens) AS avg_tokens, SUM(cost_usd) AS total_cost, COUNT(*) AS calls
+        FROM jobs WHERE cost_usd > 0 OR total_tokens > 0
+        GROUP BY kind
+        """
+    ) or []
+    by_stage = sorted([*by_stage, *job_stages],
+                      key=lambda r: -float(r.get("total_cost") or 0))
+
+    total_runs = int(totals.get("total_runs", 0) or 0) + int(jobs.get("runs", 0) or 0)
+    total_cost = float(totals.get("total_cost_usd", 0)) + float(jobs.get("total_cost_usd", 0) or 0)
+    totals["total_tokens"] = int(totals.get("total_tokens", 0) or 0) + int(jobs.get("total_tokens", 0) or 0)
 
     return {
         "total_tokens": totals.get("total_tokens", 0),
