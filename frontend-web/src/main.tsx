@@ -21,6 +21,7 @@ import { Profiles } from "./views/Profiles";
 import { ProviderKeys } from "./views/ProviderKeys";
 import { PlatformSettings } from "./views/PlatformSettings";
 import { StageModels } from "./views/StageModels";
+import { ModelScout } from "./views/ModelScout";
 import { DiagramLibrary } from "./views/DiagramLibrary";
 import { ExamBuilder } from "./views/ExamBuilder";
 import { MediaLibrary } from "./views/MediaLibrary";
@@ -115,6 +116,7 @@ function Router() {
         <Route path="datasets" element={<Screen name="Datasets"><Datasets /></Screen>} />
         <Route path="skills" element={<Screen name="Teaching skills"><Profiles /></Screen>} />
         <Route path="models" element={<Screen name="Model per station"><StageModels /></Screen>} />
+        <Route path="scout" element={<Screen name="Model scout"><ModelScout /></Screen>} />
         <Route path="queue" element={<Screen name="Queue"><QueueBoard /></Screen>} />
         <Route path="agents" element={<Screen name="Agent tasks"><AgentTasks /></Screen>} />
         <Route path="keys" element={<Screen name="API keys"><ProviderKeys /></Screen>} />

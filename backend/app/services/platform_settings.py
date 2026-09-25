@@ -69,6 +69,20 @@ SETTINGS: tuple[Setting, ...] = (
             "Datasets screen's Ingest everything, without the press.", False, "Datasets"),
     Setting("auto_ingest_interval_minutes", "AUTO_INGEST_INTERVAL_MINUTES", "int", "Auto-ingest every (minutes)",
             "How often the watch looks at Langfuse. Five at the least.", 30, "Datasets"),
+    Setting("openai_writer_model", "OPENAI_DEFAULT_MODEL", "string", "Writing model (OpenAI)",
+            "The model every writing station runs on unless bound otherwise: notes, questions, diagrams, "
+            "activities, review. Changed here by an approved model-scout recommendation, and back again "
+            "by rolling it back.", "gpt-6-sol", "Models"),
+    Setting("openai_reader_model", "OPENAI_LIGHT_MODEL", "string", "Reading model (OpenAI)",
+            "The model the reading stations run on: extracting strands, classifying a subject, research "
+            "summaries.", "gpt-6-luna", "Models"),
+    Setting("model_scout_enabled", "MODEL_SCOUT_ENABLED", "bool", "Weekly model scout",
+            "Once a week, read the provider's prices and try any cheaper or newer model on a fixed set of "
+            "sub-strands, without saving what it writes. Admins are told the result and approve any switch.",
+            True, "Models"),
+    Setting("model_scout_budget_usd", "MODEL_SCOUT_BUDGET_USD", "string", "Model scout budget (USD)",
+            "The most one weekly run may spend on trials. It stops trying models once it is spent.",
+            "5", "Models"),
     Setting("webhook_url", "WEBHOOK_URL", "string", "Webhook URL",
             "Where to POST an event when something finishes: a job, an order, a frozen paper, an agent task. "
             "Empty means no webhooks.", "", "Webhooks"),

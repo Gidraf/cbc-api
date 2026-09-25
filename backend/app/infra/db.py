@@ -1138,6 +1138,86 @@ MIGRATIONS: list[tuple[str, str]] = [
         CREATE INDEX IF NOT EXISTS idx_jobs_heartbeat ON jobs(status, heartbeat_at);
         """,
     ),
+    (
+        "040_model_scout",
+        """
+        -- Provider prices read from the provider's own page, and every change
+        -- to them, so a run is priced at the rate in force and a price cut is
+        -- noticed the week it happens.
+        CREATE TABLE IF NOT EXISTS model_prices (
+            provider TEXT NOT NULL,
+            model TEXT NOT NULL,
+            input_usd NUMERIC(12,6) NOT NULL,
+            cached_usd NUMERIC(12,6) NULL,
+            cache_write_usd NUMERIC(12,6) NULL,
+            output_usd NUMERIC(12,6) NOT NULL,
+            source TEXT NOT NULL DEFAULT '',
+            first_seen TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            last_seen TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            PRIMARY KEY (provider, model)
+        );
+        CREATE TABLE IF NOT EXISTS model_price_history (
+            id SERIAL PRIMARY KEY,
+            provider TEXT NOT NULL,
+            model TEXT NOT NULL,
+            input_usd NUMERIC(12,6) NOT NULL,
+            cached_usd NUMERIC(12,6) NULL,
+            cache_write_usd NUMERIC(12,6) NULL,
+            output_usd NUMERIC(12,6) NOT NULL,
+            seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+
+        -- One weekly look at the models: which were tried, on what, how each
+        -- did against the model in use, and what a person decided about it.
+        CREATE TABLE IF NOT EXISTS model_scout_runs (
+            run_id TEXT PRIMARY KEY,
+            status TEXT NOT NULL DEFAULT 'running',
+            trigger TEXT NOT NULL DEFAULT 'schedule',
+            started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            finished_at TIMESTAMPTZ NULL,
+            cost_usd NUMERIC(12,6) NOT NULL DEFAULT 0,
+            summary JSONB NOT NULL DEFAULT '{}'::jsonb,
+            error TEXT NULL
+        );
+        CREATE TABLE IF NOT EXISTS model_trials (
+            id SERIAL PRIMARY KEY,
+            run_id TEXT NOT NULL,
+            tier TEXT NOT NULL,
+            model TEXT NOT NULL,
+            role TEXT NOT NULL,
+            grade TEXT NOT NULL DEFAULT '',
+            subject TEXT NOT NULL DEFAULT '',
+            strand TEXT NOT NULL DEFAULT '',
+            sub_strand TEXT NOT NULL DEFAULT '',
+            passed BOOLEAN NOT NULL DEFAULT FALSE,
+            score INTEGER NOT NULL DEFAULT 0,
+            requested INTEGER NOT NULL DEFAULT 0,
+            accepted INTEGER NOT NULL DEFAULT 0,
+            held INTEGER NOT NULL DEFAULT 0,
+            cost_usd NUMERIC(12,6) NOT NULL DEFAULT 0,
+            seconds NUMERIC(10,1) NOT NULL DEFAULT 0,
+            error TEXT NULL,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS idx_model_trials_run ON model_trials(run_id, tier, model);
+        CREATE TABLE IF NOT EXISTS model_recommendations (
+            rec_id TEXT PRIMARY KEY,
+            run_id TEXT NOT NULL,
+            tier TEXT NOT NULL,
+            current_model TEXT NOT NULL,
+            candidate_model TEXT NOT NULL,
+            verdict TEXT NOT NULL,
+            reasons JSONB NOT NULL DEFAULT '[]'::jsonb,
+            metrics JSONB NOT NULL DEFAULT '{}'::jsonb,
+            status TEXT NOT NULL DEFAULT 'pending',
+            applied JSONB NOT NULL DEFAULT '{}'::jsonb,
+            decided_by TEXT NULL,
+            decided_at TIMESTAMPTZ NULL,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS idx_model_recs_status ON model_recommendations(status, created_at DESC);
+        """,
+    ),
 ]
 
 

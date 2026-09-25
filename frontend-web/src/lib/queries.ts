@@ -4057,3 +4057,70 @@ export function useKitLink() {
         "/api/v1/agent/pack/link", { method: "POST", body: JSON.stringify(v) }),
   });
 }
+
+/* ── Model scout: the weekly look at prices and models (admin) ──────────── */
+
+export type ScoutMetrics = {
+  runs: number; errors: number; passed: number; pass_rate: number; mean_score: number;
+  requested: number; accepted: number; acceptance: number; cost_usd: number;
+  cost_per_accepted: number | null; mean_seconds: number;
+};
+
+export type ScoutRecommendation = {
+  rec_id: string; run_id: string; tier: "writer" | "reader";
+  current_model: string; candidate_model: string;
+  verdict: "recommended" | "not_recommended";
+  reasons: string[];
+  metrics: { candidate: ScoutMetrics; baseline: ScoutMetrics; why_tried: string };
+  status: "pending" | "not_recommended" | "approved" | "rejected" | "rolled_back" | "superseded";
+  applied: { from?: string; to?: string; bindings?: string[] };
+  decided_by: string | null; decided_at: string | null; created_at: string;
+};
+
+export type ScoutOverview = {
+  in_use: { writer: string; reader: string };
+  enabled: boolean;
+  budget_usd: number;
+  recommendations: ScoutRecommendation[];
+  runs: Array<{
+    run_id: string; status: string; trigger: string; started_at: string; finished_at: string | null;
+    cost_usd: number | string; error: string | null;
+    summary: { notes?: string[]; prices?: { read?: number; new?: any[]; changed?: any[]; problems?: string[] } };
+  }>;
+  prices: Array<{ model: string; input_usd: string; cached_usd: string | null; output_usd: string; first_seen: string; last_seen: string }>;
+  price_history: Array<{ model: string; input_usd: string; output_usd: string; seen_at: string }>;
+  latest_trials: Array<{
+    id: number; tier: string; model: string; role: string; subject: string; sub_strand: string;
+    passed: boolean; score: number; requested: number; accepted: number; cost_usd: string;
+    seconds: string; error: string | null;
+  }>;
+};
+
+export function useModelScout() {
+  const api = useApi();
+  return useQuery({
+    queryKey: ["model-scout"],
+    queryFn: () => api<ScoutOverview>("/api/v1/model-scout"),
+    // A run in progress fills in as it goes; otherwise this changes weekly.
+    refetchInterval: (q) => ((q.state.data?.runs?.[0]?.status === "running") ? 10_000 : false),
+  });
+}
+
+function scoutMutation<V>(path: (v: V) => string) {
+  return function useScoutMutation() {
+    const api = useApi();
+    const qc = useQueryClient();
+    return useMutation({
+      mutationFn: (v: V) => api<any>(path(v), { method: "POST" }),
+      onSuccess: () => {
+        qc.invalidateQueries({ queryKey: ["model-scout"] });
+        qc.invalidateQueries({ queryKey: ["queue"] });
+      },
+    });
+  };
+}
+
+export const useRunModelScout = scoutMutation<void>(() => "/api/v1/model-scout/run");
+export const useRefreshPrices = scoutMutation<void>(() => "/api/v1/model-scout/refresh-prices");
+export const useScoutDecision = scoutMutation<{ rec_id: string; action: "approve" | "reject" | "rollback" }>(
+  (v) => `/api/v1/model-scout/recommendations/${encodeURIComponent(v.rec_id)}/${v.action}`);

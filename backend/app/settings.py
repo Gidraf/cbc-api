@@ -34,10 +34,15 @@ class Settings:
     # out of a table or classifying a subject is extraction, and a flagship
     # model on it is waste. Both are .env values: a new release of the family
     # is a line here, not a deploy.
+    #
+    # gpt-6-sol writes ($2 in / $10 out per 1M) for less than gpt-5.6-terra
+    # did ($2 / $12); gpt-6-luna reads for half what gpt-5.6-luna cost
+    # ($0.10 / $0.50). Luna is not the author: the small-model failure that
+    # put authoring on its own tier (see stages.AUTHORING) was cost, not saving.
     openai_default_model: str = (
-        os.getenv("OPENAI_DEFAULT_MODEL", "gpt-5.6-terra").strip() or "gpt-5.6-terra")
+        os.getenv("OPENAI_DEFAULT_MODEL", "gpt-6-sol").strip() or "gpt-6-sol")
     openai_light_model: str = (
-        os.getenv("OPENAI_LIGHT_MODEL", "gpt-5.6-luna").strip() or "gpt-5.6-luna")
+        os.getenv("OPENAI_LIGHT_MODEL", "gpt-6-luna").strip() or "gpt-6-luna")
     # How hard a reasoning model thinks before it writes. Reasoning tokens are
     # billed as OUTPUT — the expensive side — and "high" can multiply them
     # several times over. The loop checks the content mechanically and sends

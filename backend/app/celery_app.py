@@ -26,6 +26,7 @@ import logging
 import os
 
 from celery import Celery
+from celery.schedules import crontab
 
 from .settings import settings
 
@@ -86,6 +87,13 @@ celery_app.conf.update(
         "sweep-jobs": {
             "task": "app.tasks.sweep_jobs",
             "schedule": 120.0,
+        },
+        # Once a week, at a quiet hour: Sunday 23:00 UTC is 02:00 Monday in
+        # Nairobi, so the trials never compete with a working day's queue and
+        # the admins read the result first thing on Monday.
+        "weekly-model-scout": {
+            "task": "app.tasks.weekly_model_scout",
+            "schedule": crontab(day_of_week="sun", hour=23, minute=0),
         },
     },
 )

@@ -183,17 +183,26 @@ class ProviderRouter:
             from ..state import default_model_for
 
             provider = provider or Provider.OPENAI.value
-            model = model or (default_model_for(stage)
-                              if provider == Provider.OPENAI.value else "")
+            from .model_trial import model_for
+
+            model = model or model_for(stage, provider) or (
+                default_model_for(stage) if provider == Provider.OPENAI.value else "")
             resolved_base_url = OFFICIAL_BASE_URLS[Provider.OPENAI]
             binding_base_url = None
             model = normalize_model_name(provider, model)
             logger.warning("Stage %s is not bound; using %s/%s.", stage, provider, model)
         else:
+            explicit = bool(model)
             provider = provider or binding.provider
             raw_model = (model or binding.model or "").strip()
             model = normalize_model_name(provider, raw_model)
             binding_base_url = binding.base_url if provider == binding.provider else None
+            # A model-scout trial runs this stage on the candidate instead —
+            # unless the caller chose a model outright (a second-vendor review).
+            if not explicit:
+                from .model_trial import model_for
+
+                model = model_for(stage, provider) or model
 
         provider_config = self.state.provider_credentials.get(provider)
         if not provider_config:

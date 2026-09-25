@@ -33,6 +33,7 @@ from .routes.curriculum import router as curriculum_router
 from .routes.exams import router as exams_router
 from .routes.questions import router as questions_router
 from .routes.targets import router as targets_router
+from .routes.model_scout import router as model_scout_router
 from .routes.pipelines import router as pipelines_router
 from .routes.math import router as math_router
 from .services.auth import AuthContext, authenticate_login, create_access_token, get_auth_context, require_roles
@@ -67,6 +68,7 @@ app.include_router(questions_router)
 app.include_router(exams_router)
 app.include_router(exam_builder_router)
 app.include_router(targets_router)
+app.include_router(model_scout_router)
 app.include_router(pipelines_router)
 app.include_router(math_router)
 

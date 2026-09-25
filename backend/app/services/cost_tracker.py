@@ -12,10 +12,14 @@ logger = logging.getLogger("cbc-cost")
 # Source: https://openai.com/pricing, https://anthropic.com/pricing, https://ai.google.dev/pricing
 MODEL_PRICING: dict[str, dict[str, float]] = {
     # OpenAI — standard tier, short context, from the pricing page as pasted
-    # by the operator on 2026-09-12. Reasoning tokens are billed as output.
-    # `cached` is the cached-input rate. More specific ids sit ABOVE their
-    # family id because lookup is by prefix.
+    # by the operator on 2026-09-12, gpt-6 updated 2026-09-25. Reasoning
+    # tokens are billed as output. `cached` is the cached-input rate; cache
+    # WRITES (1.25x input on gpt-6) and long-context rates (about 2x) are not
+    # modelled, so a long prompt is priced low. More specific ids sit ABOVE
+    # their family id because lookup is by prefix.
     "gpt-6-astra": {"input": 10.00, "cached": 1.00, "output": 50.00},
+    "gpt-6-sol": {"input": 2.00, "cached": 0.20, "output": 10.00},
+    "gpt-6-luna": {"input": 0.10, "cached": 0.01, "output": 0.50},
     "gpt-5.6-sol": {"input": 4.00, "cached": 0.40, "output": 20.00},
     "gpt-5.6-terra": {"input": 2.00, "cached": 0.20, "output": 12.00},
     "gpt-5.6-luna": {"input": 0.20, "cached": 0.02, "output": 1.20},
@@ -134,27 +138,42 @@ def _lookup_pricing(model: str, provider: str) -> dict[str, float]:
     # id ("gpt-4o..." pulled locally) was billed at the paid rate.
     if provider == "ollama":
         return {"input": 0.0, "output": 0.0}
+    # The provider's own page, as last read by the weekly scout (price_book).
+    # The table below is the fallback for a model the page does not list or a
+    # deployment that has never read it.
+    if provider == "openai" or model.startswith(("gpt-", "o1", "o3", "o4")):
+        try:
+            from .price_book import rates
+
+            stored = rates(model, "openai")
+            if stored:
+                return stored
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("No stored price for %s (%s).", model, exc)
     # Exact match
     if model in MODEL_PRICING:
         return MODEL_PRICING[model]
-    # A GPT-5 id this table has not met (a dated snapshot, a point release)
-    # is priced as its size class rather than as $0 — a run that reports no
-    # cost is a run whose cost nobody notices until the invoice.
+    # A dated snapshot of a known id ("gpt-6-luna-2026-09-01") is priced as
+    # that id. Checked before the size-class guess below, which priced every
+    # such luna as gpt-5.4 — twenty-five times over.
+    for known_model, pricing in MODEL_PRICING.items():
+        if model.startswith(known_model):
+            return pricing
+    # A GPT-5/6 id this table has not met at all is priced as its size class
+    # rather than as $0 — a run that reports no cost is a run whose cost
+    # nobody notices until the invoice.
     lower = model.lower()
     if lower.startswith("gpt-5") or lower.startswith("gpt-6"):
         family = ("gpt-5-nano" if "nano" in lower
                   else "gpt-5-mini" if "mini" in lower
+                  else "gpt-6-luna" if lower.startswith("gpt-6") and "luna" in lower
+                  else "gpt-6-sol" if lower.startswith("gpt-6") and "sol" in lower
+                  else "gpt-6-astra" if lower.startswith("gpt-6") and "astra" in lower
                   else "gpt-5.5-pro" if "pro" in lower
                   else "gpt-5.4")
         logger.info("Pricing '%s' as %s (no exact entry).", model, family)
         return MODEL_PRICING[family]
     # Prefix match (e.g. 'gpt-4o-mini-2024-07-18' matches 'gpt-4o-mini')
-    # One direction only: a dated id starts with its family's id. The reverse
-    # ("gpt" is a prefix of "gpt-6-astra") priced a vague name as whichever
-    # entry came first.
-    for known_model, pricing in MODEL_PRICING.items():
-        if model.startswith(known_model):
-            return pricing
     # Unknown model — log and return zero
     logger.warning("No pricing found for model '%s' (provider: %s). Cost will be $0.", model, provider)
     return {"input": 0.0, "output": 0.0}

@@ -22,9 +22,15 @@ LIGHT_OPENAI_MODEL = settings.openai_light_model
 
 
 def default_model_for(stage: str) -> str:
-    from .services.stages import needs_reasoning
+    """The tier's model now — which an approved model-scout switch changes."""
+    from .services.model_policy import tier_model, tier_of
 
-    return DEFAULT_OPENAI_MODEL if needs_reasoning(stage) else LIGHT_OPENAI_MODEL
+    try:
+        return tier_model(tier_of(stage))
+    except Exception:  # noqa: BLE001
+        from .services.stages import needs_reasoning
+
+        return DEFAULT_OPENAI_MODEL if needs_reasoning(stage) else LIGHT_OPENAI_MODEL
 
 
 @dataclass(slots=True)

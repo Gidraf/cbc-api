@@ -101,6 +101,9 @@ ERRORS = {
     # Idempotency & Concurrency
     "IDEMPOTENCY_CONFLICT": (409, False),
     "NOT_FOUND": (404, False),
+    # Raised across the queue and the model scout, and missing from this map —
+    # so a request refused for a bad value came back as a 500.
+    "VALIDATION_FAILED": (400, False),
 }
 
 

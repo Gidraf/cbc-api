@@ -148,3 +148,22 @@ def test_cached_prompt_tokens_are_billed_at_the_cache_rate() -> None:
     usage = cost_tracker.TokenUsage(prompt_tokens=1_000_000, completion_tokens=0,
                                     total_tokens=1_000_000, cached_tokens=1_000_000)
     assert cost_tracker.calculate_cost("claude-sonnet-5", "anthropic", usage).total_cost_usd == 0.2
+
+
+# ── gpt-6 ───────────────────────────────────────────────────────────────────
+
+def test_gpt_6_is_priced_from_its_own_rates() -> None:
+    assert _cost("gpt-6-luna", "openai") == 0.6
+    assert _cost("gpt-6-sol", "openai") == 12.0
+    assert _cost("gpt-6-astra", "openai") == 60.0
+
+
+def test_a_dated_gpt_6_snapshot_is_priced_as_its_model_not_a_guess() -> None:
+    assert _cost("gpt-6-luna-2026-09-01", "openai") == 0.6
+
+
+def test_gpt_6_goes_through_the_reasoning_api() -> None:
+    from app.services import llm_client
+
+    assert llm_client.is_reasoning_model("gpt-6-luna")
+    assert "temperature" not in llm_client.openai_payload("gpt-6-sol", [], 0.2, 1)

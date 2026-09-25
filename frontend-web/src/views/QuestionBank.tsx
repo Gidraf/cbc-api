@@ -492,7 +492,7 @@ function ReviewDialog({
   const [fix, setFix] = React.useState(true);
   const [approve, setApprove] = React.useState(false);
   const hint: Record<string, string> = {
-    openai: "e.g. gpt-5.6-terra", anthropic: "e.g. claude-opus-5", gemini: "e.g. gemini-2.5-pro", ollama: "e.g. qwen3:32b",
+    openai: "e.g. gpt-6-sol", anthropic: "e.g. claude-opus-5", gemini: "e.g. gemini-2.5-pro", ollama: "e.g. qwen3:32b",
   };
   return (
     <Modal open={open} onClose={onClose} title="Review with AI" width="min(34rem, 94vw)"

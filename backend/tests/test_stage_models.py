@@ -351,7 +351,7 @@ def test_the_bootstrap_binds_writers_and_readers_to_their_tiers() -> None:
             assert runtime_state.stage_bindings[stage].model == DEFAULT_OPENAI_MODEL
         for stage in EXTRACTION:
             assert runtime_state.stage_bindings[stage].model == LIGHT_OPENAI_MODEL
-        assert DEFAULT_OPENAI_MODEL.startswith("gpt-5") and LIGHT_OPENAI_MODEL.startswith("gpt-5")
+        assert DEFAULT_OPENAI_MODEL.startswith(("gpt-5", "gpt-6")) and LIGHT_OPENAI_MODEL.startswith(("gpt-5", "gpt-6"))
     finally:
         runtime_state.stage_bindings.clear()
         runtime_state.stage_bindings.update(saved)

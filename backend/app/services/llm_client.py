@@ -26,7 +26,9 @@ logger = logging.getLogger("cbc-llm")
 # thinking that is billed as output, and `reasoning_effort` is the cost
 # dial. A stage bound to gpt-5-mini through the 4o-shaped request failed with
 # "Unsupported parameter: 'temperature'" on every call.
-_REASONING_MODEL = re.compile(r"^(gpt-5|o1|o3|o4)", re.I)
+# gpt-6 is a reasoning family too; left out, it went to Chat Completions
+# with `temperature` and failed on every call.
+_REASONING_MODEL = re.compile(r"^(gpt-5|gpt-6|o1|o3|o4)", re.I)
 
 
 def is_reasoning_model(model: str) -> bool:

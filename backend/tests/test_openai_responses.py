@@ -108,7 +108,7 @@ def test_thinking_that_eats_the_whole_budget_is_a_named_error(posted) -> None:
     assert "OPENAI_REASONING_EFFORT" in str(caught.value) or "reasoning" in str(caught.value).lower()
 
 
-def test_the_shipped_defaults_are_the_5_6_tiers() -> None:
+def test_the_shipped_defaults_are_the_gpt_6_tiers() -> None:
     import os
     from app.settings import Settings
     saved = {k: os.environ.pop(k, None) for k in
@@ -116,8 +116,8 @@ def test_the_shipped_defaults_are_the_5_6_tiers() -> None:
               "OPENAI_REASONING_EFFORT", "OPENAI_LIGHT_REASONING_EFFORT")}
     try:
         fresh = Settings()
-        assert fresh.openai_default_model == "gpt-5.6-terra"
-        assert fresh.openai_light_model == "gpt-5.6-luna"
+        assert fresh.openai_default_model == "gpt-6-sol"
+        assert fresh.openai_light_model == "gpt-6-luna"
         assert fresh.openai_reasoning_effort == "medium"
         assert fresh.openai_light_reasoning_effort == "low"
     finally:

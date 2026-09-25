@@ -1,0 +1,20 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "api-scratch",
+      "runtimeExecutable": "/Users/gmtange/Projects/cbc-api/backend/.venv/bin/uvicorn",
+      "runtimeArgs": ["app.main:app", "--port", "8765", "--app-dir", "/Users/gmtange/Projects/cbc-api/backend"],
+      "env": {"DATABASE_URL": "postgresql://postgres@127.0.0.1:55432/cbc", "JOB_WORKERS": "0"},
+      "port": 8765
+    },
+    {
+      "name": "console",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["vite", "--port", "5199", "--strictPort"],
+      "cwd": "/Users/gmtange/Projects/cbc-api/frontend-web",
+      "env": {"API_PROXY_TARGET": "http://localhost:8765"},
+      "port": 5199
+    }
+  ]
+}

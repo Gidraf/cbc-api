@@ -53,6 +53,9 @@ const NAV: { group: string; items: NavItem[] }[] = [
       { to: "/datasets", label: "Datasets", icon: "▤", right: "generate", hint: "Curriculum designs waiting to be ingested" },
       { to: "/skills", label: "Teaching skills", icon: "◎", right: "generate", hint: "Per-subject expertise injected into every prompt" },
       { to: "/models", label: "Model per station", icon: "⚙", right: "generate", hint: "Which model runs the notes, the diagrams, the ingest — and what each costs you" },
+      // "configure" is admin only: approving a switch changes the model behind
+      // every guide and question on the platform.
+      { to: "/scout", label: "Model scout", icon: "◎", right: "configure", hint: "Weekly prices and trials of cheaper models — approve or roll back a switch" },
       { to: "/agents", label: "Agent tasks", icon: "⟳", right: "generate", hint: "What Antigravity, Claude Code, Codex or Ollama are doing here right now, and what they did" },
       { to: "/keys", label: "API keys", icon: "🔑", right: "generate", hint: "Add or rotate a provider key without rebuilding anything" },
       { to: "/settings", label: "Settings", icon: "⚙", right: "generate", hint: "Public address, the name on papers, log retention, webhooks" },

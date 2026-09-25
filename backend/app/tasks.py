@@ -15,6 +15,27 @@ logger = logging.getLogger("cbc-tasks")
 
 
 _state_loaded = False
+_bindings_stamp: object = None
+
+
+def _bindings_changed() -> bool:
+    """Whether a stage binding was changed since this worker read them.
+
+    Read once per process, a switch approved in the console reached the API
+    and not the worker until someone restarted it — the worker went on writing
+    with the model the admin had just switched away from.
+    """
+    global _bindings_stamp
+    try:
+        from .infra.db import fetch_one
+
+        row = fetch_one("SELECT MAX(updated_at) AS at FROM stage_bindings") or {}
+    except Exception:  # noqa: BLE001
+        return False
+    stamp = row.get("at")
+    changed = _bindings_stamp is not None and stamp != _bindings_stamp
+    _bindings_stamp = stamp
+    return changed
 
 
 def _load_state_once() -> None:
@@ -28,6 +49,8 @@ def _load_state_once() -> None:
     two were compared as if they were the same pipeline.
     """
     global _state_loaded
+    if _bindings_changed():
+        _state_loaded = False
     if _state_loaded:
         return
     from .state import runtime_state
@@ -60,6 +83,7 @@ def run_job(self, job_id: str) -> dict:
     """
     from . import routes  # noqa: F401
     from .routes import curriculum  # noqa: F401  (registers the job handlers)
+    from .routes import model_scout  # noqa: F401  (registers the model_scout job)
     from .services import job_queue
 
     _load_state_once()
@@ -100,3 +124,19 @@ def prune_service_logs() -> dict:
     removed = log_store.prune()
     logger.info("Pruned %d service log line(s).", removed)
     return {"removed": removed}
+
+
+@celery_app.task(name="app.tasks.weekly_model_scout")
+def weekly_model_scout() -> dict:
+    """Queue the week's model scout, unless an admin has switched it off.
+
+    Queued as a job rather than run here, so it takes its turn behind the
+    work already waiting and shows on the Queue board with its cost.
+    """
+    from .routes import model_scout
+    from .services import platform_settings
+
+    if not platform_settings.get("model_scout_enabled"):
+        logger.info("Weekly model scout is switched off.")
+        return {"skipped": "disabled"}
+    return model_scout.queue_run("schedule", by="scheduler")

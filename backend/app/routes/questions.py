@@ -1406,6 +1406,11 @@ def factory_generate_questions_batch(
     #     MORE items rather than fewer. It is filed against the batch with the
     #     shape the grade's own paper uses, and the items stay drafts — which
     #     is what `draft` is for: filed, countable, and not signed off.
+    from ..services import model_trial
+
+    # A model-scout trial measures this run and keeps none of it: nothing to
+    # the bank, nothing on the day's board, no figure in the library.
+    trial = model_trial.active()
     if structure.get("batch_blocked"):
         demand = structure.get("demand") or {}
         batch.rejected.append({
@@ -1414,17 +1419,18 @@ def factory_generate_questions_batch(
             "fix": demand.get("fix") or "",
             "stage": "demand",
         })
-        question_throughput.record_batch(
-            question_throughput.BLOCKED, [{"question_id": question_throughput.unsaved_id("batch")}],
-            grade=payload.grade, subject=payload.subject, strand=payload.strand,
-            sub_strand=payload.sub_strand, detail={"gate": "demand"})
+        if trial is None:
+            question_throughput.record_batch(
+                question_throughput.BLOCKED, [{"question_id": question_throughput.unsaved_id("batch")}],
+                grade=payload.grade, subject=payload.subject, strand=payload.strand,
+                sub_strand=payload.sub_strand, detail={"gate": "demand"})
 
     # 4c. What the gate held back. Each gets an id of its own: these items
     #     were never saved, so the ids they carry are the model's positional
     #     labels ("Q1", "Q2"), the same in every run, and a day counted by
     #     distinct id saw twelve runs' held items as one run's.
     #     "Generated" is recorded after the save, below.
-    if held:
+    if held and trial is None:
         question_throughput.record_batch(
             question_throughput.BLOCKED,
             [{"question_id": question_throughput.unsaved_id(qid)} for qid in held],
@@ -1455,7 +1461,7 @@ def factory_generate_questions_batch(
     from ..services import run_log as _run_log
 
     _run_log.preview_questions(normalized_questions, "checked")
-    if normalized_questions:
+    if normalized_questions and trial is None:
         try:
             filed_gate = gate_result.to_dict() if hasattr(gate_result, "to_dict") else {}
             filed_gate["self_check"] = self_check.to_dict()
@@ -1482,12 +1488,13 @@ def factory_generate_questions_batch(
     #     say what a question costs and not only how many were written.
     run_meter.end(priced)
     per_item_usd = round(priced.cost_usd / len(saved), 6) if saved else 0.0
-    question_throughput.record_batch(
-        question_throughput.GENERATED, [s for s in saved if isinstance(s, dict)],
-        grade=payload.grade, subject=payload.subject, strand=payload.strand,
-        sub_strand=payload.sub_strand,
-        detail={"model": resolved.model, "cost_usd": per_item_usd,
-                "run_cost_usd": round(priced.cost_usd, 6), "run_items": len(saved)})
+    if trial is None:
+        question_throughput.record_batch(
+            question_throughput.GENERATED, [s for s in saved if isinstance(s, dict)],
+            grade=payload.grade, subject=payload.subject, strand=payload.strand,
+            sub_strand=payload.sub_strand,
+            detail={"model": resolved.model, "cost_usd": per_item_usd,
+                    "run_cost_usd": round(priced.cost_usd, 6), "run_items": len(saved)})
 
     return {
         "saved": len(saved),
@@ -1542,7 +1549,7 @@ def _draw_question_figures(raw_items: list[Any], diagrams_list: list[Any], *, gr
     """Draw every `figure` the writer attached, file it in the registry and
     leave a binding on the item. An item whose figure will not draw keeps
     going without one — and says so, so the checks can hold it."""
-    from ..services import figure_sketch
+    from ..services import figure_sketch, model_trial
     from ..services.diagram_dedup import diagram_deduplicator
 
     out: list[Any] = []
@@ -1556,6 +1563,12 @@ def _draw_question_figures(raw_items: list[Any], diagrams_list: list[Any], *, gr
                 logger.info("Item %s asked for a %s figure that could not be drawn.",
                             raw.get("question_id") or "?", spec.get("kind"))
                 raw["_figure_failed"] = str(spec.get("kind") or "figure")
+            elif model_trial.active() is not None:
+                # Drawn, so the trial measures whether the model's figures
+                # draw; not filed, so an untried model adds nothing to the
+                # library.
+                raw["_figure"] = {"diagram_id": "trial", "diagram_title": drawn["title"],
+                                  "storage_url": ""}
             else:
                 try:
                     dedup = diagram_deduplicator.deduplicate_and_store(

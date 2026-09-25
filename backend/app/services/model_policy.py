@@ -22,6 +22,7 @@ logger = logging.getLogger("cbc-model-policy")
 # The advanced models, newest first. The first is the provider's default
 # unless the environment says otherwise (OPENAI_DEFAULT_MODEL / _LIGHT_MODEL).
 OPENAI: tuple[str, ...] = (
+    "gpt-6-sol", "gpt-6-luna", "gpt-6-astra",
     "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.5", "gpt-5.4",
 )
 ANTHROPIC: tuple[str, ...] = (
@@ -40,13 +41,37 @@ def is_retired(model: str) -> bool:
     return bool(_RETIRED.match((model or "").strip().lower()))
 
 
+WRITER = "writer"
+READER = "reader"
+TIERS = (WRITER, READER)
+
+
+def tier_model(tier: str) -> str:
+    """The OpenAI model a tier runs on now.
+
+    Read through platform settings, not from `settings` at import: an approved
+    model-scout switch has to reach the API and the worker within seconds,
+    without a restart, and a rollback the same way.
+    """
+    from . import platform_settings
+    from ..settings import settings
+
+    if tier == READER:
+        return str(platform_settings.get("openai_reader_model") or settings.openai_light_model)
+    return str(platform_settings.get("openai_writer_model") or settings.openai_default_model)
+
+
+def tier_of(stage: str) -> str:
+    from .stages import needs_reasoning
+
+    return WRITER if needs_reasoning(stage) else READER
+
+
 def default_for(provider: str) -> str:
     """The provider's default model."""
     provider = (provider or "").strip().lower()
     if provider == "openai":
-        from ..settings import settings
-
-        return settings.openai_default_model
+        return tier_model(WRITER)
     if provider == "anthropic":
         return ANTHROPIC[0]
     if provider == "gemini":
@@ -57,10 +82,8 @@ def default_for(provider: str) -> str:
 def advanced_for(provider: str) -> tuple[str, ...]:
     provider = (provider or "").strip().lower()
     if provider == "openai":
-        from ..settings import settings
-
         # The configured defaults first, then the rest of the family.
-        chosen = [settings.openai_default_model, settings.openai_light_model]
+        chosen = [tier_model(WRITER), tier_model(READER)]
         return tuple(dict.fromkeys([*chosen, *OPENAI]))
     if provider == "anthropic":
         return ANTHROPIC

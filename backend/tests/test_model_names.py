@@ -48,7 +48,7 @@ def test_a_bare_family_name_still_becomes_a_real_model():
     # A retired family typed bare does not come back: it is the default.
     from app.services.model_policy import is_retired
     assert not is_retired(normalise("openai", "4o"))
-    assert normalise("openai", "4o").startswith("gpt-5")
+    assert normalise("openai", "4o").startswith(("gpt-5", "gpt-6"))
     assert normalise("openai", "terra") == "gpt-5.6-terra"
 
 

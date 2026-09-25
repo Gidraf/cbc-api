@@ -81,4 +81,35 @@ class NotificationService:
             return False
 
 
+    def send_admin_email(self, subject: str, html_body: str) -> bool:
+        """One HTML email to the admin list (EMAIL_RECIPIENTS). Never raises.
+
+        Without SMTP it is logged, so the message is at least in the service
+        log; the admin screen shows the same content either way.
+        """
+        if not settings.smtp_host or not settings.smtp_user:
+            logger.info("SMTP not configured. Admin notice: %s", subject)
+            return False
+        try:
+            msg = MIMEMultipart("alternative")
+            msg["Subject"] = subject
+            msg["From"] = settings.smtp_from
+            msg["To"] = ", ".join(settings.email_recipients)
+            msg.attach(MIMEText(f"<html><body style='font-family: Arial, sans-serif; color: #333;'>"
+                                f"{html_body}</body></html>", "html"))
+            if settings.smtp_secure:
+                server = smtplib.SMTP_SSL(settings.smtp_host, settings.smtp_port, timeout=10.0)
+            else:
+                server = smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=10.0)
+                server.starttls()
+            if settings.smtp_password:
+                server.login(settings.smtp_user, settings.smtp_password)
+            server.sendmail(settings.smtp_from, settings.email_recipients, msg.as_string())
+            server.quit()
+            return True
+        except Exception as exc:  # noqa: BLE001
+            logger.error("Failed to send admin email %r: %s", subject, exc)
+            return False
+
+
 notification_service = NotificationService()
