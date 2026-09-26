@@ -28,6 +28,11 @@ Kinds:
                  "labels": {"vertices": ["A","B","C"]}, "unit", "shaded": true, "angle_marks": ...}
   fraction      {"parts", "shaded", "form": "bar|circle"}
   angle         {"degrees", "label"}
+  atom          {"element", "protons", "neutrons" | "mass_number", "electrons", "show_counts"}
+  circuit       {"source": [...], "branches": [[...], ...], "voltmeters": [{"across", "label"}]}
+  flow          {"nodes", "layout": "chain|cycle", "edge_labels"}  (also food_chain, cycle)
+  population_pyramid {"age_groups", "male", "female", "unit"}
+  map           {"extent", "title", "features"}: drawn by map_sketch from its gazetteer
 """
 from __future__ import annotations
 
@@ -435,11 +440,339 @@ def _image(f: dict[str, Any]) -> tuple[str, str]:
     return got["svg"], str(f.get("title") or query)
 
 
+# ── subject figures ────────────────────────────────────────────────────────
+#
+# The kinds above are a Mathematics paper's. A science or Social Studies item
+# had only "table" and "photo" to choose from, so 62 of the bank's 89 figures
+# were tables — whichever model wrote them. These draw what those papers set:
+# the writer gives the facts, the geometry is computed, so an atom drawn from
+# 16 protons can only show 2.8.6.
+
+_ARROW = ("<defs><marker id='arrow' viewBox='0 0 10 10' refX='9' refY='5' markerWidth='7' "
+          "markerHeight='7' orient='auto-start-reverse'><path d='M0,0 L10,5 L0,10 z' fill='#111'/>"
+          "</marker></defs>")
+
+_ELEMENTS = ("H He Li Be B C N O F Ne Na Mg Al Si P S Cl Ar K Ca").split()
+
+
+def shells_for(electrons: int) -> list[int]:
+    """The arrangement taught for the first twenty elements: 2, 8, 8, then 2."""
+    if not 1 <= electrons <= 20:
+        raise ValueError("an atom figure covers 1 to 20 electrons, the elements this level teaches")
+    out, left = [], electrons
+    for cap in (2, 8, 8, 2):
+        take = min(cap, left)
+        if take:
+            out.append(take)
+        left -= take
+    return out
+
+
+def _atom(f: dict[str, Any]) -> tuple[str, str]:
+    """{"protons", "neutrons", "electrons" (default: protons), "element",
+    "symbol", "show_counts": true, "show_arrangement": false}"""
+    protons = int(_num(f.get("protons") or f.get("atomic_number")))
+    if not 1 <= protons <= 20:
+        raise ValueError("an atom figure needs 1 to 20 protons")
+    neutrons = f.get("neutrons")
+    if neutrons is None and f.get("mass_number") is not None:
+        neutrons = int(_num(f.get("mass_number"))) - protons
+    neutrons = int(_num(neutrons, -1))
+    if neutrons < 0:
+        raise ValueError("an atom figure needs neutrons or a mass number at least the atomic number")
+    electrons = int(_num(f.get("electrons"), protons))
+    shells = shells_for(electrons)
+    symbol = str(f.get("symbol") or _ELEMENTS[protons - 1])
+    charge = protons - electrons
+    ion = "" if charge == 0 else f"{abs(charge) if abs(charge) > 1 else ''}{'+' if charge > 0 else '−'}"
+    name = str(f.get("element") or symbol)
+    title = str(f.get("title") or (f"{name} ion, {symbol}{ion}" if ion else f"{name} atom"))
+
+    cx, cy = 200, 165
+    out = [_text(W / 2, 22, title, size=13, weight="bold")]
+    for n, count in enumerate(shells, start=1):
+        r = 38 + n * 30
+        out.append(f"<circle cx='{cx}' cy='{cy}' r='{r}' fill='none' stroke='#555' stroke-width='1.2'/>")
+        for i in range(count):
+            a = math.radians(-90 + 360 * i / count + (n * 17))
+            ex, ey = cx + r * math.cos(a), cy + r * math.sin(a)
+            out.append(f"<circle cx='{ex:.1f}' cy='{ey:.1f}' r='5' fill='#1f5fa8' stroke='#0d2f55'/>")
+    out.append(f"<circle cx='{cx}' cy='{cy}' r='34' fill='#f3d9b1' stroke='#8a5a1a' stroke-width='1.5'/>")
+    if f.get("show_counts", True):
+        out.append(_text(cx, cy - 4, f"{protons}p", size=13, weight="bold"))
+        out.append(_text(cx, cy + 13, f"{neutrons}n", size=13, weight="bold"))
+    else:
+        out.append(_text(cx, cy + 5, "nucleus", size=11))
+    # A key, so the dots and the nucleus are read, not guessed.
+    kx = 370
+    out.append(f"<circle cx='{kx}' cy='120' r='5' fill='#1f5fa8' stroke='#0d2f55'/>")
+    out.append(_text(kx + 12, 124, "electron", size=11, anchor="start"))
+    out.append(f"<circle cx='{kx}' cy='145' r='7' fill='#f3d9b1' stroke='#8a5a1a'/>")
+    out.append(_text(kx + 12, 149, "nucleus", size=11, anchor="start"))
+    if f.get("show_counts", True):
+        out.append(_text(kx - 6, 172, "p = proton", size=11, anchor="start"))
+        out.append(_text(kx - 6, 188, "n = neutron", size=11, anchor="start"))
+    if f.get("show_arrangement"):
+        out.append(_text(kx - 6, 214, "Arrangement: " + ".".join(map(str, shells)), size=11, anchor="start"))
+    return _svg("".join(out), title, W, 330), title
+
+
+# Circuit symbols, drawn in a slot of width 50 centred on (x, y) on a
+# horizontal wire. Each returns the SVG; the wire is broken around the slot.
+def _sym_cell(x: float, y: float, n: int = 1) -> str:
+    out = []
+    start = x - 8 * n + 4
+    for i in range(n):
+        px = start + i * 16
+        out.append(f"<line x1='{px - 4:.1f}' y1='{y - 16}' x2='{px - 4:.1f}' y2='{y + 16}' stroke='#111' stroke-width='2'/>")
+        out.append(f"<line x1='{px + 4:.1f}' y1='{y - 8}' x2='{px + 4:.1f}' y2='{y + 8}' stroke='#111' stroke-width='4'/>")
+    left, right = start - 4, start + (n - 1) * 16 + 4
+    out.append(f"<line x1='{x - 25}' y1='{y}' x2='{left:.1f}' y2='{y}' stroke='#111' stroke-width='2'/>")
+    out.append(f"<line x1='{right:.1f}' y1='{y}' x2='{x + 25}' y2='{y}' stroke='#111' stroke-width='2'/>")
+    out.append(_text(left - 4, y - 20, "+", size=12, weight="bold"))
+    return "".join(out)
+
+
+def _sym_bulb(x: float, y: float) -> str:
+    d = 9
+    return (f"<line x1='{x - 25}' y1='{y}' x2='{x - 13}' y2='{y}' stroke='#111' stroke-width='2'/>"
+            f"<line x1='{x + 13}' y1='{y}' x2='{x + 25}' y2='{y}' stroke='#111' stroke-width='2'/>"
+            f"<circle cx='{x}' cy='{y}' r='13' fill='#fff' stroke='#111' stroke-width='2'/>"
+            f"<line x1='{x - d}' y1='{y - d}' x2='{x + d}' y2='{y + d}' stroke='#111' stroke-width='1.6'/>"
+            f"<line x1='{x - d}' y1='{y + d}' x2='{x + d}' y2='{y - d}' stroke='#111' stroke-width='1.6'/>")
+
+
+def _sym_switch(x: float, y: float, closed: bool) -> str:
+    end = f"x2='{x + 14}' y2='{y}'" if closed else f"x2='{x + 12}' y2='{y - 16}'"
+    return (f"<line x1='{x - 25}' y1='{y}' x2='{x - 14}' y2='{y}' stroke='#111' stroke-width='2'/>"
+            f"<circle cx='{x - 14}' cy='{y}' r='3' fill='#111'/>"
+            f"<line x1='{x - 14}' y1='{y}' {end} stroke='#111' stroke-width='2'/>"
+            f"<circle cx='{x + 14}' cy='{y}' r='3' fill='#111'/>"
+            f"<line x1='{x + 14}' y1='{y}' x2='{x + 25}' y2='{y}' stroke='#111' stroke-width='2'/>")
+
+
+def _sym_resistor(x: float, y: float) -> str:
+    return (f"<line x1='{x - 25}' y1='{y}' x2='{x - 16}' y2='{y}' stroke='#111' stroke-width='2'/>"
+            f"<rect x='{x - 16}' y='{y - 7}' width='32' height='14' fill='#fff' stroke='#111' stroke-width='2'/>"
+            f"<line x1='{x + 16}' y1='{y}' x2='{x + 25}' y2='{y}' stroke='#111' stroke-width='2'/>")
+
+
+def _sym_meter(x: float, y: float, letter: str) -> str:
+    return (f"<line x1='{x - 25}' y1='{y}' x2='{x - 13}' y2='{y}' stroke='#111' stroke-width='2'/>"
+            f"<line x1='{x + 13}' y1='{y}' x2='{x + 25}' y2='{y}' stroke='#111' stroke-width='2'/>"
+            f"<circle cx='{x}' cy='{y}' r='13' fill='#fff' stroke='#111' stroke-width='2'/>"
+            + _text(x, y + 5, letter, size=13, weight="bold"))
+
+
+_COMPONENTS = ("cell", "battery", "bulb", "lamp", "switch", "resistor", "ammeter")
+
+
+def _component(c: dict[str, Any], x: float, y: float) -> str:
+    kind = str(c.get("kind") or "").lower()
+    if kind == "cell":
+        return _sym_cell(x, y, 1)
+    if kind == "battery":
+        return _sym_cell(x, y, max(2, min(3, int(_num(c.get("cells"), 2)))))
+    if kind in ("bulb", "lamp"):
+        return _sym_bulb(x, y)
+    if kind == "switch":
+        return _sym_switch(x, y, str(c.get("state") or "closed").lower() == "closed")
+    if kind == "resistor":
+        return _sym_resistor(x, y)
+    if kind == "ammeter":
+        return _sym_meter(x, y, "A")
+    raise ValueError(f"a circuit component must be one of {', '.join(_COMPONENTS)}, not {kind!r}")
+
+
+def _wire_with(components: list[dict[str, Any]], x0: float, x1: float, y: float,
+               labels_below: bool) -> tuple[list[str], dict[str, tuple[float, float]]]:
+    """A horizontal wire from x0 to x1 with the components spaced along it."""
+    out: list[str] = []
+    where: dict[str, tuple[float, float]] = {}
+    n = len(components)
+    if not n:
+        return [f"<line x1='{x0}' y1='{y}' x2='{x1}' y2='{y}' stroke='#111' stroke-width='2'/>"], where
+    xs = [x0 + (x1 - x0) * (i + 1) / (n + 1) for i in range(n)]
+    edge = x0
+    for c, x in zip(components, xs):
+        out.append(f"<line x1='{edge:.1f}' y1='{y}' x2='{x - 25:.1f}' y2='{y}' stroke='#111' stroke-width='2'/>")
+        out.append(_component(c, x, y))
+        label = str(c.get("label") or "")
+        if label:
+            out.append(_text(x, y + (30 if labels_below else -22), label, size=11, weight="bold"))
+            where[label] = (x, y)
+        edge = x + 25
+    out.append(f"<line x1='{edge:.1f}' y1='{y}' x2='{x1}' y2='{y}' stroke='#111' stroke-width='2'/>")
+    return out, where
+
+
+def _circuit(f: dict[str, Any]) -> tuple[str, str]:
+    """{"source": [components on the supply wire], "branches": [[...], [...]],
+    "voltmeters": [{"across": "L1", "label": "V1"}], "title"}
+
+    One branch is a series circuit; two or more are parallel branches between
+    the same two junctions. Components: cell, battery (cells: 2|3), bulb,
+    switch (state: open|closed), resistor, ammeter. A voltmeter is drawn
+    ACROSS the component it names — never in line, which is how a learner
+    is taught to connect one."""
+    source = [c for c in (f.get("source") or []) if isinstance(c, dict)]
+    branches = [[c for c in b if isinstance(c, dict)] for b in (f.get("branches") or []) if isinstance(b, list)]
+    if not branches and isinstance(f.get("components"), list):
+        branches = [[c for c in f["components"] if isinstance(c, dict)]]
+    if not any(str(c.get("kind")).lower() in ("cell", "battery") for c in source + sum(branches, [])):
+        raise ValueError("a circuit needs a cell or a battery")
+    if not branches:
+        branches = [[]]
+    if len(branches) > 3 or any(len(b) > 4 for b in branches) or len(source) > 4:
+        raise ValueError("a circuit figure takes at most 3 branches of 4 components")
+    x0, x1 = 60, 420
+    gap = 78
+    top = 100
+    rungs = [top + i * gap for i in range(len(branches))]
+    bottom = rungs[-1] + gap + 10
+    title = str(f.get("title") or ("Series circuit" if len(branches) == 1 else "Parallel circuit"))
+    out = [_text(W / 2, 22, title, size=13, weight="bold")]
+    where: dict[str, tuple[float, float]] = {}
+    for y, branch in zip(rungs, branches):
+        parts, placed = _wire_with(branch, x0, x1, y, labels_below=True)
+        out += parts
+        where.update(placed)
+    parts, placed = _wire_with(source, x0, x1, bottom, labels_below=True)
+    out += parts
+    where.update(placed)
+    out.append(f"<line x1='{x0}' y1='{rungs[0]}' x2='{x0}' y2='{bottom}' stroke='#111' stroke-width='2'/>")
+    out.append(f"<line x1='{x1}' y1='{rungs[0]}' x2='{x1}' y2='{bottom}' stroke='#111' stroke-width='2'/>")
+    if len(branches) > 1:
+        for y in rungs[1:]:
+            out.append(f"<circle cx='{x0}' cy='{y}' r='3.5' fill='#111'/><circle cx='{x1}' cy='{y}' r='3.5' fill='#111'/>")
+    for v in (f.get("voltmeters") or []):
+        target = where.get(str((v or {}).get("across") or ""))
+        if not target:
+            raise ValueError(f"a voltmeter is drawn across a labelled component; {v!r} names none")
+        x, y = target
+        up = -1 if y != bottom else 1
+        vy = y + up * 42
+        out.append(f"<polyline points='{x - 30},{y} {x - 30},{vy} {x - 13},{vy}' fill='none' stroke='#111' stroke-width='1.6'/>")
+        out.append(f"<polyline points='{x + 13},{vy} {x + 30},{vy} {x + 30},{y}' fill='none' stroke='#111' stroke-width='1.6'/>")
+        out.append(f"<circle cx='{x - 30}' cy='{y}' r='3' fill='#111'/><circle cx='{x + 30}' cy='{y}' r='3' fill='#111'/>")
+        out.append(f"<circle cx='{x}' cy='{vy}' r='13' fill='#fff' stroke='#111' stroke-width='2'/>" + _text(x, vy + 5, "V", size=13, weight="bold"))
+        if v.get("label"):
+            out.append(_text(x, vy + (-18 if up < 0 else 28), str(v["label"]), size=11, weight="bold"))
+    return _svg("".join(out), title, W, bottom + 55), title
+
+
+def _flow(f: dict[str, Any]) -> tuple[str, str]:
+    """{"nodes": ["Grass", "Grasshopper", "Frog"], "layout": "chain|cycle",
+    "edge_labels": ["eaten by", ...], "title"} — a food chain, a cycle, a
+    process or a chain of causes. Arrows run from each node to the next;
+    in a food chain that is the direction the energy flows."""
+    nodes = [str(n) for n in (f.get("nodes") or []) if str(n).strip()]
+    if not 2 <= len(nodes) <= 8:
+        raise ValueError("a flow diagram needs 2 to 8 nodes")
+    layout = str(f.get("layout") or ("cycle" if str(f.get("kind")).lower() == "cycle" else "chain")).lower()
+    labels = [str(x) for x in (f.get("edge_labels") or [])]
+    title = str(f.get("title") or ("Cycle" if layout == "cycle" else "Flow diagram"))
+    out = [_ARROW, _text(W / 2, 22, title, size=13, weight="bold")]
+    bw, bh = 88, 38
+    centres: list[tuple[float, float]] = []
+    if layout == "cycle":
+        cx, cy, r = W / 2, 175, 110
+        for i in range(len(nodes)):
+            a = math.radians(-90 + 360 * i / len(nodes))
+            centres.append((cx + r * 1.35 * math.cos(a), cy + r * 0.95 * math.sin(a)))
+        height = 330
+    else:
+        per_row = 4
+        for i in range(len(nodes)):
+            row, col = divmod(i, per_row)
+            col = col if row % 2 == 0 else per_row - 1 - col
+            centres.append((60 + col * 120, 80 + row * 95))
+        height = 80 + ((len(nodes) - 1) // per_row) * 95 + 60
+    pairs = list(zip(range(len(nodes)), range(1, len(nodes))))
+    if layout == "cycle":
+        pairs.append((len(nodes) - 1, 0))
+    for k, (i, j) in enumerate(pairs):
+        (xa, ya), (xb, yb) = centres[i], centres[j]
+        dx, dy = xb - xa, yb - ya
+        dist = math.hypot(dx, dy) or 1
+        # leave the box edge: scale to where the line crosses each box
+        sa = min(bw / 2 / abs(dx) if dx else 9e9, bh / 2 / abs(dy) if dy else 9e9)
+        sx, sy = xa + dx * sa + dx / dist * 3, ya + dy * sa + dy / dist * 3
+        ex, ey = xb - dx * sa - dx / dist * 5, yb - dy * sa - dy / dist * 5
+        out.append(f"<line x1='{sx:.1f}' y1='{sy:.1f}' x2='{ex:.1f}' y2='{ey:.1f}' stroke='#111' "
+                   f"stroke-width='1.8' marker-end='url(#arrow)'/>")
+        if k < len(labels) and labels[k]:
+            out.append(_text((sx + ex) / 2, (sy + ey) / 2 - 6, labels[k], size=10, fill="#444"))
+    for (x, y), name in zip(centres, nodes):
+        out.append(f"<rect x='{x - bw / 2:.1f}' y='{y - bh / 2:.1f}' width='{bw}' height='{bh}' rx='8' "
+                   f"fill='#eef4ea' stroke='#2f6b2f' stroke-width='1.5'/>")
+        words = name.split()
+        if len(name) > 14 and len(words) > 1:
+            half = len(words) // 2
+            out.append(_text(x, y - 3, " ".join(words[:half]), size=11))
+            out.append(_text(x, y + 11, " ".join(words[half:]), size=11))
+        else:
+            out.append(_text(x, y + 4, name, size=11))
+    return _svg("".join(out), title, W, height), title
+
+
+def _population_pyramid(f: dict[str, Any]) -> tuple[str, str]:
+    """{"age_groups": ["0-14", "15-29", ...] youngest first, "male": [...],
+    "female": [...], "unit": "thousands|%", "title"}"""
+    groups = [str(g) for g in (f.get("age_groups") or [])]
+    male = [_num(v) for v in (f.get("male") or [])]
+    female = [_num(v) for v in (f.get("female") or [])]
+    if not groups or len(male) != len(groups) or len(female) != len(groups):
+        raise ValueError("a population pyramid needs one male and one female value per age group")
+    if any(v < 0 for v in male + female):
+        raise ValueError("a population cannot be negative")
+    biggest = max(male + female) or 1
+    unit = str(f.get("unit") or "")
+    title = str(f.get("title") or "Population pyramid")
+    cx, half, top = W / 2, 170, 48
+    bar = min(28, 210 / len(groups))
+    out = [_text(W / 2, 22, title, size=13, weight="bold"),
+           _text(cx - half / 2 - 20, top - 6, "Male", size=12, weight="bold"),
+           _text(cx + half / 2 + 20, top - 6, "Female", size=12, weight="bold")]
+    for i, g in enumerate(groups):
+        y = top + (len(groups) - 1 - i) * bar
+        wm, wf = (male[i] / biggest) * (half - 24), (female[i] / biggest) * (half - 24)
+        out.append(f"<rect x='{cx - 22 - wm:.1f}' y='{y:.1f}' width='{wm:.1f}' height='{bar - 3:.1f}' fill='#5b8fd1' stroke='#1f4f8a'/>")
+        out.append(f"<rect x='{cx + 22:.1f}' y='{y:.1f}' width='{wf:.1f}' height='{bar - 3:.1f}' fill='#e39a9a' stroke='#9a3b3b'/>")
+        out.append(_text(cx, y + bar / 2 + 2, g, size=10))
+    base = top + len(groups) * bar + 6
+    out.append(f"<line x1='{cx - half}' y1='{base}' x2='{cx + half}' y2='{base}' stroke='#111'/>")
+    for frac in (0, 0.5, 1):
+        v = biggest * frac
+        for sign in (-1, 1):
+            x = cx + sign * (22 + frac * (half - 24))
+            out.append(f"<line x1='{x:.1f}' y1='{base}' x2='{x:.1f}' y2='{base + 5}' stroke='#111'/>")
+            out.append(_text(x, base + 18, _fmt(round(v, 1)), size=10))
+    out.append(_text(cx, base + 36, f"Population{f' ({unit})' if unit else ''}", size=11))
+    out.append(_text(cx, top - 6, "Age", size=11, weight="bold"))
+    return _svg("".join(out), title, W, base + 48), title
+
+
+def _map(f: dict[str, Any]) -> tuple[str, str]:
+    """A map from the platform's own gazetteer: {"extent", "title",
+    "features": [...]}, as the maps fragment specifies it."""
+    from . import map_sketch
+
+    drawn = map_sketch.render_from_model({"map": {k: v for k, v in f.items() if k != "kind"}})
+    if not drawn:
+        raise ValueError("the map could not be drawn from those features")
+    f["_scene"] = drawn.get("scene")
+    return drawn["svg"], str(f.get("title") or "Map")
+
+
 _KINDS = {
     "number_line": _number_line, "bar_chart": _bar_chart, "bar_graph": _bar_chart,
     "pie_chart": _pie_chart, "line_graph": _line_graph, "table": _table, "clock": _clock,
     "thermometer": _thermometer, "shape": _shape, "fraction": _fraction, "angle": _angle,
     "emoji": _emoji, "image": _image, "photo": _image,
+    "atom": _atom, "circuit": _circuit, "flow": _flow, "flow_diagram": _flow,
+    "food_chain": _flow, "cycle": _flow, "population_pyramid": _population_pyramid,
+    "map": _map,
 }
 
 
@@ -458,6 +791,10 @@ def render(figure: dict[str, Any]) -> dict[str, Any] | None:
         logger.warning("Could not draw a %s figure: %s", kind, exc)
         return None
     labels = re.findall(r"<text[^>]*>([^<]+)</text>", svg)
+    if isinstance(figure.get("_scene"), dict):
+        # A map knows what each feature is; keep that for the marking scheme.
+        return {"svg": svg, "scene": figure.pop("_scene"), "title": str(figure.get("title") or title),
+                "kind": kind, "alt_text": str(figure.get("alt_text") or title)}
     # A question figure's labels are the givens: shown, never blanked.
     scene = {"title": title, "parts": [
         {"label": t, "role": "label", "assessable": False, "occludable": False, "function": "", "alt_text": t}
@@ -473,12 +810,13 @@ def render(figure: dict[str, Any]) -> dict[str, Any] | None:
 FIGURES_BY_FAMILY: dict[str, str] = {
     "mathematics": "a number line or thermometer for directed numbers, a table of prices or "
                    "readings, a bar or line graph, a shape with its dimensions, a clock",
-    "science": "a results table from an investigation, a labelled diagram of apparatus or of an "
-               "organism, a line graph of readings, a photograph of a specimen",
-    "social": "a map, a population pyramid, a table or bar chart of census or survey data, a "
-              "photograph of a landform or a place",
-    "other": "a labelled diagram, a table of observations, a photograph of the tool, plant or "
-             "object the topic is about",
+    "science": "an atom model, an electric circuit, a food chain or a cycle as a flow diagram, a "
+               "line graph of readings, a photograph of a specimen or apparatus, and a results table "
+               "only for data",
+    "social": "a map, a population pyramid, a flow diagram of causes and effects, a bar chart of "
+              "census or survey data, a photograph of a landform or a place",
+    "other": "a photograph of the tool, plant or object the topic is about, a flow diagram of a "
+             "process, a table of observations",
 }
 
 
