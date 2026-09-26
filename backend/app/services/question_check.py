@@ -160,15 +160,23 @@ def _as_examples(questions: list[dict[str, Any]]) -> list[dict[str, Any]]:
 _FIGURE = re.compile(r"(?<![A-Za-z\d])\d+(?:[.,]\d+)?")
 
 
-def _translation_faults(question: dict[str, Any], label: str, findings: list[Finding]) -> bool:
+def _translation_faults(question: dict[str, Any], label: str, findings: list[Finding],
+                        *, every_figure: bool = True) -> bool:
     """Whether the writer's `expression` is an honest translation of the
     stem: every figure the situation gives must appear in it. A trader who
     "pays 2 × 160" translated as `-450 + 750 - 160` is a wrong model with
     right arithmetic, and the engine would bless it. Returns True when the
-    expression is usable."""
+    expression is usable.
+
+    `every_figure` is off outside Mathematics. A science stem gives figures
+    that are information, not terms — "sulphur, atomic number 16", "boron-11"
+    — and insisting they all go into the sum is how a chemistry batch came
+    back as BODMAS drills with an atom described round them."""
     expression = _text(question.get("expression"))
     if not expression:
         return False
+    if not every_figure:
+        return True
     stem_figures = {f.replace(",", "") for f in _FIGURE.findall(_stem(question))}
     used = {f.replace(",", "") for f in _FIGURE.findall(expression)}
     # Numbers the stem uses as labels — a year, "Grade 9", "3 marks" — are
@@ -188,7 +196,7 @@ def _translation_faults(question: dict[str, Any], label: str, findings: list[Fin
 
 
 def _check_key(question: dict[str, Any], label: str, findings: list[Finding],
-               report: Report) -> None:
+               report: Report, subject: str = "") -> None:
     """The key against the engine; then every distractor against it too.
 
     Where the writer translated the situation into `expression`, that is
@@ -197,7 +205,10 @@ def _check_key(question: dict[str, Any], label: str, findings: list[Finding],
     from . import worked_solutions
 
     stem = _stem(question)
-    if _translation_faults(question, label, findings):
+    from . import task_demand
+
+    every_figure = not subject or task_demand.has_floor(subject)
+    if _translation_faults(question, label, findings, every_figure=every_figure):
         stem = _text(question.get("expression"))
     key = _key_option(question)
     qid = _id(question)
@@ -518,6 +529,7 @@ def _has_figure(question: dict[str, Any]) -> bool:
 
 def _few_figures(questions: list[dict[str, Any]], *, subject: str, findings: list[Finding]) -> None:
     """Too few items on a figure for a subject whose papers are full of them."""
+    from .figure_sketch import figure_examples
     from .subject_checks import family_of
 
     if len(questions) < 10 or family_of(subject) not in _FIGURE_FAMILIES:
@@ -538,10 +550,10 @@ def _few_figures(questions: list[dict[str, Any]], *, subject: str, findings: lis
             "few_figures",
             f"{label}: only {have} of {len(questions)} items are set on a figure, a table or a "
             f"chart; a paper in this subject carries at least {want}.",
-            "Re-set this item on data the learner reads: a number line, a thermometer, a table, "
-            "a bar or line graph, a shape with its dimensions — given as `figure` data so it is "
-            "drawn. The question must need the figure: read a value off it, compare two, or "
-            "work from what it shows.",
+            f"Re-set this item on data the learner reads: {figure_examples(subject)} — given as "
+            "`figure` data so it is drawn. The question must need the figure: read a value off "
+            "it, compare two, or work from what it shows. Keep it a question in this subject; "
+            "do not turn it into a calculation to have something to draw.",
             [_id(question)]))
 
 
@@ -760,7 +772,7 @@ def check(questions: list[dict[str, Any]], *, grade: str = "", subject: str = ""
         label = _label(question, index)
         if index <= MAX_ENGINE_ITEMS:
             try:
-                _check_key(question, label, findings, report)
+                _check_key(question, label, findings, report, subject)
                 _check_scheme(question, label, findings)
             except Exception as exc:  # noqa: BLE001
                 logger.warning("Engine check of %s failed: %s", label, exc)

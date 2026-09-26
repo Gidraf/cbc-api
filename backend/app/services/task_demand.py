@@ -391,12 +391,15 @@ _FLOORS["Tertiary"] = _FLOORS["Senior School"]
 # told, and a subject instructed but not gated is a rule nothing enforces.
 # There is a test that these two lists are equal.
 #
-# The sciences are here because their calculations are arithmetic and are
-# marked as arithmetic. What they are NOT judged on is the maths exemplar: a
-# science calculation is demanding when it carries a formula, a substitution
-# and a unit, which is what their own fragment asks for.
-QUANTITATIVE: tuple[str, ...] = ("mathemat", "physic", "chemist",
-                                 "integrated science")
+# Mathematics only. The floor is COMBINED OPERATIONS — BODMAS, brackets,
+# directed numbers — and its exemplars are integer expressions. The sciences
+# were on this list, so a Grade 9 Integrated Science paper was prompted with
+# those exemplars and gated on them, and came back with "evaluate
+# (16 - (-8) ÷ 2 + 4) ÷ (-4 × 3 + 6)" dressed up as an "atomic stability
+# quotient". A science calculation is demanding when it carries a formula, a
+# substitution and a unit; `science-calculation-demand` in `prompt_fragments`
+# asks for exactly that, and no operation count measures it.
+QUANTITATIVE: tuple[str, ...] = ("mathemat",)
 
 
 def has_floor(subject: str | None) -> bool:

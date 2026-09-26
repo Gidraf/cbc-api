@@ -36,10 +36,10 @@ _MATHEMATICAL = re.compile(
 # "Home Science" is cookery and hygiene, not stoichiometry. Matching it on
 # "science" gave it two pages of prompt about balancing equations.
 _SCIENTIFIC = re.compile(
-    r"\b(physic|chemist|biolog|agricultur|(?<!home )science)", re.I)
+    r"\b(physic(?!al)|chemist|biolog|agricultur|(?<!home )(?<!computer )science)", re.I)
 # Where a figure has to be constructible rather than described.
 _GEOMETRIC = re.compile(
-    r"\b(mathematic|math|geometr|technical drawing|physic)", re.I)
+    r"\b(mathematic|math|geometr|technical drawing|physic(?!al))", re.I)
 
 LATEX_BLOCK = """=== HOW TO WRITE MATHEMATICS ===
 Write every mathematical expression in LaTeX, inline between single dollar
@@ -136,12 +136,7 @@ Rules that make it constructible:
 # Short on purpose. Every irrelevant instruction makes the relevant ones harder
 # to find, and this one goes to every subject.
 HOUSE_BLOCK = """=== HOW THIS IS WRITTEN IN KENYA ===
-  - The order of operations is BODMAS — Brackets, Of/Orders, Division,
-    Multiplication, Addition, Subtraction. Never PEMDAS, and never the word
-    "parentheses": they are brackets.
-  - BODMAS governs the WORKING, not just the name. Never evaluate an addition
-    or a subtraction while a multiplication or division is still waiting,
-    EVEN WHEN THE ANSWER WOULD COME OUT RIGHT ANYWAY.
+  - Brackets, never "parentheses".
   - Money is Kenya shillings. Write "KSh 250" or "250 shillings", never "$250".
     Amounts should be ones a learner recognises from a shop or a fare.
   - Metric throughout: metres, kilograms, litres, degrees Celsius.
@@ -151,9 +146,18 @@ HOUSE_BLOCK = """=== HOW THIS IS WRITTEN IN KENYA ===
   - British spelling: metre, litre, colour, practise (verb), analyse."""
 
 
-def house_block() -> str:
-    """The conventions every subject writes to, whatever it teaches."""
-    return HOUSE_BLOCK
+# The order of operations, for the mathematical subjects only. It used to be
+# the first line of the house block and so reached every subject: a Grade 9
+# Integrated Science paper, told how BODMAS governs the working, set three
+# BODMAS drills with an "atomic stability quotient" wrapped round them.
+ORDER_OF_OPERATIONS_BLOCK = """=== THE ORDER OF OPERATIONS ===
+  - It is BODMAS — Brackets, Of/Orders, Division, Multiplication, Addition,
+    Subtraction. Never PEMDAS.
+  - BODMAS governs the WORKING, not just the name. Never evaluate an addition
+    or a subtraction while a multiplication or division is still waiting,
+    EVEN WHEN THE ANSWER WOULD COME OUT RIGHT ANYWAY."""
+
+ORDER_OF_OPERATIONS_NAME = "fragment/notation-order-of-operations"
 
 
 # The house conventions were the one notation block that never reached
@@ -180,6 +184,10 @@ def for_prompt(subject: str, *, grade: str = "") -> str:
     """
     subject_notation = block_for(subject, grade=grade)
     house = house_block()
+    if _MATHEMATICAL.search(subject or ""):
+        from .prompt_store import stored_or
+
+        house += "\n\n" + stored_or(ORDER_OF_OPERATIONS_NAME, ORDER_OF_OPERATIONS_BLOCK)
     return f"{house}\n\n{subject_notation}" if subject_notation else house
 
 

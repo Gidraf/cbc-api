@@ -466,10 +466,40 @@ def render(figure: dict[str, Any]) -> dict[str, Any] | None:
             "alt_text": str(figure.get("alt_text") or title)}
 
 
-def prompt_block() -> str:
+# The figures each family's papers actually read. The list used to be the
+# Mathematics one for everybody — number lines, thermometers, a shape with its
+# dimensions — and a Social Studies batch sent back for "too few figures"
+# came back as totals and percentages with a table round them.
+FIGURES_BY_FAMILY: dict[str, str] = {
+    "mathematics": "a number line or thermometer for directed numbers, a table of prices or "
+                   "readings, a bar or line graph, a shape with its dimensions, a clock",
+    "science": "a results table from an investigation, a labelled diagram of apparatus or of an "
+               "organism, a line graph of readings, a photograph of a specimen",
+    "social": "a map, a population pyramid, a table or bar chart of census or survey data, a "
+              "photograph of a landform or a place",
+    "other": "a labelled diagram, a table of observations, a photograph of the tool, plant or "
+             "object the topic is about",
+}
+
+
+def figure_examples(subject: str) -> str:
+    """The figures this subject's papers read, or nothing where its papers do
+    not ask for figures at all (the languages)."""
+    from .subject_checks import family_of
+
+    return FIGURES_BY_FAMILY.get(family_of(subject), "")
+
+
+def prompt_block(subject: str = "") -> str:
     """How the writer asks for a figure — seeded, so it can be edited in
-    Langfuse like every other prompt."""
+    Langfuse like every other prompt. The share it must reach, and the kinds
+    of figure that count, only for a subject whose papers carry figures."""
     from .langfuse_seed import SEED_PROMPT_BLOCKS
     from .prompt_store import render
 
-    return render("question-figures", SEED_PROMPT_BLOCKS["question-figures"])
+    block = render("question-figures", SEED_PROMPT_BLOCKS["question-figures"])
+    examples = figure_examples(subject) if subject else FIGURES_BY_FAMILY["mathematics"]
+    if examples:
+        block += "\n" + render("question-figures-share", SEED_PROMPT_BLOCKS["question-figures-share"],
+                                examples=examples)
+    return block

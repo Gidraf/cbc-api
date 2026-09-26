@@ -92,7 +92,11 @@ class Profile:
 
     @property
     def numeric(self) -> bool:
-        return bool(self.operations)
+        # A stored science profile can carry an operation count; the
+        # arithmetic floor is a Mathematics rule, so it is not repeated to a
+        # science station however the profile was extracted.
+        return bool(self.operations) and (
+            not self.subject or task_demand.has_floor(self.subject))
 
     def required(self) -> dict[str, Any]:
         """The shape `command_words.check_set` takes as an override."""

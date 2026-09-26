@@ -229,5 +229,5 @@ def _system_for(grade: str, subject: str, sub_strand: str, notes_text: str) -> s
     return (f"You are rewriting assessment items for {grade} {subject} — {sub_strand} — for a Kenyan CBC "
             f"paper. Return the same JSON schema the items arrive in, one object per item, under "
             f"\"questions\", each carrying \"replaces\" with the question_id it stands in for.\n\n"
-            f"{assessment_format.prompt_block(grade, 0, subject)}\n\n{figure_sketch.prompt_block()}\n\n"
+            f"{assessment_format.prompt_block(grade, 0, subject)}\n\n{figure_sketch.prompt_block(subject)}\n\n"
             f"WHAT WAS TAUGHT:\n{(notes_text or '(no lesson notes on file)')[:8000]}")
