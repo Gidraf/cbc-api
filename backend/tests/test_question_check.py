@@ -594,3 +594,13 @@ def test_a_paper_is_not_dealt_the_same_task_twice():
     chosen = pb._deal([diver_a, diver_b, bank], 3.0, random.Random(1), seen, {})
     ids = {q["question_id"] for q in chosen}
     assert "b1" in ids and len(ids & {"d1", "d2"}) == 1, ids
+
+
+def test_a_social_studies_batch_is_sent_back_for_its_own_figures():
+    """The fix text was the Mathematics list for everybody, and a Social
+    Studies batch came back as totals and percentages."""
+    from app.services import question_check as qc
+
+    findings: list = []
+    qc._few_figures(_bare_items(20), subject="Social Studies", findings=findings)
+    assert findings and "map" in findings[0].fix and "number line" not in findings[0].fix

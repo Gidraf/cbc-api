@@ -177,7 +177,7 @@ six things to be asked about and one that was taught.""",
         ),
         title="The solar system and the sky",
         # "science" as a bare stem swept up Home Science, which is cookery.
-        subjects=("geograph", "integrated science", "astronom", "physic"),
+        subjects=("geograph", "integrated science", "astronom", "physics"),
         from_grade="grade-4",
         why="Scale is the whole lesson and the whole difficulty. A diagram of "
             "the solar system drawn to scale is mostly empty paper; one drawn "
@@ -406,7 +406,7 @@ for this grade.""",
             "PE designs ask for participation by every learner — the rubrics mark on 'takes part' — which is why a rotation that gives everybody a turn is part of the specification and not a nicety."
         ),
         title="Movement and games",
-        subjects=("physical", "sport", "games", "health"),
+        subjects=("physical education", "sport", "games", "health"),
         stations=("notes", "material", "activity"),
         why="Space, numbers and a safety rule are what make a game playable in "
             "a Kenyan school field with forty children and one ball.",
@@ -515,6 +515,39 @@ substitute directed numbers into a formula, or work backwards from an answer
 to a missing term. "Work out 5 + (-3)" asks for a keystroke.""",
     ),
     Fragment(
+        name="maths-working",
+        kicd=(
+            "The Mathematics designs mark method as well as answer, and the rubric's top level for combined operations is 'applies combined operations on integers accurately' — a worked example whose signs slip teaches the error it should prevent."
+        ),
+        title="Carrying a worked example through",
+        from_grade="grade-7",
+        subjects=("mathemat",),
+        stations=("notes", "material", "questions", "activity"),
+        why="These rules were in the lesson-material prompt every subject "
+            "received, integer fraction and all, so a science or CRE lesson "
+            "was taught how to carry signs through a BODMAS expression.",
+        body=r"""=== CARRYING THE WORKING THROUGH ===
+CARRY THE WORKING TO THE END OF THE EXPRESSION. A fraction's answer is the
+whole fraction, not its numerator. A guide worked
+$\dfrac{-15 \div 3 - (-2)\times(-4) + 6}{-2 \times 3 + (-4)}$ correctly to
+$-7$ in the numerator, wrote the denominator $-10$ down on the next line, and
+then gave $-7$ as the answer. Every step was right and the answer was wrong.
+
+NEVER SUBSTITUTE A SIGNED VALUE INTO A SLOT THAT ALREADY HOLDS ITS SIGN.
+This is the single commonest error in this kind of working, and it was made
+six times in one guide. In $-15 \div 3 - (-2)\times(-4) + 6$:
+
+  the term $(-2)\times(-4)$ is $8$, so the expression reads $-5 - 8 + 6 = -7$
+  WRONG: writing $-5 - (-8) + 6$, then "simplifying" it to $-5 + 8 + 6 = 9$
+
+The minus is already there in front of the term. Putting the sign into the
+value as well counts it twice, and the next step tidies the double negative
+away into a positive — so the error looks like careful work.
+
+Do not substitute. REWRITE THE WHOLE EXPRESSION each time, with one part
+worked out and the rest untouched, and the signs stay where they belong.""",
+    ),
+    Fragment(
         name="maths-demand-senior",
         kicd=(
             "Senior School Mathematics designs assess indices, surds, brackets and fractions within a single expression, and the pathway papers mark method as well as answer. An item that resolves in one operation carries no method to mark."
@@ -549,7 +582,7 @@ not a Senior School set.""",
             "The Integrated Science, Physics and Chemistry designs mark calculations on the design's own rubric rows — 'selects the correct formula', 'substitutes correctly' and 'states the unit' are separate levels. Three separate rows cannot be marked from an answer that is one line, so the working has to show all three."
         ),
         title="How demanding a science calculation has to be",
-        subjects=("physic", "chemist", "integrated science"),
+        subjects=("physics", "chemist", "integrated science"),
         stations=("notes", "material", "questions", "activity", "simulation"),
         from_grade="grade-7",
         why="A science calculation whose whole working is one multiplication "
@@ -651,6 +684,7 @@ def seed_prompts() -> dict[str, str]:
         # one notation block that was never seeded, which is why PEMDAS
         # survived in output from a system that had the rule in its repository.
         notation.HOUSE_NAME: notation.HOUSE_BLOCK,
+        notation.ORDER_OF_OPERATIONS_NAME: notation.ORDER_OF_OPERATIONS_BLOCK,
         "fragment/notation-mathematics": notation.LATEX_BLOCK,
         "fragment/notation-chemistry": notation.CHEMISTRY_BLOCK,
         "fragment/notation-physics": notation.PHYSICS_BLOCK,
