@@ -267,7 +267,12 @@ def _raise_figure_floor(paper: Any, pool: list[dict[str, Any]], floor: int) -> N
     have = sum(1 for q in paper.items if q.get("diagram"))
     if have >= floor:
         return
-    spare = [q for q in pool if q.get("diagram") and str(q.get("question_id")) not in on_paper]
+    from .paper_builder import _task_key
+
+    # Not the same id, and not the same question filed under another id.
+    set_already = {_task_key(q) for q in paper.items}
+    spare = [q for q in pool if q.get("diagram") and str(q.get("question_id")) not in on_paper
+             and _task_key(q) not in set_already]
     for section in paper.sections:
         kinds = {str(q.get("question_type") or "") for q in section.items}
         for index, question in enumerate(section.items):
@@ -278,7 +283,7 @@ def _raise_figure_floor(paper: Any, pool: list[dict[str, Any]], floor: int) -> N
             swap = next((s for s in spare if str(s.get("question_type") or "") in kinds), None)
             if swap is None:
                 continue
-            spare.remove(swap)
+            spare = [s for s in spare if _task_key(s) != _task_key(swap)]
             section.items[index] = swap
             have += 1
 
@@ -288,7 +293,7 @@ DIFFICULTY = {
     "easy": (0.35, "Set the batch at the EASIER end for this grade: single-step and two-step items, "
                    "familiar situations, no trick; still nothing below the grade."),
     "medium": (0.55, ""),
-    "hard": (0.8, "Set the batch at the HARDER end for this grade: multi-step items, combined operations, "
+    "hard": (0.8, "Set the batch at the HARDER end for this grade: multi-step items, "
                   "situations that must be translated before they can be worked, and at least a third "
                   "at analysis or evaluation."),
     "mixed": (0.6, "Spread the batch across the grade's range: a quarter easier, half at the grade, "
@@ -529,12 +534,59 @@ def set_override(draft_id: str, question_id: str, fields: dict[str, Any], *, own
     return update(draft_id, {"items": items}, owner=owner)
 
 
+def _without_repeats(question_ids: list[str],
+                     on_draft: set[str]) -> tuple[list[str], list[str]]:
+    """The ids with every repeat taken out, and the ids that were repeats.
+
+    A repeat is the same id twice, or an id NEW to the draft whose question is
+    one already on it under another id: the bank can hold the same task more
+    than once, and a paper should set it once. Only new ids are loaded, so
+    moving an item up does not read the whole paper back from the bank.
+    """
+    from .paper_builder import _task_key
+    from . import question_rows
+    from .question_dna import question_dna_service
+
+    def key_of(qid: str) -> str | None:
+        try:
+            return _task_key(question_rows.flatten(question_dna_service.get_question(qid)))
+        except Exception:  # noqa: BLE001
+            return None
+
+    unique = list(dict.fromkeys(str(q) for q in question_ids))
+    skipped = [str(q) for q in question_ids]
+    for qid in unique:
+        skipped.remove(qid)
+    new = [q for q in unique if q not in on_draft]
+    if not new:
+        return unique, skipped
+
+    keys = {q: key_of(q) for q in unique}
+    held: set[str] = set()
+    keep: list[str] = []
+    # Items already on the draft claim their question first, so what is
+    # refused is the one being added, never the one the builder placed.
+    for qid in sorted(unique, key=lambda q: q not in on_draft):
+        key = keys[qid]
+        if key and key in held:
+            skipped.append(qid)
+            continue
+        if key:
+            held.add(key)
+        keep.append(qid)
+    kept = set(keep)
+    return [q for q in unique if q in kept], skipped
+
+
 def reorder(draft_id: str, question_ids: list[str], *, owner: str = "") -> dict[str, Any]:
     """The items in the order given, dropped ones gone; the sections keep
-    their letters and the items flow into them in that order."""
+    their letters and the items flow into them in that order.
+
+    A question already on the paper is not added again, under its own id or
+    another: the result names what was refused in `skipped_duplicates`."""
     row = get(draft_id, owner)
-    keep = [str(q) for q in question_ids]
     items = {str(i.get("question_id")): i for i in (row.get("items") or []) if isinstance(i, dict)}
+    keep, skipped = _without_repeats(question_ids, set(items))
     new_items = [items.get(q) or {"question_id": q, "overrides": {}} for q in keep]
     snapshot = dict(row.get("snapshot") or {})
     sections = [dict(s) for s in (snapshot.get("sections") or []) if isinstance(s, dict)]
@@ -554,7 +606,8 @@ def reorder(draft_id: str, question_ids: list[str], *, owner: str = "") -> dict[
         for section in sections:
             section["question_ids"].sort(key=lambda q: rank.get(q, 1e9))
         snapshot["sections"] = sections
-    return update(draft_id, {"items": new_items, "snapshot": snapshot}, owner=owner)
+    saved = update(draft_id, {"items": new_items, "snapshot": snapshot}, owner=owner)
+    return {**saved, "skipped_duplicates": skipped}
 
 
 def queue_review(draft_id: str, *, provider: str = "", model: str = "", fix: bool = True,

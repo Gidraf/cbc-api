@@ -330,21 +330,33 @@ def test_a_subject_the_generator_was_never_told_the_rule_is_not_held_to_it() -> 
     assert td.check_set(numbers, "grade-9", "Mathematics").below is True
 
 
-def test_the_sciences_are_gated_because_their_calculations_are_marked() -> None:
-    """Their designs award the formula, the substitution and the unit
-    separately, so a one-line calculation cannot be marked on the rubric."""
+def test_the_sciences_are_not_held_to_the_maths_floor() -> None:
+    """The floor is combined operations on integers. Held to it — and prompted
+    with its exemplars — an Integrated Science paper came back with BODMAS
+    drills. A science calculation is marked on formula, substitution and unit,
+    which `science-calculation-demand` asks for and no operation count sees."""
     thin = [{"statement": "Find the density.", "steps": [{"working": "240 ÷ 30 = 8"}],
              "answer": "8 g/cm3"}]
 
     for subject in ("Physics", "Chemistry", "Integrated Science"):
-        assert td.check_set(thin, "grade-9", subject).below, subject
+        assert td.floor_for("grade-9", subject) is None, subject
+        assert td.check_set(thin, "grade-9", subject).below is False, subject
+
+
+def test_the_maths_exemplars_never_reach_a_science_prompt() -> None:
+    from app.services import demand_profile
+
+    for subject in ("Integrated Science", "Physics", "Chemistry", "Biology"):
+        for grade in ("grade-6", "grade-9", "grade-10"):
+            block = demand_profile.for_prompt(grade, subject, count=10)
+            assert "ARITHMETIC" not in block, (subject, grade)
+            assert "\\div" not in block, (subject, grade)
 
 
 def test_the_gate_and_the_prompt_cover_the_same_subjects() -> None:
     """One list, read by both sides. A subject gated but not instructed cries
     wolf; a subject instructed but not gated is a rule nothing enforces."""
-    instructed = {stem for f in pf.FRAGMENTS
-                  if f.name.endswith("-demand") or "-demand-" in f.name
+    instructed = {stem for f in pf.FRAGMENTS if f.name.startswith("maths-demand")
                   for stem in f.subjects}
 
     assert instructed == set(td.QUANTITATIVE)
@@ -363,3 +375,34 @@ def test_the_reason_given_is_about_the_level_not_about_integers() -> None:
     other Grade 9 sub-strand too, and on Pythagoras it was simply wrong."""
     for floor in td._FLOORS.values():
         assert "integer" not in floor.because.lower(), floor.level
+
+
+def test_a_stored_science_profile_does_not_carry_an_arithmetic_floor() -> None:
+    """A profile extracted before the sciences left the list can still hold an
+    operation count; it is not repeated to a science station."""
+    from app.services.demand_profile import Profile, _profile_block
+
+    science = Profile(subject="Integrated Science", sub_strand="Atoms", top=4,
+                      operations=3, kinds=2, depth=1,
+                      exemplar_question="Explain why copper conducts.",
+                      exemplar_answer="Free electrons.")
+    maths = Profile(subject="Mathematics", operations=3, kinds=2, depth=1)
+
+    assert science.numeric is False and science.floor() is None
+    assert "Arithmetic:" not in _profile_block(science)
+    assert maths.numeric is True
+
+
+def test_a_science_expression_is_not_made_to_use_every_figure() -> None:
+    """"Boron-11 … atomic number 5" are facts, not terms. Insisting they go
+    into the sum is pressure towards a contrived calculation."""
+    from app.services import question_check
+
+    item = {"question_id": "b1", "question_type": "quantitative_calculation",
+            "question_text": "A sample has 80 atoms of boron-11 and 20 atoms of boron-10 "
+                             "(atomic number 5). Calculate the percentage abundance of boron-11.",
+            "expression": "\\frac{80}{80 + 20} \\times 100", "correct_answer": "80"}
+    kinds = lambda s: {f.kind for f in question_check.check([item], grade="grade-9", subject=s).findings}
+
+    assert "expression_ignores_the_figures" not in kinds("Integrated Science")
+    assert "expression_ignores_the_figures" in kinds("Mathematics")

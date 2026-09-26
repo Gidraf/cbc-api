@@ -54,7 +54,7 @@ class _Db:
 
 
 def _q(qid, ss, *, kind="multiple_choice", marks=1, figure=False, status="draft"):
-    content = {"question_type": kind, "question_text": f"Question {qid} on {ss}: work out ${qid[-1]} + 2$.",
+    content = {"question_type": kind, "question_text": f"Question {qid} on {ss}: work out ${len(qid)}{qid[-1]} + 2$.",
                "marking_scheme": "A1", "model_answer": "x",
                "options": [{"id": "A", "text": "x", "is_correct": True}, {"id": "B", "text": "y"}] if kind == "multiple_choice" else [],
                "structured_parts": [] if kind == "multiple_choice" else [

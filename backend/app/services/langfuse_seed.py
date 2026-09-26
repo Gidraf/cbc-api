@@ -539,26 +539,6 @@ never has to work out how to read the page:
              that step, not what it did)
   answer     ONE final answer, on its own
 
-CARRY THE WORKING TO THE END OF THE EXPRESSION. A fraction's answer is the
-whole fraction, not its numerator. A guide worked
-$\\dfrac{-15 \\div 3 - (-2)\\times(-4) + 6}{-2 \\times 3 + (-4)}$ correctly to
-$-7$ in the numerator, wrote the denominator $-10$ down on the next line, and
-then gave $-7$ as the answer. Every step was right and the answer was wrong.
-
-NEVER SUBSTITUTE A SIGNED VALUE INTO A SLOT THAT ALREADY HOLDS ITS SIGN.
-This is the single commonest error in this kind of working, and it was made
-six times in one guide. In $-15 \\div 3 - (-2)\\times(-4) + 6$:
-
-  the term $(-2)\\times(-4)$ is $8$, so the expression reads $-5 - 8 + 6 = -7$
-  WRONG: writing $-5 - (-8) + 6$, then "simplifying" it to $-5 + 8 + 6 = 9$
-
-The minus is already there in front of the term. Putting the sign into the
-value as well counts it twice, and the next step tidies the double negative
-away into a positive — so the error looks like careful work.
-
-Do not substitute. REWRITE THE WHOLE EXPRESSION each time, with one part
-worked out and the rest untouched, and the signs stay where they belong.
-
 SAY WHAT THIS PIECE IS FOR, IN THE DESIGN'S OWN TERMS. These notes are not
 written from open ground: every piece exists because the design asks for
 something, and `serves` names which of the numbered elements above that is. A
@@ -566,9 +546,9 @@ piece that serves none of them is a piece the curriculum did not fund — return
 an empty list and say so, rather than inventing a ref.
 
 This is what makes a page findable later. "Not quoted from the design" tells a
-head of department nothing; "[g9-mat-01] perform combined operations on
-integers" can be looked up in the Grade 9 Mathematics design and in the BECF,
-and either it is there or the piece should not be.
+head of department nothing; a ref from the list above, with the design's own
+words beside it, can be looked up in this grade's design and in the BECF, and
+either it is there or the piece should not be.
 
 ANY QUESTION YOU SET, YOU ANSWER. If this piece asks learners to work
 something out — a quiz, a practice list, "evaluate the following" — every one
@@ -646,7 +626,7 @@ Return ONLY valid JSON:
                 "because": "<why this line follows from the one above>"}],
      "answer": "<the answer, in $…$>"}
   ],
-  "serves": ["<the ref(s) from the list above that THIS piece realises, e.g. g9-mat-01, experience 2>"],
+  "serves": ["<the ref(s) from the list above that THIS piece realises, e.g. outcome 1, experience 2>"],
   "exercises": [
     {"question": "<one question exactly as the learner meets it, mathematics in $…$>",
      "answer": "<the answer, worked to the end>",
@@ -2447,12 +2427,30 @@ the question uses. Kinds and their fields:
   {"kind": "image", "query": "maize plant Kenya farm"}
      — a PHOTOGRAPH, when no drawing would do: a plant, an animal, a tool, a landform, a building,
        a person at work. Name what the picture must show in plain words; a credited photo is fetched.
+  {"kind": "atom", "element": "Sulphur", "protons": 16, "neutrons": 16, "electrons": 16, "show_counts": true}
+     — an atom or ion (elements 1–20) with its nucleus and energy levels; the shells are
+       computed from the electrons, so give the particle numbers, never the arrangement.
+       "show_counts": false hides the nucleus numbers when the question asks for them.
+  {"kind": "circuit", "source": [{"kind": "battery", "cells": 2, "label": "B"}, {"kind": "switch", "state": "closed", "label": "S"}],
+   "branches": [[{"kind": "bulb", "label": "L1"}, {"kind": "ammeter", "label": "A"}], [{"kind": "bulb", "label": "L2"}]],
+   "voltmeters": [{"across": "L1", "label": "V"}]}
+     — one branch is a series circuit, two or three are parallel. Components: cell, battery,
+       bulb, switch (open|closed), resistor, ammeter; a voltmeter goes ACROSS a labelled part.
+  {"kind": "flow", "layout": "chain|cycle", "nodes": ["Grass", "Grasshopper", "Frog", "Hawk"], "edge_labels": []}
+     — a food chain (arrows in the direction energy flows), a cycle, a process or a chain of causes.
+  {"kind": "population_pyramid", "age_groups": ["0-14", "15-29", "30-44", "45-59", "60+"], "male": [...], "female": [...], "unit": "thousands"}
+     — youngest group first; one male and one female value per group.
+  {"kind": "map", "extent": "Kenya", "title": "...", "features": [{"kind": "lake", "name": "Lake Turkana", "note": "..."}]}
+     — drawn from the platform's own gazetteer, with scale, north arrow and key added.
 The stem then says "Study the figure below" or "In the figure below, …". A figure that is a lesson
-diagram already drawn for this sub-strand is referred to by `diagram_ref` instead.
-HOW MANY: at least one item in six is set on a figure, a table or a chart wherever the topic
-allows — a number line or thermometer for directed numbers, a table of prices or readings, a bar
-or line graph, a shape with its dimensions, a clock. The national papers read values off figures
-every few items; a batch that carries fewer is sent back with items to re-set.""",
+diagram already drawn for this sub-strand is referred to by `diagram_ref` instead.""",
+    "question-figures-share": """HOW MANY: at least one item in six is set on a figure, a table or a chart wherever the topic
+allows — {{ examples }}. The national papers read values off figures every few items; a batch
+that carries fewer is sent back with items to re-set. The figure must be one THIS subject reads:
+never a calculation brought in to have something to draw.
+A TABLE IS THE LAST RESORT. Use the kind that shows the idea — the atom, the circuit, the food
+chain, the pyramid, the map — and a table only where the question is about reading tabulated
+data. At most one figure in three may be a table; a batch with more is sent back.""",
     "questions-rewrite-directive": """=== REWRITE, DO NOT REGENERATE ===
 The batch you wrote for {{ sub_strand }} ({{ grade }}, {{ subject }}) has been checked
 item by item — every answer the maths engine could solve was solved, every item was

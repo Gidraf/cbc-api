@@ -73,7 +73,7 @@ def test_the_questions_station_draws_files_and_binds_figures() -> None:
     from app.routes import questions
 
     source = inspect.getsource(questions)
-    assert "figure_sketch.prompt_block()" in source, "the writer is told how to ask for a figure"
+    assert "figure_sketch.prompt_block(payload.subject)" in source, "the writer is told how to ask for a figure"
     assert "_draw_question_figures(" in source and "_bind_figure(raw_q) or resolve_binding(" in source
     binding = questions._bind_figure({"_figure": {"diagram_id": "diag-1", "diagram_title": "T"}})
     assert binding.variant_mode == "full" and binding.hide_layers == [] and binding.binding_method == "explicit"

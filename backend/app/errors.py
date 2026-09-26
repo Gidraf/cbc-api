@@ -63,6 +63,8 @@ ERRORS = {
     "LLM_RATE_LIMITED": (429, True),
     "LLM_INVALID_MODEL": (400, False),
     "LLM_CONTENT_FILTER": (400, False),
+    # The same request would stop at the same cap; not worth a retry.
+    "LLM_INCOMPLETE": (502, False),
     # Langfuse
     "LANGFUSE_UNAVAILABLE": (503, True),
     "PROMPT_NOT_FOUND": (404, False),

@@ -30,6 +30,13 @@ logger = logging.getLogger("cbc-llm")
 # with `temperature` and failed on every call.
 _REASONING_MODEL = re.compile(r"^(gpt-5|gpt-6|o1|o3|o4)", re.I)
 
+# Claude models from Opus 4.7 on reject `temperature` and `top_p` with a 400,
+# and think by default: the reply's content list can open with a `thinking`
+# block, and that thinking is billed against `max_tokens`. Haiku 4.5 still
+# takes sampling parameters.
+_ANTHROPIC_NO_SAMPLING = re.compile(
+    r"^claude-(fable|mythos|opus-5|sonnet-5|opus-4-[78])", re.I)
+
 
 def is_reasoning_model(model: str) -> bool:
     return bool(_REASONING_MODEL.match((model or "").strip()))
@@ -82,6 +89,37 @@ def responses_output_text(data: dict[str, Any]) -> str:
             if isinstance(content, dict) and content.get("type") == "output_text":
                 parts.append(str(content.get("text") or ""))
     return "".join(parts)
+
+
+def anthropic_output_text(data: dict[str, Any], model: str = "") -> str:
+    """The answer out of a Messages API reply: every `text` block, joined.
+
+    With thinking on, `content[0]` is a `thinking` block with no `text`, so
+    reading the first block raised KeyError. A reply cut off at `max_tokens`
+    or declined with `refusal` is raised as such rather than handed on as
+    half an answer, or none.
+    """
+    stop = str(data.get("stop_reason") or "")
+    name = model or str(data.get("model") or "the model")
+    if stop == "refusal":
+        details = data.get("stop_details") or {}
+        category = details.get("category") or "unspecified"
+        explanation = details.get("explanation") or ""
+        raise_api_error(
+            "LLM_CONTENT_FILTER",
+            f"{name} declined the request (refusal, category: {category})."
+            + (f" {explanation}" if explanation else ""),
+            detail={"stop_reason": stop, "category": category},
+        )
+    if stop == "max_tokens":
+        raise_api_error(
+            "LLM_INCOMPLETE",
+            f"{name} hit max_tokens before finishing its answer; thinking "
+            f"counts against the same budget. The partial reply was discarded.",
+            detail={"stop_reason": stop},
+        )
+    return "".join(block.get("text") or "" for block in data.get("content") or []
+                   if block.get("type") == "text")
 
 
 def _bare_svg(text: str) -> str:
@@ -401,14 +439,19 @@ class LlmClient:
         system_prompt = "\n\n".join([m["content"] for m in messages if m["role"] == "system"])
         user_messages = [{"role": m["role"], "content": m["content"]} for m in messages if m["role"] != "system"]
 
-        payload = {
-            "model": _policy.enforce("anthropic", config.model, where="anthropic call"),
-            "max_tokens": 8192,
+        model_name = _policy.enforce("anthropic", config.model, where="anthropic call")
+        # No `thinking` parameter: the current models run adaptive thinking
+        # when it is left out, and `budget_tokens` is a 400 on them. The
+        # room is for that thinking, which counts against `max_tokens`.
+        payload: dict[str, Any] = {
+            "model": model_name,
+            "max_tokens": 16000,
             "system": system_prompt,
             "messages": user_messages,
-            "temperature": temperature,
-            "top_p": top_p,
         }
+        if not _ANTHROPIC_NO_SAMPLING.match(model_name or ""):
+            payload["temperature"] = temperature
+            payload["top_p"] = top_p
 
         with httpx.Client(timeout=self.timeout) as client:
             resp = client.post(url, headers=headers, json=payload)
@@ -416,7 +459,7 @@ class LlmClient:
                 self._classify_http_error(config, resp)
 
             data = resp.json()
-            text = data["content"][0]["text"]
+            text = anthropic_output_text(data, model_name)
             raw_usage = data.get("usage", {})
             # Anthropic reports cache reads and writes APART from input_tokens,
             # so input_tokens alone left every cached prompt token unbilled.
