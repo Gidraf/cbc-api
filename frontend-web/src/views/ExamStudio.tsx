@@ -411,6 +411,26 @@ function QuestionsSection({ d, frozen }: { d: ExamDraft; frozen: boolean }) {
     [ids[i], ids[j]] = [ids[j], ids[i]];
     reorder.mutate({ draft_id: d.draft_id, question_ids: ids });
   }
+  // Adds in flight, so two adds before the list refetches send both ids —
+  // built from the stale list alone, the second add replaced the first.
+  const pendingAdds = React.useRef<Set<string>>(new Set());
+  function addToPaper(qid: string) {
+    const onPaper = (items.data || []).map((i) => i.question_id);
+    if (onPaper.includes(qid) || pendingAdds.current.has(qid)) {
+      toast("That question is already on the paper.", "info");
+      return;
+    }
+    pendingAdds.current.add(qid);
+    const ids = [...new Set([...onPaper, ...pendingAdds.current])];
+    reorder.mutate({ draft_id: d.draft_id, question_ids: ids }, {
+      onSuccess: (saved: any) => {
+        if ((saved?.skipped_duplicates || []).includes(qid)) {
+          toast("The same question is already on the paper, so it was not added again.", "info");
+        }
+      },
+      onSettled: () => { pendingAdds.current.delete(qid); },
+    });
+  }
   function drop(qid: string) {
     reorder.mutate({ draft_id: d.draft_id, question_ids: (items.data || []).map((i) => i.question_id).filter((x) => x !== qid) });
   }
@@ -474,7 +494,7 @@ function QuestionsSection({ d, frozen }: { d: ExamDraft; frozen: boolean }) {
       {watching && (
         <LivePanel d={d} subStrand={watching} active={Boolean((bank.data || []).find((s) => s.sub_strand === watching)?.writing)}
                    onPaper={new Set((items.data || []).map((i) => i.question_id))}
-                   onAdd={(qid) => reorder.mutate({ draft_id: d.draft_id, question_ids: [...(items.data || []).map((i) => i.question_id), qid] })} />
+                   onAdd={addToPaper} />
       )}
 
       <Card title={`On the paper (${(items.data || []).length})`} description="Open any question to read it with its DNA and correct it; corrections print here and reach the bank when you freeze.">
