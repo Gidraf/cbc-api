@@ -557,6 +557,84 @@ def _few_figures(questions: list[dict[str, Any]], *, subject: str, findings: lis
             [_id(question)]))
 
 
+def _figure_kind(question: dict[str, Any]) -> str:
+    figure = question.get("figure")
+    return str(figure.get("kind") or "").lower() if isinstance(figure, dict) else ""
+
+
+# At most this share of a batch's figures may be tables. Of 89 figures in the
+# bank, 62 were tables — every model, every subject — because a table always
+# draws and nothing asked for anything else.
+TABLE_SHARE = 1 / 3
+
+
+def _too_many_tables(questions: list[dict[str, Any]], *, subject: str,
+                     findings: list[Finding]) -> None:
+    """Tables where the subject's own figure would show the idea."""
+    from .figure_sketch import figure_examples
+
+    figures = [q for q in questions if _figure_kind(q)]
+    tables = [q for q in figures if _figure_kind(q) == "table"]
+    allowed = max(1, int(len(figures) * TABLE_SHARE))
+    if len(tables) <= allowed:
+        return
+    examples = figure_examples(subject)
+    instead = (f"Re-set it on the figure this subject reads — {examples} — given as `figure` data."
+               if examples else
+               "Re-set it on a passage, a poem or a dialogue the learner reads, or without a figure.")
+    for question in tables[allowed:]:
+        label = _label(question, questions.index(question) + 1)
+        findings.append(Finding(
+            "table_over_used",
+            f"{label} is set on a table, and {len(tables)} of this batch's {len(figures)} figures are "
+            f"tables; at most {allowed} may be.",
+            instead + " A table is for reading tabulated data, not for showing an idea.",
+            [_id(question)]))
+
+
+_ELEMENT_Z = {name: z for z, name in enumerate((
+    "hydrogen helium lithium beryllium boron carbon nitrogen oxygen fluorine neon sodium "
+    "magnesium aluminium silicon phosphorus sulphur chlorine argon potassium calcium").split(), start=1)}
+_ELEMENT_Z.update({"sulfur": 16, "aluminum": 13})
+_ATOMIC_NUMBER = re.compile(r"atomic number(?: of)?\s*(?:\(?Z\)?\s*)?(?:=|is|of)?\s*(\d+)|\bZ\s*=\s*(\d+)", re.I)
+
+
+def _figure_contradicts_stem(questions: list[dict[str, Any]], findings: list[Finding]) -> None:
+    """A figure that shows something other than what the question says.
+
+    An atom drawn with 15 protons beside a stem about sulphur prints a wrong
+    diagram above a right question, and the learner believes the diagram."""
+    for index, question in enumerate(questions, start=1):
+        figure = question.get("figure")
+        if _figure_kind(question) != "atom" or not isinstance(figure, dict):
+            continue
+        try:
+            protons = int(float(figure.get("protons") or figure.get("atomic_number") or 0))
+        except (TypeError, ValueError):
+            continue
+        stem = _stem(question)
+        stated = {int(a or b) for a, b in _ATOMIC_NUMBER.findall(stem)}
+        stated |= {z for name, z in _ELEMENT_Z.items() if re.search(rf"\b{name}\b", stem, re.I)}
+        named = str(figure.get("element") or "").strip().lower()
+        if named in _ELEMENT_Z and _ELEMENT_Z[named] != protons:
+            findings.append(Finding(
+                "figure_contradicts_stem",
+                f"{_label(question, index)} labels its atom {named} but gives it {protons} protons; "
+                f"{named} has {_ELEMENT_Z[named]}.",
+                "Give the figure the particle numbers of the element it names.",
+                [_id(question)]))
+            continue
+        # One element in the stem: the figure must be it. Several (sodium and
+        # chlorine compared) and the figure may be either.
+        if len(stated) == 1 and protons not in stated:
+            findings.append(Finding(
+                "figure_contradicts_stem",
+                f"{_label(question, index)} draws an atom with {protons} protons, but the question is "
+                f"about atomic number {stated.pop()}.",
+                "Give the figure the particle numbers the question states; the shells are drawn from them.",
+                [_id(question)]))
+
+
 def _refers_to_a_figure_it_lacks(questions: list[dict[str, Any]], findings: list[Finding]) -> None:
     for index, question in enumerate(questions, start=1):
         if question.get("diagram"):
@@ -798,6 +876,8 @@ def check(questions: list[dict[str, Any]], *, grade: str = "", subject: str = ""
     _all_recall(items, findings)
     _figures_unused(items, diagrams or [], findings)
     _few_figures(items, subject=subject, findings=findings)
+    _too_many_tables(items, subject=subject, findings=findings)
+    _figure_contradicts_stem(items, findings)
 
     # One finding per (kind, item set): the example reading and the engine
     # can name the same repeat twice.

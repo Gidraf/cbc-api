@@ -2427,12 +2427,30 @@ the question uses. Kinds and their fields:
   {"kind": "image", "query": "maize plant Kenya farm"}
      — a PHOTOGRAPH, when no drawing would do: a plant, an animal, a tool, a landform, a building,
        a person at work. Name what the picture must show in plain words; a credited photo is fetched.
+  {"kind": "atom", "element": "Sulphur", "protons": 16, "neutrons": 16, "electrons": 16, "show_counts": true}
+     — an atom or ion (elements 1–20) with its nucleus and energy levels; the shells are
+       computed from the electrons, so give the particle numbers, never the arrangement.
+       "show_counts": false hides the nucleus numbers when the question asks for them.
+  {"kind": "circuit", "source": [{"kind": "battery", "cells": 2, "label": "B"}, {"kind": "switch", "state": "closed", "label": "S"}],
+   "branches": [[{"kind": "bulb", "label": "L1"}, {"kind": "ammeter", "label": "A"}], [{"kind": "bulb", "label": "L2"}]],
+   "voltmeters": [{"across": "L1", "label": "V"}]}
+     — one branch is a series circuit, two or three are parallel. Components: cell, battery,
+       bulb, switch (open|closed), resistor, ammeter; a voltmeter goes ACROSS a labelled part.
+  {"kind": "flow", "layout": "chain|cycle", "nodes": ["Grass", "Grasshopper", "Frog", "Hawk"], "edge_labels": []}
+     — a food chain (arrows in the direction energy flows), a cycle, a process or a chain of causes.
+  {"kind": "population_pyramid", "age_groups": ["0-14", "15-29", "30-44", "45-59", "60+"], "male": [...], "female": [...], "unit": "thousands"}
+     — youngest group first; one male and one female value per group.
+  {"kind": "map", "extent": "Kenya", "title": "...", "features": [{"kind": "lake", "name": "Lake Turkana", "note": "..."}]}
+     — drawn from the platform's own gazetteer, with scale, north arrow and key added.
 The stem then says "Study the figure below" or "In the figure below, …". A figure that is a lesson
 diagram already drawn for this sub-strand is referred to by `diagram_ref` instead.""",
     "question-figures-share": """HOW MANY: at least one item in six is set on a figure, a table or a chart wherever the topic
 allows — {{ examples }}. The national papers read values off figures every few items; a batch
 that carries fewer is sent back with items to re-set. The figure must be one THIS subject reads:
-never a calculation brought in to have something to draw.""",
+never a calculation brought in to have something to draw.
+A TABLE IS THE LAST RESORT. Use the kind that shows the idea — the atom, the circuit, the food
+chain, the pyramid, the map — and a table only where the question is about reading tabulated
+data. At most one figure in three may be a table; a batch with more is sent back.""",
     "questions-rewrite-directive": """=== REWRITE, DO NOT REGENERATE ===
 The batch you wrote for {{ sub_strand }} ({{ grade }}, {{ subject }}) has been checked
 item by item — every answer the maths engine could solve was solved, every item was
