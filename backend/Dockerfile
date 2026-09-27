@@ -30,6 +30,14 @@ RUN if [ -n "$PIP_INDEX_URL" ]; then pip config set global.index-url "$PIP_INDEX
 COPY requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r /app/requirements.txt
 
+# A Chromium of our own, for when the stack's browser service is not there to
+# connect to (see app/services/browser.py). Installed as root with its system
+# libraries, readable by the app user.
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+RUN python -m playwright install --with-deps chromium \
+    && chmod -R a+rX /ms-playwright \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY app /app/app
 
 RUN addgroup --system appgroup && adduser --system --ingroup appgroup appuser && \
