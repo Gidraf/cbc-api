@@ -6,17 +6,14 @@ to whatever browser the operator happens to have; a downloaded file is the same
 document every time, and can be sent to somebody who is not sitting at the
 console.
 
-Chromium is already here — `browserless/chrome`, connected over CDP, used for
-page inspection. Rendering to PDF is one more call to it rather than a new
-dependency and a second HTML engine that disagrees with the first about page
-breaks.
+Chromium renders it: the stack's browser service where it answers, the one
+bundled in this image where it does not (see `browser.py`). One HTML engine,
+so the PDF and the reader agree about page breaks.
 """
 from __future__ import annotations
 
 import asyncio
 import logging
-
-from ..settings import settings
 
 logger = logging.getLogger("cbc-pdf")
 
@@ -30,29 +27,23 @@ class PdfUnavailable(RuntimeError):
 
 
 async def _render(html: str) -> bytes:
-    from playwright.async_api import async_playwright
+    from .browser import open_browser
 
-    async with async_playwright() as playwright:
-        browser = await playwright.chromium.connect_over_cdp(
-            settings.playwright_cdp_url, timeout=TIMEOUT_MS
+    async with open_browser() as browser:
+        context = await browser.new_context()
+        page = await context.new_page()
+        # set_content rather than a URL: the document never leaves this
+        # process, so there is nothing to serve and nothing to clean up.
+        await page.set_content(html, wait_until="load", timeout=TIMEOUT_MS)
+        pdf = await page.pdf(
+            format="A4",
+            print_background=True,
+            # The @page rule in the document owns the margins; overriding
+            # them here would fight it.
+            prefer_css_page_size=True,
         )
-        try:
-            context = await browser.new_context()
-            page = await context.new_page()
-            # set_content rather than a URL: the document never leaves this
-            # process, so there is nothing to serve and nothing to clean up.
-            await page.set_content(html, wait_until="load")
-            pdf = await page.pdf(
-                format="A4",
-                print_background=True,
-                # The @page rule in the document owns the margins; overriding
-                # them here would fight it.
-                prefer_css_page_size=True,
-            )
-            await context.close()
-            return pdf
-        finally:
-            await browser.close()
+        await context.close()
+        return pdf
 
 
 def from_html(html: str) -> bytes:
@@ -62,11 +53,12 @@ def from_html(html: str) -> bytes:
     except Exception as exc:  # noqa: BLE001
         logger.warning("Could not render a PDF: %s", exc)
         raise PdfUnavailable(
-            f"The browser service could not render this to PDF ({exc}). "
-            f"Check that the `playwright` container is running and reachable "
-            f"at {settings.playwright_cdp_url}. In the meantime the guide can "
-            f"be printed from the reader, and saved as PDF from the print "
-            f"dialog."
+            f"Neither the browser service nor the local Chromium could render "
+            f"this to PDF ({str(exc).splitlines()[0][:200]}). Check that the "
+            f"`playwright` container is running, or that the image has its own "
+            f"Chromium (`python -m playwright install --with-deps chromium`). "
+            f"In the meantime the guide can be printed from the reader, and "
+            f"saved as PDF from the print dialog."
         ) from exc
 
 
