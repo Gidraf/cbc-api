@@ -63,6 +63,7 @@ class CompleteRequest(BaseModel):
     content: Any = Field(..., description="The model's answer: a JSON object, or the raw text")
     model: str = Field(default="", description="What answered, for the ledger: e.g. ollama/llama3.1")
     wait_seconds: float = Field(default=25, ge=0, le=120)
+    step: int | None = Field(default=None, description="The step number this answers; a stale answer is refused")
 
 
 def _runner(station: str, params: dict[str, Any]) -> Any:
@@ -369,7 +370,7 @@ def complete_task(task_id: str, payload: CompleteRequest,
         raise_api_error("NOT_FOUND", f"No live task {task_id}.")
     done_before = len(task.steps)
     try:
-        byom.complete(task_id, payload.content, payload.model)
+        byom.complete(task_id, payload.content, payload.model, step=payload.step)
     except ValueError as exc:
         raise_api_error("SCHEMA_VALIDATION_FAILED", str(exc))
     # Wait for the station to consume the answer and either ask again or finish.

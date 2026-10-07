@@ -193,7 +193,8 @@ def test_ollama_gets_its_native_api_with_the_context_window_set(monkeypatch):
                            expect="json", temperature=0.2)
     assert out == '{"ok": 1}'
     assert seen["url"] == "https://ollama.gidraf.dev/api/chat"
-    assert seen["body"]["options"] == {"temperature": 0.2, "num_ctx": 16384} and seen["body"]["format"] == "json"
+    opts = seen["body"]["options"]
+    assert opts["temperature"] == 0.2 and opts["num_ctx"] == 16384 and seen["body"]["format"] == "json"
 
 
 def test_a_prompt_wider_than_ollamas_window_is_warned_about_once(capsys, monkeypatch):

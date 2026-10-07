@@ -21,6 +21,12 @@ before the next, and every subject's Term 3 paper before any Term 1:
     python3 cbc_agent.py sweep --from grade-6 --to grade-12 --order middle-out --terms 3 1 2 \\
         --model qwen3:14b --download ./papers
 
+Serve the queue — every task waiting on the platform, whoever started it
+(the console, an order, the exam studio), answered on your model, and keep
+watching for new ones until stopped:
+
+    python3 cbc_agent.py serve --model qwen3:14b --download ./papers
+
 The platform assembles each prompt; this answers it on the model you name
 and posts the answer back; the platform checks, repairs, draws and files.
 Your machine only needs to reach the platform and the model — the platform
@@ -44,6 +50,15 @@ API = os.getenv("CBC_API_URL", "http://localhost:8000").rstrip("/")
 KEY = os.getenv("CBC_API_KEY", "")
 
 
+class PlatformError(SystemExit):
+    """The platform answered with an error. A SystemExit, so a one-off `run`
+    still stops on it; `serve` reads `status` and decides whether to retry."""
+
+    def __init__(self, message: str, status: int) -> None:
+        super().__init__(message)
+        self.status = status
+
+
 def _platform(method: str, path: str, body: Any = None) -> dict[str, Any]:
     data = json.dumps(body).encode() if body is not None else None
     req = urllib.request.Request(API + path, data=data, method=method,
@@ -53,12 +68,39 @@ def _platform(method: str, path: str, body: Any = None) -> dict[str, Any]:
             return json.loads(resp.read().decode())
     except urllib.error.HTTPError as exc:
         detail = exc.read().decode("utf-8", "replace")
-        raise SystemExit(f"{method} {path} → {exc.code}: {detail[:400]}")
+        raise PlatformError(f"{method} {path} → {exc.code}: {detail[:400]}", exc.code)
+
+
+def _patient(method: str, path: str, body: Any = None, *, what: str = "") -> dict[str, Any]:
+    """`_platform`, retried through what a long unattended run meets: the
+    platform redeploying (502/503/504), the network dropping, a timeout.
+    A 4xx is the platform saying no, and is raised at once."""
+    delay = 5.0
+    while True:
+        try:
+            return _platform(method, path, body)
+        except PlatformError as exc:
+            if exc.status < 500:
+                raise
+            reason = f"{exc.status}"
+        except (urllib.error.URLError, TimeoutError, ConnectionError, OSError) as exc:
+            reason = str(getattr(exc, "reason", exc))[:120]
+        print(f"  platform unreachable{f' ({what})' if what else ''}: {reason}; retrying in {delay:.0f}s",
+              flush=True)
+        time.sleep(delay)
+        delay = min(delay * 2, 300.0)
 
 
 # The platform's largest prompt plus a chunk's answer: about 12k tokens in
 # and 6k out. 24k leaves room; a Mac with 24 GB runs a 14B at this.
 NUM_CTX = int(os.getenv("LLM_NUM_CTX", "24576"))
+# Room for the longest answer (a chunk of questions is about 6k tokens).
+NUM_PREDICT = int(os.getenv("LLM_NUM_PREDICT", "8192"))
+# Unloading between tasks costs a reload every time (11 s for a 14B).
+KEEP_ALIVE = os.getenv("LLM_KEEP_ALIVE", "60m")
+# qwen3 and deepseek-r1 reason before they answer. Better answers, several
+# times slower; off unless asked for (--think or LLM_THINK=1).
+THINK = os.getenv("LLM_THINK", "").lower() in ("1", "true", "yes", "on")
 _ollama_native: dict[str, bool] = {}
 
 
@@ -87,7 +129,9 @@ def _model(llm_url: str, model: str, messages: list[dict[str, str]], *, expect: 
         base = llm_url.rstrip("/")
         base = base[:-3] if base.endswith("/v1") else base
         body: dict[str, Any] = {"model": model, "messages": messages, "stream": False,
-                                "options": {"temperature": temperature, "num_ctx": NUM_CTX}}
+                                "keep_alive": KEEP_ALIVE, "think": THINK,
+                                "options": {"temperature": temperature, "num_ctx": NUM_CTX,
+                                            "num_predict": NUM_PREDICT}}
         if expect == "json":
             body["format"] = "json"
         req = urllib.request.Request(base + "/api/chat", data=json.dumps(body).encode(), method="POST",
@@ -209,7 +253,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                             temperature=float(step.get("temperature") or 0.3))
             print(f" {len(answer):,} chars in {time.time() - t0:.0f}s")
             task = _platform("POST", f"/api/v1/agent/tasks/{task['task_id']}/complete",
-                             {"content": answer, "model": f"{args.model}", "wait_seconds": 60})
+                             {"content": answer, "model": f"{args.model}", "wait_seconds": 60,
+                              "step": step["number"]})
         elif status == "running":
             task = _platform("GET", f"/api/v1/agent/tasks/{task['task_id']}/wait?seconds=60")
         else:
@@ -361,6 +406,111 @@ def sweep(args: argparse.Namespace) -> None:
           f"Run the same command again to retry the failures.")
 
 
+# ── Serve the queue, without stopping ───────────────────────────────────────
+
+def _work(task_id: str, args: argparse.Namespace) -> str:
+    """Answer one task's prompts until it finishes. Returns its final status."""
+    failures = 0
+    task = _patient("GET", f"/api/v1/agent/tasks/{task_id}", what=task_id)
+    p = task.get("params") or {}
+    where = p.get("sub_strand") or p.get("strand") or (f"term {p['term']}" if p.get("term") else "")
+    print(f"\n▶ {task_id} · {task.get('station')} · {p.get('grade')} {p.get('subject')} {where}", flush=True)
+    while True:
+        status = task.get("status")
+        if status == "awaiting" and task.get("step"):
+            step = task["step"]
+            chars = sum(len(m["content"]) for m in step["messages"])
+            print(f"  step {step['number']} ({step['stage']}, {chars:,} chars) → {args.model} …", end="", flush=True)
+            t0 = time.time()
+            try:
+                answer = _model(args.llm_url, args.model, step["messages"], expect=step["expect"],
+                                temperature=float(step.get("temperature") or 0.3))
+            except Exception as exc:  # noqa: BLE001 — Ollama down, out of memory, timed out
+                failures += 1
+                print(f" model failed ({str(exc)[:120]}); attempt {failures}", flush=True)
+                if failures >= args.max_attempts:
+                    print(f"  leaving {task_id} for now after {failures} failed attempts", flush=True)
+                    return "skipped"
+                time.sleep(min(30 * failures, 300))
+                task = _patient("GET", f"/api/v1/agent/tasks/{task_id}", what=task_id)
+                continue
+            failures = 0
+            print(f" {len(answer):,} chars in {time.time() - t0:.0f}s", flush=True)
+            try:
+                task = _patient("POST", f"/api/v1/agent/tasks/{task_id}/complete",
+                                {"content": answer, "model": args.model, "wait_seconds": 60,
+                                 "step": step["number"]}, what=task_id)
+            except PlatformError as exc:
+                # Someone else answered this step, or the task ended meanwhile:
+                # read where it is now and carry on from there.
+                print(f"  {str(exc)[:160]}", flush=True)
+                try:
+                    task = _patient("GET", f"/api/v1/agent/tasks/{task_id}", what=task_id)
+                except PlatformError:
+                    return "gone"
+        elif status == "running":
+            try:
+                task = _patient("GET", f"/api/v1/agent/tasks/{task_id}/wait?seconds=60", what=task_id)
+            except PlatformError:
+                return "gone"
+        else:
+            result = task.get("result") or {}
+            print(f"■ {task_id} {status} after {task.get('steps_completed')} step(s)"
+                  + (f" — {task.get('error')}" if task.get("error") else ""), flush=True)
+            if isinstance(result, dict) and result.get("render_urls") and args.download:
+                p = task.get("params") or {}
+                label = f"{p.get('grade')}-{str(p.get('subject') or '').lower().replace(' ', '-')}" + \
+                        (f"-term{p['term']}" if p.get("term") else "")
+                try:
+                    download_paper(result, args.download, label)
+                except Exception as exc:  # noqa: BLE001
+                    print(f"  could not download the paper: {exc}", flush=True)
+            return str(status)
+
+
+def serve(args: argparse.Namespace) -> None:
+    """Every task the platform is waiting on, answered on your model, one
+    after another — then keep watching for new ones. Tasks started from the
+    console, an order, the exam studio or another agent all land here.
+
+    Runs until stopped (Ctrl-C), or with --until-empty until the queue is
+    clear. A task whose model calls keep failing is set aside and retried
+    on a later pass, never allowed to block the rest.
+    """
+    print(f"serving {API} on {args.model} at {args.llm_url}"
+          f"{' (thinking on)' if THINK else ''}; context {NUM_CTX:,} tokens", flush=True)
+    set_aside: dict[str, float] = {}
+    idle_since: float | None = None
+    worked = 0
+    while True:
+        live = _patient("GET", "/api/v1/agent/tasks", what="listing tasks").get("live") or []
+        waiting = [t for t in live if t.get("status") in ("awaiting", "running")
+                   and set_aside.get(t["task_id"], 0) <= time.time()]
+        # Oldest first: the task someone has waited on longest.
+        waiting.sort(key=lambda t: float(t.get("created_at") or 0))
+        if not waiting:
+            if args.until_empty:
+                print(f"queue empty — {worked} task(s) worked; stopping (--until-empty)", flush=True)
+                return
+            if idle_since is None:
+                idle_since = time.time()
+                print(f"queue empty; watching every {args.poll}s for new tasks …", flush=True)
+            time.sleep(args.poll)
+            continue
+        idle_since = None
+        for t in waiting:
+            try:
+                outcome = _work(t["task_id"], args)
+            except PlatformError as exc:
+                outcome = "gone"
+                print(f"  {t['task_id']}: {str(exc)[:160]}", flush=True)
+            if outcome == "skipped":
+                set_aside[t["task_id"]] = time.time() + 900
+            else:
+                set_aside.pop(t["task_id"], None)
+                worked += 1
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -393,11 +543,30 @@ def main() -> None:
     w.add_argument("--redo", action="store_true", help="re-run papers the ledger already marks done")
     w.add_argument("--model", required=True)
     w.add_argument("--llm-url", dest="llm_url", default=os.getenv("LLM_URL", "http://localhost:11434/v1"))
+    v = sub.add_parser("serve", help="answer every task the platform is waiting on, and keep watching for more")
+    v.add_argument("--model", required=True)
+    v.add_argument("--llm-url", dest="llm_url", default=os.getenv("LLM_URL", "http://localhost:11434/v1"))
+    v.add_argument("--poll", type=int, default=30, help="seconds between looks at an empty queue")
+    v.add_argument("--until-empty", dest="until_empty", action="store_true",
+                   help="stop once nothing is waiting, instead of watching for new tasks")
+    v.add_argument("--max-attempts", dest="max_attempts", type=int, default=3,
+                   help="failed model calls on one step before the task is set aside for 15 minutes")
+    v.add_argument("--think", action="store_true", help="let qwen3 / deepseek-r1 reason first (slower)")
+    v.add_argument("--download", default=os.getenv("CBC_DOWNLOAD_DIR", ""),
+                   help="save finished papers' PDFs here")
     args = parser.parse_args()
+    if getattr(args, "think", False):
+        global THINK
+        THINK = True
     if not KEY:
         sys.exit("set CBC_API_KEY (an API key from the console's Providers page)")
     if args.command == "sweep":
         sweep(args)
+    elif args.command == "serve":
+        try:
+            serve(args)
+        except KeyboardInterrupt:
+            print("\nstopped.")
     else:
         run(args)
 
