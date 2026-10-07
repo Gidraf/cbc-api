@@ -216,3 +216,28 @@ def test_the_start_route_hands_back_the_live_twin() -> None:
     assert out["task_id"] == live.task_id and out["joined_existing"] is True
     assert "already running" in out["note"] and live.joined == 1
     byom.cancel(live.task_id)
+
+
+def test_an_answer_for_a_step_already_answered_is_refused() -> None:
+    """Two agents serving one queue both pick up step 1. The slower answer
+    used to be filed against step 2 — a different prompt."""
+    import pytest
+
+    def station(kind: str, params: dict) -> dict:
+        a = llm_client.generate(_config(), [{"role": "user", "content": "one"}], expect="text")
+        b = llm_client.generate(_config(), [{"role": "user", "content": "two"}], expect="text")
+        return {"a": a.content, "b": b.content}
+
+    task = byom.start("questions", {"grade": "grade-9"}, created_by="tester", runner=station)
+    byom.wait(task, 5, since_steps=0)
+    byom.complete(task.task_id, "first", step=1)
+    byom.wait(task, 5, since_steps=1)
+    assert task.pending.number == 2
+
+    with pytest.raises(ValueError, match="already answered"):
+        byom.complete(task.task_id, "late answer to step 1", step=1)
+    assert task.pending.number == 2, "step 2 is still waiting for its own answer"
+
+    byom.complete(task.task_id, "second", step=2)
+    byom.wait(task, 5, since_steps=2)
+    assert task.result == {"a": "first", "b": "second"}

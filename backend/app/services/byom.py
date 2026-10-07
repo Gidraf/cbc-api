@@ -284,13 +284,20 @@ def defer(config: Any, messages: list[dict[str, str]], *, temperature: float,
     return raw or "", model or "agent"
 
 
-def complete(task_id: str, content: Any, model: str = "") -> Task:
-    """The agent's answer to the pending step."""
+def complete(task_id: str, content: Any, model: str = "", step: int | None = None) -> Task:
+    """The agent's answer to the pending step.
+
+    `step` is the number of the step the answer was written for. Two agents
+    serving one queue can both pick up the same prompt; without it the slower
+    answer was filed against whatever step came next — a different prompt."""
     task = get(task_id)
     if task is None:
         raise KeyError(task_id)
     if task.status != AWAITING or task.pending is None:
         raise ValueError(f"task {task_id} is {task.status}; nothing is awaiting an answer")
+    if step is not None and step != task.pending.number:
+        raise ValueError(f"step {step} of task {task_id} was already answered; "
+                         f"step {task.pending.number} is the one awaiting an answer")
     raw = content if isinstance(content, str) else json.dumps(content, ensure_ascii=False)
     task.answer = (raw, model)
     task.wake.set()
