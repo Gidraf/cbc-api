@@ -206,3 +206,77 @@ def test_a_model_that_is_not_there_is_not_retried(monkeypatch) -> None:
     monkeypatch.setattr(cbc_agent, "_model_once", once)
     with pytest.raises(urllib.error.HTTPError):
         cbc_agent._model("http://localhost:11434/v1", "qwen2.5:32b", [], expect="json", temperature=0.2)
+
+
+class _ForgetfulPlatform:
+    """A platform that redeploys after the first answer: the live task is
+    gone (404), its answers are journalled under its parameters, and the same
+    start resumes at the first unanswered prompt — as byom does."""
+
+    def __init__(self, prompts):
+        self.prompts = prompts
+        self.journal: list[str] = []
+        self.current = "t-1"
+        self.started: list[dict] = []
+
+    def view(self):
+        n = len(self.journal)
+        out = {"task_id": self.current, "station": "questions", "created_at": 1.0,
+               "params": {"grade": "grade-9", "subject": "Integrated Science", "strand": "Matter",
+                          "sub_strand": "Atoms", "count": 2, "custom_instructions": ""},
+               "steps_completed": n, "result": {}}
+        if n < len(self.prompts):
+            out.update(status="awaiting", step={"number": n + 1, "stage": "q", "expect": "text",
+                                                "messages": [{"role": "user", "content": self.prompts[n]}]})
+        else:
+            out["status"] = "done"
+        return out
+
+    def __call__(self, method, path, body=None):
+        if method == "POST" and path == "/api/v1/agent/tasks":
+            self.started.append(body)
+            self.current = f"t-{len(self.started) + 1}"
+            return self.view()
+        if path == "/api/v1/agent/tasks":
+            v = self.view()
+            return {"live": [] if v["status"] == "done" else [{k: x for k, x in v.items() if k != "step"}]}
+        tid = path.split("/")[5]
+        if tid != self.current:
+            raise cbc_agent.PlatformError(f"No live task {tid}.", 404)
+        if method == "POST":
+            self.journal.append(body["content"])
+            if len(self.journal) == 1:
+                self.current = "lost"          # the redeploy: nothing is live now
+        return self.view()
+
+
+def test_serve_resumes_a_task_the_platform_lost_in_a_restart(monkeypatch) -> None:
+    platform = _ForgetfulPlatform(["one", "two", "three"])
+    monkeypatch.setattr(cbc_agent, "_platform", platform)
+    monkeypatch.setattr(cbc_agent, "_model", lambda url, model, messages, **kw: messages[0]["content"].upper())
+    cbc_agent.serve(_args())
+
+    assert platform.journal == ["ONE", "TWO", "THREE"], "nothing asked twice, nothing skipped"
+    restart = platform.started[0]
+    assert restart["station"] == "questions" and restart["sub_strand"] == "Atoms" and restart["count"] == 2
+    assert restart["strand"] == "Matter" and "extra" not in restart, "the same parameters, so the journal replays"
+
+
+def test_run_resumes_a_task_the_platform_lost_in_a_restart(monkeypatch) -> None:
+    platform = _ForgetfulPlatform(["one", "two"])
+    original = platform.__call__
+
+    def calls(method, path, body=None):
+        if method == "POST" and path == "/api/v1/agent/tasks" and not platform.started:
+            platform.started.append(body)          # the first start keeps id t-1
+            return platform.view()
+        return original(method, path, body)
+
+    monkeypatch.setattr(cbc_agent, "_platform", calls)
+    monkeypatch.setattr(cbc_agent, "_model", lambda url, model, messages, **kw: messages[0]["content"].upper())
+    args = argparse.Namespace(station="questions", grade="grade-9", subject="Integrated Science",
+                              strand="Matter", sub_strand="Atoms", count=2, instructions="",
+                              model="qwen3:14b", llm_url="http://localhost:11434/v1", kind="", term=None,
+                              download="")
+    task = cbc_agent.run(args)
+    assert task["status"] == "done" and platform.journal == ["ONE", "TWO"]
