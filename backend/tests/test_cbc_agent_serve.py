@@ -176,3 +176,33 @@ def test_the_window_grows_for_a_long_prompt_and_stops_at_the_cap(monkeypatch) ->
     assert cbc_agent._context_for(short) == 24576, "no reload for an ordinary prompt"
     assert cbc_agent._context_for(two_questions) == 28672, "room to answer, not 4k"
     assert cbc_agent._context_for(huge) == 32768
+
+
+def test_a_model_server_that_restarts_mid_request_is_retried(monkeypatch) -> None:
+    """Ollama's launch agent was swapped while a step was being written; the
+    request came back RemoteDisconnected and a one-off `run` died with it."""
+    import http.client
+
+    calls = {"n": 0}
+
+    def once(*a, **k):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise http.client.RemoteDisconnected("Remote end closed connection without response")
+        return "answer"
+
+    monkeypatch.setattr(cbc_agent, "_model_once", once)
+    monkeypatch.setattr(cbc_agent.time, "sleep", lambda s: None)
+    assert cbc_agent._model("http://localhost:11434/v1", "qwen3:14b", [], expect="json", temperature=0.2) == "answer"
+    assert calls["n"] == 2
+
+
+def test_a_model_that_is_not_there_is_not_retried(monkeypatch) -> None:
+    import urllib.error
+
+    def once(*a, **k):
+        raise urllib.error.HTTPError("u", 404, "model 'qwen2.5:32b' not found", {}, None)
+
+    monkeypatch.setattr(cbc_agent, "_model_once", once)
+    with pytest.raises(urllib.error.HTTPError):
+        cbc_agent._model("http://localhost:11434/v1", "qwen2.5:32b", [], expect="json", temperature=0.2)

@@ -142,6 +142,31 @@ def _is_ollama(llm_url: str) -> bool:
 
 def _model(llm_url: str, model: str, messages: list[dict[str, str]], *, expect: str,
            temperature: float) -> str:
+    """`_model_once`, retried through a model server that drops a request:
+    Ollama restarting (its launch agent swapped, it ran out of memory and
+    came back), or still loading the model. Three tries, then the error."""
+    import http.client
+
+    waits = (15, 45, 90)
+    for attempt, wait in enumerate((*waits, None), start=1):
+        try:
+            return _model_once(llm_url, model, messages, expect=expect, temperature=temperature)
+        except urllib.error.HTTPError as exc:
+            if exc.code < 500 or wait is None:
+                raise
+            reason = f"HTTP {exc.code}"
+        except (http.client.RemoteDisconnected, urllib.error.URLError, ConnectionError) as exc:
+            if wait is None:
+                raise
+            reason = str(getattr(exc, "reason", exc))[:100]
+        print(f" model server dropped the request ({reason}); retry {attempt} in {wait}s …",
+              end="", flush=True)
+        time.sleep(wait)
+    raise RuntimeError("unreachable")
+
+
+def _model_once(llm_url: str, model: str, messages: list[dict[str, str]], *, expect: str,
+                temperature: float) -> str:
     """One chat completion. Ollama gets its native API, so the context window
     is set per request (LLM_NUM_CTX, default 16k) — over /v1 it cannot be,
     and Ollama's default of 4,096 truncates the platform's prompts silently.
