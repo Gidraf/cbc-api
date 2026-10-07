@@ -43,7 +43,7 @@ class _Queue:
 
 def _args(**kw):
     base = dict(model="qwen3:14b", llm_url="http://localhost:11434/v1", poll=0, until_empty=True,
-                max_attempts=2, think=False, download="")
+                max_attempts=2, think=False, download="", window="")
     return argparse.Namespace(**{**base, **kw})
 
 
@@ -123,3 +123,56 @@ def test_ollama_is_asked_to_keep_the_model_loaded(monkeypatch) -> None:
     assert sent["keep_alive"] and sent["think"] is False
     assert sent["options"]["num_ctx"] >= 16384 and sent["options"]["num_predict"] >= 4096
     assert sent["format"] == "json"
+
+
+@pytest.mark.parametrize("window, hhmm, inside", [
+    ("00:00-07:00", "00:00", True), ("00:00-07:00", "06:59", True), ("00:00-07:00", "07:00", False),
+    ("00:00-07:00", "13:30", False), ("22:00-06:00", "23:15", True), ("22:00-06:00", "05:00", True),
+    ("22:00-06:00", "12:00", False), ("", "12:00", True),
+])
+def test_the_serving_window(window, hhmm, inside) -> None:
+    import time as _t
+
+    h, m = map(int, hhmm.split(":"))
+    now = _t.struct_time((2026, 10, 7, h, m, 0, 0, 280, -1))
+    assert cbc_agent._in_window(window, now) is inside
+
+
+def test_outside_the_window_nothing_is_asked_and_the_model_is_not_loaded(monkeypatch) -> None:
+    queue = _Queue({"t-one": [("text", "hello")]})
+    monkeypatch.setattr(cbc_agent, "_platform", queue)
+    monkeypatch.setattr(cbc_agent, "_in_window", lambda w, now=None: False)
+    monkeypatch.setattr(cbc_agent, "_model", lambda *a, **k: pytest.fail("no model call outside the window"))
+    cbc_agent.serve(_args(window="00:00-07:00"))
+    assert queue.tasks["t-one"]["answers"] == []
+
+
+def test_when_the_window_closes_it_stops_before_the_next_prompt_and_frees_the_model(monkeypatch) -> None:
+    queue = _Queue({"t-long": [("text", "one"), ("text", "two"), ("text", "three")]})
+    monkeypatch.setattr(cbc_agent, "_platform", queue)
+    calls = {"n": 0}
+
+    def model(*a, **k):
+        calls["n"] += 1
+        return "ok"
+
+    # Open for the first prompt, closed from then on.
+    monkeypatch.setattr(cbc_agent, "_in_window", lambda w, now=None: calls["n"] == 0)
+    unloaded = []
+    monkeypatch.setattr(cbc_agent, "_unload", lambda url, m: unloaded.append(m))
+    monkeypatch.setattr(cbc_agent, "_model", model)
+    cbc_agent.serve(_args(window="00:00-07:00", until_empty=False))
+
+    assert queue.tasks["t-long"]["answers"] == ["ok"], "the rest waits on the platform for tonight"
+    assert unloaded == ["qwen3:14b"], "the memory is given back"
+
+
+def test_the_window_grows_for_a_long_prompt_and_stops_at_the_cap(monkeypatch) -> None:
+    monkeypatch.setattr(cbc_agent, "NUM_CTX", 24576)
+    monkeypatch.setattr(cbc_agent, "MAX_CTX", 32768)
+    short = [{"role": "user", "content": "x" * 20_000}]
+    two_questions = [{"role": "user", "content": "x" * 71_151}]      # what a 2-question batch sent
+    huge = [{"role": "user", "content": "x" * 200_000}]
+    assert cbc_agent._context_for(short) == 24576, "no reload for an ordinary prompt"
+    assert cbc_agent._context_for(two_questions) == 28672, "room to answer, not 4k"
+    assert cbc_agent._context_for(huge) == 32768

@@ -269,34 +269,50 @@ case "{agent}" in
                  printf '\n[mcp_servers.cbc]\ncommand = "python3"\nargs = ["%s"]\n[mcp_servers.cbc.env]\nCBC_API_URL = "%s"\nCBC_API_KEY = "%s"\nCBC_DOWNLOAD_DIR = "%s/papers"\n' "$SERVER" "$BASE" "$KEY" "$HERE" >> "$HOME/.codex/config.toml"
                  echo "wrote ~/.codex/config.toml"; fi
                echo "Now: cd \"$HERE\" && codex   (Codex reads AGENTS.md here)" ;;
-  ollama)      echo "Run:  sh run.sh order grade-7 Mathematics \"\" \"\" 30 qwen2.5:32b" ;;
+  ollama)      echo "Run:  sh run.sh order grade-7 Mathematics 30 qwen3:14b      (or: sh run.sh serve)" ;;
 esac
 """
 
 
 def _ollama_runner() -> str:
+    # The term is CBC_TERM, never TERM: every shell already sets TERM to the
+    # terminal type, and `--term ${TERM:-1}` sent `--term xterm-256color`.
     return """#!/bin/sh
-# One paper:    sh run.sh order grade-7 Mathematics "" "" 30 qwen2.5:32b            (Term 1; TERM=2 sh run.sh … for Term 2)
-# One station:  sh run.sh questions grade-9 Mathematics Numbers Integers 50 qwen2.5:32b http://localhost:11434/v1
-# Everything:   sh run.sh sweep grade-6 grade-12 qwen2.5:32b                        (every ingested subject, Terms 1-3,
-#                                                                                    PDFs into ./papers, resumes if stopped)
-# The model can be any OpenAI-compatible endpoint: set LLM_URL and LLM_API_KEY in cbc/.env.
+# One paper:    sh run.sh order grade-7 Mathematics [count] [model] [term]
+#               sh run.sh order grade-7 Mathematics 30 qwen3:14b 2        (Term 2)
+# One station:  sh run.sh questions grade-9 Mathematics Numbers Integers [count] [model]
+# Serve:        sh run.sh serve [model]        (every task the platform is waiting on, non-stop)
+# Everything:   sh run.sh sweep grade-6 grade-12 [model]  (every ingested subject, Terms 1-3,
+#                                               PDFs into ./papers, resumes if stopped)
+# Defaults come from cbc/.env: LLM_MODEL (else qwen3:14b), LLM_URL, LLM_API_KEY, CBC_TERM.
 KIT="$HOME/.cbc/ollama"; [ -f "$KIT/.env" ] || KIT="$(cd "$(dirname "$0")" && pwd)/cbc"
 set -a; . "$KIT/.env"; set +a
 HERE="$(cd "$(dirname "$0")" && pwd)"
-if [ "$1" = "sweep" ]; then
-  FROM="${2:-grade-6}"; TO="${3:-grade-12}"; MODEL="${4:-qwen2.5:32b}"; URL="${5:-${LLM_URL:-http://localhost:11434/v1}}"
-  # Middle-out (9, 10, 8, 11, 7, 12, 6), each grade finished before the next;
-  # TERMS="3 1 2" puts every subject's Term 3 paper before any Term 1.
-  exec python3 "$KIT/cbc_agent.py" sweep --from "$FROM" --to "$TO" --model "$MODEL" --llm-url "$URL" \
-    --order "${ORDER:-middle-out}" --terms ${TERMS:-1 2 3} --download "$HERE/papers"
-fi
-STATION="${1:-order}"; GRADE="$2"; SUBJECT="$3"; STRAND="${4:-}"; SUB="${5:-}"; COUNT="${6:-30}"
-MODEL="${7:-qwen2.5:32b}"; URL="${8:-${LLM_URL:-http://localhost:11434/v1}}"
-EXTRA=""
-if [ "$STATION" = "order" ]; then EXTRA="--kind term --term ${TERM:-1} --download $HERE/papers"; fi
-exec python3 "$KIT/cbc_agent.py" run --station "$STATION" --grade "$GRADE" --subject "$SUBJECT" \
-  --strand "$STRAND" --sub-strand "$SUB" --count "$COUNT" --model "$MODEL" --llm-url "$URL" $EXTRA
+DEFAULT_MODEL="${LLM_MODEL:-qwen3:14b}"
+DEFAULT_URL="${LLM_URL:-http://localhost:11434/v1}"
+case "$1" in
+  sweep)
+    FROM="${2:-grade-6}"; TO="${3:-grade-12}"; MODEL="${4:-$DEFAULT_MODEL}"; URL="${5:-$DEFAULT_URL}"
+    # Middle-out (9, 10, 8, 11, 7, 12, 6), each grade finished before the next;
+    # TERMS="3 1 2" puts every subject's Term 3 paper before any Term 1.
+    exec python3 "$KIT/cbc_agent.py" sweep --from "$FROM" --to "$TO" --model "$MODEL" --llm-url "$URL" \\
+      --order "${ORDER:-middle-out}" --terms ${TERMS:-1 2 3} --download "$HERE/papers" ;;
+  serve)
+    exec python3 -u "$KIT/cbc_agent.py" serve --model "${2:-$DEFAULT_MODEL}" --llm-url "${3:-$DEFAULT_URL}" \\
+      --download "$HERE/papers" ;;
+  order)
+    GRADE="$2"; SUBJECT="$3"; COUNT="${4:-30}"; MODEL="${5:-$DEFAULT_MODEL}"; PAPER_TERM="${6:-${CBC_TERM:-1}}"
+    URL="${7:-$DEFAULT_URL}"
+    case "$PAPER_TERM" in 1|2|3) ;; *) echo "term must be 1, 2 or 3 (got '$PAPER_TERM')"; exit 2 ;; esac
+    exec python3 "$KIT/cbc_agent.py" run --station order --grade "$GRADE" --subject "$SUBJECT" \\
+      --count "$COUNT" --model "$MODEL" --llm-url "$URL" --kind term --term "$PAPER_TERM" \\
+      --download "$HERE/papers" ;;
+  *)
+    STATION="${1:-questions}"; GRADE="$2"; SUBJECT="$3"; STRAND="${4:-}"; SUB="${5:-}"; COUNT="${6:-30}"
+    MODEL="${7:-$DEFAULT_MODEL}"; URL="${8:-$DEFAULT_URL}"
+    exec python3 "$KIT/cbc_agent.py" run --station "$STATION" --grade "$GRADE" --subject "$SUBJECT" \\
+      --strand "$STRAND" --sub-strand "$SUB" --count "$COUNT" --model "$MODEL" --llm-url "$URL" ;;
+esac
 """
 
 

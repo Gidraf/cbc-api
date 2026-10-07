@@ -87,6 +87,8 @@ def _patient(method: str, path: str, body: Any = None, *, what: str = "") -> dic
             reason = str(getattr(exc, "reason", exc))[:120]
         print(f"  platform unreachable{f' ({what})' if what else ''}: {reason}; retrying in {delay:.0f}s",
               flush=True)
+        if _WINDOW and not _in_window(_WINDOW):
+            raise _WindowClosed()
         time.sleep(delay)
         delay = min(delay * 2, 300.0)
 
@@ -96,11 +98,30 @@ def _patient(method: str, path: str, body: Any = None, *, what: str = "") -> dic
 NUM_CTX = int(os.getenv("LLM_NUM_CTX", "24576"))
 # Room for the longest answer (a chunk of questions is about 6k tokens).
 NUM_PREDICT = int(os.getenv("LLM_NUM_PREDICT", "8192"))
+# The window grows past NUM_CTX for a prompt that needs it, up to this. A
+# 2-question batch arrived at 71,000 characters — the guide is in it — which
+# left a 24k window 4k tokens to answer in. 32k keeps a 14B on an 18 GB Mac.
+MAX_CTX = int(os.getenv("LLM_MAX_CTX", "32768"))
+
+
+def _context_for(messages: list[dict[str, str]]) -> int:
+    """The window this prompt needs: its tokens (about 3.2 characters each
+    for this mix of prose, LaTeX and JSON) plus room for the answer, rounded
+    up to 2k so a slightly longer prompt does not reload the model."""
+    chars = sum(len(str(m.get("content") or "")) for m in messages)
+    needed = int(chars / 3.2) + min(NUM_PREDICT, 6144)
+    size = max(NUM_CTX, -(-needed // 2048) * 2048)
+    if size > MAX_CTX:
+        print(f"\n  note: this prompt wants a {size:,}-token window; capped at {MAX_CTX:,} "
+              f"(LLM_MAX_CTX) — the start of it may be cut", flush=True)
+    return min(size, MAX_CTX)
 # Unloading between tasks costs a reload every time (11 s for a 14B).
 KEEP_ALIVE = os.getenv("LLM_KEEP_ALIVE", "60m")
 # qwen3 and deepseek-r1 reason before they answer. Better answers, several
 # times slower; off unless asked for (--think or LLM_THINK=1).
 THINK = os.getenv("LLM_THINK", "").lower() in ("1", "true", "yes", "on")
+# The serving window, while `serve --window` runs; retries respect it too.
+_WINDOW = ""
 _ollama_native: dict[str, bool] = {}
 
 
@@ -130,7 +151,7 @@ def _model(llm_url: str, model: str, messages: list[dict[str, str]], *, expect: 
         base = base[:-3] if base.endswith("/v1") else base
         body: dict[str, Any] = {"model": model, "messages": messages, "stream": False,
                                 "keep_alive": KEEP_ALIVE, "think": THINK,
-                                "options": {"temperature": temperature, "num_ctx": NUM_CTX,
+                                "options": {"temperature": temperature, "num_ctx": _context_for(messages),
                                             "num_predict": NUM_PREDICT}}
         if expect == "json":
             body["format"] = "json"
@@ -408,6 +429,37 @@ def sweep(args: argparse.Namespace) -> None:
 
 # ── Serve the queue, without stopping ───────────────────────────────────────
 
+def _in_window(window: str, now: "time.struct_time | None" = None) -> bool:
+    """Whether the clock is inside HH:MM-HH:MM. A window that crosses
+    midnight (22:00-06:00) wraps; an empty window is always open."""
+    if not window:
+        return True
+    start, end = (int(a) * 60 + int(b) for a, b in (part.split(":") for part in window.split("-")))
+    t = now or time.localtime()
+    minute = t.tm_hour * 60 + t.tm_min
+    return start <= minute < end if start < end else (minute >= start or minute < end)
+
+
+def _unload(llm_url: str, model: str) -> None:
+    """Free the model's memory now rather than when keep_alive runs out."""
+    if not _is_ollama(llm_url):
+        return
+    base = llm_url.rstrip("/")
+    base = base[:-3] if base.endswith("/v1") else base
+    try:
+        req = urllib.request.Request(base + "/api/generate", method="POST",
+                                     data=json.dumps({"model": model, "keep_alive": 0}).encode(),
+                                     headers={"Content-Type": "application/json"})
+        urllib.request.urlopen(req, timeout=30).read()
+        print(f"unloaded {model} from memory", flush=True)
+    except Exception as exc:  # noqa: BLE001
+        print(f"could not unload {model}: {exc}", flush=True)
+
+
+class _WindowClosed(Exception):
+    """The serving window ended; stop before the next prompt."""
+
+
 def _work(task_id: str, args: argparse.Namespace) -> str:
     """Answer one task's prompts until it finishes. Returns its final status."""
     failures = 0
@@ -418,6 +470,10 @@ def _work(task_id: str, args: argparse.Namespace) -> str:
     while True:
         status = task.get("status")
         if status == "awaiting" and task.get("step"):
+            if not _in_window(args.window):
+                # The step in hand is left for the next window; the platform
+                # holds it, and the next run picks it up.
+                raise _WindowClosed()
             step = task["step"]
             chars = sum(len(m["content"]) for m in step["messages"])
             print(f"  step {step['number']} ({step['stage']}, {chars:,} chars) → {args.model} …", end="", flush=True)
@@ -479,10 +535,29 @@ def serve(args: argparse.Namespace) -> None:
     """
     print(f"serving {API} on {args.model} at {args.llm_url}"
           f"{' (thinking on)' if THINK else ''}; context {NUM_CTX:,} tokens", flush=True)
+    global _WINDOW
+    _WINDOW = args.window or ""
+    if args.window and not _in_window(args.window):
+        print(f"outside the serving window {args.window}; nothing to do now", flush=True)
+        return
+    if args.window:
+        print(f"serving until the window {args.window} closes", flush=True)
+    try:
+        _serve_loop(args)
+    except _WindowClosed:
+        print(f"window {args.window} closed; stopping", flush=True)
+    finally:
+        if args.window:
+            _unload(args.llm_url, args.model)
+
+
+def _serve_loop(args: argparse.Namespace) -> None:
     set_aside: dict[str, float] = {}
     idle_since: float | None = None
     worked = 0
     while True:
+        if not _in_window(args.window):
+            raise _WindowClosed()
         live = _patient("GET", "/api/v1/agent/tasks", what="listing tasks").get("live") or []
         waiting = [t for t in live if t.get("status") in ("awaiting", "running")
                    and set_aside.get(t["task_id"], 0) <= time.time()]
@@ -501,6 +576,8 @@ def serve(args: argparse.Namespace) -> None:
         for t in waiting:
             try:
                 outcome = _work(t["task_id"], args)
+            except _WindowClosed:
+                raise
             except PlatformError as exc:
                 outcome = "gone"
                 print(f"  {t['task_id']}: {str(exc)[:160]}", flush=True)
@@ -554,6 +631,8 @@ def main() -> None:
     v.add_argument("--think", action="store_true", help="let qwen3 / deepseek-r1 reason first (slower)")
     v.add_argument("--download", default=os.getenv("CBC_DOWNLOAD_DIR", ""),
                    help="save finished papers' PDFs here")
+    v.add_argument("--window", default=os.getenv("CBC_SERVE_WINDOW", ""),
+                   help="only serve between these times, e.g. 00:00-07:00; outside it, stop and unload the model")
     args = parser.parse_args()
     if getattr(args, "think", False):
         global THINK
