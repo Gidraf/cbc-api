@@ -272,6 +272,20 @@ def _warn_if_prompt_exceeds_context(chars: int, llm_url: str) -> None:
               f"  (set the same variable in this shell so this check can see it)")
 
 
+def _recover(task: dict[str, Any], exc: "PlatformError", body: dict[str, Any], resumed: int) -> dict[str, Any]:
+    """After a refused answer: carry on from where the task is, or — if the
+    platform lost it in a restart — start it again with the same body."""
+    try:
+        return _patient("GET", f"/api/v1/agent/tasks/{task['task_id']}", what=task["task_id"])
+    except PlatformError as lost:
+        if lost.status != 404 or resumed >= RESUBMITS:
+            raise exc from lost
+    fresh = _patient("POST", "/api/v1/agent/tasks", body, what="restarting a lost task")
+    print(f"  the platform lost {task['task_id']} (restarted?); resumed as {fresh['task_id']} — "
+          f"answered prompts replay from its journal", flush=True)
+    return fresh
+
+
 def run(args: argparse.Namespace) -> dict[str, Any]:
     started = time.time()
     body: dict[str, Any] = {
@@ -283,10 +297,11 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         body["kind"] = args.kind
     if getattr(args, "term", None):
         body["term"] = args.term
-    task = _platform("POST", "/api/v1/agent/tasks", body)
+    task = _patient("POST", "/api/v1/agent/tasks", body, what="starting the task")
     print(f"task {task['task_id']} — {args.station} for {args.grade} {args.subject} "
           f"{args.sub_strand or args.strand or (f'term {args.term}' if getattr(args, 'term', None) else '')}"
           + (" (joined a task already running)" if task.get("joined_existing") else ""))
+    resumed = 0
     while True:
         status = task.get("status")
         if status == "awaiting" and task.get("step"):
@@ -298,11 +313,20 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             answer = _model(args.llm_url, args.model, step["messages"], expect=step["expect"],
                             temperature=float(step.get("temperature") or 0.3))
             print(f" {len(answer):,} chars in {time.time() - t0:.0f}s")
-            task = _platform("POST", f"/api/v1/agent/tasks/{task['task_id']}/complete",
-                             {"content": answer, "model": f"{args.model}", "wait_seconds": 60,
-                              "step": step["number"]})
+            try:
+                task = _patient("POST", f"/api/v1/agent/tasks/{task['task_id']}/complete",
+                                {"content": answer, "model": f"{args.model}", "wait_seconds": 60,
+                                 "step": step["number"]}, what=task["task_id"])
+            except PlatformError as exc:
+                task = _recover(task, exc, body, resumed)
+                resumed += 1
         elif status == "running":
-            task = _platform("GET", f"/api/v1/agent/tasks/{task['task_id']}/wait?seconds=60")
+            try:
+                task = _patient("GET", f"/api/v1/agent/tasks/{task['task_id']}/wait?seconds=60",
+                                what=task["task_id"])
+            except PlatformError as exc:
+                task = _recover(task, exc, body, resumed)
+                resumed += 1
         else:
             break
     print(f"{task.get('status')} after {task.get('steps_completed')} step(s), {time.time() - started:.0f}s")
@@ -454,6 +478,33 @@ def sweep(args: argparse.Namespace) -> None:
 
 # ── Serve the queue, without stopping ───────────────────────────────────────
 
+_START_FIELDS = ("grade", "subject", "strand", "sub_strand", "kind", "term", "sub_strands", "count",
+                 "custom_instructions", "review_cycles")
+RESUBMITS = 10
+
+
+def _resubmit(task: dict[str, Any]) -> dict[str, Any]:
+    """Start a task the platform lost again, with exactly its parameters.
+
+    A redeploy drops every live task (they live in the API's memory). The
+    answers already given are journalled under the task's parameters, so the
+    same start replays them and only the prompts not yet answered come back.
+    """
+    params = dict(task.get("params") or {})
+    body: dict[str, Any] = {"station": task.get("station"), "wait_seconds": 30}
+    for key in _START_FIELDS:
+        if params.get(key) not in (None, "", []):
+            body[key] = params.pop(key)
+        else:
+            params.pop(key, None)
+    if params:
+        body["extra"] = params
+    fresh = _patient("POST", "/api/v1/agent/tasks", body, what="restarting a lost task")
+    print(f"  the platform lost {task.get('task_id')} (restarted?); resumed as {fresh.get('task_id')} — "
+          f"answered prompts replay from its journal", flush=True)
+    return fresh
+
+
 def _in_window(window: str, now: "time.struct_time | None" = None) -> bool:
     """Whether the clock is inside HH:MM-HH:MM. A window that crosses
     midnight (22:00-06:00) wraps; an empty window is always open."""
@@ -487,12 +538,15 @@ class _WindowClosed(Exception):
 
 def _work(task_id: str, args: argparse.Namespace) -> str:
     """Answer one task's prompts until it finishes. Returns its final status."""
-    failures = 0
+    failures = resubmits = 0
     task = _patient("GET", f"/api/v1/agent/tasks/{task_id}", what=task_id)
+    last = task
     p = task.get("params") or {}
     where = p.get("sub_strand") or p.get("strand") or (f"term {p['term']}" if p.get("term") else "")
     print(f"\n▶ {task_id} · {task.get('station')} · {p.get('grade')} {p.get('subject')} {where}", flush=True)
     while True:
+        if task.get("params"):
+            last = task
         status = task.get("status")
         if status == "awaiting" and task.get("step"):
             if not _in_window(args.window):
@@ -522,18 +576,26 @@ def _work(task_id: str, args: argparse.Namespace) -> str:
                                 {"content": answer, "model": args.model, "wait_seconds": 60,
                                  "step": step["number"]}, what=task_id)
             except PlatformError as exc:
-                # Someone else answered this step, or the task ended meanwhile:
-                # read where it is now and carry on from there.
+                # Someone else answered this step, or the task ended or was
+                # lost meanwhile: read where it is now and carry on from there.
                 print(f"  {str(exc)[:160]}", flush=True)
                 try:
                     task = _patient("GET", f"/api/v1/agent/tasks/{task_id}", what=task_id)
-                except PlatformError:
-                    return "gone"
+                except PlatformError as lost:
+                    if lost.status != 404 or resubmits >= RESUBMITS:
+                        return "gone"
+                    resubmits += 1
+                    task = _resubmit(last)
+                    task_id = task["task_id"]
         elif status == "running":
             try:
                 task = _patient("GET", f"/api/v1/agent/tasks/{task_id}/wait?seconds=60", what=task_id)
-            except PlatformError:
-                return "gone"
+            except PlatformError as lost:
+                if lost.status != 404 or resubmits >= RESUBMITS:
+                    return "gone"
+                resubmits += 1
+                task = _resubmit(last)
+                task_id = task["task_id"]
         else:
             result = task.get("result") or {}
             print(f"■ {task_id} {status} after {task.get('steps_completed')} step(s)"
