@@ -349,7 +349,7 @@ def coverage(grade: str = Query(...), subject: str = Query(...),
              _: AuthContext = Depends(require_roles("admin", "operator", "developer"))) -> dict[str, Any]:
     """Per sub-strand: usable questions, figures, held items, whether a guide
     exists, when it was last reviewed — what an unattended planner decides on."""
-    from ..services import coverage as coverage_service
+    from ..services import bank_coverage as coverage_service
 
     return coverage_service.for_subject(grade, subject, with_notes=notes)
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from app.services import coverage
+from app.services import bank_coverage as coverage
 
 
 def test_every_design_sub_strand_is_listed_with_its_counts(monkeypatch) -> None:
