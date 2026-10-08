@@ -297,6 +297,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         body["kind"] = args.kind
     if getattr(args, "term", None):
         body["term"] = args.term
+    if getattr(args, "extra", None):
+        body["extra"] = dict(args.extra)
     task = _patient("POST", "/api/v1/agent/tasks", body, what="starting the task")
     print(f"task {task['task_id']} — {args.station} for {args.grade} {args.subject} "
           f"{args.sub_strand or args.strand or (f'term {args.term}' if getattr(args, 'term', None) else '')}"
@@ -685,6 +687,407 @@ def _serve_loop(args: argparse.Namespace) -> None:
                 worked += 1
 
 
+# ── The night planner: campaigns, carry-over, a report each morning ────────
+#
+# Each night it plans from facts, not guesses: the campaign's phase (create
+# or review), the bank's coverage per sub-strand, the jobs carried from
+# earlier nights, and how long each kind of job has actually taken. Planning
+# takes seconds; the model's hours go to writing.
+
+PLANNER_DIR = os.path.expanduser(os.getenv("CBC_PLANNER_DIR", "~/cbc-claude/planner"))
+GRADE_ORDER = ["grade-9", "grade-10", "grade-8", "grade-11", "grade-7", "grade-12", "grade-6"]
+# First guesses, in minutes, until a few nights have measured the real ones.
+DEFAULT_MINUTES = {"notes": 60.0, "questions": 40.0, "review": 30.0}
+
+
+def _default_campaign(today: str) -> dict[str, Any]:
+    return {
+        "start": today,
+        "grades": GRADE_ORDER,
+        "subjects": [],
+        "phases": [{"name": "create", "weeks": 10, "target_questions": 20000},
+                   {"name": "review", "weeks": 20}],
+        "repeat": [{"name": "create", "weeks": 15, "target_questions": 40000},
+                   {"name": "review", "weeks": 15}],
+        "batch": 20,
+        "carry_limit_nights": 2,
+        "max_attempts": 3,
+    }
+
+
+def _load_json(path: str, default: Any) -> Any:
+    try:
+        with open(path, encoding="utf-8") as fh:
+            return json.load(fh)
+    except (OSError, ValueError):
+        return default
+
+
+def _save_json(path: str, data: Any) -> None:
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(data, fh, indent=1, default=str)
+    os.replace(tmp, path)
+
+
+def phase_for(campaign: dict[str, Any], day: str) -> dict[str, Any]:
+    """The phase a date falls in: the listed phases, then the repeat cycle
+    for ever. Returns the phase with its own start and end dates."""
+    import datetime as dt
+
+    start = dt.date.fromisoformat(str(campaign["start"]))
+    when = dt.date.fromisoformat(day)
+    cursor = start
+    phases = list(campaign.get("phases") or [])
+    repeat = list(campaign.get("repeat") or []) or phases[-1:] or [{"name": "create", "weeks": 1}]
+    cycle = 0
+    queue = [(p, 0) for p in phases]
+    while True:
+        if not queue:
+            cycle += 1
+            queue = [(p, cycle) for p in repeat]
+        phase, n = queue.pop(0)
+        end = cursor + dt.timedelta(weeks=float(phase.get("weeks") or 1))
+        if when < end or when < start:
+            return {**phase, "cycle": n, "phase_start": cursor.isoformat(), "phase_end": end.isoformat(),
+                    "key": f"{phase.get('name')}-{cursor.isoformat()}"}
+        cursor = end
+
+
+def _night_of(now: "time.struct_time | None" = None) -> str:
+    """The night a moment belongs to: 22:00 on the 8th and 03:00 on the 9th
+    are both the night of the 8th."""
+    import datetime as dt
+
+    t = dt.datetime.fromtimestamp(time.mktime(now)) if now else dt.datetime.now()
+    return (t.date() - dt.timedelta(days=1) if t.hour < 12 else t.date()).isoformat()
+
+
+def _minutes_left(window: str) -> float:
+    if not window:
+        return 9 * 60.0
+    end_h, end_m = (int(x) for x in window.split("-")[1].split(":"))
+    t = time.localtime()
+    now = t.tm_hour * 60 + t.tm_min
+    end = end_h * 60 + end_m
+    return float((end - now) % (24 * 60))
+
+
+def _window_minutes(window: str) -> float:
+    if not window:
+        return 9 * 60.0
+    (sh, sm), (eh, em) = ((int(a), int(b)) for a, b in (p.split(":") for p in window.split("-")))
+    return float(((eh * 60 + em) - (sh * 60 + sm)) % (24 * 60)) or 24 * 60.0
+
+
+def _estimate(state: dict[str, Any], kind: str) -> float:
+    seen = sorted(state.get("measured", {}).get(kind, [])[-10:])
+    return float(seen[len(seen) // 2]) if seen else DEFAULT_MINUTES.get(kind, 45.0)
+
+
+def _subjects(grade: str, campaign: dict[str, Any], cache: dict[str, list[str]]) -> list[str]:
+    if campaign.get("subjects"):
+        return list(campaign["subjects"])
+    if grade not in cache:
+        try:
+            cache[grade] = _ingested_subjects(grade)
+        except SystemExit as exc:
+            print(f"  {grade}: could not list subjects — {str(exc)[:120]}", flush=True)
+            cache[grade] = []
+    return cache[grade]
+
+
+def _coverage(grade: str, subject: str, cache: dict[str, Any], *, notes: bool = True) -> list[dict[str, Any]]:
+    key = f"{grade}|{subject}|{notes}"
+    if key not in cache:
+        from urllib.parse import quote
+
+        try:
+            out = _patient("GET", f"/api/v1/agent/coverage?grade={quote(grade)}&subject={quote(subject)}"
+                                  f"&notes={'true' if notes else 'false'}", what=f"coverage {grade} {subject}")
+            cache[key] = out.get("sub_strands") or []
+        except PlatformError as exc:
+            print(f"  coverage {grade} {subject}: {str(exc)[:120]}", flush=True)
+            cache[key] = []
+    return cache[key]
+
+
+def _size_phase(phase: dict[str, Any], campaign: dict[str, Any], state: dict[str, Any],
+                subjects: dict[str, list[str]], cov: dict[str, Any]) -> dict[str, Any]:
+    """Once per phase: how many sub-strands the campaign covers and how many
+    questions the bank held at the start, so the target can be shared out and
+    the projection measured against it."""
+    sized = state.setdefault("phases", {}).get(phase["key"])
+    if sized:
+        return sized
+    print(f"sizing the {phase['name']} phase: counting sub-strands across the campaign …", flush=True)
+    count = questions = 0
+    for grade in campaign.get("grades") or GRADE_ORDER:
+        for subject in _subjects(grade, campaign, subjects):
+            rows = _coverage(grade, subject, cov, notes=False)
+            count += len(rows)
+            questions += sum(int(r.get("questions") or 0) for r in rows)
+    target = int(phase.get("target_questions") or 0)
+    sized = {"sub_strands": count, "bank_at_start": questions,
+             "per_sub_strand": -(-target // count) if (target and count) else 0}
+    state["phases"][phase["key"]] = sized
+    print(f"  {count} sub-strands, {questions} usable questions now; "
+          f"target {target} → {sized['per_sub_strand']} per sub-strand", flush=True)
+    return sized
+
+
+def _open_jobs(state: dict[str, Any]) -> list[dict[str, Any]]:
+    return sorted((j for j in state.get("jobs", {}).values() if j.get("status") in ("planned", "carried")),
+                  key=lambda j: (j.get("created") or "", j["id"]))
+
+
+def _new_job(state: dict[str, Any], kind: str, row: dict[str, Any], grade: str, subject: str,
+             night: str, **more: Any) -> dict[str, Any]:
+    n = state.setdefault("seq", 0) + 1
+    state["seq"] = n
+    job = {"id": f"{night}-{n:04d}-{kind}", "kind": kind, "grade": grade, "subject": subject,
+           "strand": row.get("strand") or "", "sub_strand": row.get("sub_strand") or "",
+           "status": "planned", "attempts": 0, "created": night, "nights": [], **more}
+    state.setdefault("jobs", {})[job["id"]] = job
+    return job
+
+
+def _fits(cost: float, budget: float, plan: dict[str, Any], carried: list[Any]) -> bool:
+    """A job goes in if it fits what is left of the night — or if the night
+    would otherwise be empty, since the window closing carries it over."""
+    if cost <= budget:
+        return True
+    return not plan["new"] and not carried and budget > 15
+
+
+def plan_night(campaign: dict[str, Any], state: dict[str, Any], *, night: str, window: str,
+               minutes_left: float | None = None) -> dict[str, Any]:
+    """The night's plan: carried jobs first; then new work to fill the
+    night — unless the carry-over is so large the night goes to it alone."""
+    phase = phase_for(campaign, night)
+    left = _minutes_left(window) if minutes_left is None else minutes_left
+    carried = _open_jobs(state)
+    carried_minutes = sum(_estimate(state, j["kind"]) for j in carried)
+    limit = float(campaign.get("carry_limit_nights") or 2) * _window_minutes(window)
+    plan = {"night": night, "phase": phase, "catch_up": carried_minutes > limit,
+            "carried": [j["id"] for j in carried], "new": [], "budget": left}
+    if plan["catch_up"]:
+        return plan
+    budget = left - carried_minutes
+    busy = {(j["kind"], j["grade"], j["subject"], j["sub_strand"].lower()) for j in carried}
+    subjects: dict[str, list[str]] = state.setdefault("_subject_cache", {})
+    cov: dict[str, Any] = {}
+    batch = int(campaign.get("batch") or 20)
+
+    if phase.get("name") == "create":
+        per = _size_phase(phase, campaign, state, subjects, cov)["per_sub_strand"] or batch * 2
+        for grade in campaign.get("grades") or GRADE_ORDER:
+            if budget <= 0:
+                break
+            rows: list[tuple[float, str, dict[str, Any]]] = []
+            for subject in _subjects(grade, campaign, subjects):
+                for row in _coverage(grade, subject, cov):
+                    have = int(row.get("questions") or 0)
+                    if have < per and ("questions", grade, subject, row["sub_strand"].lower()) not in busy:
+                        rows.append((have / per, subject, row))
+            rows.sort(key=lambda r: (r[0], r[1], r[2]["sub_strand"]))
+            for _ratio, subject, row in rows:
+                needs_notes = row.get("has_notes") is False
+                cost = _estimate(state, "questions") + (_estimate(state, "notes") if needs_notes else 0)
+                if not _fits(cost, budget, plan, carried):
+                    budget = 0
+                    break
+                after = None
+                if needs_notes:
+                    notes = _new_job(state, "notes", row, grade, subject, night)
+                    plan["new"].append(notes["id"])
+                    after = notes["id"]
+                count = max(1, min(batch, per - int(row.get("questions") or 0)))
+                job = _new_job(state, "questions", row, grade, subject, night, count=count, after=after)
+                plan["new"].append(job["id"])
+                budget -= cost
+    else:
+        since = phase["phase_start"]
+        for grade in campaign.get("grades") or GRADE_ORDER:
+            if budget <= 0:
+                break
+            rows = []
+            for subject in _subjects(grade, campaign, subjects):
+                for row in _coverage(grade, subject, cov, notes=False):
+                    reviewed = str(row.get("last_reviewed") or "")
+                    if int(row.get("questions") or 0) and reviewed[:10] < since \
+                            and ("review", grade, subject, row["sub_strand"].lower()) not in busy:
+                        rows.append((reviewed, subject, row))
+            rows.sort(key=lambda r: (r[0], r[1], r[2]["sub_strand"]))      # never reviewed first
+            for _when, subject, row in rows:
+                cost = _estimate(state, "review")
+                if not _fits(cost, budget, plan, carried):
+                    budget = 0
+                    break
+                job = _new_job(state, "review", row, grade, subject, night)
+                plan["new"].append(job["id"])
+                budget -= cost
+    return plan
+
+
+def _job_args(job: dict[str, Any], args: argparse.Namespace) -> argparse.Namespace:
+    station = job["kind"]
+    return argparse.Namespace(
+        station=station, grade=job["grade"], subject=job["subject"], strand=job.get("strand") or "",
+        sub_strand=job.get("sub_strand") or "", count=job.get("count") if station == "questions" else None,
+        instructions="", model=args.model, llm_url=args.llm_url, kind="", term=None, download="",
+        extra={"fix": True, "approve_clean": False} if station == "review" else None)
+
+
+def work_night(plan: dict[str, Any], state: dict[str, Any], campaign: dict[str, Any],
+               args: argparse.Namespace) -> dict[str, Any]:
+    """Run the plan in order until it is done or the window closes."""
+    jobs = state["jobs"]
+    order = plan["carried"] + plan["new"]
+    tally = {"done": [], "failed": [], "given_up": [], "carried": [], "saved": 0}
+    max_attempts = int(campaign.get("max_attempts") or 3)
+    for i, job_id in enumerate(order):
+        job = jobs[job_id]
+        if args.window and not _in_window(args.window):
+            for rest in order[i:]:
+                jobs[rest]["status"] = "carried"
+                tally["carried"].append(rest)
+            print(f"\nwindow {args.window} closed; {len(order) - i} job(s) carry over", flush=True)
+            break
+        after = job.get("after")
+        if after and jobs.get(after, {}).get("status") != "done":
+            job["status"] = "carried"
+            tally["carried"].append(job_id)
+            print(f"\n· {job_id} waits for {after} (its teacher's guide)", flush=True)
+            continue
+        print(f"\n=== {job_id}: {job['kind']} · {job['grade']} {job['subject']} · {job['sub_strand']}"
+              + (f" · {job.get('count')} items" if job.get("count") else ""), flush=True)
+        job["nights"] = sorted(set(job.get("nights", []) + [plan["night"]]))
+        started = time.time()
+        try:
+            task = run(_job_args(job, args))
+        except _WindowClosed:
+            job["status"] = "carried"
+            tally["carried"].append(job_id)
+            for rest in order[i + 1:]:
+                jobs[rest]["status"] = "carried"
+                tally["carried"].append(rest)
+            print(f"window closed mid-job; {job_id} resumes next night from its journal", flush=True)
+            break
+        except (SystemExit, Exception) as exc:  # noqa: BLE001
+            task = {"status": "failed", "error": str(exc)[:300]}
+        minutes = (time.time() - started) / 60.0
+        if task.get("status") == "done":
+            job["status"] = "done"
+            result = task.get("result") if isinstance(task.get("result"), dict) else {}
+            saved = result.get("saved")
+            job["saved"] = len(saved) if isinstance(saved, list) else int(saved or 0)
+            tally["saved"] += job["saved"] if job["kind"] == "questions" else 0
+            state.setdefault("measured", {}).setdefault(job["kind"], []).append(round(minutes, 1))
+            tally["done"].append(job_id)
+        else:
+            job["attempts"] = int(job.get("attempts") or 0) + 1
+            job["error"] = str(task.get("error") or task.get("status"))[:300]
+            job["status"] = "given_up" if job["attempts"] >= max_attempts else "carried"
+            tally["given_up" if job["status"] == "given_up" else "failed"].append(job_id)
+            print(f"  {job_id} {job['status']} (attempt {job['attempts']}): {job['error'][:160]}", flush=True)
+        _save_json(os.path.join(PLANNER_DIR, "state.json"), state)
+    return tally
+
+
+def _report(plan: dict[str, Any], tally: dict[str, Any], state: dict[str, Any],
+            campaign: dict[str, Any]) -> str:
+    import datetime as dt
+
+    phase = plan["phase"]
+    night = plan["night"]
+    nights = state.setdefault("nights", [])
+    nights.append({"night": night, "phase": phase["key"], "saved": tally["saved"],
+                   "done": len(tally["done"]), "carried": len(tally["carried"]),
+                   "failed": len(tally["failed"]), "catch_up": plan["catch_up"]})
+    lines = [f"# Night of {night} — {phase['name']} phase "
+             f"({phase['phase_start']} to {phase['phase_end']})", ""]
+    if plan["catch_up"]:
+        lines += ["**Catch-up night**: the carry-over was larger than "
+                  f"{campaign.get('carry_limit_nights', 2)} nights' work, so no new jobs were planned.", ""]
+    lines += [f"- Planned: {len(plan['carried'])} carried + {len(plan['new'])} new",
+              f"- Done: {len(tally['done'])}   Carried to next night: {len(tally['carried'])}   "
+              f"Failed (will retry): {len(tally['failed'])}   Given up: {len(tally['given_up'])}",
+              f"- Questions saved tonight: {tally['saved']}", ""]
+    if phase.get("name") == "create" and phase.get("target_questions"):
+        sized = state.get("phases", {}).get(phase["key"], {})
+        in_phase = [n for n in nights if n["phase"] == phase["key"]]
+        added = sum(n["saved"] for n in in_phase)
+        recent = [n["saved"] for n in in_phase[-7:]]
+        rate = sum(recent) / len(recent) if recent else 0.0
+        end = dt.date.fromisoformat(phase["phase_end"])
+        nights_left = max(0, (end - dt.date.fromisoformat(night)).days)
+        have = int(sized.get("bank_at_start") or 0) + added
+        projected = have + rate * nights_left
+        target = int(phase["target_questions"])
+        verdict = "on track" if projected >= target else \
+            f"short by about {int(target - projected):,} — the rate needs to be {((target - have) / max(1, nights_left)):.0f} a night"
+        lines += [f"## Toward {target:,} questions",
+                  f"- In the bank now: about {have:,} ({added:,} added this phase)",
+                  f"- Rate: {rate:.0f} a night over the last {len(recent)} night(s); {nights_left} nights left",
+                  f"- Projection at the end of the phase: about {int(projected):,} — {verdict}", ""]
+    for title, key in (("Done", "done"), ("Carried over", "carried"), ("Failed", "failed"), ("Given up", "given_up")):
+        if tally[key]:
+            lines.append(f"## {title}")
+            for jid in tally[key]:
+                j = state["jobs"][jid]
+                extra = f" — {j.get('saved')} saved" if key == "done" and j["kind"] == "questions" else \
+                        (f" — {j.get('error', '')[:120]}" if key in ("failed", "given_up") else "")
+                lines.append(f"- {j['kind']} · {j['grade']} {j['subject']} · {j['sub_strand']}{extra}")
+            lines.append("")
+    text = "\n".join(lines)
+    path = os.path.join(PLANNER_DIR, "reports", f"{night}.md")
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write(text)
+    return path
+
+
+def night(args: argparse.Namespace) -> None:
+    """One night: plan from the campaign and the bank, work the plan inside
+    the window, carry what is left, write the morning report."""
+    global _WINDOW
+    _WINDOW = args.window or ""
+    if args.window and not _in_window(args.window) and not args.plan_only:
+        print(f"outside the window {args.window}; nothing to do now")
+        return
+    campaign_path = os.path.join(PLANNER_DIR, "campaign.json")
+    state_path = os.path.join(PLANNER_DIR, "state.json")
+    tonight = _night_of()
+    if not os.path.exists(campaign_path):
+        _save_json(campaign_path, _default_campaign(tonight))
+        print(f"wrote a starting campaign to {campaign_path} — edit it to change phases and targets")
+    campaign = _load_json(campaign_path, _default_campaign(tonight))
+    state = _load_json(state_path, {})
+    plan = plan_night(campaign, state, night=tonight, window=args.window)
+    phase = plan["phase"]
+    print(f"night of {tonight}: {phase['name']} phase ({phase['phase_start']} → {phase['phase_end']}); "
+          f"{len(plan['carried'])} carried + {len(plan['new'])} new job(s)"
+          + (" — CATCH-UP NIGHT" if plan["catch_up"] else ""), flush=True)
+    for jid in plan["carried"] + plan["new"]:
+        j = state["jobs"][jid]
+        print(f"  {'↻' if jid in plan['carried'] else '+'} {j['kind']:9} {j['grade']:9} {j['subject'][:28]:28} "
+              f"{j['sub_strand'][:40]}" + (f" ({j['count']})" if j.get("count") else ""), flush=True)
+    if args.plan_only:
+        for jid in plan["new"]:
+            state["jobs"].pop(jid, None)
+        return
+    _save_json(state_path, state)
+    try:
+        tally = work_night(plan, state, campaign, args)
+    finally:
+        _save_json(state_path, state)
+    report = _report(plan, tally, state, campaign)
+    _save_json(state_path, state)
+    print(f"\nmorning report: {report}", flush=True)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -732,6 +1135,11 @@ def main() -> None:
                    help="save finished papers' PDFs here")
     v.add_argument("--window", default=os.getenv("CBC_SERVE_WINDOW", ""),
                    help="only serve between these times, e.g. 00:00-07:00; outside it, stop and unload the model")
+    n = sub.add_parser("night", help="plan tonight from the campaign and the bank, work it, report in the morning")
+    n.add_argument("--model", required=True)
+    n.add_argument("--llm-url", dest="llm_url", default=os.getenv("LLM_URL", "http://localhost:11434/v1"))
+    n.add_argument("--window", default=os.getenv("CBC_SERVE_WINDOW", ""))
+    n.add_argument("--plan-only", dest="plan_only", action="store_true", help="print tonight's plan and stop")
     args = parser.parse_args()
     if getattr(args, "think", False):
         global THINK
@@ -745,6 +1153,8 @@ def main() -> None:
             print(f"outside the window {_WINDOW}; nothing to do now")
             return
         sweep(args)
+    elif args.command == "night":
+        night(args)
     elif args.command == "serve":
         try:
             serve(args)
