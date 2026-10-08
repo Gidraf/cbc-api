@@ -305,6 +305,9 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     while True:
         status = task.get("status")
         if status == "awaiting" and task.get("step"):
+            if _WINDOW and not _in_window(_WINDOW):
+                print(f"  window {_WINDOW} closed; {task['task_id']} carries over to the next night", flush=True)
+                raise _WindowClosed()
             step = task["step"]
             chars = sum(len(m["content"]) for m in step["messages"])
             _warn_if_prompt_exceeds_context(chars, args.llm_url)
@@ -449,8 +452,15 @@ def sweep(args: argparse.Namespace) -> None:
             count=args.count, instructions=args.instructions, model=args.model, llm_url=args.llm_url,
             kind="term", term=term, download=args.download,
         )
+        if _WINDOW and not _in_window(_WINDOW):
+            print(f"\nwindow {_WINDOW} closed; the rest of the plan waits for the next night", flush=True)
+            break
         try:
             task = run(run_args)
+        except _WindowClosed:
+            remember(key, {"status": "carried", "error": "window closed mid-paper; answers are journalled"})
+            print("  carried over: the next night resumes it where it stopped", flush=True)
+            break
         except SystemExit as exc:
             # The platform refused the start (no sub-strands, bad key…).
             failed += 1
@@ -707,6 +717,8 @@ def main() -> None:
     w.add_argument("--redo", action="store_true", help="re-run papers the ledger already marks done")
     w.add_argument("--model", required=True)
     w.add_argument("--llm-url", dest="llm_url", default=os.getenv("LLM_URL", "http://localhost:11434/v1"))
+    w.add_argument("--window", default=os.getenv("CBC_SERVE_WINDOW", ""),
+                   help="only work between these times, e.g. 22:00-07:00; an unfinished paper carries over")
     v = sub.add_parser("serve", help="answer every task the platform is waiting on, and keep watching for more")
     v.add_argument("--model", required=True)
     v.add_argument("--llm-url", dest="llm_url", default=os.getenv("LLM_URL", "http://localhost:11434/v1"))
@@ -727,6 +739,11 @@ def main() -> None:
     if not KEY:
         sys.exit("set CBC_API_KEY (an API key from the console's Providers page)")
     if args.command == "sweep":
+        global _WINDOW
+        _WINDOW = getattr(args, "window", "") or ""
+        if _WINDOW and not _in_window(_WINDOW):
+            print(f"outside the window {_WINDOW}; nothing to do now")
+            return
         sweep(args)
     elif args.command == "serve":
         try:
