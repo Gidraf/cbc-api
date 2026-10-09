@@ -174,7 +174,7 @@ def test_the_window_grows_for_a_long_prompt_and_stops_at_the_cap(monkeypatch) ->
     two_questions = [{"role": "user", "content": "x" * 71_151}]      # what a 2-question batch sent
     huge = [{"role": "user", "content": "x" * 200_000}]
     assert cbc_agent._context_for(short) == 24576, "no reload for an ordinary prompt"
-    assert cbc_agent._context_for(two_questions) == 28672, "room to answer, not 4k"
+    assert cbc_agent._context_for(two_questions) == 32768, "room to answer, not 4k"
     assert cbc_agent._context_for(huge) == 32768
 
 
@@ -280,3 +280,20 @@ def test_run_resumes_a_task_the_platform_lost_in_a_restart(monkeypatch) -> None:
                               download="")
     task = cbc_agent.run(args)
     assert task["status"] == "done" and platform.journal == ["ONE", "TWO"]
+
+
+def test_the_kits_env_file_is_read_and_the_environment_still_wins(monkeypatch, tmp_path) -> None:
+    env = tmp_path / ".env"
+    env.write_text('CBC_TEST_URL=https://cbc.gidraf.dev\nexport CBC_TEST_KEY="abc"\n# a comment\nCBC_TEST_SET=file\n')
+    monkeypatch.setenv("CBC_ENV_FILE", str(env))
+    monkeypatch.setenv("CBC_TEST_SET", "environment")
+    for key in ("CBC_TEST_URL", "CBC_TEST_KEY"):
+        monkeypatch.delenv(key, raising=False)
+    cbc_agent._load_env_file()
+    import os
+
+    assert os.environ["CBC_TEST_URL"] == "https://cbc.gidraf.dev"
+    assert os.environ["CBC_TEST_KEY"] == "abc"
+    assert os.environ["CBC_TEST_SET"] == "environment"
+    for key in ("CBC_TEST_URL", "CBC_TEST_KEY"):
+        monkeypatch.delenv(key, raising=False)

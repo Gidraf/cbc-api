@@ -214,3 +214,41 @@ def test_a_prompt_wider_than_ollamas_window_is_warned_about_once(capsys, monkeyp
     monkeypatch.setattr(cbc_agent, "_context_warned", False)
     cbc_agent._warn_if_prompt_exceeds_context(40_000, "https://api.deepseek.com/v1")
     assert "WARNING" not in capsys.readouterr().out, "only Ollama has the small default"
+
+
+def test_a_sweep_stops_when_the_night_window_closes_and_carries_the_paper(fakes, monkeypatch):
+    """The paper in hand is carried (its answers are journalled); nothing new starts."""
+    platform, fetched, tmp_path = fakes
+    monkeypatch.setattr(cbc_agent, "_WINDOW", "22:00-07:00")
+    # Open for the first paper's start, closed by the time its prompt arrives.
+    checks = {"n": 0}
+
+    def in_window(window, now=None):
+        checks["n"] += 1
+        return checks["n"] == 1
+
+    monkeypatch.setattr(cbc_agent, "_in_window", in_window)
+    cbc_agent.sweep(_args(tmp_path))
+
+    assert len(platform.started) == 1, "no second paper started after the window closed"
+    assert platform.completed == 0, "no prompt answered outside the window"
+    ledger = json.load(open(tmp_path / "papers" / "sweep-ledger.json"))
+    assert list(ledger.values())[0]["status"] == "carried"
+
+
+def test_no_pdf_keeps_the_ledger_and_downloads_nothing(fakes):
+    platform, fetched, tmp_path = fakes
+    cbc_agent.sweep(_args(tmp_path, no_pdf=True))
+    assert fetched == [], "no PDF downloaded"
+    assert os.path.exists(tmp_path / "papers" / "sweep-ledger.json"), "the ledger is still kept"
+
+
+def test_a_paper_that_keeps_failing_is_not_retried_for_ever(fakes, monkeypatch):
+    platform, fetched, tmp_path = fakes
+    monkeypatch.setattr(cbc_agent, "SWEEP_MAX_ATTEMPTS", 2)
+    for _ in range(4):
+        cbc_agent.sweep(_args(tmp_path))
+    refused = [b for b in platform.started if (b["grade"], b["subject"]) == ("grade-7", "Mathematics")]
+    assert len(refused) == 4, "two terms, two attempts each, then left alone"
+    ledger = json.load(open(tmp_path / "papers" / "sweep-ledger.json"))
+    assert ledger["grade-7|Mathematics|term1"]["attempts"] == 2

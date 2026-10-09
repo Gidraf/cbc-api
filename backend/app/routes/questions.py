@@ -1522,6 +1522,17 @@ def factory_generate_questions_batch(
 # chunk's answer near 6k tokens; an API provider pays a second call per
 # forty items and nothing else changes.
 CHUNK = int(__import__("os").getenv("QUESTIONS_CHUNK", "15"))
+# An outside agent may be answering on a small local model: qwen3:14b wrote
+# 15 items as ~8,000 tokens of JSON, ran into its output cap mid-item, and the
+# whole paper failed on "the model did not return JSON" — five papers in one
+# night. Half the chunk is half the answer, well inside any local model's cap.
+AGENT_CHUNK = int(__import__("os").getenv("QUESTIONS_AGENT_CHUNK", "8"))
+
+
+def _chunk_size() -> int:
+    from ..services import byom
+
+    return min(CHUNK, AGENT_CHUNK) if byom.current() is not None else CHUNK
 
 
 def _written_by(resp: Any) -> dict[str, Any]:
@@ -1613,7 +1624,8 @@ def _generate_in_chunks(llm_client: Any, resolved: Any, messages: list[dict[str,
     written so it sets new tasks, and the chunks are one batch downstream."""
     import json as json_lib
 
-    chunks = [CHUNK] * (wanted // CHUNK) + ([wanted % CHUNK] if wanted % CHUNK else [])
+    size_ = _chunk_size()
+    chunks = [size_] * (wanted // size_) + ([wanted % size_] if wanted % size_ else [])
     if len(chunks) <= 1:
         resp = llm_client.generate(resolved, messages, temperature=0.25)
         content = resp.content

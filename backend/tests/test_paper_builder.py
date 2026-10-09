@@ -413,3 +413,15 @@ def test_items_held_for_review_are_not_dealt_even_when_drafts_are():
                        sub_strand="Integers", marks=4, allow_drafts=True)
     ids = {q["question_id"] for q in paper.items}
     assert ids == {"a", "b"}, ids
+
+
+def test_an_outside_agent_is_asked_for_smaller_chunks(monkeypatch) -> None:
+    """qwen3:14b wrote 15 items as ~8,000 tokens and was cut off mid-item;
+    when an agent answers, a chunk is at most QUESTIONS_AGENT_CHUNK."""
+    from app.routes import questions
+    from app.services import byom
+
+    monkeypatch.setattr(byom, "current", lambda: None)
+    assert questions._chunk_size() == questions.CHUNK
+    monkeypatch.setattr(byom, "current", lambda: object())
+    assert questions._chunk_size() == min(questions.CHUNK, questions.AGENT_CHUNK) == 8
