@@ -1147,6 +1147,8 @@ def main() -> None:
     p.add_argument("--kind", default="", help="order: term | topical | strand")
     p.add_argument("--term", type=int, default=None, help="order: 1, 2 or 3")
     p.add_argument("--download", default="", help="folder to save the paper's PDFs into when the order is done")
+    p.add_argument("--extra", type=json.loads, default=None,
+                   help='station options as JSON, e.g. review: \'{"fix": true, "approve_clean": false}\'')
     p.add_argument("--model", required=True, help="e.g. llama3.1:70b, qwen2.5:32b, gpt-4.1")
     p.add_argument("--llm-url", dest="llm_url", default=os.getenv("LLM_URL", "http://localhost:11434/v1"),
                    help="OpenAI-compatible base URL; Ollama serves /v1")
