@@ -31,7 +31,7 @@ KINDS = {
 # The fields a builder may correct on an item. Everything else — ids,
 # curriculum, provenance — is the bank's.
 EDITABLE = ("question_text", "stimulus_context", "options", "structured_parts", "marking_scheme",
-            "model_answer", "expression", "max_marks")
+            "model_answer", "explanation", "expression", "max_marks")
 
 
 # Compact pages, but the full worked scheme — the depth is the product —

@@ -2444,7 +2444,7 @@ the question uses. Kinds and their fields:
      — drawn from the platform's own gazetteer, with scale, north arrow and key added.
 The stem then says "Study the figure below" or "In the figure below, …". A figure that is a lesson
 diagram already drawn for this sub-strand is referred to by `diagram_ref` instead.""",
-    "question-figures-share": """HOW MANY: at least one item in six is set on a figure, a table or a chart wherever the topic
+    "question-figures-share": """HOW MANY: at least {{ share }} of the items are set on a figure wherever the topic
 allows — {{ examples }}. The national papers read values off figures every few items; a batch
 that carries fewer is sent back with items to re-set. The figure must be one THIS subject reads:
 never a calculation brought in to have something to draw.
@@ -2893,6 +2893,16 @@ CRITICAL ASSESSMENT DESIGN RULES (ZERO HALLUCINATION & FULL DNA):
    - 'assertion_reason': Statement (A) and Reason (R) causality diagnostics.
 3. IN-TEXT RESEARCH CITATIONS: Every question's 'provenance_citation' MUST cite a source from the Permitted Citation Sources list in the directives above. Do not cite sources belonging to other subjects.
 4. Include comprehensive Step-by-Step 'marking_scheme' and 4-Level 'kicd_rubric' (Exceeding, Meeting, Approaching, Below Expectation) for every item.
+5. EVERY ITEM IS SET ON A FIGURE WHERE THE TOPIC ALLOWS ONE, and carries its WALK-THROUGH:
+   - 'figure': the data for the figure the item is set on (see FIGURES A QUESTION NEEDS below) — an atom, a circuit,
+     a food chain, a graph, a map, a pyramid, a shape. The question cannot be answered without reading it.
+   - 'worked_solution': the steps a learner follows to the answer, 2 to 6 of them, each with what to do and WHY:
+     "Read the electrons on the outer shell of the figure: 6" — "the outer shell holds the valence electrons".
+     Every item has one, multiple choice included.
+   - 'explanation': why the answer is right, in two or three sentences a learner who got it wrong can follow —
+     the idea behind it, not a restatement of the answer.
+   - every option's 'distractor_rationale': for the key, why it is right; for each other option, the exact
+     mistake that leads a learner to choose it.
 
 RETURN JSON FORMAT MATCHING:
 {
@@ -2926,6 +2936,12 @@ RETURN JSON FORMAT MATCHING:
       ],
       "model_answer": "<exhaustive multi-paragraph model response with scientific explanation covering all scenarios>",
       "marking_scheme": "<step-by-step scoring keys: M1 for method, A1 for accuracy, B1 for explanation>",
+      "figure": {"kind": "<one of the kinds below>", "...": "the data that kind takes"},
+      "worked_solution": [
+        {"step": "<what the learner does: read this off the figure, apply this rule, work this line>", "why": "<the reason>"},
+        {"step": "...", "why": "..."}
+      ],
+      "explanation": "<why the answer is right: the idea, in two or three sentences>",
       "kicd_rubric": {
         "exceeding": "Demonstrates exhaustive mastery and links concept to macro-environmental systems.",
         "meeting": "Accurately demonstrates expected competence with correct technical explanations.",

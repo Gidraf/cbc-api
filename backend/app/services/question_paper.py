@@ -613,6 +613,10 @@ def _scheme_item(question: dict[str, Any], number: int, settings: Any = None) ->
             and not _same_text(model_answer, scheme) and not _same_text(model_answer, answer):
         out.append(f"<div class='why'>{_math(model_answer[:500])}</div>")
         explained = True
+    explanation = str(question.get("explanation") or "").strip()
+    if explanation and not _same_text(explanation, model_answer) and not _same_text(explanation, shown):
+        out.append(f"<div class='why'><b>Explanation:</b> {_math(explanation[:600])}</div>")
+        explained = True
     if key is not None:
         reason = str(key.get("distractor_rationale") or key.get("rationale") or "").strip()
         if reason and not _same_text(reason, model_answer):

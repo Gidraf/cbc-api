@@ -518,7 +518,11 @@ def _figures_unused(questions: list[dict[str, Any]], diagrams: list[Any],
 # the writer had the contract and used it twice — while the KNEC sample it
 # is modelled on reads values off number lines, thermometers, tables and
 # graphs every few items. Nothing asked for more, so nothing was sent back.
-FIGURE_SHARE = 0.15
+# Mostly figures: three items in five, where the subject's papers carry them.
+# A figure the platform draws from the item's data is checked by construction
+# (an atom from its protons, a circuit from its parts) — the questions a
+# smaller model writes most reliably.
+FIGURE_SHARE = float(__import__("os").getenv("QUESTIONS_FIGURE_SHARE", "0.6"))
 _FIGURE_FAMILIES = ("mathematics", "science", "social", "other")
 
 
@@ -632,6 +636,33 @@ def _figure_contradicts_stem(questions: list[dict[str, Any]], findings: list[Fin
                 f"{_label(question, index)} draws an atom with {protons} protons, but the question is "
                 f"about atomic number {stated.pop()}.",
                 "Give the figure the particle numbers the question states; the shells are drawn from them.",
+                [_id(question)]))
+
+
+def _no_walkthrough(questions: list[dict[str, Any]], findings: list[Finding]) -> None:
+    """An answer a learner cannot learn from: no walk-through to it, no
+    explanation of why it is right, or an option nobody says is wrong."""
+    for index, question in enumerate(questions, start=1):
+        label = _label(question, index)
+        steps = [w for w in (question.get("worked_solution") or [])
+                 if (isinstance(w, dict) and _text(w.get("step"))) or (isinstance(w, str) and w.strip())]
+        missing = []
+        if len(steps) < 2:
+            missing.append("a worked solution of at least two steps")
+        if not _text(question.get("explanation")):
+            missing.append("an explanation of why the answer is right")
+        unexplained = [str(o.get("id") or "?") for o in (question.get("options") or [])
+                       if isinstance(o, dict) and not _text(o.get("distractor_rationale") or o.get("rationale"))]
+        if unexplained:
+            missing.append(f"a reason on option(s) {', '.join(unexplained)}")
+        if missing:
+            findings.append(Finding(
+                "no_walkthrough",
+                f"{label} has no {'; no '.join(missing)}.",
+                "Add `worked_solution` — 2 to 6 steps, each what to do and why, reading the figure "
+                "where there is one — and `explanation`, the idea that makes the answer right; give "
+                "every option a `distractor_rationale`: why the key is right, which mistake leads to "
+                "each other option.",
                 [_id(question)]))
 
 
@@ -836,9 +867,14 @@ def check(questions: list[dict[str, Any]], *, grade: str = "", subject: str = ""
           strand: str = "", sub_strand: str = "", notes: Any = None,
           design_row: dict[str, Any] | None = None,
           existing: list[dict[str, Any]] | None = None,
-          diagrams: list[Any] | None = None) -> Report:
+          diagrams: list[Any] | None = None,
+          walkthroughs: bool = False) -> Report:
     """Every item, then the set. Repairs a key in place where the engine
-    names the option it should have been; everything else is a finding."""
+    names the option it should have been; everything else is a finding.
+
+    `walkthroughs` holds new writing to the walk-through contract (a worked
+    solution, an explanation, a reason on every option). It is off for the
+    bank's re-check: items written before the contract would all be held."""
     report = Report()
     items = [q for q in (questions or []) if isinstance(q, dict)]
     report.checked = len(items)
@@ -878,6 +914,8 @@ def check(questions: list[dict[str, Any]], *, grade: str = "", subject: str = ""
     _few_figures(items, subject=subject, findings=findings)
     _too_many_tables(items, subject=subject, findings=findings)
     _figure_contradicts_stem(items, findings)
+    if walkthroughs:
+        _no_walkthrough(items, findings)
 
     # One finding per (kind, item set): the example reading and the engine
     # can name the same repeat twice.

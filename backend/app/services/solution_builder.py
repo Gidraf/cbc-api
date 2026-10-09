@@ -190,6 +190,16 @@ def _from_author(question: dict[str, Any]) -> Solution:
     scheme = str(question.get("marking_scheme") or "").strip()
     model = str(question.get("model_answer") or "").strip()
 
+    # The writer's own walk-through, where it gave one, is the working: it was
+    # written for a learner, where a marking scheme is written for a marker.
+    walk = [w for w in (question.get("worked_solution") or []) if isinstance(w, dict) and str(w.get("step") or "").strip()]
+    if walk:
+        for n, w in enumerate(walk, start=1):
+            text = str(w["step"]).strip()
+            solution.steps.append(Step(n=n, text=text, kind=_kind_of(text), why=str(w.get("why") or "").strip()))
+        solution.answer = model or str(question.get("correct_answer") or "").strip()
+        return solution
+
     for n, line in enumerate(_split_scheme(scheme), start=1):
         marks = 0.0
         found = _MARKS.search(line)

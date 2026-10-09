@@ -36,8 +36,11 @@ def test_the_reader_disagreement_stands_even_when_the_engine_blessed_the_writers
 def _row(qid, text, *, status="draft", key_ok=True, expression=""):
     content = {"question_type": "multiple_choice", "question_text": text, "marking_scheme": "M1 A1",
                "expression": expression,
-               "options": [{"id": "A", "text": "20", "is_correct": key_ok}, {"id": "B", "text": "-20", "is_correct": not key_ok},
-                           {"id": "C", "text": "5"}, {"id": "D", "text": "-5"}]}
+               "worked_solution": [{"step": "Set it up.", "why": "method"}, {"step": "Work it.", "why": "result"}],
+               "explanation": "Why the key is right.",
+               "options": [{"id": "A", "text": "20", "is_correct": key_ok, "distractor_rationale": "r"},
+                           {"id": "B", "text": "-20", "is_correct": not key_ok, "distractor_rationale": "r"},
+                           {"id": "C", "text": "5", "distractor_rationale": "r"}, {"id": "D", "text": "-5", "distractor_rationale": "r"}]}
     return {"question_id": qid, "status": status, "created_at": "2026-09-01", "content": content,
             "curriculum_link": {"grade": "grade-9", "subject": "Mathematics", "strand": "Numbers", "sub_strand": "Integers"},
             "pedagogical_dna": {"max_marks": 1, "question_type": "multiple_choice", "bloom_level": "Application"},

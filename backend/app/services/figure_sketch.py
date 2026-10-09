@@ -828,6 +828,16 @@ def figure_examples(subject: str) -> str:
     return FIGURES_BY_FAMILY.get(family_of(subject), "")
 
 
+def _share_words(share: float) -> str:
+    """0.6 → "three in five": the share as a writer can count it."""
+    for n, d, words in ((1, 6, "one in six"), (1, 4, "one in four"), (1, 3, "one in three"),
+                        (1, 2, "half"), (3, 5, "three in five"), (2, 3, "two in three"),
+                        (3, 4, "three in four"), (4, 5, "four in five")):
+        if abs(share - n / d) < 0.02:
+            return words
+    return f"{round(share * 100)}%"
+
+
 def prompt_block(subject: str = "") -> str:
     """How the writer asks for a figure — seeded, so it can be edited in
     Langfuse like every other prompt. The share it must reach, and the kinds
@@ -838,6 +848,8 @@ def prompt_block(subject: str = "") -> str:
     block = render("question-figures", SEED_PROMPT_BLOCKS["question-figures"])
     examples = figure_examples(subject) if subject else FIGURES_BY_FAMILY["mathematics"]
     if examples:
+        from .question_check import FIGURE_SHARE
+
         block += "\n" + render("question-figures-share", SEED_PROMPT_BLOCKS["question-figures-share"],
-                                examples=examples)
+                                examples=examples, share=_share_words(FIGURE_SHARE))
     return block

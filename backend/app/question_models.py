@@ -79,6 +79,14 @@ class StructuredPart(BaseModel):
     model_answer: str = ""
 
 
+class WorkedStep(BaseModel):
+    """One line of the walk-through a learner follows to the answer: what to
+    do (read the figure, apply the rule, work the sum) and why."""
+
+    step: str
+    why: str = ""
+
+
 class KicdRubric(BaseModel):
     """The four criterion-referenced performance levels.
 
@@ -203,6 +211,11 @@ class QuestionItem(BaseModel):
 
     model_answer: str = ""
     marking_scheme: str = ""
+    # The walk-through to the answer, step by step, and the concept that
+    # makes it the answer. The marking scheme says how marks are earned;
+    # these say how a learner who got it wrong gets it right next time.
+    worked_solution: list[WorkedStep] = Field(default_factory=list)
+    explanation: str = ""
     # The situation, translated into ONE expression the engine can work:
     # `-450 + 3\\times250 - 2\\times160` for a trader's day. The writer
     # does the translating — the part a model is good at — and the engine

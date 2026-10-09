@@ -408,6 +408,8 @@ class QuestionNormalizer:
             structured_parts=parts,
             model_answer=str(raw.get("model_answer") or raw.get("explanation") or "").strip(),
             marking_scheme=marking_scheme,
+            worked_solution=_normalize_steps(raw.get("worked_solution") or raw.get("solution_steps")),
+            explanation=str(raw.get("explanation") or "").strip(),
             expression=str(raw.get("expression") or "").strip(),
             rubric=_normalize_rubric(raw.get("kicd_rubric") or raw.get("marking_guide"), marking_scheme),
             diagram=diagram,
@@ -415,6 +417,25 @@ class QuestionNormalizer:
             provenance_citation=str(raw.get("provenance_citation") or "").strip(),
             status="draft",
         )
+
+
+def _normalize_steps(raw: Any) -> list[Any]:
+    """`worked_solution` as the writer gave it: a list of {step, why}, of
+    plain strings, or one string with a step per line."""
+    from ..question_models import WorkedStep
+
+    if isinstance(raw, str):
+        raw = [line for line in raw.splitlines() if line.strip()]
+    out = []
+    for item in raw if isinstance(raw, list) else []:
+        if isinstance(item, dict):
+            text = str(item.get("step") or item.get("text") or item.get("working") or "").strip()
+            why = str(item.get("why") or item.get("because") or item.get("reason") or "").strip()
+        else:
+            text, why = str(item or "").strip(), ""
+        if text:
+            out.append(WorkedStep(step=text, why=why))
+    return out
 
 
 question_normalizer = QuestionNormalizer()

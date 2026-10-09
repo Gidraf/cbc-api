@@ -501,5 +501,5 @@ def engine_check_questions(payload: CheckQuestionsRequest,
     from ..services import question_check
 
     report = question_check.check(payload.questions, grade=payload.grade, subject=payload.subject,
-                                  strand=payload.strand, sub_strand=payload.sub_strand)
+                                  strand=payload.strand, sub_strand=payload.sub_strand, walkthroughs=True)
     return report.to_dict()

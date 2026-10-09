@@ -148,7 +148,7 @@ def run(
         """
         report = question_check.check(batch, grade=grade, subject=subject, strand=strand,
                                       sub_strand=sub_strand, notes=notes, design_row=design_row,
-                                      existing=existing, diagrams=diagrams)
+                                      existing=existing, diagrams=diagrams, walkthroughs=True)
         if audit is None:
             return report
         condemned = report.faulty_items

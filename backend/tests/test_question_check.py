@@ -36,8 +36,26 @@ def _written(label: str, stem: str, answer: str, scheme: str = "", **extra) -> d
 GRADE9 = dict(grade="grade-9", subject="Mathematics", strand="Numbers", sub_strand="Integers")
 
 
+def _explained(item: dict) -> dict:
+    """The walk-through contract: a worked solution, an explanation, and a
+    reason on every option — what a sound item carries."""
+    item = dict(item)
+    item.setdefault("worked_solution", [{"step": "Set up the working from the question.", "why": "the method"},
+                                        {"step": "Work it to the answer.", "why": "the result"}])
+    item.setdefault("explanation", "Why the answer is right, for a learner who got it wrong.")
+    if item.get("options"):
+        item["options"] = [{**o, "distractor_rationale": o.get("distractor_rationale")
+                            or ("the correct working" if o.get("is_correct") else "a sign slip")}
+                           for o in item["options"]]
+    return item
+
+
 def _sound_batch() -> list[dict]:
     """Six correct Grade-9 items, at the grade, none repeated."""
+    return [_explained(q) for q in _sound_items()]
+
+
+def _sound_items() -> list[dict]:
     return [
         _mcq("Q1", "Work out $(-12) + 4 \\times (-3) - (-6)$.",
              {"A": "-18", "B": "-30", "C": "18", "D": "-6"}, "A"),
@@ -321,10 +339,10 @@ def test_an_uncovered_outcome_asks_for_an_item_to_be_added() -> None:
 
     def rewrite(items, reasons, asks):
         seen["asks"] = asks
-        return [_mcq("Q7", "Which inequality correctly compares the integers $-7$ and $-2$ on a number line?",
+        return [_explained(_mcq("Q7", "Which inequality correctly compares the integers $-7$ and $-2$ on a number line?",
                      {"A": "$-7 < -2$", "B": "$-7 > -2$", "C": "$-7 = -2$", "D": "$-2 < -7$"}, "A",
                      serves=["grade-9-Mat-1.1-2"], question_id="q-q7",
-                     marking_scheme="$-7$ lies to the left of $-2$ on the number line, so $-7 < -2$.")]
+                     marking_scheme="$-7$ lies to the left of $-2$ on the number line, so $-7 < -2$."))]
 
     kept, report = questions_remediation.run(_serving(_sound_batch(), "grade-9-Mat-1.1-1"),
                                              design_row=SLOS, rewrite=rewrite, **GRADE9)
@@ -467,7 +485,10 @@ def _bare_items(n: int, with_figures: int = 0) -> list[dict]:
     return items
 
 
-def test_a_mathematics_batch_with_almost_no_figures_is_sent_back_for_some():
+def test_a_mathematics_batch_with_almost_no_figures_is_sent_back_for_some(monkeypatch):
+    from app.services import question_check as _qc
+
+    monkeypatch.setattr(_qc, "FIGURE_SHARE", 0.15)
     from app.services import question_check as qc
 
     findings: list = []
@@ -479,7 +500,10 @@ def test_a_mathematics_batch_with_almost_no_figures_is_sent_back_for_some():
     assert {f.items[0] for f in few} == {"q26", "q27", "q28"}, "the last bare items go back"
 
 
-def test_a_batch_with_its_share_of_figures_passes():
+def test_a_batch_with_its_share_of_figures_passes(monkeypatch):
+    from app.services import question_check as _qc
+
+    monkeypatch.setattr(_qc, "FIGURE_SHARE", 0.15)
     from app.services import question_check as qc
 
     findings: list = []
@@ -505,7 +529,10 @@ def test_few_figures_waits_until_missing_figures_are_bound():
     assert [f.kind for f in findings] == ["figure_not_supplied"]
 
 
-def test_few_figures_is_an_item_finding_the_rewrite_loop_acts_on():
+def test_few_figures_is_an_item_finding_the_rewrite_loop_acts_on(monkeypatch):
+    from app.services import question_check as _qc
+
+    monkeypatch.setattr(_qc, "FIGURE_SHARE", 0.15)
     from app.services import question_check as qc
     from app.services import questions_remediation as qr
 
@@ -604,3 +631,56 @@ def test_a_social_studies_batch_is_sent_back_for_its_own_figures():
     findings: list = []
     qc._few_figures(_bare_items(20), subject="Social Studies", findings=findings)
     assert findings and "map" in findings[0].fix and "number line" not in findings[0].fix
+
+
+def test_new_writing_must_carry_a_walk_through_and_the_bank_recheck_is_not_held_to_it() -> None:
+    """A worked solution, an explanation, a reason on every option — for new
+    items. The bank's re-check is off it: every older item would be held."""
+    from app.services import question_check as qc
+
+    bare = _mcq("Q1", "Work out $(-12) + 4 \\times (-3) - (-6)$.",
+                {"A": "-18", "B": "-30", "C": "18", "D": "-6"}, "A", marking_scheme="M1 A1")
+    new = qc.check([bare], grade="grade-9", subject="Mathematics", walkthroughs=True)
+    walk = [f for f in new.findings if f.kind == "no_walkthrough"]
+    assert walk and "worked solution" in walk[0].says and "explanation" in walk[0].says
+    assert "option(s) A, B, C, D" in walk[0].says
+
+    old = qc.check([bare], grade="grade-9", subject="Mathematics")
+    assert not [f for f in old.findings if f.kind == "no_walkthrough"]
+
+    full = qc.check([_explained(bare)], grade="grade-9", subject="Mathematics", walkthroughs=True)
+    assert not [f for f in full.findings if f.kind == "no_walkthrough"]
+
+
+def test_the_walk_through_is_the_working_on_the_scheme_and_the_explanation_is_printed() -> None:
+    from app.services import question_paper, solution_builder
+
+    q = {"question_id": "q1", "question_type": "structured_scenario",
+         "question_text": "Study the atom in the figure. State its electron arrangement.",
+         "model_answer": "2.8.6",
+         "worked_solution": [{"step": "Count the electrons on each shell, inner first: 2, 8, 6.",
+                              "why": "each ring is one energy level"},
+                             {"step": "Write them in order with full stops: 2.8.6.", "why": "the notation"}],
+         "explanation": "The outer shell holds 6 electrons, so sulphur needs 2 more to be stable."}
+    worked = solution_builder.build(q)
+    assert [s.text for s in worked.steps][0].startswith("Count the electrons")
+    html = question_paper._scheme_item(q, 1)
+    assert "Count the electrons on each shell" in html and "each ring is one energy level" in html
+    assert "Explanation:" in html and "needs 2 more" in html
+
+
+def test_the_normaliser_keeps_the_walk_through() -> None:
+    from app.services.question_normalizer import _normalize_steps
+
+    steps = _normalize_steps([{"step": "Read the figure", "why": "the data"}, "Work the sum", {"text": "x"}])
+    assert [(s.step, s.why) for s in steps] == [("Read the figure", "the data"), ("Work the sum", ""), ("x", "")]
+    assert [s.step for s in _normalize_steps("one\ntwo\n")] == ["one", "two"]
+
+
+def test_the_prompt_asks_for_figures_on_most_items_and_a_walk_through_on_all() -> None:
+    from app.services import figure_sketch
+    from app.services.langfuse_seed import SEED_PROMPT_BLOCKS
+
+    directive = SEED_PROMPT_BLOCKS["questions-factory-directive"]
+    assert '"worked_solution"' in directive and '"explanation"' in directive and '"figure"' in directive
+    assert "three in five" in figure_sketch.prompt_block("Integrated Science")
