@@ -46,6 +46,27 @@ import urllib.error
 import urllib.request
 from typing import Any
 
+def _load_env_file() -> None:
+    """The kit's own .env (CBC_API_URL, CBC_API_KEY …), next to this file.
+    Run by hand, `python3 cbc_agent.py night` stopped at "set CBC_API_KEY"
+    because only the launcher scripts read it. A value already in the
+    environment wins."""
+    for path in (os.getenv("CBC_ENV_FILE", ""), os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")):
+        if not path or not os.path.isfile(path):
+            continue
+        with open(path, encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, value = line.split("=", 1)
+                key = key.strip().removeprefix("export ").strip() if hasattr(str, "removeprefix") \
+                    else key.strip().replace("export ", "", 1).strip()
+                os.environ.setdefault(key, value.strip().strip('"').strip("'"))
+        return
+
+
+_load_env_file()
 API = os.getenv("CBC_API_URL", "http://localhost:8000").rstrip("/")
 KEY = os.getenv("CBC_API_KEY", "")
 
@@ -96,8 +117,9 @@ def _patient(method: str, path: str, body: Any = None, *, what: str = "") -> dic
 # The platform's largest prompt plus a chunk's answer: about 12k tokens in
 # and 6k out. 24k leaves room; a Mac with 24 GB runs a 14B at this.
 NUM_CTX = int(os.getenv("LLM_NUM_CTX", "24576"))
-# Room for the longest answer (a chunk of questions is about 6k tokens).
-NUM_PREDICT = int(os.getenv("LLM_NUM_PREDICT", "8192"))
+# Room for the longest answer. A 15-item chunk from qwen3:14b ran past 8,192
+# tokens and was cut off mid-item; 12,288 lets it finish.
+NUM_PREDICT = int(os.getenv("LLM_NUM_PREDICT", "12288"))
 # The window grows past NUM_CTX for a prompt that needs it, up to this. A
 # 2-question batch arrived at 71,000 characters — the guide is in it — which
 # left a 24k window 4k tokens to answer in. 32k keeps a 14B on an 18 GB Mac.
@@ -109,7 +131,7 @@ def _context_for(messages: list[dict[str, str]]) -> int:
     for this mix of prose, LaTeX and JSON) plus room for the answer, rounded
     up to 2k so a slightly longer prompt does not reload the model."""
     chars = sum(len(str(m.get("content") or "")) for m in messages)
-    needed = int(chars / 3.2) + min(NUM_PREDICT, 6144)
+    needed = int(chars / 3.2) + NUM_PREDICT
     size = max(NUM_CTX, -(-needed // 2048) * 2048)
     if size > MAX_CTX:
         print(f"\n  note: this prompt wants a {size:,}-token window; capped at {MAX_CTX:,} "
@@ -1065,6 +1087,13 @@ def night(args: argparse.Namespace) -> None:
         print(f"wrote a starting campaign to {campaign_path} — edit it to change phases and targets")
     campaign = _load_json(campaign_path, _default_campaign(tonight))
     state = _load_json(state_path, {})
+    try:
+        _platform("GET", "/api/v1/agent/coverage?grade=grade-9&subject=Mathematics&notes=false")
+    except PlatformError as exc:
+        if exc.status == 404 and "No live task" not in str(exc):
+            raise SystemExit(f"{API} has no coverage report yet (/api/v1/agent/coverage → 404). "
+                             f"Deploy the branch with the planner, then run this again.")
+        raise
     plan = plan_night(campaign, state, night=tonight, window=args.window)
     phase = plan["phase"]
     print(f"night of {tonight}: {phase['name']} phase ({phase['phase_start']} → {phase['phase_end']}); "
