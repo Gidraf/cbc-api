@@ -463,6 +463,8 @@ def sweep(args: argparse.Namespace) -> None:
     for grade in grades:
         try:
             subjects = args.subjects or _ingested_subjects(grade)
+            if getattr(args, "subject_match", None):
+                subjects = _focused(subjects, args.subject_match)
         except SystemExit as exc:
             print(f"{grade}: could not list subjects — {exc}")
             continue
@@ -732,6 +734,21 @@ def _serve_loop(args: argparse.Namespace) -> None:
 
 PLANNER_DIR = os.path.expanduser(os.getenv("CBC_PLANNER_DIR", "~/cbc-claude/planner"))
 GRADE_ORDER = ["grade-9", "grade-10", "grade-8", "grade-11", "grade-7", "grade-12", "grade-6"]
+# Science, technical subjects, mathematics and ICT: where the engine checks
+# the arithmetic and the platform draws the figures, so a 14B model's work can
+# be verified. Patterns, matched case-insensitively against subject names.
+FOCUS = ["mathemat", "(?<!home )science", "biolog", "chemist", "physic", "technical", "computer",
+         "information and communication technology", "electricit", "building construction",
+         "aviation", "metal ?work", "woodwork", "power mechanics", "marine and fisheries", "media technology"]
+
+
+def _focused(subjects: list[str], patterns: list[str] | None) -> list[str]:
+    import re as _re
+
+    if not patterns:
+        return list(subjects)
+    rx = _re.compile("|".join(f"(?:{p})" for p in patterns), _re.I)
+    return [s for s in subjects if rx.search(s)]
 # First guesses, in minutes, until a few nights have measured the real ones.
 DEFAULT_MINUTES = {"notes": 60.0, "questions": 40.0, "review": 30.0}
 
@@ -741,6 +758,7 @@ def _default_campaign(today: str) -> dict[str, Any]:
         "start": today,
         "grades": GRADE_ORDER,
         "subjects": [],
+        "subject_focus": FOCUS,
         "phases": [{"name": "create", "weeks": 10, "target_questions": 20000},
                    {"name": "review", "weeks": 20}],
         "repeat": [{"name": "create", "weeks": 15, "target_questions": 40000},
@@ -831,7 +849,7 @@ def _subjects(grade: str, campaign: dict[str, Any], cache: dict[str, list[str]])
         except SystemExit as exc:
             print(f"  {grade}: could not list subjects — {str(exc)[:120]}", flush=True)
             cache[grade] = []
-    return cache[grade]
+    return _focused(cache[grade], campaign.get("subject_focus"))
 
 
 def _coverage(grade: str, subject: str, cache: dict[str, Any], *, notes: bool = True) -> list[dict[str, Any]]:
@@ -1157,6 +1175,8 @@ def main() -> None:
     w.add_argument("--to", dest="to_grade", default="grade-12", help="last grade, e.g. grade-12")
     w.add_argument("--grades", nargs="*", help="or an explicit list: grade-7 grade-8")
     w.add_argument("--subjects", nargs="*", help="only these subjects (default: every ingested one)")
+    w.add_argument("--subject-match", dest="subject_match", nargs="*", default=None,
+                   help="only subjects matching these patterns; 'focus' = science, technical, maths and ICT")
     w.add_argument("--terms", nargs="*", type=int, default=[1, 2, 3],
                    help="in priority order: --terms 3 1 2 does every subject's Term 3 paper first")
     w.add_argument("--order", choices=["given", "middle-out"], default="given",
@@ -1195,6 +1215,8 @@ def main() -> None:
         THINK = True
     if not KEY:
         sys.exit("set CBC_API_KEY (an API key from the console's Providers page)")
+    if args.command == "sweep" and getattr(args, "subject_match", None) == ["focus"]:
+        args.subject_match = FOCUS
     if args.command == "sweep":
         global _WINDOW
         _WINDOW = getattr(args, "window", "") or ""

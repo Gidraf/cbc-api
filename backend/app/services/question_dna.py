@@ -429,6 +429,9 @@ class QuestionDnaService:
                 "constitutional_value": pedagogy_in.get("constitutional_value", ""),
                 "source_hour": pedagogy_in.get("source_hour"),
                 "source_hour_title": pedagogy_in.get("source_hour_title", ""),
+                "bloom_claimed": pedagogy_in.get("bloom_claimed", ""),
+                "difficulty_claimed": pedagogy_in.get("difficulty_claimed"),
+                "difficulty_basis": pedagogy_in.get("difficulty_basis") or {},
             }
 
             content = {

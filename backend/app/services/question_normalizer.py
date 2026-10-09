@@ -374,9 +374,17 @@ class QuestionNormalizer:
             serves=_serves(raw, design_row, item_slo),
         )
 
+        # The level and difficulty are worked out from the item; the writer's
+        # labels are kept beside them, not used.
+        from . import item_difficulty
+
+        measured = item_difficulty.measure({**raw, "question_type": q_type, "max_marks": max_marks})
         pedagogy = QuestionPedagogy(
-            bloom_level=str(raw.get("bloom_level") or "Application").strip().title(),
-            difficulty_index=min(1.0, max(0.0, difficulty)),
+            bloom_level=measured.bloom,
+            difficulty_index=measured.difficulty,
+            bloom_claimed=str(raw.get("bloom_level") or "").strip().title(),
+            difficulty_claimed=min(1.0, max(0.0, difficulty)) if raw.get("difficulty_index") is not None else None,
+            difficulty_basis=measured.basis,
             max_marks=max(0, max_marks),
             estimated_time_mins=max(0, minutes),
             micro_concept=str(raw.get("micro_concept") or "").strip(),

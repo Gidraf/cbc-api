@@ -175,8 +175,15 @@ class QuestionCurriculum(BaseModel):
 
 
 class QuestionPedagogy(BaseModel):
+    # Worked out from the item (item_difficulty), not taken from the writer:
+    # qwen3:14b filed every item at 0.65 and half a level too high.
     bloom_level: str = "Application"
     difficulty_index: float = Field(default=0.5, ge=0.0, le=1.0)
+    # What the writer claimed, kept for comparison; and why the measured
+    # values are what they are.
+    bloom_claimed: str = ""
+    difficulty_claimed: float | None = None
+    difficulty_basis: dict = Field(default_factory=dict)
     max_marks: int = Field(default=1, ge=0)
     estimated_time_mins: int = Field(default=2, ge=0)
     micro_concept: str = ""
