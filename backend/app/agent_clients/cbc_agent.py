@@ -421,6 +421,10 @@ def _ingested_subjects(grade: str) -> list[str]:
     return [str(s["name"]) for s in rows if s.get("ingested")]
 
 
+# Failures before the sweep stops retrying a paper (it says so; --redo resets).
+SWEEP_MAX_ATTEMPTS = int(os.getenv("CBC_SWEEP_MAX_ATTEMPTS", "3"))
+
+
 def sweep(args: argparse.Namespace) -> None:
     """Every ingested subject of every grade in the range, one paper per
     term, one after another, each saved as PDFs — and a ledger in the
@@ -445,7 +449,10 @@ def sweep(args: argparse.Namespace) -> None:
             ledger = json.load(fh)
 
     def remember(key: str, entry: dict[str, Any]) -> None:
-        ledger[key] = {**entry, "at": time.strftime("%Y-%m-%d %H:%M")}
+        tries = int((ledger.get(key) or {}).get("attempts") or 0)
+        if entry.get("status") not in ("done", "carried"):
+            tries += 1
+        ledger[key] = {**entry, "attempts": tries, "at": time.strftime("%Y-%m-%d %H:%M")}
         with open(ledger_path, "w", encoding="utf-8") as fh:
             json.dump(ledger, fh, indent=1)
 
@@ -470,11 +477,18 @@ def sweep(args: argparse.Namespace) -> None:
         if key in ledger and ledger[key].get("status") == "done" and not args.redo:
             skipped += 1
             continue
+        tries = int((ledger.get(key) or {}).get("attempts") or 0)
+        if tries >= SWEEP_MAX_ATTEMPTS and ledger[key].get("status") != "carried" and not args.redo:
+            # Runs restart whenever the Mac goes idle; a paper that fails for
+            # a reason no rerun fixes (a design that was never parsed) would
+            # otherwise take hours every time.
+            skipped += 1
+            continue
         print(f"\n=== {grade} · {subject} · Term {term} ===")
         run_args = argparse.Namespace(
             station="order", grade=grade, subject=subject, strand="", sub_strand="",
             count=args.count, instructions=args.instructions, model=args.model, llm_url=args.llm_url,
-            kind="term", term=term, download=args.download,
+            kind="term", term=term, download="" if getattr(args, "no_pdf", False) else args.download,
         )
         if _WINDOW and not _in_window(_WINDOW):
             print(f"\nwindow {_WINDOW} closed; the rest of the plan waits for the next night", flush=True)
@@ -913,7 +927,9 @@ def plan_night(campaign: dict[str, Any], state: dict[str, Any], *, night: str, w
                     have = int(row.get("questions") or 0)
                     if have < per and ("questions", grade, subject, row["sub_strand"].lower()) not in busy:
                         rows.append((have / per, subject, row))
-            rows.sort(key=lambda r: (r[0], r[1], r[2]["sub_strand"]))
+            # Questions first: a sub-strand that already has its guide goes
+            # straight to questions, ahead of one that needs a guide written.
+            rows.sort(key=lambda r: (r[2].get("has_notes") is False, r[0], r[1], r[2]["sub_strand"]))
             for _ratio, subject, row in rows:
                 needs_notes = row.get("has_notes") is False
                 cost = _estimate(state, "questions") + (_estimate(state, "notes") if needs_notes else 0)
@@ -1147,6 +1163,8 @@ def main() -> None:
     w.add_argument("--instructions", default="")
     w.add_argument("--download", default=os.getenv("CBC_DOWNLOAD_DIR", os.path.join(os.getcwd(), "papers")))
     w.add_argument("--redo", action="store_true", help="re-run papers the ledger already marks done")
+    w.add_argument("--no-pdf", dest="no_pdf", action="store_true",
+                   help="leave the papers on the platform; do not download their PDFs")
     w.add_argument("--model", required=True)
     w.add_argument("--llm-url", dest="llm_url", default=os.getenv("LLM_URL", "http://localhost:11434/v1"))
     w.add_argument("--window", default=os.getenv("CBC_SERVE_WINDOW", ""),

@@ -55,25 +55,25 @@ def test_phases_run_in_order_then_the_cycle_repeats() -> None:
     assert p["name"] == "create" and p["target_questions"] == 240 and p["cycle"] == 1
 
 
-def test_a_create_night_shares_the_target_out_and_writes_a_guide_before_its_questions(fake) -> None:
+def test_a_create_night_puts_questions_first_and_writes_a_guide_before_its_questions(fake) -> None:
     state: dict = {}
     plan = ca.plan_night(CAMPAIGN, state, night="2026-10-09", window="22:00-07:00", minutes_left=540)
 
     assert state["phases"][plan["phase"]["key"]]["per_sub_strand"] == 30, "120 over 4 sub-strands"
     planned = _jobs(state, plan["new"])
-    # Emptiest first; Integers (38 of 30) is already full and is left alone.
-    assert planned[:2] == [("notes", "Equations"), ("questions", "Equations")]
-    assert ("questions", "Integers") not in planned
-    eq = state["jobs"][plan["new"][1]]
-    assert eq["after"] == plan["new"][0] and eq["count"] == 20
-    assert state["jobs"][plan["new"][2]]["sub_strand"] == "Fractions"
+    # Questions first: sub-strands with a guide, emptiest first; then the one
+    # that needs its guide written. Integers (38 of 30) is full and left alone.
+    assert planned == [("questions", "Fractions"), ("questions", "Atoms"),
+                       ("notes", "Equations"), ("questions", "Equations")]
+    eq = state["jobs"][plan["new"][3]]
+    assert eq["after"] == plan["new"][2] and eq["count"] == 20
 
 
 def test_the_night_is_filled_to_its_measured_capacity(fake) -> None:
     state = {"measured": {"questions": [120, 120, 120], "notes": [60]}}
     plan = ca.plan_night(CAMPAIGN, state, night="2026-10-09", window="22:00-07:00", minutes_left=200)
-    # 200 minutes: a guide (60) + its questions (120) uses it up; nothing else fits.
-    assert _jobs(state, plan["new"]) == [("notes", "Equations"), ("questions", "Equations")]
+    # 200 minutes: one 120-minute batch fits; the next would not.
+    assert _jobs(state, plan["new"]) == [("questions", "Fractions")]
 
 
 def test_carried_jobs_come_first_and_a_big_backlog_makes_a_catch_up_night(fake) -> None:
@@ -109,9 +109,11 @@ def test_working_a_night_records_done_failed_and_carries_at_the_window(fake, mon
 
     def run(args):
         ran.append((args.station, args.sub_strand))
-        if args.sub_strand == "Equations" and args.station == "notes":
-            return {"status": "failed", "error": "the guide failed its checks"}
+        if args.sub_strand == "Fractions":
+            return {"status": "done", "result": {"saved": 20}}
         if args.sub_strand == "Atoms":
+            return {"status": "failed", "error": "the batch failed its checks"}
+        if args.station == "notes":
             raise ca._WindowClosed()
         return {"status": "done", "result": {"saved": 20}}
 
@@ -121,13 +123,11 @@ def test_working_a_night_records_done_failed_and_carries_at_the_window(fake, mon
     tally = ca.work_night(plan, state, CAMPAIGN, args)
 
     jobs = state["jobs"]
-    notes_id, eq_id = plan["new"][0], plan["new"][1]
-    assert jobs[notes_id]["status"] == "carried" and jobs[notes_id]["attempts"] == 1
-    assert jobs[eq_id]["status"] == "carried" and ("questions", "Equations") not in ran, \
-        "questions wait for their guide"
-    assert tally["saved"] == 20 and jobs[plan["new"][2]]["status"] == "done"
-    atoms = next(j for j in jobs.values() if j["sub_strand"] == "Atoms")
-    assert atoms["status"] == "carried", "the window closed mid-job; it resumes next night"
+    fractions, atoms, notes, eq = (jobs[i] for i in plan["new"])
+    assert fractions["status"] == "done" and tally["saved"] == 20
+    assert atoms["status"] == "carried" and atoms["attempts"] == 1, "failed once; retried next time"
+    assert notes["status"] == "carried", "the window closed mid-guide; it resumes from its journal"
+    assert eq["status"] == "carried" and ("questions", "Equations") not in ran
     report = ca._report(plan, tally, state, CAMPAIGN)
     text = open(report).read()
     assert "Questions saved tonight: 20" in text and "Toward 120 questions" in text
