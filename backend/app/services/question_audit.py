@@ -223,3 +223,114 @@ def audit(questions: list[dict[str, Any]], *, generate: Any, model_config: Any,
         findings.append(question_check.Finding(f"reader_{kind or 'fail'}", says + ".", fix,
                                                [question_check._id(question)]))
     return findings
+
+
+# ── the blind read: one item, no key ─────────────────────────────────────────
+#
+# The batch read above shows the reader the key ("← KEY"), and a reader shown
+# the answer agrees with it: qwen3:14b passed six items with wrong or arguable
+# keys that way. Asked one item at a time, WITHOUT the key, for its answer and
+# every option it could defend, the same model caught all six — "passed away"
+# and "is gone" are euphemisms too. So each selected-response item is read
+# blind, and fails unless exactly one option is defensible and it is the key.
+
+_BLIND_PROMPT = """You are checking one exam item for {where}. Do not trust it; check it.
+
+{item}
+
+Answer it yourself. Then list EVERY option a knowledgeable teacher could defend as correct.
+Return JSON only:
+{{"answer": "<the single best option id>", "defensible": ["<each defensible option id>"], "reason": "<one sentence>"}}"""
+
+_SELECTED = ("multiple_choice", "mcq", "assertion_reason", "true_false", "diagram_based")
+
+
+def _blind_render(question: dict[str, Any]) -> str:
+    lines = []
+    stimulus = str(question.get("stimulus_context") or "").strip()
+    if stimulus:
+        lines.append(f"Context: {stimulus}")
+    figure = question.get("figure")
+    if isinstance(figure, dict) and figure:
+        # The reader cannot see the drawing; it reads the data it is drawn from.
+        lines.append("Figure (the data it is drawn from): " + json.dumps(
+            {k: v for k, v in figure.items() if not str(k).startswith("_")}, ensure_ascii=False)[:1500])
+    elif isinstance(question.get("diagram"), dict):
+        title = question["diagram"].get("diagram_title") or question["diagram"].get("title") or ""
+        if title:
+            lines.append(f"Figure: {title}")
+    lines.append(f"Question: {str(question.get('question_text') or '').strip()}")
+    for option in question.get("options") or []:
+        if isinstance(option, dict):
+            lines.append(f"{option.get('id')}. {option.get('text')}")
+    return "\n".join(lines)
+
+
+def _engine_proved(question: dict[str, Any], key_text: str) -> bool:
+    """A key the arithmetic engine has already worked: the reader is not
+    asked, because a 14B reader slips on sums ("14 + 16 = 28") the engine
+    does not."""
+    try:
+        from . import worked_solutions
+
+        stem = " ".join(str(question.get(k) or "") for k in ("stimulus_context", "question_text"))
+        target = str(question.get("expression") or "").strip() or stem
+        verdict = worked_solutions.check(target, key_text)
+        return bool(verdict.get("checked") and verdict.get("agrees"))
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def blind_check(questions: list[dict[str, Any]], *, generate: Any, model_config: Any,
+                grade: str = "", subject: str = "", sub_strand: str = "") -> list[question_check.Finding]:
+    """Each selected-response item read blind, one at a time. Never raises."""
+    if generate is None or model_config is None:
+        return []
+    where = " · ".join(x for x in (grade, subject, sub_strand) if x) or "this sub-strand"
+    findings: list[question_check.Finding] = []
+    for index, question in enumerate([q for q in (questions or []) if isinstance(q, dict)], start=1):
+        options = [o for o in (question.get("options") or []) if isinstance(o, dict)]
+        if len(options) < 2 or str(question.get("question_type") or "").lower() not in _SELECTED:
+            continue
+        keys = {str(o.get("id") or "").strip().upper() for o in options if o.get("is_correct")}
+        if len(keys) != 1:
+            continue                      # the key itself is malformed; the normaliser says so
+        key = next(iter(keys))
+        key_text = str(next(o.get("text") for o in options if str(o.get("id") or "").strip().upper() == key) or "")
+        if _engine_proved(question, key_text):
+            continue
+        prompt = _BLIND_PROMPT.format(where=where, item=_blind_render(question))
+        try:
+            response = generate(model_config, [{"role": "user", "content": prompt}], temperature=0.0)
+            content = response.content if hasattr(response, "content") else response
+            if isinstance(content, str):
+                content = json.loads(content)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Blind read of an item skipped: %s", exc)
+            continue
+        if not isinstance(content, dict):
+            continue
+        answer = str(content.get("answer") or "").strip().upper()
+        defensible = {str(x).strip().upper() for x in (content.get("defensible") or []) if str(x).strip()}
+        if answer:
+            defensible.add(answer)
+        reason = re.sub(r"\s+", " ", str(content.get("reason") or "")).strip()[:240]
+        label = str(question.get("display_label") or f"Q{index}")
+        if answer and answer != key:
+            findings.append(question_check.Finding(
+                "blind_key",
+                f"{label}: read without its key, the answer reached is {answer}, not the key {key}"
+                + (f" — {reason}" if reason else "") + ".",
+                "Re-work the item: the key must be the answer the question as set has. If the reader is "
+                "right, change the key; if the stem misleads, rewrite it so the key is unambiguous.",
+                [question_check._id(question)]))
+        elif len(defensible) > 1:
+            others = ", ".join(sorted(defensible - {key}))
+            findings.append(question_check.Finding(
+                "blind_ambiguous",
+                f"{label}: besides the key {key}, option(s) {others} can be defended as correct"
+                + (f" — {reason}" if reason else "") + ".",
+                f"Rewrite option(s) {others} so each is clearly wrong, by a named mistake, or sharpen the "
+                "stem so only the key fits.",
+                [question_check._id(question)]))
+    return findings

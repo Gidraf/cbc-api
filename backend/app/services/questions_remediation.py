@@ -49,6 +49,10 @@ class Report:
     added: int = 0
     stopped_because: str = ""
     engine: dict[str, int] = field(default_factory=dict)
+    # Items still WRONG when the loop stopped — a key that does not stand, an
+    # answer two options share — as opposed to merely weak. They are filed
+    # `needs_review`, never `draft`, so no paper picks them up unread.
+    held: list[str] = field(default_factory=list)
 
     @property
     def clean(self) -> bool:
@@ -64,7 +68,24 @@ class Report:
             "repaired": list(self.repaired), "dropped": list(self.dropped),
             "rewritten": list(self.rewritten), "added": self.added,
             "stopped_because": self.stopped_because, "engine": dict(self.engine),
+            "held": list(self.held),
         }
+
+
+# What makes an item WRONG, not merely weak. Weak items (thin explanation,
+# below the grade, the batch short of figures) stay drafts and improve on a
+# later pass; wrong ones are held for a person.
+HOLD_KINDS = frozenset({
+    "wrong_answer", "wrong_key", "two_right_answers", "blind_key", "blind_ambiguous",
+    "figure_contradicts_stem", "story_expression_disagree", "equation_not_balanced",
+    "scheme_states_a_false_equation", "impossible_year", "answer_in_the_stem",
+    "figure_not_supplied", "passage_missing", "word_not_in_passage", "wrong_language",
+})
+
+
+def holds(kind: str) -> bool:
+    """Whether a finding of this kind keeps an item off papers until read."""
+    return kind in HOLD_KINDS or (kind.startswith("reader_") and kind != "reader_distractor")
 
 
 def _id(question: dict[str, Any]) -> str:
@@ -261,5 +282,6 @@ def run(
 
     out.score_after = best_report.score
     out.outstanding = [f.says for f in best_report.findings]
+    out.held = sorted({qid for f in best_report.findings if holds(f.kind) for qid in f.items})
     out.engine = {"checked": best_report.engine_checked, "agreed": best_report.engine_agreed}
     return best, out

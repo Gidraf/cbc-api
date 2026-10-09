@@ -102,9 +102,12 @@ def _review_group(items: list[dict[str, Any]], *, grade: str, subject: str, sub_
     notes_text = _notes_for(grade, subject, sub_strand)
 
     def audit(batch: list[dict[str, Any]]) -> list[Any]:
-        return question_audit.audit(batch, generate=llm_client.generate, model_config=resolved,
-                                    notes_text=notes_text, grade=grade, subject=subject,
-                                    sub_strand=sub_strand)
+        found = question_audit.audit(batch, generate=llm_client.generate, model_config=resolved,
+                                     notes_text=notes_text, grade=grade, subject=subject,
+                                     sub_strand=sub_strand)
+        # Each selected-response item also read blind — no key, one at a time.
+        return found + question_audit.blind_check(batch, generate=llm_client.generate, model_config=resolved,
+                                                  grade=grade, subject=subject, sub_strand=sub_strand)
 
     def rewrite(to_redo: list[dict[str, Any]], reasons: list[str], asks: list[str]) -> list[dict[str, Any]]:
         from ..routes.questions import _bind_figure, _draw_question_figures
@@ -151,15 +154,19 @@ def _review_group(items: list[dict[str, Any]], *, grade: str, subject: str, sub_
     stamp = {"reviewed_by": f"{resolved.provider} · {resolved.model}", "reviewed_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
              "findings_before": list(result.findings_before)}
 
-    # Which item each outstanding finding names.
-    held: dict[str, list[str]] = {}
+    # Which item each outstanding finding names — and of those, which are
+    # still WRONG (held for a person) rather than merely weak (left a draft,
+    # to improve on the next pass).
+    reasons: dict[str, list[str]] = {}
     for says in result.outstanding:
         m = re.match(r"^(Q\d+)\b", says)
         qid = labels.get(m.group(1)) if m else None
         if qid:
-            held.setdefault(qid, []).append(says)
+            reasons.setdefault(qid, []).append(says)
         kind = says.split(":")[0] if ":" in says[:40] else "set"
         outcome["findings_by_kind"][kind] = outcome["findings_by_kind"].get(kind, 0) + 1
+    wrong = set(getattr(result, "held", []) or [])
+    held = {qid: reasons.get(qid) or ["still fails the self-check"] for qid in wrong}
 
     # Replacements: the item now carrying the original's label.
     by_label_now = {str(q.get("display_label")): q for q in best}

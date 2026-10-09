@@ -1473,6 +1473,8 @@ def factory_generate_questions_batch(
             # and losing the run as well is worse.
             logger.warning("Generated %d item(s) for %s but could not save them: %s",
                            len(normalized_questions), payload.sub_strand, exc)
+    if saved:
+        _hold_what_still_fails(normalized_questions, saved, self_check)
 
     # 5c. Counted per SAVED item, by the id the bank gave it. This was recorded
     #     before the save, under the model's positional labels — "Q1".."Q15"
@@ -1546,6 +1548,28 @@ def _written_by(resp: Any) -> dict[str, Any]:
         if task.steps and getattr(task.steps[-1], "model_used", ""):
             out["model"] = str(task.steps[-1].model_used).replace(" (replayed)", "")
     return out
+
+
+def _hold_what_still_fails(items: list[dict[str, Any]], saved: list[Any], self_check: Any) -> None:
+    """Items the rewrite loop could not put right are filed `needs_review`:
+    a wrong or ambiguous key saved as `draft` was one "Fill from the bank"
+    away from a printed paper (nine items at 20/100 were)."""
+    held = set(getattr(self_check, "held", []) or [])
+    if not held:
+        return
+    reasons = list(getattr(self_check, "outstanding", []) or [])
+    for item, record in zip(items, saved):
+        if str(item.get("question_id") or "") not in held or not isinstance(record, dict):
+            continue
+        qid = str(record.get("question_id") or "")
+        try:
+            question_dna_service.set_status(qid, "needs_review", review_audit={
+                **(record.get("review_audit") or {}),
+                "held": {"why": [r for r in reasons if str(item.get("display_label") or "~~") in r
+                                 or str(item.get("question_id")) in r][:5] or reasons[:3],
+                         "by": "self-check"}})
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Could not hold %s: %s", qid, exc)
 
 
 def _draw_question_figures(raw_items: list[Any], diagrams_list: list[Any], *, grade: str,
@@ -1743,10 +1767,14 @@ def _check_and_repair(
     # The reader: answers every item cold and says which keys it cannot
     # reach. The one check that works for a subject with no engine.
     def audit(items: list[dict[str, Any]]) -> list[Any]:
-        return question_audit.audit(
+        found = question_audit.audit(
             items, generate=llm_client.generate, model_config=resolved,
             notes_text=notes_text, grade=payload.grade, subject=payload.subject,
             sub_strand=payload.sub_strand)
+        # And each selected-response item read blind: no key, one at a time.
+        return found + question_audit.blind_check(
+            items, generate=llm_client.generate, model_config=resolved,
+            grade=payload.grade, subject=payload.subject, sub_strand=payload.sub_strand)
 
     return questions_remediation.run(
         questions, grade=payload.grade, subject=payload.subject,
