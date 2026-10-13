@@ -50,3 +50,44 @@ def test_platforms_and_topics_are_compared_on_what_posted():
     assert tt["follows_per_1000_views"] == 10.5 and tt["avg_watch_pct"] == 50
     assert s["by_platform"]["youtube"]["planned"] == 1 and s["overall"]["posts"] == 3
     assert s["top"][0]["views"] == 3000
+
+
+from datetime import datetime, timedelta, timezone
+
+RULES = {"enabled": True, "daily_cap": 30, "platform_cap": 8, "min_gap_minutes": 20,
+         "hours": {"start": "06:00", "end": "22:00"}, "platforms": ["tiktok", "instagram", "youtube", "linkedin"]}
+NOON = datetime(2026, 10, 20, 9, 0, tzinfo=timezone.utc)   # 12:00 in Nairobi
+DUE = [{"post_id": "a", "platform": "tiktok"}, {"post_id": "b", "platform": "instagram"}]
+
+
+def test_the_poster_gets_one_post_when_the_rules_allow():
+    post, why = X.decide(NOON, RULES, posted_today=[], last_posted_at=None, candidates=DUE, logged_out=set())
+    assert post["post_id"] == "a" and why == ""
+
+
+def test_never_more_than_thirty_a_day_nor_too_close_together():
+    full = [{"platform": "tiktok"}] * 30
+    assert X.decide(NOON, RULES, posted_today=full, last_posted_at=None, candidates=DUE, logged_out=set())[0] is None
+    post, why = X.decide(NOON, RULES, posted_today=[], last_posted_at=NOON - timedelta(minutes=5), candidates=DUE, logged_out=set())
+    assert post is None and "16 min" in why
+
+
+def test_outside_hours_or_switched_off_nothing_goes_out():
+    night = datetime(2026, 10, 20, 20, 30, tzinfo=timezone.utc)   # 23:30 in Nairobi
+    assert X.decide(night, RULES, posted_today=[], last_posted_at=None, candidates=DUE, logged_out=set())[0] is None
+    assert X.decide(NOON, {**RULES, "enabled": False}, posted_today=[], last_posted_at=None, candidates=DUE, logged_out=set())[0] is None
+
+
+def test_a_logged_out_or_full_platform_is_passed_over():
+    post, _ = X.decide(NOON, RULES, posted_today=[], last_posted_at=None, candidates=DUE, logged_out={"tiktok"})
+    assert post["post_id"] == "b"
+    tiktok_full = [{"platform": "tiktok"}] * 8
+    post, _ = X.decide(NOON, RULES, posted_today=tiktok_full, last_posted_at=None, candidates=DUE, logged_out=set())
+    assert post["post_id"] == "b"
+    post, why = X.decide(NOON, RULES, posted_today=[], last_posted_at=None, candidates=DUE, logged_out={"tiktok", "instagram"})
+    assert post is None and "needs a login" in why
+
+
+def test_the_cap_can_never_be_set_above_thirty():
+    with mock.patch("app.services.platform_settings.get", side_effect=lambda k, d=None: 500 if k == "poster_daily_cap" else d):
+        assert X.poster_rules()["daily_cap"] == 30

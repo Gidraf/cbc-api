@@ -29,6 +29,9 @@ import {
   useSocialPosts,
   useHandPhoto,
   useMakeSocial,
+  usePosterCommand,
+  usePosterOverview,
+  usePosterShot,
   useMakeSocials,
   useMakeVideo,
   useSaveBrand,
@@ -45,6 +48,7 @@ import {
   useWalkthroughHtml,
   useWhiteboardHtml,
   type PlayItem,
+  type PosterOverview,
   type PostRollup,
   type SocialBrand,
   type TrackedPost,
@@ -159,6 +163,7 @@ export function PlayArcade() {
         <SocialLibrary grade={grade} subject={subject} subStrand={subStrand} onWatch={(qid) => setSocialWatch(qid)} />
       )}
       {grade && <Performance grade={grade} subject={subject} subStrand={subStrand} />}
+      <AutoPost />
 
       {playing && <Round items={playing} onClose={() => setPlaying(null)} onWatch={(qid) => setWatching(qid)} />}
       {watching && <WatchModal questionId={watching} onClose={() => setWatching(null)} />}
@@ -1057,6 +1062,121 @@ function PostRow({ post }: { post: TrackedPost }) {
         <Button size="sm" variant="ghost" onClick={() => remove.mutate(post.post_id)}>✕</Button>
       </td>
     </tr>
+  );
+}
+
+/** The browser poster: its screen, its logins, its queue. It posts from the
+ *  sessions logged into on its screen, within the server's rules. */
+function AutoPost() {
+  const [open, setOpen] = React.useState(false);
+  const overview = usePosterOverview(open);
+  const command = usePosterCommand();
+  const toast = useToast();
+  const o = overview.data;
+  async function run(action: "login" | "check" | "dry_run" | "run_now" | "pause" | "resume", platform = "") {
+    try {
+      const out = await command.mutateAsync({ action, platform });
+      if (out?.error) toast(String(out.error), "danger");
+      else if (out?.message) toast(String(out.message), "info");
+      else if (action === "dry_run") toast(out?.ok ? `Dry run on ${platform} reached the last step — see the screenshot.` : `Dry run stopped: ${out?.error || "see the screenshot"}`, out?.ok ? "ok" : "danger");
+      else toast("Done.", "ok");
+    } catch (err) { toast(err instanceof Error ? err.message : "The poster did not answer.", "danger"); }
+  }
+  const states = Object.fromEntries((o?.states || []).map((s) => [s.platform, s]));
+  const platforms = o?.live?.online ? ["tiktok", "instagram", "facebook", "youtube", "linkedin"] : (o?.rules.platforms || []);
+  const today = Object.values(o?.posted_today || {}).reduce((a, b) => a + b, 0);
+  return (
+    <Card title="Auto-post (browser)"
+          actions={<Button size="sm" variant="ghost" onClick={() => setOpen((x) => !x)}>{open ? "Hide" : "Open"}</Button>}>
+      <p style={{ margin: 0, color: "var(--ink-3)", fontSize: "var(--text-sm)" }}>
+        A real browser on the server publishes your scheduled posts from the accounts you log into on its screen — at most
+        {` ${o?.rules.daily_cap ?? 30}`} a day across every channel, spaced out, within posting hours. It stops for any
+        "is this you?" check for you to finish. Posting through the websites is against the platforms' rules: keep the volume
+        low and watch the first runs.
+      </p>
+      {open && overview.error && <ErrorNotice error={overview.error} />}
+      {open && o && (
+        <div style={{ display: "grid", gap: "var(--s3)", marginTop: "var(--s3)" }}>
+          <Stack direction="row" gap="var(--s2)" wrap align="center" style={{ fontSize: "var(--text-sm)" }}>
+            <Badge tone={o.live.online ? (o.live.paused ? "warn" : "ok") : "danger"}>
+              {o.live.online ? (o.live.paused ? "Paused" : o.live.busy || "Running") : "Poster offline"}
+            </Badge>
+            <Badge tone={o.rules.enabled ? "ok" : "neutral"}>{o.rules.enabled ? "Auto-post on" : "Auto-post off (Settings → Auto-post)"}</Badge>
+            <span>{today} of {o.rules.daily_cap} posted today · {o.rules.min_gap_minutes} min apart · {o.rules.hours.start}–{o.rules.hours.end} EAT</span>
+            <span style={{ flex: 1 }} />
+            {o.live.online && (o.live.paused
+              ? <Button size="sm" onClick={() => run("resume")}>▶ Resume</Button>
+              : <Button size="sm" variant="ghost" onClick={() => run("pause")}>❚❚ Pause</Button>)}
+            {o.live.online && <Button size="sm" variant="ghost" disabled={command.isPending} onClick={() => run("run_now")}>Post next now</Button>}
+          </Stack>
+          {!o.live.online && <p style={{ margin: 0, fontSize: "var(--text-sm)" }}>{o.live.error || "Start the social-poster service on the server."}</p>}
+          {o.live.note && <p style={{ margin: 0, fontSize: "var(--text-xs)", color: "var(--ink-3)" }}>{o.live.note}</p>}
+
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: "var(--s2)" }}>
+            {platforms.map((p) => {
+              const st = states[p];
+              return (
+                <div key={p} style={{ border: "1px solid var(--line-2)", borderRadius: "var(--radius)", padding: "var(--s2)", fontSize: "var(--text-xs)", display: "grid", gap: 6 }}>
+                  <Stack direction="row" gap="var(--s2)" align="center">
+                    <strong style={{ fontSize: "var(--text-sm)" }}>{PLATFORM_LABEL[p] || p}</strong>
+                    <Badge tone={st ? (st.logged_in ? "ok" : "danger") : "neutral"}>{st ? (st.logged_in ? "logged in" : "needs login") : "not checked"}</Badge>
+                  </Stack>
+                  <span>{o.posted_today[p] || 0} posted today</span>
+                  {st?.note && !st.logged_in && <span style={{ color: "var(--danger)" }}>{st.note}</span>}
+                  <Stack direction="row" gap="4px" wrap>
+                    <Button size="sm" variant="ghost" disabled={!o.live.online || command.isPending} onClick={() => run("login", p)}>Log in</Button>
+                    <Button size="sm" variant="ghost" disabled={!o.live.online || command.isPending} onClick={() => run("check", p)}>Check</Button>
+                    <Button size="sm" disabled={!o.live.online || command.isPending} onClick={() => run("dry_run", p)}>Dry run</Button>
+                  </Stack>
+                </div>
+              );
+            })}
+          </div>
+
+          {o.view_url ? (
+            <div>
+              <Stack direction="row" gap="var(--s2)" align="center" style={{ marginBottom: 6, fontSize: "var(--text-sm)" }}>
+                <strong>The browser's screen</strong>
+                <a href={o.view_url} target="_blank" rel="noreferrer" style={{ fontSize: "var(--text-xs)" }}>open in a new tab ↗</a>
+                <span style={{ color: "var(--ink-3)", fontSize: "var(--text-xs)" }}>Press "Log in", then sign in here. It asks for the screen password.</span>
+              </Stack>
+              <iframe title="Poster screen" src={o.view_url} style={{ width: "100%", height: 560, border: "1px solid var(--line)", borderRadius: "var(--radius)", background: "#000" }} />
+            </div>
+          ) : (
+            <p style={{ margin: 0, fontSize: "var(--text-sm)" }}>Set Settings → Public address to show the browser's screen here.</p>
+          )}
+
+          {o.live.last && <LastAttempt last={o.live.last} />}
+
+          {o.queue.length > 0 && (
+            <details>
+              <summary style={{ cursor: "pointer", fontSize: "var(--text-sm)" }}>Queue — {o.queue.length} waiting</summary>
+              {o.queue.map((q) => (
+                <div key={q.post_id} style={{ display: "flex", gap: "var(--s2)", fontSize: "var(--text-xs)", padding: "3px 0", borderBottom: "1px solid var(--line-2)" }}>
+                  <span style={{ width: 140 }}>{q.scheduled_for ? new Date(q.scheduled_for).toLocaleString([], { dateStyle: "medium", timeStyle: "short" }) : "—"}</span>
+                  <span style={{ width: 90 }}>{PLATFORM_LABEL[q.platform] || q.platform}</span>
+                  <span style={{ flex: 1 }}>{q.question_id}</span>
+                  {q.attempts > 0 && <span title={q.last_error} style={{ color: "var(--danger)" }}>{q.attempts} failed</span>}
+                </div>
+              ))}
+            </details>
+          )}
+        </div>
+      )}
+    </Card>
+  );
+}
+
+function LastAttempt({ last }: { last: NonNullable<PosterOverview["live"]["last"]> }) {
+  const img = usePosterShot(last.shot || "");
+  return (
+    <div style={{ fontSize: "var(--text-sm)" }}>
+      <strong>Last {last.dry_run ? "dry run" : "attempt"}:</strong> {PLATFORM_LABEL[last.platform] || last.platform} —{" "}
+      {last.ok ? <span style={{ color: "var(--ok)" }}>{last.dry_run ? "reached the last step" : "posted"}</span>
+               : <span style={{ color: "var(--danger)" }}>{last.error}</span>}
+      {last.url && <> · <a href={last.url} target="_blank" rel="noreferrer">view ↗</a></>}
+      {img.data && <img src={img.data} alt="What the browser showed" style={{ display: "block", marginTop: 6, maxWidth: "100%", maxHeight: 360, border: "1px solid var(--line)", borderRadius: 6 }} />}
+    </div>
   );
 }
 

@@ -4341,6 +4341,52 @@ export function useDeletePost() {
   });
 }
 
+export type PosterOverview = {
+  rules: { enabled: boolean; daily_cap: number; platform_cap: number; min_gap_minutes: number;
+           hours: { start: string; end: string }; platforms: string[] };
+  posted_today: Record<string, number>;
+  states: { platform: string; logged_in: boolean; note: string; checked_at: string }[];
+  queue: { post_id: string; platform: string; question_id: string; scheduled_for: string | null; status: string;
+           attempts: number; last_error: string }[];
+  recent: { post_id: string; platform: string; question_id: string; status: string; posted_at: string | null; url: string;
+            last_error: string; last_attempt_at: string }[];
+  live: { online: boolean; error?: string; paused?: boolean; busy?: string; note?: string; browser?: string;
+          last?: { ok: boolean; platform: string; error?: string; shot?: string; dry_run?: boolean; url?: string } | null };
+  view_url: string;
+};
+
+/** The browser poster: rules, logins, queue, and its live state. */
+export function usePosterOverview(enabled = true) {
+  const api = useApi();
+  return useQuery({
+    queryKey: ["poster"],
+    queryFn: () => api<PosterOverview>("/api/v1/play/poster/overview"),
+    enabled,
+    refetchInterval: 10_000,
+  });
+}
+
+export function usePosterCommand() {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { action: "login" | "check" | "dry_run" | "run_now" | "pause" | "resume"; platform?: string; post_id?: string }) =>
+      api<Record<string, any>>("/api/v1/play/poster/command", { method: "POST", body: JSON.stringify(v) }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["poster"] }),
+  });
+}
+
+/** A screenshot the poster took, as an object URL for an <img>. */
+export function usePosterShot(name: string) {
+  const { token } = useAuth();
+  return useQuery({
+    queryKey: ["poster-shot", name],
+    queryFn: async () => URL.createObjectURL((await fetchBlob(`/api/v1/play/poster/shot/${encodeURIComponent(name)}`, { bearerToken: token })).blob),
+    enabled: Boolean(name),
+    staleTime: Infinity,
+  });
+}
+
 
 /** The agent context pack: playbook, manifest, formats, prompts, as a zip. */
 export function useAgentPack() {

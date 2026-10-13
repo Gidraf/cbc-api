@@ -1250,6 +1250,25 @@ MIGRATIONS: list[tuple[str, str]] = [
         CREATE INDEX IF NOT EXISTS idx_social_posts_question ON social_posts(question_id);
         """,
     ),
+    (
+        "042_auto_poster",
+        """
+        -- The browser poster: each planned post's attempts and last error, and
+        -- whether each platform's saved login still works, so a logged-out
+        -- platform waits for a person instead of failing thirty times.
+        ALTER TABLE social_posts ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'planned';
+        ALTER TABLE social_posts ADD COLUMN IF NOT EXISTS attempts INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE social_posts ADD COLUMN IF NOT EXISTS last_error TEXT NOT NULL DEFAULT '';
+        ALTER TABLE social_posts ADD COLUMN IF NOT EXISTS last_attempt_at TIMESTAMPTZ NULL;
+        CREATE INDEX IF NOT EXISTS idx_social_posts_due ON social_posts(status, scheduled_for);
+        CREATE TABLE IF NOT EXISTS poster_state (
+            platform TEXT PRIMARY KEY,
+            logged_in BOOLEAN NOT NULL DEFAULT FALSE,
+            note TEXT NOT NULL DEFAULT '',
+            checked_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        """,
+    ),
 ]
 
 

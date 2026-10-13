@@ -665,3 +665,118 @@ def delete_social_post(post_id: str, auth: AuthContext = Depends(ANY)) -> dict[s
     _may_make_videos(auth)
     social_export.delete_post(post_id)
     return {"deleted": post_id}
+
+
+# ── the browser poster ───────────────────────────────────────────────────────
+#
+# The poster service (poster/ at the repo root) runs a real browser the owner
+# logs into once through its shared screen; it asks here what to publish and
+# reports back. The rules — 30 a day at most, a cap per platform, a gap
+# between posts, posting hours — are applied here, never in the browser.
+
+def _poster_call(method: str, path: str, body: dict[str, Any] | None = None, timeout: float = 8.0) -> Any:
+    import os
+
+    import httpx
+
+    base = os.getenv("POSTER_URL", "http://social-poster:6090").rstrip("/")
+    token = os.getenv("POSTER_TOKEN", "")
+    try:
+        with httpx.Client(timeout=timeout) as client:
+            r = client.request(method, base + path, json=body, headers={"X-Poster-Token": token})
+        return r.json() if "json" in r.headers.get("content-type", "") else r.content
+    except Exception as exc:  # noqa: BLE001
+        return {"online": False, "error": f"The poster is not reachable: {str(exc)[:160]}"}
+
+
+@router.get("/poster/next")
+def poster_next(platform: str = Query(""), post_id: str = Query(""), dry: bool = Query(False),
+                auth: AuthContext = Depends(ANY)) -> dict[str, Any]:
+    """The one post the browser may publish now, or why there is none. A dry
+    run takes the next queued post for a platform, rules aside, since it
+    publishes nothing."""
+    from ..services import social_export
+
+    _may_make_videos(auth)
+    return social_export.next_for_poster(platform=platform, post_id=post_id, dry=dry)
+
+
+class PosterResult(BaseModel):
+    post_id: str
+    ok: bool
+    url: str = ""
+    error: str = ""
+    dry_run: bool = False
+
+
+@router.post("/poster/result")
+def poster_result(payload: PosterResult, auth: AuthContext = Depends(ANY)) -> dict[str, Any]:
+    from ..services import social_export
+
+    _may_make_videos(auth)
+    return social_export.record_attempt(payload.post_id, ok=payload.ok, url=payload.url, error=payload.error,
+                                        dry_run=payload.dry_run)
+
+
+class PosterState(BaseModel):
+    platform: str
+    logged_in: bool
+    note: str = ""
+
+
+@router.post("/poster/state")
+def poster_state(payload: PosterState, auth: AuthContext = Depends(ANY)) -> dict[str, Any]:
+    from ..services import social_export
+
+    _may_make_videos(auth)
+    social_export.set_login_state(payload.platform.lower(), payload.logged_in, payload.note)
+    return {"platform": payload.platform, "logged_in": payload.logged_in}
+
+
+@router.get("/poster/overview")
+def poster_overview(auth: AuthContext = Depends(ANY)) -> dict[str, Any]:
+    """Rules, today's count, login state per platform, the queue, the last
+    attempts, and the poster's own live status."""
+    import os
+
+    from ..services import platform_settings, social_export
+
+    _may_make_videos(auth)
+    public = str(platform_settings.get("public_base_url") or "").rstrip("/")
+    view = os.getenv("POSTER_VIEW_URL", "") or (f"{public}/poster/vnc.html?path=poster/websockify&autoconnect=1&resize=scale"
+                                                 if public else "")
+    live = _poster_call("GET", "/status", timeout=4.0)
+    return {**social_export.poster_overview(), "live": live if isinstance(live, dict) else {"online": False}, "view_url": view}
+
+
+class PosterCommand(BaseModel):
+    action: str          # login | check | dry_run | run_now | pause | resume
+    platform: str = ""
+    post_id: str = ""
+
+
+@router.post("/poster/command")
+def poster_command(payload: PosterCommand, auth: AuthContext = Depends(ANY)) -> dict[str, Any]:
+    _may_make_videos(auth)
+    if payload.action not in ("login", "check", "dry_run", "run_now", "pause", "resume"):
+        raise_api_error("VALIDATION_FAILED", "Unknown poster action.")
+    out = _poster_call("POST", f"/{payload.action}", {"platform": payload.platform, "post_id": payload.post_id},
+                       timeout=15.0)
+    return out if isinstance(out, dict) else {"ok": True}
+
+
+@router.get("/poster/shot/{name}")
+def poster_shot(name: str, auth: AuthContext = Depends(ANY)):
+    """A screenshot the poster took — a dry run's last step, or a failure."""
+    import re as _re
+
+    from fastapi.responses import Response as _Response
+
+    _may_make_videos(auth)
+    if not _re.fullmatch(r"[\w.-]+\.png", name):
+        raise_api_error("VALIDATION_FAILED", "Not a screenshot name.")
+    out = _poster_call("GET", f"/shots/{name}")
+    if isinstance(out, (bytes, bytearray)):
+        return _Response(content=bytes(out), media_type="image/png")
+    raise_api_error("NOT_FOUND", "No such screenshot.")
+    return None

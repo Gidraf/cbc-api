@@ -26,7 +26,7 @@ from typing import Any
 
 logger = logging.getLogger("cbc-social-export")
 
-PLATFORMS = ("tiktok", "instagram", "youtube", "facebook", "whatsapp", "x")
+PLATFORMS = ("tiktok", "instagram", "youtube", "facebook", "linkedin", "whatsapp", "x")
 STATS = ("views", "likes", "comments", "shares", "saves", "follows")
 
 
@@ -244,3 +244,159 @@ When a post goes out, mark it posted and paste its link in Play → Performance;
 add its views, likes, comments, shares and follows as they come in to compare
 platforms and topics.
 """
+
+
+# ── the browser poster ───────────────────────────────────────────────────────
+#
+# The rules live here, not in the poster: whatever the browser does, it is
+# handed at most one post at a time, and only when the day's cap, the
+# platform's cap, the gap since the last post and the posting hours allow.
+
+HARD_DAILY_CAP = 30
+MAX_ATTEMPTS = 3
+EAT = timezone(timedelta(hours=3))
+
+
+def poster_rules() -> dict[str, Any]:
+    from . import platform_settings as ps
+
+    def num(key: str, default: int, top: int) -> int:
+        try:
+            return max(0, min(int(ps.get(key, default) or default), top))
+        except (TypeError, ValueError):
+            return default
+
+    hours = str(ps.get("poster_hours", "06:00-22:00") or "06:00-22:00")
+    m = re.fullmatch(r"\s*(\d{1,2}):(\d{2})\s*-\s*(\d{1,2}):(\d{2})\s*", hours)
+    start, end = ((int(m[1]), int(m[2])), (int(m[3]), int(m[4]))) if m else ((6, 0), (22, 0))
+    raw = ps.get("poster_platforms", None) or ["tiktok", "instagram", "facebook", "youtube", "linkedin"]
+    platforms = [p.strip().lower() for p in (raw if isinstance(raw, list) else str(raw).split(",")) if p.strip()]
+    return {"enabled": bool(ps.get("poster_enabled", False)),
+            "daily_cap": num("poster_daily_cap", 30, HARD_DAILY_CAP),
+            "platform_cap": num("poster_platform_cap", 8, HARD_DAILY_CAP),
+            "min_gap_minutes": num("poster_min_gap_minutes", 20, 24 * 60),
+            "hours": {"start": f"{start[0]:02d}:{start[1]:02d}", "end": f"{end[0]:02d}:{end[1]:02d}"},
+            "platforms": [p for p in platforms if p in PLATFORMS]}
+
+
+def decide(now: datetime, rules: dict[str, Any], *, posted_today: list[dict[str, Any]], last_posted_at: datetime | None,
+           candidates: list[dict[str, Any]], logged_out: set[str]) -> tuple[dict[str, Any] | None, str]:
+    """The next post the browser may publish now, or None and why."""
+    if not rules["enabled"]:
+        return None, "Auto-post is off (Settings → Auto-post)."
+    local = now.astimezone(EAT)
+    start = local.replace(hour=int(rules["hours"]["start"][:2]), minute=int(rules["hours"]["start"][3:]), second=0, microsecond=0)
+    end = local.replace(hour=int(rules["hours"]["end"][:2]), minute=int(rules["hours"]["end"][3:]), second=0, microsecond=0)
+    if not (start <= local <= end):
+        return None, f"Outside posting hours ({rules['hours']['start']}–{rules['hours']['end']} EAT)."
+    if len(posted_today) >= rules["daily_cap"]:
+        return None, f"Today's cap of {rules['daily_cap']} posts is reached."
+    if last_posted_at is not None:
+        wait = timedelta(minutes=rules["min_gap_minutes"]) - (now - last_posted_at)
+        if wait > timedelta(0):
+            return None, f"Next post allowed in {int(wait.total_seconds() // 60) + 1} min (gap {rules['min_gap_minutes']} min)."
+    per_platform: dict[str, int] = {}
+    for p in posted_today:
+        per_platform[p["platform"]] = per_platform.get(p["platform"], 0) + 1
+    skipped: set[str] = set()
+    for c in candidates:
+        platform = c["platform"]
+        if platform not in rules["platforms"]:
+            skipped.add(f"{platform} not enabled")
+            continue
+        if platform in logged_out:
+            skipped.add(f"{platform} needs a login")
+            continue
+        if per_platform.get(platform, 0) >= rules["platform_cap"]:
+            skipped.add(f"{platform} reached {rules['platform_cap']} today")
+            continue
+        return c, ""
+    return None, ("Nothing due" + (f" ({'; '.join(sorted(skipped))})" if skipped else "") + ".")
+
+
+def next_for_poster(now: datetime | None = None, *, platform: str = "", post_id: str = "",
+                    dry: bool = False) -> dict[str, Any]:
+    """What the poster's browser should publish now, with its files and text.
+    A dry run (which publishes nothing) takes the next queued post for the
+    platform, or the named post, without the day's rules."""
+    from ..infra.db import fetch_all, fetch_one
+    from . import social
+
+    now = now or datetime.now(timezone.utc)
+    rules = poster_rules()
+    if dry:
+        chosen = fetch_one(
+            """SELECT * FROM social_posts WHERE posted_at IS NULL
+               AND (:id = '' OR post_id = :id) AND (:p = '' OR platform = :p)
+               ORDER BY scheduled_for NULLS LAST LIMIT 1""", {"id": post_id, "p": platform})
+        why = "" if chosen else "Nothing queued for that platform — download posts for scheduling first."
+    else:
+        day_start = now.astimezone(EAT).replace(hour=0, minute=0, second=0, microsecond=0)
+        posted_today = fetch_all("SELECT platform FROM social_posts WHERE posted_at >= :d", {"d": day_start}) or []
+        last = fetch_one("SELECT MAX(posted_at) AS t FROM social_posts WHERE posted_at IS NOT NULL") or {}
+        candidates = fetch_all(
+            """SELECT * FROM social_posts WHERE posted_at IS NULL AND status IN ('planned', 'failed')
+               AND attempts < :tries AND scheduled_for IS NOT NULL AND scheduled_for <= :now
+               ORDER BY scheduled_for, platform LIMIT 50""", {"tries": MAX_ATTEMPTS, "now": now}) or []
+        logged_out = {r["platform"] for r in (fetch_all("SELECT platform FROM poster_state WHERE NOT logged_in") or [])}
+        chosen, why = decide(now, rules, posted_today=posted_today, last_posted_at=last.get("t"),
+                             candidates=candidates, logged_out=logged_out)
+    if not chosen:
+        return {"post": None, "reason": why, "rules": rules}
+    st = social.status(chosen["question_id"])
+    if st.get("status") != "ready":
+        return {"post": None, "reason": f"The video for {chosen['question_id']} is not made yet.", "rules": rules}
+    from .whiteboard import load
+
+    q_text = social.display(load(chosen["question_id"]).get("question_text") or "")
+    title = (f"{social.brand().get('hook') or 'Can you solve this?'} {q_text}")[:90].rstrip() + " #Shorts"
+    return {"post": {"post_id": chosen["post_id"], "platform": chosen["platform"], "question_id": chosen["question_id"],
+                     "video_url": st["url"], "thumbnail_url": st.get("thumbnail_url"), "caption": st.get("post") or "",
+                     "title": title, "attempts": chosen.get("attempts") or 0}, "reason": "", "rules": rules}
+
+
+def record_attempt(post_id: str, *, ok: bool, url: str = "", error: str = "", dry_run: bool = False) -> dict[str, Any]:
+    from ..infra.db import execute
+
+    if dry_run:
+        execute("UPDATE social_posts SET last_error = :e, last_attempt_at = NOW(), updated_at = NOW() WHERE post_id = :id",
+                {"id": post_id, "e": ("dry run ok" if ok else f"dry run: {error}")[:900]})
+    elif ok:
+        execute("""UPDATE social_posts SET status = 'posted', posted_at = COALESCE(posted_at, NOW()), url = COALESCE(NULLIF(:u, ''), url),
+                   attempts = attempts + 1, last_error = '', last_attempt_at = NOW(), updated_at = NOW() WHERE post_id = :id""",
+                {"id": post_id, "u": url})
+    else:
+        execute("""UPDATE social_posts SET status = CASE WHEN attempts + 1 >= :tries THEN 'gave_up' ELSE 'failed' END,
+                   attempts = attempts + 1, last_error = :e, last_attempt_at = NOW(), updated_at = NOW() WHERE post_id = :id""",
+                {"id": post_id, "e": error[:900], "tries": MAX_ATTEMPTS})
+    return {"post_id": post_id, "ok": ok}
+
+
+def set_login_state(platform: str, logged_in: bool, note: str = "") -> None:
+    from ..infra.db import execute
+
+    execute("""INSERT INTO poster_state (platform, logged_in, note, checked_at) VALUES (:p, :l, :n, NOW())
+               ON CONFLICT (platform) DO UPDATE SET logged_in = EXCLUDED.logged_in, note = EXCLUDED.note, checked_at = NOW()""",
+            {"p": platform, "l": logged_in, "n": note[:300]})
+
+
+def poster_overview() -> dict[str, Any]:
+    from ..infra.db import fetch_all
+
+    now = datetime.now(timezone.utc)
+    day_start = now.astimezone(EAT).replace(hour=0, minute=0, second=0, microsecond=0)
+    states = fetch_all("SELECT platform, logged_in, note, checked_at FROM poster_state ORDER BY platform") or []
+    today = fetch_all("SELECT platform, COUNT(*) AS n FROM social_posts WHERE posted_at >= :d GROUP BY platform", {"d": day_start}) or []
+    queue = fetch_all(
+        """SELECT post_id, platform, question_id, scheduled_for, status, attempts, last_error FROM social_posts
+           WHERE posted_at IS NULL AND status IN ('planned', 'failed') ORDER BY scheduled_for NULLS LAST LIMIT 30""") or []
+    recent = fetch_all(
+        """SELECT post_id, platform, question_id, status, posted_at, url, last_error, last_attempt_at FROM social_posts
+           WHERE last_attempt_at IS NOT NULL ORDER BY last_attempt_at DESC LIMIT 20""") or []
+    for rows in (states, queue, recent):
+        for r in rows:
+            for k, v in list(r.items()):
+                if hasattr(v, "isoformat"):
+                    r[k] = v.isoformat()
+    return {"rules": poster_rules(), "posted_today": {r["platform"]: int(r["n"]) for r in today},
+            "states": states, "queue": queue, "recent": recent}
