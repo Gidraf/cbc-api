@@ -63,6 +63,7 @@ class CompleteRequest(BaseModel):
     content: Any = Field(..., description="The model's answer: a JSON object, or the raw text")
     model: str = Field(default="", description="What answered, for the ledger: e.g. ollama/llama3.1")
     wait_seconds: float = Field(default=25, ge=0, le=120)
+    step: int | None = Field(default=None, description="The step number this answers; a stale answer is refused")
 
 
 def _runner(station: str, params: dict[str, Any]) -> Any:
@@ -342,6 +343,17 @@ def list_tasks(_: AuthContext = Depends(require_roles("admin", "operator", "deve
     return {"live": live, "ledger": ledger}
 
 
+@router.get("/coverage")
+def coverage(grade: str = Query(...), subject: str = Query(...),
+             notes: bool = Query(True, description="look up whether each sub-strand has a teacher's guide"),
+             _: AuthContext = Depends(require_roles("admin", "operator", "developer"))) -> dict[str, Any]:
+    """Per sub-strand: usable questions, figures, held items, whether a guide
+    exists, when it was last reviewed — what an unattended planner decides on."""
+    from ..services import bank_coverage as coverage_service
+
+    return coverage_service.for_subject(grade, subject, with_notes=notes)
+
+
 @router.get("/tasks/{task_id}")
 def get_task(task_id: str, _: AuthContext = Depends(require_roles("admin", "operator", "developer"))) -> dict[str, Any]:
     task = byom.get(task_id)
@@ -369,7 +381,7 @@ def complete_task(task_id: str, payload: CompleteRequest,
         raise_api_error("NOT_FOUND", f"No live task {task_id}.")
     done_before = len(task.steps)
     try:
-        byom.complete(task_id, payload.content, payload.model)
+        byom.complete(task_id, payload.content, payload.model, step=payload.step)
     except ValueError as exc:
         raise_api_error("SCHEMA_VALIDATION_FAILED", str(exc))
     # Wait for the station to consume the answer and either ask again or finish.
