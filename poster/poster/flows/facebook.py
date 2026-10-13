@@ -4,6 +4,14 @@ Profile: facebook.com/reels/create — one screen: description, the video,
 then Post. Post lights up before the upload is done, so it waits for the
 preview's "Uploading N%" to go first.
 
+Ahead of time: with `schedule_at`, the composer's Schedule button opens
+"Scheduling options"; the date ("Nov 7, 2026") and time ("8:47 AM", the
+browser's Nairobi time) are typed into its two boxes and read back before
+"Schedule for later". Facebook takes dates up to 29 days ahead.
+
+Groups: "Share to groups" lists every group with a checkbox (9 at most per
+post); the named ones are ticked, then Done.
+
 Page (FACEBOOK_TARGET=page): Meta Business Suite's reel composer —
 Create → Edit → Share. The video goes in through "Add Video"; the step
 tabs at the top are buttons too, so the final Share is the footer's.
@@ -13,6 +21,7 @@ from __future__ import annotations
 import asyncio
 import re
 import time
+from datetime import datetime
 
 from playwright.async_api import Page
 
@@ -58,6 +67,8 @@ async def _settled(page: Page, pattern: str, seconds: float) -> None:
 class Facebook(Flow):
     platform = "facebook"
     caption_limit = 2200
+    can_schedule = True
+    can_share_groups = True
 
     @property
     def page_mode(self) -> bool:
@@ -83,21 +94,52 @@ class Facebook(Flow):
         except Exception:  # noqa: BLE001
             return False
 
-    async def post(self, page: Page, *, video: str, caption: str, title: str, dry_run: bool) -> str:
+    async def post(self, page: Page, *, video: str, caption: str, title: str, dry_run: bool,
+                   schedule_at: str = "", groups: list[str] | None = None) -> str:
+        self.shared_groups = []
         if not await self.logged_in(page):
             raise NotLoggedIn("Facebook is logged out.")
         await check_for_human(page)
         if self.page_mode:
+            if schedule_at or groups:
+                raise StepFailed("Scheduling ahead and group shares are set up for the profile composer only.")
             return await self._page_reel(page, video=video, caption=caption, dry_run=dry_run)
-        return await self._profile_reel(page, video=video, caption=caption, dry_run=dry_run)
+        return await self._profile_reel(page, video=video, caption=caption, dry_run=dry_run,
+                                        schedule_at=schedule_at, groups=groups or [])
 
-    async def _profile_reel(self, page: Page, *, video: str, caption: str, dry_run: bool) -> str:
+    async def groups(self, page: Page) -> list[str]:
+        """Every group in the composer's "Share to groups" list."""
+        await page.goto(PROFILE_COMPOSER, wait_until="domcontentloaded", timeout=60_000)
+        await asyncio.sleep(4)
+        if _logged_out(page.url):
+            raise NotLoggedIn("Facebook is logged out.")
+        dialog = await _open_groups(page)
+        names: list[str] = []
+        for _ in range(12):                       # the list may load more as it scrolls
+            found = await dialog.evaluate(_GROUP_NAMES)
+            new = [n for n in found if n not in names]
+            names += new
+            if not new:
+                break
+            await dialog.evaluate("d => { const s = [...d.querySelectorAll('*')].find(e => e.scrollHeight > e.clientHeight + 20); if (s) s.scrollTop = s.scrollHeight; }")
+            await asyncio.sleep(1.5)
+        await page.keyboard.press("Escape")
+        return names
+
+    async def _profile_reel(self, page: Page, *, video: str, caption: str, dry_run: bool,
+                            schedule_at: str = "", groups: list[str] | None = None) -> str:
         await page.locator('input[type="file"][accept*="video"]').first.set_input_files(video)
         box = await first(page, [page.locator('[contenteditable="true"][role="textbox"]')], timeout=60,
                           what="the description box")
         await write(page, box, self.fit(caption))
         await _uploaded(page)
         await _settled(page, r"Checking for copyrighted", 120)   # posting can go ahead without it, but give it a moment
+        if groups and schedule_at:
+            raise StepFailed("Facebook cannot schedule a reel that is shared to a group — one or the other.")
+        if groups:
+            self.shared_groups = await _tick_groups(page, groups)
+        if schedule_at:
+            return await self._schedule(page, datetime.fromisoformat(schedule_at), dry_run=dry_run)
         post = page.get_by_role("button", name="Post", exact=True).last
         await enabled(post, timeout=300)
         await check_for_human(page)
@@ -108,6 +150,38 @@ class Facebook(Flow):
         await check_for_human(page)
         if not ok:
             raise RuntimeError("Facebook did not confirm the reel.")
+        return ""
+
+    async def _schedule(self, page: Page, at: datetime, *, dry_run: bool) -> str:
+        """Facebook's own Schedule: it publishes at `at` (Nairobi time, as the
+        browser is). The boxes are read back — a date Facebook will not take
+        is refused rather than quietly scheduled on another day."""
+        button = page.get_by_role("button", name="Schedule", exact=True).last
+        await enabled(button, timeout=300)
+        await button.click()
+        await first(page, [page.get_by_text("Scheduling options")], timeout=20, what="the scheduling options")
+        boxes = page.locator('input[type="text"][role="combobox"]')
+        day = f"{at:%b} {at.day}, {at.year}"
+        clock = f"{(at.hour % 12) or 12}:{at.minute:02d} {'AM' if at.hour < 12 else 'PM'}"
+        for box, text in ((boxes.nth(0), day), (boxes.nth(1), clock)):
+            await box.click()
+            await asyncio.sleep(0.6)
+            await page.keyboard.press("ControlOrMeta+A")
+            await page.keyboard.type(text, delay=30)
+            await page.keyboard.press("Enter")
+            await asyncio.sleep(1.0)
+        got = (await boxes.nth(0).input_value(), await boxes.nth(1).input_value())
+        if got != (day, clock):
+            raise StepFailed(f"Facebook would not take {day} {clock} (it shows {got[0]} {got[1]}) — "
+                             "it schedules up to 29 days ahead.")
+        await check_for_human(page)
+        if dry_run:
+            return ""
+        await page.get_by_role("button", name="Schedule for later").last.click()
+        ok = await _left_composer_or_said(page, "/reels/create")
+        await check_for_human(page)
+        if not ok:
+            raise RuntimeError("Facebook did not confirm the scheduled reel.")
         return ""
 
     async def _page_reel(self, page: Page, *, video: str, caption: str, dry_run: bool) -> str:
@@ -142,12 +216,59 @@ class Facebook(Flow):
         return ""
 
 
+_GROUP_NAMES = """d => {
+  const out = [];
+  for (const box of d.querySelectorAll('[role=checkbox], input[type=checkbox]')) {
+    let row = box;
+    for (let i = 0; i < 8 && row; i++) {
+      row = row.parentElement;
+      const lines = (row?.innerText || '').split('\\n').map(s => s.trim()).filter(Boolean);
+      if (lines.length >= 1 && lines.length <= 4 && lines[0].length < 120) { out.push(lines[0]); break; }
+    }
+  }
+  return [...new Set(out)].filter(n => !/^(select groups|post in up to)/i.test(n));
+}"""
+
+
+async def _open_groups(page: Page):
+    row = page.locator("span").filter(has_text=re.compile(r"^Share to groups$")).first
+    await row.scroll_into_view_if_needed()
+    await row.click()
+    await first(page, [page.get_by_text("Select groups")], timeout=20, what="the group list")
+    # Not a role=dialog: the box that holds the "Select groups" heading and the checkboxes.
+    dialog = page.locator("div").filter(has=page.get_by_text("Select groups")).filter(
+        has=page.locator('[role=checkbox], input[type=checkbox]')).last
+    await asyncio.sleep(1.5)
+    return dialog
+
+
+async def _tick_groups(page: Page, names: list[str]) -> list[str]:
+    """Tick the named groups (Facebook allows 9 a post), then Done. A group
+    that is not in the list is skipped, never guessed at."""
+    dialog = await _open_groups(page)
+    ticked: list[str] = []
+    for name in names[:9]:
+        if not await dialog.get_by_text(name, exact=True).count():
+            continue
+        row = dialog.locator("div").filter(has=page.get_by_text(name, exact=True)).filter(
+            has=page.locator('[role=checkbox], input[type=checkbox]')).last
+        box = row.locator('[role=checkbox], input[type=checkbox]').first
+        if (await box.get_attribute("aria-checked")) != "true" and not await box.is_checked():
+            await box.click()
+            await asyncio.sleep(0.6)
+        if (await box.get_attribute("aria-checked")) == "true" or await box.is_checked():
+            ticked.append(name)
+    await page.get_by_role("button", name="Done", exact=True).last.click()   # in the footer, outside the list
+    await asyncio.sleep(1.0)
+    return ticked
+
+
 async def _left_composer_or_said(page: Page, composer: str, timeout: float = 600.0) -> bool:
     """Done when the composer closes, or the page says the reel is out."""
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if composer not in page.url:
             return True
-        if await wait_text(page, r"reel (?:is |has been )?(?:being )?(?:published|shared|posted)|your reel is", timeout=4):
+        if await wait_text(page, r"reel (?:is |has been )?(?:being )?(?:published|shared|posted|scheduled)|your reel is|scheduled for", timeout=4):
             return True
     return False

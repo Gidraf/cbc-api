@@ -625,6 +625,7 @@ class BookAhead(BaseModel):
     low: int = 5             # videos a day, at least …
     high: int = 15           # … and at most
     platforms: list[str] = []
+    total: int = 0           # this many videos over the days (0: as many as low–high gives)
     dry: bool = False        # show the plan, book nothing
 
 
@@ -636,13 +637,15 @@ def book_social(payload: BookAhead, auth: AuthContext = Depends(ANY)) -> dict[st
     from ..services import social_export
 
     _may_make_videos(auth)
-    if not (1 <= payload.days <= 62) or not (1 <= payload.low <= 30) or not (1 <= payload.high <= 30):
-        raise_api_error("VALIDATION_FAILED", "Days are 1–62; videos a day are 1–30.")
+    if not (1 <= payload.days <= 62) or not (1 <= payload.low <= 30) or not (1 <= payload.high <= 30) \
+            or not (0 <= payload.total <= 1000):
+        raise_api_error("VALIDATION_FAILED", "Days are 1–62; videos a day are 1–30; a total is up to 1000.")
     try:
         return social_export.book_ahead(payload.grade, payload.subject, payload.sub_strand, days=payload.days,
                                         low=payload.low, high=payload.high,
                                         platforms=[p.strip().lower() for p in payload.platforms if p.strip()] or None,
-                                        dry=payload.dry, created_by=str(getattr(auth, "subject", "") or ""))
+                                        dry=payload.dry, created_by=str(getattr(auth, "subject", "") or ""),
+                                        total=payload.total)
     except ValueError as exc:
         raise_api_error("VALIDATION_FAILED", str(exc))
         return {}
@@ -738,6 +741,8 @@ class PosterResult(BaseModel):
     url: str = ""
     error: str = ""
     dry_run: bool = False
+    scheduled: bool = False      # handed to the platform's scheduler
+    groups: list[str] = []       # shared to these groups too
 
 
 @router.post("/poster/result")
@@ -746,7 +751,7 @@ def poster_result(payload: PosterResult, auth: AuthContext = Depends(ANY)) -> di
 
     _may_make_videos(auth)
     return social_export.record_attempt(payload.post_id, ok=payload.ok, url=payload.url, error=payload.error,
-                                        dry_run=payload.dry_run)
+                                        dry_run=payload.dry_run, scheduled=payload.scheduled, groups=payload.groups)
 
 
 class PosterState(BaseModel):
@@ -788,7 +793,7 @@ def poster_overview(auth: AuthContext = Depends(ANY)) -> dict[str, Any]:
 
 
 class PosterCommand(BaseModel):
-    action: str          # login | check | dry_run | run_now | pause | resume
+    action: str          # login | check | dry_run | run_now | pause | resume | groups
     platform: str = ""
     post_id: str = ""
 
@@ -803,13 +808,13 @@ def poster_command(payload: PosterCommand, auth: AuthContext = Depends(ANY)) -> 
     from ..services import social_export
 
     _may_make_videos(auth)
-    if payload.action not in ("login", "check", "dry_run", "run_now", "pause", "resume"):
+    if payload.action not in ("login", "check", "dry_run", "run_now", "pause", "resume", "groups"):
         raise_api_error("VALIDATION_FAILED", "Unknown poster action.")
     if social_export.pull_poster():
         command_id = social_export.queue_command(payload.action, payload.platform, payload.post_id,
                                                  by=str(getattr(auth, "subject", "") or ""))
-        if payload.action in ("login", "pause", "resume", "check"):
-            for _ in range(24 if payload.action == "check" else 8):
+        if payload.action in ("login", "pause", "resume", "check", "groups"):
+            for _ in range(40 if payload.action == "groups" else 24 if payload.action == "check" else 8):
                 time.sleep(1.0)
                 done = social_export.command_result(command_id)
                 if done is not None:
@@ -841,6 +846,44 @@ def poster_shot(name: str, auth: AuthContext = Depends(ANY)):
         return _Response(content=bytes(out), media_type="image/png")
     raise_api_error("NOT_FOUND", "No such screenshot.")
     return None
+
+
+# ── the owner's groups ───────────────────────────────────────────────────────
+
+class FoundGroups(BaseModel):
+    platform: str = "facebook"
+    names: list[str] = []
+
+
+@router.post("/poster/groups/found")
+def poster_groups_found(payload: FoundGroups, auth: AuthContext = Depends(ANY)) -> dict[str, Any]:
+    """The poster reports the groups it found in the platform's picker."""
+    from ..services import social_export
+
+    _may_make_videos(auth)
+    return {"groups": social_export.save_found_groups(payload.platform, payload.names[:500])}
+
+
+@router.get("/poster/groups")
+def poster_groups(platform: str = Query("facebook"), auth: AuthContext = Depends(ANY)) -> dict[str, Any]:
+    from ..services import social_export
+
+    _may_make_videos(auth)
+    return {"groups": social_export.list_groups(platform)}
+
+
+class PickGroups(BaseModel):
+    platform: str = "facebook"
+    enabled: list[str] = []
+
+
+@router.put("/poster/groups")
+def poster_pick_groups(payload: PickGroups, auth: AuthContext = Depends(ANY)) -> dict[str, Any]:
+    """Which groups may get a share — the owner ticks the ones that welcome it."""
+    from ..services import social_export
+
+    _may_make_videos(auth)
+    return {"groups": social_export.set_groups(payload.platform, payload.enabled)}
 
 
 # ── the Mac poster's side: it asks, the server answers ───────────────────────

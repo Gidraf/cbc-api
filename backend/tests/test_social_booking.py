@@ -9,7 +9,8 @@ from app.services import social_export as X
 
 EAT = timezone(timedelta(hours=3))
 RULES = {"enabled": True, "daily_cap": 30, "platform_cap": 15, "min_gap_minutes": 20,
-         "hours": {"start": "06:00", "end": "22:00"}, "platforms": ["facebook", "tiktok"]}
+         "hours": {"start": "06:00", "end": "22:00"}, "platforms": ["facebook", "tiktok"],
+         "ahead_platforms": [], "ahead_days": 28, "group_shares_per_day": 0, "group_rest_days": 7}
 DAYS = [date(2026, 10, 14) + timedelta(days=i) for i in range(25)]
 
 
@@ -129,8 +130,9 @@ def test_the_poster_passes_over_a_post_whose_video_is_not_made(monkeypatch):
     from app.infra import db
     from app.services import social, whiteboard
 
-    due = [{"post_id": "a", "platform": "facebook", "question_id": "slow", "attempts": 0},
-           {"post_id": "b", "platform": "facebook", "question_id": "done", "attempts": 0}]
+    at = datetime(2026, 10, 20, 8, 0, tzinfo=timezone.utc)
+    due = [{"post_id": "a", "platform": "facebook", "question_id": "slow", "attempts": 0, "scheduled_for": at},
+           {"post_id": "b", "platform": "facebook", "question_id": "done", "attempts": 0, "scheduled_for": at}]
     monkeypatch.setattr(X, "poster_rules", lambda: {**RULES, "platforms": ["facebook"]})
     monkeypatch.setattr(db, "fetch_all", lambda sql, params=None: due if "status IN" in sql else [])
     monkeypatch.setattr(db, "fetch_one", lambda sql, params=None: {"t": None})

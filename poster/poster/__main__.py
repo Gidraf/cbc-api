@@ -76,22 +76,86 @@ async def _set_login(platform: str, ok: bool, note: str = "") -> None:
         log.warning("Could not report %s login state: %s", platform, exc)
 
 
+PENDING_FILE = os.path.join(os.path.dirname(STATE_FILE), "unreported.json")
+
+
+def _pending() -> list[dict[str, Any]]:
+    try:
+        with open(PENDING_FILE) as fh:
+            return list(json.load(fh))
+    except Exception:  # noqa: BLE001
+        return []
+
+
+def _keep_pending(items: list[dict[str, Any]]) -> None:
+    try:
+        with open(PENDING_FILE, "w") as fh:
+            json.dump(items, fh)
+    except Exception as exc:  # noqa: BLE001
+        log.error("Could not keep the unreported posts: %s", exc)
+
+
+async def _report_or_keep(outcome: dict[str, Any]) -> None:
+    """Tell the server a post is out; if it cannot be told, keep the news on
+    disk and tell it before doing anything else."""
+    for attempt in range(3):
+        try:
+            await cbc.report(outcome["post_id"], ok=True, url=outcome.get("url", ""), dry_run=outcome.get("dry_run", False),
+                             scheduled=outcome.get("scheduled", False), groups=outcome.get("groups") or [])
+            return
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Could not report %s (try %s): %s", outcome["post_id"], attempt + 1, _why(exc))
+            await asyncio.sleep(5 * (attempt + 1))
+    if not outcome.get("dry_run"):
+        _keep_pending([*_pending(), outcome])
+
+
+async def flush_reports() -> bool:
+    """Send any posts the server has not heard about. True when none are left."""
+    left = []
+    for outcome in _pending():
+        try:
+            await cbc.report(outcome["post_id"], ok=True, url=outcome.get("url", ""), scheduled=outcome.get("scheduled", False),
+                             groups=outcome.get("groups") or [])
+        except Exception:  # noqa: BLE001
+            left.append(outcome)
+    if left or os.path.exists(PENDING_FILE):
+        _keep_pending(left)
+    return not left
+
+
 async def publish(post: dict[str, Any], *, dry_run: bool) -> dict[str, Any]:
     """One post on one platform, in the browser."""
     flow = FLOWS.get(post["platform"])
     if flow is None:
         return {"ok": False, "error": f"No steps for {post['platform']}."}
     async with browser.lock:
-        state["busy"] = f"{'Dry run' if dry_run else 'Posting'} on {post['platform']}"
+        state["busy"] = (f"{'Dry run' if dry_run else 'Scheduling' if post.get('schedule_at') else 'Posting'} "
+                         f"on {post['platform']}")
         page = None
         result: dict[str, Any] = {"post_id": post["post_id"], "platform": post["platform"], "dry_run": dry_run}
         try:
+            schedule_at, groups = post.get("schedule_at") or "", post.get("groups") or []
+            if schedule_at and not flow.can_schedule:
+                raise StepFailed(f"The poster cannot use {post['platform']}'s scheduler; this post must go out live.")
+            extra: dict[str, Any] = {}
+            if flow.can_schedule:
+                extra["schedule_at"] = schedule_at
+            if flow.can_share_groups:
+                extra["groups"] = groups
             video = await cbc.download(post["video_url"], f"{post['post_id']}.mp4")
             page = await browser.page()
-            url = await flow.post(page, video=video, caption=post["caption"], title=post.get("title", ""), dry_run=dry_run)
-            result.update(ok=True, url=url, shot=await shot(page, f"{post['platform']}-{'dry' if dry_run else 'done'}"))
+            url = await flow.post(page, video=video, caption=post["caption"], title=post.get("title", ""),
+                                  dry_run=dry_run, **extra)
+            shared = list(getattr(flow, "shared_groups", []) or [])
+            result.update(ok=True, url=url, scheduled=bool(schedule_at), schedule_at=schedule_at, groups=shared,
+                          shot=await shot(page, f"{post['platform']}-{'dry' if dry_run else 'scheduled' if schedule_at else 'done'}"))
+            # From here it is out (or scheduled): whatever happens next, it is
+            # never reported as failed — that would post it a second time.
+            outcome = {"post_id": post["post_id"], "ok": True, "url": url, "dry_run": dry_run,
+                       "scheduled": bool(schedule_at), "groups": shared}
             await _set_login(post["platform"], True)
-            await cbc.report(post["post_id"], ok=True, url=url, dry_run=dry_run)
+            await _report_or_keep(outcome)
         except NotLoggedIn as exc:
             result.update(ok=False, error=str(exc), needs="login")
             await _set_login(post["platform"], False, "Log in on the screen.")
@@ -130,6 +194,9 @@ async def publish(post: dict[str, Any], *, dry_run: bool) -> dict[str, Any]:
 async def tick() -> dict[str, Any]:
     if state["paused"]:
         return {"skipped": "paused"}
+    if not await flush_reports():
+        state["note"] = "Waiting to tell the server about a post that went out."
+        return {"skipped": state["note"]}
     try:
         nxt = await cbc.next_post()
     except Exception as exc:  # noqa: BLE001
@@ -196,6 +263,33 @@ async def do_dry_run(platform: str = "", post_id: str = "") -> dict[str, Any]:
     return await publish(nxt["post"], dry_run=True)
 
 
+async def do_groups(platform: str = "facebook") -> dict[str, Any]:
+    """Read the owner's groups from the platform's share picker and send the
+    list to the console, where the owner ticks the ones to share to."""
+    flow = FLOWS.get(platform or "facebook")
+    if flow is None or not flow.can_share_groups:
+        return {"ok": False, "error": f"No group sharing on {platform or 'facebook'}."}
+    async with browser.lock:
+        state["busy"] = f"Reading your {flow.platform} groups"
+        page = await browser.page()
+        try:
+            names = await flow.groups(page)
+        except NotLoggedIn as exc:
+            await _set_login(flow.platform, False, "Log in on the screen.")
+            return {"ok": False, "error": str(exc)}
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "error": f"Could not read the groups: {_why(exc)}"}
+        finally:
+            state["busy"] = ""
+            try:
+                await page.close()
+            except Exception:  # noqa: BLE001
+                pass
+    await cbc.groups_found(flow.platform, names)
+    return {"ok": True, "message": f"Found {len(names)} groups — tick the ones that welcome teaching posts.",
+            "count": len(names)}
+
+
 def set_paused(paused: bool) -> dict[str, Any]:
     state["paused"] = paused
     _save()
@@ -213,6 +307,8 @@ async def run(action: str, platform: str = "", post_id: str = "") -> dict[str, A
         return await tick()
     if action in ("pause", "resume"):
         return set_paused(action == "pause")
+    if action == "groups":
+        return await do_groups(platform or "facebook")
     return {"ok": False, "error": f"Unknown action {action!r}."}
 
 
@@ -237,7 +333,7 @@ async def command(action: str, body: dict[str, Any] | None = None,
                   x_poster_token: str | None = Header(default=None)) -> dict[str, Any]:
     _guard(x_poster_token)
     body = body or {}
-    if action not in ("login", "check", "dry_run", "run_now", "pause", "resume"):
+    if action not in ("login", "check", "dry_run", "run_now", "pause", "resume", "groups"):
         raise HTTPException(404, "No such action.")
     if action == "login" and str(body.get("platform") or "") not in FLOWS:
         raise HTTPException(400, "Unknown platform.")

@@ -26,7 +26,9 @@ import {
   useDeletePost,
   useExportSocial,
   useBookAhead,
+  useSaveGroups,
   type BookingPlan,
+  type PosterGroup,
   useSavePost,
   useSocialPosts,
   useHandPhoto,
@@ -906,6 +908,51 @@ const PLATFORM_LABEL: Record<string, string> = { tiktok: "TikTok", instagram: "I
   facebook: "Facebook", whatsapp: "WhatsApp", x: "X" };
 
 /** The finished posts of the scope as one zip, with a posting calendar. */
+/** The owner's groups: which may get one of the day's shares. */
+function Groups({ groups, sharesPerDay, restDays, busy, online, onRead }: {
+  groups: PosterGroup[]; sharesPerDay: number; restDays: number; busy: boolean; online: boolean; onRead: () => void;
+}) {
+  const save = useSaveGroups();
+  const toast = useToast();
+  const [picked, setPicked] = React.useState<string[] | null>(null);
+  const chosen = picked ?? groups.filter((g) => g.enabled).map((g) => g.name);
+  const dirty = picked !== null;
+  const toggle = (n: string) => setPicked((chosen.includes(n) ? chosen.filter((x) => x !== n) : [...chosen, n]));
+  async function store() {
+    try { await save.mutateAsync(chosen); setPicked(null); toast(`${chosen.length} group(s) will get shares.`, "ok"); }
+    catch (err) { toast(err instanceof Error ? err.message : "Could not save.", "danger"); }
+  }
+  const when = (t: string | null) => (t ? new Date(t).toLocaleDateString(undefined, { day: "numeric", month: "short" }) : "never");
+  return (
+    <details>
+      <summary style={{ cursor: "pointer", fontSize: "var(--text-sm)" }}>
+        👥 Facebook groups — {groups.filter((g) => g.enabled).length} ticked{sharesPerDay ? `, ${sharesPerDay} share(s) a day` : ", sharing off"}
+      </summary>
+      <p style={{ margin: "var(--s2) 0", color: "var(--ink-3)", fontSize: "var(--text-xs)" }}>
+        Each day {sharesPerDay === 2 ? "two videos (one before 1 pm, one after) are" : `${sharesPerDay} video(s) are`} also
+        shared to one ticked group, the one rested longest — a group gets at most one share in {restDays} days. Facebook will
+        not schedule a reel that goes to a group, so those go out live at their time: keep the Mac awake for them. Tick only
+        groups that welcome teaching posts.
+      </p>
+      <Stack direction="row" gap="var(--s2)" wrap align="center">
+        <Button size="sm" variant="ghost" disabled={busy || !online} onClick={onRead}>Read my groups from Facebook</Button>
+        {dirty && <Button size="sm" variant="primary" disabled={save.isPending} onClick={store}>Save</Button>}
+      </Stack>
+      {groups.length ? (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 4, marginTop: "var(--s2)", fontSize: "var(--text-sm)" }}>
+          {groups.map((g) => (
+            <label key={g.name} style={{ display: "flex", gap: 6, alignItems: "center" }}>
+              <input type="checkbox" checked={chosen.includes(g.name)} onChange={() => toggle(g.name)} />
+              <span style={{ flex: 1 }}>{g.name}</span>
+              <span style={{ color: "var(--ink-3)", fontSize: "var(--text-xs)" }}>{when(g.last_shared_for)}</span>
+            </label>
+          ))}
+        </div>
+      ) : <p style={{ margin: "var(--s2) 0 0", fontSize: "var(--text-xs)" }}>No groups yet — press "Read my groups from Facebook".</p>}
+    </details>
+  );
+}
+
 /** Keep the next weeks booked for the browser poster. */
 function BookAhead({ grade, subject, subStrand }: { grade: string; subject: string; subStrand: string }) {
   const book = useBookAhead();
@@ -915,11 +962,12 @@ function BookAhead({ grade, subject, subStrand }: { grade: string; subject: stri
   const [high, setHigh] = React.useState(15);
   const [wholeSubject, setWholeSubject] = React.useState(true);
   const [platforms, setPlatforms] = React.useState<string[]>(["facebook"]);
+  const [total, setTotal] = React.useState(0);
   const [plan, setPlan] = React.useState<BookingPlan | null>(null);
   const toggle = (p: string) => setPlatforms((xs) => (xs.includes(p) ? xs.filter((x) => x !== p) : [...xs, p]));
   async function go(dry: boolean) {
     try {
-      const out = await book.mutateAsync({ grade, subject, sub_strand: wholeSubject ? "" : subStrand, days, low, high, platforms, dry });
+      const out = await book.mutateAsync({ grade, subject, sub_strand: wholeSubject ? "" : subStrand, days, low, high, platforms, dry, total });
       setPlan(out);
       if (!dry) toast(out.posts ? `Booked ${out.videos} videos (${out.posts} posts) from ${out.first_day} to ${out.last_day}.`
                                 : out.notes[0] || "Nothing to add.", out.posts ? "ok" : "info");
@@ -932,10 +980,13 @@ function BookAhead({ grade, subject, subStrand }: { grade: string; subject: stri
       <p style={{ margin: "var(--s2) 0", color: "var(--ink-3)", fontSize: "var(--text-xs)" }}>
         Each day gets a random number of videos at random times within posting hours; each video goes to every platform you
         tick at its own time. Videos not made yet are queued now, the soonest first. No question is booked twice. Run it
-        every two weeks or every month — it starts after the last booked day and fills up to {days} days ahead.
+        every two weeks or every month — it starts after the last booked day and fills up to {days} days ahead. On Facebook
+        the poster uploads them early with Facebook's own Schedule (up to 29 days ahead).
       </p>
       <Stack direction="row" gap="var(--s3)" wrap align="end">
+        <Button size="sm" variant="ghost" onClick={() => { setDays(7); setTotal(100); setLow(5); setHigh(15); }}>100 in a week</Button>
         <label style={lbl}>Days ahead<Input type="number" min={1} max={62} value={days} onChange={(e) => setDays(Number(e.target.value) || 25)} style={{ width: 80 }} /></label>
+        <label style={lbl}>Videos in all (0 = as the day ranges give)<Input type="number" min={0} max={1000} value={total} onChange={(e) => setTotal(Math.max(0, Number(e.target.value) || 0))} style={{ width: 100 }} /></label>
         <label style={lbl}>Videos a day, at least<Input type="number" min={1} max={30} value={low} onChange={(e) => setLow(Number(e.target.value) || 1)} style={{ width: 80 }} /></label>
         <label style={lbl}>at most<Input type="number" min={1} max={30} value={high} onChange={(e) => setHigh(Number(e.target.value) || 1)} style={{ width: 80 }} /></label>
         <label style={{ display: "inline-flex", gap: 4, alignItems: "center", fontSize: "var(--text-sm)" }}>
@@ -1150,7 +1201,7 @@ function AutoPost() {
   const command = usePosterCommand();
   const toast = useToast();
   const o = overview.data;
-  async function run(action: "login" | "check" | "dry_run" | "run_now" | "pause" | "resume", platform = "") {
+  async function run(action: "login" | "check" | "dry_run" | "run_now" | "pause" | "resume" | "groups", platform = "") {
     try {
       const out = await command.mutateAsync({ action, platform });
       if (out?.error) toast(String(out.error), "danger");
@@ -1230,6 +1281,19 @@ function AutoPost() {
           ) : (
             <p style={{ margin: 0, fontSize: "var(--text-sm)" }}>Set Settings → Public address to show the browser's screen here.</p>
           )}
+
+          {(o.scheduled_ahead?.count || o.handed_today || o.waiting) ? (
+            <p style={{ margin: 0, fontSize: "var(--text-sm)" }}>
+              {o.scheduled_ahead?.count ? <>📅 <strong>{o.scheduled_ahead.count}</strong> scheduled on Facebook
+                {o.scheduled_ahead.until ? ` (to ${new Date(o.scheduled_ahead.until).toLocaleString(undefined, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })})` : ""} — Facebook
+                publishes them even with the Mac off. </> : null}
+              {o.waiting ? <>{o.waiting} booked and waiting. </> : null}
+              {o.handed_today ? <>{o.handed_today} uploaded or posted today.</> : null}
+            </p>
+          ) : null}
+
+          <Groups groups={o.groups || []} sharesPerDay={o.rules.group_shares_per_day ?? 2} restDays={o.rules.group_rest_days ?? 7}
+                  busy={command.isPending} online={o.live.online} onRead={() => run("groups", "facebook")} />
 
           {o.live.last && <LastAttempt last={o.live.last} />}
 

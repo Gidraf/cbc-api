@@ -95,6 +95,17 @@ SETTINGS: tuple[Setting, ...] = (
     Setting("poster_platforms", "POSTER_PLATFORMS", "list", "Platforms to post to",
             "tiktok, instagram, facebook, youtube, linkedin.", ["tiktok", "instagram", "facebook", "youtube", "linkedin"],
             "Auto-post"),
+    Setting("poster_ahead_platforms", "POSTER_AHEAD_PLATFORMS", "list", "Upload ahead on",
+            "Platforms where the poster uploads booked videos early and sets the platform's own Schedule, so "
+            "the platform publishes on time even if the computer is off. facebook.", ["facebook"], "Auto-post"),
+    Setting("poster_ahead_days", "POSTER_AHEAD_DAYS", "int", "Upload how far ahead (days)",
+            "How far ahead the poster schedules on the platform. Facebook accepts up to 29.", 28, "Auto-post"),
+    Setting("poster_group_shares_per_day", "POSTER_GROUP_SHARES_PER_DAY", "int", "Group shares a day",
+            "How many of a day's videos are also shared to one of your ticked groups (one in the morning, one "
+            "later). 0 turns group sharing off.", 2, "Auto-post"),
+    Setting("poster_group_rest_days", "POSTER_GROUP_REST_DAYS", "int", "Days between shares to a group",
+            "A group gets at most one share in this many days — more reads as spam to members and admins.", 7,
+            "Auto-post"),
     Setting("social_hook", "", "string", "Hook line",
             "The line over every social video's question.", "Can you solve this?", "Social"),
     Setting("social_bg_from", "", "string", "Background colour (top)", "A hex colour, e.g. #2f4d8a.", "#2f4d8a", "Social"),

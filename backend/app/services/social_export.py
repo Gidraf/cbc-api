@@ -200,9 +200,21 @@ def delete_post(post_id: str) -> None:
 
 
 def summary(posts: list[dict[str, Any]]) -> dict[str, Any]:
-    """Platforms and topics side by side, on what posted so far."""
+    """Platforms and topics side by side, on what posted so far (a post the
+    platform will publish later is still planned)."""
+    now = datetime.now(timezone.utc)
+
+    def out(r: dict[str, Any]) -> bool:
+        t = r.get("posted_at")
+        if not t:
+            return False
+        try:
+            return (datetime.fromisoformat(t) if isinstance(t, str) else t) <= now
+        except ValueError:
+            return True
+
     def roll(rows: list[dict[str, Any]]) -> dict[str, Any]:
-        live = [r for r in rows if r.get("posted_at")]
+        live = [r for r in rows if out(r)]
         totals = {k: sum(int(r.get(k) or 0) for r in live) for k in STATS}
         views = totals["views"]
         engaged = totals["likes"] + totals["comments"] + totals["shares"] + totals["saves"]
@@ -218,7 +230,7 @@ def summary(posts: list[dict[str, Any]]) -> dict[str, Any]:
     for r in posts:
         by_platform.setdefault(r["platform"], []).append(r)
         by_topic.setdefault(r.get("sub_strand") or "—", []).append(r)
-    live = sorted((r for r in posts if r.get("posted_at")), key=lambda r: -int(r.get("views") or 0))
+    live = sorted((r for r in posts if out(r)), key=lambda r: -int(r.get("views") or 0))
     return {"overall": roll(posts),
             "by_platform": {k: roll(v) for k, v in sorted(by_platform.items())},
             "by_topic": {k: roll(v) for k, v in sorted(by_topic.items())},
@@ -254,6 +266,9 @@ platforms and topics.
 
 HARD_DAILY_CAP = 30
 MAX_ATTEMPTS = 3
+AHEAD_CAPABLE = ("facebook",)          # platforms whose scheduler the poster can fill in
+AHEAD_LEAD = timedelta(minutes=30)     # closer than this, a post just goes out live
+GROUP_PLATFORMS = ("facebook",)
 EAT = timezone(timedelta(hours=3))
 
 
@@ -271,7 +286,21 @@ def poster_rules() -> dict[str, Any]:
     start, end = ((int(m[1]), int(m[2])), (int(m[3]), int(m[4]))) if m else ((6, 0), (22, 0))
     raw = ps.get("poster_platforms", None) or ["tiktok", "instagram", "facebook", "youtube", "linkedin"]
     platforms = [p.strip().lower() for p in (raw if isinstance(raw, list) else str(raw).split(",")) if p.strip()]
+    def zero_ok(key: str, default: int, top: int) -> int:      # 0 is a real answer here
+        raw = ps.get(key, default)
+        try:
+            return max(0, min(int(default if raw is None or raw == "" else raw), top))
+        except (TypeError, ValueError):
+            return default
+
+    ahead_raw = ps.get("poster_ahead_platforms", None)
+    ahead_raw = ["facebook"] if ahead_raw is None else ahead_raw
+    ahead = [p.strip().lower() for p in (ahead_raw if isinstance(ahead_raw, list) else str(ahead_raw).split(",")) if p.strip()]
     return {"enabled": bool(ps.get("poster_enabled", False)),
+            "ahead_platforms": [p for p in ahead if p in AHEAD_CAPABLE],
+            "ahead_days": max(1, min(num("poster_ahead_days", 28, 29), 29)),
+            "group_shares_per_day": zero_ok("poster_group_shares_per_day", 2, 6),
+            "group_rest_days": max(1, num("poster_group_rest_days", 7, 60)),
             "daily_cap": num("poster_daily_cap", 30, HARD_DAILY_CAP),
             "platform_cap": num("poster_platform_cap", 8, HARD_DAILY_CAP),
             "min_gap_minutes": num("poster_min_gap_minutes", 20, 24 * 60),
@@ -280,8 +309,12 @@ def poster_rules() -> dict[str, Any]:
 
 
 def decide(now: datetime, rules: dict[str, Any], *, posted_today: list[dict[str, Any]], last_posted_at: datetime | None,
-           candidates: list[dict[str, Any]], logged_out: set[str]) -> tuple[dict[str, Any] | None, str]:
-    """The next post the browser may publish now, or None and why."""
+           candidates: list[dict[str, Any]], logged_out: set[str],
+           live_today: list[dict[str, Any]] | None = None) -> tuple[dict[str, Any] | None, str]:
+    """The next post the browser may publish now, or None and why.
+    `posted_today`: the day's actions (the daily cap and the gap count them);
+    `live_today`: what goes out on each platform today (the platform cap).
+    Uploads ahead leave room in the day for its live group shares."""
     if not rules["enabled"]:
         return None, "Auto-post is off (Settings → Auto-post)."
     local = now.astimezone(EAT)
@@ -296,8 +329,9 @@ def decide(now: datetime, rules: dict[str, Any], *, posted_today: list[dict[str,
         if wait > timedelta(0):
             return None, f"Next post allowed in {int(wait.total_seconds() // 60) + 1} min (gap {rules['min_gap_minutes']} min)."
     per_platform: dict[str, int] = {}
-    for p in posted_today:
+    for p in (posted_today if live_today is None else live_today):
         per_platform[p["platform"]] = per_platform.get(p["platform"], 0) + 1
+    room_ahead = len(posted_today) < rules["daily_cap"] - int(rules.get("group_shares_per_day") or 0)
     skipped: set[str] = set()
     for c in candidates:
         platform = c["platform"]
@@ -307,7 +341,10 @@ def decide(now: datetime, rules: dict[str, Any], *, posted_today: list[dict[str,
         if platform in logged_out:
             skipped.add(f"{platform} needs a login")
             continue
-        if per_platform.get(platform, 0) >= rules["platform_cap"]:
+        if c.get("ahead") and not room_ahead:
+            skipped.add("uploads ahead wait — the rest of today is kept for its live posts")
+            continue
+        if not c.get("ahead") and per_platform.get(platform, 0) >= rules["platform_cap"]:
             skipped.add(f"{platform} reached {rules['platform_cap']} today")
             continue
         return c, ""
@@ -339,27 +376,39 @@ def next_for_poster(now: datetime | None = None, *, platform: str = "", post_id:
                else "The booked posts' videos are still being made — try again shortly.")
     else:
         day_start = now.astimezone(EAT).replace(hour=0, minute=0, second=0, microsecond=0)
-        posted_today = fetch_all("SELECT platform FROM social_posts WHERE posted_at >= :d", {"d": day_start}) or []
-        last = fetch_one("SELECT MAX(posted_at) AS t FROM social_posts WHERE posted_at IS NOT NULL") or {}
-        candidates = fetch_all(
-            """SELECT * FROM social_posts WHERE posted_at IS NULL AND status IN ('planned', 'failed')
-               AND attempts < :tries AND scheduled_for IS NOT NULL AND scheduled_for <= :now
-               ORDER BY scheduled_for, platform LIMIT 50""", {"tries": MAX_ATTEMPTS, "now": now}) or []
+        # The day's actions — a post going out live, or a video handed to a
+        # platform's scheduler — are what the caps and the gap count.
+        posted_today = fetch_all("SELECT platform FROM social_posts WHERE handed_at >= :d", {"d": day_start}) or []
+        live_today = fetch_all("""SELECT platform FROM social_posts WHERE posted_at >= :d AND posted_at < :e""",
+                               {"d": day_start, "e": day_start + timedelta(days=1)}) or []
+        last = fetch_one("SELECT MAX(handed_at) AS t FROM social_posts WHERE handed_at IS NOT NULL") or {}
+        rows = fetch_all(
+            """SELECT * FROM social_posts WHERE posted_at IS NULL AND handed_at IS NULL AND status IN ('planned', 'failed')
+               AND attempts < :tries AND scheduled_for IS NOT NULL AND scheduled_for <= :until
+               ORDER BY scheduled_for, platform LIMIT 300""",
+            {"tries": MAX_ATTEMPTS, "until": now + timedelta(days=rules["ahead_days"])}) or []
+        candidates = work_order(now, rules, rows)
         logged_out = {r["platform"] for r in (fetch_all("SELECT platform FROM poster_state WHERE NOT logged_in") or [])}
         waiting = 0
-        while True:     # a post whose video is still being made waits; the next one goes
+        for _ in range(120):
             chosen, why = decide(now, rules, posted_today=posted_today, last_posted_at=last.get("t"),
-                                 candidates=candidates, logged_out=logged_out)
+                                 candidates=candidates, logged_out=logged_out, live_today=live_today)
             if not chosen:
                 break
-            st = social.status(chosen["question_id"])
-            if st.get("status") == "ready":
-                break
-            waiting += 1
+            drop = False
+            if chosen.get("ahead"):
+                # Facebook will not schedule a reel that is also shared to a
+                # group: a post picked for a group share is kept back to go
+                # out live at its time, and handed to no scheduler.
+                if chosen.get("groups") or reserve_group(chosen, rules):
+                    drop = True
+            if not drop:
+                st = social.status(chosen["question_id"])
+                if st.get("status") == "ready":
+                    break
+                waiting += 1
             candidates = [c for c in candidates if c["post_id"] != chosen["post_id"]]
             chosen = None
-            if waiting >= 20:
-                break
         if not chosen and waiting:
             why = f"{waiting} due post(s) are waiting for their videos to be made."
     if not chosen:
@@ -368,26 +417,144 @@ def next_for_poster(now: datetime | None = None, *, platform: str = "", post_id:
 
     q_text = social.display(load(chosen["question_id"]).get("question_text") or "")
     title = (f"{social.brand().get('hook') or 'Can you solve this?'} {q_text}")[:90].rstrip() + " #Shorts"
+    when = chosen.get("scheduled_for")
+    reserved = [str(g) for g in (chosen.get("groups") or [])]
+    ahead = (not reserved and chosen["platform"] in rules["ahead_platforms"] and isinstance(when, datetime)
+             and when - now > AHEAD_LEAD and when - now <= timedelta(days=rules["ahead_days"]))
+    groups = [] if ahead else (reserved or groups_for(chosen["platform"], now, rules))
     return {"post": {"post_id": chosen["post_id"], "platform": chosen["platform"], "question_id": chosen["question_id"],
                      "video_url": st["url"], "thumbnail_url": st.get("thumbnail_url"), "caption": st.get("post") or "",
-                     "title": title, "attempts": chosen.get("attempts") or 0}, "reason": "", "rules": rules}
+                     "title": title, "attempts": chosen.get("attempts") or 0,
+                     "schedule_at": when.astimezone(EAT).isoformat() if ahead else "",
+                     "groups": groups}, "reason": "", "rules": rules}
 
 
-def record_attempt(post_id: str, *, ok: bool, url: str = "", error: str = "", dry_run: bool = False) -> dict[str, Any]:
-    from ..infra.db import execute
+def reserve_group(post: dict[str, Any], rules: dict[str, Any]) -> list[str]:
+    """If this booked post should carry one of the day's group shares, write
+    the group on it now (and rest the group from its time), so it goes out
+    live with the share — and the day's other posts know the share is taken."""
+    from ..infra.db import execute, to_json
 
+    when = post.get("scheduled_for")
+    if not isinstance(when, datetime):
+        return []
+    groups = groups_for(post["platform"], when, rules)
+    if groups:
+        execute("UPDATE social_posts SET groups = CAST(:g AS jsonb), updated_at = NOW() WHERE post_id = :id",
+                {"id": post["post_id"], "g": to_json(groups)})
+        for g in groups:
+            execute("""UPDATE poster_groups SET last_shared_for = GREATEST(COALESCE(last_shared_for, :t), :t)
+                       WHERE platform = :p AND name = :n""", {"p": post["platform"], "n": g, "t": when})
+    return groups
+
+
+def work_order(now: datetime, rules: dict[str, Any], rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Posts due now first (they go out live), then posts to hand to a
+    platform's scheduler ahead of time, soonest first. Pure."""
+    due, ahead = [], []
+    for r in rows:
+        when = r.get("scheduled_for")
+        if not isinstance(when, datetime):
+            continue
+        if when <= now:
+            due.append(r)
+        elif (r["platform"] in rules["ahead_platforms"] and when - now > AHEAD_LEAD
+              and when - now <= timedelta(days=rules["ahead_days"])):
+            ahead.append({**r, "ahead": True})
+    return due + ahead
+
+
+def groups_for(platform: str, at: datetime, rules: dict[str, Any]) -> list[str]:
+    """The group (if any) this post is also shared to: `group_shares_per_day`
+    a day — with two, one before 13:00 and one after — each to the ticked
+    group rested longest, and never the same group within `group_rest_days`."""
+    from ..infra.db import fetch_all, fetch_one
+
+    per_day = rules.get("group_shares_per_day", 0)
+    if platform not in GROUP_PLATFORMS or per_day <= 0:
+        return []
+    local = at.astimezone(EAT)
+    d0 = local.replace(hour=0, minute=0, second=0, microsecond=0)
+    shared = fetch_all(           # shared already, or kept back for a share
+        """SELECT COALESCE(posted_at, scheduled_for) AS t FROM social_posts WHERE platform = :p
+           AND groups <> '[]'::jsonb AND status <> 'gave_up' AND COALESCE(posted_at, scheduled_for) >= :d0
+           AND COALESCE(posted_at, scheduled_for) < :d1""",
+        {"p": platform, "d0": d0, "d1": d0 + timedelta(days=1)}) or []
+    if len(shared) >= per_day:
+        return []
+    if per_day == 2 and any((r["t"].astimezone(EAT).hour < 13) == (local.hour < 13) for r in shared if r.get("t")):
+        return []                       # this half of the day has its share
+    rest = timedelta(days=rules.get("group_rest_days", 7))
+    row = fetch_one(
+        """SELECT name FROM poster_groups WHERE platform = :p AND enabled
+           AND (last_shared_for IS NULL OR last_shared_for <= :cut OR last_shared_for >= :after)
+           ORDER BY last_shared_for NULLS FIRST, name LIMIT 1""",
+        {"p": platform, "cut": at - rest, "after": at + rest})
+    return [row["name"]] if row else []
+
+
+def record_attempt(post_id: str, *, ok: bool, url: str = "", error: str = "", dry_run: bool = False,
+                   scheduled: bool = False, groups: list[str] | None = None) -> dict[str, Any]:
+    """How a try went. `scheduled`: handed to the platform's scheduler — it
+    goes out at its booked time, which becomes its posted time."""
+    from ..infra.db import execute, fetch_one, to_json
+
+    groups = [str(g)[:200] for g in (groups or [])][:9]
     if dry_run:
         execute("UPDATE social_posts SET last_error = :e, last_attempt_at = NOW(), updated_at = NOW() WHERE post_id = :id",
                 {"id": post_id, "e": ("dry run ok" if ok else f"dry run: {error}")[:900]})
     elif ok:
-        execute("""UPDATE social_posts SET status = 'posted', posted_at = COALESCE(posted_at, NOW()), url = COALESCE(NULLIF(:u, ''), url),
-                   attempts = attempts + 1, last_error = '', last_attempt_at = NOW(), updated_at = NOW() WHERE post_id = :id""",
-                {"id": post_id, "u": url})
+        execute(f"""UPDATE social_posts SET status = :st,
+                   posted_at = {"COALESCE(scheduled_for, NOW())" if scheduled else "COALESCE(posted_at, NOW())"},
+                   handed_at = NOW(), platform_scheduled = :sch, groups = CAST(:g AS jsonb),
+                   url = COALESCE(NULLIF(:u, ''), url), attempts = attempts + 1, last_error = '',
+                   last_attempt_at = NOW(), updated_at = NOW() WHERE post_id = :id""",
+                {"id": post_id, "u": url, "st": "scheduled" if scheduled else "posted", "sch": scheduled, "g": to_json(groups)})
+        if groups:
+            row = fetch_one("SELECT platform, posted_at FROM social_posts WHERE post_id = :id", {"id": post_id}) or {}
+            for g in groups:
+                execute("""INSERT INTO poster_groups (platform, name, enabled, last_shared_for) VALUES (:p, :n, TRUE, :t)
+                           ON CONFLICT (platform, name) DO UPDATE SET last_shared_for = GREATEST(
+                               COALESCE(poster_groups.last_shared_for, EXCLUDED.last_shared_for), EXCLUDED.last_shared_for)""",
+                        {"p": row.get("platform") or "facebook", "n": g, "t": row.get("posted_at")})
     else:
         execute("""UPDATE social_posts SET status = CASE WHEN attempts + 1 >= :tries THEN 'gave_up' ELSE 'failed' END,
                    attempts = attempts + 1, last_error = :e, last_attempt_at = NOW(), updated_at = NOW() WHERE post_id = :id""",
                 {"id": post_id, "e": error[:900], "tries": MAX_ATTEMPTS})
-    return {"post_id": post_id, "ok": ok}
+    return {"post_id": post_id, "ok": ok, "scheduled": scheduled, "groups": groups}
+
+
+# ── the owner's groups ───────────────────────────────────────────────────────
+
+def save_found_groups(platform: str, names: list[str]) -> list[dict[str, Any]]:
+    """The groups the poster found in the platform's picker; new ones start
+    unticked — the owner chooses which welcome teaching posts."""
+    from ..infra.db import execute
+
+    for n in dict.fromkeys(str(x).strip()[:200] for x in names if str(x).strip()):
+        execute("""INSERT INTO poster_groups (platform, name) VALUES (:p, :n)
+                   ON CONFLICT (platform, name) DO UPDATE SET seen_at = NOW()""", {"p": platform, "n": n})
+    return list_groups(platform)
+
+
+def list_groups(platform: str = "facebook") -> list[dict[str, Any]]:
+    from ..infra.db import fetch_all
+
+    rows = fetch_all("""SELECT name, enabled, last_shared_for, seen_at FROM poster_groups WHERE platform = :p
+                        ORDER BY enabled DESC, name""", {"p": platform}) or []
+    for r in rows:
+        for k in ("last_shared_for", "seen_at"):
+            if r.get(k) is not None and hasattr(r[k], "isoformat"):
+                r[k] = r[k].isoformat()
+    return rows
+
+
+def set_groups(platform: str, enabled: list[str]) -> list[dict[str, Any]]:
+    from ..infra.db import execute
+
+    execute("UPDATE poster_groups SET enabled = (name = ANY(:names)) WHERE platform = :p",
+            {"p": platform, "names": [str(n) for n in enabled]})
+    return list_groups(platform)
 
 
 def set_login_state(platform: str, logged_in: bool, note: str = "") -> None:
@@ -399,15 +566,22 @@ def set_login_state(platform: str, logged_in: bool, note: str = "") -> None:
 
 
 def poster_overview() -> dict[str, Any]:
-    from ..infra.db import fetch_all
+    from ..infra.db import fetch_all, fetch_one
 
     now = datetime.now(timezone.utc)
     day_start = now.astimezone(EAT).replace(hour=0, minute=0, second=0, microsecond=0)
     states = fetch_all("SELECT platform, logged_in, note, checked_at FROM poster_state ORDER BY platform") or []
-    today = fetch_all("SELECT platform, COUNT(*) AS n FROM social_posts WHERE posted_at >= :d GROUP BY platform", {"d": day_start}) or []
+    today = fetch_all("""SELECT platform, COUNT(*) AS n FROM social_posts WHERE posted_at >= :d AND posted_at <= :now
+                         GROUP BY platform""", {"d": day_start, "now": now}) or []
     queue = fetch_all(
         """SELECT post_id, platform, question_id, scheduled_for, status, attempts, last_error FROM social_posts
-           WHERE posted_at IS NULL AND status IN ('planned', 'failed') ORDER BY scheduled_for NULLS LAST LIMIT 30""") or []
+           WHERE posted_at IS NULL AND handed_at IS NULL AND status IN ('planned', 'failed')
+           ORDER BY scheduled_for NULLS LAST LIMIT 30""") or []
+    ahead = fetch_one("""SELECT COUNT(*) AS n, MAX(posted_at) AS until FROM social_posts
+                         WHERE platform_scheduled AND posted_at > :now""", {"now": now}) or {}
+    handed = fetch_one("SELECT COUNT(*) AS n FROM social_posts WHERE handed_at >= :d", {"d": day_start}) or {}
+    waiting = fetch_one("""SELECT COUNT(*) AS n FROM social_posts WHERE posted_at IS NULL AND handed_at IS NULL
+                           AND status IN ('planned', 'failed')""") or {}
     recent = fetch_all(
         """SELECT post_id, platform, question_id, status, posted_at, url, last_error, last_attempt_at FROM social_posts
            WHERE last_attempt_at IS NOT NULL ORDER BY last_attempt_at DESC LIMIT 20""") or []
@@ -416,8 +590,12 @@ def poster_overview() -> dict[str, Any]:
             for k, v in list(r.items()):
                 if hasattr(v, "isoformat"):
                     r[k] = v.isoformat()
+    until = ahead.get("until")
     return {"rules": poster_rules(), "posted_today": {r["platform"]: int(r["n"]) for r in today},
-            "states": states, "queue": queue, "recent": recent}
+            "states": states, "queue": queue, "recent": recent,
+            "scheduled_ahead": {"count": int(ahead.get("n") or 0), "until": until.isoformat() if hasattr(until, "isoformat") else until},
+            "handed_today": int(handed.get("n") or 0), "waiting": int(waiting.get("n") or 0),
+            "groups": list_groups("facebook")}
 
 
 # ── a poster the server cannot reach (on the owner's Mac) ─────────────────────
@@ -540,16 +718,37 @@ def default_platforms() -> list[str]:
     return sorted(found) or ["facebook"]
 
 
+def day_counts(rng: Any, n_days: int, low: int, high: int, total: int = 0) -> list[int]:
+    """Videos per day: each random in [low, high]; with `total`, they add up
+    to it (as near as [low, high] allows), spread at random."""
+    if not total:
+        return [rng.randint(low, high) for _ in range(n_days)]
+    total = min(total, n_days * high)
+    counts = [min(low, total // n_days)] * n_days
+    left = total - sum(counts)
+    while left > 0:
+        open_days = [i for i, c in enumerate(counts) if c < high]
+        if not open_days:
+            break
+        counts[rng.choice(open_days)] += 1
+        left -= 1
+    return counts
+
+
 def lay_out(rng: Any, days: list[date], videos: list[str], platforms: list[str], rules: dict[str, Any], *,
-            low: int, high: int) -> list[dict[str, Any]]:
-    """The calendar: per day a random number of videos in [low, high], each
-    on every platform at its own random time. Pure — no database."""
+            low: int, high: int, total: int = 0) -> list[dict[str, Any]]:
+    """The calendar: per day a random number of videos in [low, high] (adding
+    up to `total` when given), each on every platform at its own random time.
+    Pure — no database."""
     out: list[dict[str, Any]] = []
     pool = list(videos)
-    for day in days:
+    wanted = day_counts(rng, len(days), low, high, total)
+    for day, want in zip(days, wanted):
         if not pool:
             break
-        n = min(rng.randint(low, high), len(pool))
+        n = min(want, len(pool))
+        if n <= 0:
+            continue
         chosen, pool = pool[:n], pool[n:]
         slots = day_times(rng, day, n * len(platforms), rules)
         pairs = [(qid, p) for qid in chosen for p in platforms]
@@ -564,8 +763,9 @@ def lay_out(rng: Any, days: list[date], videos: list[str], platforms: list[str],
 
 def book_ahead(grade: str, subject: str, sub_strand: str = "", *, days: int = 25, low: int = 5, high: int = 15,
                platforms: list[str] | None = None, today: date | None = None, seed: int | None = None,
-               dry: bool = False, created_by: str = "") -> dict[str, Any]:
-    """Keep the next `days` days booked. `dry` shows the plan, writes nothing."""
+               dry: bool = False, created_by: str = "", total: int = 0) -> dict[str, Any]:
+    """Keep the next `days` days booked — `total` videos over them when given.
+    `dry` shows the plan, writes nothing."""
     import random
 
     from ..infra.db import fetch_all, fetch_one
@@ -590,7 +790,7 @@ def book_ahead(grade: str, subject: str, sub_strand: str = "", *, days: int = 25
 
     today = today or datetime.now(EAT).date()
     last = fetch_one("""SELECT MAX(scheduled_for) AS t FROM social_posts
-                        WHERE posted_at IS NULL AND scheduled_for IS NOT NULL""") or {}
+                        WHERE scheduled_for IS NOT NULL AND status <> 'gave_up'""") or {}
     last_day = last["t"].astimezone(EAT).date() if last.get("t") else None
     first = max(today + timedelta(days=1), (last_day + timedelta(days=1)) if last_day else today)
     end = today + timedelta(days=max(1, days))
@@ -607,7 +807,9 @@ def book_ahead(grade: str, subject: str, sub_strand: str = "", *, days: int = 25
                   if str(q.get("status") or "") not in ("needs_review", "rejected", "superseded")
                   and str(q.get("question_id")) not in booked]
     rng.shuffle(candidates)                       # mix the topics
-    need = high * len(span)
+    if total and total > high * len(span):
+        notes.append(f"{total} videos do not fit {len(span)} day(s) at most {high} a day — booking {high * len(span)}.")
+    need = min(total, high * len(span)) if total else high * len(span)
     usable: list[str] = []
     state: dict[str, str] = {}
     for q in candidates:
@@ -624,7 +826,7 @@ def book_ahead(grade: str, subject: str, sub_strand: str = "", *, days: int = 25
         state[str(q["question_id"])] = str(st.get("status"))
     usable.sort(key=lambda qid: state[qid] != "ready")     # finished videos take the nearest days
 
-    calendar = lay_out(rng, span, usable, platforms, rules, low=low, high=high)
+    calendar = lay_out(rng, span, usable, platforms, rules, low=low, high=high, total=total)
     used = [p["question_id"] for d in calendar for p in d["posts"]]
     posts = sum(len(d["posts"]) for d in calendar)
     if len(calendar) < len(span):

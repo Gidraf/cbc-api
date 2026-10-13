@@ -4353,7 +4353,7 @@ export function useBookAhead() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (v: { grade: string; subject: string; sub_strand?: string; days: number; low: number; high: number;
-                      platforms: string[]; dry: boolean }) =>
+                      platforms: string[]; dry: boolean; total?: number }) =>
       api<BookingPlan>("/api/v1/play/social/book", { method: "POST", body: JSON.stringify(v) }),
     onSuccess: (_, v) => {
       if (!v.dry) {
@@ -4366,7 +4366,8 @@ export function useBookAhead() {
 
 export type PosterOverview = {
   rules: { enabled: boolean; daily_cap: number; platform_cap: number; min_gap_minutes: number;
-           hours: { start: string; end: string }; platforms: string[] };
+           hours: { start: string; end: string }; platforms: string[]; ahead_platforms?: string[]; ahead_days?: number;
+           group_shares_per_day?: number; group_rest_days?: number };
   posted_today: Record<string, number>;
   states: { platform: string; logged_in: boolean; note: string; checked_at: string }[];
   queue: { post_id: string; platform: string; question_id: string; scheduled_for: string | null; status: string;
@@ -4378,7 +4379,24 @@ export type PosterOverview = {
           mode?: "local" | "server"; poster_id?: string; seen_at?: string;
           last?: { ok: boolean; platform: string; error?: string; shot?: string; dry_run?: boolean; url?: string } | null };
   view_url: string;
+  /** Handed to Facebook's own scheduler: how many, and the last one's time. */
+  scheduled_ahead?: { count: number; until: string | null };
+  handed_today?: number;
+  waiting?: number;
+  groups?: PosterGroup[];
 };
+export type PosterGroup = { name: string; enabled: boolean; last_shared_for: string | null; seen_at: string };
+
+/** Which of the owner's groups may get a share. */
+export function useSaveGroups() {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (enabled: string[]) =>
+      api<{ groups: PosterGroup[] }>("/api/v1/play/poster/groups", { method: "PUT", body: JSON.stringify({ platform: "facebook", enabled }) }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["poster"] }),
+  });
+}
 
 /** The browser poster: rules, logins, queue, and its live state. */
 export function usePosterOverview(enabled = true) {
@@ -4395,7 +4413,7 @@ export function usePosterCommand() {
   const api = useApi();
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (v: { action: "login" | "check" | "dry_run" | "run_now" | "pause" | "resume"; platform?: string; post_id?: string }) =>
+    mutationFn: (v: { action: "login" | "check" | "dry_run" | "run_now" | "pause" | "resume" | "groups"; platform?: string; post_id?: string }) =>
       api<Record<string, any>>("/api/v1/play/poster/command", { method: "POST", body: JSON.stringify(v) }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["poster"] }),
   });

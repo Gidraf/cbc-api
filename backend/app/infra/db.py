@@ -1294,6 +1294,29 @@ MIGRATIONS: list[tuple[str, str]] = [
         );
         """,
     ),
+    (
+        "044_poster_ahead_groups",
+        """
+        -- A post handed to the platform ahead of time with the platform's own
+        -- scheduler: handed_at is when the poster uploaded it (the day's
+        -- actions are counted by it); posted_at stays the publish time.
+        ALTER TABLE social_posts ADD COLUMN IF NOT EXISTS handed_at TIMESTAMPTZ NULL;
+        ALTER TABLE social_posts ADD COLUMN IF NOT EXISTS platform_scheduled BOOLEAN NOT NULL DEFAULT FALSE;
+        ALTER TABLE social_posts ADD COLUMN IF NOT EXISTS groups JSONB NOT NULL DEFAULT '[]'::jsonb;
+        CREATE INDEX IF NOT EXISTS idx_social_posts_handed ON social_posts(handed_at);
+        UPDATE social_posts SET handed_at = posted_at WHERE handed_at IS NULL AND posted_at IS NOT NULL;
+        -- The owner's groups as the poster found them; the owner ticks which
+        -- may get a share, and each is shared to at most once a week.
+        CREATE TABLE IF NOT EXISTS poster_groups (
+            platform TEXT NOT NULL,
+            name TEXT NOT NULL,
+            enabled BOOLEAN NOT NULL DEFAULT FALSE,
+            last_shared_for TIMESTAMPTZ NULL,
+            seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            PRIMARY KEY (platform, name)
+        );
+        """,
+    ),
 ]
 
 

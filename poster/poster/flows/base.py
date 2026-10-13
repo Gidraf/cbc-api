@@ -127,6 +127,9 @@ class Flow:
     platform = ""
     login_url = ""
     caption_limit = 2200
+    can_schedule = False      # fills in the platform's own Schedule (post(schedule_at=...))
+    can_share_groups = False  # ticks groups in the composer (post(groups=...))
+    shared_groups: list[str] = []
 
     async def logged_in(self, page: Page) -> bool:  # pragma: no cover - site specific
         raise NotImplementedError
