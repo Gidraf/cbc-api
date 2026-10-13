@@ -22,7 +22,12 @@ import {
   usePlayRound,
   useStoredStructure,
   useSubjects,
+  useMakeVideo,
+  useMakeVideos,
+  useVideoLibrary,
+  useVideoStatus,
   useWalkthroughHtml,
+  useWhiteboardHtml,
   type PlayItem,
   type PlaySpec,
 } from "../lib/queries";
@@ -51,6 +56,7 @@ export function PlayArcade() {
   const toast = useToast();
   const [playing, setPlaying] = React.useState<PlayItem[] | null>(null);
   const [watching, setWatching] = React.useState<string | null>(null);
+  const [showLibrary, setShowLibrary] = React.useState(false);
 
   async function startRound(mode: string) {
     try {
@@ -117,10 +123,15 @@ export function PlayArcade() {
               <span style={{ flex: 1, minWidth: 0 }}>{plain(it.question_text).slice(0, 140)}</span>
               <span style={{ color: "var(--ink-3)", fontSize: "var(--text-xs)" }}>{it.sub_strand}</span>
               <Button size="sm" onClick={() => playOne(it.question_id)}>Play</Button>
-              <Button size="sm" variant="ghost" onClick={() => setWatching(it.question_id)}>Watch</Button>
+              <Button size="sm" variant="ghost" onClick={() => setWatching(it.question_id)}>✎ Whiteboard</Button>
             </div>
           ))}
         </Card>
+      )}
+
+      {grade && (items.data?.items || []).length > 0 && (
+        <VideoLibrary grade={grade} subject={subject} subStrand={subStrand} open={showLibrary}
+                      onToggle={() => setShowLibrary((v) => !v)} onWatch={(qid) => setWatching(qid)} />
       )}
 
       {playing && <Round items={playing} onClose={() => setPlaying(null)} onWatch={(qid) => setWatching(qid)} />}
@@ -422,14 +433,110 @@ function FractionGame({ spec, onDone }: { spec: PlaySpec; onDone: (c: boolean) =
 // ── the walkthrough ─────────────────────────────────────────────────────────
 
 function WatchModal({ questionId, onClose }: { questionId: string; onClose: () => void }) {
-  const page = useWalkthroughHtml(questionId);
+  const [view, setView] = React.useState<"whiteboard" | "classic">("whiteboard");
+  const board = useWhiteboardHtml(view === "whiteboard" ? questionId : "");
+  const classic = useWalkthroughHtml(view === "classic" ? questionId : "");
+  const page = view === "whiteboard" ? board : classic;
   return (
-    <Modal open onClose={onClose} title="Walkthrough — press Play to hear it" width="min(1040px, 96vw)"
+    <Modal open onClose={onClose} title="Walkthrough — press Play to hear it" width="min(1100px, 96vw)"
            footer={<Button onClick={onClose}>Close</Button>}>
+      <Stack direction="row" gap="var(--s2)" wrap align="center" style={{ marginBottom: "var(--s3)" }}>
+        <Button size="sm" variant={view === "whiteboard" ? "primary" : "ghost"} onClick={() => setView("whiteboard")}>✎ Whiteboard</Button>
+        <Button size="sm" variant={view === "classic" ? "primary" : "ghost"} onClick={() => setView("classic")}>Animated</Button>
+        <span style={{ flex: 1 }} />
+        <VideoControl questionId={questionId} />
+      </Stack>
       {page.error && <ErrorNotice error={page.error} />}
-      <iframe title="Walkthrough" srcDoc={page.data || "<p style='font-family:sans-serif;padding:2rem'>Preparing…</p>"}
-              allow="autoplay" style={{ width: "100%", height: "70vh", border: "1px solid var(--line)", borderRadius: "var(--radius)", background: "#fbfaf6" }} />
+      <iframe key={view} title="Walkthrough" srcDoc={page.data || "<p style='font-family:sans-serif;padding:2rem'>Preparing…</p>"}
+              allow="autoplay" style={{ width: "100%", height: "72vh", border: "1px solid var(--line)", borderRadius: "var(--radius)", background: "#e9e7e1" }} />
     </Modal>
+  );
+}
+
+/** The item's MP4: make it, watch it, download it. */
+function VideoControl({ questionId }: { questionId: string }) {
+  const video = useVideoStatus(questionId);
+  const make = useMakeVideo();
+  const toast = useToast();
+  const [show, setShow] = React.useState(false);
+  const v = video.data;
+  async function start() {
+    try { await make.mutateAsync(questionId); toast("Video queued — it is drawn and voiced in the worker.", "ok"); }
+    catch (err) { toast(err instanceof Error ? err.message : "Could not queue the video.", "danger"); }
+  }
+  if (!v) return <span style={{ color: "var(--ink-3)", fontSize: "var(--text-xs)" }}>{video.isLoading ? "Checking video…" : ""}</span>;
+  if (v.status === "ready" && v.url) {
+    return (
+      <>
+        <Badge tone="ok">MP4 ready</Badge>
+        <Button size="sm" variant="ghost" onClick={() => setShow((x) => !x)}>{show ? "Hide video" : "▶ Video"}</Button>
+        <a href={v.url} download target="_blank" rel="noreferrer"><Button size="sm">⬇ Download MP4</Button></a>
+        {show && (
+          <video src={v.url} controls autoPlay style={{ flexBasis: "100%", width: "100%", borderRadius: "var(--radius)", background: "#000" }} />
+        )}
+      </>
+    );
+  }
+  if (v.status === "queued" || v.status === "running") {
+    return <Badge tone="info">{v.status === "running" ? "Drawing the video…" : "Video queued…"}</Badge>;
+  }
+  return (
+    <>
+      {v.status === "failed" && <Badge tone="danger" title={v.error}>Last video failed</Badge>}
+      <Button size="sm" disabled={make.isPending || !v.scenes} onClick={start}>🎬 {v.status === "failed" ? "Try the MP4 again" : "Make MP4"}</Button>
+    </>
+  );
+}
+
+/** Every item in the scope with its video — content to download and post. */
+function VideoLibrary({ grade, subject, subStrand, open, onToggle, onWatch }: {
+  grade: string; subject: string; subStrand: string; open: boolean; onToggle: () => void; onWatch: (qid: string) => void;
+}) {
+  const library = useVideoLibrary(grade, subject, subStrand, open);
+  const makeAll = useMakeVideos();
+  const toast = useToast();
+  const rows = library.data?.items || [];
+  const busy = rows.filter((v) => v.status === "queued" || v.status === "running").length;
+  async function all() {
+    try {
+      const out = await makeAll.mutateAsync({ grade, subject, sub_strand: subStrand || undefined, limit: 60 });
+      const c = out.counts;
+      toast(`Videos: ${c.queued || 0} queued, ${c.ready || 0} already made${c.failed ? `, ${c.failed} failed` : ""}.`, "ok");
+    } catch (err) { toast(err instanceof Error ? err.message : "Could not queue the videos.", "danger"); }
+  }
+  return (
+    <Card title="Whiteboard videos"
+          actions={<Stack direction="row" gap="var(--s2)">
+            <Button size="sm" variant="ghost" onClick={onToggle}>{open ? "Hide" : "Show the library"}</Button>
+            <Button size="sm" variant="primary" disabled={makeAll.isPending} onClick={all}>
+              🎬 Make videos for {subStrand ? "this topic" : "this subject"}
+            </Button>
+          </Stack>}>
+      <p style={{ margin: 0, color: "var(--ink-3)", fontSize: "var(--text-sm)" }}>
+        Each item drawn on a whiteboard and narrated in the Kenyan voice, as an MP4 you can post or play in class.
+        Made once and kept; an edited item gets a new video.
+      </p>
+      {open && library.error && <ErrorNotice error={library.error} />}
+      {open && rows.length > 0 && (
+        <>
+          <p style={{ fontSize: "var(--text-sm)", margin: "var(--s3) 0 var(--s2)" }}>
+            <strong>{library.data?.ready || 0}</strong> of {rows.length} ready{busy ? ` · ${busy} being made` : ""}
+          </p>
+          {rows.map((v) => (
+            <div key={v.question_id} style={{ display: "flex", gap: "var(--s2)", alignItems: "center", padding: "6px 0", borderBottom: "1px solid var(--line-2)", fontSize: "var(--text-sm)" }}>
+              <Badge tone={v.status === "ready" ? "ok" : v.status === "failed" ? "danger" : v.status === "none" ? "neutral" : "info"}>
+                {{ ready: "ready", queued: "queued", running: "drawing", failed: "failed", none: "not made", skipped: "skipped" }[v.status]}
+              </Badge>
+              <span style={{ flex: 1, minWidth: 0 }} title={v.error}>{plain(v.question_text || "").slice(0, 120)}</span>
+              <Button size="sm" variant="ghost" onClick={() => onWatch(v.question_id)}>✎ Open</Button>
+              {v.status === "ready" && v.url && (
+                <a href={v.url} download target="_blank" rel="noreferrer"><Button size="sm">⬇ MP4</Button></a>
+              )}
+            </div>
+          ))}
+        </>
+      )}
+    </Card>
   );
 }
 

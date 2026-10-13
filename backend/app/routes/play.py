@@ -126,6 +126,95 @@ def walkthrough_page(question_id: str, voice: str = Query("en-KE"), autoplay: bo
                                          autoplay=autoplay))
 
 
+@router.get("/items/{question_id}/whiteboard.html")
+def whiteboard_page(question_id: str, autoplay: bool = Query(False),
+                    _: AuthContext = Depends(ANY)) -> HTMLResponse:
+    """The item worked on a whiteboard: a marker writes each line, circles
+    the side sum, draws the number line or the scale, boxes the answer and
+    strikes out the trap — timed to the device's voice. Self-contained, so
+    it works offline on a projector."""
+    from ..services import whiteboard
+
+    q = _one(question_id)
+    data, voice, title = whiteboard._script_for(q)
+    lang = "-".join(voice.split("-")[:2]) or "en-KE"
+    return HTMLResponse(whiteboard.page(data, title=title, voice=lang, autoplay=autoplay))
+
+
+@router.get("/items/{question_id}/video")
+def video_status(question_id: str, _: AuthContext = Depends(ANY)) -> dict[str, Any]:
+    """The MP4 for this item: ready (with its URL), queued, running, failed or none."""
+    from ..services import whiteboard
+
+    _one(question_id)
+    return whiteboard.status(question_id)
+
+
+@router.post("/items/{question_id}/video")
+def make_video(question_id: str, auth: AuthContext = Depends(ANY)) -> dict[str, Any]:
+    """Queue the whiteboard video. Made once per version of the item and kept."""
+    from ..services import whiteboard
+
+    _one(question_id)
+    return whiteboard.enqueue(question_id, queued_by=str(getattr(auth, "subject", "") or "whiteboard"))
+
+
+class VideoBatch(BaseModel):
+    grade: str
+    subject: str
+    sub_strand: str = ""
+    kind: str = ""          # only items that play as this kind; "" for all
+    limit: int = 40
+
+
+STAFF = require_roles("admin", "operator", "reviewer", "developer")
+
+
+@router.post("/videos")
+def make_videos(payload: VideoBatch, auth: AuthContext = Depends(STAFF)) -> dict[str, Any]:
+    """A video for every item in a scope — a topic's worth of content."""
+    import hashlib
+
+    from ..services import play_engine, whiteboard
+
+    items = _bank(payload.grade, payload.subject, payload.sub_strand, 1000)
+    if payload.kind:
+        items = [q for q in items if (play_engine.spec_for(q).get("primary") or {}).get("kind") == payload.kind]
+    items = items[:max(1, min(payload.limit, 200))]
+    if not items:
+        raise_api_error("NOT_FOUND", "No items in this scope to draw.")
+    batch = "vid_" + hashlib.sha256(
+        f"{payload.grade}{payload.subject}{payload.sub_strand}{payload.kind}".encode()).hexdigest()[:10]
+    counts: dict[str, int] = {}
+    out = []
+    for q in items:
+        qid = str(q.get("question_id") or "")
+        try:
+            got = whiteboard.enqueue(qid, queued_by=str(getattr(auth, "subject", "") or "whiteboard"), batch_id=batch)
+        except Exception as exc:  # noqa: BLE001
+            got = {"question_id": qid, "status": "failed", "error": str(exc)[:200]}
+        counts[got["status"]] = counts.get(got["status"], 0) + 1
+        out.append({k: got.get(k) for k in ("question_id", "status", "url", "job_id", "error")})
+    return {"batch_id": batch, "counts": counts, "items": out}
+
+
+@router.get("/videos")
+def list_videos(grade: str = Query(...), subject: str = Query(...), sub_strand: str = Query(""),
+                limit: int = Query(60, ge=1, le=300), _: AuthContext = Depends(ANY)) -> dict[str, Any]:
+    """Every item in a scope with its video's state — the content library."""
+    from ..services import whiteboard
+
+    out = []
+    for q in _bank(grade, subject, sub_strand, limit):
+        qid = str(q.get("question_id") or "")
+        try:
+            st = whiteboard.status(qid, q)
+        except Exception as exc:  # noqa: BLE001
+            st = {"question_id": qid, "status": "failed", "error": str(exc)[:200]}
+        out.append({**st, "question_text": str(q.get("question_text") or "")[:160]})
+    return {"items": out, "ready": sum(1 for v in out if v["status"] == "ready")}
+
+
 def walkthrough_html(data: dict[str, Any], *, title: str = "", voice: str = "en-KE", autoplay: bool = True) -> str:
     payload = json.dumps(data).replace("</", "<\\/")
     return _PAGE.replace("__TITLE__", html.escape(title or "Walkthrough")) \

@@ -12,6 +12,7 @@ ARG PIP_EXTRA_INDEX_URL=
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         curl \
+        ffmpeg \
         ca-certificates \
         && update-ca-certificates \
         && if [ -n "$CUSTOM_CA_CERT_B64" ]; then \

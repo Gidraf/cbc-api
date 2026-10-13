@@ -5427,6 +5427,9 @@ def _register_queue_handlers() -> None:
     # in the request, which used to cost up to 25 seconds per step.
     from ..services.math_engine.audio_jobs import JOB_KIND as _AUDIO_KIND, run_audio_job
     job_queue.register(_AUDIO_KIND, run_audio_job)
+    # A whiteboard video: the walkthrough drawn by a marker and voiced.
+    from ..services import whiteboard as _whiteboard
+    job_queue.register(_whiteboard.JOB_KIND, _whiteboard.run_job)
 
 
 # One step, one implementation. The pipeline delegates to the same handlers the

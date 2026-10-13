@@ -4043,6 +4043,77 @@ export function useWalkthroughHtml(questionId: string) {
   });
 }
 
+/** The item on a whiteboard: a marker draws the working, timed to the voice. */
+export function useWhiteboardHtml(questionId: string) {
+  const { token } = useAuth();
+  return useQuery({
+    queryKey: ["whiteboard", questionId],
+    queryFn: async () => {
+      const { blob } = await fetchBlob(`/api/v1/play/items/${encodeURIComponent(questionId)}/whiteboard.html`, { bearerToken: token });
+      return await blob.text();
+    },
+    enabled: Boolean(questionId),
+    staleTime: 60_000,
+  });
+}
+
+export type VideoState = {
+  question_id: string; key: string; scenes: number;
+  status: "ready" | "queued" | "running" | "failed" | "none" | "skipped";
+  url?: string; job_id?: string; error?: string; question_text?: string;
+};
+
+/** One item's MP4: polls while it is being made. */
+export function useVideoStatus(questionId: string) {
+  const api = useApi();
+  return useQuery({
+    queryKey: ["video", questionId],
+    queryFn: () => api<VideoState>(`/api/v1/play/items/${encodeURIComponent(questionId)}/video`),
+    enabled: Boolean(questionId),
+    refetchInterval: (q) => (["queued", "running"].includes(String(q.state.data?.status)) ? 4000 : false),
+  });
+}
+
+export function useMakeVideo() {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (questionId: string) =>
+      api<VideoState>(`/api/v1/play/items/${encodeURIComponent(questionId)}/video`, { method: "POST" }),
+    onSuccess: (data, questionId) => {
+      qc.setQueryData(["video", questionId], data);
+      qc.invalidateQueries({ queryKey: ["video-library"] });
+    },
+  });
+}
+
+/** Every item in a scope with its video — the content library. */
+export function useVideoLibrary(grade: string, subject: string, subStrand: string, enabled = true) {
+  const api = useApi();
+  return useQuery({
+    queryKey: ["video-library", grade, subject, subStrand],
+    queryFn: () => {
+      const qs = new URLSearchParams({ grade, subject });
+      if (subStrand) qs.set("sub_strand", subStrand);
+      return api<{ items: VideoState[]; ready: number }>(`/api/v1/play/videos?${qs}`);
+    },
+    enabled: enabled && Boolean(grade && subject),
+    refetchInterval: (q) => ((q.state.data?.items || []).some((v) => ["queued", "running"].includes(v.status)) ? 8000 : false),
+  });
+}
+
+export function useMakeVideos() {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { grade: string; subject: string; sub_strand?: string; kind?: string; limit?: number }) =>
+      api<{ batch_id: string; counts: Record<string, number>; items: VideoState[] }>(`/api/v1/play/videos`, {
+        method: "POST", body: JSON.stringify(body),
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["video-library"] }),
+  });
+}
+
 
 /** The agent context pack: playbook, manifest, formats, prompts, as a zip. */
 export function useAgentPack() {

@@ -230,8 +230,27 @@ def balance(expression: str) -> dict[str, Any] | None:
     if a1 != 1:
         moves.append({"op": "÷", "value": _show(a1), "why": f"Divide both sides by {_show(a1)}."})
     target = frac(root)
+    # The equation after each move, as a teacher writes it under the last.
+    states: list[list[str]] = []
+    left, right = lhs, rhs
+    for move in moves:
+        value = sp.parsing.sympy_parser.parse_expr(move["value"], local_dict={var: x}, transformations=tr)
+        if move["op"] == "-":
+            left, right = sp.expand(left - value), sp.expand(right - value)
+        elif move["op"] == "+":
+            left, right = sp.expand(left + value), sp.expand(right + value)
+        else:
+            left, right = sp.expand(left / value), sp.expand(right / value)
+        states.append([_pretty(left), _pretty(right)])
     return {"kind": "balance", "variable": var, "left": lhs_s.strip(), "right": rhs_s.strip(),
-            "moves": moves, "target": _num(target)}
+            "moves": moves, "states": states, "target": _num(target)}
+
+
+def _pretty(expr: Any) -> str:
+    """3*x + 5 as a learner writes it: 3x + 5."""
+    text = str(expr).replace("**", "^")
+    text = re.sub(r"(\d)\*([a-zA-Z])", r"\1\2", text)
+    return text.replace("*", " × ")
 
 
 DERIVERS = {"number_line": number_line, "fraction_bar": fraction_bar, "balance": balance, "bodmas": bodmas}

@@ -176,6 +176,20 @@ class TtsService:
 
     # ── the one thing callers use ───────────────────────────────────────────
 
+    def speak_bytes(self, text: str, voice: str = "") -> bytes | None:
+        """The audio itself, not stored — for a caller that cuts its own
+        file (a whiteboard video). Same engine order as a stored step."""
+        clean = (text or "").strip()
+        engine = (getattr(settings, "tts_engine", "edge") or "edge").lower()
+        if not clean or engine == "none":
+            return None
+        voice = voice or self.voice or voice_for("")
+        if engine == "openai":
+            return self._openai(clean) or self._edge(clean, voice)
+        if engine == "piper":
+            return self._piper(clean, voice) or self._edge(clean, voice)
+        return self._edge(clean, voice) or self._openai(clean)
+
     def synthesize_step_audio(
         self,
         text: str,
