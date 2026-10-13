@@ -316,6 +316,28 @@ def video_batches_status(limit: int = Query(20, ge=1, le=100), auth: AuthContext
     return video_batches.list_batches(limit)
 
 
+@router.get("/social/drive")
+def videos_on_drive(auth: AuthContext = Depends(ANY)) -> dict[str, Any]:
+    """Whether Google Drive is set up, what has moved there, what is moving."""
+    from ..services import drive_store
+
+    _may_make_videos(auth)
+    return drive_store.summary()
+
+
+@router.post("/social/drive/move")
+def move_videos_to_drive(auth: AuthContext = Depends(ANY)) -> dict[str, Any]:
+    """Move finished videos to Google Drive now, rather than at the next half hour."""
+    from ..services import drive_store
+
+    _may_make_videos(auth)
+    if not drive_store.configured():
+        raise_api_error("VALIDATION_FAILED", "Google Drive is not set up: add GOOGLE_DRIVE_CLIENT_ID, "
+                                             "GOOGLE_DRIVE_CLIENT_SECRET and GOOGLE_DRIVE_REFRESH_TOKEN to .env "
+                                             "(backend/scripts/drive_auth.py makes the token).")
+    return drive_store.enqueue(queued_by=str(getattr(auth, "subject", "") or "console")) or {}
+
+
 @router.post("/social/batches/{batch_id}/cancel")
 def cancel_video_batch(batch_id: str, auth: AuthContext = Depends(ANY)) -> dict[str, Any]:
     from ..services import video_batches

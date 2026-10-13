@@ -5433,6 +5433,9 @@ def _register_queue_handlers() -> None:
     # The same walkthrough cut vertical for social media, with its post.
     from ..services import social as _social
     job_queue.register(_social.JOB_KIND, _social.run_job)
+    # Finished videos moved to the owner's Google Drive, links and all.
+    from ..services import drive_store as _drive
+    job_queue.register(_drive.JOB_KIND, _drive.run_job)
 
 
 # One step, one implementation. The pipeline delegates to the same handlers the

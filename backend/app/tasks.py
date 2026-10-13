@@ -116,6 +116,15 @@ def sweep_jobs() -> dict:
     return job_queue.sweep()
 
 
+@celery_app.task(name="app.tasks.move_videos_to_drive")
+def move_videos_to_drive() -> dict:
+    """Finished videos to Google Drive, every half hour, when it is set up."""
+    from .routes import curriculum  # noqa: F401  (registers the job handlers)
+    from .services import drive_store
+
+    return drive_store.enqueue(queued_by="drive schedule") or {"status": "not set up"}
+
+
 @celery_app.task(name="app.tasks.prune_service_logs")
 def prune_service_logs() -> dict:
     """Drop log lines past their retention, on the hour."""

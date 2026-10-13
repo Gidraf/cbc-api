@@ -88,6 +88,11 @@ celery_app.conf.update(
             "task": "app.tasks.sweep_jobs",
             "schedule": 120.0,
         },
+        # Finished videos to the owner's Google Drive (a no-op until set up).
+        "move-videos-to-drive": {
+            "task": "app.tasks.move_videos_to_drive",
+            "schedule": 1800.0,
+        },
         # Once a week, at a quiet hour: Sunday 23:00 UTC is 02:00 Monday in
         # Nairobi, so the trials never compete with a working day's queue and
         # the admins read the result first thing on Monday.

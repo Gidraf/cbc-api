@@ -70,7 +70,13 @@ class ObjectStorage:
             return ""
         marker = f"/{settings.minio_bucket}/"
         index = url.find(marker)
-        return url[index + len(marker):] if index != -1 else ""
+        if index != -1:
+            return url[index + len(marker):]
+        # A video moved to Google Drive is linked there; its object is the
+        # one the move recorded.
+        from ..services import drive_store
+
+        return drive_store.object_name_of(url)
 
     def read_text(self, object_name: str) -> str:
         """One stored object, as text. Empty when it is not there.
@@ -94,7 +100,8 @@ class ObjectStorage:
                 response.release_conn()
 
     def read_bytes(self, object_name: str) -> bytes:
-        """One stored object as it was saved. Empty when it is not there."""
+        """One stored object as it was saved. Empty when it is not there —
+        unless it was moved to Google Drive, when it is fetched from there."""
         if not object_name:
             return b""
         response = None
@@ -102,12 +109,28 @@ class ObjectStorage:
             response = self._get_client().get_object(settings.minio_bucket, object_name)
             return response.read()
         except Exception as exc:  # noqa: BLE001
+            moved = self._from_drive(object_name)
+            if moved:
+                return moved
             logger.warning("MinIO read failed for '%s': %s", object_name, exc)
             return b""
         finally:
             if response is not None:
                 response.close()
                 response.release_conn()
+
+    @staticmethod
+    def _from_drive(object_name: str) -> bytes:
+        from ..services import drive_store
+
+        row = drive_store.record(object_name)
+        if not row or not drive_store.configured():
+            return b""
+        try:
+            return drive_store.Drive().download(str(row["file_id"]))
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Drive read failed for '%s': %s", object_name, exc)
+            return b""
 
     def save_bytes(self, object_name: str, payload: bytes, content_type: str) -> str:
         """Store an uploaded photograph or video exactly as it arrived.
@@ -204,7 +227,11 @@ class ObjectStorage:
             self._get_client().stat_object(settings.minio_bucket, object_name)
             return True
         except Exception:  # noqa: BLE001
-            return False
+            # Moved to Google Drive is still made: a video whose server copy
+            # was removed must not be rendered again.
+            from ..services import drive_store
+
+            return drive_store.record(object_name) is not None
 
 
 def legacy_asset_base() -> str:
@@ -228,6 +255,12 @@ def asset_base() -> str:
 
 
 def public_object_url(object_name: str) -> str:
+    # A video moved to Google Drive is linked there.
+    from ..services import drive_store
+
+    moved = drive_store.record(object_name)
+    if moved and moved.get("url"):
+        return str(moved["url"])
     return f"{asset_base()}/{object_name}"
 
 
