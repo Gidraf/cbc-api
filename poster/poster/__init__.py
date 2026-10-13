@@ -1,0 +1,1 @@
+"""The CBC browser poster."""

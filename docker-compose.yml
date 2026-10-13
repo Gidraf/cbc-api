@@ -10,6 +10,8 @@ x-backend-env: &backend-env
   DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
   CBC_MASTER_KEY: ${CBC_MASTER_KEY:-u8iP_EgFrh50kABm2MvxAfv5mN53uV8SQEgrMwJwztw=}
   REDIS_URL: redis://redis:6379/0
+  POSTER_URL: http://social-poster:6090
+  POSTER_TOKEN: ${POSTER_TOKEN:-}
   # Database 1, so the generation broker cannot be confused with — or flushed
   # alongside — the older pipeline queue on database 0.
   CELERY_BROKER_URL: ${CELERY_BROKER_URL:-redis://redis:6379/1}
