@@ -425,6 +425,14 @@ def walkthrough(question: dict[str, Any], *, grade: str = "") -> dict[str, Any]:
     elif spec.get("target") is not None:
         scenes.append({"scene": "answer", "text": str(spec["target"]),
                        "say": f"So the answer is {_spoken(spec['target'])}."})
+    # The board shows "12 m" and "KSh 50"; the voice says "12 metres" and
+    # "50 Kenya shillings".
+    from .math_engine.tts_service import language_for
+    from .speech_text import for_speech
+
+    lang = language_for(str((question.get("curriculum") or {}).get("subject") or question.get("subject") or ""))
+    for scene in scenes:
+        scene["say"] = for_speech(scene["say"], lang)
     return {"question_id": question.get("question_id"), "kind": kind, "scenes": scenes,
             "words": sum(len(s["say"].split()) for s in scenes)}
 
@@ -440,9 +448,8 @@ def _spoken(value: Any) -> str:
     text = str(value)
     if text.startswith("-"):
         return "negative " + text[1:]
-    if "/" in text:
-        n, d = text.split("/", 1)
-        return f"{n} over {d}"
+    # A fraction stays 3/4 here: the narration's last pass reads it the way
+    # a teacher does ("3 quarters", "17 twelfths").
     return text
 
 
@@ -452,6 +459,8 @@ def _spoken_op(op: str) -> str:
 
 def _speakable(text: str) -> str:
     t = re.sub(r"\$([^$]*)\$", r"\1", str(text))
+    # \frac{3}{4} becomes 3/4, which the narration reads as "3 quarters".
+    t = re.sub(r"\\[dt]?frac\{([^{}]+)\}\{([^{}]+)\}", r"\1/\2", t)
     t = t.replace("\\times", " times ").replace("\\div", " divided by ").replace("−", "-")
     t = re.sub(r"\\[a-zA-Z]+", " ", t).replace("{", "").replace("}", "")
     t = re.sub(r"(?<![\w)])-(\d)", r"negative \1", t)

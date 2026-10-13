@@ -93,6 +93,22 @@ class ObjectStorage:
                 response.close()
                 response.release_conn()
 
+    def read_bytes(self, object_name: str) -> bytes:
+        """One stored object as it was saved. Empty when it is not there."""
+        if not object_name:
+            return b""
+        response = None
+        try:
+            response = self._get_client().get_object(settings.minio_bucket, object_name)
+            return response.read()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("MinIO read failed for '%s': %s", object_name, exc)
+            return b""
+        finally:
+            if response is not None:
+                response.close()
+                response.release_conn()
+
     def save_bytes(self, object_name: str, payload: bytes, content_type: str) -> str:
         """Store an uploaded photograph or video exactly as it arrived.
 

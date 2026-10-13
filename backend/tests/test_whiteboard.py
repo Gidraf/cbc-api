@@ -152,5 +152,34 @@ def test_a_hand_photo_is_inlined_with_its_pen_tip():
         photo_key = W.cache_key(P.walkthrough(DIVER), "v")
     assert '"hand": {"src": "data:image/png;base64,' in doc and '"tip_x": 8.0' in doc and '"width": 250' in doc
     with mock.patch("app.services.platform_settings.get", side_effect=lambda k, d=None: d):
-        assert '"hand"' not in W.page(P.walkthrough(DIVER), render=True)    # no photo: the drawn hand
+        # No photo: the ✍🏿 emoji, its pen's tip where the artwork has it.
+        assert '"src": "data:image/svg+xml;base64,' in W.page(P.walkthrough(DIVER), render=True)
         assert W.cache_key(P.walkthrough(DIVER), "v") != photo_key          # a new hand is a new video
+    drawn = {"whiteboard_hand_style": "drawn"}
+    with mock.patch("app.services.platform_settings.get", side_effect=lambda k, d=None: drawn.get(k, d)):
+        assert '"hand"' not in W.page(P.walkthrough(DIVER), render=True)    # the drawn hand
+
+
+def test_the_console_hears_the_servers_voice_not_the_devices():
+    clips = [(b"ID3voice", 2.5)] * len(P.walkthrough(DIVER)["scenes"])
+    with mock.patch.object(W, "speak_all", return_value=clips):
+        doc = W.live_page(P.walkthrough(DIVER), title="Diver", voice="en-KE-AsiliaNeural")
+    assert '"audio": ["data:audio/mpeg;base64,' in doc and '"durations": [2.5' in doc
+    assert '"voice": "en-KE"' in doc
+
+
+def test_a_sentence_is_spoken_once():
+    calls = []
+
+    def speak_bytes(self, text, voice=""):
+        calls.append(text)
+        return b"x" * 12000
+
+    with mock.patch("app.services.math_engine.tts_service.TtsService.speak_bytes", speak_bytes), \
+         mock.patch("app.infra.storage.object_storage.object_exists", return_value=False), \
+         mock.patch("app.infra.storage.object_storage.save_bytes", return_value="u") as saved, \
+         mock.patch.object(W, "_probe_seconds", return_value=2.0):
+        W._SPOKEN.clear()
+        assert W.speak("Hello class.", "en-KE-AsiliaNeural") == (b"x" * 12000, 2.0)
+        assert W.speak("Hello class.", "en-KE-AsiliaNeural")[1] == 2.0
+    assert len(calls) == 1 and saved.call_args[0][0].startswith("narration/")

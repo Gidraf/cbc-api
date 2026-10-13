@@ -74,12 +74,10 @@ def hand() -> dict[str, Any] | None:
     from . import platform_settings
 
     url = str(platform_settings.get("whiteboard_hand_image", "") or "").strip()
-    if not url:
-        return None
-    payload = _hand_bytes(url)
+    payload = _hand_bytes(url) if url else None
     size = png_size(payload or b"")
     if not payload or not size:
-        return None
+        return emoji_hand(str(platform_settings.get("whiteboard_hand_style", "emoji-dark") or "emoji-dark"))
     try:
         tx, ty = (float(v) for v in str(platform_settings.get("whiteboard_hand_tip", "") or "").split(","))
     except ValueError:
@@ -89,12 +87,32 @@ def hand() -> dict[str, Any] | None:
             "tip_x": tx, "tip_y": ty, "width": max(80, min(width, 900)), "url": url}
 
 
+# The writing-hand emoji (Noto, Apache 2.0 — see static/NOTICE-noto-emoji.txt),
+# its pen's tip measured in the 128-unit artwork.
+EMOJI_HANDS = {"emoji-dark": "hand_emoji_dark.svg", "emoji-medium-dark": "hand_emoji_medium_dark.svg"}
+EMOJI_TIP = (11.2, 114.8)
+
+
+def emoji_hand(style: str) -> dict[str, Any] | None:
+    """✍🏿 or ✍🏾 as the hand; None for the drawn one."""
+    import base64
+
+    name = EMOJI_HANDS.get(style.strip().lower()) if style.strip().lower() != "drawn" else None
+    if style.strip().lower() not in EMOJI_HANDS and style.strip().lower() != "drawn":
+        name = EMOJI_HANDS["emoji-dark"]
+    if not name:
+        return None
+    svg = _asset(name).encode()
+    return {"src": "data:image/svg+xml;base64," + base64.b64encode(svg).decode(), "w": 128, "h": 128,
+            "tip_x": EMOJI_TIP[0], "tip_y": EMOJI_TIP[1], "width": 250, "emoji": True}
+
+
 def page(data: dict[str, Any], *, title: str = "", voice: str = "en-KE", durations: list[float] | None = None,
-         render: bool = False, autoplay: bool = False) -> str:
+         render: bool = False, autoplay: bool = False, audio: list[str | None] | None = None) -> str:
     """The board for one walkthrough. `durations` (seconds per scene) come
     from the voice files when rendering; live, the board estimates them."""
     payload = {"scenes": data.get("scenes") or [], "seed": str(data.get("question_id") or title or "wb"),
-               "voice": voice, "durations": durations or []}
+               "voice": voice, "durations": durations or [], "audio": audio or []}
     try:
         photo = hand()
     except Exception as exc:  # noqa: BLE001
@@ -117,7 +135,8 @@ def cache_key(data: dict[str, Any], voice: str, fps: int = FPS) -> str:
     says = [s.get("say") for s in data.get("scenes") or []]
     # A new hand photo, tip or size is a new video.
     look = [str(platform_settings.get(k, "") or "") for k in
-            ("whiteboard_hand_image", "whiteboard_hand_tip", "whiteboard_hand_width", "narration_rate")]
+            ("whiteboard_hand_image", "whiteboard_hand_tip", "whiteboard_hand_width", "whiteboard_hand_style",
+             "narration_rate")]
     blob = json.dumps({"v": VERSION, "scenes": data.get("scenes"), "says": says, "voice": voice, "fps": fps,
                        "look": look}, sort_keys=True, default=str)
     return hashlib.sha256(blob.encode()).hexdigest()[:20]
@@ -150,23 +169,93 @@ def _probe_seconds(path: Path) -> float:
         return path.stat().st_size / 6000.0
 
 
+_SPOKEN: dict[str, tuple[bytes, float]] = {}
+
+
+def speak(text: str, voice: str) -> tuple[bytes | None, float]:
+    """One sentence in this voice at the console's pace, and how long it
+    runs. Spoken once: kept in this process and in object storage, so the
+    live board and the MP4 share it and a second viewer waits for nothing."""
+    from ..infra.storage import object_storage
+    from .math_engine.tts_service import TtsService, _rate
+
+    text = (text or "").strip()
+    if not text:
+        return None, 0.0
+    try:
+        rate = _rate()
+    except Exception:  # noqa: BLE001
+        rate = "+0%"
+    from .speech_text import VERSION as SPEECH
+
+    key = hashlib.sha256(f"v1|{SPEECH}|{voice}|{rate}|{text}".encode()).hexdigest()[:24]
+    if key in _SPOKEN:
+        return _SPOKEN[key]
+    name = f"narration/{key}.mp3"
+    audio = object_storage.read_bytes(name) if object_storage.object_exists(name) else b""
+    fresh = not audio
+    if fresh:
+        # Microsoft drops the odd request when several arrive together; a
+        # scene left silent would fall back to the viewer's device voice.
+        import time
+
+        for attempt in range(3):
+            audio = TtsService(voice=voice).speak_bytes(text, voice) or b""
+            if audio:
+                break
+            time.sleep(0.6 * (attempt + 1))
+    if not audio:
+        return None, max(2.4, len(text.split()) / 2.6)
+    seconds = _seconds_of(audio)
+    if fresh:
+        object_storage.save_bytes(name, audio, "audio/mpeg")
+    if len(_SPOKEN) > 2000:
+        _SPOKEN.clear()
+    _SPOKEN[key] = (audio, seconds)
+    return audio, seconds
+
+
+def _seconds_of(audio: bytes) -> float:
+    with tempfile.NamedTemporaryFile(suffix=".mp3") as f:
+        f.write(audio)
+        f.flush()
+        return max(1.2, _probe_seconds(Path(f.name)))
+
+
+def speak_all(scenes: list[dict[str, Any]], voice: str) -> list[tuple[bytes | None, float]]:
+    """Every scene, four at a time — a walkthrough is ready in a few seconds."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    says = [str(s.get("say") or "") for s in scenes]
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        return list(pool.map(lambda t: speak(t, voice), says))
+
+
 def narrate(scenes: list[dict[str, Any]], voice: str, folder: Path) -> list[tuple[Path | None, float]]:
     """One audio file per scene and how long it runs. A scene the voice
     could not speak keeps a reading-pace length and stays silent."""
-    from .math_engine.tts_service import TtsService
-
-    tts = TtsService(voice=voice)
     out: list[tuple[Path | None, float]] = []
-    for n, scene in enumerate(scenes):
-        text = str(scene.get("say") or "").strip()
-        audio = tts.speak_bytes(text, voice) if text else None
+    for n, (audio, seconds) in enumerate(speak_all(scenes, voice)):
         if audio:
             path = folder / f"say_{n:03d}.mp3"
             path.write_bytes(audio)
-            out.append((path, max(1.2, _probe_seconds(path))))
+            out.append((path, seconds))
         else:
-            out.append((None, max(2.4, len(text.split()) / 2.6)))
+            out.append((None, seconds))
     return out
+
+
+def live_page(data: dict[str, Any], *, title: str, voice: str, autoplay: bool = False) -> str:
+    """The board for the console, voiced by the server — the same voice as
+    the MP4 rather than whatever voice the viewer's device has. A scene the
+    voice could not speak falls back to the device."""
+    import base64
+
+    clips = speak_all(data.get("scenes") or [], voice)
+    audio = ["data:audio/mpeg;base64," + base64.b64encode(a).decode() if a else None for a, _ in clips]
+    durations = [round(d, 3) for _, d in clips]
+    lang = "-".join(voice.split("-")[:2]) or "en-KE"
+    return page(data, title=title, voice=lang, durations=durations, audio=audio, autoplay=autoplay)
 
 
 def _starts(durations: list[float]) -> list[float]:
@@ -338,7 +427,7 @@ def _capture(cdp: str, doc: str, out: Path, ffmpeg: str, fps: int, tick: Any) ->
             try:
                 context = browser.new_context(viewport={"width": WIDTH, "height": HEIGHT}, device_scale_factor=1)
                 pg = context.new_page()
-                pg.set_content(doc, wait_until="load", timeout=60000)
+                pg.set_content(doc, wait_until="domcontentloaded", timeout=60000)  # fonts: __ready waits up to 2.5 s
                 total = float(pg.evaluate("() => window.__ready"))
                 total = min(total, MAX_SECONDS)
                 frames = int(total * fps) + 1

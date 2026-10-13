@@ -78,6 +78,9 @@ SETTINGS: tuple[Setting, ...] = (
     Setting("narration_rate", "TTS_RATE", "string", "Narration speed",
             "How fast the voice reads, as a change from normal: -10% is a calm classroom pace, +0% normal.",
             "-8%", "Voice"),
+    Setting("whiteboard_hand_style", "", "string", "Whiteboard hand",
+            "Which hand writes on the whiteboard: emoji-dark (✍🏿, the default), emoji-medium-dark (✍🏾) or "
+            "drawn. An uploaded hand photo, below, takes the place of all three.", "emoji-dark", "Whiteboard"),
     Setting("whiteboard_hand_image", "", "string", "Whiteboard hand photo",
             "A PNG with a transparent background of a hand holding a pen, used instead of the drawn hand. "
             "Upload it from Play → Whiteboard videos, where you also click the pen's tip. Use a photo you "

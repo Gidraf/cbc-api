@@ -131,14 +131,14 @@ def whiteboard_page(question_id: str, autoplay: bool = Query(False),
                     _: AuthContext = Depends(ANY)) -> HTMLResponse:
     """The item worked on a whiteboard: a marker writes each line, circles
     the side sum, draws the number line or the scale, boxes the answer and
-    strikes out the trap — timed to the device's voice. Self-contained, so
-    it works offline on a projector."""
+    strikes out the trap — voiced by the server in the console's chosen
+    voice, the same as the MP4. Self-contained, so it works offline on a
+    projector."""
     from ..services import whiteboard
 
     q = _one(question_id)
     data, voice, title = whiteboard._script_for(q)
-    lang = "-".join(voice.split("-")[:2]) or "en-KE"
-    return HTMLResponse(whiteboard.page(data, title=title, voice=lang, autoplay=autoplay))
+    return HTMLResponse(whiteboard.live_page(data, title=title, voice=voice, autoplay=autoplay))
 
 
 @router.get("/items/{question_id}/video")

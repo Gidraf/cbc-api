@@ -67,6 +67,10 @@
         </g>`;
       g._tilt = g.querySelector(".tilt");
       g._photo = true;
+      // The emoji writes on a desk, its hand above the line; turned, it
+      // reaches up from below as a hand at a board does, and covers nothing
+      // already written.
+      g._turn = photo.emoji ? 80 : 0;
       svg.appendChild(g);
       return g;
     }
@@ -140,7 +144,7 @@
     // at a board; writing on the left, it reaches across from the right.
     // A photograph leans less: rotating a photo far from how it was taken
     // shows that it is one.
-    const lean = (-(1 - Math.max(0, Math.min(1, x / W))) * 14 + 4) * (hand._photo ? 0.4 : 1);
+    const lean = (-(1 - Math.max(0, Math.min(1, x / W))) * 14 + 4) * (hand._photo ? 0.4 : 1) + (hand._turn || 0);
     hand.setAttribute("transform", `translate(${x.toFixed(1)},${y.toFixed(1)})`);
     hand._tilt.setAttribute("transform", `rotate(${(lean + (tilt || 0)).toFixed(2)})`);
   }
@@ -490,7 +494,8 @@
   }
 
   // ── live: the device's voice, scene by scene ──
-  let current = -1, playing = false;
+  let current = -1, playing = false, current_audio = null;
+  function stopAudio() { if (current_audio) { current_audio.onended = null; current_audio.pause(); current_audio = null; } }
   function voice() {
     const vs = speechSynthesis.getVoices(), want = data.voice || "en-KE";
     return vs.find((v) => v.lang === want) || vs.find((v) => v.lang.startsWith(want.slice(0, 2))) || null;
@@ -501,9 +506,18 @@
     const start = window.__starts[i], end = i + 1 < scenes.length ? window.__starts[i + 1] : window.__total;
     tl.seek(start); tl.play();
     tl.eventCallback("onUpdate", () => { if (tl.time() >= end - 0.05) tl.pause(); });
-    let spoken = !("speechSynthesis" in window);
+    const clip = (data.audio || [])[i];
+    let spoken = !clip && !("speechSynthesis" in window);
     const advance = () => { if (!playing) return; if (spoken && (tl.paused() || tl.time() >= end - 0.06)) playScene(i + 1); else setTimeout(advance, 150); };
-    if (!spoken) {
+    if (clip) {
+      // The server's voice — the one the MP4 has — not the device's.
+      stopAudio();
+      const a = new Audio(clip);
+      current_audio = a;
+      a.onended = () => { spoken = true; advance(); };
+      a.onerror = () => { spoken = true; advance(); };
+      a.play().catch(() => { spoken = true; advance(); });
+    } else if (!spoken) {
       speechSynthesis.cancel();
       const u = new SpeechSynthesisUtterance(scenes[i].say);
       const v = voice(); if (v) u.voice = v;
@@ -522,7 +536,7 @@
   }
   window.__wb = {
     play() { playing = true; playScene(current < 0 || current >= scenes.length - 1 ? 0 : current); },
-    pause() { playing = false; tl.pause(); if ("speechSynthesis" in window) speechSynthesis.cancel(); status(); },
+    pause() { playing = false; tl.pause(); stopAudio(); if ("speechSynthesis" in window) speechSynthesis.cancel(); status(); },
     toggle() { playing ? this.pause() : this.play(); },
     next() { this.pause(); current = Math.min(scenes.length - 1, current + 1); tl.seek(i2t(current + 1) - 0.01); status(); },
     prev() { this.pause(); current = Math.max(0, current - 1); tl.seek(i2t(current + 1) - 0.01); status(); },

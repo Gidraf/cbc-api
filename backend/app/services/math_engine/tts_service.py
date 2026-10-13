@@ -225,11 +225,13 @@ class TtsService:
     def speak_bytes(self, text: str, voice: str = "") -> bytes | None:
         """The audio itself, not stored — for a caller that cuts its own
         file (a whiteboard video). Same engine order as a stored step."""
-        clean = (text or "").strip()
+        from ..speech_text import for_speech
+
+        voice = voice or self.voice or voice_for("")
+        clean = for_speech((text or "").strip(), (voice or "en")[:2])
         engine = (getattr(settings, "tts_engine", "edge") or "edge").lower()
         if not clean or engine == "none":
             return None
-        voice = voice or self.voice or voice_for("")
         if engine == "openai":
             return self._openai(clean) or self._edge(clean, voice)
         if engine == "piper":
@@ -249,7 +251,9 @@ class TtsService:
         device's own voice when there is no file, so a walkthrough with no
         audio at all is still narrated and still advances on the words.
         """
-        clean = (text or "").strip()
+        from ..speech_text import for_speech
+
+        clean = for_speech((text or "").strip(), language_for(subject))
         if not clean:
             return None
 
