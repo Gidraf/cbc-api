@@ -380,7 +380,9 @@ def render(data: dict[str, Any], *, title: str = "", voice: str = "", subject: s
             extras = _countdown_ticks(ffmpeg, folder, scenes, starts)
             music = _music_file(folder, social.get("music_url") or "")
         final = folder / "final.mp4"
+        tick("mux", 0, 1)
         _mux(ffmpeg, video, spoken, starts, seconds, final, extras=extras, music=music)
+        tick("save", 0, 1)
         url = object_storage.save_bytes(name, final.read_bytes(), "video/mp4")
         if url.startswith("local://"):
             raise RuntimeError("The video was made but object storage refused it — is MinIO up?")
@@ -500,8 +502,13 @@ def run_job(job: dict[str, Any]) -> dict[str, Any]:
     data, voice, title = _script_for(q, str(payload.get("voice") or ""))
     run_log.step("Script", f"{len(data.get('scenes') or [])} scenes · {data.get('kind')} · {voice}")
     last = {"stage": ""}
+    from .job_queue import Live
+
+    live = Live(str(job.get("job_id") or ""))
+    live("script", 1, 1)
 
     def tick(stage: str, n: int, total: int) -> None:
+        live(stage, n, total)
         if stage != last["stage"]:
             run_log.step({"voice": "Narrating", "draw": "Drawing"}.get(stage, stage), f"{total} to do")
             last["stage"] = stage
@@ -509,6 +516,7 @@ def run_job(job: dict[str, Any]) -> dict[str, Any]:
             run_log.step("Drawing", f"frame {n} of {total}")
 
     made = render(data, title=title, voice=voice, progress=tick)
+    live.done()
     run_log.step("Saved", made["url"])
     return {"status": "done", "question_id": qid, **made}
 

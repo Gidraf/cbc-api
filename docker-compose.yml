@@ -165,6 +165,11 @@ services:
     depends_on: *backend-depends
     extra_hosts: *extra-hosts
     restart: unless-stopped
+    # A deploy stops this container with SIGTERM; Celery then finishes the job
+    # in hand before it exits. Docker's default of 10 seconds killed every
+    # render mid-way. A job still running after this is cut off, and the new
+    # worker resumes it at once (its attempt refunded).
+    stop_grace_period: 3m
 
   # The clock: the job sweep every two minutes, the log prune every hour.
   # One of these, however many workers — a beat in every worker replica
@@ -191,7 +196,7 @@ services:
 
   redis:
     image: redis:7-alpine
-    command: redis-server --appendonly yes
+    command: redis-server --appendonly yes --appendfsync everysec
     # Loopback only. The services reach it on the compose network as
     # redis:6379; publishing 6379 on every interface put a Redis with no
     # password on the public address, where bots rewrite and wipe open ones.
@@ -204,6 +209,9 @@ services:
       interval: 5s
       timeout: 3s
       retries: 20
+      # Replaying a large append-only file at start takes longer than 3s;
+      # a Redis still loading is not an unhealthy one.
+      start_period: 120s
     restart: unless-stopped
 
   playwright:

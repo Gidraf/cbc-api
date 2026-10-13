@@ -941,6 +941,8 @@ function VideoBatches({ grade, subject, subStrand, topics }: { grade: string; su
     } catch (err) { toast(err instanceof Error ? err.message : "Could not do that.", "danger"); }
   }
   const eta = (s: number | null) => (s == null ? "" : s < 90 ? "about a minute" : s < 5400 ? `about ${Math.round(s / 60)} min` : `about ${(s / 3600).toFixed(1)} h`);
+  // Time a render has been going: exact, not an estimate.
+  const elapsed = (s: number) => (s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, "0")}s`);
   const list = batches.data?.batches || [];
   return (
     <details style={{ marginTop: "var(--s3)" }} onToggle={(e) => setOpen((e.target as HTMLDetailsElement).open)}>
@@ -976,7 +978,7 @@ function VideoBatches({ grade, subject, subStrand, topics }: { grade: string; su
       {list.length > 0 && (
         <div style={{ display: "grid", gap: 6, marginTop: "var(--s3)" }}>
           {list.map((b) => {
-            const pct = b.total ? Math.round((100 * b.done) / b.total) : 0;
+            const pct = b.progress_pct ?? (b.total ? Math.round((100 * b.done) / b.total) : 0);
             return (
               <div key={b.batch_id} style={{ border: "1px solid var(--line-2)", borderRadius: "var(--radius)", padding: "6px 10px", fontSize: "var(--text-sm)" }}>
                 <Stack direction="row" gap="var(--s2)" align="center" wrap>
@@ -993,8 +995,29 @@ function VideoBatches({ grade, subject, subStrand, topics }: { grade: string; su
                   {b.failed > 0 && <Button size="sm" variant="ghost" disabled={act.isPending} onClick={() => batchAction(b, "retry")}>Retry failed</Button>}
                 </Stack>
                 <div style={{ height: 4, background: "var(--line-2)", borderRadius: 2, marginTop: 4 }}>
-                  <div style={{ width: `${pct}%`, height: 4, background: "var(--ok, #16a34a)", borderRadius: 2 }} />
+                  <div style={{ width: `${pct}%`, height: 4, background: "var(--ok, #16a34a)", borderRadius: 2, transition: "width 0.6s ease" }} />
                 </div>
+                {(b.rendering || []).map((r) => (
+                  <div key={r.job_id} style={{ marginTop: 6, fontSize: "var(--text-xs)" }}>
+                    <Stack direction="row" gap="var(--s2)" align="center" wrap>
+                      <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={r.title}>
+                        🎞️ {r.title || r.question_id}
+                      </span>
+                      <span style={{ color: "var(--ink-3)" }}>
+                        {r.stage}{r.frame ? ` · frame ${r.frame}` : ""} · {Math.round(r.pct)}% · {elapsed(r.seconds)}
+                      </span>
+                      {r.resumed && <Badge tone="neutral">resumed after a restart</Badge>}
+                    </Stack>
+                    <div style={{ height: 3, background: "var(--line-2)", borderRadius: 2, marginTop: 2 }}>
+                      <div style={{ width: `${r.pct}%`, height: 3, background: "var(--accent, #2563eb)", borderRadius: 2, transition: "width 0.6s ease" }} />
+                    </div>
+                  </div>
+                ))}
+                {(b.resumed || 0) > 0 && !(b.rendering || []).length && !b.finished && (
+                  <div style={{ marginTop: 4, fontSize: "var(--text-xs)", color: "var(--ink-3)" }}>
+                    {b.resumed} video(s) were cut off by a restart and put back in the queue — nothing lost.
+                  </div>
+                )}
               </div>
             );
           })}

@@ -53,7 +53,15 @@ class _Jobs:
         elif "SET status = 'queued', started_at = NULL" in sql and r["status"] == "running":
             if "attempts < :max" in sql and r.get("attempts", 0) >= params["max"]:
                 return
+            if "interruptions < :max" in sql and r.get("interruptions", 0) >= params["max"]:
+                return
+            if "COALESCE(heartbeat_at, started_at) < NOW()" in sql and not r.get("stale"):
+                return          # its worker is still heartbeating: never reclaimed
             r["status"] = "queued"
+            if "attempts = GREATEST(attempts - 1, 0)" in sql:
+                r["attempts"] = max(0, r.get("attempts", 0) - 1)
+            if "interruptions = interruptions + 1" in sql:
+                r["interruptions"] = r.get("interruptions", 0) + 1
         elif "SET heartbeat_at = NOW()" in sql:
             r["heartbeat_at"] = "now"
 
@@ -69,19 +77,27 @@ def _wire(monkeypatch, rows):
     return table
 
 
-def test_abandoned_running_jobs_go_back_to_the_queue_and_out_of_attempts_fail(monkeypatch):
+def test_abandoned_running_jobs_go_back_with_the_attempt_refunded(monkeypatch):
+    """A deploy is not the job failing. It used to cost an attempt, and two
+    deploys failed a healthy render as "out of attempts"."""
     table = _wire(monkeypatch, [
         {"job_id": "alive", "kind": "notes", "status": "running", "attempts": 1, "heartbeat_at": "now", "stale": False},
         {"job_id": "dead", "kind": "notes", "status": "running", "attempts": 1, "heartbeat_at": "then", "stale": True},
+        # On its last attempt when the deploy came: resumed, not failed.
         {"job_id": "spent", "kind": "notes", "status": "running", "attempts": 2, "heartbeat_at": "then", "stale": True},
+        # Cut off again and again: the job is taking its worker down. Stopped.
+        {"job_id": "crashloop", "kind": "notes", "status": "running", "attempts": 1, "heartbeat_at": "then",
+         "stale": True, "interruptions": jq.MAX_INTERRUPTIONS},
         # From before the heartbeat existed: no heartbeat, judged by started_at.
         {"job_id": "legacy-fresh", "kind": "notes", "status": "running", "attempts": 1, "heartbeat_at": None, "stale": True, "very_old": False},
         {"job_id": "legacy-old", "kind": "notes", "status": "running", "attempts": 1, "heartbeat_at": None, "stale": True, "very_old": True},
     ])
-    assert jq.recover_stalled() == 2
+    assert jq.recover_stalled() == 3
     assert table.rows["alive"]["status"] == "running"
     assert table.rows["dead"]["status"] == "queued" and "dead" in table.dispatched
-    assert table.rows["spent"]["status"] == "failed" and "out of attempts" in table.rows["spent"]["error"]
+    assert table.rows["dead"]["attempts"] == 0 and table.rows["dead"]["interruptions"] == 1
+    assert table.rows["spent"]["status"] == "queued" and table.rows["spent"]["attempts"] == 1
+    assert table.rows["crashloop"]["status"] == "failed" and "Cut off mid-run" in table.rows["crashloop"]["error"]
     assert table.rows["legacy-fresh"]["status"] == "running", "a long job from before the column is left alone"
     assert table.rows["legacy-old"]["status"] == "queued"
 
@@ -98,7 +114,7 @@ def test_stranded_queued_jobs_are_dispatched_again(monkeypatch):
 
 def test_a_redelivered_message_reclaims_the_job_its_dead_worker_held(monkeypatch):
     table = _wire(monkeypatch, [
-        {"job_id": "j1", "kind": "notes", "status": "running", "attempts": 1},
+        {"job_id": "j1", "kind": "notes", "status": "running", "attempts": 1, "stale": True},
     ])
     monkeypatch.setattr(jq, "scope_is_busy", lambda job_id: False)
     ran = []
@@ -106,12 +122,18 @@ def test_a_redelivered_message_reclaims_the_job_its_dead_worker_held(monkeypatch
 
     # Delivered fresh: a running row is somebody else's and is left alone.
     assert jq.run_job_by_id("j1")["status"] == "skipped" and ran == []
-    # Redelivered: the worker that held it is gone; take it.
+    # Redelivered: the worker that held it is gone; take it — refunding the
+    # attempt the restart cut off, and counting the interruption.
     assert jq.run_job_by_id("j1", redelivered=True)["status"] == "done" and ran == ["j1"]
-    assert table.rows["j1"]["attempts"] == 2
+    assert table.rows["j1"]["attempts"] == 1 and table.rows["j1"]["interruptions"] == 1
 
-    # But not past the attempt ceiling.
-    table.rows["j1"].update(status="running", attempts=2)
+    # Never while its worker is still heartbeating: Redis can redeliver a long
+    # job's message mid-run, and that would make the same video twice.
+    table.rows["j1"].update(status="running", stale=False)
+    assert jq.run_job_by_id("j1", redelivered=True)["status"] == "skipped"
+
+    # And not past the interruption ceiling.
+    table.rows["j1"].update(status="running", stale=True, interruptions=jq.MAX_INTERRUPTIONS)
     assert jq.run_job_by_id("j1", redelivered=True)["status"] == "skipped"
 
 

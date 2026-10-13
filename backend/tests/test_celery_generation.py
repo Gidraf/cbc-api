@@ -132,8 +132,9 @@ def test_abandoned_work_is_recovered_rather_than_left_running_for_ever():
 
     assert "status = 'running'" in recover
     assert "dispatch(job_id)" in recover
-    # One that has burned its attempts is failed, not retried a third time.
-    assert ">= MAX_ATTEMPTS" in recover
+    # A restart refunds the attempt; one cut off again and again is failed.
+    assert ">= MAX_INTERRUPTIONS" in recover
+    assert "attempts = GREATEST(attempts - 1, 0)" in recover
 
 
 def test_both_paths_execute_through_one_function():
