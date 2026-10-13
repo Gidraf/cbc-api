@@ -192,8 +192,11 @@ services:
   redis:
     image: redis:7-alpine
     command: redis-server --appendonly yes
+    # Loopback only. The services reach it on the compose network as
+    # redis:6379; publishing 6379 on every interface put a Redis with no
+    # password on the public address, where bots rewrite and wipe open ones.
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     volumes:
       - redis_data:/data
     healthcheck:
