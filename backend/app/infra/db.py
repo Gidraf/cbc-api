@@ -1317,6 +1317,27 @@ MIGRATIONS: list[tuple[str, str]] = [
         );
         """,
     ),
+    (
+        "045_video_batches_destinations",
+        """
+        -- A batch of videos queued together from the console: what was asked
+        -- for and what was queued; its progress is read from the jobs.
+        CREATE TABLE IF NOT EXISTS video_batches (
+            batch_id TEXT PRIMARY KEY,
+            label TEXT NOT NULL DEFAULT '',
+            grade TEXT NOT NULL DEFAULT '',
+            subject TEXT NOT NULL DEFAULT '',
+            sub_strands JSONB NOT NULL DEFAULT '[]'::jsonb,
+            requested INT NOT NULL DEFAULT 0,
+            queued INT NOT NULL DEFAULT 0,
+            created_by TEXT NOT NULL DEFAULT '',
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        -- Where a post went on its platform: reel, feed, story (groups are
+        -- in social_posts.groups).
+        ALTER TABLE social_posts ADD COLUMN IF NOT EXISTS destinations JSONB NOT NULL DEFAULT '[]'::jsonb;
+        """,
+    ),
 ]
 
 

@@ -227,3 +227,30 @@ def test_every_decorator_reads_the_same_policy() -> None:
 
     assert source.count("retry=retry_if_exception(is_retryable_api_error)") == 3
     assert "retry_if_exception_type" not in source
+
+
+# ── video renders: their own lane ───────────────────────────────────────────
+
+
+def test_a_render_is_not_held_by_its_topics_content_work_nor_holds_it() -> None:
+    sql = _claim_sql()
+
+    assert "jobs.kind IN ('social', 'video')" in sql          # a render skips the topic rule
+    assert "busy.kind NOT IN ('social', 'video')" in sql      # and a running render blocks no one
+
+
+def test_renders_are_capped_by_render_workers() -> None:
+    sql = _claim_sql()
+
+    assert "rendering.kind IN ('social', 'video')" in sql
+    assert "< 1" in sql or "< " in sql
+    assert job_queue._render_limit() >= 1
+
+
+def test_the_render_limit_reads_the_environment(monkeypatch) -> None:
+    monkeypatch.setenv("RENDER_WORKERS", "3")
+    assert job_queue._render_limit() == 3
+    monkeypatch.setenv("RENDER_WORKERS", "50")
+    assert job_queue._render_limit() == 8
+    monkeypatch.setenv("RENDER_WORKERS", "x")
+    assert job_queue._render_limit() == 1

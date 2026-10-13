@@ -101,7 +101,8 @@ async def _report_or_keep(outcome: dict[str, Any]) -> None:
     for attempt in range(3):
         try:
             await cbc.report(outcome["post_id"], ok=True, url=outcome.get("url", ""), dry_run=outcome.get("dry_run", False),
-                             scheduled=outcome.get("scheduled", False), groups=outcome.get("groups") or [])
+                             scheduled=outcome.get("scheduled", False), groups=outcome.get("groups") or [],
+                             destinations=outcome.get("destinations") or [])
             return
         except Exception as exc:  # noqa: BLE001
             log.warning("Could not report %s (try %s): %s", outcome["post_id"], attempt + 1, _why(exc))
@@ -116,7 +117,7 @@ async def flush_reports() -> bool:
     for outcome in _pending():
         try:
             await cbc.report(outcome["post_id"], ok=True, url=outcome.get("url", ""), scheduled=outcome.get("scheduled", False),
-                             groups=outcome.get("groups") or [])
+                             groups=outcome.get("groups") or [], destinations=outcome.get("destinations") or [])
         except Exception:  # noqa: BLE001
             left.append(outcome)
     if left or os.path.exists(PENDING_FILE):
@@ -148,12 +149,14 @@ async def publish(post: dict[str, Any], *, dry_run: bool) -> dict[str, Any]:
             url = await flow.post(page, video=video, caption=post["caption"], title=post.get("title", ""),
                                   dry_run=dry_run, **extra)
             shared = list(getattr(flow, "shared_groups", []) or [])
+            places = list(getattr(flow, "destinations", []) or [])
             result.update(ok=True, url=url, scheduled=bool(schedule_at), schedule_at=schedule_at, groups=shared,
+                          destinations=places,
                           shot=await shot(page, f"{post['platform']}-{'dry' if dry_run else 'scheduled' if schedule_at else 'done'}"))
             # From here it is out (or scheduled): whatever happens next, it is
             # never reported as failed — that would post it a second time.
             outcome = {"post_id": post["post_id"], "ok": True, "url": url, "dry_run": dry_run,
-                       "scheduled": bool(schedule_at), "groups": shared}
+                       "scheduled": bool(schedule_at), "groups": shared, "destinations": places}
             await _set_login(post["platform"], True)
             await _report_or_keep(outcome)
         except NotLoggedIn as exc:

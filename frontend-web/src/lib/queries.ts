@@ -4302,6 +4302,8 @@ export type TrackedPost = {
   post_id: string; question_id: string; platform: string; grade: string; subject: string; sub_strand: string;
   scheduled_for: string | null; posted_at: string | null; url: string; views: number; likes: number; comments: number;
   shares: number; saves: number; follows: number; watch_pct: number | null; notes: string; question_text?: string;
+  /** Where it went on the platform (reel, feed, story) and the groups it was shared to. */
+  destinations?: string[]; groups?: string[]; status?: string; platform_scheduled?: boolean;
 };
 export type PostRollup = { posts: number; planned: number; views: number; likes: number; comments: number; shares: number;
   saves: number; follows: number; views_per_post: number; engagement_rate: number; follows_per_1000_views: number;
@@ -4341,6 +4343,44 @@ export function useDeletePost() {
   });
 }
 
+export type VideoBatch = {
+  batch_id: string; label: string; grade: string; subject: string; sub_strands: string[]; requested: number; queued: number;
+  created_by: string; created_at: string; total: number; done: number; running: number; waiting: number; failed: number;
+  cancelled: number; finished: boolean; eta_seconds: number | null;
+};
+
+/** Batches of social videos and how far each has got. Polls while one is unfinished. */
+export function useVideoBatches(enabled = true) {
+  const api = useApi();
+  return useQuery({
+    queryKey: ["video-batches"],
+    queryFn: () => api<{ batches: VideoBatch[]; seconds_per_video: number | null; renders_at_once: number }>("/api/v1/play/social/batches"),
+    enabled,
+    refetchInterval: (query) => ((query.state.data?.batches || []).some((b) => !b.finished) ? 10_000 : false),
+  });
+}
+
+export function useQueueBatch() {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { grade: string; subject: string; sub_strands: string[]; count: number; mix: boolean; label?: string }) =>
+      api<{ batch_id: string; requested: number; queued: number; already: Record<string, number>; short: number; note: string }>(
+        "/api/v1/play/social/batches", { method: "POST", body: JSON.stringify(v) }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["video-batches"] }); qc.invalidateQueries({ queryKey: ["social-library"] }); },
+  });
+}
+
+export function useBatchAction() {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { batch_id: string; action: "cancel" | "retry" }) =>
+      api<Record<string, number>>(`/api/v1/play/social/batches/${encodeURIComponent(v.batch_id)}/${v.action}`, { method: "POST" }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["video-batches"] }),
+  });
+}
+
 export type BookingPlan = {
   booked: boolean; first_day: string | null; last_day: string | null; platforms: string[];
   days: { date: string; videos: number; times: string[] }[];
@@ -4353,7 +4393,7 @@ export function useBookAhead() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (v: { grade: string; subject: string; sub_strand?: string; days: number; low: number; high: number;
-                      platforms: string[]; dry: boolean; total?: number }) =>
+                      platforms: string[]; dry: boolean; total?: number; ready_only?: boolean }) =>
       api<BookingPlan>("/api/v1/play/social/book", { method: "POST", body: JSON.stringify(v) }),
     onSuccess: (_, v) => {
       if (!v.dry) {

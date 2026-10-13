@@ -96,7 +96,7 @@ class Facebook(Flow):
 
     async def post(self, page: Page, *, video: str, caption: str, title: str, dry_run: bool,
                    schedule_at: str = "", groups: list[str] | None = None) -> str:
-        self.shared_groups = []
+        self.shared_groups, self.destinations = [], []
         if not await self.logged_in(page):
             raise NotLoggedIn("Facebook is logged out.")
         await check_for_human(page)
@@ -136,6 +136,10 @@ class Facebook(Flow):
         await _settled(page, r"Checking for copyrighted", 120)   # posting can go ahead without it, but give it a moment
         if groups and schedule_at:
             raise StepFailed("Facebook cannot schedule a reel that is shared to a group — one or the other.")
+        # A profile reel shows on the profile and in friends' and followers'
+        # feeds; it goes to the story too when the composer's "Share to story"
+        # is on (the owner's own setting — read, never changed here).
+        self.destinations = ["reel", "feed"] + (["story"] if await _story_on(page) else [])
         if groups:
             self.shared_groups = await _tick_groups(page, groups)
         if schedule_at:
@@ -228,6 +232,19 @@ _GROUP_NAMES = """d => {
   }
   return [...new Set(out)].filter(n => !/^(select groups|post in up to)/i.test(n));
 }"""
+
+
+async def _story_on(page: Page) -> bool:
+    try:
+        text = await page.evaluate("""() => {
+          const label = [...document.querySelectorAll('span')].find(e => e.innerText.trim() === 'Share to story');
+          let row = label;
+          for (let i = 0; i < 5 && row; i++) { row = row.parentElement; if ((row.innerText || '').split('\\n').length > 1) break; }
+          return row ? row.innerText : '';
+        }""")
+    except Exception:  # noqa: BLE001
+        return False
+    return bool(re.search(r"\bsharing\b", text, re.I)) and not re.search(r"not sharing|\boff\b", text, re.I)
 
 
 async def _open_groups(page: Page):

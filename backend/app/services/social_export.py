@@ -494,12 +494,14 @@ def groups_for(platform: str, at: datetime, rules: dict[str, Any]) -> list[str]:
 
 
 def record_attempt(post_id: str, *, ok: bool, url: str = "", error: str = "", dry_run: bool = False,
-                   scheduled: bool = False, groups: list[str] | None = None) -> dict[str, Any]:
+                   scheduled: bool = False, groups: list[str] | None = None,
+                   destinations: list[str] | None = None) -> dict[str, Any]:
     """How a try went. `scheduled`: handed to the platform's scheduler — it
     goes out at its booked time, which becomes its posted time."""
     from ..infra.db import execute, fetch_one, to_json
 
     groups = [str(g)[:200] for g in (groups or [])][:9]
+    places = [d for d in dict.fromkeys(str(x).lower() for x in (destinations or [])) if d in ("reel", "feed", "story", "post")]
     if dry_run:
         execute("UPDATE social_posts SET last_error = :e, last_attempt_at = NOW(), updated_at = NOW() WHERE post_id = :id",
                 {"id": post_id, "e": ("dry run ok" if ok else f"dry run: {error}")[:900]})
@@ -507,9 +509,11 @@ def record_attempt(post_id: str, *, ok: bool, url: str = "", error: str = "", dr
         execute(f"""UPDATE social_posts SET status = :st,
                    posted_at = {"COALESCE(scheduled_for, NOW())" if scheduled else "COALESCE(posted_at, NOW())"},
                    handed_at = NOW(), platform_scheduled = :sch, groups = CAST(:g AS jsonb),
+                   destinations = CAST(:d AS jsonb),
                    url = COALESCE(NULLIF(:u, ''), url), attempts = attempts + 1, last_error = '',
                    last_attempt_at = NOW(), updated_at = NOW() WHERE post_id = :id""",
-                {"id": post_id, "u": url, "st": "scheduled" if scheduled else "posted", "sch": scheduled, "g": to_json(groups)})
+                {"id": post_id, "u": url, "st": "scheduled" if scheduled else "posted", "sch": scheduled,
+                 "g": to_json(groups), "d": to_json(places)})
         if groups:
             row = fetch_one("SELECT platform, posted_at FROM social_posts WHERE post_id = :id", {"id": post_id}) or {}
             for g in groups:
@@ -521,7 +525,7 @@ def record_attempt(post_id: str, *, ok: bool, url: str = "", error: str = "", dr
         execute("""UPDATE social_posts SET status = CASE WHEN attempts + 1 >= :tries THEN 'gave_up' ELSE 'failed' END,
                    attempts = attempts + 1, last_error = :e, last_attempt_at = NOW(), updated_at = NOW() WHERE post_id = :id""",
                 {"id": post_id, "e": error[:900], "tries": MAX_ATTEMPTS})
-    return {"post_id": post_id, "ok": ok, "scheduled": scheduled, "groups": groups}
+    return {"post_id": post_id, "ok": ok, "scheduled": scheduled, "groups": groups, "destinations": places}
 
 
 # ── the owner's groups ───────────────────────────────────────────────────────
@@ -763,9 +767,10 @@ def lay_out(rng: Any, days: list[date], videos: list[str], platforms: list[str],
 
 def book_ahead(grade: str, subject: str, sub_strand: str = "", *, days: int = 25, low: int = 5, high: int = 15,
                platforms: list[str] | None = None, today: date | None = None, seed: int | None = None,
-               dry: bool = False, created_by: str = "", total: int = 0) -> dict[str, Any]:
+               dry: bool = False, created_by: str = "", total: int = 0, ready_only: bool = False) -> dict[str, Any]:
     """Keep the next `days` days booked — `total` videos over them when given.
-    `dry` shows the plan, writes nothing."""
+    `ready_only`: only videos already made (book what is generated). `dry`
+    shows the plan, writes nothing."""
     import random
 
     from ..infra.db import fetch_all, fetch_one
@@ -822,6 +827,8 @@ def book_ahead(grade: str, subject: str, sub_strand: str = "", *, days: int = 25
             continue
         if st.get("status") == "failed" or not st.get("scenes"):
             continue
+        if ready_only and st.get("status") != "ready":
+            continue
         usable.append(str(q["question_id"]))
         state[str(q["question_id"])] = str(st.get("status"))
     usable.sort(key=lambda qid: state[qid] != "ready")     # finished videos take the nearest days
@@ -829,7 +836,10 @@ def book_ahead(grade: str, subject: str, sub_strand: str = "", *, days: int = 25
     calendar = lay_out(rng, span, usable, platforms, rules, low=low, high=high, total=total)
     used = [p["question_id"] for d in calendar for p in d["posts"]]
     posts = sum(len(d["posts"]) for d in calendar)
-    if len(calendar) < len(span):
+    if ready_only and len(calendar) < len(span):
+        notes.append(f"All {len(set(used))} finished videos not yet booked fill {len(calendar)} of {len(span)} days — "
+                     "make more (Video batches) and book again.")
+    elif len(calendar) < len(span):
         notes.append(f"Only enough unbooked questions for {len(calendar)} of {len(span)} days in this scope — "
                      "widen it (a whole subject) or add questions.")
     to_render = [q for q in dict.fromkeys(used) if state.get(q) != "ready"]

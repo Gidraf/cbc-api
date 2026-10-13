@@ -27,6 +27,10 @@ import {
   useExportSocial,
   useBookAhead,
   useSaveGroups,
+  useVideoBatches,
+  useQueueBatch,
+  useBatchAction,
+  type VideoBatch,
   type BookingPlan,
   type PosterGroup,
   useSavePost,
@@ -164,7 +168,7 @@ export function PlayArcade() {
       )}
 
       {grade && (items.data?.items || []).length > 0 && (
-        <SocialLibrary grade={grade} subject={subject} subStrand={subStrand} onWatch={(qid) => setSocialWatch(qid)} />
+        <SocialLibrary grade={grade} subject={subject} subStrand={subStrand} topics={subStrands} onWatch={(qid) => setSocialWatch(qid)} />
       )}
       {grade && <Performance grade={grade} subject={subject} subStrand={subStrand} />}
       <AutoPost />
@@ -556,8 +560,8 @@ function PostText({ post }: { post: string }) {
 }
 
 /** Every item in the scope as a post for TikTok, Reels, Shorts and Status. */
-function SocialLibrary({ grade, subject, subStrand, onWatch }: {
-  grade: string; subject: string; subStrand: string; onWatch: (qid: string) => void;
+function SocialLibrary({ grade, subject, subStrand, topics, onWatch }: {
+  grade: string; subject: string; subStrand: string; topics: string[]; onWatch: (qid: string) => void;
 }) {
   const [open, setOpen] = React.useState(false);
   const library = useSocialLibrary(grade, subject, subStrand, open);
@@ -597,6 +601,7 @@ function SocialLibrary({ grade, subject, subStrand, onWatch }: {
         working, hashtags) ready to paste.
       </p>
       {b && <BrandEditor brand={b} />}
+      <VideoBatches grade={grade} subject={subject} subStrand={subStrand} topics={topics} />
       <BookAhead grade={grade} subject={subject} subStrand={subStrand} />
       <ScheduleExport grade={grade} subject={subject} subStrand={subStrand} ready={library.data?.ready} />
       {b && (
@@ -908,6 +913,97 @@ const PLATFORM_LABEL: Record<string, string> = { tiktok: "TikTok", instagram: "I
   facebook: "Facebook", whatsapp: "WhatsApp", x: "X" };
 
 /** The finished posts of the scope as one zip, with a posting calendar. */
+/** Queue batches of new social videos and follow them to the end. */
+function VideoBatches({ grade, subject, subStrand, topics }: { grade: string; subject: string; subStrand: string; topics: string[] }) {
+  const [open, setOpen] = React.useState(false);
+  const batches = useVideoBatches(open);
+  const queue = useQueueBatch();
+  const act = useBatchAction();
+  const toast = useToast();
+  const [count, setCount] = React.useState(50);
+  const [mix, setMix] = React.useState(true);
+  const [label, setLabel] = React.useState("");
+  const [picked, setPicked] = React.useState<string[]>(subStrand ? [subStrand] : []);
+  React.useEffect(() => setPicked(subStrand ? [subStrand] : []), [subStrand]);
+  const toggle = (t: string) => setPicked((xs) => (xs.includes(t) ? xs.filter((x) => x !== t) : [...xs, t]));
+  async function go() {
+    try {
+      const out = await queue.mutateAsync({ grade, subject, sub_strands: picked, count, mix, label });
+      const had = Object.entries(out.already || {}).map(([k, v]) => `${v} ${k}`).join(", ");
+      toast(out.queued ? `Queued ${out.queued} videos${had ? ` (skipped: ${had})` : ""}.` : out.note || "Nothing new to make here.",
+            out.queued ? "ok" : "info");
+    } catch (err) { toast(err instanceof Error ? err.message : "Could not queue the batch.", "danger"); }
+  }
+  async function batchAction(b: VideoBatch, action: "cancel" | "retry") {
+    try {
+      const out = await act.mutateAsync({ batch_id: b.batch_id, action });
+      toast(action === "cancel" ? `Cancelled ${out.cancelled ?? 0} waiting video(s).` : `Retrying ${out.retried ?? 0} failed video(s).`, "ok");
+    } catch (err) { toast(err instanceof Error ? err.message : "Could not do that.", "danger"); }
+  }
+  const eta = (s: number | null) => (s == null ? "" : s < 90 ? "about a minute" : s < 5400 ? `about ${Math.round(s / 60)} min` : `about ${(s / 3600).toFixed(1)} h`);
+  const list = batches.data?.batches || [];
+  return (
+    <details style={{ marginTop: "var(--s3)" }} onToggle={(e) => setOpen((e.target as HTMLDetailsElement).open)}>
+      <summary style={{ cursor: "pointer", fontSize: "var(--text-sm)" }}>
+        🎬 Video batches{list.some((b) => !b.finished) ? ` — ${list.filter((b) => !b.finished).length} in progress` : ""}
+      </summary>
+      <p style={{ margin: "var(--s2) 0", color: "var(--ink-3)", fontSize: "var(--text-xs)" }}>
+        Queue new videos in one go: only questions with no video made or on its way are picked, from the whole subject or
+        the topics you tick, mixed unless you say otherwise. Videos render {batches.data?.renders_at_once ?? 1} at a time
+        {batches.data?.seconds_per_video ? `, about ${Math.round(batches.data.seconds_per_video / 60) || 1} min each` : ""}.
+        Book them for the poster once they are made.
+      </p>
+      <Stack direction="row" gap="var(--s3)" wrap align="end">
+        <label style={lbl}>Videos<Input type="number" min={1} max={500} value={count} onChange={(e) => setCount(Math.max(1, Number(e.target.value) || 1))} style={{ width: 90 }} /></label>
+        <label style={lbl}>Name (optional)<Input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="e.g. October week 2" style={{ width: 180 }} /></label>
+        <label style={{ display: "inline-flex", gap: 4, alignItems: "center", fontSize: "var(--text-sm)" }}>
+          <input type="checkbox" checked={mix} onChange={() => setMix((x) => !x)} />Mix the topics
+        </label>
+        <Button size="sm" variant="primary" disabled={queue.isPending || !grade || !subject} onClick={go}>
+          {queue.isPending ? "Queueing…" : `Queue ${count} videos`}
+        </Button>
+      </Stack>
+      {topics.length > 0 && (
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", fontSize: "var(--text-xs)", marginTop: "var(--s2)" }}>
+          <span style={{ color: "var(--ink-3)" }}>{picked.length ? `${picked.length} topic(s):` : "Whole subject — or tick topics:"}</span>
+          {topics.map((t) => (
+            <label key={t} style={{ display: "inline-flex", gap: 4, alignItems: "center" }}>
+              <input type="checkbox" checked={picked.includes(t)} onChange={() => toggle(t)} />{t}
+            </label>
+          ))}
+        </div>
+      )}
+      {list.length > 0 && (
+        <div style={{ display: "grid", gap: 6, marginTop: "var(--s3)" }}>
+          {list.map((b) => {
+            const pct = b.total ? Math.round((100 * b.done) / b.total) : 0;
+            return (
+              <div key={b.batch_id} style={{ border: "1px solid var(--line-2)", borderRadius: "var(--radius)", padding: "6px 10px", fontSize: "var(--text-sm)" }}>
+                <Stack direction="row" gap="var(--s2)" align="center" wrap>
+                  <strong>{b.label || b.batch_id}</strong>
+                  <span style={{ color: "var(--ink-3)", fontSize: "var(--text-xs)" }}>{new Date(b.created_at).toLocaleString(undefined, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}</span>
+                  <span style={{ flex: 1 }} />
+                  <span>{b.done}/{b.total} made</span>
+                  {b.running > 0 && <Badge tone="info">{b.running} rendering</Badge>}
+                  {b.waiting > 0 && <Badge tone="neutral">{b.waiting} waiting</Badge>}
+                  {b.failed > 0 && <Badge tone="danger">{b.failed} failed</Badge>}
+                  {b.cancelled > 0 && <Badge tone="neutral">{b.cancelled} cancelled</Badge>}
+                  {b.finished ? <Badge tone="ok">finished</Badge> : b.eta_seconds ? <span style={{ fontSize: "var(--text-xs)", color: "var(--ink-3)" }}>done in {eta(b.eta_seconds)}</span> : null}
+                  {b.waiting > 0 && <Button size="sm" variant="ghost" disabled={act.isPending} onClick={() => batchAction(b, "cancel")}>Cancel waiting</Button>}
+                  {b.failed > 0 && <Button size="sm" variant="ghost" disabled={act.isPending} onClick={() => batchAction(b, "retry")}>Retry failed</Button>}
+                </Stack>
+                <div style={{ height: 4, background: "var(--line-2)", borderRadius: 2, marginTop: 4 }}>
+                  <div style={{ width: `${pct}%`, height: 4, background: "var(--ok, #16a34a)", borderRadius: 2 }} />
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </details>
+  );
+}
+
 /** The owner's groups: which may get one of the day's shares. */
 function Groups({ groups, sharesPerDay, restDays, busy, online, onRead }: {
   groups: PosterGroup[]; sharesPerDay: number; restDays: number; busy: boolean; online: boolean; onRead: () => void;
@@ -963,11 +1059,12 @@ function BookAhead({ grade, subject, subStrand }: { grade: string; subject: stri
   const [wholeSubject, setWholeSubject] = React.useState(true);
   const [platforms, setPlatforms] = React.useState<string[]>(["facebook"]);
   const [total, setTotal] = React.useState(0);
+  const [readyOnly, setReadyOnly] = React.useState(false);
   const [plan, setPlan] = React.useState<BookingPlan | null>(null);
   const toggle = (p: string) => setPlatforms((xs) => (xs.includes(p) ? xs.filter((x) => x !== p) : [...xs, p]));
   async function go(dry: boolean) {
     try {
-      const out = await book.mutateAsync({ grade, subject, sub_strand: wholeSubject ? "" : subStrand, days, low, high, platforms, dry, total });
+      const out = await book.mutateAsync({ grade, subject, sub_strand: wholeSubject ? "" : subStrand, days, low, high, platforms, dry, total, ready_only: readyOnly });
       setPlan(out);
       if (!dry) toast(out.posts ? `Booked ${out.videos} videos (${out.posts} posts) from ${out.first_day} to ${out.last_day}.`
                                 : out.notes[0] || "Nothing to add.", out.posts ? "ok" : "info");
@@ -984,7 +1081,10 @@ function BookAhead({ grade, subject, subStrand }: { grade: string; subject: stri
         the poster uploads them early with Facebook's own Schedule (up to 29 days ahead).
       </p>
       <Stack direction="row" gap="var(--s3)" wrap align="end">
-        <Button size="sm" variant="ghost" onClick={() => { setDays(7); setTotal(100); setLow(5); setHigh(15); }}>100 in a week</Button>
+        <Button size="sm" variant="ghost" onClick={() => { setDays(7); setTotal(100); setLow(5); setHigh(15); setReadyOnly(false); }}>100 in a week</Button>
+        <label style={{ display: "inline-flex", gap: 4, alignItems: "center", fontSize: "var(--text-sm)" }}>
+          <input type="checkbox" checked={readyOnly} onChange={() => setReadyOnly((x) => !x)} />Only videos already made
+        </label>
         <label style={lbl}>Days ahead<Input type="number" min={1} max={62} value={days} onChange={(e) => setDays(Number(e.target.value) || 25)} style={{ width: 80 }} /></label>
         <label style={lbl}>Videos in all (0 = as the day ranges give)<Input type="number" min={0} max={1000} value={total} onChange={(e) => setTotal(Math.max(0, Number(e.target.value) || 0))} style={{ width: 100 }} /></label>
         <label style={lbl}>Videos a day, at least<Input type="number" min={1} max={30} value={low} onChange={(e) => setLow(Number(e.target.value) || 1)} style={{ width: 80 }} /></label>
@@ -1170,7 +1270,15 @@ function PostRow({ post }: { post: TrackedPost }) {
     <tr style={{ borderTop: "1px solid var(--line-2)" }}>
       <td style={{ padding: 4, whiteSpace: "nowrap" }}>
         {when ? new Date(when).toLocaleString([], { dateStyle: "medium", timeStyle: "short" }) : "—"}
-        <div>{post.posted_at ? <Badge tone="ok">posted</Badge> : <Button size="sm" variant="ghost" onClick={() => commit({ posted: true })}>Mark posted</Button>}</div>
+        <div>{post.posted_at
+          ? (post.platform_scheduled && new Date(post.posted_at) > new Date() ? <Badge tone="info">scheduled on {PLATFORM_LABEL[post.platform] || post.platform}</Badge> : <Badge tone="ok">posted</Badge>)
+          : <Button size="sm" variant="ghost" onClick={() => commit({ posted: true })}>Mark posted</Button>}</div>
+        {((post.destinations || []).length > 0 || (post.groups || []).length > 0) && (
+          <div style={{ display: "flex", gap: 3, flexWrap: "wrap", marginTop: 2 }}>
+            {(post.destinations || []).map((d) => <Badge key={d} tone="neutral">{d}</Badge>)}
+            {(post.groups || []).map((g) => <Badge key={g} tone="neutral">👥 {g}</Badge>)}
+          </div>
+        )}
       </td>
       <td style={{ padding: 4 }}>{PLATFORM_LABEL[post.platform] || post.platform}</td>
       <td style={{ padding: 4, maxWidth: 260 }}>{plain(post.question_text || "").slice(0, 90)}</td>

@@ -130,6 +130,7 @@ class Flow:
     can_schedule = False      # fills in the platform's own Schedule (post(schedule_at=...))
     can_share_groups = False  # ticks groups in the composer (post(groups=...))
     shared_groups: list[str] = []
+    destinations: list[str] = []   # where the last post went on the platform (reel, feed, story)
 
     async def logged_in(self, page: Page) -> bool:  # pragma: no cover - site specific
         raise NotImplementedError

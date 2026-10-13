@@ -22,11 +22,13 @@ async def next_post(*, platform: str = "", post_id: str = "", dry: bool = False)
 
 
 async def report(post_id: str, *, ok: bool, url: str = "", error: str = "", dry_run: bool = False,
-                 scheduled: bool = False, groups: list[str] | None = None) -> None:
+                 scheduled: bool = False, groups: list[str] | None = None,
+                 destinations: list[str] | None = None) -> None:
     async with httpx.AsyncClient(timeout=30) as client:
         r = await client.post(f"{config.CBC_API_URL}/api/v1/play/poster/result", headers=_headers(),
                               json={"post_id": post_id, "ok": ok, "url": url, "error": error[:900], "dry_run": dry_run,
-                                    "scheduled": scheduled, "groups": groups or []})
+                                    "scheduled": scheduled, "groups": groups or [],
+                                    "destinations": destinations or []})
         r.raise_for_status()
 
 

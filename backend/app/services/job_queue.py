@@ -330,14 +330,44 @@ def cancel(job_id: str = "", batch_id: str = "") -> int:
 # opportunity: a grade has hundreds, each spends its time waiting on a provider
 # rather than on this machine, and running them one at a time is why a grade
 # takes an afternoon.
-_FREE_SCOPE = """
-    NOT EXISTS (
-        SELECT 1 FROM jobs busy
-        WHERE busy.status = 'running'
-          AND busy.job_id <> jobs.job_id
-          AND LOWER(COALESCE(busy.grade, '')) = LOWER(COALESCE(jobs.grade, ''))
-          AND LOWER(COALESCE(busy.subject, '')) = LOWER(COALESCE(jobs.subject, ''))
-          AND LOWER(COALESCE(busy.sub_strand, '')) = LOWER(COALESCE(jobs.sub_strand, ''))
+#
+# Video renders are their own lane. A render (a social clip, a whiteboard
+# walkthrough) reads a finished question and writes one file: it is part of no
+# chain, so two renders for one sub-strand may run side by side, a render never
+# waits on that sub-strand's content work, and content work never waits on a
+# render. What does bind renders is this machine — each one drives a browser
+# and ffmpeg — so at most RENDER_WORKERS (default 1) run at once, whatever
+# JOB_WORKERS says.
+RENDER_KINDS = ("social", "video")
+
+
+def _render_limit() -> int:
+    import os
+
+    try:
+        return max(1, min(8, int(os.getenv("RENDER_WORKERS", "1"))))
+    except ValueError:
+        return 1
+
+
+_RENDERS = "('social', 'video')"
+_FREE_SCOPE = f"""
+    (
+        jobs.kind IN {_RENDERS}
+        OR NOT EXISTS (
+            SELECT 1 FROM jobs busy
+            WHERE busy.status = 'running'
+              AND busy.job_id <> jobs.job_id
+              AND busy.kind NOT IN {_RENDERS}
+              AND LOWER(COALESCE(busy.grade, '')) = LOWER(COALESCE(jobs.grade, ''))
+              AND LOWER(COALESCE(busy.subject, '')) = LOWER(COALESCE(jobs.subject, ''))
+              AND LOWER(COALESCE(busy.sub_strand, '')) = LOWER(COALESCE(jobs.sub_strand, ''))
+        )
+    )
+    AND (
+        jobs.kind NOT IN {_RENDERS}
+        OR (SELECT COUNT(*) FROM jobs rendering WHERE rendering.status = 'running'
+            AND rendering.kind IN {_RENDERS} AND rendering.job_id <> jobs.job_id) < {_render_limit()}
     )
 """
 

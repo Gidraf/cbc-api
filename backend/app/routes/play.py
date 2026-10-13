@@ -286,6 +286,52 @@ def make_socials(payload: VideoBatch, auth: AuthContext = Depends(ANY)) -> dict[
     return {"batch_id": batch, "counts": counts, "items": out}
 
 
+class QueueBatch(BaseModel):
+    grade: str
+    subject: str
+    sub_strands: list[str] = []      # none: the whole subject
+    count: int = 50
+    mix: bool = True                  # mix the topics
+    label: str = ""
+
+
+@router.post("/social/batches")
+def queue_video_batch(payload: QueueBatch, auth: AuthContext = Depends(ANY)) -> dict[str, Any]:
+    """Queue up to `count` new social videos — only questions with no video
+    made or on its way — as one batch to follow."""
+    from ..services import video_batches
+
+    _may_make_videos(auth)
+    if not 1 <= payload.count <= 500:
+        raise_api_error("VALIDATION_FAILED", "A batch is 1–500 videos.")
+    return video_batches.queue(payload.grade, payload.subject, payload.sub_strands, count=payload.count, mix=payload.mix,
+                               label=payload.label, by=str(getattr(auth, "subject", "") or ""))
+
+
+@router.get("/social/batches")
+def video_batches_status(limit: int = Query(20, ge=1, le=100), auth: AuthContext = Depends(ANY)) -> dict[str, Any]:
+    from ..services import video_batches
+
+    _may_make_videos(auth)
+    return video_batches.list_batches(limit)
+
+
+@router.post("/social/batches/{batch_id}/cancel")
+def cancel_video_batch(batch_id: str, auth: AuthContext = Depends(ANY)) -> dict[str, Any]:
+    from ..services import video_batches
+
+    _may_make_videos(auth)
+    return {"cancelled": video_batches.cancel(batch_id)}
+
+
+@router.post("/social/batches/{batch_id}/retry")
+def retry_video_batch(batch_id: str, auth: AuthContext = Depends(ANY)) -> dict[str, Any]:
+    from ..services import video_batches
+
+    _may_make_videos(auth)
+    return {"retried": video_batches.retry(batch_id)}
+
+
 @router.get("/social")
 def list_socials(grade: str = Query(...), subject: str = Query(...), sub_strand: str = Query(""),
                  limit: int = Query(60, ge=1, le=300), _: AuthContext = Depends(ANY)) -> dict[str, Any]:
@@ -626,6 +672,7 @@ class BookAhead(BaseModel):
     high: int = 15           # … and at most
     platforms: list[str] = []
     total: int = 0           # this many videos over the days (0: as many as low–high gives)
+    ready_only: bool = False  # only videos already made
     dry: bool = False        # show the plan, book nothing
 
 
@@ -645,7 +692,7 @@ def book_social(payload: BookAhead, auth: AuthContext = Depends(ANY)) -> dict[st
                                         low=payload.low, high=payload.high,
                                         platforms=[p.strip().lower() for p in payload.platforms if p.strip()] or None,
                                         dry=payload.dry, created_by=str(getattr(auth, "subject", "") or ""),
-                                        total=payload.total)
+                                        total=payload.total, ready_only=payload.ready_only)
     except ValueError as exc:
         raise_api_error("VALIDATION_FAILED", str(exc))
         return {}
@@ -743,6 +790,7 @@ class PosterResult(BaseModel):
     dry_run: bool = False
     scheduled: bool = False      # handed to the platform's scheduler
     groups: list[str] = []       # shared to these groups too
+    destinations: list[str] = [] # where else on the platform: reel, feed, story
 
 
 @router.post("/poster/result")
@@ -751,7 +799,8 @@ def poster_result(payload: PosterResult, auth: AuthContext = Depends(ANY)) -> di
 
     _may_make_videos(auth)
     return social_export.record_attempt(payload.post_id, ok=payload.ok, url=payload.url, error=payload.error,
-                                        dry_run=payload.dry_run, scheduled=payload.scheduled, groups=payload.groups)
+                                        dry_run=payload.dry_run, scheduled=payload.scheduled, groups=payload.groups,
+                                        destinations=payload.destinations)
 
 
 class PosterState(BaseModel):
