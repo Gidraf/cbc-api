@@ -190,8 +190,6 @@ def render(data: dict[str, Any], *, title: str = "", voice: str = "", subject: s
     if not ffmpeg:
         raise RuntimeError("ffmpeg is not installed on this worker — rebuild the image (it is in the Dockerfile).")
     cdp = (getattr(settings, "playwright_cdp_url", "") or "").strip()
-    if not cdp:
-        raise RuntimeError("No headless browser: set PLAYWRIGHT_CDP_URL (the browserless service).")
     scenes = data.get("scenes") or []
     if not scenes:
         raise RuntimeError("This item has no walkthrough to draw.")
@@ -324,7 +322,19 @@ def _capture(cdp: str, doc: str, out: Path, ffmpeg: str, fps: int, tick: Any) ->
     total = 0.0
     try:
         with sync_playwright() as p:
-            browser = p.chromium.connect_over_cdp(cdp, timeout=30000)
+            # The browser service when it answers, else the image's own
+            # Chromium — the same rule as every PDF (services/browser.py).
+            from .browser import CONNECT_TIMEOUT_MS, LAUNCH_ARGS
+
+            browser = None
+            if cdp:
+                try:
+                    browser = p.chromium.connect_over_cdp(cdp, timeout=CONNECT_TIMEOUT_MS)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("Browser service at %s unreachable (%s); launching the local Chromium.",
+                                   cdp, str(exc).splitlines()[0][:160])
+            if browser is None:
+                browser = p.chromium.launch(headless=True, args=LAUNCH_ARGS)
             try:
                 context = browser.new_context(viewport={"width": WIDTH, "height": HEIGHT}, device_scale_factor=1)
                 pg = context.new_page()
