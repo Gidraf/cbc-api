@@ -246,6 +246,29 @@ services:
       - "3001:3000"
     restart: unless-stopped
 
+  # The browser poster (poster/): a real browser the owner logs into through
+  # its screen (noVNC on 127.0.0.1:6080, behind nginx at /poster/), posting
+  # scheduled social videos within the API's rules. Needs POSTER_TOKEN,
+  # POSTER_VNC_PASSWORD and POSTER_API_KEY in .env.
+  social-poster:
+    build: ./poster
+    environment:
+      CBC_API_URL: http://api:8000
+      CBC_API_KEY: ${POSTER_API_KEY:-}
+      POSTER_TOKEN: ${POSTER_TOKEN:-}
+      VNC_PASSWORD: ${POSTER_VNC_PASSWORD:-}
+      YOUTUBE_MADE_FOR_KIDS: ${YOUTUBE_MADE_FOR_KIDS:-no}
+    ports:
+      - "127.0.0.1:6080:6080"
+    volumes:
+      - poster_data:/data
+    shm_size: "1gb"
+    depends_on:
+      api:
+        condition: service_started
+    restart: unless-stopped
+
 volumes:
   redis_data:
   langfuse_db_data:
+  poster_data:
