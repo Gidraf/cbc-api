@@ -5,6 +5,12 @@ applies the day's cap, the per-platform cap, the gap and the hours — and
 publishes it in the logged-in browser. A dry run does every step but the
 last and keeps a screenshot. A login wall or a check by a person stops that
 platform until the owner deals with it on the shared screen.
+
+Two ways to run it:
+  server  inside the stack; the API commands it over the control service
+          and the owner sees its screen through noVNC.
+  local   on the owner's own Mac, in their own Chrome; the server cannot
+          reach it, so it checks in and asks for its commands instead.
 """
 from __future__ import annotations
 
@@ -19,6 +25,15 @@ import uvicorn
 from fastapi import FastAPI, Header, HTTPException
 from fastapi.responses import FileResponse
 
+try:
+    # On a Mac behind a company proxy the system keychain knows certificates
+    # Python's own bundle does not; use the system's when it is there.
+    import truststore
+
+    truststore.inject_into_ssl()
+except ImportError:
+    pass
+
 from . import cbc, config
 from .browser import browser
 from .flows import FLOWS, NeedsHuman, NotLoggedIn, StepFailed
@@ -26,6 +41,7 @@ from .flows.base import shot
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
 log = logging.getLogger("poster")
+logging.getLogger("httpx").setLevel(logging.WARNING)   # one line per poll is noise
 
 STATE_FILE = os.path.join(os.path.dirname(config.PROFILE_DIR.rstrip("/")) or "/data", "poster-state.json")
 state: dict[str, Any] = {"paused": False, "busy": "", "last": None, "logins": {}, "started": time.time(), "note": ""}
@@ -97,6 +113,11 @@ async def publish(post: dict[str, Any], *, dry_run: bool) -> dict[str, Any]:
                 os.remove(os.path.join(config.TMP_DIR, f"{post['post_id']}.mp4"))
             except OSError:
                 pass
+        if config.POSTER_MODE == "local" and result.get("shot"):
+            try:
+                await cbc.upload_shot(result["shot"])
+            except Exception as exc:  # noqa: BLE001
+                log.warning("Could not upload %s: %s", result["shot"], exc)
         log.info("%s", {k: v for k, v in result.items() if k != "caption"})
         return result
 
@@ -124,42 +145,31 @@ async def loop() -> None:
         await asyncio.sleep(config.POLL_SECONDS)
 
 
-# ── the control service the API talks to (never exposed publicly) ────────────
+# ── what the owner can ask for, from the console ─────────────────────────────
 
-app = FastAPI(title="CBC browser poster")
-
-
-def _guard(token: str | None) -> None:
-    if not config.POSTER_TOKEN or token != config.POSTER_TOKEN:
-        raise HTTPException(status_code=401, detail="Bad poster token.")
+def status_now() -> dict[str, Any]:
+    return {"online": True, "mode": config.POSTER_MODE, "paused": state["paused"], "busy": state["busy"],
+            "note": state["note"], "browser": browser.channel or "not started", "logins": state["logins"],
+            "last": state["last"], "platforms": list(FLOWS)}
 
 
-@app.get("/status")
-async def status(x_poster_token: str | None = Header(default=None)) -> dict[str, Any]:
-    _guard(x_poster_token)
-    return {"online": True, "paused": state["paused"], "busy": state["busy"], "note": state["note"],
-            "browser": browser.channel or "not started", "logins": state["logins"], "last": state["last"],
-            "platforms": list(FLOWS)}
-
-
-@app.post("/login")
-async def login(body: dict[str, Any], x_poster_token: str | None = Header(default=None)) -> dict[str, Any]:
-    """Open the platform's login page on the shared screen for the owner."""
-    _guard(x_poster_token)
-    flow = FLOWS.get(str(body.get("platform") or ""))
+async def do_login(platform: str) -> dict[str, Any]:
+    """Open the platform's login page in the browser for the owner."""
+    flow = FLOWS.get(platform)
     if flow is None:
-        raise HTTPException(400, "Unknown platform.")
+        return {"ok": False, "error": "Unknown platform."}
     await browser.page(flow.login_url)
-    return {"ok": True, "message": f"{flow.platform} login is open on the screen — log in there, then press Check."}
+    where = "in Chrome on your Mac" if config.POSTER_MODE == "local" else "on the screen"
+    return {"ok": True, "message": f"{flow.platform} login is open {where} — log in there, then press Check."}
 
 
-@app.post("/check")
-async def check(body: dict[str, Any], x_poster_token: str | None = Header(default=None)) -> dict[str, Any]:
-    _guard(x_poster_token)
-    platforms = [body["platform"]] if body.get("platform") else list(FLOWS)
+async def do_check(platform: str = "") -> dict[str, Any]:
+    platforms = [platform] if platform else list(FLOWS)
     out = {}
     async with browser.lock:
         for p in platforms:
+            if p not in FLOWS:
+                continue
             page = await browser.page()
             try:
                 ok = await FLOWS[p].logged_in(page)
@@ -173,36 +183,60 @@ async def check(body: dict[str, Any], x_poster_token: str | None = Header(defaul
     return {"ok": True, "logins": out}
 
 
-@app.post("/dry_run")
-async def dry_run(body: dict[str, Any], x_poster_token: str | None = Header(default=None)) -> dict[str, Any]:
+async def do_dry_run(platform: str = "", post_id: str = "") -> dict[str, Any]:
     """Every step but the last, on the next queued post for a platform."""
-    _guard(x_poster_token)
-    nxt = await cbc.next_post(platform=str(body.get("platform") or ""), post_id=str(body.get("post_id") or ""), dry=True)
+    nxt = await cbc.next_post(platform=platform, post_id=post_id, dry=True)
     if not nxt.get("post"):
         return {"ok": False, "error": nxt.get("reason") or "Nothing queued for that platform."}
     return await publish(nxt["post"], dry_run=True)
 
 
-@app.post("/run_now")
-async def run_now(body: dict[str, Any] | None = None, x_poster_token: str | None = Header(default=None)) -> dict[str, Any]:
-    _guard(x_poster_token)
-    return await tick()
-
-
-@app.post("/pause")
-async def pause(body: dict[str, Any] | None = None, x_poster_token: str | None = Header(default=None)) -> dict[str, Any]:
-    _guard(x_poster_token)
-    state["paused"] = True
+def set_paused(paused: bool) -> dict[str, Any]:
+    state["paused"] = paused
     _save()
-    return {"ok": True, "paused": True}
+    return {"ok": True, "paused": paused}
 
 
-@app.post("/resume")
-async def resume(body: dict[str, Any] | None = None, x_poster_token: str | None = Header(default=None)) -> dict[str, Any]:
+async def run(action: str, platform: str = "", post_id: str = "") -> dict[str, Any]:
+    if action == "login":
+        return await do_login(platform)
+    if action == "check":
+        return await do_check(platform)
+    if action == "dry_run":
+        return await do_dry_run(platform, post_id)
+    if action == "run_now":
+        return await tick()
+    if action in ("pause", "resume"):
+        return set_paused(action == "pause")
+    return {"ok": False, "error": f"Unknown action {action!r}."}
+
+
+# ── server mode: the control service the API talks to (never public) ────────
+
+app = FastAPI(title="CBC browser poster")
+
+
+def _guard(token: str | None) -> None:
+    if not config.POSTER_TOKEN or token != config.POSTER_TOKEN:
+        raise HTTPException(status_code=401, detail="Bad poster token.")
+
+
+@app.get("/status")
+async def status(x_poster_token: str | None = Header(default=None)) -> dict[str, Any]:
     _guard(x_poster_token)
-    state["paused"] = False
-    _save()
-    return {"ok": True, "paused": False}
+    return status_now()
+
+
+@app.post("/{action}")
+async def command(action: str, body: dict[str, Any] | None = None,
+                  x_poster_token: str | None = Header(default=None)) -> dict[str, Any]:
+    _guard(x_poster_token)
+    body = body or {}
+    if action not in ("login", "check", "dry_run", "run_now", "pause", "resume"):
+        raise HTTPException(404, "No such action.")
+    if action == "login" and str(body.get("platform") or "") not in FLOWS:
+        raise HTTPException(400, "Unknown platform.")
+    return await run(action, str(body.get("platform") or ""), str(body.get("post_id") or ""))
 
 
 @app.get("/shots/{name}")
@@ -214,8 +248,50 @@ async def shots(name: str, x_poster_token: str | None = Header(default=None)):
     return FileResponse(path, media_type="image/png")
 
 
+# ── local mode: check in, ask for commands, never listen ─────────────────────
+
+async def checkin_loop() -> None:
+    while True:
+        try:
+            await cbc.heartbeat(status_now())
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Could not check in with %s: %s", config.CBC_API_URL, str(exc)[:160])
+        await asyncio.sleep(15)
+
+
+async def command_loop() -> None:
+    while True:
+        try:
+            cmd = await cbc.take_command()
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Could not ask for commands: %s", str(exc)[:160])
+            cmd = None
+        if cmd:
+            log.info("Command %s: %s %s", cmd["command_id"], cmd["action"], cmd.get("platform") or "")
+            try:
+                result = await run(cmd["action"], cmd.get("platform") or "", cmd.get("post_id") or "")
+            except Exception as exc:  # noqa: BLE001
+                result = {"ok": False, "error": str(exc)[:400]}
+            try:
+                await cbc.command_done(int(cmd["command_id"]), result)
+                await cbc.heartbeat(status_now())     # the console sees the change at once
+            except Exception as exc:  # noqa: BLE001
+                log.warning("Could not report command %s: %s", cmd["command_id"], exc)
+            continue
+        await asyncio.sleep(4)
+
+
 async def main() -> None:
     _load()
+    if config.POSTER_MODE == "local":
+        if not config.CBC_API_KEY:
+            raise SystemExit("CBC_API_KEY is not set — run the installer again, or add it to ~/.cbc/poster/.env.")
+        for d in (config.PROFILE_DIR, config.SHOTS_DIR, config.TMP_DIR):
+            os.makedirs(d, exist_ok=True)
+        log.info("Local poster %s → %s", config.POSTER_ID, config.CBC_API_URL)
+        await browser.context()
+        await asyncio.gather(checkin_loop(), command_loop(), loop())
+        return
     await browser.context()          # the browser is on the screen from the start
     server = uvicorn.Server(uvicorn.Config(app, host="0.0.0.0", port=config.CONTROL_PORT, log_level="warning"))
     await asyncio.gather(server.serve(), loop())

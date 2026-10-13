@@ -28,7 +28,8 @@ class Browser:
     async def context(self) -> BrowserContext:
         if self._ctx is not None:
             return self._ctx
-        self._pw = await async_playwright().start()
+        if self._pw is None:
+            self._pw = await async_playwright().start()
         options = dict(user_data_dir=config.PROFILE_DIR, headless=False, viewport=None, locale="en-US",
                        timezone_id="Africa/Nairobi", args=["--start-maximized", "--no-first-run",
                                                            "--no-default-browser-check", "--disable-dev-shm-usage"])
@@ -39,6 +40,7 @@ class Browser:
             log.info("No %s here (%s); using Chromium.", config.BROWSER_CHANNEL, str(exc).splitlines()[0][:120])
             self._ctx = await self._pw.chromium.launch_persistent_context(**options)
             self.channel = "chromium"
+        # Closing the window (on a Mac) ends the browser; the next action opens it again.
         self._ctx.on("close", lambda *_: setattr(self, "_ctx", None))
         return self._ctx
 

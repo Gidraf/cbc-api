@@ -400,3 +400,72 @@ def poster_overview() -> dict[str, Any]:
                     r[k] = v.isoformat()
     return {"rules": poster_rules(), "posted_today": {r["platform"]: int(r["n"]) for r in today},
             "states": states, "queue": queue, "recent": recent}
+
+
+# ── a poster the server cannot reach (on the owner's Mac) ─────────────────────
+#
+# It asks instead of being told: it takes the console's commands from a queue,
+# reports a heartbeat with its status, and uploads its screenshots here.
+
+PULL_FRESH_SECONDS = 120
+
+
+def heartbeat(poster_id: str, status: dict[str, Any]) -> None:
+    from ..infra.db import execute, to_json
+
+    execute("""INSERT INTO poster_heartbeat (poster_id, status, seen_at) VALUES (:id, CAST(:s AS jsonb), NOW())
+               ON CONFLICT (poster_id) DO UPDATE SET status = EXCLUDED.status, seen_at = NOW()""",
+            {"id": poster_id[:80], "s": to_json(status)})
+
+
+def pull_poster() -> dict[str, Any] | None:
+    """The most recent poster that checked in within the last two minutes."""
+    from ..infra.db import fetch_one
+
+    row = fetch_one(
+        """SELECT poster_id, status, seen_at FROM poster_heartbeat
+           WHERE seen_at > NOW() - make_interval(secs => :age) ORDER BY seen_at DESC LIMIT 1""",
+        {"age": PULL_FRESH_SECONDS})
+    if not row:
+        return None
+    status = dict(row.get("status") or {})
+    return {**status, "online": True, "poster_id": row["poster_id"], "mode": status.get("mode") or "local",
+            "seen_at": row["seen_at"].isoformat() if hasattr(row["seen_at"], "isoformat") else row["seen_at"]}
+
+
+def queue_command(action: str, platform: str = "", post_id: str = "", by: str = "") -> int:
+    from ..infra.db import fetch_one
+
+    row = fetch_one("""INSERT INTO poster_commands (action, platform, post_id, created_by)
+                       VALUES (:a, :p, :id, :by) RETURNING command_id""",
+                    {"a": action, "p": platform, "id": post_id, "by": by})
+    return int((row or {}).get("command_id") or 0)
+
+
+def take_command() -> dict[str, Any] | None:
+    """The oldest command nobody has taken; commands older than ten minutes
+    are dropped — a "log in" pressed an hour ago is not what anyone wants now."""
+    from ..infra.db import execute, fetch_one
+
+    execute("""UPDATE poster_commands SET taken_at = NOW(), done_at = NOW(), result = '{"expired": true}'::jsonb
+               WHERE taken_at IS NULL AND created_at < NOW() - INTERVAL '10 minutes'""")
+    row = fetch_one(
+        """UPDATE poster_commands SET taken_at = NOW() WHERE command_id = (
+               SELECT command_id FROM poster_commands WHERE taken_at IS NULL ORDER BY created_at
+               LIMIT 1 FOR UPDATE SKIP LOCKED)
+           RETURNING command_id, action, platform, post_id""")
+    return dict(row) if row else None
+
+
+def finish_command(command_id: int, result: dict[str, Any]) -> None:
+    from ..infra.db import execute, to_json
+
+    execute("UPDATE poster_commands SET done_at = NOW(), result = CAST(:r AS jsonb) WHERE command_id = :id",
+            {"id": command_id, "r": to_json(result)})
+
+
+def command_result(command_id: int) -> dict[str, Any] | None:
+    from ..infra.db import fetch_one
+
+    row = fetch_one("SELECT done_at, result FROM poster_commands WHERE command_id = :id", {"id": command_id})
+    return dict(row["result"] or {}) if row and row.get("done_at") else None

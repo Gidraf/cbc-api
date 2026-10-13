@@ -4351,6 +4351,8 @@ export type PosterOverview = {
   recent: { post_id: string; platform: string; question_id: string; status: string; posted_at: string | null; url: string;
             last_error: string; last_attempt_at: string }[];
   live: { online: boolean; error?: string; paused?: boolean; busy?: string; note?: string; browser?: string;
+          /** "local": the poster on the owner's Mac (it checks in); "server": the one in the stack. */
+          mode?: "local" | "server"; poster_id?: string; seen_at?: string;
           last?: { ok: boolean; platform: string; error?: string; shot?: string; dry_run?: boolean; url?: string } | null };
   view_url: string;
 };

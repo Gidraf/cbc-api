@@ -33,8 +33,38 @@ async def login_state(platform: str, logged_in: bool, note: str = "") -> None:
                           json={"platform": platform, "logged_in": logged_in, "note": note[:300]})
 
 
+async def heartbeat(status: dict[str, Any]) -> None:
+    async with httpx.AsyncClient(timeout=20) as client:
+        await client.post(f"{config.CBC_API_URL}/api/v1/play/poster/heartbeat", headers=_headers(),
+                          json={"poster_id": config.POSTER_ID, "status": status})
+
+
+async def take_command() -> dict[str, Any] | None:
+    async with httpx.AsyncClient(timeout=20) as client:
+        r = await client.post(f"{config.CBC_API_URL}/api/v1/play/poster/commands/next", headers=_headers())
+        r.raise_for_status()
+        return r.json().get("command")
+
+
+async def command_done(command_id: int, result: dict[str, Any]) -> None:
+    async with httpx.AsyncClient(timeout=20) as client:
+        await client.post(f"{config.CBC_API_URL}/api/v1/play/poster/commands/{command_id}/done",
+                          headers=_headers(), json={"result": result})
+
+
+async def upload_shot(name: str) -> None:
+    path = os.path.join(config.SHOTS_DIR, name)
+    if not name or not os.path.exists(path):
+        return
+    async with httpx.AsyncClient(timeout=60) as client:
+        with open(path, "rb") as fh:
+            await client.post(f"{config.CBC_API_URL}/api/v1/play/poster/shots", headers=_headers(),
+                              files={"file": (name, fh, "image/png")})
+
+
 def internal(url: str) -> str:
-    """A stored file's public link, fetched inside the network instead."""
+    """A stored file's link, fetched through the API the poster talks to —
+    inside the stack's network on the server, over the domain on a Mac."""
     marker = "/api/v1/assets/"
     return config.CBC_API_URL + url[url.index(marker):] if marker in url else url
 

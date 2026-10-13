@@ -1269,6 +1269,31 @@ MIGRATIONS: list[tuple[str, str]] = [
         );
         """,
     ),
+    (
+        "043_poster_pull",
+        """
+        -- A poster the server cannot reach (on the owner's own computer) asks
+        -- for its work instead: the console's commands wait here until it
+        -- takes them, and it says it is alive with a heartbeat.
+        CREATE TABLE IF NOT EXISTS poster_commands (
+            command_id BIGSERIAL PRIMARY KEY,
+            action TEXT NOT NULL,
+            platform TEXT NOT NULL DEFAULT '',
+            post_id TEXT NOT NULL DEFAULT '',
+            created_by TEXT NOT NULL DEFAULT '',
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            taken_at TIMESTAMPTZ NULL,
+            done_at TIMESTAMPTZ NULL,
+            result JSONB NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_poster_commands_open ON poster_commands(taken_at, created_at);
+        CREATE TABLE IF NOT EXISTS poster_heartbeat (
+            poster_id TEXT PRIMARY KEY,
+            status JSONB NOT NULL DEFAULT '{}'::jsonb,
+            seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        """,
+    ),
 ]
 
 

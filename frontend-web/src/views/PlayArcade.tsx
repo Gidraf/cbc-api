@@ -1085,11 +1085,13 @@ function AutoPost() {
   const states = Object.fromEntries((o?.states || []).map((s) => [s.platform, s]));
   const platforms = o?.live?.online ? ["tiktok", "instagram", "facebook", "youtube", "linkedin"] : (o?.rules.platforms || []);
   const today = Object.values(o?.posted_today || {}).reduce((a, b) => a + b, 0);
+  const local = o?.live?.mode === "local";
   return (
     <Card title="Auto-post (browser)"
           actions={<Button size="sm" variant="ghost" onClick={() => setOpen((x) => !x)}>{open ? "Hide" : "Open"}</Button>}>
       <p style={{ margin: 0, color: "var(--ink-3)", fontSize: "var(--text-sm)" }}>
-        A real browser on the server publishes your scheduled posts from the accounts you log into on its screen — at most
+        A real browser — Chrome on your Mac, or the one on the server — publishes your scheduled posts from the accounts you
+        log into yourself — at most
         {` ${o?.rules.daily_cap ?? 30}`} a day across every channel, spaced out, within posting hours. It stops for any
         "is this you?" check for you to finish. Posting through the websites is against the platforms' rules: keep the volume
         low and watch the first runs.
@@ -1101,6 +1103,7 @@ function AutoPost() {
             <Badge tone={o.live.online ? (o.live.paused ? "warn" : "ok") : "danger"}>
               {o.live.online ? (o.live.paused ? "Paused" : o.live.busy || "Running") : "Poster offline"}
             </Badge>
+            {o.live.online && <Badge tone="neutral">{local ? `On ${o.live.poster_id || "your Mac"}` : "On the server"}</Badge>}
             <Badge tone={o.rules.enabled ? "ok" : "neutral"}>{o.rules.enabled ? "Auto-post on" : "Auto-post off (Settings → Auto-post)"}</Badge>
             <span>{today} of {o.rules.daily_cap} posted today · {o.rules.min_gap_minutes} min apart · {o.rules.hours.start}–{o.rules.hours.end} EAT</span>
             <span style={{ flex: 1 }} />
@@ -1109,7 +1112,7 @@ function AutoPost() {
               : <Button size="sm" variant="ghost" onClick={() => run("pause")}>❚❚ Pause</Button>)}
             {o.live.online && <Button size="sm" variant="ghost" disabled={command.isPending} onClick={() => run("run_now")}>Post next now</Button>}
           </Stack>
-          {!o.live.online && <p style={{ margin: 0, fontSize: "var(--text-sm)" }}>{o.live.error || "Start the social-poster service on the server."}</p>}
+          {!o.live.online && <p style={{ margin: 0, fontSize: "var(--text-sm)" }}>{o.live.error || "No poster is running. On your Mac: bash poster/mac/install.sh — or start the social-poster service on the server."}</p>}
           {o.live.note && <p style={{ margin: 0, fontSize: "var(--text-xs)", color: "var(--ink-3)" }}>{o.live.note}</p>}
 
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: "var(--s2)" }}>
@@ -1133,7 +1136,12 @@ function AutoPost() {
             })}
           </div>
 
-          {o.view_url ? (
+          {local ? (
+            <p style={{ margin: 0, fontSize: "var(--text-sm)" }}>
+              The browser is Chrome on <strong>{o.live.poster_id || "your Mac"}</strong>, in a window of its own. Press "Log in"
+              and sign in there yourself; it picks up commands within a few seconds. Keep the Mac on and the lid open while it posts.
+            </p>
+          ) : o.view_url ? (
             <div>
               <Stack direction="row" gap="var(--s2)" align="center" style={{ marginBottom: 6, fontSize: "var(--text-sm)" }}>
                 <strong>The browser's screen</strong>

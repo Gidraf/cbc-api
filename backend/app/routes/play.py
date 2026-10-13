@@ -736,17 +736,24 @@ def poster_state(payload: PosterState, auth: AuthContext = Depends(ANY)) -> dict
 @router.get("/poster/overview")
 def poster_overview(auth: AuthContext = Depends(ANY)) -> dict[str, Any]:
     """Rules, today's count, login state per platform, the queue, the last
-    attempts, and the poster's own live status."""
+    attempts, and the poster's own live status — the Mac poster's heartbeat
+    when it has checked in, else the server poster's."""
     import os
 
     from ..services import platform_settings, social_export
 
     _may_make_videos(auth)
-    public = str(platform_settings.get("public_base_url") or "").rstrip("/")
-    view = os.getenv("POSTER_VIEW_URL", "") or (f"{public}/poster/vnc.html?path=poster/websockify&autoconnect=1&resize=scale"
-                                                 if public else "")
-    live = _poster_call("GET", "/status", timeout=4.0)
-    return {**social_export.poster_overview(), "live": live if isinstance(live, dict) else {"online": False}, "view_url": view}
+    pulled = social_export.pull_poster()
+    if pulled:
+        live, view = pulled, ""
+    else:
+        public = str(platform_settings.get("public_base_url") or "").rstrip("/")
+        view = os.getenv("POSTER_VIEW_URL", "") or (
+            f"{public}/poster/vnc.html?path=poster/websockify&autoconnect=1&resize=scale" if public else "")
+        live = _poster_call("GET", "/status", timeout=4.0)
+        live = live if isinstance(live, dict) else {"online": False}
+        live.setdefault("mode", "server")
+    return {**social_export.poster_overview(), "live": live, "view_url": view}
 
 
 class PosterCommand(BaseModel):
@@ -757,9 +764,27 @@ class PosterCommand(BaseModel):
 
 @router.post("/poster/command")
 def poster_command(payload: PosterCommand, auth: AuthContext = Depends(ANY)) -> dict[str, Any]:
+    """To the Mac poster's queue when it is checking in; straight to the
+    server poster otherwise. A quick command waits a few seconds for its
+    answer; a dry run reports through the overview when it is done."""
+    import time
+
+    from ..services import social_export
+
     _may_make_videos(auth)
     if payload.action not in ("login", "check", "dry_run", "run_now", "pause", "resume"):
         raise_api_error("VALIDATION_FAILED", "Unknown poster action.")
+    if social_export.pull_poster():
+        command_id = social_export.queue_command(payload.action, payload.platform, payload.post_id,
+                                                 by=str(getattr(auth, "subject", "") or ""))
+        if payload.action in ("login", "pause", "resume", "check"):
+            for _ in range(24 if payload.action == "check" else 8):
+                time.sleep(1.0)
+                done = social_export.command_result(command_id)
+                if done is not None:
+                    return done
+        return {"ok": True, "queued": command_id,
+                "message": "Sent to the poster on your Mac — it picks commands up within a few seconds."}
     out = _poster_call("POST", f"/{payload.action}", {"platform": payload.platform, "post_id": payload.post_id},
                        timeout=15.0)
     return out if isinstance(out, dict) else {"ok": True}
@@ -772,11 +797,72 @@ def poster_shot(name: str, auth: AuthContext = Depends(ANY)):
 
     from fastapi.responses import Response as _Response
 
+    from ..infra.storage import object_storage
+
     _may_make_videos(auth)
     if not _re.fullmatch(r"[\w.-]+\.png", name):
         raise_api_error("VALIDATION_FAILED", "Not a screenshot name.")
+    stored = object_storage.read_bytes(f"poster/shots/{name}")
+    if stored:
+        return _Response(content=stored, media_type="image/png")
     out = _poster_call("GET", f"/shots/{name}")
     if isinstance(out, (bytes, bytearray)):
         return _Response(content=bytes(out), media_type="image/png")
     raise_api_error("NOT_FOUND", "No such screenshot.")
     return None
+
+
+# ── the Mac poster's side: it asks, the server answers ───────────────────────
+
+class Heartbeat(BaseModel):
+    poster_id: str
+    status: dict[str, Any] = {}
+
+
+@router.post("/poster/heartbeat")
+def poster_heartbeat(payload: Heartbeat, auth: AuthContext = Depends(ANY)) -> dict[str, Any]:
+    from ..services import social_export
+
+    _may_make_videos(auth)
+    social_export.heartbeat(payload.poster_id, {**payload.status, "mode": payload.status.get("mode") or "local"})
+    return {"ok": True}
+
+
+@router.post("/poster/commands/next")
+def poster_take_command(auth: AuthContext = Depends(ANY)) -> dict[str, Any]:
+    from ..services import social_export
+
+    _may_make_videos(auth)
+    return {"command": social_export.take_command()}
+
+
+class CommandDone(BaseModel):
+    result: dict[str, Any] = {}
+
+
+@router.post("/poster/commands/{command_id}/done")
+def poster_command_done(command_id: int, payload: CommandDone, auth: AuthContext = Depends(ANY)) -> dict[str, Any]:
+    from ..services import social_export
+
+    _may_make_videos(auth)
+    social_export.finish_command(command_id, payload.result)
+    return {"ok": True}
+
+
+@router.post("/poster/shots")
+async def poster_upload_shot(file: UploadFile = File(...), auth: AuthContext = Depends(ANY)) -> dict[str, Any]:
+    """A screenshot from the Mac poster, kept so the console can show it."""
+    import os as _os
+    import re as _re
+
+    from ..infra.storage import object_storage
+
+    _may_make_videos(auth)
+    name = _os.path.basename(file.filename or "")
+    if not _re.fullmatch(r"[\w.-]+\.png", name):
+        raise_api_error("VALIDATION_FAILED", "Not a screenshot name.")
+    payload = await file.read()
+    if payload[:8] != b"\x89PNG\r\n\x1a\n" or len(payload) > 8 * 1024 * 1024:
+        raise_api_error("VALIDATION_FAILED", "Send a PNG under 8 MB.")
+    object_storage.save_bytes(f"poster/shots/{name}", payload, "image/png")
+    return {"name": name}
