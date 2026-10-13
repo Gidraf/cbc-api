@@ -12,6 +12,7 @@ import { LoadingBlock, ToastProvider } from "./ui/components";
 import { AgentTasks } from "./views/AgentTasks";
 import { Approvals } from "./views/Approvals";
 import { ExamStudio } from "./views/ExamStudio";
+import { PlayArcade } from "./views/PlayArcade";
 import { QueueBoard } from "./views/QueueBoard";
 import { Coverage } from "./views/Coverage";
 import { ContentFactory } from "./views/ContentFactory";
@@ -101,6 +102,7 @@ function Router() {
         <Route path="questions" element={<Screen name="Question bank"><QuestionBank /></Screen>} />
         <Route path="exams" element={<Screen name="Exam builder"><ExamBuilder /></Screen>} />
         <Route path="studio" element={<Screen name="Exam studio"><ExamStudio /></Screen>} />
+        <Route path="play" element={<Screen name="Play"><PlayArcade /></Screen>} />
         <Route path="studio/:draftId" element={<Screen name="Exam studio"><ExamStudio /></Screen>} />
         <Route path="diagrams" element={<Screen name="Diagram library"><DiagramLibrary /></Screen>} />
         <Route path="media" element={<Screen name="Photo and video library"><MediaLibrary /></Screen>} />

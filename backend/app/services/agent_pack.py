@@ -77,6 +77,11 @@ marking scheme, and returns `result.render_urls` — the paper, the booklet
 - LaTeX inside JSON strings uses a single backslash escaped for JSON: `\\\\times`.
 - Figures a question needs go in `figure` as data (see `formats.json`); the
   platform draws them. Maps go in `map`. Never describe a figure in words.
+- Every mathematics item is also a game, a simulator and a narrated
+  walkthrough. Say how it is played in `interaction` (`number_line`,
+  `balance`, `bodmas`, `fraction_bar` or `choice`) and write `expression` so
+  it supports that kind — the engine takes every number from the expression,
+  and an item whose game would land anywhere but its key is sent back.
 - Do not repeat the guide's worked examples as questions; the checks catch it.
 - Sentence answers to sentence questions; values to value questions.
 

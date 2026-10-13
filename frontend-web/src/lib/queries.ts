@@ -3988,6 +3988,62 @@ export function useDraftPdf() {
 }
 
 
+// ── Play: games, simulators, walkthroughs ─────────────────────────────────
+// Every number in a spec comes from the maths engine; the console only plays it.
+
+export type PlayKind = "number_line" | "balance" | "bodmas" | "fraction_bar" | "choice";
+export type PlaySpec = { kind: PlayKind } & Record<string, any>;
+export type PlayItem = { question_id: string; question_text: string; stimulus_context?: string; spec: PlaySpec; marks?: number; diagram?: any };
+
+export function usePlayItems(grade: string, subject: string, subStrand: string) {
+  const api = useApi();
+  return useQuery({
+    queryKey: ["play-items", grade, subject, subStrand],
+    queryFn: () => {
+      const qs = new URLSearchParams({ grade, subject });
+      if (subStrand) qs.set("sub_strand", subStrand);
+      return api<{ items: { question_id: string; question_text: string; sub_strand: string; kind: PlayKind; also_choice: boolean; key_agrees: boolean | null; status: string }[]; counts: Record<string, number> }>(
+        `/api/v1/play/items?${qs}`);
+    },
+    enabled: Boolean(grade && subject),
+  });
+}
+
+export function usePlayRound() {
+  const api = useApi();
+  return useMutation({
+    mutationFn: (v: { grade: string; subject: string; sub_strand?: string; mode: string; count: number }) => {
+      const qs = new URLSearchParams({ grade: v.grade, subject: v.subject, mode: v.mode, count: String(v.count), seed: Math.random().toString(36).slice(2) });
+      if (v.sub_strand) qs.set("sub_strand", v.sub_strand);
+      return api<{ mode: string; count: number; items: PlayItem[] }>(`/api/v1/play/session?${qs}`);
+    },
+  });
+}
+
+export function usePlayOne() {
+  const api = useApi();
+  return useMutation({
+    mutationFn: (questionId: string) =>
+      api<{ question: any; play: { primary: PlaySpec | null; choice: PlaySpec | null }; walkthrough: any }>(`/api/v1/play/items/${encodeURIComponent(questionId)}`),
+  });
+}
+
+/** The walkthrough page as HTML for an iframe — the same self-playing page a
+ * share link opens, so the console shows exactly what a class would see. */
+export function useWalkthroughHtml(questionId: string) {
+  const { token } = useAuth();
+  return useQuery({
+    queryKey: ["walkthrough", questionId],
+    queryFn: async () => {
+      const { blob } = await fetchBlob(`/api/v1/play/items/${encodeURIComponent(questionId)}/walkthrough.html`, { bearerToken: token });
+      return await blob.text();
+    },
+    enabled: Boolean(questionId),
+    staleTime: 60_000,
+  });
+}
+
+
 /** The agent context pack: playbook, manifest, formats, prompts, as a zip. */
 export function useAgentPack() {
   const { token } = useAuth();

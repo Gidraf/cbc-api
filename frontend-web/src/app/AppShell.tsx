@@ -32,6 +32,7 @@ const NAV: { group: string; items: NavItem[] }[] = [
     group: "Assess",
     items: [
       { to: "/studio", label: "Exam studio", icon: "✎", right: "build", hint: "Build a paper step by step and see it as it prints" },
+      { to: "/play", label: "Play", icon: "▶", right: "build", hint: "Every question as a game, a simulator and a narrated walkthrough" },
       { to: "/questions", label: "Question bank", icon: "?", right: "read", hint: "Every approved item, in curriculum order" },
       { to: "/exams", label: "Exam builder", icon: "▦", right: "read", hint: "Compose and print papers" },
       { to: "/diagrams", label: "Diagram library", icon: "◈", right: "read", hint: "Reusable visuals and their parts" },
