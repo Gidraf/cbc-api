@@ -9,7 +9,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# --ignore-installed: the base image's typing_extensions came from apt, and
+# pip cannot uninstall what apt installed.
+RUN pip install --no-cache-dir --ignore-installed -r requirements.txt
 
 # Google Chrome where Google builds it (x86-64); the bundled Chromium elsewhere.
 RUN if [ "$(dpkg --print-architecture)" = "amd64" ]; then python -m playwright install --with-deps chrome || true; fi
