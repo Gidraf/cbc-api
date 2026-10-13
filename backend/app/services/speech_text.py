@@ -47,7 +47,8 @@ _SINGLE = {"m", "g", "l", "L", "s", "h", "W", "V", "N", "J"}
 _MULTI = sorted((u for u in _UNITS_EN if u not in _SINGLE), key=len, reverse=True)
 
 _NUM = r"(?<![\w.])(-?\d[\d,]*(?:\.\d+)?)"
-_OPERATOR_AFTER = r"(?!\s*[-+×x*/÷=^(]\s*[\w(])"
+# What follows algebra: a symbol, or the word the voice has made of one.
+_OPERATOR_AFTER = r"(?!\s*[-+×x*/÷=^(]\s*[\w(])(?!\s*(?:plus|minus|times|divided|equals|over|is)\b)"
 
 
 def _plural(number: str, pair: tuple[str, str]) -> str:
@@ -163,7 +164,7 @@ def _units_after_numbers(t: str, sw: bool) -> str:
     t = re.sub(_NUM + r" (" + single + r")(\^?[23²³])?(?![\w'])" + _OPERATOR_AFTER, lambda m: unit(m, True), t)
     # Written together, only where a plain word follows — "2.5m wide",
     # "a 3m rope" — and never at the end of an expression ("4m - 2m.").
-    t = re.sub(_NUM + r"(" + single + r")(?=\s+(?!and\b|or\b|is\b)[a-z]{2,})", lambda m: unit(m, True), t)
+    t = re.sub(_NUM + r"(" + single + r")(?=\s+(?!and\b|or\b|is\b|plus\b|minus\b|times\b|divided\b|equals\b|over\b|to\b)[a-z]{2,})", lambda m: unit(m, True), t)
     return t
 
 

@@ -36,3 +36,16 @@ def test_the_voice_says_words_not_markup(latex, said):
 def test_units_and_fractions_still_read_naturally():
     assert for_speech(r"Area $24\ \text{cm}^2$ and $\frac{3}{4}$ of it") == "Area 24 square centimetres and 3 quarters of it"
     assert for_speech("(b) 5³ = 125 m³.") == "(b) 5 cubed equals 125 cubic metres."
+
+
+@pytest.mark.parametrize("typed, written, said", [
+    ("35 * 120 = 4,200", "35 × 120 = 4,200", "35 times 120 equals 4,200"),
+    ("4,200 <= 4,800", "4,200 ≤ 4,800", "4,200 is less than or equal to 4,800"),
+    ("2*x + 3 >= 7", "2 × x + 3 ≥ 7", "2 times x plus 3 is greater than or equal to 7"),
+    ("sqrt(144 + 25)", "√(144 + 25)", "the square root of 144 plus 25"),
+    ("12 × 9 ÷ 3", "12 × 9 ÷ 3", "12 times 9 divided by 3"),
+])
+def test_typed_operators_are_written_and_said_properly(typed, written, said):
+    assert to_unicode(typed) == written
+    assert for_speech(typed) == said
+    assert "*" not in for_speech(typed) and "star" not in for_speech(typed)

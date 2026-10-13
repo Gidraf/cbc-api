@@ -70,6 +70,22 @@ def _wrap(x: str) -> str:
     return x if _simple(x) or re.fullmatch(r"[\w.^{}²³⁰-⁹]+", x) else f"({x})"
 
 
+_OPERAND_L = r"(?<=[\w)\]%°²³])"
+_OPERAND_R = r"(?=\s*[\w(\[√∛−-])"
+
+
+def _ascii_maths(t: str) -> str:
+    """Operators typed the computer way — 35 * 120, a <= b, sqrt(169) —
+    written the way a learner writes them: 35 × 120, a ≤ b, √(169)."""
+    t = re.sub(_OPERAND_L + r"\s*\*\s*" + _OPERAND_R, " × ", t)
+    t = re.sub(r"\s*<=\s*", " ≤ ", t)
+    t = re.sub(r"\s*>=\s*", " ≥ ", t)
+    t = re.sub(r"\s*!=\s*", " ≠ ", t)
+    t = re.sub(r"\bsqrt\s*\(", "√(", t)
+    t = re.sub(r"\bcbrt\s*\(", "∛(", t)
+    return t
+
+
 def to_unicode(text: str) -> str:
     """LaTeX written as a hand writes it."""
     t = _prepare(text)
@@ -95,6 +111,7 @@ def to_unicode(text: str) -> str:
     t = re.sub(r"_\s*(?:\{([^{}]*)\}|(\w))", sub, t)
     t = re.sub(r"\\([A-Za-z]+|[%${}])", lambda m: _SYMBOLS.get(m.group(1), m.group(1)), t)
     t = t.replace("{", "").replace("}", "").replace("−", "-")
+    t = _ascii_maths(t)
     t = re.sub(r"[ \t]+([.,;:?!])", r"\1", t)
     return re.sub(r"[ \t]{2,}", " ", t).strip()
 
@@ -119,9 +136,20 @@ def _said_part(x: str, denominator: bool = False) -> str:
 def to_speech(text: str) -> str:
     """LaTeX said as a teacher says it. Plain prose passes through."""
     raw = str(text or "")
-    if not re.search(r"[\\^$_∛∜√²³]", raw):
+    if not re.search(r"[\\^$_∛∜√²³*×÷=<>≤≥≠≈±+]|sqrt|cbrt|\s[−-]\s|(?<![\w)])[−-]\d", raw):
         return raw
-    t = _prepare(raw)
+    t = _ascii_maths(_prepare(raw))
+    # Symbols a voice would otherwise read aloud as "star" or skip.
+    t = re.sub(r"\s*[×*]\s*", " times ", t)
+    t = re.sub(r"\s*÷\s*", " divided by ", t)
+    t = re.sub(r"\s*≤\s*", " is less than or equal to ", t)
+    t = re.sub(r"\s*≥\s*", " is greater than or equal to ", t)
+    t = re.sub(r"\s*≠\s*", " is not equal to ", t)
+    t = re.sub(r"\s*≈\s*", " is approximately ", t)
+    t = re.sub(r"\s*±\s*", " plus or minus ", t)
+    t = re.sub(r"\bapprox\.?(?=\s)", "approximately", t)
+    t = re.sub(r"√\s*\(([^()]*)\)", r" the square root of \1 ", t)
+    t = re.sub(r"∛\s*\(([^()]*)\)", r" the cube root of \1 ", t)
     # Unicode already in the text: ∛343, √16, 5³, x² (but "125 m³" is a unit,
     # said "cubic metres" by the narration's unit rule).
     t = re.sub(r"∛\s*(\(?[\w.]+\)?)", r" the cube root of \1 ", t)
