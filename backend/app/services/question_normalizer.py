@@ -131,6 +131,20 @@ def _normalize_options(raw: Any, stated_correct: str) -> list[AnswerOption]:
     return [o for o in options if o.text]
 
 
+_PLAY_KINDS = ("number_line", "balance", "bodmas", "fraction_bar", "choice")
+
+
+def _interaction(raw: Any) -> dict[str, Any]:
+    """The writer's chosen play kind, and nothing it cannot be trusted with:
+    the engine fills every number from the expression."""
+    if isinstance(raw, str):
+        raw = {"kind": raw}
+    if not isinstance(raw, dict):
+        return {}
+    kind = str(raw.get("kind") or "").strip().lower().replace("-", "_").replace(" ", "_")
+    return {"kind": kind} if kind in _PLAY_KINDS else {}
+
+
 def scheme_text(raw: Any) -> str:
     """The marking scheme as lines of text, whatever shape the writer sent.
 
@@ -409,6 +423,7 @@ class QuestionNormalizer:
             model_answer=str(raw.get("model_answer") or raw.get("explanation") or "").strip(),
             marking_scheme=marking_scheme,
             expression=str(raw.get("expression") or "").strip(),
+            interaction=_interaction(raw.get("interaction")),
             rubric=_normalize_rubric(raw.get("kicd_rubric") or raw.get("marking_guide"), marking_scheme),
             diagram=diagram,
             activity_ref=str(raw.get("activity_ref") or "").strip(),

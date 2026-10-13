@@ -209,6 +209,11 @@ class QuestionItem(BaseModel):
     # does the arithmetic — the part it is not. Empty where the item has
     # no single calculation in it.
     expression: str = ""
+    # How this item is PLAYED — the game, simulator and walkthrough kind the
+    # writer chose: {"kind": "number_line" | "balance" | "bodmas" |
+    # "fraction_bar" | "choice"}. The engine fills the numbers from the
+    # expression; a writer's numbers are never trusted.
+    interaction: dict[str, Any] = Field(default_factory=dict)
     rubric: KicdRubric = Field(default_factory=KicdRubric)
 
     diagram: DiagramBinding | None = None
@@ -344,6 +349,7 @@ class QuestionItem(BaseModel):
             data["model_answer"] = self.model_answer
             data["marking_scheme"] = self.marking_scheme
             data["expression"] = self.expression
+            data["interaction"] = dict(self.interaction or {})
             data["rubric"] = self.rubric.model_dump()
             for src, dst in zip(self.structured_parts, data["structured_parts"]):
                 dst["model_answer"] = src.model_answer

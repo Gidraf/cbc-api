@@ -2406,6 +2406,18 @@ Procedure Steps: {{ target_exp_obj_get_procedure_steps }}
 Safety Protocols: {{ target_exp_obj_get_safety_hazards_to_check }}
 CRITICAL RULE: ALL GENERATED QUESTIONS MUST DIRECTLY TEST THIS PRACTICAL INVESTIGATION. Provide empirical observed data tables and multi-part questions (a)-(d) evaluating data analysis, scientific mechanisms, and farmer remediation recommendations.
 """,
+    "question-interactions": """=== HOW EACH ITEM IS PLAYED ===
+Every item is also a game, a simulator and a narrated walkthrough on screen. Choose how it is
+played in `interaction`, and make the `expression` support that choice — the engine draws every
+number from the expression, so the expression must be the situation, exactly:
+  {"kind": "number_line"}   a chain of additions and subtractions of integers — temperatures,
+                            depths, floors, balances, scores: expression like "-18 + 12 - 5 + 8"
+  {"kind": "balance"}       a linear equation in one unknown: expression like "3x + 5 = 20"
+  {"kind": "fraction_bar"}  the sum or difference of two fractions: expression like "3/4 + 2/3"
+  {"kind": "bodmas"}        a calculation of several operations: expression like
+                            "-16 + (-28) / 4 * (-3) - (-9)"
+  {"kind": "choice"}        anything else; the quiz plays the options and each distractor's rationale
+Vary the kinds across a batch. A conceptual item ("explain why…") is `choice` and needs no expression.""",
     "question-figures": """=== FIGURES A QUESTION NEEDS ===
 An item that is set on a figure the lesson did not draw — a shape with its sides marked, a bar
 graph, a clock, a number line, a shaded fraction, a table of data — carries the figure as DATA

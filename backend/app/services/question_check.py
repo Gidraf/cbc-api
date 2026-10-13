@@ -635,6 +635,43 @@ def _figure_contradicts_stem(questions: list[dict[str, Any]], findings: list[Fin
                 [_id(question)]))
 
 
+def _unplayable(questions: list[dict[str, Any]], *, subject: str, findings: list[Finding]) -> None:
+    """An item whose chosen play kind its expression cannot support, or whose
+    game would land somewhere other than its key."""
+    from . import play_engine
+    from .subject_checks import family_of
+
+    if subject and family_of(subject) != "mathematics":
+        return
+    # An item the engine has already found a wrong key on is reported once,
+    # by the engine; the game landing elsewhere is the same fact.
+    already = {i for f in findings if f.kind in ("wrong_key", "key_disagrees", "engine_disagrees")
+               or "maths engine makes it" in f.says for i in f.items}
+    for index, question in enumerate(questions, start=1):
+        if _id(question) in already:
+            continue
+        try:
+            play = play_engine.spec_for(question)
+        except Exception:  # noqa: BLE001
+            continue
+        label = _label(question, index)
+        if play.get("note"):
+            findings.append(Finding(
+                "unplayable",
+                f"{label}: {play['note']} (expression: {play.get('expression') or 'none'}).",
+                "The expression has to be the situation in the form that kind plays — a chain of "
+                "integer additions and subtractions for number_line, a linear equation for balance, "
+                "two fractions for fraction_bar — or the kind chosen has to be one it supports.",
+                [_id(question)]))
+        elif play.get("key_agrees") is False:
+            findings.append(Finding(
+                "play_disagrees_with_key",
+                f"{label}: worked through as a game, the expression lands on "
+                f"{(play.get('primary') or {}).get('target')}, which is not the key.",
+                "Make the expression and the key the same value — the expression is the situation.",
+                [_id(question)]))
+
+
 def _refers_to_a_figure_it_lacks(questions: list[dict[str, Any]], findings: list[Finding]) -> None:
     for index, question in enumerate(questions, start=1):
         if question.get("diagram"):
@@ -876,6 +913,7 @@ def check(questions: list[dict[str, Any]], *, grade: str = "", subject: str = ""
     _all_recall(items, findings)
     _figures_unused(items, diagrams or [], findings)
     _few_figures(items, subject=subject, findings=findings)
+    _unplayable(items, subject=subject, findings=findings)
     _too_many_tables(items, subject=subject, findings=findings)
     _figure_contradicts_stem(items, findings)
 

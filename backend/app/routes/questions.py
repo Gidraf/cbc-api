@@ -10,7 +10,7 @@ from pydantic import BaseModel
 
 from ..errors import raise_api_error
 from ..services import (assessment_format, demand_profile, design_elements, figure_sketch,
-                        notation, prompt_fragments, prompt_store)
+                        notation, play_engine, prompt_fragments, prompt_store)
 from ..services.auth import AuthContext, require_roles
 from ..services.level_register import language_block, register_block, teacher_block
 from ..services.faith_scope import prompt_block as faith_prompt_block
@@ -1222,6 +1222,7 @@ def factory_generate_questions_batch(
             # edited in Langfuse before this existed still receives it.
             + "\n\n" + assessment_format.prompt_block(payload.grade, payload.batch_count, payload.subject)
             + "\n\n" + figure_sketch.prompt_block(payload.subject)
+            + "\n\n" + play_engine.prompt_block(payload.subject)
         ),
     })
 
