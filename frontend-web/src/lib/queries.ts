@@ -4341,6 +4341,29 @@ export function useDeletePost() {
   });
 }
 
+export type BookingPlan = {
+  booked: boolean; first_day: string | null; last_day: string | null; platforms: string[];
+  days: { date: string; videos: number; times: string[] }[];
+  videos: number; posts: number; to_render: number; notes: string[];
+};
+
+/** Keep the next weeks booked for the poster (dry: preview only). */
+export function useBookAhead() {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { grade: string; subject: string; sub_strand?: string; days: number; low: number; high: number;
+                      platforms: string[]; dry: boolean }) =>
+      api<BookingPlan>("/api/v1/play/social/book", { method: "POST", body: JSON.stringify(v) }),
+    onSuccess: (_, v) => {
+      if (!v.dry) {
+        qc.invalidateQueries({ queryKey: ["poster"] });
+        qc.invalidateQueries({ queryKey: ["social-posts"] });
+      }
+    },
+  });
+}
+
 export type PosterOverview = {
   rules: { enabled: boolean; daily_cap: number; platform_cap: number; min_gap_minutes: number;
            hours: { start: string; end: string }; platforms: string[] };

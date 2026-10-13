@@ -325,11 +325,18 @@ def next_for_poster(now: datetime | None = None, *, platform: str = "", post_id:
     now = now or datetime.now(timezone.utc)
     rules = poster_rules()
     if dry:
-        chosen = fetch_one(
+        rows = fetch_all(
             """SELECT * FROM social_posts WHERE posted_at IS NULL
                AND (:id = '' OR post_id = :id) AND (:p = '' OR platform = :p)
-               ORDER BY scheduled_for NULLS LAST LIMIT 1""", {"id": post_id, "p": platform})
-        why = "" if chosen else "Nothing queued for that platform — download posts for scheduling first."
+               ORDER BY scheduled_for NULLS LAST LIMIT 20""", {"id": post_id, "p": platform}) or []
+        chosen, st = None, {}
+        for row in rows:                  # the first whose video is made
+            st = social.status(row["question_id"])
+            if st.get("status") == "ready":
+                chosen = row
+                break
+        why = ("" if chosen else "Nothing booked for that platform yet — book the next weeks first." if not rows
+               else "The booked posts' videos are still being made — try again shortly.")
     else:
         day_start = now.astimezone(EAT).replace(hour=0, minute=0, second=0, microsecond=0)
         posted_today = fetch_all("SELECT platform FROM social_posts WHERE posted_at >= :d", {"d": day_start}) or []
@@ -339,13 +346,24 @@ def next_for_poster(now: datetime | None = None, *, platform: str = "", post_id:
                AND attempts < :tries AND scheduled_for IS NOT NULL AND scheduled_for <= :now
                ORDER BY scheduled_for, platform LIMIT 50""", {"tries": MAX_ATTEMPTS, "now": now}) or []
         logged_out = {r["platform"] for r in (fetch_all("SELECT platform FROM poster_state WHERE NOT logged_in") or [])}
-        chosen, why = decide(now, rules, posted_today=posted_today, last_posted_at=last.get("t"),
-                             candidates=candidates, logged_out=logged_out)
+        waiting = 0
+        while True:     # a post whose video is still being made waits; the next one goes
+            chosen, why = decide(now, rules, posted_today=posted_today, last_posted_at=last.get("t"),
+                                 candidates=candidates, logged_out=logged_out)
+            if not chosen:
+                break
+            st = social.status(chosen["question_id"])
+            if st.get("status") == "ready":
+                break
+            waiting += 1
+            candidates = [c for c in candidates if c["post_id"] != chosen["post_id"]]
+            chosen = None
+            if waiting >= 20:
+                break
+        if not chosen and waiting:
+            why = f"{waiting} due post(s) are waiting for their videos to be made."
     if not chosen:
         return {"post": None, "reason": why, "rules": rules}
-    st = social.status(chosen["question_id"])
-    if st.get("status") != "ready":
-        return {"post": None, "reason": f"The video for {chosen['question_id']} is not made yet.", "rules": rules}
     from .whiteboard import load
 
     q_text = social.display(load(chosen["question_id"]).get("question_text") or "")
@@ -469,3 +487,165 @@ def command_result(command_id: int) -> dict[str, Any] | None:
 
     row = fetch_one("SELECT done_at, result FROM poster_commands WHERE command_id = :id", {"id": command_id})
     return dict(row["result"] or {}) if row and row.get("done_at") else None
+
+
+# ── booking ahead: the next weeks, a random few videos a day ─────────────────
+#
+# One run keeps the next `days` days booked: it starts the day after the last
+# booked post (or tomorrow) and fills up to `days` days from today, so running
+# it every two weeks or every month tops the calendar up rather than piling
+# more onto it. Each day gets a random number of videos at random times inside
+# the posting hours, spaced by the gap; a video goes to every chosen platform
+# at a different time. A question is never booked twice. Videos not made yet
+# are queued for rendering, earliest post first, and the poster passes over a
+# post whose video is not ready.
+
+POSTER_PLATFORMS = ("tiktok", "instagram", "facebook", "youtube", "linkedin")
+
+
+def day_times(rng: Any, day: date, count: int, rules: dict[str, Any]) -> list[datetime]:
+    """`count` random times on `day` inside the posting hours, at least the
+    gap apart (fewer if the hours cannot hold them)."""
+    start = int(rules["hours"]["start"][:2]) * 60 + int(rules["hours"]["start"][3:])
+    end = int(rules["hours"]["end"][:2]) * 60 + int(rules["hours"]["end"][3:]) - 15   # room to finish the last one
+    gap = max(1, int(rules["min_gap_minutes"]) + 2)    # a little over the gap: the poster ticks once a minute
+    window = max(0, end - start)
+    count = min(count, window // gap + 1)
+    if count <= 0:
+        return []
+    slack = window - (count - 1) * gap
+    picks = sorted(rng.uniform(0, slack) for _ in range(count))
+    return [datetime.combine(day, time(0, 0), tzinfo=EAT) + timedelta(minutes=round(start + p + i * gap))
+            for i, p in enumerate(picks)]
+
+
+def videos_a_day_limit(rules: dict[str, Any], platforms: list[str]) -> int:
+    """How many videos one day can hold on these platforms under the caps."""
+    n = max(1, len(platforms))
+    start = int(rules["hours"]["start"][:2]) * 60 + int(rules["hours"]["start"][3:])
+    end = int(rules["hours"]["end"][:2]) * 60 + int(rules["hours"]["end"][3:]) - 15
+    fits = (max(0, end - start) // (int(rules["min_gap_minutes"]) + 2) + 1) // n
+    return max(0, min(rules["platform_cap"], rules["daily_cap"] // n, fits))
+
+
+def default_platforms() -> list[str]:
+    """The platforms the poster is logged into, else Facebook."""
+    from ..infra.db import fetch_all
+
+    try:
+        rows = fetch_all("SELECT platform FROM poster_state WHERE logged_in") or []
+    except Exception:  # noqa: BLE001
+        rows = []
+    found = [r["platform"] for r in rows if r["platform"] in POSTER_PLATFORMS]
+    return sorted(found) or ["facebook"]
+
+
+def lay_out(rng: Any, days: list[date], videos: list[str], platforms: list[str], rules: dict[str, Any], *,
+            low: int, high: int) -> list[dict[str, Any]]:
+    """The calendar: per day a random number of videos in [low, high], each
+    on every platform at its own random time. Pure — no database."""
+    out: list[dict[str, Any]] = []
+    pool = list(videos)
+    for day in days:
+        if not pool:
+            break
+        n = min(rng.randint(low, high), len(pool))
+        chosen, pool = pool[:n], pool[n:]
+        slots = day_times(rng, day, n * len(platforms), rules)
+        pairs = [(qid, p) for qid in chosen for p in platforms]
+        rng.shuffle(pairs)
+        pairs = pairs[:len(slots)]
+        out.append({"date": day.isoformat(), "videos": len({q for q, _ in pairs}),
+                    "posts": [{"question_id": q, "platform": p, "at": at} for (q, p), at in zip(pairs, slots)]})
+        unposted = [q for q in chosen if q not in {q2 for q2, _ in pairs}]
+        pool = unposted + pool          # anything the day could not hold goes first tomorrow
+    return out
+
+
+def book_ahead(grade: str, subject: str, sub_strand: str = "", *, days: int = 25, low: int = 5, high: int = 15,
+               platforms: list[str] | None = None, today: date | None = None, seed: int | None = None,
+               dry: bool = False, created_by: str = "") -> dict[str, Any]:
+    """Keep the next `days` days booked. `dry` shows the plan, writes nothing."""
+    import random
+
+    from ..infra.db import fetch_all, fetch_one
+    from . import question_rows, social
+    from .question_dna import question_dna_service
+
+    rng = random.Random(seed)
+    rules = poster_rules()
+    platforms = [p for p in (platforms or default_platforms()) if p in POSTER_PLATFORMS]
+    if not platforms:
+        raise ValueError("Pick at least one of: " + ", ".join(POSTER_PLATFORMS))
+    notes: list[str] = []
+    room = videos_a_day_limit(rules, platforms)
+    if room <= 0:
+        raise ValueError("The posting rules leave no room for a post (Settings → Auto-post).")
+    low, high = max(1, min(low, high)), max(1, max(low, high))
+    if high > room:
+        notes.append(f"At most {room} videos a day fit {len(platforms)} platform(s) under the caps "
+                     f"({rules['daily_cap']} a day, {rules['platform_cap']} per platform, {rules['min_gap_minutes']} min "
+                     "apart) — raise them in Settings → Auto-post for more.")
+        high, low = room, min(low, room)
+
+    today = today or datetime.now(EAT).date()
+    last = fetch_one("""SELECT MAX(scheduled_for) AS t FROM social_posts
+                        WHERE posted_at IS NULL AND scheduled_for IS NOT NULL""") or {}
+    last_day = last["t"].astimezone(EAT).date() if last.get("t") else None
+    first = max(today + timedelta(days=1), (last_day + timedelta(days=1)) if last_day else today)
+    end = today + timedelta(days=max(1, days))
+    span = [first + timedelta(days=i) for i in range((end - first).days + 1)]
+    if not span:
+        return {"booked": False, "first_day": None, "last_day": last_day.isoformat() if last_day else None,
+                "days": [], "videos": 0, "posts": 0, "to_render": 0, "platforms": platforms,
+                "notes": [f"Already booked through {last_day:%a %d %b} — nothing to add yet."]}
+
+    booked = {r["question_id"] for r in (fetch_all("SELECT DISTINCT question_id FROM social_posts") or [])}
+    rows = question_dna_service.list_questions(grade=grade or None, subject=subject or None,
+                                               sub_strand=sub_strand or None, limit=2000)
+    candidates = [q for q in question_rows.flatten_all(rows)
+                  if str(q.get("status") or "") not in ("needs_review", "rejected", "superseded")
+                  and str(q.get("question_id")) not in booked]
+    rng.shuffle(candidates)                       # mix the topics
+    need = high * len(span)
+    usable: list[str] = []
+    state: dict[str, str] = {}
+    for q in candidates:
+        if len(usable) >= need:
+            break
+        try:
+            st = social.status(str(q["question_id"]), q)
+        except Exception as exc:  # noqa: BLE001
+            logger.info("Skipping %s: %s", q.get("question_id"), exc)
+            continue
+        if st.get("status") == "failed" or not st.get("scenes"):
+            continue
+        usable.append(str(q["question_id"]))
+        state[str(q["question_id"])] = str(st.get("status"))
+    usable.sort(key=lambda qid: state[qid] != "ready")     # finished videos take the nearest days
+
+    calendar = lay_out(rng, span, usable, platforms, rules, low=low, high=high)
+    used = [p["question_id"] for d in calendar for p in d["posts"]]
+    posts = sum(len(d["posts"]) for d in calendar)
+    if len(calendar) < len(span):
+        notes.append(f"Only enough unbooked questions for {len(calendar)} of {len(span)} days in this scope — "
+                     "widen it (a whole subject) or add questions.")
+    to_render = [q for q in dict.fromkeys(used) if state.get(q) != "ready"]
+    if not dry:
+        by_id = {str(q["question_id"]): q for q in candidates}
+        for d in calendar:
+            for p in d["posts"]:
+                _plan_post(by_id[p["question_id"]], p["platform"], p["at"], created_by)
+        for qid in sorted(to_render, key=lambda q: min(p["at"] for d in calendar for p in d["posts"] if p["question_id"] == q)):
+            if state.get(qid) in ("queued", "running"):
+                continue
+            try:
+                social.enqueue(qid, queued_by=created_by or "social-plan")
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Could not queue the video for %s: %s", qid, exc)
+    return {"booked": not dry, "first_day": calendar[0]["date"] if calendar else None,
+            "last_day": calendar[-1]["date"] if calendar else None, "platforms": platforms,
+            "days": [{"date": d["date"], "videos": d["videos"],
+                      "times": [f"{p['at'].astimezone(EAT):%H:%M} {p['platform']}" for p in d["posts"]]}
+                     for d in calendar],
+            "videos": len(set(used)), "posts": posts, "to_render": len(to_render), "notes": notes}

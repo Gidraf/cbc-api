@@ -617,6 +617,37 @@ def export_social(grade: str = Query(...), subject: str = Query(...), sub_strand
                         background=BackgroundTask(lambda: os.path.exists(path) and os.remove(path)))
 
 
+class BookAhead(BaseModel):
+    grade: str
+    subject: str
+    sub_strand: str = ""
+    days: int = 25
+    low: int = 5             # videos a day, at least …
+    high: int = 15           # … and at most
+    platforms: list[str] = []
+    dry: bool = False        # show the plan, book nothing
+
+
+@router.post("/social/book")
+def book_social(payload: BookAhead, auth: AuthContext = Depends(ANY)) -> dict[str, Any]:
+    """Keep the next weeks booked for the poster: a random number of videos
+    each day at random times, videos not made yet queued for rendering.
+    Running it again tops the calendar up; no question is booked twice."""
+    from ..services import social_export
+
+    _may_make_videos(auth)
+    if not (1 <= payload.days <= 62) or not (1 <= payload.low <= 30) or not (1 <= payload.high <= 30):
+        raise_api_error("VALIDATION_FAILED", "Days are 1–62; videos a day are 1–30.")
+    try:
+        return social_export.book_ahead(payload.grade, payload.subject, payload.sub_strand, days=payload.days,
+                                        low=payload.low, high=payload.high,
+                                        platforms=[p.strip().lower() for p in payload.platforms if p.strip()] or None,
+                                        dry=payload.dry, created_by=str(getattr(auth, "subject", "") or ""))
+    except ValueError as exc:
+        raise_api_error("VALIDATION_FAILED", str(exc))
+        return {}
+
+
 @router.get("/social/posts")
 def social_posts(grade: str = Query(""), subject: str = Query(""), sub_strand: str = Query(""),
                  platform: str = Query(""), _: AuthContext = Depends(ANY)) -> dict[str, Any]:

@@ -25,6 +25,8 @@ import {
   useClearHandPhoto,
   useDeletePost,
   useExportSocial,
+  useBookAhead,
+  type BookingPlan,
   useSavePost,
   useSocialPosts,
   useHandPhoto,
@@ -593,6 +595,7 @@ function SocialLibrary({ grade, subject, subStrand, onWatch }: {
         working, hashtags) ready to paste.
       </p>
       {b && <BrandEditor brand={b} />}
+      <BookAhead grade={grade} subject={subject} subStrand={subStrand} />
       <ScheduleExport grade={grade} subject={subject} subStrand={subStrand} ready={library.data?.ready} />
       {b && (
         <Stack direction="row" gap="var(--s3)" wrap align="center" style={{ marginTop: "var(--s2)", fontSize: "var(--text-sm)" }}>
@@ -903,6 +906,80 @@ const PLATFORM_LABEL: Record<string, string> = { tiktok: "TikTok", instagram: "I
   facebook: "Facebook", whatsapp: "WhatsApp", x: "X" };
 
 /** The finished posts of the scope as one zip, with a posting calendar. */
+/** Keep the next weeks booked for the browser poster. */
+function BookAhead({ grade, subject, subStrand }: { grade: string; subject: string; subStrand: string }) {
+  const book = useBookAhead();
+  const toast = useToast();
+  const [days, setDays] = React.useState(25);
+  const [low, setLow] = React.useState(5);
+  const [high, setHigh] = React.useState(15);
+  const [wholeSubject, setWholeSubject] = React.useState(true);
+  const [platforms, setPlatforms] = React.useState<string[]>(["facebook"]);
+  const [plan, setPlan] = React.useState<BookingPlan | null>(null);
+  const toggle = (p: string) => setPlatforms((xs) => (xs.includes(p) ? xs.filter((x) => x !== p) : [...xs, p]));
+  async function go(dry: boolean) {
+    try {
+      const out = await book.mutateAsync({ grade, subject, sub_strand: wholeSubject ? "" : subStrand, days, low, high, platforms, dry });
+      setPlan(out);
+      if (!dry) toast(out.posts ? `Booked ${out.videos} videos (${out.posts} posts) from ${out.first_day} to ${out.last_day}.`
+                                : out.notes[0] || "Nothing to add.", out.posts ? "ok" : "info");
+    } catch (err) { toast(err instanceof Error ? err.message : "Could not book.", "danger"); }
+  }
+  const fmt = (d: string) => new Date(`${d}T12:00:00`).toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" });
+  return (
+    <details style={{ marginTop: "var(--s3)" }}>
+      <summary style={{ cursor: "pointer", fontSize: "var(--text-sm)" }}>🗓 Book the next weeks for the auto-poster</summary>
+      <p style={{ margin: "var(--s2) 0", color: "var(--ink-3)", fontSize: "var(--text-xs)" }}>
+        Each day gets a random number of videos at random times within posting hours; each video goes to every platform you
+        tick at its own time. Videos not made yet are queued now, the soonest first. No question is booked twice. Run it
+        every two weeks or every month — it starts after the last booked day and fills up to {days} days ahead.
+      </p>
+      <Stack direction="row" gap="var(--s3)" wrap align="end">
+        <label style={lbl}>Days ahead<Input type="number" min={1} max={62} value={days} onChange={(e) => setDays(Number(e.target.value) || 25)} style={{ width: 80 }} /></label>
+        <label style={lbl}>Videos a day, at least<Input type="number" min={1} max={30} value={low} onChange={(e) => setLow(Number(e.target.value) || 1)} style={{ width: 80 }} /></label>
+        <label style={lbl}>at most<Input type="number" min={1} max={30} value={high} onChange={(e) => setHigh(Number(e.target.value) || 1)} style={{ width: 80 }} /></label>
+        <label style={{ display: "inline-flex", gap: 4, alignItems: "center", fontSize: "var(--text-sm)" }}>
+          <input type="checkbox" checked={wholeSubject || !subStrand} disabled={!subStrand} onChange={() => setWholeSubject((x) => !x)} />
+          Whole subject{subStrand && !wholeSubject ? "" : " (all topics, mixed)"}
+        </label>
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", fontSize: "var(--text-sm)" }}>
+          {["facebook", "tiktok", "instagram", "youtube", "linkedin"].map((p) => (
+            <label key={p} style={{ display: "inline-flex", gap: 4, alignItems: "center" }}>
+              <input type="checkbox" checked={platforms.includes(p)} onChange={() => toggle(p)} />{PLATFORM_LABEL[p] || p}
+            </label>
+          ))}
+        </div>
+        <Button size="sm" variant="ghost" disabled={book.isPending || !platforms.length || !subject} onClick={() => go(true)}>Preview</Button>
+        <Button size="sm" variant="primary" disabled={book.isPending || !platforms.length || !subject} onClick={() => go(false)}>
+          {book.isPending ? "Booking…" : `Book ${days} days`}
+        </Button>
+      </Stack>
+      {plan && (
+        <div style={{ marginTop: "var(--s2)", fontSize: "var(--text-sm)", display: "grid", gap: 6 }}>
+          <strong>
+            {plan.booked ? "Booked" : "Preview"}: {plan.videos} videos, {plan.posts} posts
+            {plan.first_day ? ` · ${fmt(plan.first_day)} – ${fmt(plan.last_day || plan.first_day)}` : ""}
+            {plan.to_render ? ` · ${plan.to_render} videos ${plan.booked ? "queued to be made" : "to make"}` : ""}
+          </strong>
+          {plan.notes.map((n) => <span key={n} style={{ color: "var(--warn, var(--ink-2))" }}>{n}</span>)}
+          {plan.days.length > 0 && (
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: 6 }}>
+              {plan.days.map((d) => (
+                <div key={d.date} title={d.times.join("\n")}
+                     style={{ border: "1px solid var(--line-2)", borderRadius: "var(--radius)", padding: "4px 8px", fontSize: "var(--text-xs)" }}>
+                  <strong>{fmt(d.date)}</strong> · {d.videos} video{d.videos === 1 ? "" : "s"}
+                  <div style={{ color: "var(--ink-3)" }}>{d.times.slice(0, 3).map((t) => t.split(" ")[0]).join(", ")}{d.times.length > 3 ? " …" : ""}</div>
+                </div>
+              ))}
+            </div>
+          )}
+          {!plan.booked && plan.posts > 0 && <span style={{ color: "var(--ink-3)", fontSize: "var(--text-xs)" }}>Nothing is booked until you press "Book". Hover a day for its times.</span>}
+        </div>
+      )}
+    </details>
+  );
+}
+
 function ScheduleExport({ grade, subject, subStrand, ready }: { grade: string; subject: string; subStrand: string; ready?: number }) {
   const exportZip = useExportSocial();
   const toast = useToast();
