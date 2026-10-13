@@ -87,6 +87,9 @@ case "$CODE" in
   200) echo "The CBC API accepted the key." ;;
   401) echo "The CBC API rejected the key — run: bash poster/mac/install.sh --reconfigure" >&2; exit 1 ;;
   403) echo "That key's account may not make videos (ask an admin to add it to video makers)." >&2; exit 1 ;;
+  404) echo "$CBC_API_URL does not have the Mac poster yet — on the server run:" >&2
+       echo "  git pull && docker compose up -d --build" >&2
+       echo "then run this installer again (it keeps the settings you just gave)." >&2; exit 1 ;;
   *)   echo "Could not reach $CBC_API_URL (HTTP $CODE). Installing anyway; it will keep trying." >&2 ;;
 esac
 
