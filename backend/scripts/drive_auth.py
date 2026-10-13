@@ -4,7 +4,7 @@
 Makes the refresh token the server uses to move finished videos to your
 Drive. Run it on your own computer (it opens a browser):
 
-    python3 backend/scripts/drive_auth.py
+    python3 backend/scripts/drive_auth.py ~/Downloads/client_secret_XXXX.json
 
 Before you run it, in Google Cloud Console (console.cloud.google.com):
   1. Create a project (or pick one) and enable the "Google Drive API".
@@ -38,9 +38,24 @@ AUTH = "https://accounts.google.com/o/oauth2/v2/auth"
 TOKEN = "https://oauth2.googleapis.com/token"
 
 
+def _from_file(path: str) -> tuple[str, str]:
+    """The client ID and secret from the JSON Google Cloud lets you download
+    when you create an OAuth client (client_secret_….json)."""
+    with open(os.path.expanduser(path), encoding="utf-8") as fh:
+        data = json.load(fh)
+    client = data.get("installed") or data.get("web") or data
+    if "web" in data and "installed" not in data:
+        print("Note: this is a 'Web application' client; create a 'Desktop app' client instead if sign-in "
+              "fails with redirect_uri_mismatch.")
+    return str(client.get("client_id") or ""), str(client.get("client_secret") or "")
+
+
 def main() -> None:
-    client_id = os.getenv("GOOGLE_DRIVE_CLIENT_ID") or input("OAuth client ID: ").strip()
-    client_secret = os.getenv("GOOGLE_DRIVE_CLIENT_SECRET") or getpass.getpass("OAuth client secret: ").strip()
+    client_id, client_secret = "", ""
+    if len(sys.argv) > 1 and sys.argv[1].endswith(".json"):
+        client_id, client_secret = _from_file(sys.argv[1])
+    client_id = client_id or os.getenv("GOOGLE_DRIVE_CLIENT_ID") or input("OAuth client ID: ").strip()
+    client_secret = client_secret or os.getenv("GOOGLE_DRIVE_CLIENT_SECRET") or getpass.getpass("OAuth client secret: ").strip()
     if not client_id or not client_secret:
         sys.exit("A client ID and secret are needed (see the notes at the top of this file).")
 
