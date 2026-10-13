@@ -11,7 +11,7 @@ import json
 import logging
 from typing import Any
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
@@ -213,6 +213,64 @@ def list_videos(grade: str = Query(...), subject: str = Query(...), sub_strand: 
             st = {"question_id": qid, "status": "failed", "error": str(exc)[:200]}
         out.append({**st, "question_text": str(q.get("question_text") or "")[:160]})
     return {"items": out, "ready": sum(1 for v in out if v["status"] == "ready")}
+
+
+OPERATORS = require_roles("admin", "operator")
+
+
+@router.get("/hand")
+def hand_photo(_: AuthContext = Depends(ANY)) -> dict[str, Any]:
+    """The hand the whiteboard draws with: the uploaded photo, or none (the drawn hand)."""
+    from ..services import platform_settings
+
+    url = str(platform_settings.get("whiteboard_hand_image", "") or "")
+    return {"image": url or None, "tip": str(platform_settings.get("whiteboard_hand_tip", "") or "") or None,
+            "width": int(platform_settings.get("whiteboard_hand_width", 300) or 300)}
+
+
+@router.post("/hand")
+async def set_hand_photo(file: UploadFile | None = File(None), tip_x: float = Form(...), tip_y: float = Form(...),
+                         width: int = Form(300), auth: AuthContext = Depends(OPERATORS)) -> dict[str, Any]:
+    """A photo of a real hand holding a pen — a PNG cut out on a transparent
+    background — and where its pen's tip is, in the photo's pixels. Sent
+    without a file, it moves the tip or resizes the photo already in use."""
+    import hashlib
+
+    from ..infra.storage import object_storage
+    from ..services import platform_settings, whiteboard
+
+    values: dict[str, Any] = {"whiteboard_hand_tip": f"{tip_x:.1f},{tip_y:.1f}",
+                              "whiteboard_hand_width": max(80, min(int(width), 900))}
+    if file is not None:
+        payload = await file.read()
+        size = whiteboard.png_size(payload)
+        if not size:
+            raise_api_error("VALIDATION_FAILED", "Send a PNG — cut out on a transparent background.")
+        if len(payload) > 6 * 1024 * 1024:
+            raise_api_error("VALIDATION_FAILED", "Keep the hand photo under 6 MB.")
+        name = f"whiteboard/hand-{hashlib.sha256(payload).hexdigest()[:16]}.png"
+        url = object_storage.save_bytes(name, payload, "image/png")
+        if url.startswith("local://"):
+            raise_api_error("STORAGE_UPLOAD_FAILED", "Object storage refused the photo — is MinIO up?")
+        values["whiteboard_hand_image"] = url
+        w, h = size
+        if not (0 <= tip_x <= w and 0 <= tip_y <= h):
+            raise_api_error("VALIDATION_FAILED", f"The tip ({tip_x:.0f},{tip_y:.0f}) is outside the {w}×{h} photo.")
+    elif not platform_settings.get("whiteboard_hand_image", ""):
+        raise_api_error("VALIDATION_FAILED", "Upload a hand photo first.")
+    platform_settings.set_many(values, updated_by=str(getattr(auth, "subject", "") or ""))
+    whiteboard._hand_bytes.cache_clear()
+    return hand_photo(auth)
+
+
+@router.delete("/hand")
+def clear_hand_photo(auth: AuthContext = Depends(OPERATORS)) -> dict[str, Any]:
+    """Back to the drawn hand."""
+    from ..services import platform_settings
+
+    platform_settings.set_many({"whiteboard_hand_image": "", "whiteboard_hand_tip": ""},
+                               updated_by=str(getattr(auth, "subject", "") or ""))
+    return hand_photo(auth)
 
 
 def walkthrough_html(data: dict[str, Any], *, title: str = "", voice: str = "en-KE", autoplay: bool = True) -> str:

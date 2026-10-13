@@ -4114,6 +4114,49 @@ export function useMakeVideos() {
   });
 }
 
+export type HandPhoto = { image: string | null; tip: string | null; width: number };
+
+/** The hand the whiteboard writes with: an uploaded photo, or the drawn one. */
+export function useHandPhoto() {
+  const api = useApi();
+  return useQuery({ queryKey: ["whiteboard-hand"], queryFn: () => api<HandPhoto>("/api/v1/play/hand") });
+}
+
+export function useSetHandPhoto() {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { file?: File | null; tip_x: number; tip_y: number; width: number }) => {
+      const form = new FormData();
+      if (v.file) form.append("file", v.file);
+      form.append("tip_x", String(v.tip_x));
+      form.append("tip_y", String(v.tip_y));
+      form.append("width", String(v.width));
+      return api<HandPhoto>("/api/v1/play/hand", { method: "POST", body: form });
+    },
+    onSuccess: (data) => {
+      qc.setQueryData(["whiteboard-hand"], data);
+      qc.invalidateQueries({ queryKey: ["whiteboard"] });
+      qc.invalidateQueries({ queryKey: ["video"] });
+      qc.invalidateQueries({ queryKey: ["video-library"] });
+    },
+  });
+}
+
+export function useClearHandPhoto() {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api<HandPhoto>("/api/v1/play/hand", { method: "DELETE" }),
+    onSuccess: (data) => {
+      qc.setQueryData(["whiteboard-hand"], data);
+      qc.invalidateQueries({ queryKey: ["whiteboard"] });
+      qc.invalidateQueries({ queryKey: ["video"] });
+      qc.invalidateQueries({ queryKey: ["video-library"] });
+    },
+  });
+}
+
 
 /** The agent context pack: playbook, manifest, formats, prompts, as a zip. */
 export function useAgentPack() {

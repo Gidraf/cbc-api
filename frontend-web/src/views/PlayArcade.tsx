@@ -22,7 +22,10 @@ import {
   usePlayRound,
   useStoredStructure,
   useSubjects,
+  useClearHandPhoto,
+  useHandPhoto,
   useMakeVideo,
+  useSetHandPhoto,
   useMakeVideos,
   useVideoLibrary,
   useVideoStatus,
@@ -516,6 +519,7 @@ function VideoLibrary({ grade, subject, subStrand, open, onToggle, onWatch }: {
         Each item drawn on a whiteboard and narrated in the Kenyan voice, as an MP4 you can post or play in class.
         Made once and kept; an edited item gets a new video.
       </p>
+      {open && <HandPicker />}
       {open && library.error && <ErrorNotice error={library.error} />}
       {open && rows.length > 0 && (
         <>
@@ -537,6 +541,95 @@ function VideoLibrary({ grade, subject, subStrand, open, onToggle, onWatch }: {
         </>
       )}
     </Card>
+  );
+}
+
+/** The hand that writes: the drawn one, or a photo of a real hand. Upload a
+ *  PNG cut out on a transparent background, click the pen's tip, save. */
+function HandPicker() {
+  const current = useHandPhoto();
+  const save = useSetHandPhoto();
+  const clear = useClearHandPhoto();
+  const toast = useToast();
+  const [file, setFile] = React.useState<File | null>(null);
+  const [preview, setPreview] = React.useState<string | null>(null);
+  const [tip, setTip] = React.useState<{ x: number; y: number } | null>(null);
+  const [width, setWidth] = React.useState(300);
+  const imgRef = React.useRef<HTMLImageElement>(null);
+
+  React.useEffect(() => {
+    const c = current.data;
+    if (!c) return;
+    setWidth(c.width || 300);
+    if (c.tip && !file) {
+      const [x, y] = c.tip.split(",").map(Number);
+      setTip({ x, y });
+    }
+  }, [current.data, file]);
+  React.useEffect(() => () => { if (preview) URL.revokeObjectURL(preview); }, [preview]);
+
+  const shown = preview || current.data?.image || null;
+  function pick(f: File | null) {
+    if (!f) return;
+    if (f.type !== "image/png") return toast("Use a PNG cut out on a transparent background.", "danger");
+    setFile(f); setTip(null); setPreview(URL.createObjectURL(f));
+  }
+  function mark(e: React.MouseEvent<HTMLImageElement>) {
+    const img = imgRef.current;
+    if (!img) return;
+    const r = img.getBoundingClientRect();
+    setTip({ x: Math.round((e.clientX - r.left) * (img.naturalWidth / r.width)),
+             y: Math.round((e.clientY - r.top) * (img.naturalHeight / r.height)) });
+  }
+  async function submit() {
+    if (!tip) return toast("Click the pen's tip on the photo first.", "info");
+    try {
+      await save.mutateAsync({ file, tip_x: tip.x, tip_y: tip.y, width });
+      setFile(null); setPreview(null);
+      toast("Hand saved — the whiteboard writes with it now. Videos re-render with it.", "ok");
+    } catch (err) { toast(err instanceof Error ? err.message : "Could not save the hand.", "danger"); }
+  }
+  async function useDrawn() {
+    try { await clear.mutateAsync(); setTip(null); setFile(null); setPreview(null); toast("Back to the drawn hand.", "ok"); }
+    catch (err) { toast(err instanceof Error ? err.message : "Could not change the hand.", "danger"); }
+  }
+  const img = imgRef.current;
+  const dot = tip && img && img.naturalWidth
+    ? { left: `${(tip.x / img.naturalWidth) * 100}%`, top: `${(tip.y / img.naturalHeight) * 100}%` } : null;
+
+  return (
+    <div style={{ marginTop: "var(--s3)", padding: "var(--s3)", border: "1px solid var(--line-2)", borderRadius: "var(--radius)" }}>
+      <Stack direction="row" gap="var(--s2)" wrap align="center">
+        <strong style={{ fontSize: "var(--text-sm)" }}>The hand</strong>
+        <Badge tone={current.data?.image ? "ok" : "neutral"}>{current.data?.image ? "Photo of a real hand" : "Drawn hand"}</Badge>
+        <span style={{ flex: 1 }} />
+        <label style={{ cursor: "pointer" }}>
+          <input type="file" accept="image/png" style={{ display: "none" }} onChange={(e) => pick(e.target.files?.[0] || null)} />
+          <span style={{ fontSize: "var(--text-sm)", textDecoration: "underline" }}>Upload a hand photo (PNG)</span>
+        </label>
+        {current.data?.image && <Button size="sm" variant="ghost" disabled={clear.isPending} onClick={useDrawn}>Use the drawn hand</Button>}
+      </Stack>
+      <p style={{ margin: "var(--s2) 0", color: "var(--ink-3)", fontSize: "var(--text-xs)" }}>
+        A photo of a hand holding a pen, cut out on a transparent background (remove.bg or any photo editor does it).
+        Use a photo you took or are licensed to use. Then click the pen's tip.
+      </p>
+      {shown && (
+        <Stack direction="row" gap="var(--s3)" wrap align="start">
+          <div style={{ position: "relative", display: "inline-block", background: "repeating-conic-gradient(#eee 0 25%, #fff 0 50%) 0 0/16px 16px", borderRadius: 6 }}>
+            <img ref={imgRef} src={shown} alt="Hand" onClick={mark} onLoad={() => setTip((t) => (t ? { ...t } : t))}
+                 style={{ display: "block", maxWidth: 260, maxHeight: 260, cursor: "crosshair" }} />
+            {dot && <span style={{ position: "absolute", ...dot, width: 12, height: 12, marginLeft: -6, marginTop: -6, borderRadius: 6, background: "#dc2626", border: "2px solid #fff", pointerEvents: "none" }} />}
+          </div>
+          <div style={{ fontSize: "var(--text-sm)", display: "grid", gap: "var(--s2)" }}>
+            <span>{tip ? `Pen tip at ${tip.x}, ${tip.y}` : "Click the pen's tip on the photo."}</span>
+            <label>Size on the board: {width}px
+              <input type="range" min={140} max={600} step={10} value={width} onChange={(e) => setWidth(Number(e.target.value))} style={{ display: "block", width: 200 }} />
+            </label>
+            <Button size="sm" variant="primary" disabled={save.isPending || !tip} onClick={submit}>Save the hand</Button>
+          </div>
+        </Stack>
+      )}
+    </div>
   );
 }
 

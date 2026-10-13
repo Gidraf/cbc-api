@@ -25,7 +25,7 @@ from typing import Any
 logger = logging.getLogger("cbc-whiteboard")
 
 STATIC = Path(__file__).resolve().parent.parent / "static"
-VERSION = "wb2"          # bump when the board draws differently: old videos re-render
+VERSION = "wb3"          # bump when the board draws differently: old videos re-render
 FPS = 20
 WIDTH, HEIGHT = 1280, 720
 MAX_SECONDS = 240
@@ -40,12 +40,68 @@ def _script(js: str) -> str:
     return js.replace("</script", "<\\/script")
 
 
+def png_size(payload: bytes) -> tuple[int, int] | None:
+    """Width and height from a PNG's header — the only format a cut-out
+    hand needs, and no imaging library to install for it."""
+    if len(payload) < 24 or payload[:8] != b"\x89PNG\r\n\x1a\n" or payload[12:16] != b"IHDR":
+        return None
+    return int.from_bytes(payload[16:20], "big"), int.from_bytes(payload[20:24], "big")
+
+
+@lru_cache(maxsize=4)
+def _hand_bytes(url: str) -> bytes | None:
+    import httpx
+
+    try:
+        if url.startswith("data:"):
+            import base64
+
+            return base64.b64decode(url.split(",", 1)[1])
+        with httpx.Client(timeout=20.0, follow_redirects=True) as client:
+            got = client.get(url)
+        return got.content if got.status_code == 200 else None
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Could not fetch the hand photo %s: %s", url, exc)
+        return None
+
+
+def hand() -> dict[str, Any] | None:
+    """The uploaded hand photo, ready to inline: {src, w, h, tip_x, tip_y,
+    width}. None — the drawn hand — when there is none or it cannot be read.
+    Inlined as a data URI so the headless renderer never fetches it."""
+    import base64
+
+    from . import platform_settings
+
+    url = str(platform_settings.get("whiteboard_hand_image", "") or "").strip()
+    if not url:
+        return None
+    payload = _hand_bytes(url)
+    size = png_size(payload or b"")
+    if not payload or not size:
+        return None
+    try:
+        tx, ty = (float(v) for v in str(platform_settings.get("whiteboard_hand_tip", "") or "").split(","))
+    except ValueError:
+        tx, ty = size[0] * 0.2, size[1] * 0.2
+    width = int(platform_settings.get("whiteboard_hand_width", 300) or 300)
+    return {"src": "data:image/png;base64," + base64.b64encode(payload).decode(), "w": size[0], "h": size[1],
+            "tip_x": tx, "tip_y": ty, "width": max(80, min(width, 900)), "url": url}
+
+
 def page(data: dict[str, Any], *, title: str = "", voice: str = "en-KE", durations: list[float] | None = None,
          render: bool = False, autoplay: bool = False) -> str:
     """The board for one walkthrough. `durations` (seconds per scene) come
     from the voice files when rendering; live, the board estimates them."""
     payload = {"scenes": data.get("scenes") or [], "seed": str(data.get("question_id") or title or "wb"),
                "voice": voice, "durations": durations or []}
+    try:
+        photo = hand()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Hand photo unavailable, drawing the hand: %s", exc)
+        photo = None
+    if photo:
+        payload["hand"] = {k: v for k, v in photo.items() if k != "url"}
     chrome = "" if render else _CONTROLS.replace("__AUTOPLAY__", "true" if autoplay else "false")
     return (_PAGE.replace("__TITLE__", html.escape(title or "Whiteboard"))
             .replace("__BODY_CLASS__", "render" if render else "live")
@@ -56,9 +112,14 @@ def page(data: dict[str, Any], *, title: str = "", voice: str = "en-KE", duratio
 
 
 def cache_key(data: dict[str, Any], voice: str, fps: int = FPS) -> str:
+    from . import platform_settings
+
     says = [s.get("say") for s in data.get("scenes") or []]
-    blob = json.dumps({"v": VERSION, "scenes": data.get("scenes"), "says": says, "voice": voice, "fps": fps},
-                      sort_keys=True, default=str)
+    # A new hand photo, tip or size is a new video.
+    look = [str(platform_settings.get(k, "") or "") for k in
+            ("whiteboard_hand_image", "whiteboard_hand_tip", "whiteboard_hand_width", "narration_rate")]
+    blob = json.dumps({"v": VERSION, "scenes": data.get("scenes"), "says": says, "voice": voice, "fps": fps,
+                       "look": look}, sort_keys=True, default=str)
     return hashlib.sha256(blob.encode()).hexdigest()[:20]
 
 

@@ -71,7 +71,47 @@ def language_for(subject: str = "") -> str:
     return "en"
 
 
+# Microsoft moved speech off the host edge-tts 7.2.8 calls: since October 2026
+# speech.platform.bing.com answers synthesis with 403 (rany2/edge-tts#490),
+# while api.msedgeservices.com — where Edge itself now speaks — accepts the
+# same token. EDGE_TTS_WSS_URL overrides it if Microsoft moves again.
+_EDGE_WSS = "wss://api.msedgeservices.com/tts/cognitiveservices/websocket/v1?Ocp-Apim-Subscription-Key={token}"
+
+
+def _point_edge_at_current_host() -> None:
+    import os
+
+    try:
+        import edge_tts.communicate as communicate
+        import edge_tts.constants as constants
+    except ImportError:
+        return
+    url = os.getenv("EDGE_TTS_WSS_URL", "").strip() or _EDGE_WSS.format(token=constants.TRUSTED_CLIENT_TOKEN)
+    if "speech.platform.bing.com" in communicate.WSS_URL or os.getenv("EDGE_TTS_WSS_URL"):
+        communicate.WSS_URL = constants.WSS_URL = url
+
+
+def _rate() -> str:
+    from ..platform_settings import get
+
+    rate = str(get("narration_rate", "-8%") or "").strip() or "+0%"
+    if not re.match(r"^[+-]\d{1,2}%$", rate):
+        rate = rate if rate.startswith(("+", "-")) else f"+{rate}"
+        rate = rate if rate.endswith("%") else f"{rate}%"
+    return rate if re.match(r"^[+-]\d{1,2}%$", rate) else "+0%"
+
+
 def voice_for(subject: str = "") -> str:
+    try:
+        from ..platform_settings import get
+
+        chosen = str(get("narration_voice", "") or "").strip()
+    except Exception:  # noqa: BLE001
+        chosen = ""
+    # The console's choice reads English lessons; a Kiswahili or French
+    # lesson keeps a voice that speaks its language.
+    if chosen and re.match(r"^[a-z]{2}-[A-Z]{2}-", chosen) and language_for(subject) == chosen[:2]:
+        return chosen
     configured = (getattr(settings, "tts_voice", "") or "").strip()
     # A configured voice that names a locale is a deliberate choice; the
     # OpenAI-style names ("alloy") are not edge voices and must not be passed on.
@@ -97,9 +137,15 @@ class TtsService:
             logger.info("edge-tts is not installed; no free engine available.")
             return None
 
+        _point_edge_at_current_host()
+        try:
+            rate = _rate()
+        except Exception:  # noqa: BLE001
+            rate = "+0%"
+
         async def synthesise() -> bytes:
             audio = bytearray()
-            communicate = edge_tts.Communicate(text, voice)
+            communicate = edge_tts.Communicate(text, voice, rate=rate)
             async for chunk in communicate.stream():
                 if chunk.get("type") == "audio" and chunk.get("data"):
                     audio.extend(chunk["data"])

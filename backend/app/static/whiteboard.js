@@ -47,45 +47,86 @@
   }
 
   function buildHand() {
-    // A teacher's right hand — deep brown skin, lighter nails, a shirt cuff —
-    // holding a marker. Drawn along +x with the marker's tip at (0,0); the
-    // inner group tilts it so the arm comes in from the lower right.
-    const SKIN = "#5b3520", SHADE = "#3d2215", LIGHT = "#80492b", NAIL = "#d9b3a1", CREASE = "#2f1a10";
+    // A teacher's right hand holding a marker, seen from the board's side:
+    // the back of the hand, the index finger along the top of the marker,
+    // the thumb pinching it from below, the other fingers curled under, and
+    // a shirt cuff at the wrist. Two frames: the marker's (tip at 0,0, along
+    // +x) for what touches it, and the arm's, turned 18° from it, for the
+    // rest — a marker is held steeper than the forearm.
     const g = document.createElementNS(NS, "g");
-    g.innerHTML = `<g class="tilt"><g transform="scale(1.22)">
-      <!-- forearm and sleeve, behind everything -->
-      <path d="M190,-44 C260,-58 330,-66 470,-70 L480,52 C340,52 270,50 205,40 Z" fill="${SKIN}"/>
-      <path d="M200,-40 C260,-52 320,-60 470,-64" fill="none" stroke="${LIGHT}" stroke-width="6" stroke-linecap="round" opacity=".55"/>
-      <path d="M300,-74 C360,-80 420,-82 900,-90 L900,80 C440,70 370,66 306,62 C296,20 294,-30 300,-74 Z" fill="#6f9fd6"/>
-      <path d="M300,-74 C296,-30 296,20 306,62" fill="none" stroke="#4a78ad" stroke-width="7"/>
-      <path d="M322,-70 C318,-20 318,24 326,60" fill="none" stroke="#4a78ad" stroke-width="2.5" opacity=".7"/>
-      <!-- curled middle, ring and little fingers, under the marker -->
-      <ellipse cx="150" cy="44" rx="20" ry="15" fill="${SHADE}"/>
-      <ellipse cx="128" cy="38" rx="20" ry="15" fill="${SKIN}"/>
-      <ellipse cx="104" cy="28" rx="19" ry="14" fill="${SKIN}"/>
-      <path d="M92,30 C100,40 114,42 124,36 M116,40 C124,50 140,52 150,46" fill="none" stroke="${CREASE}" stroke-width="2" opacity=".6"/>
-      <!-- the marker -->
-      <g transform="rotate(-15)">
-        <polygon points="0,0 15,-5 15,5" fill="#1b1f2a"/>
-        <rect x="14" y="-8" width="12" height="16" rx="2" fill="#9ca3af"/>
-        <rect x="25" y="-10" width="200" height="20" rx="5" fill="#1f2937"/>
-        <rect x="212" y="-11" width="34" height="22" rx="6" fill="#1d4ed8"/>
-        <rect x="30" y="-8" width="180" height="4" rx="2" fill="#475569" opacity=".7"/>
+    const photo = data.hand;
+    if (photo && photo.src) {
+      // An uploaded photograph of a real hand, its pen's tip on (0,0).
+      const k = photo.width / photo.w, w = photo.width, h = photo.h * k;
+      g.innerHTML = `<defs><filter id="wbShadow" x="-30%" y="-30%" width="160%" height="160%">
+        <feColorMatrix type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 .22 0"/>
+        <feGaussianBlur stdDeviation="8"/></filter></defs>
+        <g class="tilt">
+          <image href="${photo.src}" x="${-photo.tip_x * k + 14}" y="${-photo.tip_y * k + 18}" width="${w}" height="${h}" filter="url(#wbShadow)"/>
+          <image href="${photo.src}" x="${-photo.tip_x * k}" y="${-photo.tip_y * k}" width="${w}" height="${h}"/>
+        </g>`;
+      g._tilt = g.querySelector(".tilt");
+      g._photo = true;
+      svg.appendChild(g);
+      return g;
+    }
+    g.innerHTML = `<defs>
+      <linearGradient id="wbSkin" gradientUnits="userSpaceOnUse" x1="118" y1="0" x2="342" y2="0">
+        <stop offset="0" stop-color="#4f2d1f"/><stop offset=".32" stop-color="#7a4a33"/>
+        <stop offset=".68" stop-color="#6a3f2a"/><stop offset="1" stop-color="#3b2117"/></linearGradient>
+      <linearGradient id="wbIndex" gradientUnits="userSpaceOnUse" x1="0" y1="84" x2="0" y2="154">
+        <stop offset="0" stop-color="#8d5b41"/><stop offset=".55" stop-color="#704430"/><stop offset="1" stop-color="#4c2b1d"/></linearGradient>
+      <linearGradient id="wbThumb" gradientUnits="userSpaceOnUse" x1="120" y1="0" x2="164" y2="0">
+        <stop offset="0" stop-color="#4a2a1c"/><stop offset=".6" stop-color="#6c412c"/><stop offset="1" stop-color="#5a3423"/></linearGradient>
+      <radialGradient id="wbSheen" gradientUnits="userSpaceOnUse" cx="230" cy="150" r="120">
+        <stop offset="0" stop-color="#ffd8bf" stop-opacity=".2"/><stop offset="1" stop-color="#ffd8bf" stop-opacity="0"/></radialGradient>
+      <linearGradient id="wbPen" gradientUnits="userSpaceOnUse" x1="0" y1="-8" x2="0" y2="8">
+        <stop offset="0" stop-color="#6b7280"/><stop offset=".35" stop-color="#1f2430"/><stop offset="1" stop-color="#07090e"/></linearGradient>
+      <linearGradient id="wbChrome" gradientUnits="userSpaceOnUse" x1="0" y1="-8" x2="0" y2="8">
+        <stop offset="0" stop-color="#f1f5f9"/><stop offset=".5" stop-color="#94a3b8"/><stop offset="1" stop-color="#475569"/></linearGradient>
+      <filter id="wbShadow" x="-30%" y="-30%" width="160%" height="160%">
+        <feColorMatrix type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 .22 0"/>
+        <feGaussianBlur stdDeviation="8"/></filter>
+    </defs>
+    <g class="tilt"><g transform="scale(.85) translate(-130,-95)">
+      <use href="#wbHandBody" transform="translate(16,20)" filter="url(#wbShadow)"/>
+      <g id="wbHandBody">
+        <!-- the fist, the wrist and the forearm, in one outline -->
+        <path d="M136,104 C132,96 140,90 152,89 C178,86 206,80 234,80 C262,82 290,100 308,126 C322,146 326,176 320,206
+                 C316,240 312,280 316,320 C326,420 350,700 380,1500 L180,1500 C210,700 214,420 196,330
+                 C178,292 156,252 140,214 C128,186 120,158 126,136 C128,124 132,112 136,104 Z" fill="url(#wbSkin)"/>
+        <path d="M136,104 C132,96 140,90 152,89 C178,86 206,80 234,80 C262,82 290,100 308,126 C322,146 326,176 320,206
+                 C316,240 312,280 316,320 L196,330 C178,292 156,252 140,214 C128,186 120,158 126,136 Z" fill="url(#wbSheen)"/>
+        <!-- knuckles of the curled fingers down the right edge, the palm's crease, the wrist -->
+        <path d="M304,146 c-7,10 -9,22 -5,34 M314,190 c-6,10 -7,22 -3,32 M312,234 c-5,9 -6,19 -3,28" fill="none" stroke="#2a150c" stroke-opacity=".35" stroke-width="2.2" stroke-linecap="round"/>
+        <path d="M232,170 C250,176 268,188 282,204" fill="none" stroke="#2a150c" stroke-opacity=".3" stroke-width="2"/>
+        <path d="M150,196 C168,232 188,264 212,302" fill="none" stroke="#2a150c" stroke-opacity=".28" stroke-width="2.4"/>
+        <path d="M206,334 C240,326 284,322 316,326" fill="none" stroke="#2a150c" stroke-opacity=".18" stroke-width="2"/>
+        <path d="M296,340 C306,420 320,560 336,800" fill="none" stroke="#ffd8bf" stroke-opacity=".12" stroke-width="12" stroke-linecap="round"/>
+        <path d="M244,120 C268,128 292,140 312,160" fill="none" stroke="#ffd8bf" stroke-opacity=".12" stroke-width="8" stroke-linecap="round"/>
+        <!-- the pen, resting against the curled middle finger -->
+        <g transform="translate(130,95) rotate(49.5)">
+          <polygon points="0,0 14,-3.6 14,3.6" fill="#a1a1aa"/>
+          <rect x="13" y="-5.5" width="11" height="11" rx="2" fill="url(#wbChrome)"/>
+          <rect x="23" y="-8" width="150" height="16" rx="5" fill="url(#wbPen)"/>
+          <rect x="126" y="-8.5" width="9" height="17" rx="1.5" fill="url(#wbChrome)"/>
+          <rect x="168" y="-7" width="16" height="14" rx="6" fill="#111827"/>
+          <rect x="30" y="-6" width="90" height="2.5" rx="1.2" fill="#fff" fill-opacity=".18"/>
+        </g>
+        <!-- the thumb, pinching the pen from the left -->
+        <path d="M126,140 C124,126 132,116 143,118 C154,120 162,132 164,146 C166,164 160,182 150,194 C140,198 131,186 128,170 Z" fill="url(#wbThumb)"/>
+        <path d="M150,194 C160,182 166,164 164,146 C162,132 154,121 144,118" fill="none" stroke="#1f0f08" stroke-opacity=".45" stroke-width="2.4" stroke-linecap="round"/>
+        <path d="M128,126 C130,121 135,118 140,119" fill="none" stroke="#c9a08c" stroke-width="3" stroke-linecap="round" stroke-opacity=".8"/>
+        <!-- the index finger, arched over the pen -->
+        <path d="M136,104 C132,96 140,90 152,89 C178,86 206,80 234,80 C262,82 290,100 308,126 C300,140 290,150 280,153
+                 C262,140 244,132 224,128 C200,124 178,124 160,124 C148,122 140,115 136,104 Z" fill="url(#wbIndex)"/>
+        <path d="M150,90 C178,86 206,81 234,81 C256,83 280,98 298,116" fill="none" stroke="#ffd8bf" stroke-opacity=".18" stroke-width="4" stroke-linecap="round"/>
+        <path d="M152,122 C180,125 206,125 226,129 C248,134 266,142 284,154" fill="none" stroke="#1f0f08" stroke-opacity=".6" stroke-width="3" stroke-linecap="round"/>
+        <path d="M156,128 C182,131 208,132 228,136 C248,141 264,149 280,160" fill="none" stroke="#1f0f08" stroke-opacity=".18" stroke-width="7" stroke-linecap="round"/>
+        <path d="M184,86 C189,98 189,112 185,124 M232,82 c6,8 7,19 3,30 M241,84 c5,7 6,15 3,23" fill="none" stroke="#2a150c" stroke-opacity=".32" stroke-width="1.8" stroke-linecap="round"/>
+        <path d="M140,99 C141,93 147,90 155,90 C160,90 163,93 162,97 C158,100 148,101 140,99 Z" fill="#c69a86"/>
+        <path d="M144,95 C147,92 152,91 156,92" fill="none" stroke="#fff" stroke-opacity=".5" stroke-width="1.6" stroke-linecap="round"/>
       </g>
-      <!-- back of the hand -->
-      <path d="M96,-30 C112,-60 168,-70 204,-48 C230,-30 232,12 214,36 C196,58 150,58 122,42 C100,30 88,-6 96,-30 Z" fill="${SKIN}"/>
-      <path d="M112,-44 C140,-62 180,-62 204,-44" fill="none" stroke="${LIGHT}" stroke-width="7" stroke-linecap="round" opacity=".6"/>
-      <path d="M150,-30 C160,-20 168,-6 170,8 M176,-34 C188,-22 194,-6 194,10" fill="none" stroke="${SHADE}" stroke-width="2.5" opacity=".45"/>
-      <!-- index finger along the top of the marker -->
-      <path d="M36,-8 C34,-22 46,-30 60,-29 L122,-40 C134,-42 140,-20 128,-14 L64,-2 C50,1 38,2 36,-8 Z" fill="${SKIN}"/>
-      <path d="M58,-28 L120,-38" fill="none" stroke="${LIGHT}" stroke-width="4" stroke-linecap="round" opacity=".55"/>
-      <path d="M82,-30 C86,-24 86,-12 84,-6 M104,-36 C108,-28 108,-16 106,-10" fill="none" stroke="${CREASE}" stroke-width="2" opacity=".55"/>
-      <ellipse cx="47" cy="-17" rx="9" ry="5.5" transform="rotate(-12 47 -17)" fill="${NAIL}"/>
-      <!-- thumb, below the marker -->
-      <path d="M42,8 C40,20 50,28 64,26 L132,30 C142,30 142,8 130,8 L64,6 C54,5 44,0 42,8 Z" fill="${SKIN}"/>
-      <path d="M62,26 L130,30" fill="none" stroke="${SHADE}" stroke-width="3" opacity=".5"/>
-      <ellipse cx="52" cy="15" rx="8" ry="5" transform="rotate(8 52 15)" fill="${NAIL}"/>
-      <path d="M90,10 C94,16 94,22 92,26" fill="none" stroke="${CREASE}" stroke-width="2" opacity=".55"/>
     </g></g>`;
     g._tilt = g.querySelector(".tilt");
     svg.appendChild(g);
@@ -94,10 +135,14 @@
 
   // Where the marker's tip is, and how the hand leans. Set directly (not
   // through gsap transforms) so a seek always lands the same pose.
-  const BASE_TILT = 36;
   function pose(x, y, tilt) {
+    // The forearm hangs nearly straight down, as in a photograph of a hand
+    // at a board; writing on the left, it reaches across from the right.
+    // A photograph leans less: rotating a photo far from how it was taken
+    // shows that it is one.
+    const lean = (-(1 - Math.max(0, Math.min(1, x / W))) * 14 + 4) * (hand._photo ? 0.4 : 1);
     hand.setAttribute("transform", `translate(${x.toFixed(1)},${y.toFixed(1)})`);
-    hand._tilt.setAttribute("transform", `rotate(${(BASE_TILT + (tilt || 0)).toFixed(2)})`);
+    hand._tilt.setAttribute("transform", `rotate(${(lean + (tilt || 0)).toFixed(2)})`);
   }
 
   // ── marks ──

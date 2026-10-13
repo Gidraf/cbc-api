@@ -69,6 +69,23 @@ SETTINGS: tuple[Setting, ...] = (
             "Datasets screen's Ingest everything, without the press.", False, "Datasets"),
     Setting("auto_ingest_interval_minutes", "AUTO_INGEST_INTERVAL_MINUTES", "int", "Auto-ingest every (minutes)",
             "How often the watch looks at Langfuse. Five at the least.", 30, "Datasets"),
+    Setting("narration_voice", "TTS_VOICE", "string", "Narration voice",
+            "The voice that reads walkthroughs and whiteboard videos — a Microsoft neural voice name. "
+            "Women's voices: en-KE-AsiliaNeural (Kenyan), en-US-AvaMultilingualNeural and "
+            "en-US-EmmaMultilingualNeural (the most natural), en-GB-SoniaNeural, en-ZA-LeahNeural, "
+            "en-NG-EzinneNeural. Kiswahili lessons keep sw-KE-ZuriNeural. Empty: the Kenyan default.",
+            "", "Voice"),
+    Setting("narration_rate", "TTS_RATE", "string", "Narration speed",
+            "How fast the voice reads, as a change from normal: -10% is a calm classroom pace, +0% normal.",
+            "-8%", "Voice"),
+    Setting("whiteboard_hand_image", "", "string", "Whiteboard hand photo",
+            "A PNG with a transparent background of a hand holding a pen, used instead of the drawn hand. "
+            "Upload it from Play → Whiteboard videos, where you also click the pen's tip. Use a photo you "
+            "own or are licensed to use. Empty: the drawn hand.", "", "Whiteboard"),
+    Setting("whiteboard_hand_tip", "", "string", "Pen tip in the hand photo",
+            "Where the pen's tip is in the photo, as x,y pixels.", "", "Whiteboard"),
+    Setting("whiteboard_hand_width", "", "int", "Hand photo width on the board",
+            "How wide the hand photo is drawn, in board pixels (the board is 1280 wide).", 300, "Whiteboard"),
     Setting("openai_writer_model", "OPENAI_DEFAULT_MODEL", "string", "Writing model (OpenAI)",
             "The model every writing station runs on unless bound otherwise: notes, questions, diagrams, "
             "activities, review. Changed here by an approved model-scout recommendation, and back again "

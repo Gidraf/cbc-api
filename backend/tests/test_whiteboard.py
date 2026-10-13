@@ -99,3 +99,58 @@ def test_video_is_a_queue_kind():
     from app.services import job_queue
 
     assert "video" in job_queue.known_kinds()
+
+
+def test_edge_speaks_through_the_host_microsoft_still_answers():
+    import importlib
+
+    import edge_tts.communicate as communicate
+    import edge_tts.constants as constants
+
+    T = importlib.import_module("app.services.math_engine.tts_service")
+    legacy = f"wss://{constants.BASE_URL}/edge/v1?TrustedClientToken={constants.TRUSTED_CLIENT_TOKEN}"
+    with mock.patch.object(communicate, "WSS_URL", legacy), mock.patch.object(constants, "WSS_URL", legacy):
+        T._point_edge_at_current_host()
+        assert communicate.WSS_URL.startswith("wss://api.msedgeservices.com/")
+        assert constants.TRUSTED_CLIENT_TOKEN in communicate.WSS_URL
+
+
+def test_the_console_chooses_the_voice_and_its_pace():
+    import importlib
+
+    T = importlib.import_module("app.services.math_engine.tts_service")
+    chosen = {"narration_voice": "en-US-AvaMultilingualNeural", "narration_rate": "-10"}
+    with mock.patch("app.services.platform_settings.get", side_effect=lambda k, d=None: chosen.get(k, d)):
+        assert T.voice_for("Mathematics") == "en-US-AvaMultilingualNeural"
+        assert T.voice_for("Kiswahili") == "sw-KE-ZuriNeural"     # a Kiswahili lesson keeps a Kiswahili voice
+        assert T._rate() == "-10%"
+    with mock.patch("app.services.platform_settings.get", side_effect=lambda k, d=None: {"narration_rate": "fast"}.get(k, d)):
+        assert T._rate() == "+0%"
+
+
+def _png(w, h):
+    import struct
+    import zlib
+
+    def chunk(t, d):
+        return struct.pack(">I", len(d)) + t + d + struct.pack(">I", zlib.crc32(t + d) & 0xffffffff)
+    raw = b"".join(b"\x00" + b"\x00\x00\x00\x00" * w for _ in range(h))
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 6, 0, 0, 0))
+            + chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b""))
+
+
+def test_a_hand_photo_is_inlined_with_its_pen_tip():
+    import base64
+
+    png = _png(40, 60)
+    assert W.png_size(png) == (40, 60) and W.png_size(b"GIF89a" + b"0" * 30) is None
+    vals = {"whiteboard_hand_image": "data:image/png;base64," + base64.b64encode(png).decode(),
+            "whiteboard_hand_tip": "8,12", "whiteboard_hand_width": 250}
+    W._hand_bytes.cache_clear()
+    with mock.patch("app.services.platform_settings.get", side_effect=lambda k, d=None: vals.get(k, d)):
+        doc = W.page(P.walkthrough(DIVER), render=True)
+        photo_key = W.cache_key(P.walkthrough(DIVER), "v")
+    assert '"hand": {"src": "data:image/png;base64,' in doc and '"tip_x": 8.0' in doc and '"width": 250' in doc
+    with mock.patch("app.services.platform_settings.get", side_effect=lambda k, d=None: d):
+        assert '"hand"' not in W.page(P.walkthrough(DIVER), render=True)    # no photo: the drawn hand
+        assert W.cache_key(P.walkthrough(DIVER), "v") != photo_key          # a new hand is a new video
