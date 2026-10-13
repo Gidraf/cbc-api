@@ -183,3 +183,43 @@ def test_a_sentence_is_spoken_once():
         assert W.speak("Hello class.", "en-KE-AsiliaNeural") == (b"x" * 12000, 2.0)
         assert W.speak("Hello class.", "en-KE-AsiliaNeural")[1] == 2.0
     assert len(calls) == 1 and saved.call_args[0][0].startswith("narration/")
+
+
+def test_a_second_unknown_never_takes_a_topic_down():
+    q = {"question_text": "Find k if the line $y = kx + 3$ passes through $(2, 7)$.", "expression": "2k + 3 = kx + 7"}
+    assert P.spec_for(q) is not None and P.walkthrough(q)["scenes"]
+
+
+def test_every_walkthrough_shows_working_before_the_answer():
+    q = {"question_text": r"Simplify $\frac{p^7 \times p^4}{p^6}$.",
+         "model_answer": r"Product rule: $p^7 \times p^4 = p^{11}$. Quotient rule: $p^{11} \div p^6 = p^5$. Option B is correct.",
+         "options": [{"id": "A", "text": "$p^{17}$"}, {"id": "B", "text": "$p^5$", "is_correct": True}]}
+    scenes = P.walkthrough(q)["scenes"]
+    kinds = [s["scene"] for s in scenes]
+    assert kinds[:3] == ["title", "working", "working"] and "answer" in kinds
+    assert all("Option B" not in s.get("text", "") for s in scenes)
+    page = W.page(P.walkthrough(q), render=True)
+    assert "\\\\frac" not in page.split("window.WB_DATA = ", 1)[1].split(";</script>", 1)[0]   # the board writes p¹¹, not \\frac
+
+
+def test_only_admins_and_named_makers_make_videos():
+    from app.errors import ApiError
+    from app.routes.play import _may_make_videos
+    from app.services.auth import AuthContext
+
+    with mock.patch("app.services.platform_settings.get", side_effect=lambda k, d=None: ["gidraf"] if k == "video_makers" else d):
+        _may_make_videos(AuthContext(subject="gidraf", role="user", auth_type="session"))
+        _may_make_videos(AuthContext(subject="someone", role="admin", auth_type="session"))
+        import pytest
+        with pytest.raises(ApiError):
+            _may_make_videos(AuthContext(subject="someone", role="operator", auth_type="session"))
+
+
+def test_files_are_linked_at_the_domain_not_the_ip():
+    from app.infra import storage
+    from app.settings import settings
+
+    with mock.patch.object(settings, "minio_public_base_url", "http://5.78.137.59:6500"), \
+         mock.patch("app.services.platform_settings.get", side_effect=lambda k, d=None: "https://cbc.gidraf.dev" if k == "public_base_url" else d):
+        assert storage.public_object_url("videos/q/k.mp4") == f"https://cbc.gidraf.dev/api/v1/assets/{settings.minio_bucket}/videos/q/k.mp4"
+        assert storage.legacy_asset_base() == f"http://5.78.137.59:6500/{settings.minio_bucket}"

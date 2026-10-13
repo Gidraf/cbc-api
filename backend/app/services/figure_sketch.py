@@ -16,7 +16,8 @@ is 144 degrees. Every label is a `<text>` the scene builder can address,
 so "the length marked x" is a part the marking scheme knows.
 
 Kinds:
-  number_line   {"min", "max", "step", "marks": [{"value", "label"}], "arrow_from", "arrow_to"}
+  number_line   {"min", "max", "step", "marks": [{"value", "label"}], "arrow_from", "arrow_to",
+                 "rays": [{"from", "direction": "right|left" | "to", "open_from", "open_to"}]}
   bar_chart     {"title", "categories", "values", "x_label", "y_label", "unit"}
   pie_chart     {"title", "slices": [{"label", "value"}], "show": "percent|value|none"}
   line_graph    {"title", "x_label", "y_label", "points": [[x, y], ...]}
@@ -104,6 +105,28 @@ def _number_line(f: dict[str, Any]) -> tuple[str, str]:
         out.append(f"<circle cx='{x:.1f}' cy='{y}' r='5' fill='#c0392b'/>")
         if mark.get("label"):
             out.append(_text(x, y - 16, mark["label"], size=13, weight="bold"))
+    # An inequality's solution set: a ray from a circle (open for < and >,
+    # filled for ≤ and ≥) running off one end, or a segment between two.
+    for ray in f.get("rays") or []:
+        if not isinstance(ray, dict) or ray.get("from") is None:
+            continue
+        start = px(_num(ray["from"]))
+        if ray.get("to") is not None:
+            end, head = px(_num(ray["to"])), ""
+        else:
+            right = str(ray.get("direction") or "right").lower() != "left"
+            end, head = (x1 + 14 if right else x0 - 14), " marker-end='url(#ray)'"
+        yy = y - 26
+        out.append("<defs><marker id='ray' markerWidth='16' markerHeight='16' refX='11' refY='8' orient='auto' "
+                   "markerUnits='userSpaceOnUse'><path d='M0,1 L16,8 L0,15 z' fill='#1d4ed8'/></marker></defs>")
+        out.append(f"<line x1='{start:.1f}' y1='{yy}' x2='{end:.1f}' y2='{yy}' stroke='#1d4ed8' stroke-width='4'{head}/>")
+        for value, is_open in ((start, ray.get("open_from", ray.get("open", False))),
+                               (end if ray.get("to") is not None else None, ray.get("open_to", False))):
+            if value is None:
+                continue
+            fill = "#ffffff" if is_open else "#1d4ed8"
+            out.append(f"<circle cx='{value:.1f}' cy='{yy}' r='8' fill='{fill}' stroke='#1d4ed8' stroke-width='3'/>")
+            out.append(f"<line x1='{value:.1f}' y1='{yy + 8}' x2='{value:.1f}' y2='{y}' stroke='#1d4ed8' stroke-width='1.5' stroke-dasharray='3 3'/>")
     if f.get("arrow_from") is not None and f.get("arrow_to") is not None:
         a, b = px(_num(f["arrow_from"])), px(_num(f["arrow_to"]))
         out.append(f"<path d='M{a:.1f},{y - 30} Q{(a + b) / 2:.1f},{y - 70} {b:.1f},{y - 30}' fill='none' "

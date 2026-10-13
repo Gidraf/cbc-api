@@ -47,6 +47,8 @@ from .services.workflow import WorkflowService
 from .state import StageBinding, default_model_for, runtime_state
 from .services import model_policy
 
+from .routes.assets import router as assets_router
+
 app = FastAPI(title="CBC API Platform", version="2.1.0", description="Contract-First Educational Content Production System")
 
 app.add_middleware(
@@ -58,6 +60,28 @@ app.add_middleware(
 )
 
 # Mount Modular Feature Routers
+@app.middleware("http")
+async def _asset_links(request, call_next):
+    """Links saved before the assets route pointed at MinIO's IP and port;
+    they are rewritten to the public address on the way out, so old rows
+    need no migration."""
+    response = await call_next(request)
+    kind = response.headers.get("content-type", "")
+    if not (kind.startswith("application/json") or kind.startswith("text/html")):
+        return response
+    from .infra.storage import asset_base, legacy_asset_base
+
+    old, new = legacy_asset_base(), asset_base()
+    if old == new:
+        return response
+    body = b"".join([chunk async for chunk in response.body_iterator])
+    body = body.replace(old.encode(), new.encode())
+    headers = {k: v for k, v in response.headers.items() if k.lower() != "content-length"}
+    from fastapi.responses import Response as _Response
+
+    return _Response(content=body, status_code=response.status_code, headers=headers)
+
+
 app.include_router(auth_router)
 app.include_router(admin_langfuse_router)
 app.include_router(admin_logs_router)
@@ -69,6 +93,7 @@ app.include_router(questions_router)
 app.include_router(exams_router)
 app.include_router(exam_builder_router)
 app.include_router(play_router)
+app.include_router(assets_router)
 app.include_router(targets_router)
 app.include_router(model_scout_router)
 app.include_router(pipelines_router)

@@ -58,7 +58,9 @@ def for_speech(text: str, lang: str = "en") -> str:
     """The line as a teacher would say it."""
     if not text:
         return text
-    t = str(text)
+    from .latex_text import to_speech
+
+    t = to_speech(str(text))
     sw = lang.startswith("sw")
     t = _currency(t, sw)
     t = _temperatures_and_angles(t, sw)

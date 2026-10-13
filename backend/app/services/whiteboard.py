@@ -57,6 +57,13 @@ def _hand_bytes(url: str) -> bytes | None:
             import base64
 
             return base64.b64decode(url.split(",", 1)[1])
+        # One of our own stored files, whatever address it was linked at:
+        # read it from storage rather than round the internet and back.
+        from ..infra.storage import object_storage
+
+        name = object_storage.object_name_of(url)
+        if name and object_storage.object_exists(name):
+            return object_storage.read_bytes(name) or None
         with httpx.Client(timeout=20.0, follow_redirects=True) as client:
             got = client.get(url)
         return got.content if got.status_code == 200 else None
@@ -107,6 +114,28 @@ def emoji_hand(style: str) -> dict[str, Any] | None:
             "tip_x": EMOJI_TIP[0], "tip_y": EMOJI_TIP[1], "width": 250, "emoji": True}
 
 
+_SHOWN = ("text", "context", "expression", "before", "after", "left", "right", "caption", "name", "handle", "cta")
+
+
+def _written(scenes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Every field the board writes, in the symbols a hand writes — ¾, x²,
+    ∛216, ≤, 45° — never `\\frac`. What is said is left alone."""
+    import copy
+
+    from .latex_text import to_unicode
+
+    def walk(value: Any, key: str = "") -> Any:
+        if isinstance(value, dict):
+            return {k: walk(v, k) for k, v in value.items()}
+        if isinstance(value, list):
+            return [walk(v, key) for v in value]
+        if isinstance(value, str) and key in _SHOWN:
+            return to_unicode(value)
+        return value
+
+    return [walk(copy.deepcopy(sc)) if isinstance(sc, dict) else sc for sc in scenes]
+
+
 def page(data: dict[str, Any], *, title: str = "", voice: str = "en-KE", durations: list[float] | None = None,
          render: bool = False, autoplay: bool = False, audio: list[str | None] | None = None,
          social: dict[str, Any] | None = None) -> str:
@@ -114,7 +143,7 @@ def page(data: dict[str, Any], *, title: str = "", voice: str = "en-KE", duratio
     from the voice files when rendering; live, the board estimates them.
     With `social`, the board sits in a vertical 1080×1920 frame with a
     hook, captions, a countdown and the brand (see services/social.py)."""
-    payload = {"scenes": data.get("scenes") or [], "seed": str(data.get("question_id") or title or "wb"),
+    payload = {"scenes": _written(data.get("scenes") or []), "seed": str(data.get("question_id") or title or "wb"),
                "voice": voice, "durations": durations or [], "audio": audio or []}
     if social:
         payload["social"] = {k: v for k, v in social.items() if k not in ("logo", "music_url")}
@@ -157,9 +186,9 @@ def object_name(question_id: str, key: str) -> str:
 
 
 def public_url(name: str) -> str:
-    from ..settings import settings
+    from ..infra.storage import public_object_url
 
-    return f"{settings.minio_public_base_url}/{settings.minio_bucket}/{name}"
+    return public_object_url(name)
 
 
 def ffmpeg_binary() -> str | None:
@@ -402,17 +431,18 @@ def load(question_id: str) -> dict[str, Any]:
     return question_rows.flatten(question_dna_service.get_question(question_id))
 
 
-def _script_for(q: dict[str, Any]) -> tuple[dict[str, Any], str, str]:
-    """The walkthrough, the voice and the title for one stored item."""
+def _script_for(q: dict[str, Any], voice: str = "") -> tuple[dict[str, Any], str, str]:
+    """The walkthrough, the voice and the title for one stored item. A voice
+    named for this item overrides the console's default."""
     from . import play_engine
     from .math_engine.tts_service import voice_for
 
     link = q.get("curriculum") or {}
     data = play_engine.walkthrough(q, grade=str(link.get("grade") or ""))
-    return data, voice_for(str(link.get("subject") or "")), str(q.get("question_text") or "")[:80]
+    return data, (voice or voice_for(str(link.get("subject") or ""))), str(q.get("question_text") or "")[:80]
 
 
-def status(question_id: str, q: dict[str, Any] | None = None) -> dict[str, Any]:
+def status(question_id: str, q: dict[str, Any] | None = None, voice: str = "") -> dict[str, Any]:
     """The video for this item as it reads now: ready (a URL), being made
     (the job), failed (why), or none yet. A changed item is a new video —
     the key is over the script, so an edit never serves the old one."""
@@ -420,7 +450,7 @@ def status(question_id: str, q: dict[str, Any] | None = None) -> dict[str, Any]:
     from ..infra.storage import object_storage
 
     q = q or load(question_id)
-    data, voice, _ = _script_for(q)
+    data, voice, _ = _script_for(q, voice)
     key = cache_key(data, voice)
     name = object_name(question_id, key)
     out: dict[str, Any] = {"question_id": question_id, "key": key, "scenes": len(data.get("scenes") or [])}
@@ -437,12 +467,12 @@ def status(question_id: str, q: dict[str, Any] | None = None) -> dict[str, Any]:
     return {**out, "status": "none"}
 
 
-def enqueue(question_id: str, *, queued_by: str = "", batch_id: str = "") -> dict[str, Any]:
+def enqueue(question_id: str, *, queued_by: str = "", batch_id: str = "", voice: str = "") -> dict[str, Any]:
     """Queue one item's video unless it is already made or being made."""
     from . import job_queue
 
     q = load(question_id)
-    now = status(question_id, q)
+    now = status(question_id, q, voice)
     if now["status"] in ("ready", "queued", "running"):
         return now
     if not now["scenes"]:
@@ -452,7 +482,7 @@ def enqueue(question_id: str, *, queued_by: str = "", batch_id: str = "") -> dic
         JOB_KIND, str(link.get("grade") or ""), str(link.get("subject") or ""),
         # artifact_id keys the duplicate check: two items in one sub-strand
         # are two videos, not one queued twice.
-        {"artifact_id": question_id, "question_id": question_id},
+        {"artifact_id": question_id, "question_id": question_id, "voice": voice},
         strand=str(link.get("strand") or ""), sub_strand=str(link.get("sub_strand") or ""),
         batch_id=batch_id, queued_by=queued_by or "whiteboard")
     job_queue.start_worker()
@@ -467,7 +497,7 @@ def run_job(job: dict[str, Any]) -> dict[str, Any]:
     if not qid:
         return {"status": "skipped", "reason": "no question_id"}
     q = load(qid)
-    data, voice, title = _script_for(q)
+    data, voice, title = _script_for(q, str(payload.get("voice") or ""))
     run_log.step("Script", f"{len(data.get('scenes') or [])} scenes · {data.get('kind')} · {voice}")
     last = {"stage": ""}
 
@@ -486,7 +516,18 @@ def run_job(job: dict[str, Any]) -> dict[str, Any]:
 def _capture(cdp: str, doc: str, out: Path, ffmpeg: str, fps: int, tick: Any, *,
              size: tuple[int, int] = (WIDTH, HEIGHT), selector: str = "#wb",
              thumb_at: float | None = None) -> tuple[float, bytes | None]:
+    """Every frame of the page, piped into ffmpeg.
+
+    A video is a minute or two of screenshots, longer than the browser
+    service keeps a session: browserless closed it mid-capture ("Target
+    page, context or browser has been closed") and not one video finished.
+    So the image's own Chromium is used first — no session limit — and the
+    service only when there is none; and a browser that goes away mid-way
+    is reconnected and the capture resumes at the frame it reached, since
+    the page draws any moment the same way."""
     from playwright.sync_api import sync_playwright
+
+    from .browser import CONNECT_TIMEOUT_MS, LAUNCH_ARGS
 
     encoder = subprocess.Popen(
         [ffmpeg, "-y", "-loglevel", "error", "-f", "image2pipe", "-framerate", str(fps), "-c:v", "mjpeg",
@@ -495,40 +536,51 @@ def _capture(cdp: str, doc: str, out: Path, ffmpeg: str, fps: int, tick: Any, *,
         stdin=subprocess.PIPE, stderr=subprocess.PIPE)
     total = 0.0
     thumb: bytes | None = None
+    frame = 0
+    frames = 0
+    attempts = 0
     try:
         with sync_playwright() as p:
-            # The browser service when it answers, else the image's own
-            # Chromium — the same rule as every PDF (services/browser.py).
-            from .browser import CONNECT_TIMEOUT_MS, LAUNCH_ARGS
-
-            browser = None
-            if cdp:
+            while True:
+                browser = None
                 try:
-                    browser = p.chromium.connect_over_cdp(cdp, timeout=CONNECT_TIMEOUT_MS)
+                    try:
+                        browser = p.chromium.launch(headless=True, args=LAUNCH_ARGS)
+                    except Exception as exc:  # noqa: BLE001
+                        if not cdp:
+                            raise
+                        logger.info("No local Chromium (%s); using the browser service.", str(exc).splitlines()[0][:120])
+                        browser = p.chromium.connect_over_cdp(cdp, timeout=CONNECT_TIMEOUT_MS)
+                    context = browser.new_context(viewport={"width": size[0], "height": size[1]}, device_scale_factor=1)
+                    pg = context.new_page()
+                    pg.set_content(doc, wait_until="domcontentloaded", timeout=60000)  # fonts: __ready waits up to 2.5 s
+                    total = min(float(pg.evaluate("() => window.__ready")), MAX_SECONDS)
+                    frames = int(total * fps) + 1
+                    box = pg.locator(selector).bounding_box() or {"x": 0, "y": 0, "width": size[0], "height": size[1]}
+                    clip = {"x": box["x"], "y": box["y"], "width": box["width"], "height": box["height"]}
+                    while frame < frames:
+                        pg.evaluate("t => window.__seek(t)", frame / fps)
+                        encoder.stdin.write(pg.screenshot(type="jpeg", quality=88, clip=clip,  # type: ignore[union-attr]
+                                                          animations="disabled"))
+                        if frame % (fps * 2) == 0:
+                            tick("draw", frame, frames)
+                        frame += 1
+                    if thumb_at is not None:
+                        pg.evaluate("t => window.__seek(t)", min(thumb_at, total))
+                        thumb = pg.screenshot(type="jpeg", quality=90, clip=clip)
+                    context.close()
+                    break
                 except Exception as exc:  # noqa: BLE001
-                    logger.warning("Browser service at %s unreachable (%s); launching the local Chromium.",
-                                   cdp, str(exc).splitlines()[0][:160])
-            if browser is None:
-                browser = p.chromium.launch(headless=True, args=LAUNCH_ARGS)
-            try:
-                context = browser.new_context(viewport={"width": size[0], "height": size[1]}, device_scale_factor=1)
-                pg = context.new_page()
-                pg.set_content(doc, wait_until="domcontentloaded", timeout=60000)  # fonts: __ready waits up to 2.5 s
-                total = float(pg.evaluate("() => window.__ready"))
-                total = min(total, MAX_SECONDS)
-                frames = int(total * fps) + 1
-                board = pg.locator(selector)
-                for f in range(frames):
-                    pg.evaluate("t => window.__seek(t)", f / fps)
-                    encoder.stdin.write(board.screenshot(type="jpeg", quality=88))  # type: ignore[union-attr]
-                    if f % (fps * 2) == 0:
-                        tick("draw", f, frames)
-                if thumb_at is not None:
-                    pg.evaluate("t => window.__seek(t)", min(thumb_at, total))
-                    thumb = board.screenshot(type="jpeg", quality=90)
-                context.close()
-            finally:
-                browser.close()
+                    attempts += 1
+                    if attempts > 3 or "closed" not in str(exc).lower():
+                        raise
+                    logger.warning("Browser went away at frame %d of %d; reconnecting (%d).", frame, frames, attempts)
+                finally:
+                    try:
+                        if browser is not None:
+                            browser.close()
+                    except Exception:  # noqa: BLE001
+                        pass
     finally:
         if encoder.stdin and not encoder.stdin.closed:
             encoder.stdin.close()

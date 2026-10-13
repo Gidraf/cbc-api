@@ -156,13 +156,39 @@
 
   // On a phone the board is a third of the screen: its writing is a fifth
   // bigger in the social cut.
-  const ZOOM = data.social ? 1.2 : 1;
+  const ZOOM = data.social ? 1.4 : 1;
+
+  // Powers and indices drawn raised or lowered, small — not as the font's
+  // superscript characters, which a handwriting font draws as tick marks.
+  const SUPS = "⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻⁼⁽⁾ⁿⁱ", SUPN = "0123456789+-=()ni";
+  const SUBS = "₀₁₂₃₄₅₆₇₈₉₊₋₌₍₎", SUBN = "0123456789+-=()";
+  function setRich(node, str) {
+    const re = new RegExp(`([${SUPS}]+)|([${SUBS}]+)`, "g");
+    let last = 0, m;
+    const plainRun = (s) => { if (s) node.appendChild(document.createTextNode(s)); };
+    while ((m = re.exec(str))) {
+      plainRun(str.slice(last, m.index));
+      const sup = !!m[1], run = m[1] || m[2];
+      const span = document.createElementNS(NS, "tspan");
+      span.textContent = [...run].map((ch) => (sup ? SUPN[SUPS.indexOf(ch)] : SUBN[SUBS.indexOf(ch)])).join("");
+      span.setAttribute("font-size", "62%");
+      span.setAttribute("dy", sup ? "-0.55em" : "0.3em");
+      node.appendChild(span);
+      // Back to the line for what follows.
+      const back = document.createElementNS(NS, "tspan");
+      back.setAttribute("dy", sup ? "0.341em" : "-0.186em");  // the same distance, at full size
+      back.textContent = "\u200b";
+      node.appendChild(back);
+      last = m.index + run.length;
+    }
+    plainRun(str.slice(last));
+  }
 
   function text(x, y, str, opt) {
     opt = opt || {};
     const t = el("text", { x, y, "font-size": Math.round((opt.size || 34) * ZOOM), fill: opt.color || INK.black,
       "font-family": FONT, "text-anchor": "start" }, page);
-    t.textContent = str;
+    setRich(t, str);
     const id = `c${clipN++}`;
     const cp = el("clipPath", { id }, defs);
     const r = el("rect", { x: x - 4, y: y - (opt.size || 34) * ZOOM * 1.1, width: 0, height: (opt.size || 34) * ZOOM * 1.5 }, cp);
@@ -308,15 +334,38 @@
 
   const builders = {
     title(s, at, dur) {
-      const lines = wrap(s.text, Math.round(46 / ZOOM)).slice(0, 6);
-      const ctx = s.context ? wrap(s.context, Math.round(60 / ZOOM)).slice(0, 2) : [];
-      const per = (dur * 0.8) / Math.max(1, lines.length + ctx.length);
+      // The whole question, never a heading: the writing shrinks for a long
+      // question, and one longer than a board carries on to the next.
+      const fit = (size) => {
+        const width = Math.round((46 * 40) / (size * ZOOM));
+        const lines = wrap(s.text, width);
+        const ctx = s.context ? wrap(s.context, Math.round(width * 1.45)) : [];
+        const height = ctx.length * 40 * ZOOM * (size / 40) + lines.length * size * 1.45 * ZOOM;
+        return { lines, ctx, height };
+      };
+      let size = 40, laid = fit(size);
+      while (laid.height > H - 170 && size > 28) { size -= 4; laid = fit(size); }
+      const { lines, ctx } = laid;
+      const per = (dur * 0.85) / Math.max(1, lines.length + ctx.length);
       let y = 120;
-      for (const c of ctx) { at = write(text(LEFT, y, c, { size: 26, color: INK.grey }), at, per); y += 40 * ZOOM; }
-      if (ctx.length) y += 10;
-      for (const l of lines) { at = write(text(LEFT, y, l, { size: 40 }), at, per); y += 58 * ZOOM; }
+      const next = (step) => {
+        y += step;
+        if (y > H - 50) { at = newPage(at); y = 110; }
+      };
+      for (const c of ctx) { at = write(text(LEFT, y, c, { size: Math.round(size * 0.68), color: INK.grey }), at, per); next(40 * ZOOM * (size / 40)); }
+      if (ctx.length) next(10);
+      for (const l of lines) { at = write(text(LEFT, y, l, { size }), at, per); next(size * 1.45 * ZOOM); }
       cursorY = y + 20;
       return { at, y };
+    },
+    working(s, at, dur) {
+      // A line of the item's own solution, written as the voice reads it.
+      const lines = wrap(s.text, Math.round(54 / ZOOM)).slice(0, 4);
+      at = room(lines.length * 46 * ZOOM + 16, at);
+      const per = (dur * 0.85) / Math.max(1, lines.length);
+      for (const l of lines) { at = write(text(LEFT, cursorY, l, { size: 34, color: INK.blue }), at, per); cursorY += 48 * ZOOM; }
+      cursorY += 16;
+      return { at };
     },
     setup(s, at, dur) {
       at = newPage(at); cursorY = 110;

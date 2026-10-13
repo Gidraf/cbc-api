@@ -127,7 +127,7 @@ def walkthrough_page(question_id: str, voice: str = Query("en-KE"), autoplay: bo
 
 
 @router.get("/items/{question_id}/whiteboard.html")
-def whiteboard_page(question_id: str, autoplay: bool = Query(False),
+def whiteboard_page(question_id: str, autoplay: bool = Query(False), voice: str = Query(""),
                     _: AuthContext = Depends(ANY)) -> HTMLResponse:
     """The item worked on a whiteboard: a marker writes each line, circles
     the side sum, draws the number line or the scale, boxes the answer and
@@ -137,26 +137,40 @@ def whiteboard_page(question_id: str, autoplay: bool = Query(False),
     from ..services import whiteboard
 
     q = _one(question_id)
-    data, voice, title = whiteboard._script_for(q)
+    data, voice, title = whiteboard._script_for(q, _voice(voice))
     return HTMLResponse(whiteboard.live_page(data, title=title, voice=voice, autoplay=autoplay))
 
 
 @router.get("/items/{question_id}/video")
-def video_status(question_id: str, _: AuthContext = Depends(ANY)) -> dict[str, Any]:
+def video_status(question_id: str, voice: str = Query(""), _: AuthContext = Depends(ANY)) -> dict[str, Any]:
     """The MP4 for this item: ready (with its URL), queued, running, failed or none."""
     from ..services import whiteboard
 
-    _one(question_id)
-    return whiteboard.status(question_id)
+    return whiteboard.status(question_id, _one(question_id), _voice(voice))
+
+
+def _may_make_videos(auth: AuthContext) -> None:
+    """Rendering is minutes of server time per video, so for now only an
+    admin, or someone named in Settings → Video makers, may start one."""
+    from ..services import platform_settings
+
+    raw = platform_settings.get("video_makers", ["gidraf"]) or []
+    names = raw if isinstance(raw, list) else str(raw).replace(";", ",").split(",")
+    makers = {str(m).strip().lower() for m in names if str(m).strip()}
+    if auth.role == "admin" or str(auth.subject or "").lower() in makers:
+        return
+    raise_api_error("FORBIDDEN", "Only an admin or a named video maker can make videos for now.")
 
 
 @router.post("/items/{question_id}/video")
-def make_video(question_id: str, auth: AuthContext = Depends(ANY)) -> dict[str, Any]:
+def make_video(question_id: str, voice: str = Query(""), auth: AuthContext = Depends(ANY)) -> dict[str, Any]:
     """Queue the whiteboard video. Made once per version of the item and kept."""
     from ..services import whiteboard
 
+    _may_make_videos(auth)
     _one(question_id)
-    return whiteboard.enqueue(question_id, queued_by=str(getattr(auth, "subject", "") or "whiteboard"))
+    return whiteboard.enqueue(question_id, queued_by=str(getattr(auth, "subject", "") or "whiteboard"),
+                              voice=_voice(voice))
 
 
 class VideoBatch(BaseModel):
@@ -171,10 +185,11 @@ STAFF = require_roles("admin", "operator", "reviewer", "developer")
 
 
 @router.post("/videos")
-def make_videos(payload: VideoBatch, auth: AuthContext = Depends(STAFF)) -> dict[str, Any]:
+def make_videos(payload: VideoBatch, auth: AuthContext = Depends(ANY)) -> dict[str, Any]:
     """A video for every item in a scope — a topic's worth of content."""
     import hashlib
 
+    _may_make_videos(auth)
     from ..services import play_engine, whiteboard
 
     items = _bank(payload.grade, payload.subject, payload.sub_strand, 1000)
@@ -218,34 +233,36 @@ def list_videos(grade: str = Query(...), subject: str = Query(...), sub_strand: 
 # ── social posts ──────────────────────────────────────────────────────────────
 
 @router.get("/items/{question_id}/social.html")
-def social_page(question_id: str, _: AuthContext = Depends(ANY)) -> HTMLResponse:
+def social_page(question_id: str, voice: str = Query(""), _: AuthContext = Depends(ANY)) -> HTMLResponse:
     """The vertical cut, live and voiced — what the post's video will be."""
     from ..services import social
 
-    return HTMLResponse(social.live_page(_one(question_id)))
+    return HTMLResponse(social.live_page(_one(question_id), _voice(voice)))
 
 
 @router.get("/items/{question_id}/social")
-def social_status(question_id: str, _: AuthContext = Depends(ANY)) -> dict[str, Any]:
+def social_status(question_id: str, voice: str = Query(""), _: AuthContext = Depends(ANY)) -> dict[str, Any]:
     """The social post for this item: its video, thumbnail and post text, or where they are."""
     from ..services import social
 
-    return social.status(question_id, _one(question_id))
+    return social.status(question_id, _one(question_id), _voice(voice))
 
 
 @router.post("/items/{question_id}/social")
-def make_social(question_id: str, auth: AuthContext = Depends(ANY)) -> dict[str, Any]:
+def make_social(question_id: str, voice: str = Query(""), auth: AuthContext = Depends(ANY)) -> dict[str, Any]:
     from ..services import social
 
+    _may_make_videos(auth)
     _one(question_id)
-    return social.enqueue(question_id, queued_by=str(getattr(auth, "subject", "") or "social"))
+    return social.enqueue(question_id, queued_by=str(getattr(auth, "subject", "") or "social"), voice=_voice(voice))
 
 
 @router.post("/social")
-def make_socials(payload: VideoBatch, auth: AuthContext = Depends(STAFF)) -> dict[str, Any]:
+def make_socials(payload: VideoBatch, auth: AuthContext = Depends(ANY)) -> dict[str, Any]:
     """A social post for every item in a scope — a fortnight of daily posts."""
     import hashlib
 
+    _may_make_videos(auth)
     from ..services import play_engine, social
 
     items = _bank(payload.grade, payload.subject, payload.sub_strand, 1000)
@@ -334,9 +351,67 @@ def clear_social_asset(kind: str = Query(...), auth: AuthContext = Depends(OPERA
 
 @router.get("/social/brand")
 def social_brand(_: AuthContext = Depends(ANY)) -> dict[str, Any]:
-    from ..services import social
+    from ..services import platform_settings, social
 
-    return social.brand()
+    return {**social.brand(), "voice": str(platform_settings.get("narration_voice", "") or ""),
+            "rate": str(platform_settings.get("narration_rate", "-8%") or "-8%")}
+
+
+class BrandUpdate(BaseModel):
+    name: str | None = None
+    handle: str | None = None
+    website: str | None = None
+    cta: str | None = None
+    hook: str | None = None
+    countdown: int | None = None
+    hashtags: str | None = None
+    bg_from: str | None = None
+    bg_to: str | None = None
+    accent: str | None = None
+    text: str | None = None
+    voice: str | None = None
+    rate: str | None = None
+
+
+@router.put("/social/brand")
+def save_social_brand(payload: BrandUpdate, auth: AuthContext = Depends(ANY)) -> dict[str, Any]:
+    """The look and voice of every video: brand, colours, hook, default voice."""
+    import re as _re
+
+    from ..services import platform_settings
+
+    _may_make_videos(auth)
+    keys = {"name": "social_brand_name", "handle": "social_handle", "website": "social_website", "cta": "social_cta",
+            "hook": "social_hook", "countdown": "social_countdown_seconds", "hashtags": "social_hashtags",
+            "bg_from": "social_bg_from", "bg_to": "social_bg_to", "accent": "social_accent", "text": "social_text",
+            "voice": "narration_voice", "rate": "narration_rate"}
+    values: dict[str, Any] = {}
+    for field, key in keys.items():
+        value = getattr(payload, field)
+        if value is None:
+            continue
+        if field in ("bg_from", "bg_to", "accent", "text") and value and not _re.fullmatch(r"#[0-9a-fA-F]{3}(?:[0-9a-fA-F]{3})?", str(value)):
+            raise_api_error("VALIDATION_FAILED", f"{field} must be a hex colour such as #facc15.")
+        if field == "voice" and value and not _re.fullmatch(r"[a-z]{2}-[A-Z]{2}-\w+", str(value)):
+            raise_api_error("VALIDATION_FAILED", "Choose a voice from the list.")
+        values[key] = value
+    platform_settings.set_many(values, updated_by=str(getattr(auth, "subject", "") or ""))
+    return social_brand(auth)
+
+
+@router.get("/voices")
+def voices(_: AuthContext = Depends(ANY)) -> dict[str, Any]:
+    """The voices a video can be narrated in — English and Kiswahili."""
+    from ..services.math_engine.tts_service import available_voices
+
+    return {"voices": available_voices()}
+
+
+def _voice(voice: str) -> str:
+    """A per-item voice, if it looks like one; else the default applies."""
+    import re as _re
+
+    return voice if _re.fullmatch(r"[a-z]{2}-[A-Z]{2}-\w+", voice or "") else ""
 
 
 @router.get("/hand")

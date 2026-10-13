@@ -4044,12 +4044,12 @@ export function useWalkthroughHtml(questionId: string) {
 }
 
 /** The item on a whiteboard: a marker draws the working, timed to the voice. */
-export function useWhiteboardHtml(questionId: string) {
+export function useWhiteboardHtml(questionId: string, voice = "") {
   const { token } = useAuth();
   return useQuery({
-    queryKey: ["whiteboard", questionId],
+    queryKey: ["whiteboard", questionId, voice],
     queryFn: async () => {
-      const { blob } = await fetchBlob(`/api/v1/play/items/${encodeURIComponent(questionId)}/whiteboard.html`, { bearerToken: token });
+      const { blob } = await fetchBlob(`/api/v1/play/items/${encodeURIComponent(questionId)}/whiteboard.html${voice ? `?voice=${voice}` : ""}`, { bearerToken: token });
       return await blob.text();
     },
     enabled: Boolean(questionId),
@@ -4064,11 +4064,11 @@ export type VideoState = {
 };
 
 /** One item's MP4: polls while it is being made. */
-export function useVideoStatus(questionId: string) {
+export function useVideoStatus(questionId: string, voice = "") {
   const api = useApi();
   return useQuery({
-    queryKey: ["video", questionId],
-    queryFn: () => api<VideoState>(`/api/v1/play/items/${encodeURIComponent(questionId)}/video`),
+    queryKey: ["video", questionId, voice],
+    queryFn: () => api<VideoState>(`/api/v1/play/items/${encodeURIComponent(questionId)}/video${voice ? `?voice=${voice}` : ""}`),
     enabled: Boolean(questionId),
     refetchInterval: (q) => (["queued", "running"].includes(String(q.state.data?.status)) ? 4000 : false),
   });
@@ -4078,10 +4078,10 @@ export function useMakeVideo() {
   const api = useApi();
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (questionId: string) =>
-      api<VideoState>(`/api/v1/play/items/${encodeURIComponent(questionId)}/video`, { method: "POST" }),
-    onSuccess: (data, questionId) => {
-      qc.setQueryData(["video", questionId], data);
+    mutationFn: (v: { questionId: string; voice?: string }) =>
+      api<VideoState>(`/api/v1/play/items/${encodeURIComponent(v.questionId)}/video${v.voice ? `?voice=${v.voice}` : ""}`, { method: "POST" }),
+    onSuccess: (data, v) => {
+      qc.setQueryData(["video", v.questionId, v.voice || ""], data);
       qc.invalidateQueries({ queryKey: ["video-library"] });
     },
   });
@@ -4163,15 +4163,34 @@ export type SocialState = {
   url?: string; thumbnail_url?: string; job_id?: string; error?: string; question_text?: string;
 };
 export type SocialBrand = { name: string; handle: string; website: string; cta: string; countdown: number;
-  hashtags: string; logo_url: string; music_url: string };
+  hashtags: string; logo_url: string; music_url: string; hook: string; bg_from: string; bg_to: string;
+  accent: string; text: string; voice: string; rate: string };
+export type Voice = { name: string; gender: string; locale: string };
+
+export function useVoices() {
+  const api = useApi();
+  return useQuery({ queryKey: ["voices"], queryFn: () => api<{ voices: Voice[] }>("/api/v1/play/voices"), staleTime: 3_600_000 });
+}
+
+export function useSaveBrand() {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: Partial<SocialBrand>) => api<SocialBrand>("/api/v1/play/social/brand", { method: "PUT", body: JSON.stringify(v) }),
+    onSuccess: (data) => {
+      qc.setQueryData(["social-brand"], data);
+      for (const k of ["social", "social-html", "social-library", "whiteboard", "video", "video-library"]) qc.invalidateQueries({ queryKey: [k] });
+    },
+  });
+}
 
 /** The vertical cut, live and voiced, for the console's preview. */
-export function useSocialHtml(questionId: string) {
+export function useSocialHtml(questionId: string, voice = "") {
   const { token } = useAuth();
   return useQuery({
-    queryKey: ["social-html", questionId],
+    queryKey: ["social-html", questionId, voice],
     queryFn: async () => {
-      const { blob } = await fetchBlob(`/api/v1/play/items/${encodeURIComponent(questionId)}/social.html`, { bearerToken: token });
+      const { blob } = await fetchBlob(`/api/v1/play/items/${encodeURIComponent(questionId)}/social.html${voice ? `?voice=${voice}` : ""}`, { bearerToken: token });
       return await blob.text();
     },
     enabled: Boolean(questionId),
@@ -4180,11 +4199,11 @@ export function useSocialHtml(questionId: string) {
 }
 
 /** One item's social post — video, thumbnail, post text — polled while it is made. */
-export function useSocialStatus(questionId: string) {
+export function useSocialStatus(questionId: string, voice = "") {
   const api = useApi();
   return useQuery({
-    queryKey: ["social", questionId],
-    queryFn: () => api<SocialState>(`/api/v1/play/items/${encodeURIComponent(questionId)}/social`),
+    queryKey: ["social", questionId, voice],
+    queryFn: () => api<SocialState>(`/api/v1/play/items/${encodeURIComponent(questionId)}/social${voice ? `?voice=${voice}` : ""}`),
     enabled: Boolean(questionId),
     refetchInterval: (q) => (["queued", "running"].includes(String(q.state.data?.status)) ? 4000 : false),
   });
@@ -4194,10 +4213,10 @@ export function useMakeSocial() {
   const api = useApi();
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (questionId: string) =>
-      api<SocialState>(`/api/v1/play/items/${encodeURIComponent(questionId)}/social`, { method: "POST" }),
-    onSuccess: (data, questionId) => {
-      qc.setQueryData(["social", questionId], data);
+    mutationFn: (v: { questionId: string; voice?: string }) =>
+      api<SocialState>(`/api/v1/play/items/${encodeURIComponent(v.questionId)}/social${v.voice ? `?voice=${v.voice}` : ""}`, { method: "POST" }),
+    onSuccess: (data, v) => {
+      qc.setQueryData(["social", v.questionId, v.voice || ""], data);
       qc.invalidateQueries({ queryKey: ["social-library"] });
     },
   });

@@ -78,6 +78,16 @@ SETTINGS: tuple[Setting, ...] = (
     Setting("narration_rate", "TTS_RATE", "string", "Narration speed",
             "How fast the voice reads, as a change from normal: -10% is a calm classroom pace, +0% normal.",
             "-8%", "Voice"),
+    Setting("video_makers", "VIDEO_MAKERS", "list", "Video makers",
+            "Usernames, besides admins, who may make whiteboard videos and social posts — rendering takes "
+            "minutes of server time each. Comma-separated.", ["gidraf"], "Social"),
+    Setting("social_hook", "", "string", "Hook line",
+            "The line over every social video's question.", "Can you solve this?", "Social"),
+    Setting("social_bg_from", "", "string", "Background colour (top)", "A hex colour, e.g. #2f4d8a.", "#2f4d8a", "Social"),
+    Setting("social_bg_to", "", "string", "Background colour (bottom)", "A hex colour, e.g. #141d36.", "#141d36", "Social"),
+    Setting("social_accent", "", "string", "Highlight colour",
+            "The hook, the spoken word in the captions and the countdown ring. A hex colour.", "#facc15", "Social"),
+    Setting("social_text", "", "string", "Text colour", "Captions and the footer. A hex colour.", "#ffffff", "Social"),
     Setting("social_brand_name", "", "string", "Brand on social videos",
             "The name in the top corner of every social video and written on its end card. Empty: the "
             "series name on papers.", "", "Social"),

@@ -53,7 +53,7 @@ class ObjectStorage:
                 length=len(payload),
                 content_type="image/svg+xml",
             )
-            return f"{settings.minio_public_base_url}/{settings.minio_bucket}/{object_name}"
+            return public_object_url(object_name)
         except Exception as exc:  # noqa: BLE001
             logger.warning("MinIO save_svg failed for '%s': %s", object_name, exc)
             return f"local://{settings.minio_bucket}/{object_name}"
@@ -125,7 +125,7 @@ class ObjectStorage:
                 length=len(payload),
                 content_type=content_type or "application/octet-stream",
             )
-            return f"{settings.minio_public_base_url}/{settings.minio_bucket}/{object_name}"
+            return public_object_url(object_name)
         except Exception as exc:  # noqa: BLE001
             logger.warning("MinIO save_bytes failed for '%s': %s", object_name, exc)
             return f"local://{settings.minio_bucket}/{object_name}"
@@ -142,7 +142,7 @@ class ObjectStorage:
                 length=len(payload),
                 content_type="application/json; charset=utf-8",
             )
-            return f"{settings.minio_public_base_url}/{settings.minio_bucket}/{object_name}"
+            return public_object_url(object_name)
         except Exception as exc:  # noqa: BLE001
             logger.warning("MinIO save_json failed for '%s': %s", object_name, exc)
             return f"local://{settings.minio_bucket}/{object_name}"
@@ -159,7 +159,7 @@ class ObjectStorage:
                 length=len(payload),
                 content_type=content_type,
             )
-            return f"{settings.minio_public_base_url}/{settings.minio_bucket}/{object_name}"
+            return public_object_url(object_name)
         except Exception as exc:  # noqa: BLE001
             logger.warning("MinIO save_text failed for '%s': %s", object_name, exc)
             return f"local://{settings.minio_bucket}/{object_name}"
@@ -205,6 +205,30 @@ class ObjectStorage:
             return True
         except Exception:  # noqa: BLE001
             return False
+
+
+def legacy_asset_base() -> str:
+    """Where stored links used to point: MinIO's own address."""
+    return f"{settings.minio_public_base_url.rstrip('/')}/{settings.minio_bucket}"
+
+
+def asset_base() -> str:
+    """Where a stored file is linked: the platform's public address, through
+    /api/v1/assets — not MinIO's IP and port. Falls back to MinIO's address
+    only while no public address is set."""
+    try:
+        from ..services.platform_settings import get
+
+        public = str(get("public_base_url") or "").rstrip("/")
+    except Exception:  # noqa: BLE001
+        public = ""
+    if public:
+        return f"{public}/api/v1/assets/{settings.minio_bucket}"
+    return legacy_asset_base()
+
+
+def public_object_url(object_name: str) -> str:
+    return f"{asset_base()}/{object_name}"
 
 
 object_storage = ObjectStorage()

@@ -101,6 +101,44 @@ def _rate() -> str:
     return rate if re.match(r"^[+-]\d{1,2}%$", rate) else "+0%"
 
 
+# Voices offered when the network cannot list Microsoft's: the ones a Kenyan
+# classroom is most likely to want.
+FALLBACK_VOICES: list[dict[str, str]] = [
+    {"name": "en-KE-AsiliaNeural", "gender": "Female", "locale": "en-KE"},
+    {"name": "en-KE-ChilembaNeural", "gender": "Male", "locale": "en-KE"},
+    {"name": "en-US-AvaMultilingualNeural", "gender": "Female", "locale": "en-US"},
+    {"name": "en-US-EmmaMultilingualNeural", "gender": "Female", "locale": "en-US"},
+    {"name": "en-US-AndrewMultilingualNeural", "gender": "Male", "locale": "en-US"},
+    {"name": "en-GB-SoniaNeural", "gender": "Female", "locale": "en-GB"},
+    {"name": "en-ZA-LeahNeural", "gender": "Female", "locale": "en-ZA"},
+    {"name": "en-NG-EzinneNeural", "gender": "Female", "locale": "en-NG"},
+    {"name": "en-TZ-ImaniNeural", "gender": "Female", "locale": "en-TZ"},
+    {"name": "sw-KE-ZuriNeural", "gender": "Female", "locale": "sw-KE"},
+    {"name": "sw-KE-RafikiNeural", "gender": "Male", "locale": "sw-KE"},
+]
+_VOICE_LIST: dict[str, Any] = {}
+
+
+def available_voices() -> list[dict[str, str]]:
+    """English and Kiswahili voices Microsoft offers, listed once a day."""
+    import time
+
+    if _VOICE_LIST.get("at", 0) > time.time() - 86400:
+        return _VOICE_LIST["voices"]
+    voices: list[dict[str, str]] = []
+    try:
+        import edge_tts
+
+        found = asyncio.run(edge_tts.list_voices())
+        voices = [{"name": v["ShortName"], "gender": v.get("Gender", ""), "locale": v.get("Locale", "")}
+                  for v in found if str(v.get("Locale", "")).split("-")[0] in ("en", "sw")]
+    except Exception as exc:  # noqa: BLE001
+        logger.info("Could not list Microsoft voices (%s); offering the usual ones.", exc)
+    voices = sorted(voices or FALLBACK_VOICES, key=lambda v: (not v["locale"].endswith("KE"), v["locale"], v["name"]))
+    _VOICE_LIST.update(at=time.time(), voices=voices)
+    return voices
+
+
 def voice_for(subject: str = "") -> str:
     try:
         from ..platform_settings import get
@@ -259,7 +297,9 @@ class TtsService:
 
         object_key = f"simulations/{simulation_id}/step_{step_index}.mp3"
         if object_storage.object_exists(object_key):
-            return f"{settings.minio_public_base_url}/{settings.minio_bucket}/{object_key}"
+            from ...infra.storage import public_object_url
+
+            return public_object_url(object_key)
 
         engine = (getattr(settings, "tts_engine", "edge") or "edge").lower()
         if engine == "none":

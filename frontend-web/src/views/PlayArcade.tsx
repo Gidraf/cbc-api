@@ -27,6 +27,7 @@ import {
   useMakeSocial,
   useMakeSocials,
   useMakeVideo,
+  useSaveBrand,
   useSocialAsset,
   useSocialBrand,
   useSocialHtml,
@@ -36,9 +37,11 @@ import {
   useMakeVideos,
   useVideoLibrary,
   useVideoStatus,
+  useVoices,
   useWalkthroughHtml,
   useWhiteboardHtml,
   type PlayItem,
+  type SocialBrand,
   type SocialState,
   type PlaySpec,
 } from "../lib/queries";
@@ -451,9 +454,10 @@ function FractionGame({ spec, onDone }: { spec: PlaySpec; onDone: (c: boolean) =
 
 function WatchModal({ questionId, onClose, start = "whiteboard" }: { questionId: string; onClose: () => void; start?: "whiteboard" | "classic" | "social" }) {
   const [view, setView] = React.useState<"whiteboard" | "classic" | "social">(start);
-  const board = useWhiteboardHtml(view === "whiteboard" ? questionId : "");
+  const [voice, setVoice] = React.useState("");
+  const board = useWhiteboardHtml(view === "whiteboard" ? questionId : "", voice);
   const classic = useWalkthroughHtml(view === "classic" ? questionId : "");
-  const vertical = useSocialHtml(view === "social" ? questionId : "");
+  const vertical = useSocialHtml(view === "social" ? questionId : "", voice);
   const page = view === "whiteboard" ? board : view === "classic" ? classic : vertical;
   const frame = (
     <iframe key={view} title="Walkthrough" srcDoc={page.data || "<p style='font-family:sans-serif;padding:2rem'>Preparing — the voice is being recorded…</p>"}
@@ -466,14 +470,15 @@ function WatchModal({ questionId, onClose, start = "whiteboard" }: { questionId:
         <Button size="sm" variant={view === "whiteboard" ? "primary" : "ghost"} onClick={() => setView("whiteboard")}>✎ Whiteboard</Button>
         <Button size="sm" variant={view === "social" ? "primary" : "ghost"} onClick={() => setView("social")}>📱 Social post</Button>
         <Button size="sm" variant={view === "classic" ? "primary" : "ghost"} onClick={() => setView("classic")}>Animated</Button>
+        <VoicePicker value={voice} onChange={setVoice} label="Voice" />
         <span style={{ flex: 1 }} />
-        {view !== "social" && <VideoControl questionId={questionId} />}
+        {view !== "social" && <VideoControl questionId={questionId} voice={voice} />}
       </Stack>
       {page.error && <ErrorNotice error={page.error} />}
       {view === "social" ? (
         <div style={{ display: "flex", gap: "var(--s4)", flexWrap: "wrap", alignItems: "flex-start" }}>
           {frame}
-          <div style={{ flex: "1 1 320px", minWidth: 0 }}><SocialControl questionId={questionId} /></div>
+          <div style={{ flex: "1 1 320px", minWidth: 0 }}><SocialControl questionId={questionId} voice={voice} /></div>
         </div>
       ) : frame}
     </Modal>
@@ -481,13 +486,13 @@ function WatchModal({ questionId, onClose, start = "whiteboard" }: { questionId:
 }
 
 /** The item's social post: the vertical MP4, its thumbnail, and the text to paste. */
-function SocialControl({ questionId }: { questionId: string }) {
-  const social = useSocialStatus(questionId);
+function SocialControl({ questionId, voice }: { questionId: string; voice: string }) {
+  const social = useSocialStatus(questionId, voice);
   const make = useMakeSocial();
   const toast = useToast();
   const v = social.data;
   async function start() {
-    try { await make.mutateAsync(questionId); toast("Social video queued — drawn, voiced and captioned in the worker.", "ok"); }
+    try { await make.mutateAsync({ questionId, voice }); toast("Social video queued — drawn, voiced and captioned in the worker.", "ok"); }
     catch (err) { toast(err instanceof Error ? err.message : "Could not queue it.", "danger"); }
   }
   if (!v) return <p style={{ color: "var(--ink-3)" }}>{social.isLoading ? "Loading the post…" : ""}</p>;
@@ -575,15 +580,7 @@ function SocialLibrary({ grade, subject, subStrand, onWatch }: {
         try, the solution with captions, your brand at the end — with a thumbnail and the post text (question, answer,
         working, hashtags) ready to paste.
       </p>
-      {b && (
-        <div style={{ marginTop: "var(--s3)", fontSize: "var(--text-sm)", display: "flex", gap: "var(--s3)", flexWrap: "wrap", alignItems: "center" }}>
-          <span>Brand: <strong>{b.name}</strong></span>
-          <span>Handle: <strong>{b.handle || "— not set"}</strong></span>
-          <span>Website: <strong>{b.website || "—"}</strong></span>
-          <span>Countdown: <strong>{b.countdown}s</strong></span>
-          <span style={{ color: "var(--ink-3)" }}>Change these in Settings → Social.</span>
-        </div>
-      )}
+      {b && <BrandEditor brand={b} />}
       {b && (
         <Stack direction="row" gap="var(--s3)" wrap align="center" style={{ marginTop: "var(--s2)", fontSize: "var(--text-sm)" }}>
           <label style={{ cursor: "pointer" }}>
@@ -628,14 +625,14 @@ function SocialLibrary({ grade, subject, subStrand, onWatch }: {
 }
 
 /** The item's MP4: make it, watch it, download it. */
-function VideoControl({ questionId }: { questionId: string }) {
-  const video = useVideoStatus(questionId);
+function VideoControl({ questionId, voice = "" }: { questionId: string; voice?: string }) {
+  const video = useVideoStatus(questionId, voice);
   const make = useMakeVideo();
   const toast = useToast();
   const [show, setShow] = React.useState(false);
   const v = video.data;
   async function start() {
-    try { await make.mutateAsync(questionId); toast("Video queued — it is drawn and voiced in the worker.", "ok"); }
+    try { await make.mutateAsync({ questionId, voice }); toast("Video queued — it is drawn and voiced in the worker.", "ok"); }
     catch (err) { toast(err instanceof Error ? err.message : "Could not queue the video.", "danger"); }
   }
   if (!v) return <span style={{ color: "var(--ink-3)", fontSize: "var(--text-xs)" }}>{video.isLoading ? "Checking video…" : ""}</span>;
@@ -801,6 +798,91 @@ function HandPicker() {
         </Stack>
       )}
     </div>
+  );
+}
+
+/** One voice from Microsoft's list; empty means the brand's default. */
+function VoicePicker({ value, onChange, label, includeDefault = true }: {
+  value: string; onChange: (v: string) => void; label: string; includeDefault?: boolean;
+}) {
+  const voices = useVoices();
+  return (
+    <label style={{ fontSize: "var(--text-sm)", display: "inline-flex", gap: 6, alignItems: "center" }}>{label}
+      <Select value={value} onChange={(e) => onChange(e.target.value)} style={{ maxWidth: 260 }}>
+        {includeDefault && <option value="">Default voice</option>}
+        {(voices.data?.voices || []).map((v) => (
+          <option key={v.name} value={v.name}>
+            {v.name.replace(/Neural$/, "").replace(/^([a-z]{2}-[A-Z]{2})-/, "$1 · ")} — {v.gender === "Female" ? "woman" : v.gender === "Male" ? "man" : v.gender}
+          </option>
+        ))}
+      </Select>
+    </label>
+  );
+}
+
+/** The look and voice of every video: brand, colours, hook, default voice. */
+function BrandEditor({ brand }: { brand: SocialBrand }) {
+  const save = useSaveBrand();
+  const toast = useToast();
+  const [form, setForm] = React.useState<SocialBrand>(brand);
+  React.useEffect(() => setForm(brand), [brand]);
+  const set = (k: keyof SocialBrand) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
+    setForm((f) => ({ ...f, [k]: k === "countdown" ? Number(e.target.value) : e.target.value }));
+  async function submit() {
+    try {
+      await save.mutateAsync({ name: form.name, handle: form.handle, website: form.website, cta: form.cta, hook: form.hook,
+        countdown: form.countdown, hashtags: form.hashtags, bg_from: form.bg_from, bg_to: form.bg_to, accent: form.accent,
+        text: form.text, voice: form.voice, rate: form.rate });
+      toast("Brand saved — new videos use it.", "ok");
+    } catch (err) { toast(err instanceof Error ? err.message : "Could not save the brand.", "danger"); }
+  }
+  const field = (label: string, k: keyof SocialBrand, placeholder = "") => (
+    <label style={{ display: "grid", gap: 4, fontSize: "var(--text-xs)" }}>{label}
+      <Input value={String(form[k] ?? "")} placeholder={placeholder} onChange={set(k)} />
+    </label>
+  );
+  const colour = (label: string, k: keyof SocialBrand) => (
+    <label style={{ display: "inline-flex", gap: 6, alignItems: "center", fontSize: "var(--text-xs)" }}>
+      <input type="color" value={String(form[k] || "#000000")} onChange={set(k)} style={{ width: 36, height: 28, border: 0, padding: 0, background: "none" }} />
+      {label}
+    </label>
+  );
+  return (
+    <details style={{ marginTop: "var(--s3)" }}>
+      <summary style={{ cursor: "pointer", fontSize: "var(--text-sm)" }}>
+        Brand & voice — <strong>{brand.name}</strong> {brand.handle || ""} · {brand.voice || "default voice"}
+      </summary>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "var(--s2)", marginTop: "var(--s2)" }}>
+        {field("Brand name", "name")}
+        {field("Handle", "handle", "@yourhandle")}
+        {field("Website", "website")}
+        {field("Hook line", "hook", "Can you solve this?")}
+        {field("Call to action", "cta")}
+        {field("Extra hashtags", "hashtags", "#MathsWithMwalimu")}
+        <label style={{ display: "grid", gap: 4, fontSize: "var(--text-xs)" }}>Countdown (seconds)
+          <Input type="number" min={3} max={10} value={String(form.countdown)} onChange={set("countdown")} />
+        </label>
+        <label style={{ display: "grid", gap: 4, fontSize: "var(--text-xs)" }}>Speaking speed
+          <Select value={form.rate || "-8%"} onChange={set("rate")}>
+            {["-15%", "-10%", "-8%", "-5%", "+0%", "+5%", "+10%"].map((r) => <option key={r} value={r}>{r === "+0%" ? "Normal" : r}</option>)}
+          </Select>
+        </label>
+      </div>
+      <Stack direction="row" gap="var(--s3)" wrap align="center" style={{ marginTop: "var(--s2)" }}>
+        {colour("Background top", "bg_from")}
+        {colour("Background bottom", "bg_to")}
+        {colour("Highlight", "accent")}
+        {colour("Text", "text")}
+        <span style={{ width: 120, height: 28, borderRadius: 6, background: `linear-gradient(${form.bg_from}, ${form.bg_to})`,
+                       color: form.accent, fontWeight: 800, fontSize: 12, display: "inline-flex", alignItems: "center", justifyContent: "center" }}>
+          {form.hook || "Can you solve this?"}
+        </span>
+      </Stack>
+      <Stack direction="row" gap="var(--s3)" wrap align="center" style={{ marginTop: "var(--s2)" }}>
+        <VoicePicker value={form.voice || ""} onChange={(v) => setForm((f) => ({ ...f, voice: v }))} label="Default voice" />
+        <Button size="sm" variant="primary" disabled={save.isPending} onClick={submit}>Save brand</Button>
+      </Stack>
+    </details>
   );
 }
 

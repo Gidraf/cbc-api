@@ -279,6 +279,16 @@ def _choice(question: dict[str, Any]) -> dict[str, Any] | None:
          "why": str(o.get("distractor_rationale") or o.get("rationale") or "")} for o in options]}
 
 
+def _derive(kind: str, expression: str) -> dict[str, Any] | None:
+    """One builder, never raising: an equation with a second unknown (`kx`)
+    crashed the balance builder and took a whole topic's list down with a 500."""
+    try:
+        return DERIVERS[kind](expression)
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("No %s for %r: %s", kind, expression, exc)
+        return None
+
+
 def spec_for(question: dict[str, Any]) -> dict[str, Any]:
     """The play spec for one item: the writer's chosen kind where the engine
     can fill it, else the most visual kind the expression supports, plus the
@@ -290,12 +300,12 @@ def spec_for(question: dict[str, Any]) -> dict[str, Any]:
     note = ""
     if expression:
         if wanted in DERIVERS:
-            spec = DERIVERS[wanted](expression)
+            spec = _derive(wanted, expression)
             if spec is None:
                 note = f"the writer asked for {wanted}, which this expression does not support"
         if spec is None:
             for kind in AUTO_ORDER:
-                spec = DERIVERS[kind](expression)
+                spec = _derive(kind, expression)
                 if spec is not None:
                     break
     choice = _choice(question)
@@ -413,6 +423,12 @@ def walkthrough(question: dict[str, Any], *, grade: str = "") -> dict[str, Any]:
             scenes.append({"scene": "rewrite", "step": step,
                            "say": (f"{'First' if first else 'Next'}, {_spoken(step['left'])} {_spoken_op(step['op'])} "
                                    f"{_spoken(step['right'])} is {_spoken(step['result'])}. {step['why']}")})
+    if not any(sc["scene"] not in ("title",) for sc in scenes):
+        # No picture the engine can build: the working the question itself
+        # carries, written and said line by line, so no walkthrough jumps
+        # from the question straight to the answer.
+        for line in working_lines(question):
+            scenes.append({"scene": "working", "text": line, "say": _speakable(line)})
     choice = play.get("choice")
     if choice:
         key = next((o for o in choice["options"] if o["correct"]), None)
@@ -457,14 +473,40 @@ def _spoken_op(op: str) -> str:
     return {"+": "plus", "-": "minus", "×": "times", "÷": "divided by", "^": "to the power"}.get(op, op)
 
 
+_MARKS = re.compile(r"\b(?:[MABS]\d|B\d|M\d|A\d)\s*:\s*|\[\s*\d+\s*marks?\s*\]|\(\s*\d+\s*marks?\s*\)", re.I)
+_VERDICT = re.compile(r"\s*(?:Option [A-D] is (?:the )?correct\.?|The correct (?:answer|option) is [A-D]\.?|Therefore,? option [A-D]\.?)\s*", re.I)
+
+
+def working_lines(question: dict[str, Any], most: int = 6) -> list[str]:
+    """The steps of the item's own solution: its model answer, its parts'
+    answers, or its marking scheme, cut into board lines."""
+    parts = [p for p in (question.get("structured_parts") or []) if isinstance(p, dict) and p.get("model_answer")]
+    if parts:
+        raw = [f"{str(p.get('part_id') or '').strip()} {str(p.get('model_answer'))}".strip() for p in parts]
+    else:
+        source = str(question.get("model_answer") or "") or str(question.get("marking_scheme") or "")
+        if not source.strip():
+            key = next((o for o in question.get("options") or [] if isinstance(o, dict) and o.get("is_correct")), None)
+            source = str((key or {}).get("distractor_rationale") or "")
+        source = source.replace("\\n", "\n")
+        raw = re.split(r"\n+|(?=\bStep \d)|(?=\b[MAB]\d\s*:)|(?<=[.;])\s+(?=[A-Z(])", source)
+    out: list[str] = []
+    for chunk in raw:
+        line = _VERDICT.sub(" ", _MARKS.sub("", chunk)).strip(" ;,")
+        line = re.sub(r"^(?:Correct|Correct answer)\s*[:.-]\s*", "", line, flags=re.I)
+        if len(re.sub(r"[^\w]", "", line)) < 3:
+            continue
+        out.append(line[:220])
+        if len(out) >= most:
+            break
+    return out
+
+
 def _speakable(text: str) -> str:
-    t = re.sub(r"\$([^$]*)\$", r"\1", str(text))
-    # \frac{3}{4} becomes 3/4, which the narration reads as "3 quarters".
-    t = re.sub(r"\\[dt]?frac\{([^{}]+)\}\{([^{}]+)\}", r"\1/\2", t)
-    t = t.replace("\\times", " times ").replace("\\div", " divided by ").replace("−", "-")
-    t = re.sub(r"\\[a-zA-Z]+", " ", t).replace("{", "").replace("}", "")
-    t = re.sub(r"(?<![\w)])-(\d)", r"negative \1", t)
-    return re.sub(r"\s+", " ", t).strip()
+    """The text as said aloud: LaTeX read as words, never as its markup."""
+    from .latex_text import to_speech
+
+    return to_speech(str(text))
 
 
 def _lower_first(text: str) -> str:

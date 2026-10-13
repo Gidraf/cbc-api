@@ -61,7 +61,14 @@ def brand() -> dict[str, Any]:
         countdown = max(3, min(int(get("social_countdown_seconds", 3) or 3), 10))
     except (TypeError, ValueError):
         countdown = 3
+    def colour(key: str, default: str) -> str:
+        value = str(get(key, default) or default).strip()
+        return value if re.fullmatch(r"#[0-9a-fA-F]{3}(?:[0-9a-fA-F]{3})?", value) else default
+
     return {
+        "hook": str(get("social_hook", "") or "Can you solve this?").strip(),
+        "bg_from": colour("social_bg_from", "#2f4d8a"), "bg_to": colour("social_bg_to", "#141d36"),
+        "accent": colour("social_accent", "#facc15"), "text": colour("social_text", "#ffffff"),
         "name": name, "handle": handle, "website": website,
         "cta": str(get("social_cta", "") or "Follow for a new question every day").strip(),
         "countdown": countdown,
@@ -93,7 +100,7 @@ def script(data: dict[str, Any], q: dict[str, Any], b: dict[str, Any] | None = N
             opt = f"{scene['option']}: " if scene.get("option") else ""
             scene["say"] = _answer_line(scene, opt)
         if scene.get("scene") == "title":
-            scene["say"] = f"Can you solve this? {scene.get('say') or ''}".strip()
+            scene["say"] = f"{b.get('hook') or 'Can you solve this?'} {scene.get('say') or ''}".strip()
             scenes.append(scene)
             scenes.append({"scene": "countdown", "hold": b["countdown"], "say": "",
                            "caption": "Pause the video and try it!"})
@@ -136,7 +143,8 @@ def frame_payload(q: dict[str, Any], b: dict[str, Any]) -> dict[str, Any]:
         if raw:
             kind = "image/svg+xml" if raw.lstrip()[:1] == b"<" else "image/png"
             logo = f"data:{kind};base64," + base64.b64encode(raw).decode()
-    return {"hook": "Can you solve this?", "tag": tag, "brand": b["name"], "handle": b["handle"],
+    return {"hook": b.get("hook") or "Can you solve this?", "tag": tag, "brand": b["name"], "handle": b["handle"],
+            "bg_from": b["bg_from"], "bg_to": b["bg_to"], "accent": b["accent"], "text": b["text"],
             "website": b["website"], "countdown": b["countdown"], "logo": logo, "music_url": b["music_url"]}
 
 
@@ -148,7 +156,8 @@ def _grade_label(grade: str) -> str:
 def cache_key(sdata: dict[str, Any], voice: str, b: dict[str, Any]) -> str:
     from . import whiteboard
 
-    look = {k: b.get(k) for k in ("name", "handle", "website", "cta", "countdown", "logo_url", "music_url")}
+    look = {k: b.get(k) for k in ("name", "handle", "website", "cta", "countdown", "logo_url", "music_url",
+                                  "hook", "bg_from", "bg_to", "accent", "text")}
     blob = json.dumps({"v": VERSION, "board": whiteboard.cache_key(sdata, voice), "brand": look}, sort_keys=True)
     return hashlib.sha256(blob.encode()).hexdigest()[:20]
 
@@ -156,14 +165,10 @@ def cache_key(sdata: dict[str, Any], voice: str, b: dict[str, Any]) -> str:
 # ── the post ─────────────────────────────────────────────────────────────────
 
 def display(text: Any) -> str:
-    """LaTeX as a phone shows it: 3/4, ×, ÷, −."""
-    t = re.sub(r"\$([^$]*)\$", r"\1", str(text or ""))
-    t = re.sub(r"\\[dt]?frac\{([^{}]+)\}\{([^{}]+)\}", r"\1/\2", t)
-    t = (t.replace("\\times", "×").replace("\\div", "÷").replace("\\cdot", "·").replace("^\\circ", "°")
-         .replace("\\%", "%").replace("\\left", "").replace("\\right", ""))
-    t = re.sub(r"\\(?:text|mathrm)\{([^{}]*)\}", r"\1", t)
-    t = re.sub(r"\\[a-zA-Z]+", "", t).replace("{", "").replace("}", "")
-    return re.sub(r"\s+", " ", t).strip()
+    """LaTeX as a phone shows it: 3/4, x², ∛216, ≤, 45°."""
+    from .latex_text import to_unicode
+
+    return re.sub(r"\s+", " ", to_unicode(str(text or ""))).strip()
 
 
 def _steps(scenes: list[dict[str, Any]]) -> list[str]:
@@ -196,6 +201,8 @@ def _steps(scenes: list[dict[str, Any]]) -> list[str]:
             out.append(f"Use {sp.get('common')} as the common denominator: "
                        f"{sp['first'][0]}/{sp['first'][1]} = {sp['first_as'][0]}/{sp['common']}, "
                        f"{sp['second'][0]}/{sp['second'][1]} = {sp['second_as'][0]}/{sp['common']}.")
+        elif kind == "working":
+            out.append(display(s.get("text")))
         elif kind == "fraction_bars" and s.get("phase") == "result":
             sp = s.get("spec") or {}
             out.append(f"{sp['first_as'][0]}/{sp['common']} {sp.get('op')} {sp['second_as'][0]}/{sp['common']} "
@@ -235,7 +242,7 @@ def post_text(q: dict[str, Any], data: dict[str, Any], b: dict[str, Any] | None 
     link = q.get("curriculum") or {}
     head = " · ".join(x for x in (_grade_label(str(link.get("grade") or "")), str(link.get("subject") or ""),
                                   str(link.get("sub_strand") or "")) if x)
-    lines = [f"🧮 Can you solve this?{f' ({head})' if head else ''}", ""]
+    lines = [f"🧮 {b.get('hook') or 'Can you solve this?'}{f' ({head})' if head else ''}", ""]
     context = display(q.get("stimulus_context") or "")
     if context:
         lines += [context, ""]
@@ -271,22 +278,22 @@ def post_text(q: dict[str, Any], data: dict[str, Any], b: dict[str, Any] | None 
 
 # ── the queue ────────────────────────────────────────────────────────────────
 
-def _prepare(q: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any], str, str, dict[str, Any], str]:
+def _prepare(q: dict[str, Any], voice: str = "") -> tuple[dict[str, Any], dict[str, Any], str, str, dict[str, Any], str]:
     from . import whiteboard
 
     b = brand()
-    data, voice, title = whiteboard._script_for(q)
+    data, voice, title = whiteboard._script_for(q, voice)
     sdata = script(data, q, b)
     return data, sdata, voice, title, b, cache_key(sdata, voice, b)
 
 
-def status(question_id: str, q: dict[str, Any] | None = None) -> dict[str, Any]:
+def status(question_id: str, q: dict[str, Any] | None = None, voice: str = "") -> dict[str, Any]:
     from ..infra.db import fetch_one
     from ..infra.storage import object_storage
     from . import whiteboard
 
     q = q or whiteboard.load(question_id)
-    data, sdata, voice, _, b, key = _prepare(q)
+    data, sdata, voice, _, b, key = _prepare(q, voice)
     name = f"{PREFIX}/{question_id}/{key}.mp4"
     out: dict[str, Any] = {"question_id": question_id, "key": key, "scenes": len(data.get("scenes") or []),
                            "post": post_text(q, data, b)}
@@ -304,11 +311,11 @@ def status(question_id: str, q: dict[str, Any] | None = None) -> dict[str, Any]:
     return {**out, "status": "none"}
 
 
-def enqueue(question_id: str, *, queued_by: str = "", batch_id: str = "") -> dict[str, Any]:
+def enqueue(question_id: str, *, queued_by: str = "", batch_id: str = "", voice: str = "") -> dict[str, Any]:
     from . import job_queue, whiteboard
 
     q = whiteboard.load(question_id)
-    now = status(question_id, q)
+    now = status(question_id, q, voice)
     if now["status"] in ("ready", "queued", "running"):
         return now
     if not now["scenes"]:
@@ -316,7 +323,7 @@ def enqueue(question_id: str, *, queued_by: str = "", batch_id: str = "") -> dic
     link = q.get("curriculum") or {}
     job = job_queue.enqueue(
         JOB_KIND, str(link.get("grade") or ""), str(link.get("subject") or ""),
-        {"artifact_id": f"social:{question_id}", "question_id": question_id},
+        {"artifact_id": f"social:{question_id}", "question_id": question_id, "voice": voice},
         strand=str(link.get("strand") or ""), sub_strand=str(link.get("sub_strand") or ""),
         batch_id=batch_id, queued_by=queued_by or "social")
     job_queue.start_worker()
@@ -332,7 +339,7 @@ def run_job(job: dict[str, Any]) -> dict[str, Any]:
     if not qid:
         return {"status": "skipped", "reason": "no question_id"}
     q = whiteboard.load(qid)
-    data, sdata, voice, title, b, key = _prepare(q)
+    data, sdata, voice, title, b, key = _prepare(q, str(payload.get("voice") or ""))
     run_log.step("Script", f"{len(sdata['scenes'])} scenes · vertical · {voice}")
     last = {"stage": ""}
 
@@ -349,13 +356,13 @@ def run_job(job: dict[str, Any]) -> dict[str, Any]:
     return {"status": "done", "question_id": qid, "post": post, **made}
 
 
-def live_page(q: dict[str, Any]) -> str:
+def live_page(q: dict[str, Any], voice: str = "") -> str:
     """The vertical cut in the console, voiced by the server."""
     import base64
 
     from . import whiteboard
 
-    _, sdata, voice, title, b, _ = _prepare(q)
+    _, sdata, voice, title, b, _ = _prepare(q, voice)
     clips = whiteboard.speak_all(sdata["scenes"], voice)
     audio = ["data:audio/mpeg;base64," + base64.b64encode(a).decode() if a else None for a, _ in clips]
     durations = [float(sc["hold"]) if sc.get("hold") else round(d, 3) for sc, (_, d) in zip(sdata["scenes"], clips)]
@@ -373,7 +380,9 @@ def frame(social: dict[str, Any]) -> str:
     brand_line = html.escape(social.get("brand") or "")
     handle = html.escape(social.get("handle") or "")
     website = html.escape(social.get("website") or "")
-    return (_FRAME.replace("__LOGO__", logo).replace("__BRAND__", brand_line)
+    colours = (f"--bg-from:{social.get('bg_from') or '#2f4d8a'};--bg-to:{social.get('bg_to') or '#141d36'};"
+               f"--accent:{social.get('accent') or '#facc15'};--ink:{social.get('text') or '#ffffff'}")
+    return (_FRAME.replace("__COLOURS__", colours).replace("__LOGO__", logo).replace("__BRAND__", brand_line)
             .replace("__HOOK__", html.escape(social.get("hook") or "Can you solve this?"))
             .replace("__TAG__", html.escape(social.get("tag") or ""))
             .replace("__HANDLE__", handle).replace("__WEBSITE__", website))
@@ -384,30 +393,31 @@ _FRAME = """<!doctype html><html lang="en"><head><meta charset="utf-8">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Patrick+Hand&family=Baloo+2:wght@600;800&display=swap" rel="stylesheet">
 <style>
- html,body{margin:0;background:#1f2a44;font-family:'Baloo 2',system-ui,sans-serif;color:#fff}
+ :root{__COLOURS__}
+ html,body{margin:0;background:var(--bg-to);font-family:'Baloo 2',system-ui,sans-serif;color:var(--ink)}
  #social{position:relative;width:1080px;height:1920px;overflow:hidden;
-   background:radial-gradient(120% 70% at 50% 0%,#2f4d8a 0%,#1d2b4f 55%,#141d36 100%)}
+   background:radial-gradient(120% 70% at 50% 0%,var(--bg-from) 0%,color-mix(in srgb,var(--bg-from) 45%,var(--bg-to)) 55%,var(--bg-to) 100%)}
  body.live #social{transform-origin:top left}
  .top{position:absolute;left:60px;right:150px;top:130px}
  .chip{display:inline-flex;align-items:center;gap:14px;background:rgba(255,255,255,.12);border-radius:40px;
    padding:8px 26px 8px 10px;font-size:34px;font-weight:600}
  .chip .logo{width:56px;height:56px;border-radius:50%;object-fit:cover;background:#fff}
- .chip .dot{width:22px;height:22px;border-radius:50%;background:#facc15;margin-left:12px}
- .hook{margin:26px 0 6px;font-size:92px;line-height:1;font-weight:800;color:#facc15;letter-spacing:-1px}
+ .chip .dot{width:22px;height:22px;border-radius:50%;background:var(--accent);margin-left:12px}
+ .hook{margin:26px 0 6px;font-size:92px;line-height:1;font-weight:800;color:var(--accent);letter-spacing:-1px}
  .tag{font-size:36px;opacity:.85;font-weight:600}
  #wb{position:absolute;left:40px;top:470px;width:960px;border-radius:22px;overflow:hidden;
    box-shadow:0 18px 40px rgba(0,0,0,.35);background:#fdfdfb}
  #sc-caption{position:absolute;left:60px;right:150px;top:1040px;min-height:300px;font-size:60px;line-height:1.18;
    font-weight:800;text-align:left;text-shadow:0 3px 0 rgba(0,0,0,.25)}
  #sc-caption .w{opacity:.55}
- #sc-caption .w.on{opacity:1;color:#facc15}
+ #sc-caption .w.on{opacity:1;color:var(--accent)}
  #sc-caption .w.past{opacity:1}
  #sc-count{position:absolute;left:0;right:0;top:1030px;display:none;text-align:center}
  #sc-count .ring{display:inline-flex;align-items:center;justify-content:center;width:260px;height:260px;
-   border-radius:50%;border:16px solid #facc15;font-size:150px;font-weight:800;color:#fff;background:rgba(0,0,0,.15)}
+   border-radius:50%;border:16px solid var(--accent);font-size:150px;font-weight:800;color:var(--ink);background:rgba(0,0,0,.15)}
  #sc-count .say{font-size:56px;font-weight:800;margin-top:24px}
  .foot{position:absolute;left:60px;right:150px;top:1440px;font-size:40px;font-weight:600;opacity:.95}
- .foot b{color:#facc15}
+ .foot b{color:var(--accent)}
  body.live{background:#0f172a;overflow:hidden}
  .bar{position:fixed;left:0;right:0;bottom:0;height:54px;display:flex;gap:8px;align-items:center;justify-content:center;
    background:#0f172a}
