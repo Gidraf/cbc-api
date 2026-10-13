@@ -69,6 +69,12 @@ def to_plain(text: str) -> str:
     out = out.replace(r"\[", " ").replace(r"\]", " ")
     out = out.replace(r"\(", " ").replace(r"\)", " ")
 
+    # Roots are worked before anything else unwraps them: `\sqrt[3]{216}` read
+    # as `sqrt(3)*216` was answered 648.
+    from .solvers.integers import _roots
+
+    out = _roots(out)
+
     for _ in range(6):  # depth guard; real questions nest one or two deep
         new = _WRAPPER.sub(r"\1", out)
         new = _FRAC.sub(r"(\1)/(\2)", new)

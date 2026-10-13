@@ -58,9 +58,44 @@ _LEFT_RIGHT = re.compile(r"\\(?:left|right|,|;|!)\s*")
 _THOUSANDS = re.compile(r"(?<=\d),(?=\d{3}(?!\d))")
 
 
+# Roots. The tokeniser knew no root at all: `\\sqrt[3]{216}` lost its `\\sqrt`,
+# kept `[3]` as a bracket and was worked as 3 × 216 = 648 — and question
+# writers trusted that, so a Grade 9 bank shipped "∛216 = 648" as the key.
+# A root of a calculation is worked exactly here; a root that is not exact
+# (√2) is left as `√`, which the engine refuses rather than guesses.
+_ROOT = re.compile(r"\\sqrt\s*(?:\[\s*(\d+)\s*\])?\s*\{([^{}]*)\}|\b(sqrt|cbrt)\s*\(([^()]*)\)")
+
+
+def _root_value(inner: str, n: int) -> str:
+    import sympy as sp
+
+    try:
+        expr = _LEFT_RIGHT.sub("", inner).replace("\\times", "*").replace("\\div", "/").replace("×", "*")
+        expr = expr.replace("÷", "/").replace("^", "**").translate(_OTHER_BRACKETS)
+        if re.search(r"[A-Za-z\\]", expr):
+            return "√"
+        value = sp.real_root(sp.nsimplify(sp.sympify(expr)), n)
+        if value.is_rational:
+            v = Fraction(int(value.p), int(value.q))
+            return f"({_show(v)})" if v.denominator == 1 else f"({v.numerator}/{v.denominator})"
+    except Exception:  # noqa: BLE001
+        pass
+    return "√"
+
+
+def _roots(text: str) -> str:
+    for _ in range(4):
+        new = _ROOT.sub(lambda m: _root_value(m.group(2) if m.group(2) is not None else m.group(4),
+                                              int(m.group(1) or (3 if m.group(3) == "cbrt" else 2))), text)
+        if new == text:
+            break
+        text = new
+    return text
+
+
 def _normalise(text: str) -> str:
     """One spelling for each operator and bracket, before anything reads them."""
-    out = _THOUSANDS.sub("", text)
+    out = _roots(_THOUSANDS.sub("", text))
     out = _LEFT_RIGHT.sub("", out).replace("\\{", "(").replace("\\}", ")")
     out = _SUPERS.sub(lambda m: "^" + m.group(0).translate(_SUPERSCRIPT), out)
     return out.replace("**", "^").translate(_OTHER_BRACKETS)

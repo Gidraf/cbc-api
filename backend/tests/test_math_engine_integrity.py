@@ -69,7 +69,8 @@ def test_to_plain_leaves_the_mathematics_and_drops_the_markup() -> None:
     assert to_plain(r"$\frac{2}{3} + \frac{1}{4}$") == "2/3 + 1/4"
     assert to_plain(r"a base of $8\text{ cm}$") == "a base of 8 cm"
     assert to_plain(r"$5 \times 4$") == "5 * 4"
-    assert to_plain(r"$\sqrt{16}$") == "sqrt(16)"
+    assert to_plain(r"$\sqrt{16}$") == "(4)"   # roots are worked, never misread
+    assert to_plain(r"$\sqrt[3]{216}$") == "(6)"
     assert to_plain("") == ""
 
 
