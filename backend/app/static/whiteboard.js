@@ -47,16 +47,57 @@
   }
 
   function buildHand() {
-    // A marker held at the tip: the point is at (0,0).
+    // A teacher's right hand — deep brown skin, lighter nails, a shirt cuff —
+    // holding a marker. Drawn along +x with the marker's tip at (0,0); the
+    // inner group tilts it so the arm comes in from the lower right.
+    const SKIN = "#5b3520", SHADE = "#3d2215", LIGHT = "#80492b", NAIL = "#d9b3a1", CREASE = "#2f1a10";
     const g = document.createElementNS(NS, "g");
-    g.innerHTML = `<g transform="rotate(-38)">
-      <rect x="-7" y="-118" width="14" height="96" rx="4" fill="#2b2f3a"/>
-      <rect x="-7" y="-122" width="14" height="14" rx="3" fill="#c2410c"/>
-      <rect x="-6" y="-24" width="12" height="18" fill="#9ca3af"/>
-      <polygon points="-5,-6 5,-6 1,0 -1,0" fill="#1b1f2a"/></g>`;
-    g.style.opacity = 0;
+    g.innerHTML = `<g class="tilt"><g transform="scale(1.22)">
+      <!-- forearm and sleeve, behind everything -->
+      <path d="M190,-44 C260,-58 330,-66 470,-70 L480,52 C340,52 270,50 205,40 Z" fill="${SKIN}"/>
+      <path d="M200,-40 C260,-52 320,-60 470,-64" fill="none" stroke="${LIGHT}" stroke-width="6" stroke-linecap="round" opacity=".55"/>
+      <path d="M300,-74 C360,-80 420,-82 900,-90 L900,80 C440,70 370,66 306,62 C296,20 294,-30 300,-74 Z" fill="#6f9fd6"/>
+      <path d="M300,-74 C296,-30 296,20 306,62" fill="none" stroke="#4a78ad" stroke-width="7"/>
+      <path d="M322,-70 C318,-20 318,24 326,60" fill="none" stroke="#4a78ad" stroke-width="2.5" opacity=".7"/>
+      <!-- curled middle, ring and little fingers, under the marker -->
+      <ellipse cx="150" cy="44" rx="20" ry="15" fill="${SHADE}"/>
+      <ellipse cx="128" cy="38" rx="20" ry="15" fill="${SKIN}"/>
+      <ellipse cx="104" cy="28" rx="19" ry="14" fill="${SKIN}"/>
+      <path d="M92,30 C100,40 114,42 124,36 M116,40 C124,50 140,52 150,46" fill="none" stroke="${CREASE}" stroke-width="2" opacity=".6"/>
+      <!-- the marker -->
+      <g transform="rotate(-15)">
+        <polygon points="0,0 15,-5 15,5" fill="#1b1f2a"/>
+        <rect x="14" y="-8" width="12" height="16" rx="2" fill="#9ca3af"/>
+        <rect x="25" y="-10" width="200" height="20" rx="5" fill="#1f2937"/>
+        <rect x="212" y="-11" width="34" height="22" rx="6" fill="#1d4ed8"/>
+        <rect x="30" y="-8" width="180" height="4" rx="2" fill="#475569" opacity=".7"/>
+      </g>
+      <!-- back of the hand -->
+      <path d="M96,-30 C112,-60 168,-70 204,-48 C230,-30 232,12 214,36 C196,58 150,58 122,42 C100,30 88,-6 96,-30 Z" fill="${SKIN}"/>
+      <path d="M112,-44 C140,-62 180,-62 204,-44" fill="none" stroke="${LIGHT}" stroke-width="7" stroke-linecap="round" opacity=".6"/>
+      <path d="M150,-30 C160,-20 168,-6 170,8 M176,-34 C188,-22 194,-6 194,10" fill="none" stroke="${SHADE}" stroke-width="2.5" opacity=".45"/>
+      <!-- index finger along the top of the marker -->
+      <path d="M36,-8 C34,-22 46,-30 60,-29 L122,-40 C134,-42 140,-20 128,-14 L64,-2 C50,1 38,2 36,-8 Z" fill="${SKIN}"/>
+      <path d="M58,-28 L120,-38" fill="none" stroke="${LIGHT}" stroke-width="4" stroke-linecap="round" opacity=".55"/>
+      <path d="M82,-30 C86,-24 86,-12 84,-6 M104,-36 C108,-28 108,-16 106,-10" fill="none" stroke="${CREASE}" stroke-width="2" opacity=".55"/>
+      <ellipse cx="47" cy="-17" rx="9" ry="5.5" transform="rotate(-12 47 -17)" fill="${NAIL}"/>
+      <!-- thumb, below the marker -->
+      <path d="M42,8 C40,20 50,28 64,26 L132,30 C142,30 142,8 130,8 L64,6 C54,5 44,0 42,8 Z" fill="${SKIN}"/>
+      <path d="M62,26 L130,30" fill="none" stroke="${SHADE}" stroke-width="3" opacity=".5"/>
+      <ellipse cx="52" cy="15" rx="8" ry="5" transform="rotate(8 52 15)" fill="${NAIL}"/>
+      <path d="M90,10 C94,16 94,22 92,26" fill="none" stroke="${CREASE}" stroke-width="2" opacity=".55"/>
+    </g></g>`;
+    g._tilt = g.querySelector(".tilt");
     svg.appendChild(g);
     return g;
+  }
+
+  // Where the marker's tip is, and how the hand leans. Set directly (not
+  // through gsap transforms) so a seek always lands the same pose.
+  const BASE_TILT = 36;
+  function pose(x, y, tilt) {
+    hand.setAttribute("transform", `translate(${x.toFixed(1)},${y.toFixed(1)})`);
+    hand._tilt.setAttribute("transform", `rotate(${(BASE_TILT + (tilt || 0)).toFixed(2)})`);
   }
 
   // ── marks ──
@@ -105,14 +146,25 @@
 
   // ── tweens ──
   const tl = gsap.timeline({ paused: true });
-  const handOn = (at) => tl.set(hand, { opacity: 1 }, at);
+  // The hand's track: every write and every stroke adds a segment that
+  // knows where the tip is at each moment. One tween reads the track, so
+  // the hand is a function of time — live or rendered, it moves the same.
+  const track = [];
+  const ease = gsap.parseEase("power1.inOut");
 
   function write(t, at, dur) {
     const bb = t.getBBox();
     const r = t._clip;
-    tl.to(r, { attr: { width: bb.width + 8 }, duration: dur, ease: "none" }, at);
-    tl.fromTo(hand, { x: bb.x, y: bb.y + bb.height * 0.8 },
-      { x: bb.x + bb.width, y: bb.y + bb.height * 0.8, duration: dur, ease: "none" }, at);
+    // A short reach to the line's start, then the letters.
+    const reach = Math.min(0.28, dur * 0.2);
+    tl.to(r, { attr: { width: bb.width + 8 }, duration: dur - reach, ease: "none" }, at + reach);
+    const letters = Math.max(1, t.textContent.replace(/\s/g, "").length);
+    const h = bb.height, base = bb.y + h * 0.78;
+    track.push({ t0: at + reach, t1: at + dur, at(p) {
+      // Up and down once a letter, leaning into each stroke, as a hand writes.
+      const ph = p * letters * Math.PI;
+      return { x: bb.x + p * bb.width, y: base - Math.abs(Math.sin(ph)) * h * 0.42, tilt: Math.sin(ph * 2) * 3 };
+    } });
     return at + dur;
   }
 
@@ -125,8 +177,37 @@
     tl.set(p, { opacity: 1 }, at);
     const o = { t: 0 };
     tl.to(o, { t: 1, duration: dur, ease: "power1.inOut",
-      onUpdate() { p.style.strokeDashoffset = `${len * (1 - o.t)}`; const pt = p.getPointAtLength(len * o.t); gsap.set(hand, { x: pt.x, y: pt.y }); } }, at);
+      onUpdate() { p.style.strokeDashoffset = `${len * (1 - o.t)}`; } }, at);
+    track.push({ t0: at, t1: at + dur, at(q) { const pt = p.getPointAtLength(len * ease(q)); return { x: pt.x, y: pt.y, tilt: 0 }; } });
     return at + dur;
+  }
+
+  const OFF = { x: W + 160, y: H + 260, tilt: 0 };
+  function rest(pt) { return { x: Math.min(W + 40, pt.x + 90), y: Math.min(H + 60, pt.y + 150), tilt: -4 }; }
+  function mix(a, b, k) { k = ease(Math.max(0, Math.min(1, k))); return { x: a.x + (b.x - a.x) * k, y: a.y + (b.y - a.y) * k, tilt: a.tilt + (b.tilt - a.tilt) * k }; }
+
+  function handAt(time) {
+    // Inside a segment: that segment. Between two: glide across if the gap
+    // is short, or lift away from the board and come back if the narrator
+    // is talking — so the hand never sits on what was just written.
+    let prev = null, next = null, active = null;
+    for (const seg of track) {
+      if (seg.t0 <= time && time <= seg.t1) { if (!active || seg.t0 >= active.t0) active = seg; }
+      if (seg.t1 < time && (!prev || seg.t1 > prev.t1)) prev = seg;
+      if (seg.t0 > time && (!next || seg.t0 < next.t0)) next = seg;
+    }
+    if (active) return active.at((time - active.t0) / Math.max(0.001, active.t1 - active.t0));
+    const from = prev ? prev.at(1) : OFF, to = next ? next.at(0) : OFF;
+    const t0 = prev ? prev.t1 : 0, t1 = next ? next.t0 : t0 + 1;
+    const gap = t1 - t0;
+    if (!prev || !next || gap > 0.9) {
+      const away = !next ? OFF : !prev ? OFF : rest(from);
+      const out = Math.min(0.45, gap / 2), back = Math.min(0.45, gap / 2);
+      if (time - t0 < out) return mix(from, away, (time - t0) / out);
+      if (t1 - time < back) return mix(away, to, 1 - (t1 - time) / back);
+      return away;
+    }
+    return mix(from, to, (time - t0) / gap);
   }
 
   function show(node, at, dur) { tl.fromTo(node, { opacity: 0 }, { opacity: 1, duration: dur || 0.3 }, at); return at + (dur || 0.3); }
@@ -344,7 +425,6 @@
 
   function build() {
     let at = 0.3;
-    handOn(at);
     const starts = [];
     scenes.forEach((s, i) => {
       starts.push(at);
@@ -355,8 +435,11 @@
       }
       at += durations[i];
     });
-    tl.set(hand, { opacity: 0 }, at - 0.2);
     tl.to({}, { duration: 0.6 }, at);   // a beat on the finished board
+    const end = tl.duration(), clock = { t: 0 };
+    track.sort((a, b) => a.t0 - b.t0);
+    tl.fromTo(clock, { t: 0 }, { t: end, duration: end, ease: "none", onUpdate() { const p = handAt(clock.t); pose(p.x, p.y, p.tilt); } }, 0);
+    pose(OFF.x, OFF.y, 0);
     window.__starts = starts;
     window.__total = tl.duration();
   }

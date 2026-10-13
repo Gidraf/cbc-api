@@ -25,7 +25,7 @@ from typing import Any
 logger = logging.getLogger("cbc-whiteboard")
 
 STATIC = Path(__file__).resolve().parent.parent / "static"
-VERSION = "wb1"          # bump when the board draws differently: old videos re-render
+VERSION = "wb2"          # bump when the board draws differently: old videos re-render
 FPS = 20
 WIDTH, HEIGHT = 1280, 720
 MAX_SECONDS = 240
