@@ -215,7 +215,128 @@ def list_videos(grade: str = Query(...), subject: str = Query(...), sub_strand: 
     return {"items": out, "ready": sum(1 for v in out if v["status"] == "ready")}
 
 
+# ── social posts ──────────────────────────────────────────────────────────────
+
+@router.get("/items/{question_id}/social.html")
+def social_page(question_id: str, _: AuthContext = Depends(ANY)) -> HTMLResponse:
+    """The vertical cut, live and voiced — what the post's video will be."""
+    from ..services import social
+
+    return HTMLResponse(social.live_page(_one(question_id)))
+
+
+@router.get("/items/{question_id}/social")
+def social_status(question_id: str, _: AuthContext = Depends(ANY)) -> dict[str, Any]:
+    """The social post for this item: its video, thumbnail and post text, or where they are."""
+    from ..services import social
+
+    return social.status(question_id, _one(question_id))
+
+
+@router.post("/items/{question_id}/social")
+def make_social(question_id: str, auth: AuthContext = Depends(ANY)) -> dict[str, Any]:
+    from ..services import social
+
+    _one(question_id)
+    return social.enqueue(question_id, queued_by=str(getattr(auth, "subject", "") or "social"))
+
+
+@router.post("/social")
+def make_socials(payload: VideoBatch, auth: AuthContext = Depends(STAFF)) -> dict[str, Any]:
+    """A social post for every item in a scope — a fortnight of daily posts."""
+    import hashlib
+
+    from ..services import play_engine, social
+
+    items = _bank(payload.grade, payload.subject, payload.sub_strand, 1000)
+    if payload.kind:
+        items = [q for q in items if (play_engine.spec_for(q).get("primary") or {}).get("kind") == payload.kind]
+    items = items[:max(1, min(payload.limit, 200))]
+    if not items:
+        raise_api_error("NOT_FOUND", "No items in this scope to post.")
+    batch = "soc_" + hashlib.sha256(
+        f"{payload.grade}{payload.subject}{payload.sub_strand}{payload.kind}".encode()).hexdigest()[:10]
+    counts: dict[str, int] = {}
+    out = []
+    for q in items:
+        qid = str(q.get("question_id") or "")
+        try:
+            got = social.enqueue(qid, queued_by=str(getattr(auth, "subject", "") or "social"), batch_id=batch)
+        except Exception as exc:  # noqa: BLE001
+            got = {"question_id": qid, "status": "failed", "error": str(exc)[:200]}
+        counts[got["status"]] = counts.get(got["status"], 0) + 1
+        out.append({k: got.get(k) for k in ("question_id", "status", "url", "job_id", "error")})
+    return {"batch_id": batch, "counts": counts, "items": out}
+
+
+@router.get("/social")
+def list_socials(grade: str = Query(...), subject: str = Query(...), sub_strand: str = Query(""),
+                 limit: int = Query(60, ge=1, le=300), _: AuthContext = Depends(ANY)) -> dict[str, Any]:
+    """Every item in a scope with its social post — ready to download and paste."""
+    from ..services import social
+
+    out = []
+    for q in _bank(grade, subject, sub_strand, limit):
+        qid = str(q.get("question_id") or "")
+        try:
+            st = social.status(qid, q)
+        except Exception as exc:  # noqa: BLE001
+            st = {"question_id": qid, "status": "failed", "error": str(exc)[:200]}
+        out.append({**st, "question_text": str(q.get("question_text") or "")[:160]})
+    return {"items": out, "ready": sum(1 for v in out if v["status"] == "ready")}
+
+
 OPERATORS = require_roles("admin", "operator")
+
+
+@router.post("/social/asset")
+async def social_asset(kind: str = Form(..., description="logo | music"), file: UploadFile = File(...),
+                       auth: AuthContext = Depends(OPERATORS)) -> dict[str, Any]:
+    """The logo (PNG or SVG) or the background music (MP3) for social videos."""
+    import hashlib
+
+    from ..infra.storage import object_storage
+    from ..services import platform_settings, whiteboard
+
+    payload = await file.read()
+    if kind == "logo":
+        is_svg = payload.lstrip()[:1] == b"<" and b"<svg" in payload[:2000]
+        if not (whiteboard.png_size(payload) or is_svg):
+            raise_api_error("VALIDATION_FAILED", "Send the logo as a PNG or an SVG.")
+        ext, ctype, limit, key = ("svg" if is_svg else "png"), ("image/svg+xml" if is_svg else "image/png"), 2, "social_logo_url"
+    elif kind == "music":
+        if not (payload[:3] == b"ID3" or payload[:2] in (b"\xff\xfb", b"\xff\xf3", b"\xff\xf2")):
+            raise_api_error("VALIDATION_FAILED", "Send the music as an MP3.")
+        ext, ctype, limit, key = "mp3", "audio/mpeg", 15, "social_music_url"
+    else:
+        raise_api_error("VALIDATION_FAILED", "kind is logo or music.")
+        return {}
+    if len(payload) > limit * 1024 * 1024:
+        raise_api_error("VALIDATION_FAILED", f"Keep the {kind} under {limit} MB.")
+    name = f"social/assets/{kind}-{hashlib.sha256(payload).hexdigest()[:16]}.{ext}"
+    url = object_storage.save_bytes(name, payload, ctype)
+    if url.startswith("local://"):
+        raise_api_error("STORAGE_UPLOAD_FAILED", "Object storage refused the file — is MinIO up?")
+    platform_settings.set_many({key: url}, updated_by=str(getattr(auth, "subject", "") or ""))
+    return {"kind": kind, "url": url}
+
+
+@router.delete("/social/asset")
+def clear_social_asset(kind: str = Query(...), auth: AuthContext = Depends(OPERATORS)) -> dict[str, Any]:
+    from ..services import platform_settings
+
+    key = {"logo": "social_logo_url", "music": "social_music_url"}.get(kind)
+    if not key:
+        raise_api_error("VALIDATION_FAILED", "kind is logo or music.")
+    platform_settings.set_many({key: ""}, updated_by=str(getattr(auth, "subject", "") or ""))
+    return {"kind": kind, "url": None}
+
+
+@router.get("/social/brand")
+def social_brand(_: AuthContext = Depends(ANY)) -> dict[str, Any]:
+    from ..services import social
+
+    return social.brand()
 
 
 @router.get("/hand")

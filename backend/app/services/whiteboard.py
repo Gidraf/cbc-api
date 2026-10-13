@@ -108,11 +108,16 @@ def emoji_hand(style: str) -> dict[str, Any] | None:
 
 
 def page(data: dict[str, Any], *, title: str = "", voice: str = "en-KE", durations: list[float] | None = None,
-         render: bool = False, autoplay: bool = False, audio: list[str | None] | None = None) -> str:
+         render: bool = False, autoplay: bool = False, audio: list[str | None] | None = None,
+         social: dict[str, Any] | None = None) -> str:
     """The board for one walkthrough. `durations` (seconds per scene) come
-    from the voice files when rendering; live, the board estimates them."""
+    from the voice files when rendering; live, the board estimates them.
+    With `social`, the board sits in a vertical 1080×1920 frame with a
+    hook, captions, a countdown and the brand (see services/social.py)."""
     payload = {"scenes": data.get("scenes") or [], "seed": str(data.get("question_id") or title or "wb"),
                "voice": voice, "durations": durations or [], "audio": audio or []}
+    if social:
+        payload["social"] = {k: v for k, v in social.items() if k not in ("logo", "music_url")}
     try:
         photo = hand()
     except Exception as exc:  # noqa: BLE001
@@ -121,8 +126,13 @@ def page(data: dict[str, Any], *, title: str = "", voice: str = "en-KE", duratio
     if photo:
         payload["hand"] = {k: v for k, v in photo.items() if k != "url"}
     chrome = "" if render else _CONTROLS.replace("__AUTOPLAY__", "true" if autoplay else "false")
-    return (_PAGE.replace("__TITLE__", html.escape(title or "Whiteboard"))
-            .replace("__BODY_CLASS__", "render" if render else "live")
+    template = _PAGE
+    if social:
+        from .social import frame
+
+        template = frame(social)
+    return (template.replace("__TITLE__", html.escape(title or "Whiteboard"))
+            .replace("__BODY_CLASS__", ("social " if social else "") + ("render" if render else "live"))
             .replace("__CONTROLS__", chrome)
             .replace("__GSAP__", _script(_asset("gsap.min.js")))
             .replace("__DATA__", json.dumps(payload).replace("</", "<\\/"))
@@ -188,7 +198,7 @@ def speak(text: str, voice: str) -> tuple[bytes | None, float]:
         rate = "+0%"
     from .speech_text import VERSION as SPEECH
 
-    key = hashlib.sha256(f"v1|{SPEECH}|{voice}|{rate}|{text}".encode()).hexdigest()[:24]
+    key = hashlib.sha256(f"v2|{SPEECH}|{voice}|{rate}|{text}".encode()).hexdigest()[:24]
     if key in _SPOKEN:
         return _SPOKEN[key]
     name = f"narration/{key}.mp3"
@@ -206,6 +216,8 @@ def speak(text: str, voice: str) -> tuple[bytes | None, float]:
             time.sleep(0.6 * (attempt + 1))
     if not audio:
         return None, max(2.4, len(text.split()) / 2.6)
+    if fresh:
+        audio = _trim(audio)
     seconds = _seconds_of(audio)
     if fresh:
         object_storage.save_bytes(name, audio, "audio/mpeg")
@@ -213,6 +225,25 @@ def speak(text: str, voice: str) -> tuple[bytes | None, float]:
         _SPOKEN.clear()
     _SPOKEN[key] = (audio, seconds)
     return audio, seconds
+
+
+def _trim(audio: bytes) -> bytes:
+    """The voice without the half-second of air Microsoft puts either side
+    of every clip — between scenes it added up to a second and a half of
+    silence, which a feed scrolls past."""
+    ffmpeg = ffmpeg_binary()
+    if not ffmpeg:
+        return audio
+    cut = ("silenceremove=start_periods=1:start_threshold=-50dB:start_silence=0.05,areverse,"
+           "silenceremove=start_periods=1:start_threshold=-50dB:start_silence=0.12,areverse")
+    with tempfile.TemporaryDirectory(prefix="say-") as tmp:
+        src, dst = Path(tmp) / "in.mp3", Path(tmp) / "out.mp3"
+        src.write_bytes(audio)
+        done = subprocess.run([ffmpeg, "-y", "-loglevel", "error", "-i", str(src), "-af", cut, "-c:a", "libmp3lame",
+                               "-b:a", "64k", "-ac", "1", str(dst)], capture_output=True, timeout=60)
+        if done.returncode or not dst.exists() or dst.stat().st_size < 1000:
+            return audio
+        return dst.read_bytes()
 
 
 def _seconds_of(audio: bytes) -> float:
@@ -236,6 +267,10 @@ def narrate(scenes: list[dict[str, Any]], voice: str, folder: Path) -> list[tupl
     could not speak keeps a reading-pace length and stays silent."""
     out: list[tuple[Path | None, float]] = []
     for n, (audio, seconds) in enumerate(speak_all(scenes, voice)):
+        if scenes[n].get("hold"):
+            # A silent beat of a set length — the countdown.
+            out.append((None, float(scenes[n]["hold"])))
+            continue
         if audio:
             path = folder / f"say_{n:03d}.mp3"
             path.write_bytes(audio)
@@ -269,8 +304,10 @@ def _starts(durations: list[float]) -> list[float]:
 
 
 def render(data: dict[str, Any], *, title: str = "", voice: str = "", subject: str = "",
-           fps: int = FPS, progress: Any = None) -> dict[str, Any]:
-    """Speak, draw and encode one walkthrough. Returns {url, seconds, key}."""
+           fps: int = FPS, progress: Any = None, social: dict[str, Any] | None = None,
+           prefix: str = "videos", key: str = "") -> dict[str, Any]:
+    """Speak, draw and encode one walkthrough. Returns {url, seconds, key}
+    — and, for a social cut, a thumbnail too."""
     from ..settings import settings
     from ..infra.storage import object_storage
     from .math_engine.tts_service import voice_for
@@ -283,28 +320,74 @@ def render(data: dict[str, Any], *, title: str = "", voice: str = "", subject: s
     if not scenes:
         raise RuntimeError("This item has no walkthrough to draw.")
     voice = voice or voice_for(subject)
-    key = cache_key(data, voice, fps)
+    key = key or cache_key(data, voice, fps)
     qid = str(data.get("question_id") or "item")
-    name = object_name(qid, key)
+    name = f"{prefix}/{qid}/{key}.mp4"
+    thumb_name = f"{prefix}/{qid}/{key}.jpg"
     if object_storage.object_exists(name):
-        return {"url": public_url(name), "key": key, "cached": True}
+        return {"url": public_url(name), "key": key, "cached": True,
+                **({"thumbnail_url": public_url(thumb_name)} if social else {})}
 
     tick = progress or (lambda *_a, **_k: None)
+    size = (1080, 1920) if social else (WIDTH, HEIGHT)
     with tempfile.TemporaryDirectory(prefix="wb-") as tmp:
         folder = Path(tmp)
         tick("voice", 0, len(scenes))
         spoken = narrate(scenes, voice, folder)
         durations = [round(d, 3) for _, d in spoken]
-        doc = page(data, title=title, voice=voice, durations=durations, render=True)
+        starts = _starts(durations)
+        doc = page(data, title=title, voice=voice, durations=durations, render=True, social=social)
+        thumb_at = None
+        if social:
+            # The question written out and the countdown at its first number.
+            k = next((i for i, sc in enumerate(scenes) if sc.get("scene") == "countdown"), 0)
+            thumb_at = starts[k] + 0.4
         video = folder / "board.mp4"
-        seconds = _capture(cdp, doc, video, ffmpeg, fps, tick)
+        seconds, thumb = _capture(cdp, doc, video, ffmpeg, fps, tick, size=size,
+                                  selector="#social" if social else "#wb", thumb_at=thumb_at)
+        extras: list[tuple[Path, float]] = []
+        music = None
+        if social:
+            extras = _countdown_ticks(ffmpeg, folder, scenes, starts)
+            music = _music_file(folder, social.get("music_url") or "")
         final = folder / "final.mp4"
-        _mux(ffmpeg, video, spoken, _starts(durations), seconds, final)
+        _mux(ffmpeg, video, spoken, starts, seconds, final, extras=extras, music=music)
         url = object_storage.save_bytes(name, final.read_bytes(), "video/mp4")
         if url.startswith("local://"):
             raise RuntimeError("The video was made but object storage refused it — is MinIO up?")
-    logger.info("Whiteboard video for %s: %.1fs, %s", qid, seconds, name)
-    return {"url": url, "seconds": round(seconds, 1), "key": key, "cached": False}
+        out = {"url": url, "seconds": round(seconds, 1), "key": key, "cached": False}
+        if thumb:
+            out["thumbnail_url"] = object_storage.save_bytes(thumb_name, thumb, "image/jpeg")
+    logger.info("Whiteboard %s for %s: %.1fs, %s", "social cut" if social else "video", qid, seconds, name)
+    return out
+
+
+def _countdown_ticks(ffmpeg: str, folder: Path, scenes: list[dict[str, Any]],
+                     starts: list[float]) -> list[tuple[Path, float]]:
+    """A soft tick each second of the countdown, a brighter one as it ends."""
+    tick, ding = folder / "tick.wav", folder / "ding.wav"
+    for path, freq, dur, vol in ((tick, 1150, 0.06, 0.35), (ding, 1650, 0.22, 0.4)):
+        subprocess.run([ffmpeg, "-y", "-loglevel", "error", "-f", "lavfi", "-i",
+                        f"sine=frequency={freq}:duration={dur}", "-af",
+                        f"volume={vol},afade=t=out:st={dur * 0.5}:d={dur * 0.5}", str(path)],
+                       capture_output=True, timeout=60, check=True)
+    out: list[tuple[Path, float]] = []
+    for scene, start in zip(scenes, starts):
+        if scene.get("scene") == "countdown":
+            n = int(scene.get("hold") or 0)
+            out += [(tick, start + k) for k in range(n)] + [(ding, start + n - 0.05)]
+    return out
+
+
+def _music_file(folder: Path, url: str) -> Path | None:
+    if not url:
+        return None
+    payload = _hand_bytes(url)
+    if not payload:
+        return None
+    path = folder / "music.mp3"
+    path.write_bytes(payload)
+    return path
 
 
 # ── the queue ────────────────────────────────────────────────────────────────
@@ -400,7 +483,9 @@ def run_job(job: dict[str, Any]) -> dict[str, Any]:
     return {"status": "done", "question_id": qid, **made}
 
 
-def _capture(cdp: str, doc: str, out: Path, ffmpeg: str, fps: int, tick: Any) -> float:
+def _capture(cdp: str, doc: str, out: Path, ffmpeg: str, fps: int, tick: Any, *,
+             size: tuple[int, int] = (WIDTH, HEIGHT), selector: str = "#wb",
+             thumb_at: float | None = None) -> tuple[float, bytes | None]:
     from playwright.sync_api import sync_playwright
 
     encoder = subprocess.Popen(
@@ -409,6 +494,7 @@ def _capture(cdp: str, doc: str, out: Path, ffmpeg: str, fps: int, tick: Any) ->
          "-r", str(fps), str(out)],
         stdin=subprocess.PIPE, stderr=subprocess.PIPE)
     total = 0.0
+    thumb: bytes | None = None
     try:
         with sync_playwright() as p:
             # The browser service when it answers, else the image's own
@@ -425,18 +511,21 @@ def _capture(cdp: str, doc: str, out: Path, ffmpeg: str, fps: int, tick: Any) ->
             if browser is None:
                 browser = p.chromium.launch(headless=True, args=LAUNCH_ARGS)
             try:
-                context = browser.new_context(viewport={"width": WIDTH, "height": HEIGHT}, device_scale_factor=1)
+                context = browser.new_context(viewport={"width": size[0], "height": size[1]}, device_scale_factor=1)
                 pg = context.new_page()
                 pg.set_content(doc, wait_until="domcontentloaded", timeout=60000)  # fonts: __ready waits up to 2.5 s
                 total = float(pg.evaluate("() => window.__ready"))
                 total = min(total, MAX_SECONDS)
                 frames = int(total * fps) + 1
-                board = pg.locator("#wb")
+                board = pg.locator(selector)
                 for f in range(frames):
                     pg.evaluate("t => window.__seek(t)", f / fps)
                     encoder.stdin.write(board.screenshot(type="jpeg", quality=88))  # type: ignore[union-attr]
                     if f % (fps * 2) == 0:
                         tick("draw", f, frames)
+                if thumb_at is not None:
+                    pg.evaluate("t => window.__seek(t)", min(thumb_at, total))
+                    thumb = board.screenshot(type="jpeg", quality=90)
                 context.close()
             finally:
                 browser.close()
@@ -447,22 +536,31 @@ def _capture(cdp: str, doc: str, out: Path, ffmpeg: str, fps: int, tick: Any) ->
         encoder.wait(timeout=600)
     if encoder.returncode:
         raise RuntimeError(f"ffmpeg could not encode the board: {err.decode(errors='ignore')[-400:]}")
-    return total
+    return total, thumb
 
 
 def _mux(ffmpeg: str, video: Path, spoken: list[tuple[Path | None, float]], starts: list[float],
-         seconds: float, out: Path) -> None:
-    """Each scene's voice placed where its scene starts on the board."""
-    voiced = [(p, s) for (p, _), s in zip(spoken, starts) if p]
-    if not voiced:
+         seconds: float, out: Path, *, extras: list[tuple[Path, float]] | tuple = (),
+         music: Path | None = None) -> None:
+    """Each scene's voice placed where its scene starts on the board; any
+    extra sounds (the countdown's ticks) at their times; music, if any,
+    quietly under all of it."""
+    voiced = [(p, s) for (p, _), s in zip(spoken, starts) if p] + list(extras)
+    if not voiced and not music:
         shutil.copyfile(video, out)
         return
     args = [ffmpeg, "-y", "-loglevel", "error", "-i", str(video)]
     for p, _ in voiced:
         args += ["-i", str(p)]
     chains = [f"[{k + 1}:a]adelay={int(s * 1000)}|{int(s * 1000)}[a{k}]" for k, (_, s) in enumerate(voiced)]
-    mix = "".join(f"[a{k}]" for k in range(len(voiced)))
-    graph = ";".join(chains) + f";{mix}amix=inputs={len(voiced)}:normalize=0:dropout_transition=0,apad[aout]"
+    labels = [f"[a{k}]" for k in range(len(voiced))]
+    if music:
+        args += ["-stream_loop", "-1", "-i", str(music)]
+        m = len(voiced) + 1
+        fade = max(0.0, seconds - 1.5)
+        chains.append(f"[{m}:a]volume=0.10,afade=t=in:d=1,afade=t=out:st={fade:.2f}:d=1.5[mus]")
+        labels.append("[mus]")
+    graph = ";".join(chains) + f";{''.join(labels)}amix=inputs={len(labels)}:normalize=0:dropout_transition=0,apad[aout]"
     args += ["-filter_complex", graph, "-map", "0:v", "-map", "[aout]", "-c:v", "copy", "-c:a", "aac",
              "-b:a", "128k", "-t", f"{seconds:.2f}", "-movflags", "+faststart", str(out)]
     done = subprocess.run(args, capture_output=True, timeout=600)

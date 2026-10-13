@@ -5430,6 +5430,9 @@ def _register_queue_handlers() -> None:
     # A whiteboard video: the walkthrough drawn by a marker and voiced.
     from ..services import whiteboard as _whiteboard
     job_queue.register(_whiteboard.JOB_KIND, _whiteboard.run_job)
+    # The same walkthrough cut vertical for social media, with its post.
+    from ..services import social as _social
+    job_queue.register(_social.JOB_KIND, _social.run_job)
 
 
 # One step, one implementation. The pipeline delegates to the same handlers the

@@ -24,7 +24,14 @@ import {
   useSubjects,
   useClearHandPhoto,
   useHandPhoto,
+  useMakeSocial,
+  useMakeSocials,
   useMakeVideo,
+  useSocialAsset,
+  useSocialBrand,
+  useSocialHtml,
+  useSocialLibrary,
+  useSocialStatus,
   useSetHandPhoto,
   useMakeVideos,
   useVideoLibrary,
@@ -32,6 +39,7 @@ import {
   useWalkthroughHtml,
   useWhiteboardHtml,
   type PlayItem,
+  type SocialState,
   type PlaySpec,
 } from "../lib/queries";
 
@@ -60,6 +68,7 @@ export function PlayArcade() {
   const [playing, setPlaying] = React.useState<PlayItem[] | null>(null);
   const [watching, setWatching] = React.useState<string | null>(null);
   const [showLibrary, setShowLibrary] = React.useState(false);
+  const [socialWatch, setSocialWatch] = React.useState<string | null>(null);
 
   async function startRound(mode: string) {
     try {
@@ -137,8 +146,13 @@ export function PlayArcade() {
                       onToggle={() => setShowLibrary((v) => !v)} onWatch={(qid) => setWatching(qid)} />
       )}
 
+      {grade && (items.data?.items || []).length > 0 && (
+        <SocialLibrary grade={grade} subject={subject} subStrand={subStrand} onWatch={(qid) => setSocialWatch(qid)} />
+      )}
+
       {playing && <Round items={playing} onClose={() => setPlaying(null)} onWatch={(qid) => setWatching(qid)} />}
       {watching && <WatchModal questionId={watching} onClose={() => setWatching(null)} />}
+      {socialWatch && <WatchModal questionId={socialWatch} start="social" onClose={() => setSocialWatch(null)} />}
     </>
   );
 }
@@ -435,24 +449,181 @@ function FractionGame({ spec, onDone }: { spec: PlaySpec; onDone: (c: boolean) =
 
 // ── the walkthrough ─────────────────────────────────────────────────────────
 
-function WatchModal({ questionId, onClose }: { questionId: string; onClose: () => void }) {
-  const [view, setView] = React.useState<"whiteboard" | "classic">("whiteboard");
+function WatchModal({ questionId, onClose, start = "whiteboard" }: { questionId: string; onClose: () => void; start?: "whiteboard" | "classic" | "social" }) {
+  const [view, setView] = React.useState<"whiteboard" | "classic" | "social">(start);
   const board = useWhiteboardHtml(view === "whiteboard" ? questionId : "");
   const classic = useWalkthroughHtml(view === "classic" ? questionId : "");
-  const page = view === "whiteboard" ? board : classic;
+  const vertical = useSocialHtml(view === "social" ? questionId : "");
+  const page = view === "whiteboard" ? board : view === "classic" ? classic : vertical;
+  const frame = (
+    <iframe key={view} title="Walkthrough" srcDoc={page.data || "<p style='font-family:sans-serif;padding:2rem'>Preparing — the voice is being recorded…</p>"}
+            allow="autoplay" style={{ width: view === "social" ? "min(420px, 100%)" : "100%", height: view === "social" ? "62vh" : "72vh", border: "1px solid var(--line)", borderRadius: "var(--radius)", background: view === "social" ? "#0f172a" : "#e9e7e1" }} />
+  );
   return (
     <Modal open onClose={onClose} title="Walkthrough — press Play to hear it" width="min(1100px, 96vw)"
            footer={<Button onClick={onClose}>Close</Button>}>
       <Stack direction="row" gap="var(--s2)" wrap align="center" style={{ marginBottom: "var(--s3)" }}>
         <Button size="sm" variant={view === "whiteboard" ? "primary" : "ghost"} onClick={() => setView("whiteboard")}>✎ Whiteboard</Button>
+        <Button size="sm" variant={view === "social" ? "primary" : "ghost"} onClick={() => setView("social")}>📱 Social post</Button>
         <Button size="sm" variant={view === "classic" ? "primary" : "ghost"} onClick={() => setView("classic")}>Animated</Button>
         <span style={{ flex: 1 }} />
-        <VideoControl questionId={questionId} />
+        {view !== "social" && <VideoControl questionId={questionId} />}
       </Stack>
       {page.error && <ErrorNotice error={page.error} />}
-      <iframe key={view} title="Walkthrough" srcDoc={page.data || "<p style='font-family:sans-serif;padding:2rem'>Preparing…</p>"}
-              allow="autoplay" style={{ width: "100%", height: "72vh", border: "1px solid var(--line)", borderRadius: "var(--radius)", background: "#e9e7e1" }} />
+      {view === "social" ? (
+        <div style={{ display: "flex", gap: "var(--s4)", flexWrap: "wrap", alignItems: "flex-start" }}>
+          {frame}
+          <div style={{ flex: "1 1 320px", minWidth: 0 }}><SocialControl questionId={questionId} /></div>
+        </div>
+      ) : frame}
     </Modal>
+  );
+}
+
+/** The item's social post: the vertical MP4, its thumbnail, and the text to paste. */
+function SocialControl({ questionId }: { questionId: string }) {
+  const social = useSocialStatus(questionId);
+  const make = useMakeSocial();
+  const toast = useToast();
+  const v = social.data;
+  async function start() {
+    try { await make.mutateAsync(questionId); toast("Social video queued — drawn, voiced and captioned in the worker.", "ok"); }
+    catch (err) { toast(err instanceof Error ? err.message : "Could not queue it.", "danger"); }
+  }
+  if (!v) return <p style={{ color: "var(--ink-3)" }}>{social.isLoading ? "Loading the post…" : ""}</p>;
+  return (
+    <div style={{ display: "grid", gap: "var(--s3)" }}>
+      <Stack direction="row" gap="var(--s2)" wrap align="center">
+        {v.status === "ready" && v.url ? (
+          <>
+            <Badge tone="ok">Video ready</Badge>
+            <a href={v.url} download target="_blank" rel="noreferrer"><Button size="sm" variant="primary">⬇ Video (MP4)</Button></a>
+            {v.thumbnail_url && <a href={v.thumbnail_url} download target="_blank" rel="noreferrer"><Button size="sm">⬇ Thumbnail</Button></a>}
+          </>
+        ) : v.status === "queued" || v.status === "running" ? (
+          <Badge tone="info">{v.status === "running" ? "Making the video…" : "Video queued…"}</Badge>
+        ) : (
+          <>
+            {v.status === "failed" && <Badge tone="danger" title={v.error}>Last attempt failed</Badge>}
+            <Button size="sm" variant="primary" disabled={make.isPending || !v.scenes} onClick={start}>📱 Make the social video</Button>
+          </>
+        )}
+      </Stack>
+      <PostText post={v.post} />
+    </div>
+  );
+}
+
+function PostText({ post }: { post: string }) {
+  const toast = useToast();
+  async function copy() {
+    try { await navigator.clipboard.writeText(post); toast("Post copied — paste it as the caption.", "ok"); }
+    catch { toast("Could not copy — select the text and copy it.", "danger"); }
+  }
+  return (
+    <div>
+      <Stack direction="row" gap="var(--s2)" align="center" style={{ marginBottom: 6 }}>
+        <strong style={{ fontSize: "var(--text-sm)" }}>Post text</strong>
+        <span style={{ flex: 1 }} />
+        <Button size="sm" onClick={copy}>📋 Copy post</Button>
+      </Stack>
+      <textarea readOnly value={post} rows={14}
+                style={{ width: "100%", boxSizing: "border-box", font: "inherit", fontSize: "var(--text-sm)", padding: 10,
+                         borderRadius: "var(--radius)", border: "1px solid var(--line)", background: "var(--surface-2)", color: "var(--ink)" }} />
+    </div>
+  );
+}
+
+/** Every item in the scope as a post for TikTok, Reels, Shorts and Status. */
+function SocialLibrary({ grade, subject, subStrand, onWatch }: {
+  grade: string; subject: string; subStrand: string; onWatch: (qid: string) => void;
+}) {
+  const [open, setOpen] = React.useState(false);
+  const library = useSocialLibrary(grade, subject, subStrand, open);
+  const makeAll = useMakeSocials();
+  const brand = useSocialBrand();
+  const asset = useSocialAsset();
+  const toast = useToast();
+  const rows = library.data?.items || [];
+  const busy = rows.filter((v) => v.status === "queued" || v.status === "running").length;
+  const b = brand.data;
+  async function all() {
+    try {
+      const out = await makeAll.mutateAsync({ grade, subject, sub_strand: subStrand || undefined, limit: 60 });
+      const c = out.counts;
+      setOpen(true);
+      toast(`Social posts: ${c.queued || 0} queued, ${c.ready || 0} already made${c.failed ? `, ${c.failed} failed` : ""}.`, "ok");
+    } catch (err) { toast(err instanceof Error ? err.message : "Could not queue the posts.", "danger"); }
+  }
+  async function upload(kind: "logo" | "music", file: File | null) {
+    try { await asset.mutateAsync({ kind, file }); toast(file ? `${kind === "logo" ? "Logo" : "Music"} saved.` : `${kind === "logo" ? "Logo" : "Music"} removed.`, "ok"); }
+    catch (err) { toast(err instanceof Error ? err.message : "Could not save it.", "danger"); }
+  }
+  async function copy(post: string) {
+    try { await navigator.clipboard.writeText(post); toast("Post copied.", "ok"); } catch { toast("Could not copy.", "danger"); }
+  }
+  return (
+    <Card title="Social posts"
+          actions={<Stack direction="row" gap="var(--s2)">
+            <Button size="sm" variant="ghost" onClick={() => setOpen((x) => !x)}>{open ? "Hide" : "Show the posts"}</Button>
+            <Button size="sm" variant="primary" disabled={makeAll.isPending} onClick={all}>
+              📱 Make posts for {subStrand ? "this topic" : "this subject"}
+            </Button>
+          </Stack>}>
+      <p style={{ margin: 0, color: "var(--ink-3)", fontSize: "var(--text-sm)" }}>
+        Each question as a vertical video for TikTok, Reels, Shorts and WhatsApp Status — a hook, a countdown to pause and
+        try, the solution with captions, your brand at the end — with a thumbnail and the post text (question, answer,
+        working, hashtags) ready to paste.
+      </p>
+      {b && (
+        <div style={{ marginTop: "var(--s3)", fontSize: "var(--text-sm)", display: "flex", gap: "var(--s3)", flexWrap: "wrap", alignItems: "center" }}>
+          <span>Brand: <strong>{b.name}</strong></span>
+          <span>Handle: <strong>{b.handle || "— not set"}</strong></span>
+          <span>Website: <strong>{b.website || "—"}</strong></span>
+          <span>Countdown: <strong>{b.countdown}s</strong></span>
+          <span style={{ color: "var(--ink-3)" }}>Change these in Settings → Social.</span>
+        </div>
+      )}
+      {b && (
+        <Stack direction="row" gap="var(--s3)" wrap align="center" style={{ marginTop: "var(--s2)", fontSize: "var(--text-sm)" }}>
+          <label style={{ cursor: "pointer" }}>
+            <input type="file" accept="image/png,image/svg+xml" style={{ display: "none" }} onChange={(e) => upload("logo", e.target.files?.[0] || null)} />
+            <span style={{ textDecoration: "underline" }}>{b.logo_url ? "Replace the logo" : "Upload a logo (PNG/SVG)"}</span>
+          </label>
+          {b.logo_url && <Button size="sm" variant="ghost" onClick={() => upload("logo", null)}>Remove logo</Button>}
+          <label style={{ cursor: "pointer" }}>
+            <input type="file" accept="audio/mpeg" style={{ display: "none" }} onChange={(e) => upload("music", e.target.files?.[0] || null)} />
+            <span style={{ textDecoration: "underline" }}>{b.music_url ? "Replace the music" : "Add background music (MP3)"}</span>
+          </label>
+          {b.music_url && <Button size="sm" variant="ghost" onClick={() => upload("music", null)}>No music</Button>}
+          <span style={{ color: "var(--ink-3)", fontSize: "var(--text-xs)" }}>Use music you own or that is royalty-free for social media.</span>
+        </Stack>
+      )}
+      {open && library.error && <ErrorNotice error={library.error} />}
+      {open && rows.length > 0 && (
+        <>
+          <p style={{ fontSize: "var(--text-sm)", margin: "var(--s3) 0 var(--s2)" }}>
+            <strong>{library.data?.ready || 0}</strong> of {rows.length} ready{busy ? ` · ${busy} being made` : ""}
+          </p>
+          {rows.map((v: SocialState) => (
+            <div key={v.question_id} style={{ display: "flex", gap: "var(--s2)", alignItems: "center", padding: "6px 0", borderBottom: "1px solid var(--line-2)", fontSize: "var(--text-sm)" }}>
+              {v.thumbnail_url && v.status === "ready"
+                ? <img src={v.thumbnail_url} alt="" style={{ width: 36, height: 64, objectFit: "cover", borderRadius: 4 }} />
+                : <span style={{ width: 36 }} />}
+              <Badge tone={v.status === "ready" ? "ok" : v.status === "failed" ? "danger" : v.status === "none" ? "neutral" : "info"}>
+                {{ ready: "ready", queued: "queued", running: "making", failed: "failed", none: "not made", skipped: "skipped" }[v.status]}
+              </Badge>
+              <span style={{ flex: 1, minWidth: 0 }} title={v.error}>{plain(v.question_text || "").slice(0, 110)}</span>
+              <Button size="sm" variant="ghost" onClick={() => onWatch(v.question_id)}>Preview</Button>
+              <Button size="sm" variant="ghost" onClick={() => copy(v.post)}>📋 Post</Button>
+              {v.status === "ready" && v.url && (
+                <a href={v.url} download target="_blank" rel="noreferrer"><Button size="sm">⬇ MP4</Button></a>
+              )}
+            </div>
+          ))}
+        </>
+      )}
+    </Card>
   );
 }
 

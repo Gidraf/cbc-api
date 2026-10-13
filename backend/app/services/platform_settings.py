@@ -78,6 +78,27 @@ SETTINGS: tuple[Setting, ...] = (
     Setting("narration_rate", "TTS_RATE", "string", "Narration speed",
             "How fast the voice reads, as a change from normal: -10% is a calm classroom pace, +0% normal.",
             "-8%", "Voice"),
+    Setting("social_brand_name", "", "string", "Brand on social videos",
+            "The name in the top corner of every social video and written on its end card. Empty: the "
+            "series name on papers.", "", "Social"),
+    Setting("social_handle", "", "string", "Social handle",
+            "Your account, e.g. @cbcmaths — shown on every video, written on the end card, said aloud and "
+            "put in each post.", "", "Social"),
+    Setting("social_website", "", "string", "Website on social videos",
+            "Shown under the captions and in each post. Empty: the public address.", "", "Social"),
+    Setting("social_cta", "", "string", "Call to action",
+            "Said and written at the end of every social video.", "Follow for a new question every day", "Social"),
+    Setting("social_countdown_seconds", "", "int", "Countdown (seconds)",
+            "How long a social video counts down after the question, for the viewer to pause and try. 3–10.",
+            3, "Social"),
+    Setting("social_hashtags", "", "string", "Extra hashtags",
+            "Added to every post after the ones made from the grade and topic, e.g. #MathsWithMwalimu.",
+            "", "Social"),
+    Setting("social_logo_url", "", "string", "Logo on social videos",
+            "A square PNG or SVG shown beside the brand. Upload it from Play → Social posts.", "", "Social"),
+    Setting("social_music_url", "", "string", "Background music",
+            "An MP3 played quietly under the voice. Use a track you own or that is royalty-free for social "
+            "media. Upload it from Play → Social posts. Empty: no music.", "", "Social"),
     Setting("whiteboard_hand_style", "", "string", "Whiteboard hand",
             "Which hand writes on the whiteboard: emoji-dark (✍🏿, the default), emoji-medium-dark (✍🏾) or "
             "drawn. An uploaded hand photo, below, takes the place of all three.", "emoji-dark", "Whiteboard"),

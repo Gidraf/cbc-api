@@ -4157,6 +4157,103 @@ export function useClearHandPhoto() {
   });
 }
 
+export type SocialState = {
+  question_id: string; key: string; scenes: number; post: string;
+  status: "ready" | "queued" | "running" | "failed" | "none" | "skipped";
+  url?: string; thumbnail_url?: string; job_id?: string; error?: string; question_text?: string;
+};
+export type SocialBrand = { name: string; handle: string; website: string; cta: string; countdown: number;
+  hashtags: string; logo_url: string; music_url: string };
+
+/** The vertical cut, live and voiced, for the console's preview. */
+export function useSocialHtml(questionId: string) {
+  const { token } = useAuth();
+  return useQuery({
+    queryKey: ["social-html", questionId],
+    queryFn: async () => {
+      const { blob } = await fetchBlob(`/api/v1/play/items/${encodeURIComponent(questionId)}/social.html`, { bearerToken: token });
+      return await blob.text();
+    },
+    enabled: Boolean(questionId),
+    staleTime: 60_000,
+  });
+}
+
+/** One item's social post — video, thumbnail, post text — polled while it is made. */
+export function useSocialStatus(questionId: string) {
+  const api = useApi();
+  return useQuery({
+    queryKey: ["social", questionId],
+    queryFn: () => api<SocialState>(`/api/v1/play/items/${encodeURIComponent(questionId)}/social`),
+    enabled: Boolean(questionId),
+    refetchInterval: (q) => (["queued", "running"].includes(String(q.state.data?.status)) ? 4000 : false),
+  });
+}
+
+export function useMakeSocial() {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (questionId: string) =>
+      api<SocialState>(`/api/v1/play/items/${encodeURIComponent(questionId)}/social`, { method: "POST" }),
+    onSuccess: (data, questionId) => {
+      qc.setQueryData(["social", questionId], data);
+      qc.invalidateQueries({ queryKey: ["social-library"] });
+    },
+  });
+}
+
+export function useSocialLibrary(grade: string, subject: string, subStrand: string, enabled = true) {
+  const api = useApi();
+  return useQuery({
+    queryKey: ["social-library", grade, subject, subStrand],
+    queryFn: () => {
+      const qs = new URLSearchParams({ grade, subject });
+      if (subStrand) qs.set("sub_strand", subStrand);
+      return api<{ items: SocialState[]; ready: number }>(`/api/v1/play/social?${qs}`);
+    },
+    enabled: enabled && Boolean(grade && subject),
+    refetchInterval: (q) => ((q.state.data?.items || []).some((v) => ["queued", "running"].includes(v.status)) ? 8000 : false),
+  });
+}
+
+export function useMakeSocials() {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { grade: string; subject: string; sub_strand?: string; kind?: string; limit?: number }) =>
+      api<{ batch_id: string; counts: Record<string, number>; items: SocialState[] }>(`/api/v1/play/social`, {
+        method: "POST", body: JSON.stringify(body),
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["social-library"] }),
+  });
+}
+
+export function useSocialBrand() {
+  const api = useApi();
+  return useQuery({ queryKey: ["social-brand"], queryFn: () => api<SocialBrand>("/api/v1/play/social/brand") });
+}
+
+export function useSocialAsset() {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { kind: "logo" | "music"; file: File | null }): Promise<{ kind: string; url: string | null }> => {
+      if (!v.file) return api<{ kind: string; url: string | null }>(`/api/v1/play/social/asset?kind=${v.kind}`, { method: "DELETE" });
+      const form = new FormData();
+      form.append("kind", v.kind);
+      form.append("file", v.file);
+      return api<{ kind: string; url: string | null }>("/api/v1/play/social/asset", { method: "POST", body: form });
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["social-brand"] });
+      qc.invalidateQueries({ queryKey: ["social"] });
+      qc.invalidateQueries({ queryKey: ["social-library"] });
+      qc.invalidateQueries({ queryKey: ["social-html"] });
+    },
+  });
+}
+
 
 /** The agent context pack: playbook, manifest, formats, prompts, as a zip. */
 export function useAgentPack() {

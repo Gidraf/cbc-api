@@ -154,17 +154,28 @@
   const pages = [page];
   let clipN = 0;
 
+  // On a phone the board is a third of the screen: its writing is a fifth
+  // bigger in the social cut.
+  const ZOOM = data.social ? 1.2 : 1;
+
   function text(x, y, str, opt) {
     opt = opt || {};
-    const t = el("text", { x, y, "font-size": opt.size || 34, fill: opt.color || INK.black,
+    const t = el("text", { x, y, "font-size": Math.round((opt.size || 34) * ZOOM), fill: opt.color || INK.black,
       "font-family": FONT, "text-anchor": "start" }, page);
     t.textContent = str;
     const id = `c${clipN++}`;
     const cp = el("clipPath", { id }, defs);
-    const r = el("rect", { x: x - 4, y: y - (opt.size || 34) * 1.1, width: 0, height: (opt.size || 34) * 1.5 }, cp);
+    const r = el("rect", { x: x - 4, y: y - (opt.size || 34) * ZOOM * 1.1, width: 0, height: (opt.size || 34) * ZOOM * 1.5 }, cp);
     t.setAttribute("clip-path", `url(#${id})`);
     t._clip = r;
     return t;
+  }
+
+  function centered(y, str, opt) {
+    const probe = text(0, -200, str, opt);
+    const w = probe.getBBox().width;
+    probe.remove();
+    return text((W - w) / 2, y, str, opt);
   }
 
   function path(d, color, width) {
@@ -297,13 +308,13 @@
 
   const builders = {
     title(s, at, dur) {
-      const lines = wrap(s.text, 46).slice(0, 5);
-      const ctx = s.context ? wrap(s.context, 60).slice(0, 2) : [];
+      const lines = wrap(s.text, Math.round(46 / ZOOM)).slice(0, 6);
+      const ctx = s.context ? wrap(s.context, Math.round(60 / ZOOM)).slice(0, 2) : [];
       const per = (dur * 0.8) / Math.max(1, lines.length + ctx.length);
       let y = 120;
-      for (const c of ctx) { at = write(text(LEFT, y, c, { size: 26, color: INK.grey }), at, per); y += 40; }
+      for (const c of ctx) { at = write(text(LEFT, y, c, { size: 26, color: INK.grey }), at, per); y += 40 * ZOOM; }
       if (ctx.length) y += 10;
-      for (const l of lines) { at = write(text(LEFT, y, l, { size: 40 }), at, per); y += 58; }
+      for (const l of lines) { at = write(text(LEFT, y, l, { size: 40 }), at, per); y += 58 * ZOOM; }
       cursorY = y + 20;
       return { at, y };
     },
@@ -448,6 +459,28 @@
       at = draw(sketchBox(bb.x - 18, bb.y - 10, bb.width + 36, bb.height + 20), at, dur * 0.25);
       return { at };
     },
+    countdown(s, at, dur) {
+      // The board holds the question while the frame counts down; the hand
+      // steps back so nothing covers it.
+      return { at };
+    },
+    outro(s, at, dur) {
+      at = newPage(at);
+      const lines = [[s.name, 64, INK.blue], [s.handle, 52, INK.red], [s.cta, 38, INK.black], [s.website, 32, INK.grey]]
+        .filter((l) => l[0]);
+      const per = (dur * 0.8) / Math.max(1, lines.length);
+      let y = 250 - (lines.length - 2) * 30;
+      lines.forEach(([str, size, color], k) => {
+        const t = centered(y, String(str), { size, color });
+        at = write(t, at, per * (k ? 0.9 : 1.2));
+        if (k === 0) {
+          const bb = t.getBBox();
+          at = draw(path(`M${bb.x},${bb.y + bb.height + 10} Q${bb.x + bb.width / 2},${bb.y + bb.height + 24} ${bb.x + bb.width},${bb.y + bb.height + 6}`, INK.red, 5), at, 0.35);
+        }
+        y += size * 1.7;
+      });
+      return { at };
+    },
     trap(s, at, dur) {
       at = room(110, at);
       const t = text(LEFT, cursorY, `${s.option}.  ${plain(s.text)}`, { size: 38, color: INK.grey });
@@ -462,6 +495,41 @@
     },
   };
   const wb = {};
+
+  // ── the vertical frame: captions and the countdown ──
+  // A function of time, like the hand, so a rendered frame and a live one
+  // agree. Captions come a phrase at a time with the spoken word lit.
+  const capEl = document.getElementById("sc-caption"), countEl = document.getElementById("sc-count");
+  const countN = document.getElementById("sc-n");
+  let lastCap = "";
+  function overlay(time) {
+    if (!capEl) return;
+    const starts = window.__starts || [];
+    let i = -1;
+    for (let k = 0; k < starts.length; k++) if (starts[k] <= time) i = k;
+    const sc = scenes[i];
+    if (!sc) { if (lastCap) { capEl.innerHTML = ""; lastCap = ""; } countEl.style.display = "none"; return; }
+    const into = time - starts[i];
+    if (sc.scene === "countdown") {
+      countEl.style.display = "block";
+      capEl.style.visibility = "hidden";
+      countN.textContent = String(Math.max(1, Math.ceil((sc.hold || 5) - into)));
+      return;
+    }
+    countEl.style.display = "none";
+    capEl.style.visibility = "visible";
+    const words = String(sc.caption || sc.say || "").split(/\s+/).filter(Boolean);
+    const speak = Math.max(0.5, durations[i] - GAP);
+    const k = Math.min(words.length - 1, Math.floor((into / speak) * words.length));
+    const per = 7, c = Math.floor(Math.max(0, k) / per);
+    const key = `${i}:${c}:${k}`;
+    if (key === lastCap) return;
+    lastCap = key;
+    capEl.innerHTML = words.slice(c * per, c * per + per).map((w, j) => {
+      const n = c * per + j;
+      return `<span class="w${n < k ? " past" : n === k ? " on" : ""}">${w.replace(/[<&>]/g, "")}</span>`;
+    }).join(" ");
+  }
 
   // ── durations and the timeline ──
   const GAP = 0.4;
@@ -487,7 +555,7 @@
     tl.to({}, { duration: 0.6 }, at);   // a beat on the finished board
     const end = tl.duration(), clock = { t: 0 };
     track.sort((a, b) => a.t0 - b.t0);
-    tl.fromTo(clock, { t: 0 }, { t: end, duration: end, ease: "none", onUpdate() { const p = handAt(clock.t); pose(p.x, p.y, p.tilt); } }, 0);
+    tl.fromTo(clock, { t: 0 }, { t: end, duration: end, ease: "none", onUpdate() { const p = handAt(clock.t); pose(p.x, p.y, p.tilt); overlay(clock.t); } }, 0);
     pose(OFF.x, OFF.y, 0);
     window.__starts = starts;
     window.__total = tl.duration();
