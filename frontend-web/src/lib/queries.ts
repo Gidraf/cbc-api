@@ -4273,6 +4273,74 @@ export function useSocialAsset() {
   });
 }
 
+/** A scope's finished social posts as one zip, numbered for scheduling. */
+export function useExportSocial() {
+  const { token } = useAuth();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (v: { grade: string; subject: string; sub_strand?: string; start: string; per_day: number;
+                            times: string; platforms: string[] }) => {
+      const qs = new URLSearchParams({ grade: v.grade, subject: v.subject, start: v.start, per_day: String(v.per_day),
+                                       times: v.times, platforms: v.platforms.join(",") });
+      if (v.sub_strand) qs.set("sub_strand", v.sub_strand);
+      const { blob, filename } = await fetchBlob(`/api/v1/play/social/export.zip?${qs}`, { bearerToken: token });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+      return filename;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["social-posts"] }),
+  });
+}
+
+export type TrackedPost = {
+  post_id: string; question_id: string; platform: string; grade: string; subject: string; sub_strand: string;
+  scheduled_for: string | null; posted_at: string | null; url: string; views: number; likes: number; comments: number;
+  shares: number; saves: number; follows: number; watch_pct: number | null; notes: string; question_text?: string;
+};
+export type PostRollup = { posts: number; planned: number; views: number; likes: number; comments: number; shares: number;
+  saves: number; follows: number; views_per_post: number; engagement_rate: number; follows_per_1000_views: number;
+  avg_watch_pct: number | null };
+
+/** Where each video went and how it did. */
+export function useSocialPosts(grade: string, subject: string, subStrand: string) {
+  const api = useApi();
+  return useQuery({
+    queryKey: ["social-posts", grade, subject, subStrand],
+    queryFn: () => {
+      const qs = new URLSearchParams({ grade, subject });
+      if (subStrand) qs.set("sub_strand", subStrand);
+      return api<{ posts: TrackedPost[]; platforms: string[]; summary: { overall: PostRollup; by_platform: Record<string, PostRollup>;
+                   by_topic: Record<string, PostRollup>; top: Partial<TrackedPost>[] } }>(`/api/v1/play/social/posts?${qs}`);
+    },
+    enabled: Boolean(grade && subject),
+  });
+}
+
+export function useSavePost() {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: Partial<TrackedPost> & { posted?: boolean }) =>
+      api<TrackedPost>("/api/v1/play/social/posts", { method: "POST", body: JSON.stringify(v) }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["social-posts"] }),
+  });
+}
+
+export function useDeletePost() {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (postId: string) => api<{ deleted: string }>(`/api/v1/play/social/posts/${encodeURIComponent(postId)}`, { method: "DELETE" }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["social-posts"] }),
+  });
+}
+
 
 /** The agent context pack: playbook, manifest, formats, prompts, as a zip. */
 export function useAgentPack() {

@@ -34,19 +34,44 @@ _SAY = {"times": " times ", "div": " divided by ", "cdot": " times ", "pm": " pl
         "cdots": ", and so on, ", "ldots": ", and so on, ", "dots": ", and so on, ", "to": " to ",
         "rightarrow": " gives ", "Rightarrow": " which gives ", "iff": " if and only if ", "therefore": " therefore ",
         "perp": " is perpendicular to ", "parallel": " is parallel to ", "propto": " is proportional to ",
+        "in": " is in ", "cup": " union ", "cap": " intersection ",
         "sin": " sine ", "cos": " cosine ", "tan": " tangent ", "log": " log ", "ln": " natural log ",
         "%": " percent", "$": "$", "{": "", "}": "", **{k: f" {k} " for k in _GREEK}}
 _ORDINAL_POWER = {"2": "squared", "3": "cubed"}
 _UNITS = {"mm", "cm", "dm", "m", "km", "ft", "in", "yd", "mi"}
 
-_WRAPPERS = re.compile(r"\\(?:text|textbf|textit|mathrm|mathbf|mathit|operatorname|boxed|displaystyle)\s*\{([^{}]*)\}")
+_WRAPPERS = re.compile(r"\\(?:text|textbf|textit|textrm|textsf|mathrm|mathbf|mathit|mathbb|mathcal|mathsf|operatorname|boxed|displaystyle|underline|overline|emph)\s*\{([^{}]*)\}")
 _FRAC = re.compile(r"\\[dt]?frac\s*\{([^{}]*)\}\s*\{([^{}]*)\}")
 _ROOT = re.compile(r"\\sqrt\s*(?:\[\s*([^\]]+?)\s*\])?\s*\{([^{}]*)\}")
 _SPACING = re.compile(r"\\(?:left|right|big|Big|bigg|Bigg)(?![A-Za-z])|\\[,;:! ]|\\q?quad(?![A-Za-z])")
 
 
+# A backslash lost to string escaping becomes a control character: "\t" of
+# \times and \text is a TAB, "\f" of \frac a form feed, "\b" of \beta a
+# backspace, "\r" of \right a carriage return, "\a" of \angle a bell — and
+# the voice read "imes", "ext" or "rac". They are put back before anything.
+_LOST = {"\t": "t", "\x0c": "f", "\x08": "b", "\x07": "a", "\x0b": "v", "\r": "r"}
+
+
+def _restore(t: str) -> str:
+    t = re.sub(r"[\t\x0c\x08\x07\x0b\r](?=[a-z]{2})", lambda m: "\\" + _LOST[m.group(0)], t)
+    t = re.sub(r"\n(?=(?:eq|e|abla|ot|u)\b|eq\b)", r"\\n", t)
+    return re.sub(r"[\x00-\x06\x0e-\x1f](?=[A-Za-z])", r"\\", t)
+
+
+def _residue(t: str) -> str:
+    """Whatever markup survived — a cut-off \\frac{-2x}{-2…, a stray brace —
+    is dropped rather than said or written."""
+    t = re.sub(r"\\[A-Za-z]+", " ", t)
+    t = re.sub(r"\b[dt]?frac\b", " ", t)
+    return re.sub(r"[\\{}]", " ", t)
+
+
 def _prepare(text: str) -> str:
-    t = str(text or "").replace("{,}", ",")
+    t = _restore(str(text or ""))
+    # The bank's thousands comma, 3\text{,}400 or 3{,}400, before anything
+    # unwraps it into "3 text,400".
+    t = re.sub(r"\\{1,2}text\s*\{\s*,\s*\}", ",", t).replace("{,}", ",")
     t = re.sub(r"\\\\(?=[A-Za-z{}()\[\],;:! %$])", r"\\", t)   # `\\frac` stored doubled
     t = t.replace("$$", " ").replace("$", " ").replace("\\(", " ").replace("\\)", " ")
     t = t.replace("\\[", " ").replace("\\]", " ")
@@ -86,9 +111,24 @@ def _ascii_maths(t: str) -> str:
     return t
 
 
+def _tables_written(t: str) -> str:
+    """A markdown table on the board: rows with spaced columns, no pipes."""
+    if "|" not in t:
+        return t
+    lines = []
+    for line in t.split("\n"):
+        if re.fullmatch(r"\s*\|?[\s:|-]+\|?\s*", line) and "-" in line:
+            continue
+        if line.strip().startswith("|") and line.strip().endswith("|"):
+            lines.append("   ".join(c.strip() for c in line.strip().strip("|").split("|")))
+        else:
+            lines.append(line)
+    return "\n".join(lines)
+
+
 def to_unicode(text: str) -> str:
     """LaTeX written as a hand writes it."""
-    t = _prepare(text)
+    t = _prepare(_tables_written(str(text or "")))
     for _ in range(6):
         new = _FRAC.sub(lambda m: f"{_wrap(m.group(1))}/{_wrap(m.group(2))}", t)
         new = _ROOT.sub(lambda m: {"3": "∛", "4": "∜"}.get((m.group(1) or "").strip(), (m.group(1) or "").translate(_SUP) + "√")
@@ -111,7 +151,8 @@ def to_unicode(text: str) -> str:
     t = re.sub(r"_\s*(?:\{([^{}]*)\}|(\w))", sub, t)
     t = re.sub(r"\\([A-Za-z]+|[%${}])", lambda m: _SYMBOLS.get(m.group(1), m.group(1)), t)
     t = t.replace("{", "").replace("}", "").replace("−", "-")
-    t = _ascii_maths(t)
+    t = _residue(_ascii_maths(t))
+    t = re.sub(r"\(\s+", "(", re.sub(r"\s+\)", ")", t))
     t = re.sub(r"[ \t]+([.,;:?!])", r"\1", t)
     return re.sub(r"[ \t]{2,}", " ", t).strip()
 
@@ -136,7 +177,7 @@ def _said_part(x: str, denominator: bool = False) -> str:
 def to_speech(text: str) -> str:
     """LaTeX said as a teacher says it. Plain prose passes through."""
     raw = str(text or "")
-    if not re.search(r"[\\^$_∛∜√²³*×÷=<>≤≥≠≈±+]|sqrt|cbrt|\s[−-]\s|(?<![\w)])[−-]\d", raw):
+    if not re.search(r"[\\^$_∛∜√²³*×÷=<>≤≥≠≈±+\x00-\x08\x0b-\x1f]|sqrt|cbrt|\s[−-]\s|(?<![\w)])[−-]\d", raw):
         return raw
     t = _ascii_maths(_prepare(raw))
     # Symbols a voice would otherwise read aloud as "star" or skip.
@@ -167,6 +208,8 @@ def to_speech(text: str) -> str:
         if new == t:
             break
         t = new
+    t = re.sub(r"\^\s*(?:\{\s*\\circ\s*\}|\\circ)\s*C(?![a-z])", " degrees Celsius", t)
+    t = re.sub(r"\^\s*(?:\{\s*\\circ\s*\}|\\circ)\s*F(?![a-z])", " degrees Fahrenheit", t)
     t = re.sub(r"\^\s*(?:\{\s*\\circ\s*\}|\\circ)", " degrees", t)
     t = re.sub(r"\\log\s*_\s*\{?\s*(\w+)\s*\}?", r" log to base \1 of ", t)
     def power(m: re.Match) -> str:
@@ -182,8 +225,12 @@ def to_speech(text: str) -> str:
     t = re.sub(r"(?<=[\w)])\s*=\s*(?=[\w(-])", " equals ", t)
     t = re.sub(r"(?<=[\w)])\s*<\s*(?=[\w(-])", " is less than ", t)
     t = re.sub(r"(?<=[\w)])\s*>\s*(?=[\w(-])", " is greater than ", t)
-    t = re.sub(r"(?<=[\w)])\s+[−-]\s+(?=[\w(])", " minus ", t)
-    t = re.sub(r"(?<=[\w)])\s*\+\s*(?=[\w(])", " plus ", t)
+    t = re.sub(r"(?<=[\w)\]])\s+[−-]\s+(?=[\w(\[])", " minus ", t)
+    t = re.sub(r"(?<=[\w)\]])\s*\+\s*(?=[\w(\[])", " plus ", t)
     t = re.sub(r"(?<![\w)])[−-](?=\d)", "negative ", t)
+    t = re.sub(r"(?<![\w)])[−-]\s*(?=(?:KSh|Kshs?|KES|Sh|US\$|\$)\s*\d)", "negative ", t)
+    t = re.sub(r"\bsqrt\b(?!\s*\()", "the square root", t)
+    t = _residue(t)
+    t = re.sub(r"\(\s+", "(", re.sub(r"\s+\)", ")", t))
     t = re.sub(r"\s+([.,;:?!])", r"\1", t)
     return re.sub(r"\s{2,}", " ", t).strip()

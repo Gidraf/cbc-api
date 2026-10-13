@@ -1218,6 +1218,38 @@ MIGRATIONS: list[tuple[str, str]] = [
         CREATE INDEX IF NOT EXISTS idx_model_recs_status ON model_recommendations(status, created_at DESC);
         """,
     ),
+    (
+        "041_social_posts",
+        """
+        -- Where each social video went, when, and how it did: one row per
+        -- platform it was posted to, its numbers updated as they come in, so
+        -- topics and platforms can be compared on what learners watched.
+        CREATE TABLE IF NOT EXISTS social_posts (
+            post_id TEXT PRIMARY KEY,
+            question_id TEXT NOT NULL,
+            platform TEXT NOT NULL,
+            grade TEXT NOT NULL DEFAULT '',
+            subject TEXT NOT NULL DEFAULT '',
+            sub_strand TEXT NOT NULL DEFAULT '',
+            scheduled_for TIMESTAMPTZ NULL,
+            posted_at TIMESTAMPTZ NULL,
+            url TEXT NOT NULL DEFAULT '',
+            views INTEGER NOT NULL DEFAULT 0,
+            likes INTEGER NOT NULL DEFAULT 0,
+            comments INTEGER NOT NULL DEFAULT 0,
+            shares INTEGER NOT NULL DEFAULT 0,
+            saves INTEGER NOT NULL DEFAULT 0,
+            follows INTEGER NOT NULL DEFAULT 0,
+            watch_pct REAL NULL,
+            notes TEXT NOT NULL DEFAULT '',
+            created_by TEXT NOT NULL DEFAULT '',
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS idx_social_posts_scope ON social_posts(grade, subject, sub_strand);
+        CREATE INDEX IF NOT EXISTS idx_social_posts_question ON social_posts(question_id);
+        """,
+    ),
 ]
 
 

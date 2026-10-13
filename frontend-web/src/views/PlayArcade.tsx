@@ -23,6 +23,10 @@ import {
   useStoredStructure,
   useSubjects,
   useClearHandPhoto,
+  useDeletePost,
+  useExportSocial,
+  useSavePost,
+  useSocialPosts,
   useHandPhoto,
   useMakeSocial,
   useMakeSocials,
@@ -41,7 +45,9 @@ import {
   useWalkthroughHtml,
   useWhiteboardHtml,
   type PlayItem,
+  type PostRollup,
   type SocialBrand,
+  type TrackedPost,
   type SocialState,
   type PlaySpec,
 } from "../lib/queries";
@@ -152,6 +158,7 @@ export function PlayArcade() {
       {grade && (items.data?.items || []).length > 0 && (
         <SocialLibrary grade={grade} subject={subject} subStrand={subStrand} onWatch={(qid) => setSocialWatch(qid)} />
       )}
+      {grade && <Performance grade={grade} subject={subject} subStrand={subStrand} />}
 
       {playing && <Round items={playing} onClose={() => setPlaying(null)} onWatch={(qid) => setWatching(qid)} />}
       {watching && <WatchModal questionId={watching} onClose={() => setWatching(null)} />}
@@ -581,6 +588,7 @@ function SocialLibrary({ grade, subject, subStrand, onWatch }: {
         working, hashtags) ready to paste.
       </p>
       {b && <BrandEditor brand={b} />}
+      <ScheduleExport grade={grade} subject={subject} subStrand={subStrand} ready={library.data?.ready} />
       {b && (
         <Stack direction="row" gap="var(--s3)" wrap align="center" style={{ marginTop: "var(--s2)", fontSize: "var(--text-sm)" }}>
           <label style={{ cursor: "pointer" }}>
@@ -883,6 +891,172 @@ function BrandEditor({ brand }: { brand: SocialBrand }) {
         <Button size="sm" variant="primary" disabled={save.isPending} onClick={submit}>Save brand</Button>
       </Stack>
     </details>
+  );
+}
+
+const PLATFORM_LABEL: Record<string, string> = { tiktok: "TikTok", instagram: "Instagram", youtube: "YouTube Shorts",
+  facebook: "Facebook", whatsapp: "WhatsApp", x: "X" };
+
+/** The finished posts of the scope as one zip, with a posting calendar. */
+function ScheduleExport({ grade, subject, subStrand, ready }: { grade: string; subject: string; subStrand: string; ready?: number }) {
+  const exportZip = useExportSocial();
+  const toast = useToast();
+  const tomorrow = new Date(Date.now() + 86_400_000).toISOString().slice(0, 10);
+  const [start, setStart] = React.useState(tomorrow);
+  const [perDay, setPerDay] = React.useState(1);
+  const [times, setTimes] = React.useState("19:00");
+  const [platforms, setPlatforms] = React.useState<string[]>(["tiktok", "instagram", "youtube"]);
+  async function go() {
+    try {
+      const name = await exportZip.mutateAsync({ grade, subject, sub_strand: subStrand || undefined, start, per_day: perDay, times, platforms });
+      toast(`Downloaded ${name}. The schedule is also in Performance.`, "ok");
+    } catch (err) { toast(err instanceof Error ? err.message : "Could not build the download.", "danger"); }
+  }
+  const toggle = (p: string) => setPlatforms((xs) => (xs.includes(p) ? xs.filter((x) => x !== p) : [...xs, p]));
+  return (
+    <details style={{ marginTop: "var(--s3)" }}>
+      <summary style={{ cursor: "pointer", fontSize: "var(--text-sm)" }}>
+        ⬇ Download all for scheduling{ready ? ` — ${ready} ready` : ""}
+      </summary>
+      <p style={{ margin: "var(--s2) 0", color: "var(--ink-3)", fontSize: "var(--text-xs)" }}>
+        One zip: every finished video, thumbnail and caption, numbered in posting order, with a schedule.csv for your
+        scheduling tool (Buffer, Metricool, Meta Business Suite, YouTube Studio…). Make the videos first; only finished
+        ones are included.
+      </p>
+      <Stack direction="row" gap="var(--s3)" wrap align="end">
+        <label style={lbl}>First day<Input type="date" value={start} onChange={(e) => setStart(e.target.value)} /></label>
+        <label style={lbl}>Posts a day
+          <Select value={String(perDay)} onChange={(e) => {
+            const n = Number(e.target.value); setPerDay(n);
+            setTimes(["19:00", "07:00,19:00", "07:00,13:00,19:00"][n - 1] || "19:00");
+          }}>{[1, 2, 3].map((n) => <option key={n} value={n}>{n}</option>)}</Select>
+        </label>
+        <label style={lbl}>Times (EAT)<Input value={times} onChange={(e) => setTimes(e.target.value)} placeholder="07:00,19:00" /></label>
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", fontSize: "var(--text-sm)" }}>
+          {["tiktok", "instagram", "youtube", "facebook", "whatsapp"].map((p) => (
+            <label key={p} style={{ display: "inline-flex", gap: 4, alignItems: "center" }}>
+              <input type="checkbox" checked={platforms.includes(p)} onChange={() => toggle(p)} />{PLATFORM_LABEL[p]}
+            </label>
+          ))}
+        </div>
+        <Button size="sm" variant="primary" disabled={exportZip.isPending || !platforms.length} onClick={go}>
+          {exportZip.isPending ? "Building the zip…" : "⬇ Download zip"}
+        </Button>
+      </Stack>
+    </details>
+  );
+}
+
+/** How each video did, platform by platform and topic by topic. */
+function Performance({ grade, subject, subStrand }: { grade: string; subject: string; subStrand: string }) {
+  const posts = useSocialPosts(grade, subject, subStrand);
+  const [platform, setPlatform] = React.useState("");
+  const data = posts.data;
+  if (!data || !data.posts.length) {
+    return (
+      <Card title="Performance">
+        <p style={{ margin: 0, color: "var(--ink-3)", fontSize: "var(--text-sm)" }}>
+          Nothing tracked yet. Download posts for scheduling (in Social posts) and each one appears here, per platform,
+          ready for its link and numbers.
+        </p>
+      </Card>
+    );
+  }
+  const rows = data.posts.filter((p) => !platform || p.platform === platform);
+  const s = data.summary;
+  return (
+    <Card title="Performance">
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: "var(--s2)" }}>
+        <Rollup title="All platforms" r={s.overall} />
+        {Object.entries(s.by_platform).map(([p, r]) => <Rollup key={p} title={PLATFORM_LABEL[p] || p} r={r} />)}
+      </div>
+      {Object.keys(s.by_topic).length > 1 && (
+        <div style={{ marginTop: "var(--s3)", fontSize: "var(--text-sm)" }}>
+          <strong>By topic</strong>
+          {Object.entries(s.by_topic).sort((a, b) => b[1].views_per_post - a[1].views_per_post).map(([t, r]) => (
+            <div key={t} style={{ display: "flex", gap: "var(--s3)", padding: "2px 0" }}>
+              <span style={{ flex: 1 }}>{t}</span><span>{r.views_per_post} views/post</span>
+              <span>{r.engagement_rate}% engaged</span><span>{r.follows} follows</span>
+            </div>
+          ))}
+        </div>
+      )}
+      <Stack direction="row" gap="var(--s2)" wrap align="center" style={{ margin: "var(--s3) 0 var(--s2)" }}>
+        <strong style={{ fontSize: "var(--text-sm)" }}>Posts</strong>
+        <Select value={platform} onChange={(e) => setPlatform(e.target.value)}>
+          <option value="">All platforms</option>
+          {Object.keys(s.by_platform).map((p) => <option key={p} value={p}>{PLATFORM_LABEL[p] || p}</option>)}
+        </Select>
+        <span style={{ color: "var(--ink-3)", fontSize: "var(--text-xs)" }}>
+          Paste the link when a post goes out; update the numbers from each app's insights every few days.
+        </span>
+      </Stack>
+      <div style={{ overflowX: "auto" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "var(--text-xs)" }}>
+          <thead><tr style={{ textAlign: "left", color: "var(--ink-3)" }}>
+            {["When", "Platform", "Question", "Link", "Views", "Likes", "Comments", "Shares", "Saves", "Follows", "Watched %", ""].map((h) => <th key={h} style={{ padding: 4 }}>{h}</th>)}
+          </tr></thead>
+          <tbody>{rows.map((p) => <PostRow key={p.post_id} post={p} />)}</tbody>
+        </table>
+      </div>
+    </Card>
+  );
+}
+
+function Rollup({ title, r }: { title: string; r: PostRollup }) {
+  return (
+    <div style={{ border: "1px solid var(--line-2)", borderRadius: "var(--radius)", padding: "var(--s2)", fontSize: "var(--text-xs)" }}>
+      <div style={{ fontWeight: 700, fontSize: "var(--text-sm)" }}>{title}</div>
+      <div>{r.posts} posted{r.planned ? ` · ${r.planned} planned` : ""}</div>
+      <div><strong>{r.views.toLocaleString()}</strong> views · {r.views_per_post} per post</div>
+      <div>{r.engagement_rate}% engaged · {r.follows} follows ({r.follows_per_1000_views}/1k views)</div>
+      {r.avg_watch_pct != null && <div>{r.avg_watch_pct}% watched on average</div>}
+    </div>
+  );
+}
+
+function PostRow({ post }: { post: TrackedPost }) {
+  const save = useSavePost();
+  const remove = useDeletePost();
+  const toast = useToast();
+  const [draft, setDraft] = React.useState(post);
+  React.useEffect(() => setDraft(post), [post]);
+  const when = post.posted_at || post.scheduled_for;
+  async function commit(changes: Partial<TrackedPost> & { posted?: boolean }) {
+    try { await save.mutateAsync({ post_id: post.post_id, ...changes }); }
+    catch (err) { toast(err instanceof Error ? err.message : "Could not save.", "danger"); }
+  }
+  const num = (k: "views" | "likes" | "comments" | "shares" | "saves" | "follows") => (
+    <td style={{ padding: 2 }}>
+      <input type="number" min={0} value={draft[k]} style={{ width: 64 }}
+             onChange={(e) => setDraft({ ...draft, [k]: Number(e.target.value) })}
+             onBlur={() => draft[k] !== post[k] && commit({ [k]: draft[k] })} />
+    </td>
+  );
+  return (
+    <tr style={{ borderTop: "1px solid var(--line-2)" }}>
+      <td style={{ padding: 4, whiteSpace: "nowrap" }}>
+        {when ? new Date(when).toLocaleString([], { dateStyle: "medium", timeStyle: "short" }) : "—"}
+        <div>{post.posted_at ? <Badge tone="ok">posted</Badge> : <Button size="sm" variant="ghost" onClick={() => commit({ posted: true })}>Mark posted</Button>}</div>
+      </td>
+      <td style={{ padding: 4 }}>{PLATFORM_LABEL[post.platform] || post.platform}</td>
+      <td style={{ padding: 4, maxWidth: 260 }}>{plain(post.question_text || "").slice(0, 90)}</td>
+      <td style={{ padding: 2 }}>
+        <input value={draft.url} placeholder="paste link" style={{ width: 150 }}
+               onChange={(e) => setDraft({ ...draft, url: e.target.value })}
+               onBlur={() => draft.url !== post.url && commit({ url: draft.url, ...(draft.url && !post.posted_at ? { posted: true } : {}) })} />
+        {post.url && <a href={post.url} target="_blank" rel="noreferrer" style={{ marginLeft: 4 }}>↗</a>}
+      </td>
+      {num("views")}{num("likes")}{num("comments")}{num("shares")}{num("saves")}{num("follows")}
+      <td style={{ padding: 2 }}>
+        <input type="number" min={0} max={100} value={draft.watch_pct ?? ""} style={{ width: 56 }}
+               onChange={(e) => setDraft({ ...draft, watch_pct: e.target.value === "" ? null : Number(e.target.value) })}
+               onBlur={() => draft.watch_pct !== post.watch_pct && draft.watch_pct != null && commit({ watch_pct: draft.watch_pct })} />
+      </td>
+      <td style={{ padding: 2 }}>
+        <Button size="sm" variant="ghost" onClick={() => remove.mutate(post.post_id)}>✕</Button>
+      </td>
+    </tr>
   );
 }
 

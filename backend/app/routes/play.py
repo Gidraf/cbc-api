@@ -577,3 +577,91 @@ document.getElementById("next").onclick=()=>{speechSynthesis.cancel();show(i+1)}
 document.getElementById("prev").onclick=()=>{speechSynthesis.cancel();show(i-1)};
 show(0); if(AUTOPLAY){ /* browsers need a gesture before speaking; the first click starts it */ }
 </script></body></html>"""
+
+
+# ── scheduling and performance ───────────────────────────────────────────────
+
+@router.get("/social/export.zip")
+def export_social(grade: str = Query(...), subject: str = Query(...), sub_strand: str = Query(""),
+                  start: str = Query("", description="First posting day, YYYY-MM-DD (default tomorrow)"),
+                  per_day: int = Query(1, ge=1, le=6), times: str = Query("19:00", description="e.g. 07:00,19:00"),
+                  platforms: str = Query("tiktok,instagram,youtube"), record: bool = Query(True),
+                  auth: AuthContext = Depends(ANY)):
+    """Every finished post in the scope as one zip — videos, thumbnails and
+    captions in posting order with a schedule.csv — and the plan written to
+    the performance tracker."""
+    import os
+    from datetime import date, timedelta
+
+    from fastapi.responses import FileResponse
+    from starlette.background import BackgroundTask
+
+    from ..services import social_export
+
+    _may_make_videos(auth)
+    try:
+        first = date.fromisoformat(start) if start else date.today() + timedelta(days=1)
+    except ValueError:
+        raise_api_error("VALIDATION_FAILED", "start is a date such as 2026-10-20.")
+        return None
+    slots = [t.strip() for t in times.split(",") if t.strip()]
+    if not slots or not all(__import__("re").fullmatch(r"([01]?\d|2[0-3]):[0-5]\d", t) for t in slots):
+        raise_api_error("VALIDATION_FAILED", "times are 24-hour times such as 07:00,19:00.")
+    path, count = social_export.export_zip(grade, subject, sub_strand, start=first, per_day=per_day, times=slots,
+                                           platforms=[p.strip().lower() for p in platforms.split(",") if p.strip()],
+                                           record=record, created_by=str(getattr(auth, "subject", "") or ""))
+    if not count:
+        raise_api_error("NOT_FOUND", "No finished social videos in this scope yet — make them first.")
+    name = f"social-{social_export._slug(sub_strand or subject)}-{first:%Y%m%d}-{count}posts.zip"
+    return FileResponse(path, media_type="application/zip", filename=name,
+                        background=BackgroundTask(lambda: os.path.exists(path) and os.remove(path)))
+
+
+@router.get("/social/posts")
+def social_posts(grade: str = Query(""), subject: str = Query(""), sub_strand: str = Query(""),
+                 platform: str = Query(""), _: AuthContext = Depends(ANY)) -> dict[str, Any]:
+    """Where each video went and how it did, with platforms and topics compared."""
+    from ..services import social_export
+
+    posts = social_export.list_posts(grade, subject, sub_strand, platform)
+    return {"posts": posts, "summary": social_export.summary(posts), "platforms": list(social_export.PLATFORMS)}
+
+
+class PostUpdate(BaseModel):
+    post_id: str | None = None
+    question_id: str | None = None
+    platform: str | None = None
+    url: str | None = None
+    notes: str | None = None
+    posted: bool | None = None
+    posted_at: str | None = None
+    scheduled_for: str | None = None
+    views: int | None = None
+    likes: int | None = None
+    comments: int | None = None
+    shares: int | None = None
+    saves: int | None = None
+    follows: int | None = None
+    watch_pct: float | None = None
+
+
+@router.post("/social/posts")
+def save_social_post(payload: PostUpdate, auth: AuthContext = Depends(ANY)) -> dict[str, Any]:
+    """Record that a video went out on a platform, or update its link and numbers."""
+    from ..services import social_export
+
+    _may_make_videos(auth)
+    try:
+        return social_export.save_post(payload.model_dump(exclude_none=True), created_by=str(getattr(auth, "subject", "") or ""))
+    except ValueError as exc:
+        raise_api_error("VALIDATION_FAILED", str(exc))
+        return {}
+
+
+@router.delete("/social/posts/{post_id}")
+def delete_social_post(post_id: str, auth: AuthContext = Depends(ANY)) -> dict[str, Any]:
+    from ..services import social_export
+
+    _may_make_videos(auth)
+    social_export.delete_post(post_id)
+    return {"deleted": post_id}

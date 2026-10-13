@@ -48,7 +48,7 @@ _MULTI = sorted((u for u in _UNITS_EN if u not in _SINGLE), key=len, reverse=Tru
 
 _NUM = r"(?<![\w.])(-?\d[\d,]*(?:\.\d+)?)"
 # What follows algebra: a symbol, or the word the voice has made of one.
-_OPERATOR_AFTER = r"(?!\s*[-+×x*/÷=^(]\s*[\w(])(?!\s*(?:plus|minus|times|divided|equals|over|is)\b)"
+_OPERATOR_AFTER = r"(?!\s*[-+×x*÷=^]\s*[\w(])(?!\s*/\s*[\d(])(?!\()(?!\s*(?:plus|minus|times|divided|equals|over|is)\b)"
 
 
 def _plural(number: str, pair: tuple[str, str]) -> str:
@@ -61,7 +61,7 @@ def for_speech(text: str, lang: str = "en") -> str:
         return text
     from .latex_text import to_speech
 
-    t = to_speech(str(text))
+    t = to_speech(_tables_said(str(text)))
     sw = lang.startswith("sw")
     t = _currency(t, sw)
     t = _temperatures_and_angles(t, sw)
@@ -73,7 +73,32 @@ def for_speech(text: str, lang: str = "en") -> str:
         t = _units_after_words(t)
         t = _words(t)
     t = _percent_sw(t) if sw else re.sub(r"\s*%", " percent", t)
+    if not sw:
+        # A rate between words — m³/worker-hour — is "per".
+        t = re.sub(r"(?<=[A-Za-z²³])\s*/\s*(?=[A-Za-z])", " per ", t)
     return re.sub(r"\s{2,}", " ", t).strip()
+
+
+_CELL_WORDS = {"-": "minus", "−": "minus", "+": "plus", "×": "times", "\\times": "times", "÷": "divided by",
+               "\\div": "divided by", "=": "equals"}
+
+
+def _tables_said(t: str) -> str:
+    """A markdown table read a row at a time — "Trial 2, negative 7, times,
+    negative 4." — not pipe by pipe."""
+    if "|" not in t:
+        return t
+    out = []
+    for line in t.split("\n"):
+        if re.fullmatch(r"\s*\|?[\s:|-]+\|?\s*", line) and "-" in line:
+            continue  # the |---| rule
+        if line.strip().startswith("|") and line.strip().endswith("|"):
+            cells = [c.strip() for c in line.strip().strip("|").split("|")]
+            cells = [_CELL_WORDS.get(re.sub(r"\$", "", c).strip(), c) for c in cells if c]
+            out.append(", ".join(cells) + ".")
+        else:
+            out.append(line)
+    return "\n".join(out)
 
 
 def _percent_sw(t: str) -> str:
@@ -160,6 +185,9 @@ def _units_after_numbers(t: str, sw: bool) -> str:
     if not letters:
         return t
     single = "|".join(re.escape(u) for u in letters)
+    # A number, a space, a letter and a power — "2700 m^2" — is an area or a
+    # volume whatever follows it.
+    t = re.sub(_NUM + r" (" + single + r")(\^?[23²³])(?![\w'])", lambda m: unit(m, True), t)
     # Single letters only with a space, and not where algebra continues.
     t = re.sub(_NUM + r" (" + single + r")(\^?[23²³])?(?![\w'])" + _OPERATOR_AFTER, lambda m: unit(m, True), t)
     # Written together, only where a plain word follows — "2.5m wide",
