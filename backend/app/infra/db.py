@@ -1338,6 +1338,19 @@ MIGRATIONS: list[tuple[str, str]] = [
         ALTER TABLE social_posts ADD COLUMN IF NOT EXISTS destinations JSONB NOT NULL DEFAULT '[]'::jsonb;
         """,
     ),
+    (
+        "046_job_live_progress",
+        """
+        -- How far a running job has got, written as it works (a render's
+        -- stage and percentage), so a batch shows movement before a video is
+        -- finished rather than jumping when it is.
+        ALTER TABLE jobs ADD COLUMN IF NOT EXISTS live JSONB NOT NULL DEFAULT '{}'::jsonb;
+        -- How many times a restart cut the job off. Counted apart from
+        -- attempts: a deploy is not the job failing, and two deploys used to
+        -- fail a healthy render as "out of attempts".
+        ALTER TABLE jobs ADD COLUMN IF NOT EXISTS interruptions INTEGER NOT NULL DEFAULT 0;
+        """,
+    ),
 ]
 
 

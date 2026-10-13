@@ -4347,6 +4347,13 @@ export type VideoBatch = {
   batch_id: string; label: string; grade: string; subject: string; sub_strands: string[]; requested: number; queued: number;
   created_by: string; created_at: string; total: number; done: number; running: number; waiting: number; failed: number;
   cancelled: number; finished: boolean; eta_seconds: number | null;
+  /** Done, failed and cancelled, plus the part of each video in hand already rendered. */
+  progress_pct?: number;
+  /** The videos being made now, with the stage and percentage each reported. */
+  rendering?: { job_id: string; question_id: string; title: string; stage: string; pct: number; frame: string;
+                seconds: number; resumed: boolean }[];
+  /** Videos a restart cut off and the queue resumed. */
+  resumed?: number;
 };
 
 /** Batches of social videos and how far each has got. Polls while one is unfinished. */
@@ -4356,7 +4363,12 @@ export function useVideoBatches(enabled = true) {
     queryKey: ["video-batches"],
     queryFn: () => api<{ batches: VideoBatch[]; seconds_per_video: number | null; renders_at_once: number }>("/api/v1/play/social/batches"),
     enabled,
-    refetchInterval: (query) => ((query.state.data?.batches || []).some((b) => !b.finished) ? 10_000 : false),
+    // Every few seconds while a video is being made, so its bar moves as it renders.
+    refetchInterval: (query) => {
+      const list = query.state.data?.batches || [];
+      if (list.some((b) => (b.rendering || []).length > 0)) return 3_000;
+      return list.some((b) => !b.finished) ? 10_000 : false;
+    },
   });
 }
 

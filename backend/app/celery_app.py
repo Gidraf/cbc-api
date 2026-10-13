@@ -122,6 +122,28 @@ except Exception:  # noqa: BLE001
     pass
 
 
+# A worker that has just started is usually a deploy's replacement: put back
+# at once what the old one was cut off in the middle of (its heartbeat
+# stopped), and re-send queued jobs whose message went with Redis, rather than
+# leaving them for the sweep's five-minute patience.
+try:
+    from celery.signals import worker_ready
+
+    @worker_ready.connect
+    def _resume_after_restart(**kwargs):  # noqa: ANN001
+        try:
+            from .services import job_queue
+
+            resumed = job_queue.recover_stalled(minutes=job_queue.RESTART_ABANDONED_MINUTES)
+            resent = job_queue.redispatch_stranded()
+            if resumed or resent:
+                logger.info("After the restart: %d job(s) resumed, %d re-sent.", resumed, resent)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Could not resume jobs after the restart: %s", exc)
+except Exception:  # noqa: BLE001
+    pass
+
+
 def broker_available() -> bool:
     """Whether a Celery broker can actually be reached right now.
 

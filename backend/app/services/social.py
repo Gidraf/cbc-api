@@ -323,7 +323,9 @@ def enqueue(question_id: str, *, queued_by: str = "", batch_id: str = "", voice:
     link = q.get("curriculum") or {}
     job = job_queue.enqueue(
         JOB_KIND, str(link.get("grade") or ""), str(link.get("subject") or ""),
-        {"artifact_id": f"social:{question_id}", "question_id": question_id, "voice": voice},
+        {"artifact_id": f"social:{question_id}", "question_id": question_id, "voice": voice,
+         # What the batch screen shows while it renders.
+         "title": " ".join(str(q.get("question_text") or "").split())[:90]},
         strand=str(link.get("strand") or ""), sub_strand=str(link.get("sub_strand") or ""),
         batch_id=batch_id, queued_by=queued_by or "social")
     job_queue.start_worker()
@@ -342,16 +344,25 @@ def run_job(job: dict[str, Any]) -> dict[str, Any]:
     data, sdata, voice, title, b, key = _prepare(q, str(payload.get("voice") or ""))
     run_log.step("Script", f"{len(sdata['scenes'])} scenes · vertical · {voice}")
     last = {"stage": ""}
+    from .job_queue import Live
+
+    # Stage and percentage on the job's row as the render goes, for the batch
+    # screen; the run log keeps the narration.
+    live = Live(str(job.get("job_id") or ""))
+    live("script", 1, 1)
 
     def tick(stage: str, n: int, total: int) -> None:
+        live(stage, n, total)
         if stage != last["stage"]:
-            run_log.step({"voice": "Narrating", "draw": "Drawing"}.get(stage, stage), f"{total} to do")
+            run_log.step({"voice": "Narrating", "draw": "Drawing", "mux": "Mixing sound",
+                          "save": "Saving"}.get(stage, stage), f"{total} to do" if total > 1 else "")
             last["stage"] = stage
 
     made = whiteboard.render(sdata, title=title, voice=voice, progress=tick, social=frame_payload(q, b),
                              prefix=PREFIX, key=key)
     post = post_text(q, data, b)
     object_storage.save_text(f"{PREFIX}/{qid}/{key}.txt", post)
+    live.done()
     run_log.step("Saved", made["url"])
     return {"status": "done", "question_id": qid, "post": post, **made}
 

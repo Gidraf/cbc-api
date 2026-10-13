@@ -85,20 +85,46 @@ def recent_render_seconds() -> float | None:
 
 
 def summarise(batch: dict[str, Any], counts: dict[str, int], per_video: float | None, renders: int,
-              ahead: int) -> dict[str, Any]:
+              ahead: int, rendering: list[dict[str, Any]] | None = None,
+              resumed: int = 0) -> dict[str, Any]:
     """One batch's progress and a finishing estimate. Pure. `ahead`: render
-    jobs queued before this batch's next one."""
+    jobs queued before this batch's next one. `rendering`: the videos being
+    made now, each with the stage and percentage it reported — counted into
+    the batch's progress, so the bar moves while a video is made rather than
+    only when one is finished."""
+    rendering = list(rendering or [])
     total = sum(counts.values())
     waiting = counts.get("queued", 0) + counts.get("waiting_for_scope", 0)
     left = waiting + counts.get("running", 0)
+    under_way = sum(float(r.get("pct") or 0) for r in rendering) / 100.0
+    settled = counts.get("done", 0) + counts.get("failed", 0) + counts.get("cancelled", 0)
+    progress = round(100 * (settled + under_way) / total, 1) if total else 0.0
     eta = None
     if per_video and left:
-        eta = round((ahead + left) * per_video / max(1, renders))
+        # The videos in hand have part of their render behind them.
+        eta = round(max(0.0, (ahead + left - under_way)) * per_video / max(1, renders))
     created = batch.get("created_at")
     return {**batch, "created_at": created.isoformat() if hasattr(created, "isoformat") else created,
             "total": total, "done": counts.get("done", 0), "running": counts.get("running", 0), "waiting": waiting,
             "failed": counts.get("failed", 0), "cancelled": counts.get("cancelled", 0),
-            "finished": left == 0, "eta_seconds": eta}
+            "finished": left == 0, "eta_seconds": eta,
+            "progress_pct": min(100.0, progress), "rendering": rendering, "resumed": resumed}
+
+
+_STAGE_WORDS = {"script": "Writing the script", "voice": "Narrating", "draw": "Drawing",
+                "mux": "Mixing sound", "save": "Saving", "done": "Finishing"}
+
+
+def _rendering(row: dict[str, Any]) -> dict[str, Any]:
+    """One video being made, as the batch screen shows it."""
+    live = row.get("live") if isinstance(row.get("live"), dict) else {}
+    stage = str(live.get("stage") or "")
+    return {"job_id": row.get("job_id"), "question_id": row.get("question_id") or "",
+            "title": (row.get("title") or row.get("sub_strand") or "")[:90],
+            "stage": _STAGE_WORDS.get(stage, stage.capitalize() or "Starting"),
+            "pct": round(float(live.get("pct") or 0), 1),
+            "frame": f"{live.get('n')} of {live.get('total')}" if stage == "draw" and live.get("total") else "",
+            "seconds": int(row.get("seconds") or 0), "resumed": int(row.get("interruptions") or 0) > 0}
 
 
 def list_batches(limit: int = 20) -> dict[str, Any]:
@@ -117,7 +143,15 @@ def list_batches(limit: int = 20) -> dict[str, Any]:
         if first_waiting.get("t"):
             ahead = int((fetch_one("""SELECT COUNT(*) AS n FROM jobs WHERE status = 'queued' AND kind IN ('social', 'video')
                                       AND created_at < :t""", {"t": first_waiting["t"]}) or {}).get("n") or 0)
-        out.append(summarise(dict(b), {r["status"]: int(r["n"]) for r in rows}, per_video, _render_limit(), ahead))
+        live_rows = fetch_all(
+            """SELECT job_id, sub_strand, payload->>'question_id' AS question_id, payload->>'title' AS title,
+                      live, interruptions, EXTRACT(EPOCH FROM (NOW() - started_at))::int AS seconds
+               FROM jobs WHERE batch_id = :id AND status = 'running' ORDER BY started_at""",
+            {"id": b["batch_id"]}) or []
+        resumed = int((fetch_one("SELECT COUNT(*) AS n FROM jobs WHERE batch_id = :id AND interruptions > 0",
+                                 {"id": b["batch_id"]}) or {}).get("n") or 0)
+        out.append(summarise(dict(b), {r["status"]: int(r["n"]) for r in rows}, per_video, _render_limit(), ahead,
+                             rendering=[_rendering(r) for r in live_rows], resumed=resumed))
     return {"batches": out, "seconds_per_video": round(per_video) if per_video else None, "renders_at_once": _render_limit()}
 
 

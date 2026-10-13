@@ -446,10 +446,16 @@ def run_job_by_id(job_id: str, *, redelivered: bool = False) -> dict[str, Any]:
     if redelivered:
         from ..infra.db import execute
 
+        # Only a job whose heartbeat has stopped: Redis can redeliver a long
+        # job's message while its worker is still on it, and reclaiming that
+        # would render the same video twice. Like the sweep, the interruption
+        # is counted and the attempt refunded.
         execute(
-            "UPDATE jobs SET status = 'queued', started_at = NULL, heartbeat_at = NULL "
-            "WHERE job_id = :job_id AND status = 'running' AND attempts < :max",
-            {"job_id": job_id, "max": MAX_ATTEMPTS},
+            "UPDATE jobs SET status = 'queued', started_at = NULL, heartbeat_at = NULL, "
+            "attempts = GREATEST(attempts - 1, 0), interruptions = interruptions + 1 "
+            "WHERE job_id = :job_id AND status = 'running' AND interruptions < :max "
+            "AND COALESCE(heartbeat_at, started_at) < NOW() - (:minutes * INTERVAL '1 minute')",
+            {"job_id": job_id, "max": MAX_INTERRUPTIONS, "minutes": RESTART_ABANDONED_MINUTES},
         )
     if scope_is_busy(job_id):
         logger.info("Job %s waits: its sub-strand is already being built.", job_id)
@@ -597,6 +603,13 @@ ABANDONED_MINUTES = int(__import__("os").getenv("JOB_ABANDONED_MINUTES", "5"))
 # its broker message went with a deploy, a flushed Redis, or a worker that
 # never came back. The claim is atomic, so a second message is harmless.
 STRANDED_MINUTES = int(__import__("os").getenv("JOB_STRANDED_MINUTES", "3"))
+# A restart that cuts a job off is not the job failing: it goes back with its
+# attempt refunded. This many interruptions, though, is a crash the job itself
+# causes (out of memory every time), and it stops.
+MAX_INTERRUPTIONS = int(__import__("os").getenv("JOB_MAX_INTERRUPTIONS", "6"))
+# After a worker starts, a running row whose heartbeat is older than this has
+# lost its worker: heartbeats come every 30 seconds, so four missed is dead.
+RESTART_ABANDONED_MINUTES = 2
 
 
 class _Heartbeat:
@@ -631,7 +644,60 @@ class _Heartbeat:
         self._stop.set()
 
 
-def recover_stalled() -> int:
+class Live:
+    """How far a running job has got, written to its row as it works.
+
+    A render reports stages and counts (narrating 3 of 9, drawing frame 412 of
+    1,800); this turns them into one percentage over weighted stages and
+    writes it at most every LIVE_SECONDS, so the console's bar moves while a
+    video is being made instead of jumping when it is finished.
+    """
+
+    # Share of the whole each stage takes, in order. Drawing (the frame-by-
+    # frame capture) is most of a render.
+    STAGES = (("script", 3), ("voice", 9), ("draw", 78), ("mux", 6), ("save", 4))
+    LIVE_SECONDS = 2.0
+
+    def __init__(self, job_id: str) -> None:
+        self.job_id = job_id
+        self._last = 0.0
+        self._stage = ""
+        self.pct = 0.0
+
+    def percent(self, stage: str, n: int, total: int) -> float:
+        done = 0.0
+        for name, weight in self.STAGES:
+            if name == stage:
+                frac = (min(max(n, 0), total) / total) if total else 0.0
+                return round(done + weight * frac, 1)
+            done += weight
+        return round(self.pct, 1)
+
+    def __call__(self, stage: str, n: int = 0, total: int = 0) -> None:
+        import time as _time
+
+        pct = max(self.pct, self.percent(stage, n, total))
+        now = _time.monotonic()
+        if stage == self._stage and now - self._last < self.LIVE_SECONDS and pct < 100:
+            return
+        self._stage, self._last, self.pct = stage, now, pct
+        self.write({"stage": stage, "n": n, "total": total, "pct": pct})
+
+    def done(self) -> None:
+        self.pct = 100.0
+        self.write({"stage": "done", "pct": 100})
+
+    def write(self, live: dict[str, Any]) -> None:
+        from ..infra.db import execute, to_json
+
+        try:
+            execute("UPDATE jobs SET live = CAST(:live AS jsonb) WHERE job_id = :job_id",
+                    {"job_id": self.job_id, "live": to_json({**live, "at": _now()})})
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("Could not write live progress for %s: %s", self.job_id, exc)
+
+
+def recover_stalled(minutes: float | None = None) -> int:
     """Return abandoned work to the queue and dispatch it again.
 
     Deploys, crashes and OOM kills all leave the same trace: status 'running',
@@ -649,13 +715,13 @@ def recover_stalled() -> int:
 
     stalled = fetch_all(
         """
-        SELECT job_id, kind, attempts FROM jobs
+        SELECT job_id, kind, attempts, interruptions FROM jobs
         WHERE status = 'running'
           AND COALESCE(heartbeat_at, started_at) < NOW() - (:minutes * INTERVAL '1 minute')
         """,
         # Rows from before the heartbeat column have only started_at; those
         # are judged by the old, longer patience.
-        {"minutes": ABANDONED_MINUTES},
+        {"minutes": ABANDONED_MINUTES if minutes is None else minutes},
     ) or []
     stalled = [j for j in stalled if _abandoned(j)]
     if not stalled:
@@ -664,17 +730,23 @@ def recover_stalled() -> int:
     requeued = 0
     for job in stalled:
         job_id = str(job["job_id"])
-        if int(job.get("attempts") or 0) >= MAX_ATTEMPTS:
+        # Its worker went away — a deploy, a restart, the machine. That is not
+        # the job failing, so the attempt it was on is given back; what is
+        # counted is the interruption, and only a job that is cut off again and
+        # again (one that takes its worker down with it) is stopped.
+        if int(job.get("interruptions") or 0) >= MAX_INTERRUPTIONS:
             execute(
                 "UPDATE jobs SET status = 'failed', finished_at = NOW(), "
                 "error = :error WHERE job_id = :job_id AND status = 'running'",
                 {"job_id": job_id,
-                 "error": "Abandoned mid-run and out of attempts — the worker "
-                          "that owned it did not come back."},
+                 "error": f"Cut off mid-run {MAX_INTERRUPTIONS} times — the job itself is "
+                          f"probably bringing its worker down (memory?)."},
             )
             continue
         execute(
-            "UPDATE jobs SET status = 'queued', started_at = NULL "
+            "UPDATE jobs SET status = 'queued', started_at = NULL, heartbeat_at = NULL, "
+            "attempts = GREATEST(attempts - 1, 0), interruptions = interruptions + 1, "
+            "live = jsonb_build_object('stage', 'interrupted — waiting to resume', 'pct', 0) "
             "WHERE job_id = :job_id AND status = 'running'",
             {"job_id": job_id},
         )
