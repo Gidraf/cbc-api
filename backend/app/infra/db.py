@@ -1351,6 +1351,23 @@ MIGRATIONS: list[tuple[str, str]] = [
         ALTER TABLE jobs ADD COLUMN IF NOT EXISTS interruptions INTEGER NOT NULL DEFAULT 0;
         """,
     ),
+    (
+        "047_drive_objects",
+        """
+        -- Videos moved to the owner's Google Drive: which object became which
+        -- Drive file, its checked MD5, and when the server's copy was removed.
+        CREATE TABLE IF NOT EXISTS drive_objects (
+            object_name TEXT PRIMARY KEY,
+            file_id TEXT NOT NULL,
+            url TEXT NOT NULL,
+            md5 TEXT NOT NULL DEFAULT '',
+            bytes BIGINT NOT NULL DEFAULT 0,
+            moved_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            local_removed_at TIMESTAMPTZ
+        );
+        CREATE INDEX IF NOT EXISTS idx_drive_objects_file ON drive_objects(file_id);
+        """,
+    ),
 ]
 
 

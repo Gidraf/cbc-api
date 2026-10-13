@@ -31,6 +31,13 @@ def asset(bucket: str, object_path: str, request: Request) -> Response:
     try:
         stat = client.stat_object(bucket, object_path)
     except Exception:  # noqa: BLE001
+        # A video moved to Google Drive: a link already posted somewhere
+        # keeps working.
+        from ..services import drive_store
+
+        moved = drive_store.record(object_path)
+        if moved and moved.get("url"):
+            return Response(status_code=302, headers={"Location": str(moved["url"])})
         return Response(status_code=404)
     size = int(stat.size)
     media = stat.content_type or mimetypes.guess_type(object_path)[0] or "application/octet-stream"

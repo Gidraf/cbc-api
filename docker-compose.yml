@@ -12,6 +12,12 @@ x-backend-env: &backend-env
   REDIS_URL: redis://redis:6379/0
   POSTER_URL: http://social-poster:6090
   POSTER_TOKEN: ${POSTER_TOKEN:-}
+  # Finished videos moved to the owner's Google Drive (backend/scripts/drive_auth.py).
+  GOOGLE_DRIVE_CLIENT_ID: ${GOOGLE_DRIVE_CLIENT_ID:-}
+  GOOGLE_DRIVE_CLIENT_SECRET: ${GOOGLE_DRIVE_CLIENT_SECRET:-}
+  GOOGLE_DRIVE_REFRESH_TOKEN: ${GOOGLE_DRIVE_REFRESH_TOKEN:-}
+  GOOGLE_DRIVE_FOLDER_ID: ${GOOGLE_DRIVE_FOLDER_ID:-}
+  DRIVE_KEEP_LOCAL_DAYS: ${DRIVE_KEEP_LOCAL_DAYS:-7}
   # Video renders at once (each drives a browser and ffmpeg). They have their
   # own lane: with CELERY_CONCURRENCY=2, one slot renders while one generates.
   RENDER_WORKERS: ${RENDER_WORKERS:-1}

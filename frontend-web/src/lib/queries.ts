@@ -4372,6 +4372,31 @@ export function useVideoBatches(enabled = true) {
   });
 }
 
+export type DriveStatus = {
+  configured: boolean; keep_local_days: number; moved?: number; moved_mb?: number; freed?: number; freed_mb?: number;
+  job?: { job_id: string; status: string; live?: { pct?: number; n?: number; total?: number } } | null; error?: string;
+};
+
+/** Finished videos moved to Google Drive. Polls while a move is running. */
+export function useDriveStatus(enabled = true) {
+  const api = useApi();
+  return useQuery({
+    queryKey: ["video-drive"],
+    queryFn: () => api<DriveStatus>("/api/v1/play/social/drive"),
+    enabled,
+    refetchInterval: (query) => (query.state.data?.job ? 5_000 : 60_000),
+  });
+}
+
+export function useMoveToDrive() {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api<{ job_id?: string; status?: string }>("/api/v1/play/social/drive/move", { method: "POST" }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["video-drive"] }),
+  });
+}
+
 export function useQueueBatch() {
   const api = useApi();
   const qc = useQueryClient();

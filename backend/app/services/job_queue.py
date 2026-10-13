@@ -658,8 +658,10 @@ class Live:
     STAGES = (("script", 3), ("voice", 9), ("draw", 78), ("mux", 6), ("save", 4))
     LIVE_SECONDS = 2.0
 
-    def __init__(self, job_id: str) -> None:
+    def __init__(self, job_id: str, stages: tuple[tuple[str, float], ...] | None = None) -> None:
         self.job_id = job_id
+        if stages:
+            self.STAGES = stages
         self._last = 0.0
         self._stage = ""
         self.pct = 0.0

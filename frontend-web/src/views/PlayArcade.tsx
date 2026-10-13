@@ -28,6 +28,8 @@ import {
   useBookAhead,
   useSaveGroups,
   useVideoBatches,
+  useDriveStatus,
+  useMoveToDrive,
   useQueueBatch,
   useBatchAction,
   type VideoBatch,
@@ -917,6 +919,8 @@ const PLATFORM_LABEL: Record<string, string> = { tiktok: "TikTok", instagram: "I
 function VideoBatches({ grade, subject, subStrand, topics }: { grade: string; subject: string; subStrand: string; topics: string[] }) {
   const [open, setOpen] = React.useState(false);
   const batches = useVideoBatches(open);
+  const drive = useDriveStatus(open);
+  const moveToDrive = useMoveToDrive();
   const queue = useQueueBatch();
   const act = useBatchAction();
   const toast = useToast();
@@ -973,6 +977,32 @@ function VideoBatches({ grade, subject, subStrand, topics }: { grade: string; su
               <input type="checkbox" checked={picked.includes(t)} onChange={() => toggle(t)} />{t}
             </label>
           ))}
+        </div>
+      )}
+      {drive.data && (
+        <div style={{ marginTop: "var(--s2)", fontSize: "var(--text-xs)", color: "var(--ink-3)" }}>
+          {!drive.data.configured ? (
+            <>☁️ Google Drive is not set up — videos stay on the server. Run <code>backend/scripts/drive_auth.py</code> and add its three lines to the server's .env.</>
+          ) : (
+            <Stack direction="row" gap="var(--s2)" align="center" wrap>
+              <span>
+                ☁️ Google Drive: {drive.data.moved ?? 0} file(s) moved ({drive.data.moved_mb ?? 0} MB)
+                {drive.data.freed ? ` · ${drive.data.freed_mb} MB freed on the server` : ""}
+                {` · the server keeps its copy ${drive.data.keep_local_days} day(s)`}
+              </span>
+              {drive.data.job ? (
+                <Badge tone="info">
+                  moving{drive.data.job.live?.total ? ` ${drive.data.job.live.n}/${drive.data.job.live.total}` : "…"}
+                </Badge>
+              ) : (
+                <Button size="sm" variant="ghost" disabled={moveToDrive.isPending}
+                        onClick={async () => {
+                          try { await moveToDrive.mutateAsync(); toast("Moving finished videos to Google Drive.", "ok"); }
+                          catch (err) { toast(err instanceof Error ? err.message : "Could not start the move.", "danger"); }
+                        }}>Move to Drive now</Button>
+              )}
+            </Stack>
+          )}
         </div>
       )}
       {list.length > 0 && (
