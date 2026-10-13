@@ -24,4 +24,7 @@ CONTROL_PORT = int(os.getenv("CONTROL_PORT", "6090"))
 # YouTube asks whether each video is made for children (under 13). Junior
 # Secondary content is for 12–15 year olds; set "yes" if your channel is for
 # younger children. The legal choice is the channel owner's.
+# "profile": reels on your own Facebook profile; "page": on a Page, through
+# Meta Business Suite (the Page you last used there).
+FACEBOOK_TARGET = os.getenv("FACEBOOK_TARGET", "profile").lower()
 YOUTUBE_MADE_FOR_KIDS = os.getenv("YOUTUBE_MADE_FOR_KIDS", "no").lower() in ("1", "yes", "true")

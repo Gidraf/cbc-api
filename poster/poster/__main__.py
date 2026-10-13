@@ -47,6 +47,11 @@ STATE_FILE = os.path.join(os.path.dirname(config.PROFILE_DIR.rstrip("/")) or "/d
 state: dict[str, Any] = {"paused": False, "busy": "", "last": None, "logins": {}, "started": time.time(), "note": ""}
 
 
+def _why(exc: BaseException) -> str:
+    """A timeout has no message of its own; say what kind of failure it was."""
+    return (f"{type(exc).__name__}: {exc}" if str(exc) else type(exc).__name__)[:200]
+
+
 def _load() -> None:
     try:
         with open(STATE_FILE) as fh:
@@ -255,7 +260,7 @@ async def checkin_loop() -> None:
         try:
             await cbc.heartbeat(status_now())
         except Exception as exc:  # noqa: BLE001
-            log.warning("Could not check in with %s: %s", config.CBC_API_URL, str(exc)[:160])
+            log.warning("Could not check in with %s: %s", config.CBC_API_URL, _why(exc))
         await asyncio.sleep(15)
 
 
@@ -264,7 +269,7 @@ async def command_loop() -> None:
         try:
             cmd = await cbc.take_command()
         except Exception as exc:  # noqa: BLE001
-            log.warning("Could not ask for commands: %s", str(exc)[:160])
+            log.warning("Could not ask for commands: %s", _why(exc))
             cmd = None
         if cmd:
             log.info("Command %s: %s %s", cmd["command_id"], cmd["action"], cmd.get("platform") or "")
@@ -276,7 +281,7 @@ async def command_loop() -> None:
                 await cbc.command_done(int(cmd["command_id"]), result)
                 await cbc.heartbeat(status_now())     # the console sees the change at once
             except Exception as exc:  # noqa: BLE001
-                log.warning("Could not report command %s: %s", cmd["command_id"], exc)
+                log.warning("Could not report command %s: %s", cmd["command_id"], _why(exc))
             continue
         await asyncio.sleep(4)
 

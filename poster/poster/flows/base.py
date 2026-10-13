@@ -103,7 +103,7 @@ async def enabled(locator: Locator, timeout: float = 600.0) -> None:
 async def write(page: Page, box: Locator, text: str) -> None:
     """Replace whatever is in a caption box with `text`."""
     await box.click()
-    await page.keyboard.press("Control+A")
+    await page.keyboard.press("ControlOrMeta+A")   # Cmd on a Mac
     await page.keyboard.press("Delete")
     await page.keyboard.insert_text(text)
     await asyncio.sleep(0.5)

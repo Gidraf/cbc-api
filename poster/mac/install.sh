@@ -72,6 +72,7 @@ BROWSER_CHANNEL=chrome
 POSTER_ID=$( (scutil --get ComputerName 2>/dev/null || hostname) | tr ' ' '-' | tr -cd '[:alnum:]._-')
 POLL_SECONDS=60
 YOUTUBE_MADE_FOR_KIDS=no
+FACEBOOK_TARGET=profile
 EOF
   unset KEY
   chmod 600 "$ENV_FILE"
