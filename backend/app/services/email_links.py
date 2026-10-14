@@ -76,7 +76,10 @@ def send_reset(who: str) -> int:
     for the log, never for the person asking."""
     base = base_url()
     sent = 0
-    for row in accounts_for(who):
+    rows = accounts_for(who)
+    if not rows:
+        logger.warning("Reset link not sent: no active account with an email address matches what was typed.")
+    for row in rows:
         if not base:
             logger.error("Reset link not sent: set the Public address in Settings first.")
             return 0

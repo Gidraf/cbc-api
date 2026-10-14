@@ -264,7 +264,7 @@ def test_email(context: AuthContext = Depends(require_roles("admin"))) -> dict[s
     ok = mailer.send(to, "CBC Factory test email", "Email from the platform works.",
                      "<p>Email from the platform works.</p>")
     if not ok:
-        raise_api_error("VALIDATION_FAILED", "The mail server refused it. The api service log says why.")
+        raise_api_error("VALIDATION_FAILED", "Not sent: " + (mailer.LAST_ERROR["error"] or "the mail server refused it."))
     return {"ok": True, "sent_to": to}
 
 
