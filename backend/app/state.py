@@ -50,15 +50,39 @@ class StageBinding:
     base_url: str | None = None
 
 
+# The fallback docker-compose.yml once carried. It is in the repository's
+# history, so anything encrypted with it is readable by anyone with a clone.
+PUBLISHED_MASTER_KEY = "u8iP_EgFrh50kABm2MvxAfv5mN53uV8SQEgrMwJwztw="
+
+_KEY_HELP = (
+    'Generate one with: python -c "from cryptography.fernet import Fernet; '
+    'print(Fernet.generate_key().decode())" and put CBC_MASTER_KEY=<it> in .env. '
+    "Keys already stored under another key are moved with backend/scripts/rotate_master_key.py."
+)
+
+
+def load_master_key(value: str | None = None) -> Fernet:
+    """The Fernet that guards stored provider keys — CBC_MASTER_KEY, or a clear refusal.
+
+    There is no default: a generated key would make every stored key unreadable
+    after a restart, and a committed one protects nothing.
+    """
+    key = (os.getenv("CBC_MASTER_KEY") if value is None else value) or ""
+    key = key.strip()
+    if not key:
+        raise RuntimeError("CBC_MASTER_KEY is not set. " + _KEY_HELP)
+    if key == PUBLISHED_MASTER_KEY:
+        raise RuntimeError(
+            "CBC_MASTER_KEY is the key published in this repository. Rotate to a new one. " + _KEY_HELP)
+    try:
+        return Fernet(key.encode("utf-8"))
+    except (ValueError, TypeError) as exc:
+        raise RuntimeError(f"CBC_MASTER_KEY is not a valid Fernet key ({exc}). " + _KEY_HELP) from exc
+
+
 class RuntimeState:
     def __init__(self) -> None:
-        env_key = os.getenv("CBC_MASTER_KEY")
-        if env_key:
-            key_bytes = env_key.encode("utf-8")
-        else:
-            key_bytes = Fernet.generate_key()
-
-        self._fernet = Fernet(key_bytes)
+        self._fernet = load_master_key()
         self.provider_credentials: dict[str, ProviderCredential] = {
             Provider.OPENAI.value: ProviderCredential(provider=Provider.OPENAI.value),
             Provider.ANTHROPIC.value: ProviderCredential(provider=Provider.ANTHROPIC.value),

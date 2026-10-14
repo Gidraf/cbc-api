@@ -8,7 +8,8 @@ x-backend-build: &backend-build
 
 x-backend-env: &backend-env
   DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
-  CBC_MASTER_KEY: ${CBC_MASTER_KEY:-u8iP_EgFrh50kABm2MvxAfv5mN53uV8SQEgrMwJwztw=}
+  # Encrypts provider API keys stored in Postgres. No default: see .env.example.
+  CBC_MASTER_KEY: ${CBC_MASTER_KEY:?CBC_MASTER_KEY is required}
   REDIS_URL: redis://redis:6379/0
   POSTER_URL: http://social-poster:6090
   POSTER_TOKEN: ${POSTER_TOKEN:-}
