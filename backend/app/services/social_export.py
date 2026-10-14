@@ -355,7 +355,8 @@ def next_for_poster(now: datetime | None = None, *, platform: str = "", post_id:
                     dry: bool = False) -> dict[str, Any]:
     """What the poster's browser should publish now, with its files and text.
     A dry run (which publishes nothing) takes the next queued post for the
-    platform, or the named post, without the day's rules."""
+    platform, or the named post, without the day's rules — never one already
+    handed to a platform's scheduler. "Post next now" uses it too."""
     from ..infra.db import fetch_all, fetch_one
     from . import social
 
@@ -363,7 +364,7 @@ def next_for_poster(now: datetime | None = None, *, platform: str = "", post_id:
     rules = poster_rules()
     if dry:
         rows = fetch_all(
-            """SELECT * FROM social_posts WHERE posted_at IS NULL
+            """SELECT * FROM social_posts WHERE posted_at IS NULL AND handed_at IS NULL
                AND (:id = '' OR post_id = :id) AND (:p = '' OR platform = :p)
                ORDER BY scheduled_for NULLS LAST LIMIT 20""", {"id": post_id, "p": platform}) or []
         chosen, st = None, {}

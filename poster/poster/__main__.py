@@ -266,6 +266,27 @@ async def do_dry_run(platform: str = "", post_id: str = "") -> dict[str, Any]:
     return await publish(nxt["post"], dry_run=True)
 
 
+async def post_now(platform: str = "") -> dict[str, Any]:
+    """"Post next now": the next queued post goes out live at once — not at
+    its booked time, and without waiting out the gap. A post already due
+    goes first; otherwise the next booked one on a platform logged in."""
+    if state["paused"]:
+        return {"ok": False, "error": "The poster is paused — resume it first."}
+    done = await tick()
+    if done.get("post_id"):
+        return done
+    why = done.get("skipped") or ""
+    for p in [platform] if platform else list(FLOWS):
+        if not platform and state["logins"].get(p, {}).get("logged_in") is False:
+            continue
+        nxt = await cbc.next_post(platform=p, dry=True)
+        if nxt.get("post"):
+            # Out now, live — never handed to the platform's scheduler for later.
+            return await publish({**nxt["post"], "schedule_at": ""}, dry_run=False)
+        why = nxt.get("reason") or why
+    return {"ok": False, "error": why or "Nothing queued to post."}
+
+
 async def do_groups(platform: str = "facebook") -> dict[str, Any]:
     """Read the owner's groups from the platform's share picker and send the
     list to the console, where the owner ticks the ones to share to."""
@@ -307,7 +328,7 @@ async def run(action: str, platform: str = "", post_id: str = "") -> dict[str, A
     if action == "dry_run":
         return await do_dry_run(platform, post_id)
     if action == "run_now":
-        return await tick()
+        return await post_now(platform)
     if action in ("pause", "resume"):
         return set_paused(action == "pause")
     if action == "groups":
