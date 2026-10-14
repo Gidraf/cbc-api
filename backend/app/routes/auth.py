@@ -130,6 +130,37 @@ def register(payload: RegisterRequest, request: Request) -> dict[str, Any]:
     return {"status": "registered", "username": payload.username}
 
 
+class ChangePassword(BaseModel):
+    current_password: str
+    new_password: str
+
+
+@router.post("/password")
+def change_password(payload: ChangePassword, request: Request,
+                    context: AuthContext = Depends(get_auth_context)) -> dict[str, Any]:
+    """Set your own password: the current one (a random one an admin gave
+    you counts), then the new one. Every other signed-in session of yours
+    is signed out."""
+    from ..services import rate_limit
+    from ..services.auth import authenticate_login, hash_password
+    from ..state import KNOWN_WEAK
+
+    if context.auth_type != "bearer":
+        raise_api_error("FORBIDDEN", "Sign in to change your password (an API key cannot).")
+    rate_limit.hit("login_user", context.subject.lower())
+    authenticate_login(context.subject, payload.current_password)     # the current one, or refused
+    new = payload.new_password
+    if len(new) < MIN_PASSWORD or new.lower() in KNOWN_WEAK or new.lower() == context.subject.lower():
+        raise_api_error("VALIDATION_FAILED", f"Choose a password of {MIN_PASSWORD} characters or more that is not your username.")
+    if len(new) > 128 or new == payload.current_password:
+        raise_api_error("VALIDATION_FAILED", "Choose a new password, 128 characters at most.")
+    execute("UPDATE app_users SET password_hash = :h, password_plain = '', updated_at = NOW() WHERE username = :u",
+            {"h": hash_password(new), "u": context.subject})
+    execute("DELETE FROM refresh_tokens WHERE user_id = :u", {"u": context.subject})
+    rate_limit.clear("login_user", context.subject.lower())
+    return {"ok": True}
+
+
 @router.post("/refresh")
 def refresh_token_endpoint(payload: RefreshRequest) -> dict[str, Any]:
     username = verify_and_consume_refresh_token(payload.refresh_token)

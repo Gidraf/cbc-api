@@ -1,7 +1,8 @@
 """Admin tools that run inside the api container (the image has only app/).
 
-    docker compose exec api python -m app.admin_tools reset-password --username admin [--role admin]
-        A new random password for an account, printed once; switches it on.
+    docker compose exec api python -m app.admin_tools reset-password --username admin [--role admin] [--ask]
+        A new random password for an account, printed once (or, with --ask, one
+        you type); switches it on.
 
     docker compose run --rm -e OLD_MASTER_KEY -e NEW_MASTER_KEY api python -m app.admin_tools rotate-master-key [--dry-run]
         Moves the saved provider keys from one CBC_MASTER_KEY to another. Both
@@ -59,7 +60,8 @@ def rotate_master_key(dry: bool) -> int:
     return 0
 
 
-def reset_password(username: str, role: str = "") -> int:
+def reset_password(username: str, role: str = "", ask: bool = False) -> int:
+    import getpass
     import secrets
 
     from app.infra.db import execute, run_migrations
@@ -69,14 +71,30 @@ def reset_password(username: str, role: str = "") -> int:
         print(f"Unknown role {role!r}.")
         return 2
     run_migrations()
-    password = secrets.token_urlsafe(18)
+    if ask:
+        # Typed, not passed on the command line: it never lands in shell history or `ps`.
+        from app.state import KNOWN_WEAK
+
+        password = getpass.getpass(f"New password for {username}: ")
+        if getpass.getpass("Again: ") != password:
+            print("They do not match; nothing changed.")
+            return 2
+        if len(password) < 12 or password.lower() in KNOWN_WEAK or password.lower() == username.lower():
+            print("Use 12 characters or more, not a default and not the username; nothing changed.")
+            return 2
+    else:
+        password = secrets.token_urlsafe(18)
     execute("""INSERT INTO app_users (username, password_plain, password_hash, role, is_active, updated_at)
                VALUES (:u, '', :h, :r, TRUE, NOW())
                ON CONFLICT (username) DO UPDATE SET password_plain = '', password_hash = EXCLUDED.password_hash,
                    role = CASE WHEN :keep THEN app_users.role ELSE EXCLUDED.role END, is_active = TRUE, updated_at = NOW()""",
             {"u": username, "h": hash_password(password), "r": role or "admin", "keep": not role})
-    print(f"{username}: new password (shown once, not stored anywhere readable):")
-    print(f"  {password}")
+    if ask:
+        print(f"{username}: password set.")
+    else:
+        print(f"{username}: new password (shown once, not stored anywhere readable):")
+        print(f"  {password}")
+        print("Sign in with it, then set your own: Account → Change password in the console.")
     return 0
 
 
@@ -88,11 +106,12 @@ def main(argv: list[str] | None = None) -> int:
     r = sub.add_parser("reset-password", help="a new random password for an account")
     r.add_argument("--username", default="admin")
     r.add_argument("--role", default="", help="also give it this role (a new account is an admin)")
+    r.add_argument("--ask", action="store_true", help="type the password yourself instead of a random one")
     k = sub.add_parser("rotate-master-key", help="move saved provider keys to NEW_MASTER_KEY")
     k.add_argument("--dry-run", action="store_true")
     args = parser.parse_args(argv)
     if args.cmd == "reset-password":
-        return reset_password(args.username, args.role)
+        return reset_password(args.username, args.role, ask=args.ask)
     return rotate_master_key(args.dry_run)
 
 
