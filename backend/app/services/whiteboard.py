@@ -15,6 +15,7 @@ import hashlib
 import html
 import json
 import logging
+import re
 import shutil
 import subprocess
 import tempfile
@@ -433,6 +434,40 @@ def load(question_id: str) -> dict[str, Any]:
     return question_rows.flatten(question_dna_service.get_question(question_id))
 
 
+MAX_FIGURE_BYTES = 400_000   # a figure bigger than this is a photo, not a drawing
+
+
+def figure_scene(q: dict[str, Any]) -> dict[str, Any] | None:
+    """The item's figure as a scene the marker draws, stroke by stroke —
+    as the learner sees it (gaps left as gaps). None when the item has no
+    figure, or it cannot be found: the video is still made, without it."""
+    binding = q.get("diagram")
+    if not isinstance(binding, dict) or not (binding.get("diagram_id") or binding.get("svg_markup")):
+        return None
+    try:
+        from .question_paper import figure_markup, figures_for
+
+        svg = figure_markup(q, figures_for([q]), answers=False).strip()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("No figure for the video of %s: %s", q.get("question_id") or "?", exc)
+        return None
+    if not svg.startswith("<svg") or len(svg) > MAX_FIGURE_BYTES:
+        return None
+    title = re.sub(r"\s+", " ", str(binding.get("diagram_title") or "")).strip()
+    say = "Look at the figure" + (f": {title}." if title else ".") + " Notice what it shows before we start."
+    return {"scene": "figure", "svg": svg, "title": title, "say": say}
+
+
+def with_figure(data: dict[str, Any], q: dict[str, Any]) -> dict[str, Any]:
+    """The walkthrough with the figure drawn straight after the question."""
+    scene = figure_scene(q)
+    scenes = list(data.get("scenes") or [])
+    if not scene or any(isinstance(sc, dict) and sc.get("scene") == "figure" for sc in scenes):
+        return data
+    at = 1 if scenes and isinstance(scenes[0], dict) and scenes[0].get("scene") == "title" else 0
+    return {**data, "scenes": scenes[:at] + [scene] + scenes[at:]}
+
+
 def _script_for(q: dict[str, Any], voice: str = "") -> tuple[dict[str, Any], str, str]:
     """The walkthrough, the voice and the title for one stored item. A voice
     named for this item overrides the console's default."""
@@ -441,6 +476,7 @@ def _script_for(q: dict[str, Any], voice: str = "") -> tuple[dict[str, Any], str
 
     link = q.get("curriculum") or {}
     data = play_engine.walkthrough(q, grade=str(link.get("grade") or ""))
+    data = with_figure(data, q)
     return data, (voice or voice_for(str(link.get("subject") or ""))), str(q.get("question_text") or "")[:80]
 
 
