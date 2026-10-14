@@ -1057,9 +1057,9 @@ function VideoBatches({ grade, subject, subStrand, topics }: { grade: string; su
   );
 }
 
-/** The owner's groups: which may get one of the day's shares. */
-function Groups({ groups, sharesPerDay, restDays, busy, online, onRead }: {
-  groups: PosterGroup[]; sharesPerDay: number; restDays: number; busy: boolean; online: boolean; onRead: () => void;
+/** The owner's groups: which take turns in the day's shares. */
+function Groups({ groups, sharesPerDay, restDays, perPost, busy, online, onRead }: {
+  groups: PosterGroup[]; sharesPerDay: number; restDays: number; perPost: number; busy: boolean; online: boolean; onRead: () => void;
 }) {
   const save = useSaveGroups();
   const toast = useToast();
@@ -1079,7 +1079,8 @@ function Groups({ groups, sharesPerDay, restDays, busy, online, onRead }: {
       </summary>
       <p style={{ margin: "var(--s2) 0", color: "var(--ink-3)", fontSize: "var(--text-xs)" }}>
         Each day {sharesPerDay === 2 ? "two videos (one before 1 pm, one after) are" : `${sharesPerDay} video(s) are`} also
-        shared to one ticked group, the one rested longest — a group gets at most one share in {restDays} days. Facebook will
+        shared to the next {perPost} ticked group{perPost === 1 ? "" : "s"} in turn, the ones rested longest — so the shares go round
+        every ticked group before any gets a second. A group gets at most one share in {restDays} days. Facebook will
         not schedule a reel that goes to a group, so those go out live at their time: keep the Mac awake for them. Tick only
         groups that welcome teaching posts.
       </p>
@@ -1099,6 +1100,39 @@ function Groups({ groups, sharesPerDay, restDays, busy, online, onRead }: {
         </div>
       ) : <p style={{ margin: "var(--s2) 0 0", fontSize: "var(--text-xs)" }}>No groups yet — press "Read my groups from Facebook".</p>}
     </details>
+  );
+}
+
+const MAX_GROUPS_PER_POST = 5;
+
+/** Up to five of the owner's groups, picked by hand, for the next video now. */
+function PickGroups({ groups, busy, onPost }: { groups: PosterGroup[]; busy: boolean; onPost: (names: string[]) => void }) {
+  const [picked, setPicked] = React.useState<string[]>([]);
+  const full = picked.length >= MAX_GROUPS_PER_POST;
+  const toggle = (n: string) => setPicked((xs) => (xs.includes(n) ? xs.filter((x) => x !== n) : full ? xs : [...xs, n]));
+  const when = (t: string | null) => (t ? new Date(t).toLocaleDateString(undefined, { day: "numeric", month: "short" }) : "never");
+  // Rested longest first: the groups that have waited go to the top.
+  const order = [...groups].sort((a, b) => (a.last_shared_for || "").localeCompare(b.last_shared_for || "") || a.name.localeCompare(b.name));
+  return (
+    <div style={{ border: "1px solid var(--line-2)", borderRadius: "var(--radius)", padding: "var(--s2)", display: "grid", gap: "var(--s2)" }}>
+      <Stack direction="row" gap="var(--s2)" align="center" wrap style={{ fontSize: "var(--text-sm)" }}>
+        <strong>Pick up to {MAX_GROUPS_PER_POST} groups</strong>
+        <span style={{ color: "var(--ink-3)" }}>{picked.length} of {MAX_GROUPS_PER_POST} picked — the next video goes to your feed and these, now.</span>
+        <span style={{ flex: 1 }} />
+        <Button size="sm" variant="primary" disabled={busy || !picked.length} onClick={() => onPost(picked)}>
+          Post now to {picked.length || ""} group{picked.length === 1 ? "" : "s"}
+        </Button>
+      </Stack>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 4, fontSize: "var(--text-sm)" }}>
+        {order.map((g) => (
+          <label key={g.name} style={{ display: "flex", gap: 6, alignItems: "center", opacity: full && !picked.includes(g.name) ? 0.5 : 1 }}>
+            <input type="checkbox" checked={picked.includes(g.name)} disabled={full && !picked.includes(g.name)} onChange={() => toggle(g.name)} />
+            <span style={{ flex: 1 }}>{g.name}</span>
+            <span style={{ color: "var(--ink-3)", fontSize: "var(--text-xs)" }}>last {when(g.last_shared_for)}</span>
+          </label>
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -1362,9 +1396,11 @@ function AutoPost() {
   const command = usePosterCommand();
   const toast = useToast();
   const o = overview.data;
-  async function run(action: "login" | "check" | "dry_run" | "run_now" | "pause" | "resume" | "groups", platform = "") {
+  const [picking, setPicking] = React.useState(false);
+  async function run(action: "login" | "check" | "dry_run" | "run_now" | "pause" | "resume" | "groups", platform = "",
+                     options?: { share?: "feed" | "groups"; groups?: string[] }) {
     try {
-      const out = await command.mutateAsync({ action, platform });
+      const out = await command.mutateAsync({ action, platform, options });
       if (out?.error) toast(String(out.error), "danger");
       else if (out?.message) toast(String(out.message), "info");
       else if (action === "dry_run") toast(out?.ok ? `Dry run on ${platform} reached the last step — see the screenshot.` : `Dry run stopped: ${out?.error || "see the screenshot"}`, out?.ok ? "ok" : "danger");
@@ -1399,8 +1435,28 @@ function AutoPost() {
             {o.live.online && (o.live.paused
               ? <Button size="sm" onClick={() => run("resume")}>▶ Resume</Button>
               : <Button size="sm" variant="ghost" onClick={() => run("pause")}>❚❚ Pause</Button>)}
-            {o.live.online && <Button size="sm" variant="ghost" disabled={command.isPending} onClick={() => run("run_now")}>Post next now</Button>}
+            {o.live.online && <Button size="sm" variant="ghost" disabled={command.isPending} onClick={() => run("run_now")}
+                                      title="The next post, now, with any group share it carries">Post next now</Button>}
           </Stack>
+          {o.live.online && (
+            <Stack direction="row" gap="var(--s2)" wrap align="center" style={{ fontSize: "var(--text-sm)" }}>
+              <span style={{ color: "var(--ink-3)" }}>Post the next video now:</span>
+              <Button size="sm" variant="ghost" disabled={command.isPending} onClick={() => run("run_now", "", { share: "feed" })}>
+                Post to feed
+              </Button>
+              <Button size="sm" variant="ghost" disabled={command.isPending || !(o.groups || []).some((g) => g.enabled)}
+                      title="Facebook: your feed and the next ticked groups in turn, the ones rested longest"
+                      onClick={() => run("run_now", "facebook", { share: "groups" })}>
+                Post to feed + {o.rules.groups_per_post ?? 5} groups
+              </Button>
+              <Button size="sm" variant={picking ? "primary" : "ghost"} disabled={!(o.groups || []).length}
+                      onClick={() => setPicking((x) => !x)}>Pick groups…</Button>
+            </Stack>
+          )}
+          {o.live.online && picking && (
+            <PickGroups groups={o.groups || []} busy={command.isPending}
+                        onPost={async (names) => { await run("run_now", "facebook", { share: "groups", groups: names }); setPicking(false); }} />
+          )}
           {!o.live.online && <p style={{ margin: 0, fontSize: "var(--text-sm)" }}>{o.live.error || "No poster is running. On your Mac: bash poster/mac/install.sh — or start the social-poster service on the server."}</p>}
           {o.live.note && <p style={{ margin: 0, fontSize: "var(--text-xs)", color: "var(--ink-3)" }}>{o.live.note}</p>}
 
@@ -1454,6 +1510,7 @@ function AutoPost() {
           ) : null}
 
           <Groups groups={o.groups || []} sharesPerDay={o.rules.group_shares_per_day ?? 2} restDays={o.rules.group_rest_days ?? 7}
+                  perPost={o.rules.groups_per_post ?? 5}
                   busy={command.isPending} online={o.live.online} onRead={() => run("groups", "facebook")} />
 
           {o.live.last && <LastAttempt last={o.live.last} />}

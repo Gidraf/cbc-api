@@ -9,7 +9,7 @@ from __future__ import annotations
 import html
 import json
 import logging
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
 from fastapi.responses import HTMLResponse
@@ -794,14 +794,16 @@ def _poster_call(method: str, path: str, body: dict[str, Any] | None = None, tim
 
 @router.get("/poster/next")
 def poster_next(platform: str = Query(""), post_id: str = Query(""), dry: bool = Query(False),
+                share: Literal["", "feed", "groups"] = Query(""), groups: list[str] = Query(default=[]),
                 auth: AuthContext = Depends(ANY)) -> dict[str, Any]:
     """The one post the browser may publish now, or why there is none. A dry
     run takes the next queued post for a platform, rules aside, since it
-    publishes nothing."""
+    publishes nothing. `share` with `dry`: a post-now button (feed only, or
+    feed and groups — the next in turn, or the `groups` picked)."""
     from ..services import social_export
 
     _may_make_videos(auth)
-    return social_export.next_for_poster(platform=platform, post_id=post_id, dry=dry)
+    return social_export.next_for_poster(platform=platform, post_id=post_id, dry=dry, share=share, groups=groups)
 
 
 class PosterResult(BaseModel):
@@ -867,6 +869,8 @@ class PosterCommand(BaseModel):
     action: str          # login | check | dry_run | run_now | pause | resume | groups
     platform: str = ""
     post_id: str = ""
+    # run_now: {"share": "feed" | "groups", "groups": [names picked, at most 5]}
+    options: dict[str, Any] = {}
 
 
 @router.post("/poster/command")
@@ -881,9 +885,18 @@ def poster_command(payload: PosterCommand, auth: AuthContext = Depends(ANY)) -> 
     _may_make_videos(auth)
     if payload.action not in ("login", "check", "dry_run", "run_now", "pause", "resume", "groups"):
         raise_api_error("VALIDATION_FAILED", "Unknown poster action.")
+    options: dict[str, Any] = {}
+    share = str((payload.options or {}).get("share") or "")
+    if payload.action == "run_now" and share:
+        if share not in ("feed", "groups"):
+            raise_api_error("VALIDATION_FAILED", "Share to \"feed\" or \"groups\".")
+        picked = [str(g)[:200] for g in ((payload.options or {}).get("groups") or []) if str(g).strip()]
+        if len(picked) > social_export.MAX_GROUPS_PER_POST:
+            raise_api_error("VALIDATION_FAILED", f"Pick at most {social_export.MAX_GROUPS_PER_POST} groups for one post.")
+        options = {"share": share, "groups": picked}
     if social_export.pull_poster():
         command_id = social_export.queue_command(payload.action, payload.platform, payload.post_id,
-                                                 by=str(getattr(auth, "subject", "") or ""))
+                                                 by=str(getattr(auth, "subject", "") or ""), options=options)
         if payload.action in ("login", "pause", "resume", "check", "groups"):
             for _ in range(40 if payload.action == "groups" else 24 if payload.action == "check" else 8):
                 time.sleep(1.0)
@@ -892,7 +905,8 @@ def poster_command(payload: PosterCommand, auth: AuthContext = Depends(ANY)) -> 
                     return done
         return {"ok": True, "queued": command_id,
                 "message": "Sent to the poster on your Mac — it picks commands up within a few seconds."}
-    out = _poster_call("POST", f"/{payload.action}", {"platform": payload.platform, "post_id": payload.post_id},
+    out = _poster_call("POST", f"/{payload.action}", {"platform": payload.platform, "post_id": payload.post_id,
+                                                      "options": options},
                        timeout=15.0)
     return out if isinstance(out, dict) else {"ok": True}
 

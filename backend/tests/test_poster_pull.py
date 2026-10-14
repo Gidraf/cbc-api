@@ -22,8 +22,9 @@ def client(monkeypatch):
     monkeypatch.setattr(social_export, "pull_poster", lambda: fresh["value"])
     monkeypatch.setattr(social_export, "poster_overview", lambda: {"rules": {"daily_cap": 30}, "queue": []})
 
-    def queue(action, platform="", post_id="", by=""):
+    def queue(action, platform="", post_id="", by="", options=None):
         calls["queued"].append((action, platform, post_id, by))
+        calls.setdefault("options", []).append(options)
         results[len(calls["queued"])] = {"ok": True, "paused": action == "pause"}
         return len(calls["queued"])
 
@@ -108,3 +109,20 @@ def test_old_commands_expire_before_one_is_taken(monkeypatch):
     monkeypatch.setattr(db, "fetch_one", lambda sql, params=None: seen.append(("fetch", sql)) or None)
     assert social_export.take_command() is None
     assert "10 minutes" in seen[0][1] and "SKIP LOCKED" in seen[1][1]
+
+
+def test_post_now_buttons_carry_feed_or_groups_and_five_groups_at_most(client):
+    c, calls, fresh, _who = client
+    fresh["value"] = True
+    r = c.post("/api/v1/play/poster/command", json={"action": "run_now", "options": {"share": "feed"}})
+    assert r.status_code == 200 and calls["options"][-1] == {"share": "feed", "groups": []}
+    r = c.post("/api/v1/play/poster/command",
+               json={"action": "run_now", "platform": "facebook", "options": {"share": "groups", "groups": ["A", "B"]}})
+    assert r.status_code == 200 and calls["options"][-1] == {"share": "groups", "groups": ["A", "B"]}
+    six = [f"G{i}" for i in range(6)]
+    r = c.post("/api/v1/play/poster/command", json={"action": "run_now", "options": {"share": "groups", "groups": six}})
+    assert r.status_code >= 400
+    r = c.post("/api/v1/play/poster/command", json={"action": "run_now", "options": {"share": "everywhere"}})
+    assert r.status_code >= 400
+    r = c.post("/api/v1/play/poster/command", json={"action": "run_now"})          # the old button: no options
+    assert r.status_code == 200 and calls["options"][-1] == {}

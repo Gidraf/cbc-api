@@ -59,8 +59,15 @@ def _db(monkeypatch, shared_times, group):
     from app.infra import db
 
     calls = []
-    monkeypatch.setattr(db, "fetch_all", lambda sql, p=None: [{"t": t} for t in shared_times])
-    monkeypatch.setattr(db, "fetch_one", lambda sql, p=None: calls.append(p) or ({"name": group} if group else None))
+
+    def fetch_all(sql, p=None):
+        if "FROM poster_groups" in sql:          # the rotation: the next groups in turn
+            calls.append(p)
+            names = group if isinstance(group, list) else ([group] if group else [])
+            return [{"name": n} for n in names[: p["n"]]]
+        return [{"t": t} for t in shared_times]  # the day's shares so far
+
+    monkeypatch.setattr(db, "fetch_all", fetch_all)
     return calls
 
 
@@ -161,3 +168,25 @@ def test_summary_counts_only_what_has_gone_out():
     posts = [{"platform": "facebook", "posted_at": past, "views": 10}, {"platform": "facebook", "posted_at": future, "views": 0}]
     s = X.summary(posts)
     assert s["overall"]["posts"] == 1 and s["overall"]["planned"] == 1
+
+
+def test_a_share_goes_to_the_next_groups_in_turn_five_at_most(monkeypatch):
+    groups = [f"G{i}" for i in range(1, 13)]
+    calls = _db(monkeypatch, [], groups)
+    at = datetime(2026, 10, 21, 8, 0, tzinfo=EAT)
+    assert X.group_rotation("facebook", at, {**RULES, "groups_per_post": 5}) == groups[:5]
+    assert calls[-1]["n"] == 5
+    assert X.group_rotation("facebook", at, {**RULES, "groups_per_post": 9}) == groups[:5]   # the ceiling is 5
+    assert X.group_rotation("facebook", at, {**RULES, "groups_per_post": 2}) == groups[:2]
+    assert X.groups_for("facebook", at, {**RULES, "groups_per_post": 3}) == groups[:3]
+    assert X.group_rotation("tiktok", at, RULES) == []
+
+
+def test_groups_picked_by_hand_are_only_ones_the_poster_found(monkeypatch):
+    from app.infra import db
+
+    monkeypatch.setattr(db, "fetch_all", lambda sql, p=None: [{"name": n} for n in p["n"] if n != "Unknown"])
+    picked = ["A", "Unknown", "B", "A", "C", "D", "E", "F"]
+    assert X.picked_groups("facebook", picked) == ["A", "B", "C", "D", "E"]
+    assert X.picked_groups("facebook", []) == []
+    assert X.picked_groups("tiktok", ["A"]) == []

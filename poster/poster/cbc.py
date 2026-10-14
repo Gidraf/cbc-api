@@ -13,8 +13,11 @@ def _headers() -> dict[str, str]:
     return {"X-API-Key": config.CBC_API_KEY}
 
 
-async def next_post(*, platform: str = "", post_id: str = "", dry: bool = False) -> dict[str, Any]:
-    params = {"platform": platform, "post_id": post_id, "dry": str(dry).lower()}
+async def next_post(*, platform: str = "", post_id: str = "", dry: bool = False, share: str = "",
+                    groups: list[str] | None = None) -> dict[str, Any]:
+    params: dict[str, Any] = {"platform": platform, "post_id": post_id, "dry": str(dry).lower()}
+    if share:                       # a post-now button: the feed only, or the feed and groups
+        params.update(share=share, groups=list(groups or []))
     async with httpx.AsyncClient(timeout=60) as client:
         r = await client.get(f"{config.CBC_API_URL}/api/v1/play/poster/next", params=params, headers=_headers())
         r.raise_for_status()

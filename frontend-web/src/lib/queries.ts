@@ -4444,7 +4444,7 @@ export function useBookAhead() {
 export type PosterOverview = {
   rules: { enabled: boolean; daily_cap: number; platform_cap: number; min_gap_minutes: number;
            hours: { start: string; end: string }; platforms: string[]; ahead_platforms?: string[]; ahead_days?: number;
-           group_shares_per_day?: number; group_rest_days?: number };
+           group_shares_per_day?: number; group_rest_days?: number; groups_per_post?: number };
   posted_today: Record<string, number>;
   states: { platform: string; logged_in: boolean; note: string; checked_at: string }[];
   queue: { post_id: string; platform: string; question_id: string; scheduled_for: string | null; status: string;
@@ -4490,7 +4490,9 @@ export function usePosterCommand() {
   const api = useApi();
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (v: { action: "login" | "check" | "dry_run" | "run_now" | "pause" | "resume" | "groups"; platform?: string; post_id?: string }) =>
+    mutationFn: (v: { action: "login" | "check" | "dry_run" | "run_now" | "pause" | "resume" | "groups"; platform?: string; post_id?: string;
+                      /** run_now: the feed only, or the feed and groups — the next in turn, or the ones picked (5 at most). */
+                      options?: { share?: "feed" | "groups"; groups?: string[] } }) =>
       api<Record<string, any>>("/api/v1/play/poster/command", { method: "POST", body: JSON.stringify(v) }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["poster"] }),
   });

@@ -101,8 +101,11 @@ SETTINGS: tuple[Setting, ...] = (
     Setting("poster_ahead_days", "POSTER_AHEAD_DAYS", "int", "Upload how far ahead (days)",
             "How far ahead the poster schedules on the platform. Facebook accepts up to 29.", 28, "Auto-post"),
     Setting("poster_group_shares_per_day", "POSTER_GROUP_SHARES_PER_DAY", "int", "Group shares a day",
-            "How many of a day's videos are also shared to one of your ticked groups (one in the morning, one "
-            "later). 0 turns group sharing off.", 2, "Auto-post"),
+            "How many of a day's videos are also shared to your ticked groups (one in the morning, one later). "
+            "0 turns group sharing off.", 2, "Auto-post"),
+    Setting("poster_groups_per_post", "POSTER_GROUPS_PER_POST", "int", "Groups per post (1-5)",
+            "How many groups one shared video goes to. Each share takes the next groups in turn, the ones "
+            "rested longest, until every ticked group has had one; then it goes round again.", 5, "Auto-post"),
     Setting("poster_group_rest_days", "POSTER_GROUP_REST_DAYS", "int", "Days between shares to a group",
             "A group gets at most one share in this many days — more reads as spam to members and admins.", 7,
             "Auto-post"),

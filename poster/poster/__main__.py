@@ -266,23 +266,38 @@ async def do_dry_run(platform: str = "", post_id: str = "") -> dict[str, Any]:
     return await publish(nxt["post"], dry_run=True)
 
 
-async def post_now(platform: str = "") -> dict[str, Any]:
-    """"Post next now": the next queued post goes out live at once — not at
-    its booked time, and without waiting out the gap. A post already due
-    goes first; otherwise the next booked one on a platform logged in."""
+async def post_now(platform: str = "", options: dict[str, Any] | None = None) -> dict[str, Any]:
+    """The post-now buttons: the next queued post goes out live at once —
+    not at its booked time, and without waiting out the gap.
+
+    No `share` ("Post next now"): a post already due goes first, with any
+    group share it carries; otherwise the next booked one on a platform
+    logged in. `share` "feed": the feed only. `share` "groups": Facebook's
+    feed and the next groups in turn, or the `groups` picked (5 at most)."""
+    options = options or {}
+    share = str(options.get("share") or "")
+    picked = [str(g) for g in (options.get("groups") or [])][:5]
     if state["paused"]:
         return {"ok": False, "error": "The poster is paused — resume it first."}
-    done = await tick()
-    if done.get("post_id"):
-        return done
-    why = done.get("skipped") or ""
-    for p in [platform] if platform else list(FLOWS):
-        if not platform and state["logins"].get(p, {}).get("logged_in") is False:
+    why = ""
+    if not share:
+        done = await tick()
+        if done.get("post_id"):
+            return done
+        why = done.get("skipped") or ""
+    if share == "groups":
+        platforms = ["facebook"]        # the only platform with groups
+    else:
+        platforms = [platform] if platform else list(FLOWS)
+    for p in platforms:
+        if not platform and share != "groups" and state["logins"].get(p, {}).get("logged_in") is False:
             continue
-        nxt = await cbc.next_post(platform=p, dry=True)
+        nxt = await cbc.next_post(platform=p, dry=True, share=share, groups=picked)
         if nxt.get("post"):
-            # Out now, live — never handed to the platform's scheduler for later.
-            return await publish({**nxt["post"], "schedule_at": ""}, dry_run=False)
+            post = {**nxt["post"], "schedule_at": ""}   # out now, live — never handed to a scheduler
+            if share == "feed":
+                post["groups"] = []
+            return await publish(post, dry_run=False)
         why = nxt.get("reason") or why
     return {"ok": False, "error": why or "Nothing queued to post."}
 
@@ -320,7 +335,8 @@ def set_paused(paused: bool) -> dict[str, Any]:
     return {"ok": True, "paused": paused}
 
 
-async def run(action: str, platform: str = "", post_id: str = "") -> dict[str, Any]:
+async def run(action: str, platform: str = "", post_id: str = "",
+              options: dict[str, Any] | None = None) -> dict[str, Any]:
     if action == "login":
         return await do_login(platform)
     if action == "check":
@@ -328,7 +344,7 @@ async def run(action: str, platform: str = "", post_id: str = "") -> dict[str, A
     if action == "dry_run":
         return await do_dry_run(platform, post_id)
     if action == "run_now":
-        return await post_now(platform)
+        return await post_now(platform, options)
     if action in ("pause", "resume"):
         return set_paused(action == "pause")
     if action == "groups":
@@ -361,7 +377,8 @@ async def command(action: str, body: dict[str, Any] | None = None,
         raise HTTPException(404, "No such action.")
     if action == "login" and str(body.get("platform") or "") not in FLOWS:
         raise HTTPException(400, "Unknown platform.")
-    return await run(action, str(body.get("platform") or ""), str(body.get("post_id") or ""))
+    return await run(action, str(body.get("platform") or ""), str(body.get("post_id") or ""),
+                     body.get("options") if isinstance(body.get("options"), dict) else None)
 
 
 @app.get("/shots/{name}")
@@ -392,9 +409,12 @@ async def command_loop() -> None:
             log.warning("Could not ask for commands: %s", _why(exc))
             cmd = None
         if cmd:
-            log.info("Command %s: %s %s", cmd["command_id"], cmd["action"], cmd.get("platform") or "")
+            log.info("Command %s: %s %s %s", cmd["command_id"], cmd["action"], cmd.get("platform") or "",
+                     cmd.get("options") or "")
             try:
-                result = await run(cmd["action"], cmd.get("platform") or "", cmd.get("post_id") or "")
+                opts = cmd.get("options")
+                result = await run(cmd["action"], cmd.get("platform") or "", cmd.get("post_id") or "",
+                                   opts if isinstance(opts, dict) else None)
             except Exception as exc:  # noqa: BLE001
                 result = {"ok": False, "error": str(exc)[:400]}
             try:

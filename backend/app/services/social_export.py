@@ -267,6 +267,7 @@ platforms and topics.
 HARD_DAILY_CAP = 30
 MAX_ATTEMPTS = 3
 AHEAD_CAPABLE = ("facebook",)          # platforms whose scheduler the poster can fill in
+MAX_GROUPS_PER_POST = 5               # the owner's ceiling; Facebook itself allows 9
 AHEAD_LEAD = timedelta(minutes=30)     # closer than this, a post just goes out live
 GROUP_PLATFORMS = ("facebook",)
 EAT = timezone(timedelta(hours=3))
@@ -301,6 +302,7 @@ def poster_rules() -> dict[str, Any]:
             "ahead_days": max(1, min(num("poster_ahead_days", 28, 29), 29)),
             "group_shares_per_day": zero_ok("poster_group_shares_per_day", 2, 6),
             "group_rest_days": max(1, num("poster_group_rest_days", 7, 60)),
+            "groups_per_post": max(1, num("poster_groups_per_post", 5, MAX_GROUPS_PER_POST)),
             "daily_cap": num("poster_daily_cap", 30, HARD_DAILY_CAP),
             "platform_cap": num("poster_platform_cap", 8, HARD_DAILY_CAP),
             "min_gap_minutes": num("poster_min_gap_minutes", 20, 24 * 60),
@@ -352,11 +354,15 @@ def decide(now: datetime, rules: dict[str, Any], *, posted_today: list[dict[str,
 
 
 def next_for_poster(now: datetime | None = None, *, platform: str = "", post_id: str = "",
-                    dry: bool = False) -> dict[str, Any]:
+                    dry: bool = False, share: str = "", groups: list[str] | None = None) -> dict[str, Any]:
     """What the poster's browser should publish now, with its files and text.
     A dry run (which publishes nothing) takes the next queued post for the
     platform, or the named post, without the day's rules — never one already
-    handed to a platform's scheduler. "Post next now" uses it too."""
+    handed to a platform's scheduler. "Post next now" uses it too.
+
+    `share` (with `dry`) is a post-now button: "feed" — the feed only;
+    "groups" — the feed and the next groups in turn, or the `groups` the
+    owner picked. Either way it goes out live, now."""
     from ..infra.db import fetch_all, fetch_one
     from . import social
 
@@ -420,14 +426,25 @@ def next_for_poster(now: datetime | None = None, *, platform: str = "", post_id:
     title = (f"{social.brand().get('hook') or 'Can you solve this?'} {q_text}")[:90].rstrip() + " #Shorts"
     when = chosen.get("scheduled_for")
     reserved = [str(g) for g in (chosen.get("groups") or [])]
-    ahead = (not reserved and chosen["platform"] in rules["ahead_platforms"] and isinstance(when, datetime)
+    ahead = (not share and not reserved and chosen["platform"] in rules["ahead_platforms"] and isinstance(when, datetime)
              and when - now > AHEAD_LEAD and when - now <= timedelta(days=rules["ahead_days"]))
-    groups = [] if ahead else (reserved or groups_for(chosen["platform"], now, rules))
+    if share == "feed":
+        to_groups: list[str] = []
+    elif share == "groups":
+        to_groups = (picked_groups(chosen["platform"], groups) if groups
+                     else group_rotation(chosen["platform"], now, rules))
+        if not to_groups:
+            return {"post": None, "rules": rules, "reason": (
+                "None of the picked groups is one the poster found — press \"Read my groups from Facebook\"."
+                if groups else "No group is free for a share: tick more groups, or wait for one to rest "
+                f"({rules['group_rest_days']} days between shares to a group).")}
+    else:
+        to_groups = [] if ahead else (reserved or groups_for(chosen["platform"], now, rules))
     return {"post": {"post_id": chosen["post_id"], "platform": chosen["platform"], "question_id": chosen["question_id"],
                      "video_url": st["url"], "thumbnail_url": st.get("thumbnail_url"), "caption": st.get("post") or "",
                      "title": title, "attempts": chosen.get("attempts") or 0,
                      "schedule_at": when.astimezone(EAT).isoformat() if ahead else "",
-                     "groups": groups}, "reason": "", "rules": rules}
+                     "groups": to_groups}, "reason": "", "rules": rules}
 
 
 def reserve_group(post: dict[str, Any], rules: dict[str, Any]) -> list[str]:
@@ -466,10 +483,10 @@ def work_order(now: datetime, rules: dict[str, Any], rows: list[dict[str, Any]])
 
 
 def groups_for(platform: str, at: datetime, rules: dict[str, Any]) -> list[str]:
-    """The group (if any) this post is also shared to: `group_shares_per_day`
-    a day — with two, one before 13:00 and one after — each to the ticked
-    group rested longest, and never the same group within `group_rest_days`."""
-    from ..infra.db import fetch_all, fetch_one
+    """The groups (if any) this post is also shared to: `group_shares_per_day`
+    posts a day carry a share — with two, one before 13:00 and one after —
+    each to the next `groups_per_post` groups in turn (see `group_rotation`)."""
+    from ..infra.db import fetch_all
 
     per_day = rules.get("group_shares_per_day", 0)
     if platform not in GROUP_PLATFORMS or per_day <= 0:
@@ -485,13 +502,40 @@ def groups_for(platform: str, at: datetime, rules: dict[str, Any]) -> list[str]:
         return []
     if per_day == 2 and any((r["t"].astimezone(EAT).hour < 13) == (local.hour < 13) for r in shared if r.get("t")):
         return []                       # this half of the day has its share
+    return group_rotation(platform, at, rules)
+
+
+def group_rotation(platform: str, at: datetime, rules: dict[str, Any], *, limit: int = 0) -> list[str]:
+    """The next groups in turn: the ticked groups rested longest (never
+    shared first), `groups_per_post` of them, none shared within
+    `group_rest_days`. Shares walk through every ticked group before any
+    gets a second one, because each share marks its groups as just used."""
+    from ..infra.db import fetch_all
+
+    if platform not in GROUP_PLATFORMS:
+        return []
+    n = max(1, min(limit or rules.get("groups_per_post", MAX_GROUPS_PER_POST), MAX_GROUPS_PER_POST))
     rest = timedelta(days=rules.get("group_rest_days", 7))
-    row = fetch_one(
+    rows = fetch_all(
         """SELECT name FROM poster_groups WHERE platform = :p AND enabled
            AND (last_shared_for IS NULL OR last_shared_for <= :cut OR last_shared_for >= :after)
-           ORDER BY last_shared_for NULLS FIRST, name LIMIT 1""",
-        {"p": platform, "cut": at - rest, "after": at + rest})
-    return [row["name"]] if row else []
+           ORDER BY last_shared_for NULLS FIRST, name LIMIT :n""",
+        {"p": platform, "cut": at - rest, "after": at + rest, "n": n}) or []
+    return [r["name"] for r in rows]
+
+
+def picked_groups(platform: str, names: list[str]) -> list[str]:
+    """Groups the owner picked by hand for one post: only groups the poster
+    found on the platform, in the order picked, at most MAX_GROUPS_PER_POST.
+    A hand pick may use a group that is not ticked for the rotation."""
+    from ..infra.db import fetch_all
+
+    wanted = [str(n).strip() for n in names if str(n).strip()]
+    if platform not in GROUP_PLATFORMS or not wanted:
+        return []
+    known = {r["name"] for r in (fetch_all("SELECT name FROM poster_groups WHERE platform = :p AND name = ANY(:n)",
+                                           {"p": platform, "n": wanted}) or [])}
+    return [n for n in dict.fromkeys(wanted) if n in known][:MAX_GROUPS_PER_POST]
 
 
 def record_attempt(post_id: str, *, ok: bool, url: str = "", error: str = "", dry_run: bool = False,
@@ -634,12 +678,13 @@ def pull_poster() -> dict[str, Any] | None:
             "seen_at": row["seen_at"].isoformat() if hasattr(row["seen_at"], "isoformat") else row["seen_at"]}
 
 
-def queue_command(action: str, platform: str = "", post_id: str = "", by: str = "") -> int:
-    from ..infra.db import fetch_one
+def queue_command(action: str, platform: str = "", post_id: str = "", by: str = "",
+                  options: dict[str, Any] | None = None) -> int:
+    from ..infra.db import fetch_one, to_json
 
-    row = fetch_one("""INSERT INTO poster_commands (action, platform, post_id, created_by)
-                       VALUES (:a, :p, :id, :by) RETURNING command_id""",
-                    {"a": action, "p": platform, "id": post_id, "by": by})
+    row = fetch_one("""INSERT INTO poster_commands (action, platform, post_id, created_by, options)
+                       VALUES (:a, :p, :id, :by, CAST(:o AS jsonb)) RETURNING command_id""",
+                    {"a": action, "p": platform, "id": post_id, "by": by, "o": to_json(options or {})})
     return int((row or {}).get("command_id") or 0)
 
 
@@ -654,7 +699,7 @@ def take_command() -> dict[str, Any] | None:
         """UPDATE poster_commands SET taken_at = NOW() WHERE command_id = (
                SELECT command_id FROM poster_commands WHERE taken_at IS NULL ORDER BY created_at
                LIMIT 1 FOR UPDATE SKIP LOCKED)
-           RETURNING command_id, action, platform, post_id""")
+           RETURNING command_id, action, platform, post_id, options""")
     return dict(row) if row else None
 
 

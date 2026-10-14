@@ -1368,6 +1368,14 @@ MIGRATIONS: list[tuple[str, str]] = [
         CREATE INDEX IF NOT EXISTS idx_drive_objects_file ON drive_objects(file_id);
         """,
     ),
+    (
+        "048_poster_command_options",
+        """
+        -- What a console button chose: post to the feed only, or to groups
+        -- (the next in turn, or the ones picked by hand).
+        ALTER TABLE poster_commands ADD COLUMN IF NOT EXISTS options JSONB NOT NULL DEFAULT '{}'::jsonb;
+        """,
+    ),
 ]
 
 
