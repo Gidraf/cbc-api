@@ -229,7 +229,7 @@ def test_nobody_signs_up_into_the_factory(monkeypatch):
     c = TestClient(app)
     for asked in ("reviewer", "developer", "admin", "operator", "user", "api", ""):
         rate_limit.reset_all()                 # five sign-ups an hour from one address
-        c.post("/api/v1/auth/register", json={"username": f"person-{asked or 'none'}", "password": "a long passphrase",
+        c.post("/api/v1/auth/register", json={"username": f"person-{asked or 'none'}", "password": "a long passphrase", "email": "p@example.org",
                                               "role": asked})
     assert made == ["user", "api", "user", "user", "user", "api", "user"]
 

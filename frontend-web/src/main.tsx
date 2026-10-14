@@ -39,6 +39,7 @@ import { MyQuestions } from "./views/MyQuestions";
 import { MyVideos } from "./views/MyVideos";
 import { Account } from "./views/Account";
 import { TakeTest } from "./views/TakeTest";
+import { ResetPassword, VerifyEmail } from "./views/EmailLinks";
 
 import "./ui/tokens.css";
 import "katex/dist/katex.min.css";
@@ -94,6 +95,9 @@ function Router() {
       </Routes>
     );
   }
+  // The links in an email open signed in or out.
+  if (location.pathname === "/reset") return <ResetPassword />;
+  if (location.pathname === "/verify") return <VerifyEmail />;
   if (!token) return <SignIn />;
 
   return (

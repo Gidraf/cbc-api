@@ -1523,6 +1523,24 @@ MIGRATIONS: list[tuple[str, str]] = [
         ALTER TABLE social_posts ADD COLUMN IF NOT EXISTS step TEXT NOT NULL DEFAULT 'walkthrough';
         """,
     ),
+    (
+        "053_email_links",
+        """
+        -- An email address is confirmed by a link sent to it; a forgotten
+        -- password is reset by one. Only a hash of each link's token is kept.
+        ALTER TABLE app_users ADD COLUMN IF NOT EXISTS email_verified_at TIMESTAMPTZ NULL;
+        CREATE TABLE IF NOT EXISTS auth_links (
+            token_hash TEXT PRIMARY KEY,
+            username TEXT NOT NULL,
+            purpose TEXT NOT NULL,
+            email TEXT NOT NULL DEFAULT '',
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            expires_at TIMESTAMPTZ NOT NULL,
+            used_at TIMESTAMPTZ NULL
+        );
+        CREATE INDEX IF NOT EXISTS auth_links_user ON auth_links (username, purpose);
+        """,
+    ),
 ]
 
 

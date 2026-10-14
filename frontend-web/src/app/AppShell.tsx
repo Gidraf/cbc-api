@@ -2,6 +2,7 @@ import React from "react";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { useAuth } from "../lib/auth";
 import { Badge, Button } from "../ui/components";
+import { EmailBanner } from "../views/EmailLinks";
 
 type NavItem = { to: string; label: string; icon: string; right?: string; hint: string };
 
@@ -52,7 +53,7 @@ const NAV: { group: string; items: NavItem[] }[] = [
     items: [
       { to: "/wallet", label: "Wallet", icon: "◉", right: "wallet", hint: "Your balance, M-Pesa top-ups and what you paid for" },
       { to: "/developer", label: "Developer", icon: "{}", right: "api", hint: "API keys, free calls left, and the docs" },
-      { to: "/account", label: "Change password", icon: "🔒", hint: "Set your own password" },
+      { to: "/account", label: "Email & password", icon: "🔒", hint: "Your email address and your own password" },
     ],
   },
   {
@@ -230,6 +231,7 @@ export function AppShell() {
             gap: "var(--s5)",
           }}
         >
+          <EmailBanner />
           <Outlet />
         </main>
       </div>
