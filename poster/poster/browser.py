@@ -33,8 +33,14 @@ class Browser:
         options = dict(user_data_dir=config.PROFILE_DIR, headless=False, viewport=None, locale="en-US",
                        timezone_id="Africa/Nairobi", args=["--start-maximized", "--no-first-run",
                                                            "--no-default-browser-check", "--disable-dev-shm-usage"])
+        # Real Chrome keeps its cookies encrypted with the Mac's Keychain. Playwright
+        # swaps in a fake keychain by default, which makes a login done in plain
+        # Chrome (mac/login.sh) unreadable here, and this one unreadable there.
+        # Keep the real one so a single login works in both, every start.
+        chrome_options = dict(options, ignore_default_args=["--use-mock-keychain", "--password-store=basic"])
         try:
-            self._ctx = await self._pw.chromium.launch_persistent_context(channel=config.BROWSER_CHANNEL, **options)
+            self._ctx = await self._pw.chromium.launch_persistent_context(channel=config.BROWSER_CHANNEL,
+                                                                          **chrome_options)
             self.channel = config.BROWSER_CHANNEL
         except Exception as exc:  # noqa: BLE001
             log.info("No %s here (%s); using Chromium.", config.BROWSER_CHANNEL, str(exc).splitlines()[0][:120])
