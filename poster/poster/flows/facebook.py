@@ -12,6 +12,9 @@ browser's Nairobi time) are typed into its two boxes and read back before
 Groups: "Share to groups" lists every group with a checkbox (9 at most per
 post); the named ones are ticked, then Done.
 
+Photos (a question's teaser, question and answer cards): the home page's
+"What's on your mind" box — the photo, the caption, Post.
+
 Page (FACEBOOK_TARGET=page): Meta Business Suite's reel composer —
 Create → Edit → Share. The video goes in through "Add Video"; the step
 tabs at the top are buttons too, so the final Share is the footer's.
@@ -29,6 +32,7 @@ from .. import config
 from .base import Flow, NotLoggedIn, StepFailed, check_for_human, enabled, first, wait_text, write
 
 PROFILE_COMPOSER = "https://www.facebook.com/reels/create/"
+HOME = "https://www.facebook.com/"
 PAGE_COMPOSER = "https://business.facebook.com/latest/reels_composer"
 
 
@@ -106,6 +110,64 @@ class Facebook(Flow):
             return await self._page_reel(page, video=video, caption=caption, dry_run=dry_run)
         return await self._profile_reel(page, video=video, caption=caption, dry_run=dry_run,
                                         schedule_at=schedule_at, groups=groups or [])
+
+    can_post_photos = True
+
+    async def post_photo(self, page: Page, *, image: str, caption: str, dry_run: bool) -> str:
+        """A photo post on the profile's feed: the home page's "What's on
+        your mind" composer, the photo, the caption, then Post."""
+        if self.page_mode:
+            raise StepFailed("Photo posts are set up for the profile only.")
+        await page.goto(HOME, wait_until="domcontentloaded", timeout=60_000)
+        await asyncio.sleep(4)
+        if _logged_out(page.url):
+            raise NotLoggedIn("Facebook is logged out.")
+        await check_for_human(page)
+        opener = await first(page, [page.get_by_role("button", name=re.compile(r"What's on your mind", re.I)),
+                                    page.get_by_text(re.compile(r"^What's on your mind", re.I))],
+                             timeout=30, what='"What\'s on your mind"')
+        await opener.click()
+        dialog = page.get_by_role("dialog").filter(has_text=re.compile(r"Create post", re.I)).last
+        await first(page, [dialog], timeout=30, what='the "Create post" box')
+        box = await first(page, [dialog.locator('[contenteditable="true"][role="textbox"]')], timeout=30,
+                          what="the post's text box")
+        await write(page, box, self.fit(caption))
+        # The photo: the box's own file input if it has one; else "Photo/video",
+        # then its input or its file chooser.
+        files = dialog.locator('input[type="file"][accept*="image"]')
+        if not await files.count():
+            pv = await first(page, [dialog.get_by_role("button", name=re.compile(r"Photo/video", re.I)),
+                                    dialog.get_by_label(re.compile(r"Photo/video", re.I))], timeout=20,
+                             what='"Photo/video"')
+            await pv.click()
+            await asyncio.sleep(1.5)
+        if await files.count():
+            await files.first.set_input_files(image)
+        else:
+            add = await first(page, [dialog.get_by_text(re.compile(r"Add photos/videos", re.I))], timeout=20,
+                              what='"Add photos/videos"')
+            async with page.expect_file_chooser(timeout=20_000) as chooser:
+                await add.click()
+            await (await chooser.value).set_files(image)
+        await first(page, [dialog.locator("img[src^='blob:'], img[src*='scontent']")], timeout=90,
+                    what="the photo's preview")
+        await asyncio.sleep(1.5)
+        post = dialog.get_by_role("button", name="Post", exact=True).last
+        await enabled(post, timeout=120)
+        await check_for_human(page)
+        self.destinations = ["feed"]
+        if dry_run:
+            return ""
+        await post.click()
+        deadline = time.monotonic() + 180
+        while time.monotonic() < deadline:          # done when the box closes
+            try:
+                if not await dialog.count() or not await dialog.is_visible():
+                    return ""
+            except Exception:  # noqa: BLE001
+                return ""
+            await asyncio.sleep(2)
+        raise RuntimeError("Facebook did not confirm the photo post.")
 
     async def groups(self, page: Page) -> list[str]:
         """Every group in the composer's "Share to groups" list."""

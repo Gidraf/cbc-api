@@ -304,7 +304,9 @@ def poster_rules() -> dict[str, Any]:
             "group_rest_days": max(1, num("poster_group_rest_days", 7, 60)),
             "groups_per_post": max(1, num("poster_groups_per_post", 5, MAX_GROUPS_PER_POST)),
             "daily_cap": num("poster_daily_cap", 30, HARD_DAILY_CAP),
-            "platform_cap": num("poster_platform_cap", 8, HARD_DAILY_CAP),
+            "platform_cap": num("poster_platform_cap", 16, HARD_DAILY_CAP),
+            "videos_per_day": num("poster_videos_per_day", 8, HARD_DAILY_CAP),
+            "photos_per_day": num("poster_photos_per_day", 8, HARD_DAILY_CAP),
             "min_gap_minutes": num("poster_min_gap_minutes", 20, 24 * 60),
             "hours": {"start": f"{start[0]:02d}:{start[1]:02d}", "end": f"{end[0]:02d}:{end[1]:02d}"},
             "platforms": [p for p in platforms if p in PLATFORMS]}
@@ -331,8 +333,11 @@ def decide(now: datetime, rules: dict[str, Any], *, posted_today: list[dict[str,
         if wait > timedelta(0):
             return None, f"Next post allowed in {int(wait.total_seconds() // 60) + 1} min (gap {rules['min_gap_minutes']} min)."
     per_platform: dict[str, int] = {}
+    per_format: dict[tuple[str, str], int] = {}
     for p in (posted_today if live_today is None else live_today):
         per_platform[p["platform"]] = per_platform.get(p["platform"], 0) + 1
+        key = (p["platform"], str(p.get("format") or "video"))
+        per_format[key] = per_format.get(key, 0) + 1
     room_ahead = len(posted_today) < rules["daily_cap"] - int(rules.get("group_shares_per_day") or 0)
     skipped: set[str] = set()
     for c in candidates:
@@ -348,6 +353,11 @@ def decide(now: datetime, rules: dict[str, Any], *, posted_today: list[dict[str,
             continue
         if not c.get("ahead") and per_platform.get(platform, 0) >= rules["platform_cap"]:
             skipped.add(f"{platform} reached {rules['platform_cap']} today")
+            continue
+        fmt = str(c.get("format") or "video")
+        cap = rules.get("photos_per_day" if fmt == "photo" else "videos_per_day")
+        if not c.get("ahead") and cap is not None and per_format.get((platform, fmt), 0) >= int(cap):
+            skipped.add(f"{platform} reached {cap} {fmt}s today")
             continue
         return c, ""
     return None, ("Nothing due" + (f" ({'; '.join(sorted(skipped))})" if skipped else "") + ".")
@@ -374,8 +384,8 @@ def next_for_poster(now: datetime | None = None, *, platform: str = "", post_id:
                AND (:id = '' OR post_id = :id) AND (:p = '' OR platform = :p)
                ORDER BY scheduled_for NULLS LAST LIMIT 20""", {"id": post_id, "p": platform}) or []
         chosen, st = None, {}
-        for row in rows:                  # the first whose video is made
-            st = social.status(row["question_id"])
+        for row in rows:                  # the first whose video (or card) is made
+            st = _media(row)
             if st.get("status") == "ready":
                 chosen = row
                 break
@@ -385,8 +395,8 @@ def next_for_poster(now: datetime | None = None, *, platform: str = "", post_id:
         day_start = now.astimezone(EAT).replace(hour=0, minute=0, second=0, microsecond=0)
         # The day's actions — a post going out live, or a video handed to a
         # platform's scheduler — are what the caps and the gap count.
-        posted_today = fetch_all("SELECT platform FROM social_posts WHERE handed_at >= :d", {"d": day_start}) or []
-        live_today = fetch_all("""SELECT platform FROM social_posts WHERE posted_at >= :d AND posted_at < :e""",
+        posted_today = fetch_all("SELECT platform, format FROM social_posts WHERE handed_at >= :d", {"d": day_start}) or []
+        live_today = fetch_all("""SELECT platform, format FROM social_posts WHERE posted_at >= :d AND posted_at < :e""",
                                {"d": day_start, "e": day_start + timedelta(days=1)}) or []
         last = fetch_one("SELECT MAX(handed_at) AS t FROM social_posts WHERE handed_at IS NOT NULL") or {}
         rows = fetch_all(
@@ -410,22 +420,27 @@ def next_for_poster(now: datetime | None = None, *, platform: str = "", post_id:
                 if chosen.get("groups") or reserve_group(chosen, rules):
                     drop = True
             if not drop:
-                st = social.status(chosen["question_id"])
+                st = _media(chosen)
                 if st.get("status") == "ready":
                     break
                 if st.get("status") == "none":
-                    # Its video is out of date (the item or the board changed
-                    # since it was made) or was never made: make it now, so
-                    # the post goes out on a later look instead of never.
+                    # Its video or card is out of date (the item or the board
+                    # changed since it was made) or was never made: make it
+                    # now, so the post goes out on a later look, not never.
                     try:
-                        social.enqueue(chosen["question_id"], queued_by="poster")
+                        if str(chosen.get("format") or "video") == "photo":
+                            from . import social_cards
+
+                            social_cards.enqueue(chosen["question_id"], queued_by="poster")
+                        else:
+                            social.enqueue(chosen["question_id"], queued_by="poster")
                     except Exception as exc:  # noqa: BLE001
-                        logger.warning("Could not queue the video for %s: %s", chosen["question_id"], exc)
+                        logger.warning("Could not queue the media for %s: %s", chosen["question_id"], exc)
                 waiting += 1
             candidates = [c for c in candidates if c["post_id"] != chosen["post_id"]]
             chosen = None
         if not chosen and waiting:
-            why = f"{waiting} due post(s) are waiting for their videos to be made."
+            why = f"{waiting} due post(s) are waiting for their videos or cards to be made."
     if not chosen:
         return {"post": None, "reason": why, "rules": rules}
     from .whiteboard import load
@@ -448,11 +463,33 @@ def next_for_poster(now: datetime | None = None, *, platform: str = "", post_id:
                 f"({rules['group_rest_days']} days between shares to a group).")}
     else:
         to_groups = [] if ahead else (reserved or groups_for(chosen["platform"], now, rules))
+    photo = str(chosen.get("format") or "video") == "photo"
+    if photo:
+        ahead, to_groups = False, []            # a card goes out live, to the feed
     return {"post": {"post_id": chosen["post_id"], "platform": chosen["platform"], "question_id": chosen["question_id"],
-                     "video_url": st["url"], "thumbnail_url": st.get("thumbnail_url"), "caption": st.get("post") or "",
+                     "format": "photo" if photo else "video", "step": chosen.get("step") or "walkthrough",
+                     "video_url": "" if photo else st["url"], "image_url": st.get("url") if photo else "",
+                     "thumbnail_url": None if photo else st.get("thumbnail_url"), "caption": st.get("post") or "",
                      "title": title, "attempts": chosen.get("attempts") or 0,
                      "schedule_at": when.astimezone(EAT).isoformat() if ahead else "",
                      "groups": to_groups}, "reason": "", "rules": rules}
+
+
+def _media(row: dict[str, Any]) -> dict[str, Any]:
+    """What a booked post shows, if it is made: the walkthrough video (with
+    its post text), or the step's photo card (with its caption)."""
+    from . import social
+
+    if str(row.get("format") or "video") != "photo":
+        return social.status(row["question_id"])
+    from . import social_cards
+    from .whiteboard import load
+
+    q = load(row["question_id"])
+    st = social_cards.status(row["question_id"], str(row.get("step") or "question"), q)
+    if st.get("status") == "ready":
+        st["post"] = social_cards.caption(q, str(row.get("step") or "question"))
+    return st
 
 
 def reserve_group(post: dict[str, Any], rules: dict[str, Any]) -> list[str]:
@@ -484,7 +521,8 @@ def work_order(now: datetime, rules: dict[str, Any], rows: list[dict[str, Any]])
             continue
         if when <= now:
             due.append(r)
-        elif (r["platform"] in rules["ahead_platforms"] and when - now > AHEAD_LEAD
+        elif (str(r.get("format") or "video") == "video" and r["platform"] in rules["ahead_platforms"]
+              and when - now > AHEAD_LEAD
               and when - now <= timedelta(days=rules["ahead_days"])):
             ahead.append({**r, "ahead": True})
     return due + ahead
@@ -931,3 +969,157 @@ def book_ahead(grade: str, subject: str, sub_strand: str = "", *, days: int = 25
                       "times": [f"{p['at'].astimezone(EAT):%H:%M} {p['platform']}" for p in d["posts"]]}
                      for d in calendar],
             "videos": len(set(used)), "posts": posts, "to_render": len(to_render), "notes": notes}
+
+
+# ── photo + video series ─────────────────────────────────────────────────────
+
+SERIES_FULL = ("teaser", "question", "answer", "walkthrough")
+SERIES_SHORT = ("question", "answer", "walkthrough")
+
+
+def series_shape(photos: int, videos: int) -> list[tuple[str, ...]]:
+    """A day's runs: full series (3 cards and the video) while the budget
+    holds, a short one (question, answer, video) with what is left, and the
+    remaining videos on their own. Pure."""
+    runs: list[tuple[str, ...]] = []
+    while photos >= 3 and videos >= 1:
+        runs.append(SERIES_FULL)
+        photos, videos = photos - 3, videos - 1
+    while photos >= 2 and videos >= 1:
+        runs.append(SERIES_SHORT)
+        photos, videos = photos - 2, videos - 1
+    runs += [("walkthrough",)] * max(0, videos)
+    return runs
+
+
+def interleave(rng: Any, runs: list[list[Any]]) -> list[Any]:
+    """Merge the runs into one day: each run keeps its order, and which run
+    goes next is random (longer runs a little more often, so a series is
+    spread over the day rather than bunched at its end). Pure."""
+    runs = [list(r) for r in runs if r]
+    out: list[Any] = []
+    while runs:
+        weights = [len(r) for r in runs]
+        pick = rng.choices(range(len(runs)), weights=weights)[0]
+        out.append(runs[pick].pop(0))
+        runs = [r for r in runs if r]
+    return out
+
+
+def _plan_step(q: dict[str, Any], platform: str, step: str, at: datetime, created_by: str) -> str:
+    from ..infra.db import execute
+
+    link = q.get("curriculum") or {}
+    fmt = "video" if step == "walkthrough" else "photo"
+    post_id = _post_id(q["question_id"], platform) if fmt == "video" else \
+        "sp_" + hashlib.sha256(f"{q['question_id']}:{platform}:{step}".encode()).hexdigest()[:16]
+    execute(
+        """INSERT INTO social_posts (post_id, question_id, platform, grade, subject, sub_strand, scheduled_for,
+                                     created_by, format, step)
+           VALUES (:id, :qid, :platform, :grade, :subject, :ss, :at, :by, :fmt, :step)
+           ON CONFLICT (post_id) DO UPDATE SET scheduled_for = EXCLUDED.scheduled_for, format = EXCLUDED.format,
+               step = EXCLUDED.step, updated_at = NOW()
+           WHERE social_posts.posted_at IS NULL""",
+        {"id": post_id, "qid": q["question_id"], "platform": platform, "grade": str(link.get("grade") or ""),
+         "subject": str(link.get("subject") or ""), "ss": str(link.get("sub_strand") or ""), "at": at,
+         "by": created_by, "fmt": fmt, "step": step})
+    return post_id
+
+
+def book_series(grade: str, subject: str, sub_strand: str = "", *, days: int = 7, photos: int | None = None,
+                videos: int | None = None, platform: str = "facebook", today: date | None = None,
+                seed: int | None = None, dry: bool = False, created_by: str = "") -> dict[str, Any]:
+    """Book the next `days` days as series: per day up to `photos` cards and
+    `videos` videos (the Auto-post settings, 8 and 8), each question's steps
+    in order — "Can you solve this?", the question, the answer, then its
+    walkthrough — spread through the day among single videos. Questions with
+    a figure go first. Cards and videos not made yet are queued."""
+    import random
+
+    from ..infra.db import fetch_all, fetch_one
+    from . import question_rows, social, social_cards
+    from .question_dna import question_dna_service
+
+    rng = random.Random(seed)
+    rules = poster_rules()
+    photos = rules["photos_per_day"] if photos is None else max(0, int(photos))
+    videos = rules["videos_per_day"] if videos is None else max(0, int(videos))
+    if platform not in POSTER_PLATFORMS:
+        raise ValueError("Pick one of: " + ", ".join(POSTER_PLATFORMS))
+    if platform != "facebook":
+        photos = 0                                 # the poster posts cards on Facebook only, for now
+    shape = series_shape(photos, videos)
+    per_day = sum(len(r) for r in shape)
+    if not per_day:
+        raise ValueError("Photos and videos a day are both 0.")
+    notes: list[str] = []
+    fits = len(day_times(rng, date.today(), per_day, rules))
+    if fits < per_day:
+        notes.append(f"{per_day} posts do not fit a day {rules['min_gap_minutes']} min apart between "
+                     f"{rules['hours']['start']} and {rules['hours']['end']} — {fits} a day. Lower the gap "
+                     "(Settings → Auto-post) for all of them.")
+    today = today or datetime.now(EAT).date()
+    last = fetch_one("""SELECT MAX(scheduled_for) AS t FROM social_posts WHERE platform = :p AND scheduled_for IS NOT NULL
+                        AND status <> 'gave_up'""", {"p": platform}) or {}
+    last_day = last["t"].astimezone(EAT).date() if last.get("t") else None
+    first = max(today + timedelta(days=1), (last_day + timedelta(days=1)) if last_day else today)
+    span = [first + timedelta(days=i) for i in range(max(1, days))]
+
+    booked = {r["question_id"] for r in (fetch_all("SELECT DISTINCT question_id FROM social_posts WHERE platform = :p",
+                                                   {"p": platform}) or [])}
+    rows = question_dna_service.list_questions(grade=grade or None, subject=subject or None,
+                                               sub_strand=sub_strand or None, limit=2000)
+    pool = [q for q in question_rows.flatten_all(rows)
+            if str(q.get("status") or "") not in ("needs_review", "rejected", "superseded")
+            and str(q.get("question_id")) not in booked]
+    rng.shuffle(pool)
+    pool.sort(key=lambda q: not (isinstance(q.get("diagram"), dict) and q["diagram"].get("diagram_id")))
+
+    def usable() -> dict[str, Any] | None:
+        while pool:
+            q = pool.pop(0)
+            try:
+                st = social.status(str(q["question_id"]), q)
+            except Exception:  # noqa: BLE001
+                continue
+            if st.get("status") != "failed" and st.get("scenes"):
+                q["_video"] = st.get("status")
+                return q
+        return None
+
+    calendar: list[dict[str, Any]] = []
+    chosen: dict[str, dict[str, Any]] = {}
+    for day in span:
+        runs: list[list[tuple[str, str]]] = []
+        for run in shape:
+            q = usable()
+            if not q:
+                break
+            chosen[q["question_id"]] = q
+            runs.append([(q["question_id"], step) for step in run])
+        if not runs:
+            notes.append("Not enough unbooked questions in this scope for more days — widen it or add questions.")
+            break
+        order = interleave(rng, runs)
+        slots = day_times(rng, day, len(order), rules)
+        posts = [{"question_id": qid, "step": step, "at": at} for (qid, step), at in zip(order, slots)]
+        calendar.append({"date": day.isoformat(), "posts": posts})
+
+    if not dry:
+        for d in calendar:
+            for p in d["posts"]:
+                _plan_step(chosen[p["question_id"]], platform, p["step"], p["at"], created_by)
+        for qid, q in chosen.items():
+            try:
+                if any(p["question_id"] == qid and p["step"] != "walkthrough" for d in calendar for p in d["posts"]):
+                    social_cards.enqueue(qid, queued_by=created_by or "series")
+                if q.get("_video") not in ("ready", "queued", "running"):
+                    social.enqueue(qid, queued_by=created_by or "series")
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Could not queue the media for %s: %s", qid, exc)
+    count = lambda fmt: sum(1 for d in calendar for p in d["posts"] if (p["step"] == "walkthrough") == (fmt == "video"))  # noqa: E731
+    return {"booked": not dry, "platform": platform, "first_day": calendar[0]["date"] if calendar else None,
+            "last_day": calendar[-1]["date"] if calendar else None, "photos": count("photo"), "videos": count("video"),
+            "questions": len(chosen),
+            "days": [{"date": d["date"], "times": [f"{p['at'].astimezone(EAT):%H:%M} {p['step']}" for p in d["posts"]]}
+                     for d in calendar], "notes": notes}

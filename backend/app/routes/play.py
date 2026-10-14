@@ -842,6 +842,37 @@ def book_social(payload: BookAhead, auth: AuthContext = Depends(ANY)) -> dict[st
         return {}
 
 
+class BookSeries(BaseModel):
+    grade: str
+    subject: str
+    sub_strand: str = ""
+    days: int = 7
+    photos: int | None = None     # cards a day (default: Settings → Auto-post, 8)
+    videos: int | None = None     # videos a day (default 8)
+    platform: str = "facebook"
+    dry: bool = False
+
+
+@router.post("/social/book-series")
+def book_social_series(payload: BookSeries, auth: AuthContext = Depends(ANY)) -> dict[str, Any]:
+    """Book days of series: each question's "Can you solve this?" card, the
+    question, the answer, then its walkthrough video, spread through the day
+    with single videos — up to 8 photos and 8 videos a day."""
+    from ..services import social_export
+
+    _may_make_videos(auth)
+    if not (1 <= payload.days <= 31) or not (0 <= (payload.photos or 0) <= 16) or not (0 <= (payload.videos or 0) <= 16):
+        raise_api_error("VALIDATION_FAILED", "Days are 1–31; photos and videos a day are 0–16 each.")
+    try:
+        return social_export.book_series(payload.grade, payload.subject, payload.sub_strand, days=payload.days,
+                                         photos=payload.photos, videos=payload.videos,
+                                         platform=payload.platform.strip().lower() or "facebook", dry=payload.dry,
+                                         created_by=str(getattr(auth, "subject", "") or ""))
+    except ValueError as exc:
+        raise_api_error("VALIDATION_FAILED", str(exc))
+        return {}
+
+
 @router.get("/social/posts")
 def social_posts(grade: str = Query(""), subject: str = Query(""), sub_strand: str = Query(""),
                  platform: str = Query(""), auth: AuthContext = Depends(ANY)) -> dict[str, Any]:

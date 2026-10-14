@@ -121,7 +121,7 @@ def test_nothing_to_add_when_already_booked_far_enough(world):
 def test_asking_for_more_than_the_caps_allow_says_so(world, monkeypatch):
     from app.services import platform_settings
 
-    monkeypatch.setattr(platform_settings, "get", lambda k, d=None: d)          # the default 8 per platform
+    monkeypatch.setattr(platform_settings, "get", lambda k, d=None: 8 if k == "poster_platform_cap" else d)
     out = X.book_ahead("grade-9", "Mathematics", today=date(2026, 10, 13), seed=3, dry=True)
     assert all(5 <= d["videos"] <= 8 for d in out["days"]) and "At most 8 videos a day" in out["notes"][0]
 
