@@ -52,9 +52,64 @@ def keep_local_days() -> float:
         return 7.0
 
 
+SECRET_NAME = "google_drive"
+SCOPE = "https://www.googleapis.com/auth/drive.file"
+_creds_cache: dict[str, Any] = {"at": 0.0, "value": None}
+
+
+def _fernet() -> Any:
+    from ..state import runtime_state
+
+    return runtime_state._fernet
+
+
+def credentials() -> dict[str, str]:
+    """The Drive sign-in: what the admin connected in the console (kept in
+    the database, encrypted with CBC_MASTER_KEY), else the environment."""
+    if time.time() - _creds_cache["at"] < 30 and _creds_cache["value"] is not None:
+        return dict(_creds_cache["value"])
+    stored: dict[str, str] = {}
+    try:
+        import json
+
+        from ..infra.db import fetch_one
+
+        row = fetch_one("SELECT value FROM platform_secrets WHERE name = :n", {"n": SECRET_NAME})
+        if row and row.get("value"):
+            stored = json.loads(_fernet().decrypt(str(row["value"]).encode()).decode())
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("No Drive sign-in in the database: %s", exc)
+    value = {"client_id": stored.get("client_id") or os.getenv("GOOGLE_DRIVE_CLIENT_ID", ""),
+             "client_secret": stored.get("client_secret") or os.getenv("GOOGLE_DRIVE_CLIENT_SECRET", ""),
+             "refresh_token": stored.get("refresh_token") or os.getenv("GOOGLE_DRIVE_REFRESH_TOKEN", ""),
+             "folder_id": stored.get("folder_id") or os.getenv("GOOGLE_DRIVE_FOLDER_ID", ""),
+             "connected_at": stored.get("connected_at", ""), "source": "console" if stored.get("refresh_token") else
+             ("environment" if os.getenv("GOOGLE_DRIVE_REFRESH_TOKEN") else "")}
+    _creds_cache.update(at=time.time(), value=value)
+    return dict(value)
+
+
+def save_credentials(**changes: str) -> dict[str, str]:
+    """Store (merge) the console's Drive sign-in, encrypted."""
+    import json
+
+    from ..infra.db import execute
+
+    current = {k: v for k, v in credentials().items() if k in ("client_id", "client_secret", "refresh_token",
+                                                              "folder_id", "connected_at")}
+    if credentials().get("source") == "environment":
+        current = {k: "" for k in current}       # the console's own, not a copy of the environment's
+    merged = {**current, **{k: v for k, v in changes.items() if v is not None}}
+    token = _fernet().encrypt(json.dumps(merged).encode()).decode()
+    execute("""INSERT INTO platform_secrets (name, value) VALUES (:n, :v)
+               ON CONFLICT (name) DO UPDATE SET value = EXCLUDED.value""", {"n": SECRET_NAME, "v": token})
+    _creds_cache.update(at=0.0, value=None)
+    return credentials()
+
+
 def configured() -> bool:
-    return all(os.getenv(k) for k in ("GOOGLE_DRIVE_CLIENT_ID", "GOOGLE_DRIVE_CLIENT_SECRET",
-                                      "GOOGLE_DRIVE_REFRESH_TOKEN"))
+    c = credentials()
+    return bool(c["client_id"] and c["client_secret"] and c["refresh_token"])
 
 
 def movable(object_name: str) -> bool:
@@ -133,19 +188,18 @@ class Drive:
         self.http = client or httpx.Client(timeout=120.0, follow_redirects=True)
         self._token = ""
         self._expires = 0.0
-        self._folder = os.getenv("GOOGLE_DRIVE_FOLDER_ID", "")
+        self._creds = credentials()
+        self._folder = self._creds.get("folder_id", "")
 
     def token(self) -> str:
         if self._token and time.time() < self._expires - 60:
             return self._token
         r = self.http.post(TOKEN_URL, data={
-            "client_id": os.getenv("GOOGLE_DRIVE_CLIENT_ID", ""),
-            "client_secret": os.getenv("GOOGLE_DRIVE_CLIENT_SECRET", ""),
-            "refresh_token": os.getenv("GOOGLE_DRIVE_REFRESH_TOKEN", ""),
-            "grant_type": "refresh_token"})
+            "client_id": self._creds["client_id"], "client_secret": self._creds["client_secret"],
+            "refresh_token": self._creds["refresh_token"], "grant_type": "refresh_token"})
         if r.status_code != 200:
-            raise RuntimeError(f"Google refused the Drive sign-in ({r.status_code}): {r.text[:200]} — "
-                               f"make a new refresh token with backend/scripts/drive_auth.py")
+            raise RuntimeError(f"Google refused the Drive sign-in ({r.status_code}) — connect Drive again in "
+                               f"the console (Settings → Google Drive)")
         body = r.json()
         self._token, self._expires = body["access_token"], time.time() + float(body.get("expires_in") or 3600)
         return self._token
@@ -194,11 +248,22 @@ class Drive:
             got = r.headers.get("Range", "")
             start = int(got.split("-")[-1]) + 1 if got else end + 1
 
-    def share(self, file_id: str) -> None:
-        """Viewable by anyone with the link — what a posted video needs."""
-        r = self.http.post(f"{API}/files/{file_id}/permissions", headers=self._auth(),
-                           json={"role": "reader", "type": "anyone"})
+    def unshare(self, file_id: str) -> int:
+        """Remove "anyone with the link": the file is reachable only through
+        the platform, which decides who may watch. Returns how many removed."""
+        r = self.http.get(f"{API}/files/{file_id}/permissions", headers=self._auth(),
+                          params={"fields": "permissions(id,type)"})
+        if r.status_code == 404:
+            return 0
         r.raise_for_status()
+        removed = 0
+        for perm in r.json().get("permissions") or []:
+            if perm.get("type") == "anyone":
+                d = self.http.delete(f"{API}/files/{file_id}/permissions/{perm['id']}", headers=self._auth())
+                if d.status_code not in (200, 204, 404):
+                    d.raise_for_status()
+                removed += 1
+        return removed
 
     def download(self, file_id: str) -> bytes:
         r = self.http.get(f"{API}/files/{file_id}", params={"alt": "media"}, headers=self._auth())
@@ -231,7 +296,7 @@ def pending(limit: int = PER_JOB) -> list[str]:
 
 
 def move(object_name: str, drive: Drive) -> dict[str, Any]:
-    """One object to Drive: upload, check the copy, share it, record it."""
+    """One object to Drive: upload, check the copy, record it (private)."""
     from ..infra.db import execute
     from ..infra.storage import object_storage
 
@@ -243,12 +308,14 @@ def move(object_name: str, drive: Drive) -> dict[str, Any]:
     made = drive.upload(object_name.replace("/", "__"), payload, mime)
     if made.get("md5Checksum") and made["md5Checksum"] != md5:
         raise RuntimeError(f"The Drive copy of {object_name} does not match the original; not recorded")
-    drive.share(made["id"])
+    # Never shared: the file is private to the owner's Drive, and the
+    # platform streams it to whoever may watch (services/streaming.py).
     execute(
-        """INSERT INTO drive_objects (object_name, file_id, url, md5, bytes)
-           VALUES (:n, :f, :u, :m, :b)
+        """INSERT INTO drive_objects (object_name, file_id, url, md5, bytes, private_at)
+           VALUES (:n, :f, :u, :m, :b, NOW())
            ON CONFLICT (object_name) DO UPDATE SET file_id = EXCLUDED.file_id, url = EXCLUDED.url,
-                md5 = EXCLUDED.md5, bytes = EXCLUDED.bytes, moved_at = NOW(), local_removed_at = NULL""",
+                md5 = EXCLUDED.md5, bytes = EXCLUDED.bytes, moved_at = NOW(), local_removed_at = NULL,
+                private_at = NOW()""",
         {"n": object_name, "f": made["id"], "u": view_url(made["id"]), "m": md5, "b": len(payload)})
     _forget(object_name)
     return {"object_name": object_name, "file_id": made["id"], "bytes": len(payload)}
@@ -279,7 +346,7 @@ def run_job(job: dict[str, Any]) -> dict[str, Any]:
     from . import job_queue, run_log
 
     if not configured():
-        return {"status": "skipped", "reason": "Google Drive is not set up (GOOGLE_DRIVE_* settings)"}
+        return {"status": "skipped", "reason": "Google Drive is not connected (Settings → Google Drive)"}
     drive = Drive()
     todo = pending()
     live = job_queue.Live(str(job.get("job_id") or ""), stages=(("upload", 100),))
@@ -295,13 +362,35 @@ def run_job(job: dict[str, Any]) -> dict[str, Any]:
             logger.warning("Drive move of %s failed: %s", name, exc)
         live("upload", n, len(todo))
     removed = remove_local_copies()
-    run_log.step("Moved", f"{moved} file(s), {sent / 1e6:.1f} MB; {removed} server copies removed")
+    hidden = privatize(drive)
+    run_log.step("Moved", f"{moved} file(s), {sent / 1e6:.1f} MB; {removed} server copies removed; "
+                          f"{hidden} earlier file(s) made private")
     if len(todo) >= PER_JOB and moved:
         enqueue(queued_by="drive (more waiting)")
     if failed and not moved:
         raise RuntimeError("Nothing moved: " + "; ".join(failed[:3]))
     return {"status": "done", "moved": moved, "megabytes": round(sent / 1e6, 1), "failed": failed,
-            "server_copies_removed": removed}
+            "server_copies_removed": removed, "made_private": hidden}
+
+
+def privatize(drive: Drive | None = None, limit: int = 200) -> int:
+    """Files moved while moves still shared them with "anyone with the
+    link": take that away, so a Drive link alone opens nothing."""
+    from ..infra.db import execute, fetch_all
+
+    rows = fetch_all("SELECT object_name, file_id FROM drive_objects WHERE private_at IS NULL LIMIT :n", {"n": limit}) or []
+    if not rows:
+        return 0
+    drive = drive or Drive()
+    done = 0
+    for row in rows:
+        try:
+            drive.unshare(str(row["file_id"]))
+            execute("UPDATE drive_objects SET private_at = NOW() WHERE object_name = :n", {"n": row["object_name"]})
+            done += 1
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Could not make %s private: %s", row["object_name"], exc)
+    return done
 
 
 def enqueue(queued_by: str = "drive") -> dict[str, Any] | None:

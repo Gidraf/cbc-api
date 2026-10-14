@@ -123,10 +123,16 @@ SETTINGS: tuple[Setting, ...] = (
             "Per question returned, past the free calls.", "1.5", "Billing"),
     Setting("billing_api_diagram_ksh", "BILLING_API_DIAGRAM_KSH", "string", "API: diagram question (KSh)",
             "Per question with a figure returned, past the free calls.", "2.5", "Billing"),
-    Setting("billing_video_plan_ksh", "BILLING_VIDEO_PLAN_KSH", "string", "Video plan price (KSh)",
-            "One period of the video plan: every whiteboard video (streamed, never downloaded), and the games and "
-            "animated walkthroughs of every question. 0 = not on sale.", "0", "Billing"),
-    Setting("billing_video_plan_days", "BILLING_VIDEO_PLAN_DAYS", "int", "Video plan period (days)", "", 30, "Billing"),
+    Setting("billing_free_play_items", "BILLING_FREE_PLAY_ITEMS", "int", "Free plays per account",
+            "Questions an account may open in Play free — video, game and walkthrough — before it needs the pass.",
+            100, "Billing"),
+    Setting("billing_video_plan_ksh", "BILLING_VIDEO_PLAN_KSH", "string", "Play pass price (KSh)",
+            "One period of the pass: every video (streamed, never downloaded), game and animated walkthrough. "
+            "0 = not on sale.", "50", "Billing"),
+    Setting("billing_video_plan_days", "BILLING_VIDEO_PLAN_DAYS", "int", "Play pass period (days)", "", 1, "Billing"),
+    Setting("video_daily_target", "VIDEO_DAILY_TARGET", "int", "Videos made a day",
+            "The daily job keeps making lesson videos for questions that have none until this many are made "
+            "that day. 0 stops it.", 200, "Videos"),
     Setting("billing_min_topup_ksh", "BILLING_MIN_TOPUP_KSH", "int", "Smallest top-up (KSh)", "", 10, "Billing"),
     Setting("billing_max_topup_ksh", "BILLING_MAX_TOPUP_KSH", "int", "Largest top-up (KSh)",
             "M-Pesa's own limit per transaction is higher; this caps one top-up.", 70000, "Billing"),

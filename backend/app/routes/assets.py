@@ -21,21 +21,41 @@ router = APIRouter(prefix="/api/v1/assets", tags=["Assets"])
 _RANGE = re.compile(r"bytes=(\d*)-(\d*)")
 
 
+# Video and sound are never free files: the platform's own people (staff, the
+# poster's key) fetch them; everyone else streams them through /api/v1/watch.
+MEDIA = (".mp4", ".webm", ".mov", ".m4v", ".mp3", ".wav", ".m4a", ".ogg")
+MEDIA_ROLES = {"admin", "operator", "reviewer", "developer", "poster"}
+
+
+def _may_fetch_media(request: Request) -> bool:
+    from ..errors import ApiError
+    from ..services.auth import get_auth_context
+
+    try:
+        auth = get_auth_context(authorization=request.headers.get("authorization"),
+                                x_api_key=request.headers.get("x-api-key"))
+    except ApiError:
+        return False
+    return auth.role in MEDIA_ROLES
+
+
 @router.get("/{bucket}/{object_path:path}")
 def asset(bucket: str, object_path: str, request: Request) -> Response:
     if bucket != settings.minio_bucket or ".." in object_path:
         return Response(status_code=404)
-    out = serve_object(object_path, request.headers.get("range", ""), cache="public, max-age=86400")
+    media = object_path.lower().endswith(MEDIA)
+    if media and not _may_fetch_media(request):
+        return Response(status_code=403, content="Videos are watched in the platform, not downloaded.")
+    cache = "private, no-store" if media else "public, max-age=86400"
+    out = serve_object(object_path, request.headers.get("range", ""), cache=cache)
     if out is not None:
         return out
-    # A video moved to Google Drive: a link already posted somewhere
-    # keeps working.
-    from ..services import drive_store
+    # Moved to Google Drive: passed through from there — the Drive file is
+    # private, and its link is never handed out.
+    from ..services import streaming
 
-    moved = drive_store.record(object_path)
-    if moved and moved.get("url"):
-        return Response(status_code=302, headers={"Location": str(moved["url"])})
-    return Response(status_code=404)
+    streamed = streaming.stream(object_path, request.headers.get("range", ""))
+    return streamed if streamed is not None else Response(status_code=404)
 
 
 def serve_object(object_path: str, range_header: str, *, cache: str, extra: dict[str, str] | None = None) -> Response | None:

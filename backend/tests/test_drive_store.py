@@ -19,6 +19,7 @@ def env(monkeypatch):
         monkeypatch.setenv(k, v)
     monkeypatch.delenv("GOOGLE_DRIVE_FOLDER_ID", raising=False)
     D._cache.clear()
+    D._creds_cache.update(at=0.0, value=None)        # the sign-in is read afresh: the environment's here
 
 
 class FakeGoogle:
@@ -75,14 +76,14 @@ def world(monkeypatch, env):
     return rows, sql
 
 
-def test_a_video_is_uploaded_in_chunks_checked_shared_and_recorded(world):
+def test_a_video_is_uploaded_in_chunks_checked_kept_private_and_recorded(world):
     rows, _ = world
     google = FakeGoogle()
     out = D.move("social/q1/k1.mp4", D.Drive(httpx.Client(transport=httpx.MockTransport(google))))
     assert google.received == VIDEO, "every byte, across the chunks"
     assert out == {"object_name": "social/q1/k1.mp4", "file_id": "file1", "bytes": len(VIDEO)}
     assert rows["social/q1/k1.mp4"]["url"] == "https://drive.google.com/uc?export=download&id=file1"
-    assert ("POST", f"{D.API}/files/file1/permissions") in google.calls, "viewable by anyone with the link"
+    assert not any("/permissions" in url for _, url in google.calls), "never shared: viewers stream it through us"
     assert ("POST", f"{D.API}/files") in google.calls, "the folder was made the first time"
 
 
@@ -113,7 +114,8 @@ def test_the_storage_layer_answers_for_a_moved_video_from_drive(monkeypatch, env
     monkeypatch.setattr(D, "record", lambda name: moved if name == "social/q1/k1.mp4" else None)
     monkeypatch.setattr(D, "record_by_file", lambda f: moved if f == "file1" else None)
 
-    assert storage.public_object_url("social/q1/k1.mp4") == moved["url"]
+    assert "drive.google.com" not in storage.public_object_url("social/q1/k1.mp4"), "our address, never Drive's"
+    assert storage.public_object_url("social/q1/k1.mp4").endswith("/social/q1/k1.mp4")
     assert storage.public_object_url("diagrams/a.svg").endswith("/diagrams/a.svg"), "nothing else changes"
 
     class Gone:
@@ -144,23 +146,28 @@ def test_server_copies_go_only_after_the_safety_window(monkeypatch, env):
 
 
 def test_not_set_up_moves_nothing_and_a_move_is_queued_once(monkeypatch):
+    from app.infra import db
+
     for k in ("GOOGLE_DRIVE_CLIENT_ID", "GOOGLE_DRIVE_CLIENT_SECRET", "GOOGLE_DRIVE_REFRESH_TOKEN"):
         monkeypatch.delenv(k, raising=False)
+    monkeypatch.setattr(db, "fetch_one", lambda q, p=None: None)          # nothing connected in the console either
+    D._creds_cache.update(at=0.0, value=None)
     assert D.run_job({"job_id": "j"})["status"] == "skipped" and D.enqueue() is None
-
-    from app.infra import db
 
     monkeypatch.setenv("GOOGLE_DRIVE_CLIENT_ID", "c"); monkeypatch.setenv("GOOGLE_DRIVE_CLIENT_SECRET", "s")
     monkeypatch.setenv("GOOGLE_DRIVE_REFRESH_TOKEN", "r")
+    D._creds_cache.update(at=0.0, value=None)
     monkeypatch.setattr(db, "fetch_one", lambda q, p=None: {"job_id": "busy"})
     assert D.enqueue() == {"job_id": "busy", "status": "already queued"}
 
 
-def test_an_old_link_to_a_moved_video_redirects_to_drive(monkeypatch):
+def test_an_old_link_to_a_moved_video_is_streamed_through_us_to_those_allowed(monkeypatch):
+    from fastapi.responses import Response
     from starlette.requests import Request
 
     from app.infra import storage
     from app.routes import assets
+    from app.services import streaming
     from app.settings import settings
 
     class Gone:
@@ -168,10 +175,13 @@ def test_an_old_link_to_a_moved_video_redirects_to_drive(monkeypatch):
             raise FileNotFoundError
 
     monkeypatch.setattr(storage.object_storage, "_get_client", lambda: Gone())
-    monkeypatch.setattr(D, "record", lambda name: {"url": "https://drive.google.com/uc?export=download&id=f9"})
+    monkeypatch.setattr(D, "record", lambda name: {"file_id": "f9", "url": "https://drive.google.com/uc?export=download&id=f9"})
+    monkeypatch.setattr(streaming, "stream", lambda name, rng: Response(b"video", status_code=206))
     request = Request({"type": "http", "headers": [], "method": "GET", "path": "/"})
+    assert assets.asset(settings.minio_bucket, "social/q1/k1.mp4", request).status_code == 403, "signed out: no file"
+    monkeypatch.setattr(assets, "_may_fetch_media", lambda request: True)
     response = assets.asset(settings.minio_bucket, "social/q1/k1.mp4", request)
-    assert response.status_code == 302 and response.headers["location"].endswith("id=f9")
+    assert response.status_code == 206 and "location" not in response.headers, "passed through, never a Drive redirect"
 
 
 def test_the_move_reports_its_progress_as_uploads():

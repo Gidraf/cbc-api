@@ -38,7 +38,8 @@ from .routes.model_scout import router as model_scout_router
 from .routes.pipelines import router as pipelines_router
 from .routes.math import router as math_router
 from .routes.billing import router as billing_router
-from .routes.content import router as content_router
+from .routes.content import embed as embed_router, router as content_router
+from .routes.admin_drive import router as admin_drive_router
 from .routes.classroom import public as tests_public_router, router as classroom_router, watch as watch_router
 from .services.auth import AuthContext, authenticate_login, create_access_token, get_auth_context, require_roles
 from .services.browser_agent import browse_page
@@ -73,9 +74,11 @@ async def _security_headers(request, call_next):
     h = response.headers
     h.setdefault("X-Content-Type-Options", "nosniff")
     h.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
-    h.setdefault("X-Frame-Options", "SAMEORIGIN")
+    if not request.url.path.startswith("/api/v1/embed/"):     # the embeddable player is framed by any site
+        h.setdefault("X-Frame-Options", "SAMEORIGIN")
     h.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=()")
-    h.setdefault("Cross-Origin-Opener-Policy", "same-origin")
+    if not request.url.path.startswith("/api/v1/embed/"):
+        h.setdefault("Cross-Origin-Opener-Policy", "same-origin")
     if request.headers.get("x-forwarded-proto", request.url.scheme) == "https":
         h.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
     path = request.url.path
@@ -124,6 +127,8 @@ app.include_router(pipelines_router)
 app.include_router(math_router)
 app.include_router(billing_router)
 app.include_router(content_router)
+app.include_router(embed_router)
+app.include_router(admin_drive_router)
 app.include_router(classroom_router)
 app.include_router(tests_public_router)
 app.include_router(watch_router)

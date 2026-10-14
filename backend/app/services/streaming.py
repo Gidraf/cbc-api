@@ -16,7 +16,9 @@ from typing import Any
 import jwt
 
 TTL_SECONDS = 3 * 3600
-STREAM_HEADERS = {"Cache-Control": "no-store, private", "Content-Disposition": "inline",
+# Kept in the browser's own cache for the session, as any streamed video is —
+# never in a shared cache, never offered as a download.
+STREAM_HEADERS = {"Cache-Control": "private, max-age=3600", "Content-Disposition": "inline",
                   "X-Content-Type-Options": "nosniff", "Cross-Origin-Resource-Policy": "same-origin"}
 
 
@@ -50,11 +52,11 @@ def stream(object_name: str, range_header: str) -> Any:
     from ..routes.assets import serve_object
     from . import drive_store
 
-    served = serve_object(object_name, range_header, cache="no-store, private", extra=STREAM_HEADERS)
+    served = serve_object(object_name, range_header, cache="private, max-age=3600", extra=STREAM_HEADERS)
     if served is not None:
         return served
     moved = drive_store.record(object_name)
-    if not moved or not moved.get("file_id"):
+    if not moved or not moved.get("file_id") or not drive_store.configured():
         return None
     drive = drive_store.Drive()
     headers = {**drive._auth()}

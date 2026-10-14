@@ -1,5 +1,6 @@
 import React from "react";
 import { useAuth } from "../lib/auth";
+import { fetchBlob } from "../api";
 import gsap from "gsap";
 import {
   Badge,
@@ -57,6 +58,7 @@ import {
   useVideoLibrary,
   useVideoStatus,
   usePlan,
+  usePlayCatalog,
   useWatchLink,
   useVoices,
   useWalkthroughHtml,
@@ -88,7 +90,13 @@ export function PlayArcade() {
   const [subStrand, setSubStrand] = React.useState("");
   const subjects = useSubjects(grade);
   const structure = useStoredStructure(grade, subject);
-  const items = usePlayItems(grade, subject, subStrand);
+  const { role: myRole } = useAuth();
+  const isStaff = myRole === "admin" || myRole === "operator" || myRole === "reviewer" || myRole === "developer";
+  const [figures, setFigures] = React.useState<"any" | "only" | "none">("any");
+  // A parent or teacher sees what has videos first; staff see the whole bank.
+  const [videosOnly, setVideosOnly] = React.useState(!isStaff);
+  const catalog = usePlayCatalog(videosOnly);
+  const items = usePlayItems(grade, subject, subStrand, { figures, videos: videosOnly });
   const round = usePlayRound();
   const one = usePlayOne();
   const toast = useToast();
@@ -126,15 +134,34 @@ export function PlayArcade() {
       <Card>
         <Stack direction="row" gap="var(--s3)" wrap align="end">
           <label style={lbl}>Grade
-            <Select value={grade} onChange={(e) => { setGrade(e.target.value); setSubStrand(""); }}>
+            <Select value={grade} onChange={(e) => {
+              setGrade(e.target.value); setSubStrand("");
+              if (videosOnly) { const first = (catalog.data || []).find((c) => c.grade === e.target.value); if (first) setSubject(first.subject); }
+            }}>
               <option value="">Choose…</option>
-              {(grades.data || []).map((g) => <option key={g.slug || g.name} value={g.slug || g.name}>{gradeOptionLabel(g)}</option>)}
+              {videosOnly
+                ? [...new Map((catalog.data || []).map((c) => [c.grade, c])).values()].map((c) => (
+                    <option key={c.grade} value={c.grade}>{c.grade.replace("grade-", "Grade ").replace(/^pp/, "PP")} — {(catalog.data || []).filter((x) => x.grade === c.grade).reduce((a, x) => a + x.videos, 0)} videos</option>))
+                : (grades.data || []).map((g) => <option key={g.slug || g.name} value={g.slug || g.name}>{gradeOptionLabel(g)}</option>)}
             </Select>
           </label>
           <label style={lbl}>Subject
             <Select value={subject} onChange={(e) => { setSubject(e.target.value); setSubStrand(""); }} disabled={!grade}>
-              {(subjects.data || []).map((s: any) => <option key={s.name} value={s.name}>{subjectOptionLabel(s)}</option>)}
+              {videosOnly
+                ? (catalog.data || []).filter((c) => c.grade === grade).map((c) => <option key={c.subject} value={c.subject}>{c.subject} — {c.videos} videos</option>)
+                : (subjects.data || []).map((s: any) => <option key={s.name} value={s.name}>{subjectOptionLabel(s)}</option>)}
             </Select>
+          </label>
+          <label style={lbl}>Figures
+            <Select value={figures} onChange={(e) => setFigures(e.target.value as any)}>
+              <option value="any">With or without</option>
+              <option value="only">With a figure</option>
+              <option value="none">Without a figure</option>
+            </Select>
+          </label>
+          <label style={{ ...lbl, flexDirection: "row", alignItems: "center", gap: 6 }}>
+            <input type="checkbox" checked={videosOnly} onChange={(e) => { setVideosOnly(e.target.checked); setGrade(""); setSubStrand(""); }} />
+            Only with videos
           </label>
           <label style={lbl}>Topic
             <Select value={subStrand} onChange={(e) => setSubStrand(e.target.value)} disabled={!grade}>
@@ -158,16 +185,18 @@ export function PlayArcade() {
       {grade && (items.data?.items || []).length === 0 && !items.isLoading && (
         <EmptyState title="Nothing playable here yet" description="Write questions for this topic in the Exam studio; every item with a calculation becomes a game." />
       )}
-      {!staff && lockedCount > 0 && <PlanBanner locked={lockedCount} />}
+      {!staff && <PlanBanner locked={lockedCount} freeLeft={items.data?.free_left ?? null} />}
       {(items.data?.items || []).length > 0 && (
         <Card title={`${items.data!.items.length} playable items`}>
           {items.data!.items.map((it) => (
             <div key={it.question_id} style={{ display: "flex", gap: "var(--s2)", alignItems: "center", padding: "6px 0", borderBottom: "1px solid var(--line-2)", fontSize: "var(--text-sm)", opacity: it.locked ? 0.6 : 1 }}>
-              <Badge tone={it.locked ? "neutral" : "info"}>{it.locked ? "🔒" : KIND_ICON[it.kind]} {KIND_LABEL[it.kind]}</Badge>
+              <Badge tone={it.locked ? "neutral" : "info"}>{it.locked ? "🔒" : KIND_ICON[it.kind] || "🎬"} {KIND_LABEL[it.kind] || "Watch"}</Badge>
+              {it.has_video && <span title="Has a video">🎬</span>}
+              {it.has_figure && <span title="Has a figure">📐</span>}
               <span style={{ flex: 1, minWidth: 0 }}>{plain(it.question_text).slice(0, 140)}</span>
               <span style={{ color: "var(--ink-3)", fontSize: "var(--text-xs)" }}>{it.sub_strand}</span>
-              <Button size="sm" disabled={it.locked} title={it.locked ? "Buy a paper with it, or take the video plan" : undefined}
-                      onClick={() => playOne(it.question_id)}>Play</Button>
+              {it.kind !== "watch" && <Button size="sm" disabled={it.locked} title={it.locked ? "Free plays used up: the play pass opens it" : undefined}
+                      onClick={() => playOne(it.question_id)}>Play</Button>}
               <Button size="sm" variant="ghost" disabled={it.locked} onClick={() => setWatching(it.question_id)}>✎ Whiteboard</Button>
             </div>
           ))}
@@ -534,7 +563,7 @@ function SocialControl({ questionId, voice }: { questionId: string; voice: strin
         {v.status === "ready" && v.url ? (
           <>
             <Badge tone="ok">Video ready</Badge>
-            <a href={v.url} download target="_blank" rel="noreferrer"><Button size="sm" variant="primary">⬇ Video (MP4)</Button></a>
+            <DownloadMp4 url={v.url} name={`${v.question_id}.mp4`} label="⬇ Video (MP4)" primary />
             {v.thumbnail_url && <a href={v.thumbnail_url} download target="_blank" rel="noreferrer"><Button size="sm">⬇ Thumbnail</Button></a>}
           </>
         ) : v.status === "queued" || v.status === "running" ? (
@@ -649,7 +678,7 @@ function SocialLibrary({ grade, subject, subStrand, topics, onWatch }: {
               <Button size="sm" variant="ghost" onClick={() => onWatch(v.question_id)}>Preview</Button>
               <Button size="sm" variant="ghost" onClick={() => copy(v.post)}>📋 Post</Button>
               {v.status === "ready" && v.url && (
-                <a href={v.url} download target="_blank" rel="noreferrer"><Button size="sm">⬇ MP4</Button></a>
+                <DownloadMp4 url={v.url} name={`${v.question_id}.mp4`} label="⬇ MP4" />
               )}
             </div>
           ))}
@@ -660,20 +689,47 @@ function SocialLibrary({ grade, subject, subStrand, topics, onWatch }: {
 }
 
 /** For a parent's or teacher's account: what the video plan opens, and the way to it. */
-function PlanBanner({ locked }: { locked: number }) {
+function PlanBanner({ locked, freeLeft }: { locked: number; freeLeft: number | null }) {
   const plan = usePlan();
   const p = plan.data;
+  // The list's count when a topic is open, else the account's own.
+  freeLeft = freeLeft ?? p?.free_left ?? null;
+  if (!p || p.active) return p?.active ? <Card><span style={{ fontSize: "var(--text-sm)" }}>✅ Play pass on until {p.until ? new Date(p.until).toLocaleString() : ""} — every video, game and walkthrough is open.</span></Card> : null;
+  const period = p.days === 1 ? "a day" : `for ${p.days} days`;
   return (
     <Card>
       <Stack direction="row" gap="var(--s3)" align="center" wrap style={{ fontSize: "var(--text-sm)" }}>
         <span style={{ flex: 1, minWidth: 220 }}>
-          🔒 {locked} question(s) here are locked. A question opens — game, walkthrough, answers — once it is on a paper you bought,
-          or when you wrote it yourself{p?.on_sale ? `. The video plan (KSh ${p.price_ksh} for ${p.days} days) opens them all, with every video.` : "."}
+          {freeLeft ? <>🎁 <strong>{freeLeft}</strong> of your {p.free_plays} free plays left — opening a question (its video, game or walkthrough) uses one, and it stays open.</>
+                    : <>🔒 {locked ? `${locked} question(s) here are locked: ` : ""}your free plays are used up.</>}
+          {p.on_sale ? ` The play pass is KSh ${p.price_ksh} ${period} for everything.` : ""}
         </span>
-        {p?.on_sale && <a href="/wallet"><Button size="sm" variant="primary">See the video plan</Button></a>}
+        {p.on_sale && <a href="/wallet"><Button size="sm" variant={freeLeft ? "ghost" : "primary"}>Get the play pass</Button></a>}
       </Stack>
     </Card>
   );
+}
+
+/** Staff only: the MP4 as a file, fetched signed in (a bare link is refused —
+ *  videos are never free files). */
+function DownloadMp4({ url, name, label, primary }: { url?: string; name: string; label: string; primary?: boolean }) {
+  const { token } = useAuth();
+  const toast = useToast();
+  const [busy, setBusy] = React.useState(false);
+  if (!url) return null;
+  async function go() {
+    setBusy(true);
+    try {
+      const path = url!.startsWith("http") ? new URL(url!).pathname : url!;
+      const { blob } = await fetchBlob(path, { bearerToken: token });
+      const href = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = href; a.download = name; document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(href), 30_000);
+    } catch (err) { toast(err instanceof Error ? err.message : "Could not download.", "danger"); }
+    finally { setBusy(false); }
+  }
+  return <Button size="sm" variant={primary ? "primary" : undefined} loading={busy} onClick={go}>{label}</Button>;
 }
 
 /** Streams a video in the page: a short-lived link, no download, no picture-in-picture. */
@@ -725,9 +781,9 @@ function VideoControl({ questionId, voice = "" }: { questionId: string; voice?: 
       <>
         <Badge tone="ok">MP4 ready</Badge>
         <Button size="sm" variant="ghost" onClick={() => setShow((x) => !x)}>{show ? "Hide video" : "▶ Video"}</Button>
-        <a href={v.url} download target="_blank" rel="noreferrer"><Button size="sm">⬇ Download MP4</Button></a>
+        <DownloadMp4 url={v.url} name={`${questionId}.mp4`} label="⬇ Download MP4" />
         {show && (
-          <video src={v.url} controls autoPlay style={{ flexBasis: "100%", width: "100%", borderRadius: "var(--radius)", background: "#000" }} />
+          <StreamedVideo questionId={questionId} />
         )}
       </>
     );
@@ -786,7 +842,7 @@ function VideoLibrary({ grade, subject, subStrand, open, onToggle, onWatch }: {
               <span style={{ flex: 1, minWidth: 0 }} title={v.error}>{plain(v.question_text || "").slice(0, 120)}</span>
               <Button size="sm" variant="ghost" onClick={() => onWatch(v.question_id)}>✎ Open</Button>
               {v.status === "ready" && v.url && (
-                <a href={v.url} download target="_blank" rel="noreferrer"><Button size="sm">⬇ MP4</Button></a>
+                <DownloadMp4 url={v.url} name={`${v.question_id}.mp4`} label="⬇ MP4" />
               )}
             </div>
           ))}

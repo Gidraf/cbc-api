@@ -3,7 +3,7 @@ import { Badge, Button, Card, ErrorNotice, Field, Input, LoadingBlock, PageHeade
 import { usePlan, useSubscribe, useTopUp, useTopUpStatus, useWallet } from "../lib/queries";
 
 const KIND_LABEL: Record<string, string> = {
-  topup: "M-Pesa top-up", paper: "Paper", api: "API calls", admin: "Added by CBC", refund: "Refund", plan: "Video plan",
+  topup: "M-Pesa top-up", paper: "Paper", api: "API calls", admin: "Added by CBC", refund: "Refund", plan: "Play pass",
 };
 
 function ksh(n: number) {
@@ -131,11 +131,11 @@ function PlanCard({ balance }: { balance: number }) {
     } catch (err) { toast(err instanceof Error ? err.message : "Could not start the plan.", "danger"); }
   }
   return (
-    <Card title={p.active ? `Video plan — on until ${until}` : `Video plan — KSh ${p.price_ksh} for ${p.days} days`}
-          description="Every question's whiteboard video, game and animated walkthrough — watched here, not downloaded.">
+    <Card title={p.active ? `Play pass — on until ${until}` : `Play pass — KSh ${p.price_ksh} ${p.days === 1 ? "a day" : `for ${p.days} days`}`}
+          description={`Every question's video, game and animated walkthrough — watched here, not downloaded.${p.free_left != null ? ` You have ${p.free_left} of ${p.free_plays} free plays left.` : ""}`}>
       <Stack direction="row" gap="var(--s2)" align="center" wrap>
         <Button variant={p.active ? "ghost" : "primary"} loading={subscribe.isPending} disabled={balance < p.price_ksh} onClick={go}>
-          {p.active ? `Add ${p.days} more days (KSh ${p.price_ksh})` : `Start it — KSh ${p.price_ksh}`}
+          {p.active ? `Add ${p.days === 1 ? "another day" : `${p.days} more days`} (KSh ${p.price_ksh})` : `Start it — KSh ${p.price_ksh}`}
         </Button>
         {balance < p.price_ksh && <span style={{ color: "var(--ink-3)", fontSize: "var(--text-sm)" }}>Top up first: the wallet has KSh {balance}.</span>}
       </Stack>

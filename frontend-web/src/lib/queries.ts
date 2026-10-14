@@ -3995,14 +3995,30 @@ export type PlayKind = "number_line" | "balance" | "bodmas" | "fraction_bar" | "
 export type PlaySpec = { kind: PlayKind } & Record<string, any>;
 export type PlayItem = { question_id: string; question_text: string; stimulus_context?: string; spec: PlaySpec; marks?: number; diagram?: any };
 
-export function usePlayItems(grade: string, subject: string, subStrand: string) {
+/** The grades and subjects that have videos, with how many. */
+export function usePlayCatalog(enabled = true) {
   const api = useApi();
   return useQuery({
-    queryKey: ["play-items", grade, subject, subStrand],
+    queryKey: ["play-catalog"],
+    queryFn: () => api<{ items: { grade: string; subject: string; videos: number }[] }>("/api/v1/play/catalog").then((r) => r.items),
+    enabled,
+    staleTime: 60_000,
+  });
+}
+
+export function usePlayItems(grade: string, subject: string, subStrand: string,
+                             opts: { figures?: "any" | "only" | "none"; videos?: boolean } = {}) {
+  const api = useApi();
+  return useQuery({
+    queryKey: ["play-items", grade, subject, subStrand, opts.figures || "any", Boolean(opts.videos)],
     queryFn: () => {
       const qs = new URLSearchParams({ grade, subject });
       if (subStrand) qs.set("sub_strand", subStrand);
-      return api<{ items: { question_id: string; question_text: string; sub_strand: string; kind: PlayKind; also_choice: boolean; key_agrees: boolean | null; status: string; locked?: boolean }[]; counts: Record<string, number> }>(
+      if (opts.figures && opts.figures !== "any") qs.set("figures", opts.figures);
+      if (opts.videos) qs.set("videos", "true");
+      return api<{ items: { question_id: string; question_text: string; sub_strand: string; kind: PlayKind | "watch"; also_choice: boolean; key_agrees: boolean | null; status: string; locked?: boolean;
+                           /** "watch": nothing to play, but a video or figure to watch. */
+                           has_video?: boolean; has_figure?: boolean; open?: boolean }[]; counts: Record<string, number>; free_left?: number | null }>(
         `/api/v1/play/items?${qs}`);
     },
     enabled: Boolean(grade && subject),
@@ -4743,7 +4759,8 @@ export const useDraftVersions = draftMutation<{ draft_id: string; versions: numb
 
 // ── Phase 2: the video plan, own questions, online tests ─────────────────────
 
-export type PlanStatus = { on_sale: boolean; price_ksh: number; days: number; active: boolean; staff: boolean; until: string | null };
+export type PlanStatus = { on_sale: boolean; price_ksh: number; days: number; active: boolean; staff: boolean; until: string | null;
+                           free_plays?: number; free_left?: number | null };
 
 export function usePlan() {
   const api = useApi();

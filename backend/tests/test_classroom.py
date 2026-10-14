@@ -160,9 +160,10 @@ def test_a_paper_must_be_bought_before_a_class_takes_it(db):
 # ── the video plan ───────────────────────────────────────────────────────────
 
 @needs_db
-def test_the_video_plan_is_off_until_priced_then_paid_from_the_wallet(db, monkeypatch):
+def test_the_pass_is_off_at_zero_then_paid_from_the_wallet(db, monkeypatch):
     from app.services import billing, platform_settings
 
+    monkeypatch.setattr(platform_settings, "_load", lambda: {"billing_video_plan_ksh": "0"})
     assert not entitlements.plan_status("mama", "user")["on_sale"]
     with pytest.raises(Exception):
         entitlements.subscribe("mama", "user")
@@ -196,15 +197,21 @@ def test_a_question_not_owned_is_locked_until_bought_or_on_the_plan(as_user, mon
     c, who = as_user
     state = {"owned": set(), "plan": False}
     monkeypatch.setattr(entitlements, "owned_ids", lambda o, ids: {i for i in ids if i in state["owned"]})
+    # Her free plays are used up (test_videos_drive_embed covers spending them).
+    monkeypatch.setattr(entitlements, "_use_free_play", lambda o, q: False)
+    monkeypatch.setattr(entitlements, "opened_ids", lambda o, ids: set())
+    monkeypatch.setattr(entitlements, "free_left", lambda o: 0)
     monkeypatch.setattr(entitlements, "has_video_plan", lambda o, r: r in entitlements.STAFF or state["plan"])
     monkeypatch.setattr(entitlements, "plan_status", lambda o, r: {"on_sale": False})
     monkeypatch.setattr(play, "_one", lambda qid, owner="": {"question_id": qid, "question_text": "2+2?", "correct_answer": "4"})
+    from app.services import whiteboard
+
+    monkeypatch.setattr(whiteboard, "status", lambda qid, q=None, voice="": {"status": "ready", "key": "k"})
     assert c.get("/api/v1/play/items/q1").status_code == 402
     assert c.get("/api/v1/play/items/q1/walkthrough.html").status_code == 402
     assert c.get("/api/v1/play/items/q1/watch").status_code == 402
     state["owned"].add("q1")
     assert c.get("/api/v1/play/items/q1").status_code == 200
-    assert c.get("/api/v1/play/items/q1/watch").status_code == 402  # owning it is not the video plan
     who["role"] = "operator"
     assert c.get("/api/v1/play/items/q2").status_code == 200        # staff open everything
 
