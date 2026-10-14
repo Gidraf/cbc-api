@@ -31,6 +31,10 @@ LIMITS: dict[str, tuple[int, int]] = {
     "test_start_ip": (150, 10 * 60),    # students opening tests from one address (a whole class shares one)
     "test_code_ip": (60, 10 * 60),      # test codes looked up: no guessing them
     "watch_owner": (300, 60 * 60),      # video links handed out
+    "forgot_ip": (10, 60 * 60),         # reset emails asked for, per address
+    "forgot_who": (3, 60 * 60),         # ... and per username or email: no inbox flooding
+    "email_link_ip": (30, 15 * 60),     # reset / confirm links tried: no guessing them
+    "confirm_owner": (5, 60 * 60),      # confirm emails an account may resend
 }
 
 

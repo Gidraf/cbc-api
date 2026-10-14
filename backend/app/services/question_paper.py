@@ -446,7 +446,8 @@ EXAM_CSS = """
 .exam .omr tr:nth-child(5n) td { padding-bottom: 6px; }
 .exam .sheetpage .official { margin-top: 12px; }
 .exam .demo .bubble.filled { background: #111; color: #111; }
-.exam .keygrid { border-collapse: collapse; margin: 0 0 6px; width: 100%; font-size: 8.4pt; column-span: all; }
+.exam .keyblock { column-span: all; display: block; break-inside: avoid; margin: 0 0 8px; }
+.exam .keygrid { border-collapse: collapse; margin: 0 0 6px; width: 100%; font-size: 8.4pt; table-layout: fixed; }
 .exam .keygrid td, .exam .keygrid th { border: 0.6pt solid #111; padding: 1px 2px; text-align: center; }
 .exam .keygrid th { font-weight: 400; background: #eee; }
 .exam .keygrid td { font-weight: 700; }
@@ -807,10 +808,15 @@ def render_paper(paper: Any, *, answers: bool = False, with_scheme: bool = False
                                 if isinstance(o, dict) and o.get("is_correct")),
                                str(question.get("correct_answer") or ""))
                     keys.append((offset, key))
+                # In one block that spans both columns: a TABLE given column-span
+                # is not laid out as spanning by Chromium's print engine, and the
+                # answers below it then flow underneath the grid.
+                grids = []
                 for row in range(0, len(keys), 10):
                     chunk = keys[row:row + 10]
-                    out.append("<table class='keygrid'><tr>" + "".join(f"<th>{n}</th>" for n, _ in chunk)
-                               + "</tr><tr>" + "".join(f"<td>{_esc(k)}</td>" for _, k in chunk) + "</tr></table>")
+                    grids.append("<table class='keygrid'><tr>" + "".join(f"<th>{n}</th>" for n, _ in chunk)
+                                 + "</tr><tr>" + "".join(f"<td>{_esc(k)}</td>" for _, k in chunk) + "</tr></table>")
+                out.append("<div class='keyblock'>" + "".join(grids) + "</div>")
             i = 0
             covered = -1        # the last index whose figure is already printed
             while i < len(items):

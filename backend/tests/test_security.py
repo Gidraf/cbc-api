@@ -89,7 +89,7 @@ def test_sign_ups_need_a_real_password_and_cannot_take_a_trusted_name(monkeypatc
 
     def signup(name, pw):
         rate_limit.reset_all()
-        return c.post("/api/v1/auth/register", json={"username": name, "password": pw}).status_code
+        return c.post("/api/v1/auth/register", json={"username": name, "password": pw, "email": "someone@example.org"}).status_code
 
     assert signup("gidraf", "a long passphrase") == 400          # a video maker's name
     assert signup("Admin", "a long passphrase") == 400           # a built-in, any case
