@@ -198,3 +198,30 @@ def test_an_inbox_cannot_be_flooded(db, outbox) -> None:
     _signup(client)
     codes = [client.post("/api/v1/auth/forgot", json={"who": "amina"}).status_code for _ in range(5)]
     assert codes[:3] == [200, 200, 200] and 429 in codes
+
+
+def test_every_email_carries_the_headers_a_mail_server_requires(monkeypatch) -> None:
+    """amavis blocks a message with no Date as BAD-HEADER-0 and bounces it."""
+    import smtplib
+
+    from app.settings import settings
+
+    sent = {}
+
+    class FakeSMTP:
+        def __init__(self, *a, **k): pass
+        def starttls(self, **k): pass
+        def login(self, *a): pass
+        def send_message(self, msg): sent["msg"] = msg
+        def quit(self): pass
+
+    monkeypatch.setattr(smtplib, "SMTP_SSL", FakeSMTP)
+    monkeypatch.setattr(smtplib, "SMTP", FakeSMTP)
+    monkeypatch.setattr(settings, "smtp_host", "mail.example.org")
+    monkeypatch.setattr(settings, "smtp_user", "info@example.org")
+    monkeypatch.setattr(settings, "smtp_password", "x")
+    assert mailer.send("a@example.org", "Hello", "Body", "<p>Body</p>")
+    msg = sent["msg"]
+    for header in ("Date", "Message-ID", "From", "To", "Subject", "MIME-Version"):
+        assert msg[header], header
+    assert "@example.org" in msg["From"] and msg["Message-ID"].endswith("@example.org>")

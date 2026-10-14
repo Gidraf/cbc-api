@@ -16,7 +16,7 @@ import os
 import smtplib
 import ssl
 from email.message import EmailMessage
-from email.utils import formataddr, make_msgid
+from email.utils import formataddr, formatdate, make_msgid
 from typing import Any
 
 logger = logging.getLogger("cbc-mailer")
@@ -87,6 +87,9 @@ def send(to: str, subject: str, text: str, html_body: str = "") -> bool:
     msg["Subject"] = subject
     msg["From"] = formataddr((c["name"], c["sender"]))
     msg["To"] = to
+    # Date and Message-ID are required headers: without a Date, amavis on the
+    # mail server blocks the message as BAD-HEADER and bounces it.
+    msg["Date"] = formatdate(localtime=False, usegmt=True)
     msg["Message-ID"] = make_msgid(domain=(c["sender"].split("@")[-1] or None))
     msg.set_content(text)
     if html_body:
