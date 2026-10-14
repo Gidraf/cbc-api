@@ -5,6 +5,9 @@
 #   bash poster/mac/install.sh              install, or update after git pull
 #   bash poster/mac/install.sh --reconfigure   ask for the address and key again
 #
+# The key: it reuses one already saved on this Mac when the API accepts it
+# (see saved_key below), and only asks you to paste one when none works.
+#
 # Everything lives in ~/.cbc/poster. It starts at login and keeps the Mac
 # awake (not the screen) while it runs. Remove it with poster/mac/uninstall.sh.
 set -euo pipefail
@@ -53,12 +56,47 @@ fi
 "$VENV/bin/python" -m pip install --quiet -r "$APP/requirements.txt"
 # No browser download: it drives the Google Chrome you already have.
 
+MAC_ID="$( (scutil --get ComputerName 2>/dev/null || hostname) | tr ' ' '-' | tr -cd '[:alnum:]._-')"
+
+# A key saved on this Mac already, so a reinstall does not need a new one.
+# Looked for, in order: CBC_API_KEY in the environment, POSTER_API_KEY or
+# CBC_API_KEY in the repo's .env, then the agent runners' ~/.cbc/*/.env.
+# Each is tried against the API and the first one it accepts is used.
+env_value() {  # env_value FILE NAME — the value, without quotes; never sourced
+  [ -f "$1" ] || return 0
+  grep -E "^$2=" "$1" | tail -n 1 | cut -d= -f2- | sed -e 's/^["'\'']//' -e 's/["'\'']$//' || true
+}
+key_code() {  # key_code URL KEY — the HTTP status of a heartbeat with that key
+  curl -s -o /dev/null -w '%{http_code}' -X POST -H "X-API-Key: $2" \
+       -H 'Content-Type: application/json' -d "{\"poster_id\":\"$MAC_ID\",\"status\":{\"online\":false,\"mode\":\"local\",\"note\":\"Installing\"}}" \
+       "$1/api/v1/play/poster/heartbeat" || true
+}
+saved_key() {  # saved_key URL — prints the first saved key the API accepts
+  local repo f k
+  repo="$(cd "$HERE/.." && pwd)"
+  for k in "${CBC_API_KEY:-}" \
+           "$(env_value "$repo/.env" POSTER_API_KEY)" \
+           "$(env_value "$repo/.env" CBC_API_KEY)" \
+           $(for f in "$HOME"/.cbc/*/.env; do [ "$f" = "$ENV_FILE" ] || env_value "$f" CBC_API_KEY; done); do
+    [ -n "$k" ] || continue
+    if [ "$(key_code "$1" "$k")" = "200" ]; then printf '%s' "$k"; return 0; fi
+  done
+  return 0
+}
+
 if [ ! -f "$ENV_FILE" ] || [ "${1:-}" = "--reconfigure" ]; then
   read -r -p "CBC address [https://cbc.gidraf.dev]: " URL
   URL="${URL:-https://cbc.gidraf.dev}"
-  echo "Paste a CBC API key that belongs to a video maker (it is not shown as you paste):"
-  read -r -s KEY
-  echo
+  KEY=""
+  if [ "${1:-}" != "--reconfigure" ]; then
+    KEY="$(saved_key "$URL")"
+    [ -n "$KEY" ] && echo "Using a key already saved on this Mac (the API accepted it)."
+  fi
+  if [ -z "$KEY" ]; then
+    echo "Paste a CBC API key that belongs to a video maker (it is not shown as you paste):"
+    read -r -s KEY
+    echo
+  fi
   if [ -z "$KEY" ]; then
     echo "No key given; nothing was installed as a service." >&2
     exit 1
@@ -69,7 +107,7 @@ POSTER_MODE=local
 CBC_API_URL=$URL
 CBC_API_KEY=$KEY
 BROWSER_CHANNEL=chrome
-POSTER_ID=$( (scutil --get ComputerName 2>/dev/null || hostname) | tr ' ' '-' | tr -cd '[:alnum:]._-')
+POSTER_ID=$MAC_ID
 POLL_SECONDS=60
 YOUTUBE_MADE_FOR_KIDS=no
 FACEBOOK_TARGET=profile

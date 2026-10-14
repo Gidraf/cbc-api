@@ -19,7 +19,10 @@ cd ~/Projects/cbc-api && git pull
 bash poster/mac/install.sh
 ```
 
-The installer asks for the CBC address (default `https://cbc.gidraf.dev`) and the key.
+The installer asks for the CBC address (default `https://cbc.gidraf.dev`). It then reuses a
+key already saved on this Mac, if the API accepts it. It looks in `CBC_API_KEY` in your
+environment, then `POSTER_API_KEY` or `CBC_API_KEY` in the repo's `.env`, then the agent
+runners' `~/.cbc/*/.env`. It only asks you to paste a key when none of those work.
 The key isn't shown while you paste it, and it's saved in `~/.cbc/poster/.env` (mode 600).
 It also checks that the key works, then starts the poster as a login item.
 
