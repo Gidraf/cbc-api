@@ -259,3 +259,18 @@ def test_marking_reads_values_and_leaves_words_to_the_teacher():
     assert online_tests.mark_one(mcq, "A", ["B", "A"])["status"] == "right"       # B was shown first, as "A"
     assert online_tests.mark_one(mcq, "A", ["A", "B"])["status"] == "wrong"
     assert online_tests.mark_one(mcq, "Z", ["A", "B"])["status"] == "wrong"
+
+
+def test_figures_really_reach_students_and_developers(monkeypatch):
+    """The figure SVG is built, not just promised: an import that does not
+    exist once made every figure silently empty."""
+    from app.services import content_api, question_paper
+
+    svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><rect width="5" height="5" onclick="x()"/></svg>'
+    monkeypatch.setattr(question_paper, "figures_for", lambda qs: {"d1": {"svg_markup": svg, "scene_document": {}}})
+    q = {"question_id": "q1", "question_text": "Read it.", "diagram": {"diagram_id": "d1", "diagram_title": "T", "hide_layers": []}}
+    student = online_tests._figure(q)
+    assert student.startswith("<svg") and "onclick" not in student
+    row = {"question_id": "q1", "content": {"question_text": "Read it.", "diagram": q["diagram"]}, "curriculum_link": {},
+           "pedagogical_dna": {}}
+    assert content_api.public(row)["figure"]["svg"].startswith("<svg")

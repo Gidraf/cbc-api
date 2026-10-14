@@ -1,6 +1,7 @@
 import React from "react";
 import { useSearchParams } from "react-router-dom";
 import { Badge, Button, Card, EmptyState, ErrorNotice, Input, LoadingBlock, PageHeader, Select, Stack, Table, useToast } from "../ui/components";
+import { MathText } from "../ui/MathBlock";
 import { useCreateTest, useDrafts, useMarkAnswer, useTestAction, useTestResults, useTests, type OnlineTest } from "../lib/queries";
 
 const lbl: React.CSSProperties = { fontSize: "var(--text-sm)", fontWeight: 550, display: "flex", flexDirection: "column", gap: 4 };
@@ -160,9 +161,10 @@ function Results({ testId }: { testId: string }) {
               return (
                 <div key={`${m.attempt.attempt_id}-${m.question_id}`} style={{ borderTop: "1px solid var(--line-2)", paddingTop: "var(--s2)", display: "grid", gap: 4, fontSize: "var(--text-sm)" }}>
                   <strong>{m.attempt.name}</strong>
-                  <span>{q?.question}</span>
+                  <MathText text={q?.question || ""} />
                   <span style={{ background: "var(--surface-2, #f4f4f2)", padding: "6px 8px", borderRadius: "var(--radius)" }}>“{m.given || "(no answer)"}”</span>
-                  <span style={{ color: "var(--ink-3)" }}>Answer: {q?.answer}{q?.marking_scheme ? ` · Scheme: ${q.marking_scheme}` : ""}</span>
+                  <span style={{ color: "var(--ink-3)" }}>Answer: <MathText text={q?.answer || ""} />
+                    {q?.marking_scheme ? <> · Scheme: <MathText text={q.marking_scheme} /></> : null}</span>
                   <Stack direction="row" gap="4px" wrap>
                     {Array.from({ length: Math.floor(m.out_of) + 1 }, (_, n) => (
                       <Button key={n} size="sm" variant="ghost" onClick={() => give(m.attempt.attempt_id, m.question_id, n)}>{n}</Button>
