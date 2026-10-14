@@ -37,6 +37,7 @@ import { Developer } from "./views/Developer";
 import { Classroom } from "./views/Classroom";
 import { MyQuestions } from "./views/MyQuestions";
 import { MyVideos } from "./views/MyVideos";
+import { Account } from "./views/Account";
 import { TakeTest } from "./views/TakeTest";
 
 import "./ui/tokens.css";
@@ -145,6 +146,7 @@ function Router() {
         <Route path="classroom" element={<Screen name="Online tests"><Classroom /></Screen>} />
         <Route path="my-questions" element={<Screen name="My questions"><MyQuestions /></Screen>} />
         <Route path="my-videos" element={<Screen name="My videos"><MyVideos /></Screen>} />
+        <Route path="account" element={<Screen name="Change password"><Account /></Screen>} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>

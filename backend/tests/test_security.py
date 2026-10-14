@@ -241,3 +241,33 @@ def test_the_master_key_moves_all_saved_keys_or_none(monkeypatch):
     assert Fernet(new.encode()).decrypt(rows["openai"].encode()) == b"sk-1"
     assert Fernet(new.encode()).decrypt(rows["gemini"].encode()) == b"g-2"
     assert admin_tools.main(["rotate-master-key"]) == 0                     # run twice: already moved, still fine
+
+
+def test_you_set_your_own_password_with_the_current_one(monkeypatch):
+    from app.routes import auth as auth_routes
+    from app.services.auth import AuthContext, get_auth_context
+
+    stored = {"hash": _hash("the one I was shown"), "tokens_cleared": False, "set": None}
+    monkeypatch.setattr(auth_service, "fetch_one", lambda sql, p=None: {"username": "gidraf", "password_hash": stored["hash"],
+                                                                       "role": "admin", "is_active": True})
+
+    def execute(sql, p=None):
+        if "password_hash = :h" in sql:
+            stored["set"] = p["h"]
+        if "DELETE FROM refresh_tokens" in sql:
+            stored["tokens_cleared"] = True
+    monkeypatch.setattr(auth_routes, "execute", execute)
+    who = {"auth": AuthContext("gidraf", "admin", "bearer")}
+    app.dependency_overrides[get_auth_context] = lambda: who["auth"]
+    try:
+        c = TestClient(app)
+        say = lambda cur, new: c.post("/api/v1/auth/password", json={"current_password": cur, "new_password": new}).status_code  # noqa: E731
+        assert say("wrong", "a brand new passphrase") == 401
+        assert say("the one I was shown", "short") == 400
+        assert say("the one I was shown", "password123") == 400
+        assert say("the one I was shown", "a brand new passphrase") == 200
+        assert auth_service.verify_password("a brand new passphrase", stored["set"]) and stored["tokens_cleared"]
+        who["auth"] = AuthContext("gidraf", "admin", "api_key")
+        assert say("the one I was shown", "another new passphrase") == 403        # a key cannot
+    finally:
+        app.dependency_overrides.pop(get_auth_context, None)
