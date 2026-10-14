@@ -30,6 +30,9 @@ It also checks that the key works, then starts the poster as a login item.
 
 1. Open the console at **Play → Auto-post**. It shows *On &lt;your Mac&gt;* once the poster has checked in.
 2. For each platform, press **Log in**. A Chrome window opens on your Mac; log in there yourself.
+   If a site keeps asking for codes or won't let you in (that window says it is controlled
+   by automated test software), run `bash poster/mac/login.sh` instead. It opens the same
+   profile in ordinary Chrome. Log in, quit Chrome (Cmd+Q), and the poster starts again.
 3. Press **Check**, then **Dry run** on one platform. A dry run does every step except the
    final Post and sends back a screenshot.
 4. Turn on **Settings → Auto-post**. The server still enforces the limits: at most 30 posts a
