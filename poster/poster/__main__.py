@@ -225,7 +225,8 @@ async def loop() -> None:
 def status_now() -> dict[str, Any]:
     return {"online": True, "mode": config.POSTER_MODE, "paused": state["paused"], "busy": state["busy"],
             "note": state["note"], "browser": browser.channel or "not started", "logins": state["logins"],
-            "last": state["last"], "platforms": list(FLOWS)}
+            "last": state["last"], "platforms": list(FLOWS),
+            "started": state["started"]}   # the newest poster is the active one (two Macs never both post)
 
 
 async def do_login(platform: str) -> dict[str, Any]:

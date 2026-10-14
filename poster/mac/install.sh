@@ -32,7 +32,8 @@ for c in python3.12 python3.13 python3.11 python3.10 python3; do
   fi
 done
 if [ -z "$PY" ]; then
-  echo "Python 3.10 or newer is needed:  brew install python@3.12" >&2
+  echo "Python 3.10 or newer is needed. Install it from https://www.python.org/downloads/macos/" >&2
+  echo "(or, with Homebrew: brew install python@3.12), then run this again." >&2
   exit 1
 fi
 echo "Python: $PY ($("$PY" --version 2>&1))"
@@ -46,7 +47,8 @@ mkdir -p "$APP"
 cp -R "$HERE/poster" "$APP/poster"
 cp "$HERE/requirements.txt" "$APP/requirements.txt"
 cp "$HERE/mac/run.sh" "$HOME_DIR/run.sh"
-chmod +x "$HOME_DIR/run.sh"
+cp "$HERE/mac/login.sh" "$HERE/mac/uninstall.sh" "$HOME_DIR/"   # always at ~/.cbc/poster/
+chmod +x "$HOME_DIR/run.sh" "$HOME_DIR/login.sh" "$HOME_DIR/uninstall.sh"
 find "$APP" -name '__pycache__' -prune -exec rm -rf {} +
 
 if [ ! -x "$VENV/bin/python" ]; then
@@ -85,8 +87,13 @@ saved_key() {  # saved_key URL — prints the first saved key the API accepts
 }
 
 if [ ! -f "$ENV_FILE" ] || [ "${1:-}" = "--reconfigure" ]; then
-  read -r -p "CBC address [https://cbc.gidraf.dev]: " URL
-  URL="${URL:-https://cbc.gidraf.dev}"
+  if [ -n "${CBC_DEFAULT_URL:-}" ] && [ "${1:-}" != "--reconfigure" ]; then
+    URL="$CBC_DEFAULT_URL"          # the downloaded installer knows where it came from
+    echo "CBC address: $URL"
+  else
+    read -r -p "CBC address [https://cbc.gidraf.dev]: " URL
+    URL="${URL:-https://cbc.gidraf.dev}"
+  fi
   KEY=""
   if [ "${1:-}" != "--reconfigure" ]; then
     KEY="$(saved_key "$URL")"
@@ -170,5 +177,6 @@ Next, in the console (Play → Auto-post):
 Logs:    tail -f ~/.cbc/poster/poster.log
 Stop:    launchctl bootout gui/\$(id -u)/$LABEL
 Start:   launchctl bootstrap gui/\$(id -u) $PLIST
-Remove:  bash poster/mac/uninstall.sh
+Log in:  bash ~/.cbc/poster/login.sh
+Remove:  bash ~/.cbc/poster/uninstall.sh
 EOF

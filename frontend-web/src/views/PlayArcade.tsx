@@ -40,6 +40,7 @@ import {
   useHandPhoto,
   useMakeSocial,
   usePosterCommand,
+  usePosterMacLink,
   usePosterOverview,
   usePosterShot,
   useMakeSocials,
@@ -1136,6 +1137,44 @@ function PickGroups({ groups, busy, onPost }: { groups: PosterGroup[]; busy: boo
   );
 }
 
+/** Set the poster up on another Mac: one command to paste in its Terminal. */
+function AnotherMac() {
+  const link = usePosterMacLink();
+  const toast = useToast();
+  const got = link.data;
+  async function make() {
+    try { await link.mutateAsync(); }
+    catch (err) { toast(err instanceof Error ? err.message : "Could not make the link.", "danger"); }
+  }
+  async function copy() {
+    try { await navigator.clipboard.writeText(got?.command || ""); toast("Copied — paste it in the other Mac's Terminal.", "ok"); }
+    catch { toast("Select the command and copy it.", "info"); }
+  }
+  return (
+    <details>
+      <summary style={{ cursor: "pointer", fontSize: "var(--text-sm)" }}>💻 Set up the poster on another Mac</summary>
+      <div style={{ display: "grid", gap: "var(--s2)", marginTop: "var(--s2)", fontSize: "var(--text-sm)" }}>
+        <p style={{ margin: 0, color: "var(--ink-3)" }}>
+          Run the poster on a Mac you don't use much, so it posts while you work. That Mac needs Google Chrome and Python 3.10
+          or newer. Make a link, then paste the command in that Mac's Terminal. It installs the poster with a new key for your
+          account, so you don't copy anything across. Only one Mac posts at a time: the one started most recently. Any other
+          Mac waits on standby, so nothing is posted twice.
+        </p>
+        <Stack direction="row" gap="var(--s2)" wrap align="center">
+          <Button size="sm" disabled={link.isPending} onClick={make}>{got ? "Make a new link" : "Make an install link"}</Button>
+          {got && <Button size="sm" variant="ghost" onClick={copy}>Copy command</Button>}
+          {got && <span style={{ color: "var(--ink-3)", fontSize: "var(--text-xs)" }}>Works once, for {got.expires_in_minutes} minutes.</span>}
+        </Stack>
+        {got && (
+          <code style={{ display: "block", padding: "var(--s2)", background: "var(--surface-2, #f4f4f2)", borderRadius: "var(--radius)",
+                         wordBreak: "break-all", fontSize: "var(--text-xs)" }}>{got.command}</code>
+        )}
+        {got && <p style={{ margin: 0, color: "var(--ink-3)", fontSize: "var(--text-xs)" }}>{got.note} Then, on that Mac: bash ~/.cbc/poster/login.sh to log in to each site.</p>}
+      </div>
+    </details>
+  );
+}
+
 /** Keep the next weeks booked for the browser poster. */
 function BookAhead({ grade, subject, subStrand }: { grade: string; subject: string; subStrand: string }) {
   const book = useBookAhead();
@@ -1458,6 +1497,7 @@ function AutoPost() {
                         onPost={async (names) => { await run("run_now", "facebook", { share: "groups", groups: names }); setPicking(false); }} />
           )}
           {!o.live.online && <p style={{ margin: 0, fontSize: "var(--text-sm)" }}>{o.live.error || "No poster is running. On your Mac: bash poster/mac/install.sh — or start the social-poster service on the server."}</p>}
+          <AnotherMac />
           {o.live.note && <p style={{ margin: 0, fontSize: "var(--text-xs)", color: "var(--ink-3)" }}>{o.live.note}</p>}
 
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: "var(--s2)" }}>

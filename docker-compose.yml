@@ -123,6 +123,10 @@ services:
     environment: *backend-env
     ports:
       - "8000:8000"
+    volumes:
+      # The Mac poster's code, read-only, so "Set up another Mac" in the
+      # console downloads exactly what this checkout runs (POSTER_SRC).
+      - ./poster:/app/poster_src:ro
     depends_on:
       <<: *backend-depends
       playwright:

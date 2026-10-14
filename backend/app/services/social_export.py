@@ -664,18 +664,34 @@ def heartbeat(poster_id: str, status: dict[str, Any]) -> None:
 
 
 def pull_poster() -> dict[str, Any] | None:
-    """The most recent poster that checked in within the last two minutes."""
+    """The active poster: of those that checked in within the last two
+    minutes, the one started most recently. With two Macs installed, the
+    newest one posts and the other stands by (see `standing_by`), so a post
+    never goes out twice; restarting a poster makes it the active one."""
     from ..infra.db import fetch_one
 
     row = fetch_one(
         """SELECT poster_id, status, seen_at FROM poster_heartbeat
-           WHERE seen_at > NOW() - make_interval(secs => :age) ORDER BY seen_at DESC LIMIT 1""",
+           WHERE seen_at > NOW() - make_interval(secs => :age)
+           ORDER BY CASE WHEN status->>'started' ~ '^[0-9.]+$' THEN (status->>'started')::float ELSE 0 END DESC,
+                    seen_at DESC LIMIT 1""",
         {"age": PULL_FRESH_SECONDS})
     if not row:
         return None
     status = dict(row.get("status") or {})
     return {**status, "online": True, "poster_id": row["poster_id"], "mode": status.get("mode") or "local",
             "seen_at": row["seen_at"].isoformat() if hasattr(row["seen_at"], "isoformat") else row["seen_at"]}
+
+
+def standing_by(poster_id: str) -> str:
+    """Why this poster must not take work now — another one is active — or ""."""
+    if not poster_id:
+        return ""                     # a poster too old to say who it is
+    active = pull_poster()
+    other = str((active or {}).get("poster_id") or "")
+    if active and other and other != poster_id[:80]:
+        return f"Standing by: {other} is the active poster. Restart this one to make it active."
+    return ""
 
 
 def queue_command(action: str, platform: str = "", post_id: str = "", by: str = "",

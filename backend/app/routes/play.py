@@ -11,9 +11,9 @@ import json
 import logging
 from typing import Any, Literal
 
-from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
-from fastapi.responses import HTMLResponse
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends, File, Form, Query, Request, UploadFile
+from fastapi.responses import HTMLResponse, Response
+from pydantic import BaseModel, Field
 
 from ..errors import raise_api_error
 from ..services.auth import AuthContext, require_roles
@@ -795,7 +795,7 @@ def _poster_call(method: str, path: str, body: dict[str, Any] | None = None, tim
 @router.get("/poster/next")
 def poster_next(platform: str = Query(""), post_id: str = Query(""), dry: bool = Query(False),
                 share: Literal["", "feed", "groups"] = Query(""), groups: list[str] = Query(default=[]),
-                auth: AuthContext = Depends(ANY)) -> dict[str, Any]:
+                poster_id: str = Query(""), auth: AuthContext = Depends(ANY)) -> dict[str, Any]:
     """The one post the browser may publish now, or why there is none. A dry
     run takes the next queued post for a platform, rules aside, since it
     publishes nothing. `share` with `dry`: a post-now button (feed only, or
@@ -803,6 +803,9 @@ def poster_next(platform: str = Query(""), post_id: str = Query(""), dry: bool =
     from ..services import social_export
 
     _may_make_videos(auth)
+    why = social_export.standing_by(poster_id)
+    if why:
+        return {"post": None, "reason": why, "standby": True}
     return social_export.next_for_poster(platform=platform, post_id=post_id, dry=dry, share=share, groups=groups)
 
 
@@ -978,6 +981,64 @@ class Heartbeat(BaseModel):
     status: dict[str, Any] = {}
 
 
+class MacLinkRequest(BaseModel):
+    minutes: int = Field(default=60, ge=5, le=1440)
+
+
+@router.post("/poster/mac-link")
+def poster_mac_link(request: Request, payload: MacLinkRequest | None = None,
+                    auth: AuthContext = Depends(ANY)) -> dict[str, Any]:
+    """A one-time link to set the poster up on another Mac: paste the command
+    in that Mac's Terminal. The installer it fetches carries a new key for
+    this account, so nothing has to be copied across."""
+    import secrets
+
+    from ..infra.db import execute
+    from ..services import platform_settings, poster_installer
+
+    _may_make_videos(auth)
+    minutes = (payload or MacLinkRequest()).minutes
+    token = secrets.token_urlsafe(24)
+    execute("""INSERT INTO download_links (token, what, params, created_by, expires_at)
+               VALUES (:token, 'poster', '{}'::jsonb, :by, NOW() + (:minutes || ' minutes')::interval)""",
+            {"token": token, "by": auth.subject, "minutes": str(minutes)})
+    url = f"{platform_settings.public_base_url(request)}/api/v1/play/poster/mac-installer/{token}"
+    file = f"/tmp/{poster_installer.FILENAME}"
+    return {"url": url, "expires_in_minutes": minutes, "single_use": True,
+            "command": f'curl -fsSL "{url}" -o {file} && bash {file}',
+            "note": "Anyone with this link can install a poster on your account once before it expires. "
+                    "Paste it only into the other Mac's Terminal."}
+
+
+@router.get("/poster/mac-installer/{token}")
+def poster_mac_installer(token: str, request: Request) -> Response:
+    """The Mac poster as one file, fetched with a link from the console. No
+    sign-in: the link is the credential — once, and only while it lasts."""
+    import datetime as _dt
+
+    from ..infra.db import execute, fetch_one
+    from ..services import platform_settings, poster_installer
+    from .agent import _mint_key
+
+    row = fetch_one("SELECT * FROM download_links WHERE token = :token AND what = 'poster'", {"token": token})
+    if not row or row.get("used_at") is not None:
+        raise_api_error("NOT_FOUND", "This link has been used or does not exist. Make a new one in the console.")
+    expires = row.get("expires_at")
+    if expires is not None and expires < _dt.datetime.now(tz=expires.tzinfo):
+        raise_api_error("NOT_FOUND", "This link has expired. Make a new one in the console.")
+    src = poster_installer.source_dir()
+    try:
+        poster_installer.tarball(src)
+    except FileNotFoundError as exc:
+        raise_api_error("NOT_FOUND", f"{exc} Mount the repo's poster/ folder into the API container (docker-compose.yml).")
+    execute("UPDATE download_links SET used_at = NOW() WHERE token = :token AND used_at IS NULL", {"token": token})
+    maker = AuthContext(subject=str(row.get("created_by") or "link"), role="operator", auth_type="link")
+    key = _mint_key(maker, label="poster on another Mac (link)")
+    body = poster_installer.build(src, platform_settings.public_base_url(request), api_key=key)
+    return Response(body, media_type="application/octet-stream", headers={
+        "Content-Disposition": f'attachment; filename="{poster_installer.FILENAME}"', "Cache-Control": "no-store"})
+
+
 @router.post("/poster/heartbeat")
 def poster_heartbeat(payload: Heartbeat, auth: AuthContext = Depends(ANY)) -> dict[str, Any]:
     from ..services import social_export
@@ -988,10 +1049,12 @@ def poster_heartbeat(payload: Heartbeat, auth: AuthContext = Depends(ANY)) -> di
 
 
 @router.post("/poster/commands/next")
-def poster_take_command(auth: AuthContext = Depends(ANY)) -> dict[str, Any]:
+def poster_take_command(poster_id: str = Query(""), auth: AuthContext = Depends(ANY)) -> dict[str, Any]:
     from ..services import social_export
 
     _may_make_videos(auth)
+    if social_export.standing_by(poster_id):
+        return {"command": None, "standby": True}   # the console's buttons are for the active poster
     return {"command": social_export.take_command()}
 
 

@@ -4498,6 +4498,15 @@ export function usePosterCommand() {
   });
 }
 
+/** A one-time link that installs the poster on another Mac (paste `command` in its Terminal). */
+export function usePosterMacLink() {
+  const api = useApi();
+  return useMutation({
+    mutationFn: () => api<{ url: string; command: string; expires_in_minutes: number; note: string }>(
+      "/api/v1/play/poster/mac-link", { method: "POST", body: JSON.stringify({ minutes: 60 }) }),
+  });
+}
+
 /** A screenshot the poster took, as an object URL for an <img>. */
 export function usePosterShot(name: string) {
   const { token } = useAuth();
