@@ -149,6 +149,21 @@ def _figure(question: dict[str, Any], assets: dict[str, Any] | None,
     binding = question.get("diagram")
     if not isinstance(binding, dict):
         return ""
+    svg = figure_markup(question, assets, answers=answers)
+    if not svg:
+        title = str(binding.get("diagram_title") or "the figure")
+        return f"<div class='stimulus'>Refer to {_esc(title)}.</div>"
+    return f"<div class='figure-inline'>{svg}</div>"
+
+
+def figure_markup(question: dict[str, Any], assets: dict[str, Any] | None,
+                  answers: bool = False) -> str:
+    """The bare SVG of the figure this question binds to — gaps left as the
+    learner sees them unless `answers` — or "" when it has none or the
+    figure cannot be found. `assets` as for `_figure`."""
+    binding = question.get("diagram")
+    if not isinstance(binding, dict):
+        return ""
     source: Any = None
     if assets:
         for key in (binding.get("diagram_id"), binding.get("diagram_title")):
@@ -160,17 +175,15 @@ def _figure(question: dict[str, Any], assets: dict[str, Any] | None,
     if isinstance(source, str):
         source = {"svg_markup": source, "scene_document": {}}
     if not isinstance(source, dict) or not (source.get("svg_markup") or source.get("diagram_svg")):
-        title = str(binding.get("diagram_title") or "the figure")
-        return f"<div class='stimulus'>Refer to {_esc(title)}.</div>"
+        return ""
     try:
         from .diagram_scene import render_for_question
 
-        svg = render_for_question(source, binding, with_answers=answers)
+        return render_for_question(source, binding, with_answers=answers)
     except Exception as exc:  # noqa: BLE001
         logger.warning("Could not render the figure for %s: %s",
                        question.get("question_id") or "?", exc)
-        svg = str(source.get("svg_markup") or source.get("diagram_svg") or "")
-    return f"<div class='figure-inline'>{svg}</div>"
+        return str(source.get("svg_markup") or source.get("diagram_svg") or "")
 
 
 def figures_for(questions: list[dict[str, Any]]) -> dict[str, Any]:
