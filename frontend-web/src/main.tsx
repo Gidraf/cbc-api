@@ -1,6 +1,6 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
-import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
+import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import { AppShell } from "./app/AppShell";
@@ -34,6 +34,9 @@ import { Review } from "./views/Review";
 import { SignIn } from "./views/SignIn";
 import { Wallet } from "./views/Wallet";
 import { Developer } from "./views/Developer";
+import { Classroom } from "./views/Classroom";
+import { MyQuestions } from "./views/MyQuestions";
+import { TakeTest } from "./views/TakeTest";
 
 import "./ui/tokens.css";
 import "katex/dist/katex.min.css";
@@ -78,7 +81,17 @@ function Home() {
 
 function Router() {
   const { token } = useAuth();
+  const location = useLocation();
 
+  // A student taking a test has no account: /t and /t/<code> open signed out.
+  if (location.pathname === "/t" || location.pathname.startsWith("/t/")) {
+    return (
+      <Routes>
+        <Route path="/t" element={<TakeTest />} />
+        <Route path="/t/:code" element={<TakeTest />} />
+      </Routes>
+    );
+  }
   if (!token) return <SignIn />;
 
   return (
@@ -128,6 +141,8 @@ function Router() {
         <Route path="settings" element={<Screen name="Settings"><PlatformSettings /></Screen>} />
         <Route path="wallet" element={<Screen name="Wallet"><Wallet /></Screen>} />
         <Route path="developer" element={<Screen name="Developer"><Developer /></Screen>} />
+        <Route path="classroom" element={<Screen name="Online tests"><Classroom /></Screen>} />
+        <Route path="my-questions" element={<Screen name="My questions"><MyQuestions /></Screen>} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>

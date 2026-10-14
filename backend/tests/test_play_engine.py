@@ -126,6 +126,11 @@ def client(monkeypatch):
     ]
     monkeypatch.setattr(svc, "list_questions", lambda **kw: bank)
     monkeypatch.setattr(svc, "get_question", lambda qid: next(r for r in bank if r["question_id"] == qid))
+    from app.services import entitlements, user_questions
+
+    # Amina is on the video plan: every question opens (test_classroom covers the locks).
+    monkeypatch.setattr(entitlements, "has_video_plan", lambda owner, role: True)
+    monkeypatch.setattr(user_questions, "list_for", lambda owner, **kw: [])
     app.dependency_overrides[get_auth_context] = lambda: AuthContext(subject="amina", role="user", auth_type="session")
     try:
         yield TestClient(app)
@@ -148,3 +153,16 @@ def test_the_play_api_as_a_user(client):
 
     page = client.get("/api/v1/play/items/q1/walkthrough.html")
     assert page.status_code == 200 and "gsap" in page.text and "number_line_jump" in page.text
+
+
+def test_without_the_plan_a_users_play_list_says_what_is_locked(client, monkeypatch):
+    from app.services import entitlements
+
+    monkeypatch.setattr(entitlements, "has_video_plan", lambda owner, role: False)
+    monkeypatch.setattr(entitlements, "owned_ids", lambda owner, ids: {"q2"})
+    monkeypatch.setattr(entitlements, "plan_status", lambda owner, role: {"on_sale": False})
+    items = {i["question_id"]: i["locked"] for i in client.get("/api/v1/play/items?grade=grade-9&subject=Mathematics").json()["items"]}
+    assert items == {"q1": True, "q2": False}
+    assert client.get("/api/v1/play/items/q1").status_code == 402
+    rnd = client.get("/api/v1/play/session?grade=grade-9&subject=Mathematics&mode=mixed&count=5&seed=x").json()
+    assert [i["question_id"] for i in rnd["items"]] == ["q2"]          # only what Amina owns

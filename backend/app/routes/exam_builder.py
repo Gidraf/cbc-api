@@ -177,7 +177,8 @@ def draft_items(draft_id: str, auth: AuthContext = Depends(ANY)) -> dict[str, An
     from ..services import exam_drafts
 
     row = exam_drafts.get(draft_id, _owner(auth))
-    return {"items": exam_drafts.items_detail(row)}
+    items = exam_drafts.items_detail(row)
+    return {"items": _hide_unowned(auth, items, key="question")}
 
 
 @router.put("/drafts/{draft_id}/items/{question_id}")
@@ -209,7 +210,31 @@ def candidates(draft_id: str, sub_strand: str = Query(""), limit: int = Query(20
     items = [q for q in question_rows.flatten_all(rows)
              if str(q.get("status") or "") not in ("needs_review", "rejected", "superseded")
              and str(q.get("question_id")) not in on_paper]
-    return {"items": items}
+    return {"items": _hide_unowned(auth, items)}
+
+
+def _hide_unowned(auth: AuthContext, items: list[dict[str, Any]], key: str = "") -> list[dict[str, Any]]:
+    """A parent's or teacher's account sees a question's answer, marking
+    scheme and working only once it owns the question (bought or wrote it)."""
+    from ..services import entitlements
+
+    if entitlements.staff(auth.role):
+        return items
+    owned = entitlements.owned_ids(auth.subject, [str(i.get("question_id")) for i in items])
+    out = []
+    for item in items:
+        if str(item.get("question_id")) in owned:
+            out.append(item)
+            continue
+        if key:
+            hidden = {**item, key: entitlements.redact(dict(item.get(key) or {})), "locked": True}
+            hidden.pop("working", None)
+            hidden["overrides"] = {k: v for k, v in (item.get("overrides") or {}).items()
+                                   if k not in entitlements.ANSWER_FIELDS}
+        else:
+            hidden = {**entitlements.redact(item), "locked": True}
+        out.append(hidden)
+    return out
 
 
 def _quote(row: dict[str, Any], auth: AuthContext) -> dict[str, Any]:

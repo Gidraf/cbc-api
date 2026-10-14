@@ -123,6 +123,10 @@ SETTINGS: tuple[Setting, ...] = (
             "Per question returned, past the free calls.", "1.5", "Billing"),
     Setting("billing_api_diagram_ksh", "BILLING_API_DIAGRAM_KSH", "string", "API: diagram question (KSh)",
             "Per question with a figure returned, past the free calls.", "2.5", "Billing"),
+    Setting("billing_video_plan_ksh", "BILLING_VIDEO_PLAN_KSH", "string", "Video plan price (KSh)",
+            "One period of the video plan: every whiteboard video (streamed, never downloaded), and the games and "
+            "animated walkthroughs of every question. 0 = not on sale.", "0", "Billing"),
+    Setting("billing_video_plan_days", "BILLING_VIDEO_PLAN_DAYS", "int", "Video plan period (days)", "", 30, "Billing"),
     Setting("billing_min_topup_ksh", "BILLING_MIN_TOPUP_KSH", "int", "Smallest top-up (KSh)", "", 10, "Billing"),
     Setting("billing_max_topup_ksh", "BILLING_MAX_TOPUP_KSH", "int", "Largest top-up (KSh)",
             "M-Pesa's own limit per transaction is higher; this caps one top-up.", 70000, "Billing"),

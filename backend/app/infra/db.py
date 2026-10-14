@@ -1431,6 +1431,61 @@ MIGRATIONS: list[tuple[str, str]] = [
         );
         """,
     ),
+    (
+        "050_classroom",
+        """
+        -- Phase 2: the video plan, an account's own questions, online tests
+        -- and the students' attempts (services/entitlements.py,
+        -- user_questions.py, online_tests.py).
+        CREATE TABLE IF NOT EXISTS subscriptions (
+            owner TEXT NOT NULL,
+            plan TEXT NOT NULL,
+            until TIMESTAMPTZ NOT NULL,
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            PRIMARY KEY (owner, plan)
+        );
+        CREATE TABLE IF NOT EXISTS user_questions (
+            question_id TEXT PRIMARY KEY,
+            owner TEXT NOT NULL,
+            content JSONB NOT NULL,
+            curriculum JSONB NOT NULL DEFAULT '{}'::jsonb,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS idx_user_questions_owner ON user_questions(owner, updated_at DESC);
+        CREATE TABLE IF NOT EXISTS online_tests (
+            test_id TEXT PRIMARY KEY,
+            owner TEXT NOT NULL,
+            draft_id TEXT NOT NULL,
+            title TEXT NOT NULL DEFAULT '',
+            code TEXT NOT NULL UNIQUE,
+            pool JSONB NOT NULL DEFAULT '[]'::jsonb,
+            per_student INTEGER NOT NULL,
+            minutes INTEGER NOT NULL DEFAULT 0,
+            show_answers TEXT NOT NULL DEFAULT 'after_submit',
+            shuffle_options BOOLEAN NOT NULL DEFAULT TRUE,
+            status TEXT NOT NULL DEFAULT 'open',
+            closes_at TIMESTAMPTZ,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS idx_online_tests_owner ON online_tests(owner, created_at DESC);
+        CREATE TABLE IF NOT EXISTS test_attempts (
+            attempt_id TEXT PRIMARY KEY,
+            token TEXT NOT NULL UNIQUE,
+            test_id TEXT NOT NULL,
+            student_name TEXT NOT NULL,
+            question_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
+            option_orders JSONB NOT NULL DEFAULT '{}'::jsonb,
+            answers JSONB,
+            score DOUBLE PRECISION,
+            out_of DOUBLE PRECISION,
+            late BOOLEAN NOT NULL DEFAULT FALSE,
+            started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            submitted_at TIMESTAMPTZ
+        );
+        CREATE INDEX IF NOT EXISTS idx_test_attempts_test ON test_attempts(test_id, submitted_at DESC);
+        """,
+    ),
 ]
 
 

@@ -22,7 +22,28 @@ logger = logging.getLogger("cbc-play")
 router = APIRouter(prefix="/api/v1/play", tags=["Play"])
 
 ANY = require_roles("admin", "operator", "reviewer", "developer", "user", "poster")
+# The question content (games, walkthroughs, videos): people, not the poster's key.
+CONTENT = require_roles("admin", "operator", "reviewer", "developer", "user")
 _HIDDEN = ("needs_review", "rejected", "superseded")
+
+
+def _gate(auth: AuthContext, question_id: str) -> None:
+    """A parent's or teacher's account opens a question it owns (bought or
+    wrote) or every question on the video plan; staff open all."""
+    from ..services import entitlements
+
+    if not entitlements.may_open(auth.subject, auth.role, question_id):
+        raise_api_error("PAYMENT_REQUIRED", entitlements.locked_reason(auth.role),
+                        detail={"question_id": question_id, "plan": entitlements.plan_status(auth.subject, auth.role)})
+
+
+def _open_ids(auth: AuthContext, ids: list[str]) -> set[str] | None:
+    """Of these, the ones this account may open — None meaning all of them."""
+    from ..services import entitlements
+
+    if entitlements.staff(auth.role) or entitlements.has_video_plan(auth.subject, auth.role):
+        return None
+    return entitlements.owned_ids(auth.subject, ids)
 
 
 def _bank(grade: str, subject: str, sub_strand: str, limit: int) -> list[dict[str, Any]]:
@@ -34,12 +55,11 @@ def _bank(grade: str, subject: str, sub_strand: str, limit: int) -> list[dict[st
     return [q for q in question_rows.flatten_all(rows) if str(q.get("status") or "") not in _HIDDEN]
 
 
-def _one(question_id: str) -> dict[str, Any]:
-    from ..services import question_rows
-    from ..services.question_dna import question_dna_service
+def _one(question_id: str, owner: str = "") -> dict[str, Any]:
+    from ..services import user_questions
 
     try:
-        return question_rows.flatten(question_dna_service.get_question(question_id))
+        return user_questions.load(question_id, owner)
     except Exception:  # noqa: BLE001
         raise_api_error("NOT_FOUND", f"No question {question_id}.")
     return {}
@@ -49,13 +69,18 @@ def _one(question_id: str) -> dict[str, Any]:
 def playable_items(grade: str = Query(""), subject: str = Query(""), sub_strand: str = Query(""),
                    kind: str = Query("", description="number_line | balance | bodmas | fraction_bar | choice"),
                    limit: int = Query(200, ge=1, le=1000),
-                   _: AuthContext = Depends(ANY)) -> dict[str, Any]:
-    """Items in a scope with the kind each plays as — what a game picker lists."""
-    from ..services import play_engine
+                   auth: AuthContext = Depends(CONTENT)) -> dict[str, Any]:
+    """Items in a scope with the kind each plays as — what a game picker lists.
+    Each says whether this account may open it (`locked`)."""
+    from ..services import play_engine, user_questions
 
     out = []
     counts: dict[str, int] = {}
-    for q in _bank(grade, subject, sub_strand, limit):
+    pool = _bank(grade, subject, sub_strand, limit)
+    if auth.role == "user":
+        pool += user_questions.list_for(auth.subject, grade=grade, subject=subject)
+    opened = _open_ids(auth, [str(q.get("question_id")) for q in pool])
+    for q in pool:
         play = play_engine.spec_for(q)
         primary = play.get("primary") or {}
         k = primary.get("kind")
@@ -65,16 +90,18 @@ def playable_items(grade: str = Query(""), subject: str = Query(""), sub_strand:
         out.append({"question_id": q.get("question_id"), "question_text": q.get("question_text"),
                     "sub_strand": (q.get("curriculum") or {}).get("sub_strand"), "kind": k,
                     "also_choice": bool(play.get("choice")) and k != "choice",
-                    "key_agrees": play.get("key_agrees"), "status": q.get("status")})
+                    "key_agrees": play.get("key_agrees"), "status": q.get("status"),
+                    "locked": opened is not None and str(q.get("question_id")) not in opened})
     return {"items": out, "counts": counts}
 
 
 @router.get("/items/{question_id}")
-def play_item(question_id: str, _: AuthContext = Depends(ANY)) -> dict[str, Any]:
+def play_item(question_id: str, auth: AuthContext = Depends(CONTENT)) -> dict[str, Any]:
     """One item: its game/simulator spec and its walkthrough scenes."""
     from ..services import play_engine
 
-    q = _one(question_id)
+    _gate(auth, question_id)
+    q = _one(question_id, auth.subject)
     return {"question": {k: q.get(k) for k in ("question_id", "question_text", "stimulus_context", "question_type",
                                                "diagram", "curriculum")},
             "play": play_engine.spec_for(q),
@@ -85,16 +112,25 @@ def play_item(question_id: str, _: AuthContext = Depends(ANY)) -> dict[str, Any]
 def game_session(grade: str = Query(...), subject: str = Query(...), sub_strand: str = Query(""),
                  mode: str = Query("mixed", description="mixed | choice | number_line | balance | bodmas | fraction_bar"),
                  count: int = Query(10, ge=1, le=50), seed: str = Query(""),
-                 _: AuthContext = Depends(ANY)) -> dict[str, Any]:
-    """A round: `count` items played as `mode`, shuffled by `seed`."""
+                 auth: AuthContext = Depends(CONTENT)) -> dict[str, Any]:
+    """A round: `count` items played as `mode`, shuffled by `seed` — from the
+    questions this account may open."""
     import random
 
-    from ..services import play_engine
+    from ..services import play_engine, user_questions
 
     pool = _bank(grade, subject, sub_strand, 600)
+    if auth.role == "user":
+        pool += user_questions.list_for(auth.subject, grade=grade, subject=subject)
+    opened = _open_ids(auth, [str(q.get("question_id")) for q in pool])
+    if opened is not None:
+        pool = [q for q in pool if str(q.get("question_id")) in opened]
     random.Random(seed or None).shuffle(pool)
     items = play_engine.session(pool, mode=mode, count=count)
     if not items:
+        if opened is not None:
+            raise_api_error("NOT_FOUND", "None of your questions here plays as a game yet. Buy a paper on this topic, "
+                                         "write your own questions, or take the video plan to play them all.")
         raise_api_error("NOT_FOUND", f"Nothing in the bank plays as '{mode}' for this scope yet.")
     return {"mode": mode, "count": len(items), "items": items}
 
@@ -105,7 +141,7 @@ class CheckRequest(BaseModel):
 
 
 @router.post("/check")
-def check(payload: CheckRequest, _: AuthContext = Depends(ANY)) -> dict[str, Any]:
+def check(payload: CheckRequest, _: AuthContext = Depends(CONTENT)) -> dict[str, Any]:
     """Whether a learner's typed value is the value: 3/4, 0.75 and 6/8 agree."""
     from ..services import play_engine
 
@@ -114,13 +150,14 @@ def check(payload: CheckRequest, _: AuthContext = Depends(ANY)) -> dict[str, Any
 
 @router.get("/items/{question_id}/walkthrough.html")
 def walkthrough_page(question_id: str, voice: str = Query("en-KE"), autoplay: bool = Query(True),
-                     _: AuthContext = Depends(ANY)) -> HTMLResponse:
+                     auth: AuthContext = Depends(CONTENT)) -> HTMLResponse:
     """A self-playing walkthrough, for a projector or a share link: GSAP
     animates each scene while the device's voice reads it, and the next
     scene starts when the sentence ends."""
     from ..services import play_engine
 
-    q = _one(question_id)
+    _gate(auth, question_id)
+    q = _one(question_id, auth.subject)
     data = play_engine.walkthrough(q)
     return HTMLResponse(walkthrough_html(data, title=str(q.get("question_text") or "")[:80], voice=voice,
                                          autoplay=autoplay))
@@ -128,7 +165,7 @@ def walkthrough_page(question_id: str, voice: str = Query("en-KE"), autoplay: bo
 
 @router.get("/items/{question_id}/whiteboard.html")
 def whiteboard_page(question_id: str, autoplay: bool = Query(False), voice: str = Query(""),
-                    _: AuthContext = Depends(ANY)) -> HTMLResponse:
+                    auth: AuthContext = Depends(CONTENT)) -> HTMLResponse:
     """The item worked on a whiteboard: a marker writes each line, circles
     the side sum, draws the number line or the scale, boxes the answer and
     strikes out the trap — voiced by the server in the console's chosen
@@ -136,17 +173,40 @@ def whiteboard_page(question_id: str, autoplay: bool = Query(False), voice: str 
     projector."""
     from ..services import whiteboard
 
-    q = _one(question_id)
+    _gate(auth, question_id)
+    q = _one(question_id, auth.subject)
     data, voice, title = whiteboard._script_for(q, _voice(voice))
     return HTMLResponse(whiteboard.live_page(data, title=title, voice=voice, autoplay=autoplay))
 
 
 @router.get("/items/{question_id}/video")
-def video_status(question_id: str, voice: str = Query(""), _: AuthContext = Depends(ANY)) -> dict[str, Any]:
-    """The MP4 for this item: ready (with its URL), queued, running, failed or none."""
-    from ..services import whiteboard
+def video_status(question_id: str, voice: str = Query(""), auth: AuthContext = Depends(CONTENT)) -> dict[str, Any]:
+    """The MP4 for this item: ready, queued, running, failed or none. Staff
+    get its file link; everyone else watches it through /watch, on the plan."""
+    from ..services import entitlements, whiteboard
 
-    return whiteboard.status(question_id, _one(question_id), _voice(voice))
+    out = whiteboard.status(question_id, _one(question_id, auth.subject), _voice(voice))
+    if not entitlements.staff(auth.role):
+        out.pop("url", None)
+        out.pop("job_id", None)
+        out["watch"] = entitlements.has_video_plan(auth.subject, auth.role)
+    return out
+
+
+@router.get("/items/{question_id}/watch")
+def watch_link(question_id: str, voice: str = Query(""), auth: AuthContext = Depends(CONTENT)) -> dict[str, Any]:
+    """A short-lived link that streams this item's video in the page — on the
+    video plan (staff always). Never a file to keep."""
+    from ..services import entitlements, rate_limit, streaming, whiteboard
+
+    if not entitlements.has_video_plan(auth.subject, auth.role):
+        raise_api_error("PAYMENT_REQUIRED", "Videos come with the video plan.",
+                        detail={"plan": entitlements.plan_status(auth.subject, auth.role)})
+    rate_limit.hit("watch_owner", auth.subject)
+    st = whiteboard.status(question_id, _one(question_id, auth.subject), _voice(voice))
+    if st.get("status") != "ready":
+        raise_api_error("NOT_FOUND", "This question's video is not made yet.")
+    return streaming.watch_link(auth.subject, whiteboard.object_name(question_id, st["key"]))
 
 
 def _may_make_videos(auth: AuthContext) -> None:
@@ -218,8 +278,9 @@ def make_videos(payload: VideoBatch, auth: AuthContext = Depends(ANY)) -> dict[s
 
 @router.get("/videos")
 def list_videos(grade: str = Query(...), subject: str = Query(...), sub_strand: str = Query(""),
-                limit: int = Query(60, ge=1, le=300), _: AuthContext = Depends(ANY)) -> dict[str, Any]:
+                limit: int = Query(60, ge=1, le=300), auth: AuthContext = Depends(ANY)) -> dict[str, Any]:
     """Every item in a scope with its video's state — the content library."""
+    _may_make_videos(auth)            # production tools: file links and posts
     from ..services import whiteboard
 
     out = []
@@ -236,16 +297,18 @@ def list_videos(grade: str = Query(...), subject: str = Query(...), sub_strand: 
 # ── social posts ──────────────────────────────────────────────────────────────
 
 @router.get("/items/{question_id}/social.html")
-def social_page(question_id: str, voice: str = Query(""), _: AuthContext = Depends(ANY)) -> HTMLResponse:
+def social_page(question_id: str, voice: str = Query(""), auth: AuthContext = Depends(ANY)) -> HTMLResponse:
     """The vertical cut, live and voiced — what the post's video will be."""
+    _may_make_videos(auth)            # production tools: file links and posts
     from ..services import social
 
     return HTMLResponse(social.live_page(_one(question_id), _voice(voice)))
 
 
 @router.get("/items/{question_id}/social")
-def social_status(question_id: str, voice: str = Query(""), _: AuthContext = Depends(ANY)) -> dict[str, Any]:
+def social_status(question_id: str, voice: str = Query(""), auth: AuthContext = Depends(ANY)) -> dict[str, Any]:
     """The social post for this item: its video, thumbnail and post text, or where they are."""
+    _may_make_videos(auth)            # production tools: file links and posts
     from ..services import social
 
     return social.status(question_id, _one(question_id), _voice(voice))
@@ -359,8 +422,9 @@ def retry_video_batch(batch_id: str, auth: AuthContext = Depends(ANY)) -> dict[s
 
 @router.get("/social")
 def list_socials(grade: str = Query(...), subject: str = Query(...), sub_strand: str = Query(""),
-                 limit: int = Query(60, ge=1, le=300), _: AuthContext = Depends(ANY)) -> dict[str, Any]:
+                 limit: int = Query(60, ge=1, le=300), auth: AuthContext = Depends(ANY)) -> dict[str, Any]:
     """Every item in a scope with its social post — ready to download and paste."""
+    _may_make_videos(auth)            # production tools: file links and posts
     from ..services import social
 
     out = []
@@ -725,8 +789,9 @@ def book_social(payload: BookAhead, auth: AuthContext = Depends(ANY)) -> dict[st
 
 @router.get("/social/posts")
 def social_posts(grade: str = Query(""), subject: str = Query(""), sub_strand: str = Query(""),
-                 platform: str = Query(""), _: AuthContext = Depends(ANY)) -> dict[str, Any]:
+                 platform: str = Query(""), auth: AuthContext = Depends(ANY)) -> dict[str, Any]:
     """Where each video went and how it did, with platforms and topics compared."""
+    _may_make_videos(auth)            # production tools: file links and posts
     from ..services import social_export
 
     posts = social_export.list_posts(grade, subject, sub_strand, platform)

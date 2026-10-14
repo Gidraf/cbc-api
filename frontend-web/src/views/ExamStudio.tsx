@@ -1049,6 +1049,11 @@ function PrintSection({ d, params, save }: { d: ExamDraft; params: Record<string
   return (
     <Stack gap="var(--s3)">
       <BuyCard d={d} />
+      {!locked && (d.items || []).length > 0 && (
+        <Card title="Take it online" description="Your class answers this paper on their phones, each with their own random questions; it is marked as they hand in.">
+          <a href={`/classroom?draft=${encodeURIComponent(d.draft_id)}`}><Button>Make an online test from this paper</Button></a>
+        </Card>
+      )}
       <OwnLinesCard d={d} save={save} frozen={frozen} />
       <VersionsCard d={d} />
       <Card title="Download" description={locked ? "Pay for the paper above first; then download it, its marking scheme and the booklet."

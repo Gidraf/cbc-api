@@ -227,8 +227,10 @@ def test_a_user_builds_a_paper_through_the_api_but_may_not_spend_tokens(client):
     r = client.get(f"/api/v1/builder/drafts/{draft_id}/preview.html?density=dense")
     assert r.status_code == 200 and "font-size: 7.8pt" in r.text, "a knob on the query string"
 
+    # Not bought yet: the items come without their working and answers.
     items = client.get(f"/api/v1/builder/drafts/{draft_id}/items").json()["items"]
-    assert items and "working" in items[0] and "curriculum" in items[0]
+    assert items and items[0]["locked"] and "working" not in items[0] and "curriculum" in items[0]
+    assert "correct_answer" not in items[0]["question"] and "marking_scheme" not in items[0]["question"]
 
     r = client.put(f"/api/v1/builder/drafts/{draft_id}/items/{items[0]['question_id']}",
                    json={"fields": {"question_text": "Corrected."}})
