@@ -57,7 +57,8 @@ def test_the_claim_is_still_atomic() -> None:
     source = inspect.getsource(job_queue._claim)
 
     assert "FOR UPDATE SKIP LOCKED" in source
-    assert "ORDER BY created_at ASC" in source, "oldest first, still"
+    assert 'ORDER BY %s DESC, created_at ASC' in source and '_priority("jobs")' in source, \
+        "the most urgent first (a bought paper's video), then oldest first, still"
 
 
 def test_the_claim_sql_binds_no_parameters() -> None:

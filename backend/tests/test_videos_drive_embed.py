@@ -200,3 +200,45 @@ def test_the_embed_player_streams_with_their_heading_and_can_be_framed_anywhere(
     assert TestClient(app).get(f"/api/v1/embed/{old}").status_code == 410
     from app.services.auth import create_access_token
     assert TestClient(app).get(f"/api/v1/embed/{create_access_token('x', 'admin')}").status_code == 410
+
+
+# ── what you bought, as videos ───────────────────────────────────────────────
+
+@needs_db
+def test_a_bought_papers_videos_render_before_the_daily_batch(db, monkeypatch):
+    from sqlalchemy import text
+
+    from app.services import job_queue
+
+    monkeypatch.setattr(job_queue, "_render_limit", lambda: 1, raising=False)
+    with db.begin() as c:
+        for jid, pri, age in (("daily-1", None, 30), ("daily-2", None, 20), ("bought-1", "10", 1)):
+            payload = '{"artifact_id": "%s"%s}' % (jid, f', "priority": "{pri}"' if pri else "")
+            c.execute(text("""INSERT INTO jobs (job_id, kind, grade, subject, status, payload, created_at)
+                              VALUES (:j, 'video', 'grade-9', 'Mathematics', 'queued', CAST(:p AS jsonb),
+                                      NOW() - make_interval(mins => :a))"""), {"j": jid, "p": payload, "a": age})
+    # The oldest daily job waits while the bought one is queued …
+    assert job_queue.scope_is_busy("daily-1") and not job_queue.scope_is_busy("bought-1")
+    # … and the in-process worker takes the bought one first, though it is the newest.
+    assert job_queue._claim()["job_id"] == "bought-1"
+
+
+@needs_db
+def test_my_videos_lists_what_was_bought_and_queues_the_missing(db, monkeypatch):
+    from sqlalchemy import text
+
+    from app.services import my_videos, whiteboard
+
+    _bank(db, 4)
+    with db.begin() as c:
+        for q in ("q001", "q002", "q003"):
+            c.execute(text("INSERT INTO question_purchases (owner, question_id) VALUES ('mama', :q)"), {"q": q})
+    whiteboard.record_video("q001", "videos", "k", "videos/q001/k.mp4")
+    lib = my_videos.library("mama")
+    states = {i["question_id"]: i["video"] for i in lib["items"]}
+    assert states == {"q001": "ready", "q002": "none", "q003": "none"} and "q000" not in states   # only what she bought
+    queued = []
+    monkeypatch.setattr(whiteboard, "enqueue", lambda qid, queued_by="", priority=0: queued.append((qid, priority)) or {"status": "queued"})
+    assert my_videos.queue_missing(["q001", "q002", "q003", "uq-mine"], by="mama") == 2
+    assert queued == [("q002", 10), ("q003", 10)]            # first in line; her own questions are not drawn
+    assert my_videos.library("mama", draft_ids=["q002", "q000"])["items"][0]["question_id"] == "q002"

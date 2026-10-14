@@ -39,6 +39,31 @@ def subscribe(auth: AuthContext = Depends(MEMBER)) -> dict[str, Any]:
     return {}
 
 
+# ── my videos: what the account bought, to watch ─────────────────────────────
+
+@router.get("/library")
+def my_library(draft_id: str = Query("", description="Only the questions of this paper"),
+               auth: AuthContext = Depends(MEMBER)) -> dict[str, Any]:
+    """Every question you bought, with its video: ready, being made, or not yet."""
+    from ..services import exam_drafts, my_videos
+
+    ids = None
+    if draft_id:
+        row = exam_drafts.get(draft_id, f"{auth.role}:{auth.subject}")
+        ids = [str(i.get("question_id")) for i in (row.get("items") or []) if isinstance(i, dict)]
+    return my_videos.library(auth.subject, draft_ids=ids)
+
+
+@router.post("/library/make")
+def make_my_videos(draft_id: str = Query(""), auth: AuthContext = Depends(MEMBER)) -> dict[str, Any]:
+    """Queue (first in line) the videos your bought questions do not have yet."""
+    from ..services import my_videos
+
+    got = my_library(draft_id=draft_id, auth=auth)
+    todo = [i["question_id"] for i in got["items"] if i["video"] in ("none", "failed")]
+    return {"queued": my_videos.queue_missing_soon(todo, by=auth.subject)}
+
+
 # ── own questions ────────────────────────────────────────────────────────────
 
 class OwnQuestion(BaseModel):

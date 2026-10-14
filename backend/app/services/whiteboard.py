@@ -526,8 +526,10 @@ def status(question_id: str, q: dict[str, Any] | None = None, voice: str = "") -
     return {**out, "status": "none"}
 
 
-def enqueue(question_id: str, *, queued_by: str = "", batch_id: str = "", voice: str = "") -> dict[str, Any]:
-    """Queue one item's video unless it is already made or being made."""
+def enqueue(question_id: str, *, queued_by: str = "", batch_id: str = "", voice: str = "",
+            priority: int = 0) -> dict[str, Any]:
+    """Queue one item's video unless it is already made or being made.
+    `priority`: higher renders sooner (a bought paper's videos: 10)."""
     from . import job_queue
 
     q = load(question_id)
@@ -541,7 +543,8 @@ def enqueue(question_id: str, *, queued_by: str = "", batch_id: str = "", voice:
         JOB_KIND, str(link.get("grade") or ""), str(link.get("subject") or ""),
         # artifact_id keys the duplicate check: two items in one sub-strand
         # are two videos, not one queued twice.
-        {"artifact_id": question_id, "question_id": question_id, "voice": voice},
+        {"artifact_id": question_id, "question_id": question_id, "voice": voice,
+         **({"priority": str(int(priority))} if priority else {})},
         strand=str(link.get("strand") or ""), sub_strand=str(link.get("sub_strand") or ""),
         batch_id=batch_id, queued_by=queued_by or "whiteboard")
     job_queue.start_worker()

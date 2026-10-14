@@ -267,11 +267,16 @@ def buy(draft_id: str, auth: AuthContext = Depends(ANY)) -> dict[str, Any]:
     from ..services import billing, exam_drafts
 
     row = exam_drafts.get(draft_id, _owner(auth))
+    items = list(exam_drafts.paper_for(row).items)
     try:
-        out = billing.buy_paper(auth.subject, auth.role, list(exam_drafts.paper_for(row).items), ref=draft_id)
+        out = billing.buy_paper(auth.subject, auth.role, items, ref=draft_id)
     except billing.PaymentRequired as exc:
         raise_api_error("PAYMENT_REQUIRED", str(exc), detail=exc.detail())
     out.pop("lines", None)
+    # What they bought, they can watch: its videos are made first in the queue.
+    from ..services import my_videos
+
+    out["videos_queued"] = my_videos.queue_missing_soon([str(q.get("question_id")) for q in items], by=auth.subject)
     return out
 
 
