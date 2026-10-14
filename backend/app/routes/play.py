@@ -21,7 +21,7 @@ from ..services.auth import AuthContext, require_roles
 logger = logging.getLogger("cbc-play")
 router = APIRouter(prefix="/api/v1/play", tags=["Play"])
 
-ANY = require_roles("admin", "operator", "reviewer", "developer", "user")
+ANY = require_roles("admin", "operator", "reviewer", "developer", "user", "poster")
 _HIDDEN = ("needs_review", "rejected", "superseded")
 
 
@@ -157,7 +157,10 @@ def _may_make_videos(auth: AuthContext) -> None:
     raw = platform_settings.get("video_makers", ["gidraf"]) or []
     names = raw if isinstance(raw, list) else str(raw).replace(";", ",").split(",")
     makers = {str(m).strip().lower() for m in names if str(m).strip()}
-    if auth.role == "admin" or str(auth.subject or "").lower() in makers:
+    # Trusted by name: so a video maker's name can never be signed up for
+    # by someone else (routes/auth.py refuses it), and a developer's "api"
+    # account is never one.
+    if auth.role == "admin" or (auth.role != "api" and str(auth.subject or "").lower() in makers):
         return
     raise_api_error("FORBIDDEN", "Only an admin or a named video maker can make videos for now.")
 
@@ -996,7 +999,10 @@ def poster_mac_link(request: Request, payload: MacLinkRequest | None = None,
     from ..infra.db import execute
     from ..services import platform_settings, poster_installer
 
+    from ..services import rate_limit
+
     _may_make_videos(auth)
+    rate_limit.hit("link_owner", auth.subject)
     minutes = (payload or MacLinkRequest()).minutes
     token = secrets.token_urlsafe(24)
     execute("""INSERT INTO download_links (token, what, params, created_by, expires_at)
@@ -1033,7 +1039,8 @@ def poster_mac_installer(token: str, request: Request) -> Response:
         raise_api_error("NOT_FOUND", f"{exc} Mount the repo's poster/ folder into the API container (docker-compose.yml).")
     execute("UPDATE download_links SET used_at = NOW() WHERE token = :token AND used_at IS NULL", {"token": token})
     maker = AuthContext(subject=str(row.get("created_by") or "link"), role="operator", auth_type="link")
-    key = _mint_key(maker, label="poster on another Mac (link)")
+    # The poster's own role: the poster endpoints, nothing else in the platform.
+    key = _mint_key(maker, label="poster on another Mac (link)", role="poster")
     body = poster_installer.build(src, platform_settings.public_base_url(request), api_key=key)
     return Response(body, media_type="application/octet-stream", headers={
         "Content-Disposition": f'attachment; filename="{poster_installer.FILENAME}"', "Cache-Control": "no-store"})

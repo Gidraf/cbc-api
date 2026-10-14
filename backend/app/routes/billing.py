@@ -46,9 +46,14 @@ def topup(payload: TopUp, request: Request, auth: AuthContext = Depends(SIGNED_I
     """Send an M-Pesa PIN prompt to the phone. Poll /topup/{id} for the result."""
     from ..services import billing, mpesa, platform_settings
 
+    from ..services import rate_limit
+
     p = billing.prices()
     if not p.min_topup <= payload.amount <= p.max_topup:
         raise_api_error("VALIDATION_FAILED", f"Top up between KSh {p.min_topup} and KSh {p.max_topup}.")
+    # A prompt lands on someone's phone: never a flood, from one account or to one number.
+    rate_limit.hit("topup_owner", auth.subject)
+    rate_limit.hit("topup_phone", mpesa.phone(payload.phone) or payload.phone[:20])
     try:
         return mpesa.stk_push(owner=auth.subject, phone_number=payload.phone, amount=payload.amount,
                               callback_base=platform_settings.public_base_url(request))

@@ -268,7 +268,7 @@ def download_by_link(token: str, request: Request) -> Any:
                     headers={"Content-Disposition": f'attachment; filename="{stem}.zip"'})
 
 
-def _mint_key(auth: AuthContext, *, label: str) -> str:
+def _mint_key(auth: AuthContext, *, label: str, role: str = "operator") -> str:
     """An operator key for a kit, filed like one made on the keys page."""
     import hashlib
     import secrets
@@ -279,10 +279,10 @@ def _mint_key(auth: AuthContext, *, label: str) -> str:
     execute(
         """
         INSERT INTO api_keys (key_id, key_hash, user_id, role, label, is_active, created_at)
-        VALUES (:kid, :khash, :uid, 'operator', :label, TRUE, NOW())
+        VALUES (:kid, :khash, :uid, :role, :label, TRUE, NOW())
         """,
         {"kid": f"key_{secrets.token_hex(6)}", "khash": hashlib.sha256(raw_key.encode("utf-8")).hexdigest(),
-         "uid": auth.subject, "label": label},
+         "uid": auth.subject, "label": label, "role": role},
     )
     logger.info("Kit key minted by %s: %s", auth.subject, label)
     return raw_key

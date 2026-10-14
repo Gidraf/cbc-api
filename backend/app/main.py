@@ -55,11 +55,32 @@ app = FastAPI(title="CBC API Platform", version="2.1.0", description="Contract-F
 
 app.add_middleware(
     CORSMiddleware,
+    # Any site may call the API from a browser, but never with cookies: the
+    # API signs in by header (Bearer or X-API-Key), so a page elsewhere gets
+    # nothing a visitor's browser holds.
     allow_origins=["*"],
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def _security_headers(request, call_next):
+    """The headers every response carries, whatever route made it."""
+    response = await call_next(request)
+    h = response.headers
+    h.setdefault("X-Content-Type-Options", "nosniff")
+    h.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    h.setdefault("X-Frame-Options", "SAMEORIGIN")
+    h.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=()")
+    h.setdefault("Cross-Origin-Opener-Policy", "same-origin")
+    if request.headers.get("x-forwarded-proto", request.url.scheme) == "https":
+        h.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+    path = request.url.path
+    if path.startswith(("/api/v1/auth", "/api/v1/billing")):
+        h["Cache-Control"] = "no-store"     # tokens, keys and balances never sit in a cache
+    return response
 
 # Mount Modular Feature Routers
 @app.middleware("http")
@@ -302,6 +323,24 @@ def _bootstrap_default_stage_bindings() -> None:
 def startup() -> None:
     try:
         run_migrations()
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Migrations failed at startup: %s", exc)
+    try:
+        from .services import secrets_guard
+
+        secrets_guard.ensure()
+    except Exception as exc:  # noqa: BLE001
+        # Never run with a signing secret anyone can read: a random one for
+        # this process (sessions end at the next restart) beats a forgeable one.
+        import secrets as _secrets
+
+        from .services.secrets_guard import jwt_weak
+        from .settings import settings as _settings
+
+        if jwt_weak(_settings.jwt_secret):
+            _settings.jwt_secret = _secrets.token_urlsafe(48)
+        logger.error("Secret check failed at startup (%s): using a one-off signing secret.", exc)
+    try:
         from .services import log_store
 
         log_store.install("api")

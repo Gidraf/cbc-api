@@ -31,24 +31,33 @@ def cli():
 
 @cli.command("reset-admin-password")
 @click.option("--username", default="admin", help="Admin username to reset")
-@click.option("--password", default=None, help="New password (generates random if omitted)")
-def reset_admin_password(username: str, password: str | None):
-    """Resets the password for an admin account directly in PostgreSQL."""
+@click.option("--password", default=None, help="New password (a random one if omitted — better: it stays out of your shell history)")
+@click.option("--role", default="", help="Give the account this role too (a new account is an admin)")
+def reset_admin_password(username: str, password: str | None, role: str):
+    """Sets an account's password in PostgreSQL and switches it on. An
+    existing account keeps its role unless --role is given."""
+    from app.state import KNOWN_WEAK, MIN_BUILTIN_PASSWORD
+
     run_migrations()
-    new_pwd = password or secrets.token_urlsafe(12)
+    new_pwd = password or secrets.token_urlsafe(18)
+    if len(new_pwd) < MIN_BUILTIN_PASSWORD or new_pwd.lower() in KNOWN_WEAK:
+        raise click.ClickException(f"Use {MIN_BUILTIN_PASSWORD}+ characters and not a default — or leave --password out.")
+    if role and role not in ("admin", "operator", "reviewer", "developer", "user", "api"):
+        raise click.ClickException("Unknown role.")
     pwd_hash = hash_password(new_pwd)
 
     execute(
         """
         INSERT INTO app_users (username, password_plain, password_hash, role, is_active, updated_at)
-        VALUES (:uname, '', :phash, 'admin', TRUE, NOW())
+        VALUES (:uname, '', :phash, :role, TRUE, NOW())
         ON CONFLICT (username) DO UPDATE SET
+            password_plain = '',
             password_hash = EXCLUDED.password_hash,
-            role = 'admin',
+            role = CASE WHEN :keep THEN app_users.role ELSE EXCLUDED.role END,
             is_active = TRUE,
             updated_at = NOW()
         """,
-        {"uname": username, "phash": pwd_hash},
+        {"uname": username, "phash": pwd_hash, "role": role or "admin", "keep": not role},
     )
 
     click.secho(f"✓ Password successfully reset for user '{username}':", fg="green", bold=True)

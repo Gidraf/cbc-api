@@ -108,6 +108,8 @@ ERRORS = {
     "VALIDATION_FAILED": (400, False),
     # The wallet cannot pay for this (services/billing.py); nothing was charged.
     "PAYMENT_REQUIRED": (402, False),
+    # Too many tries in a short time (services/rate_limit.py).
+    "RATE_LIMITED": (429, True),
 }
 
 

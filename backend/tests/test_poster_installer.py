@@ -60,12 +60,14 @@ def test_the_link_is_one_use_and_only_for_the_poster(monkeypatch):
     rows = {"tok": {"token": "tok", "what": "poster", "created_by": "gidraf", "used_at": None, "expires_at": None}}
     monkeypatch.setattr(db, "fetch_one", lambda sql, p=None: rows.get(p["token"]) if "what = 'poster'" in sql else None)
     monkeypatch.setattr(db, "execute", lambda sql, p=None: rows["tok"].update(used_at="now") if "used_at = NOW()" in sql else None)
-    monkeypatch.setattr(agent, "_mint_key", lambda auth, label: "cbc_live_minted")
+    minted = {}
+    monkeypatch.setattr(agent, "_mint_key", lambda auth, label, role="operator": minted.update(role=role) or "cbc_live_minted")
     monkeypatch.setenv("POSTER_SRC", str(POSTER))
     c = TestClient(app)
     r = c.get("/api/v1/play/poster/mac-installer/tok")
     assert r.status_code == 200 and b'CBC_API_KEY="cbc_live_minted"' in r.content
     assert "cbc-poster-installer.command" in r.headers["content-disposition"]
+    assert minted["role"] == "poster"            # the poster's own role, not an operator's
     assert c.get("/api/v1/play/poster/mac-installer/tok").status_code == 404     # used
     assert c.get("/api/v1/play/poster/mac-installer/nope").status_code == 404
 

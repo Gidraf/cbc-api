@@ -8,7 +8,9 @@ x-backend-build: &backend-build
 
 x-backend-env: &backend-env
   DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
-  CBC_MASTER_KEY: ${CBC_MASTER_KEY:-u8iP_EgFrh50kABm2MvxAfv5mN53uV8SQEgrMwJwztw=}
+  # Encrypts the saved provider keys. Set it in .env (deploy/harden.sh makes one
+  # and moves the saved keys to it); there is no default.
+  CBC_MASTER_KEY: ${CBC_MASTER_KEY:-}
   REDIS_URL: redis://redis:6379/0
   POSTER_URL: http://social-poster:6090
   POSTER_TOKEN: ${POSTER_TOKEN:-}
@@ -81,13 +83,16 @@ x-backend-env: &backend-env
   QUEUE_NAME: ${QUEUE_NAME:-generation_jobs}
   REGENERATION_QUEUE_NAME: ${REGENERATION_QUEUE_NAME:-regeneration_jobs}
   RESULT_TTL_SECONDS: ${RESULT_TTL_SECONDS:-86400}
-  JWT_SECRET: ${JWT_SECRET:-change-this-jwt-secret}
+  # Missing or weak, the API makes a strong one and keeps it in the database.
+  JWT_SECRET: ${JWT_SECRET:-}
   JWT_EXP_MINUTES: ${JWT_EXP_MINUTES:-480}
-  ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin123}
-  OPERATOR_PASSWORD: ${OPERATOR_PASSWORD:-operator123}
-  REVIEWER_PASSWORD: ${REVIEWER_PASSWORD:-reviewer123}
-  DEVELOPER_PASSWORD: ${DEVELOPER_PASSWORD:-developer123}
-  DEVELOPER_API_KEY: ${DEVELOPER_API_KEY:-cbc_live_dev_key_example}
+  # Optional, 12+ characters: sets that built-in account's password at start.
+  # No defaults — an account still on an old default password is switched off.
+  ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
+  OPERATOR_PASSWORD: ${OPERATOR_PASSWORD:-}
+  REVIEWER_PASSWORD: ${REVIEWER_PASSWORD:-}
+  DEVELOPER_PASSWORD: ${DEVELOPER_PASSWORD:-}
+  DEVELOPER_API_KEY: ${DEVELOPER_API_KEY:-}
 
 x-backend-depends: &backend-depends
   redis:
@@ -120,7 +125,9 @@ services:
       # repointed without rebuilding the image.
       API_PROXY_TARGET: ${API_PROXY_TARGET:-http://api:8000}
     ports:
-      - "5173:5173"
+      # The host's nginx serves the site; the port is not open to the internet.
+      # (CONSOLE_BIND=0.0.0.0 in .env opens it, if you ever need that.)
+      - "${CONSOLE_BIND:-127.0.0.1}:5173:5173"
     depends_on:
       api:
         condition: service_started
@@ -131,7 +138,7 @@ services:
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000
     environment: *backend-env
     ports:
-      - "8000:8000"
+      - "${API_BIND:-127.0.0.1}:8000:8000"
     volumes:
       # The Mac poster's code, read-only, so "Set up another Mac" in the
       # console downloads exactly what this checkout runs (POSTER_SRC).
@@ -276,7 +283,8 @@ services:
       TELEMETRY_ENABLED: "false"
       LANGFUSE_ENABLE_EXPERIMENTAL_FEATURES: "true"
     ports:
-      - "3001:3000"
+      # Langfuse's own login is the only thing in front of it: local unless asked.
+      - "${LANGFUSE_BIND:-127.0.0.1}:3001:3000"
     restart: unless-stopped
 
   # The browser poster (poster/): a real browser the owner logs into through

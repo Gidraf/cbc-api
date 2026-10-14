@@ -149,7 +149,7 @@ export function SignIn() {
 
         <p style={{ fontSize: "var(--text-xs)", color: "var(--ink-3)" }}>
           Lost the admin password? Reset it from the server with{" "}
-          <code>cbc-cli reset-admin-password</code>.
+          <code>docker compose exec api python -m app.admin_tools reset-password</code>.
         </p>
       </div>
     </div>

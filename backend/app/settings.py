@@ -90,23 +90,13 @@ class Settings:
         email.strip() for email in os.getenv("EMAIL_RECIPIENTS", "admin@cbc-platform.ke").split(",") if email.strip()
     ]
 
-    user_accounts = {
-        "admin": {
-            "password": os.getenv("ADMIN_PASSWORD", "admin123"),
-            "role": "admin",
-        },
-        "operator": {
-            "password": os.getenv("OPERATOR_PASSWORD", "operator123"),
-            "role": "operator",
-        },
-        "reviewer": {
-            "password": os.getenv("REVIEWER_PASSWORD", "reviewer123"),
-            "role": "reviewer",
-        },
-        "developer": {
-            "password": os.getenv("DEVELOPER_PASSWORD", "developer123"),
-            "role": "developer",
-        },
+    # The built-in accounts. A password comes from the environment only and
+    # must be strong; none has a default (state.harden_users).
+    builtin_accounts = {
+        "admin": ("ADMIN_PASSWORD", "admin"),
+        "operator": ("OPERATOR_PASSWORD", "operator"),
+        "reviewer": ("REVIEWER_PASSWORD", "reviewer"),
+        "developer": ("DEVELOPER_PASSWORD", "developer"),
     }
 
 

@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import hashlib
+import re
 import secrets
 from typing import Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel
 
 from ..errors import raise_api_error
@@ -47,8 +48,14 @@ class CreateApiKeyRequest(BaseModel):
 
 
 @router.post("/login")
-def login(payload: LoginRequest) -> dict[str, Any]:
+def login(payload: LoginRequest, request: Request) -> dict[str, Any]:
+    from ..services import rate_limit
+
+    who = payload.username.strip().lower()[:64]
+    rate_limit.hit("login_ip", rate_limit.client_ip(request))
+    rate_limit.hit("login_user", who)
     context = authenticate_login(payload.username, payload.password)
+    rate_limit.clear("login_user", who)
     access_token = create_access_token(context.subject, context.role)
     refresh_token = create_refresh_token(context.subject)
 
@@ -66,11 +73,41 @@ def login(payload: LoginRequest) -> dict[str, Any]:
     }
 
 
+USERNAME = re.compile(r"^[a-z0-9][a-z0-9._-]{2,31}$")
+MIN_PASSWORD = 10
+# Names a stranger must never take: the built-in accounts, the people the
+# platform trusts by name (video makers), and anything that reads as staff.
+RESERVED = {"admin", "administrator", "operator", "reviewer", "developer", "root", "system", "support", "staff",
+            "cbc", "api", "poster", "developer_api_key", "link", "security", "billing", "mpesa"}
+
+
+def _reserved(name: str) -> bool:
+    from ..services import platform_settings
+
+    raw = platform_settings.get("video_makers", ["gidraf"]) or []
+    makers = raw if isinstance(raw, list) else str(raw).replace(";", ",").split(",")
+    return name in RESERVED or name in {str(m).strip().lower() for m in makers}
+
+
 @router.post("/register")
-def register(payload: RegisterRequest) -> dict[str, Any]:
-    existing = fetch_one("SELECT username FROM app_users WHERE username = :uname", {"uname": payload.username})
-    if existing:
-        raise_api_error("UNAUTHORIZED_ACCESS", "Username is already registered")
+def register(payload: RegisterRequest, request: Request) -> dict[str, Any]:
+    from ..services import rate_limit
+    from ..state import KNOWN_WEAK
+
+    rate_limit.hit("register_all", "*")
+    rate_limit.hit("register_ip", rate_limit.client_ip(request))
+
+    name = payload.username.strip().lower()
+    if not USERNAME.match(name):
+        raise_api_error("VALIDATION_FAILED", "A username is 3–32 letters, numbers, dots, dashes or underscores.")
+    if len(payload.password) < MIN_PASSWORD or payload.password.lower() in KNOWN_WEAK or payload.password.lower() == name:
+        raise_api_error("VALIDATION_FAILED", f"Choose a password of {MIN_PASSWORD} characters or more that is not your username.")
+    if len(payload.password) > 128:
+        raise_api_error("VALIDATION_FAILED", "Passwords are 128 characters at most.")
+    existing = fetch_one("SELECT username FROM app_users WHERE LOWER(username) = :uname", {"uname": name})
+    if existing or _reserved(name):
+        raise_api_error("VALIDATION_FAILED", "That username is taken. Choose another.")
+    payload.username = name
 
     pwd_hash = hash_password(payload.password)
     execute(
@@ -96,8 +133,10 @@ def register(payload: RegisterRequest) -> dict[str, Any]:
 @router.post("/refresh")
 def refresh_token_endpoint(payload: RefreshRequest) -> dict[str, Any]:
     username = verify_and_consume_refresh_token(payload.refresh_token)
-    user_row = fetch_one("SELECT username, role FROM app_users WHERE username = :uname", {"uname": username})
-    role = user_row["role"] if user_row else "developer"
+    user_row = fetch_one("SELECT username, role, is_active FROM app_users WHERE username = :uname", {"uname": username})
+    if not user_row or not user_row.get("is_active", True):
+        raise_api_error("UNAUTHORIZED_ACCESS", "This account is not active. Sign in again.")
+    role = user_row["role"]
 
     new_access_token = create_access_token(username, role)
     new_refresh_token = create_refresh_token(username)

@@ -16,7 +16,15 @@ from ..services.auth import AuthContext, require_roles
 
 router = APIRouter(prefix="/api/v1/content", tags=["Content API"])
 
-DEVELOPER = require_roles("api", "developer", "admin", "operator")
+_ROLE = require_roles("api", "developer", "admin", "operator")
+
+
+def DEVELOPER(auth: AuthContext = Depends(_ROLE)) -> AuthContext:  # noqa: N802 — used as a dependency like the others
+    """A developer's call: the role, then the per-minute limit."""
+    from ..services import rate_limit
+
+    rate_limit.hit("content_key", auth.subject)
+    return auth
 
 GUIDE = """
 Questions written for Kenya's **Competency-Based Curriculum (CBC)**, from Grade 1 to Grade 12. Each one
@@ -85,6 +93,7 @@ maths9 = [row for row in tree if row["grade"] == "grade-9" and row["subject"] ==
 * A call is free while you are under **both** free limits. Past either, each question it returns is
   charged to your wallet: a call that returns 20 text questions costs KSh 30.
 * `GET /curriculum` and `GET /usage` are always free and never counted.
+* At most **120 calls a minute** per account; past that the API answers 429 for a moment.
 * Top up your wallet with **M-Pesa** (below). When it runs out, paid calls answer **402** and nothing is
   charged.
 * Questions do not change often: **store what you fetch** (by `id`) and you pay for a question once.
@@ -186,6 +195,7 @@ person:
 | 403 | `FORBIDDEN` | This key's account may not use the content API. |
 | 404 | `NOT_FOUND` | No such question (or it was withdrawn). |
 | 400 | `VALIDATION_FAILED` | A filter has a value the API does not know. |
+| 429 | `RATE_LIMITED` | More than 120 calls in a minute. Wait `errors[0].detail.retry_after_seconds` and retry. |
 
 ```python
 r = requests.get(f"{BASE}/questions", headers=HEADERS, params={"grade": "Grade 9"}, timeout=30)

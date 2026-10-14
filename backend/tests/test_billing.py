@@ -218,12 +218,18 @@ def test_nobody_signs_up_into_the_factory(monkeypatch):
     from app.main import app
     from app.routes import auth as auth_routes
 
+    from app.services import platform_settings, rate_limit
+
+    rate_limit.reset_all()
     made = []
     monkeypatch.setattr(auth_routes, "fetch_one", lambda sql, p=None: None)
     monkeypatch.setattr(auth_routes, "execute", lambda sql, p=None: made.append(p["role"]))
+    monkeypatch.setattr(platform_settings, "get", lambda k, d=None: ["gidraf"] if k == "video_makers" else d)
     c = TestClient(app)
     for asked in ("reviewer", "developer", "admin", "operator", "user", "api", ""):
-        c.post("/api/v1/auth/register", json={"username": f"u{asked}", "password": "pw", "role": asked})
+        rate_limit.reset_all()                 # five sign-ups an hour from one address
+        c.post("/api/v1/auth/register", json={"username": f"person-{asked or 'none'}", "password": "a long passphrase",
+                                              "role": asked})
     assert made == ["user", "api", "user", "user", "user", "api", "user"]
 
 
@@ -333,6 +339,10 @@ def test_a_developer_who_signed_up_can_actually_sign_in():
     from app.main import app
     from app.services.auth import create_access_token
 
+    from app.services import auth as auth_service
+
     token = create_access_token("devtest", "api")
+    auth_service._ACCOUNT_CACHE["devtest"] = (10**12, {"username": "devtest", "role": "api", "is_active": True})
     r = TestClient(app).get("/api/v1/auth/me", headers={"Authorization": f"Bearer {token}"})
+    auth_service._ACCOUNT_CACHE.pop("devtest", None)
     assert r.status_code == 200 and r.json()["role"] == "api"

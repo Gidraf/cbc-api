@@ -67,6 +67,31 @@ export default defineConfig(({ mode }) => {
       host: "0.0.0.0",
       port: 5173,
       proxy,
+      // The deployed console's headers. Scripts only from this site and the
+      // KaTeX CDN the paper previews load (their onload handler is inline,
+      // hence 'unsafe-inline' for scripts — no other site can run code here);
+      // nothing may frame the console but itself.
+      headers: {
+        "Content-Security-Policy": [
+          "default-src 'self'",
+          "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net",
+          "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com",
+          "font-src 'self' data: https://cdn.jsdelivr.net https://fonts.gstatic.com",
+          "img-src 'self' data: blob: https:",
+          "media-src 'self' blob: https:",
+          "connect-src 'self'",
+          "frame-src 'self' blob: data:",
+          "worker-src 'self' blob:",
+          "object-src 'none'",
+          "base-uri 'self'",
+          "form-action 'self'",
+          "frame-ancestors 'self'",
+        ].join("; "),
+        "X-Content-Type-Options": "nosniff",
+        "Referrer-Policy": "strict-origin-when-cross-origin",
+        "X-Frame-Options": "SAMEORIGIN",
+        "Permissions-Policy": "camera=(), microphone=(), geolocation=(), payment=()",
+      },
     },
     build: {
       // Source maps make a production stack trace readable without shipping a

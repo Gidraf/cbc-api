@@ -141,7 +141,7 @@ def test_the_kit_route_mints_a_key_only_for_admins_and_operators() -> None:
     source = inspect.getsource(agent.download_pack)
     assert 'if auth.role not in ("admin", "operator")' in source
     assert "_mint_key(auth, label=" in source
-    assert "'operator'" in inspect.getsource(agent._mint_key), "a kit key is an operator key, never admin"
+    assert 'role: str = "operator"' in inspect.getsource(agent._mint_key), "a kit key is an operator key, never admin"
 
 
 def test_a_kit_link_is_one_use_short_lived_and_needs_no_key_to_fetch() -> None:

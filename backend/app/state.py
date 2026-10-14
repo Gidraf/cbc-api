@@ -56,7 +56,13 @@ class RuntimeState:
         if env_key:
             key_bytes = env_key.encode("utf-8")
         else:
-            key_bytes = Fernet.generate_key()
+            # Unset: the key docker-compose.yml used to supply, so keys saved
+            # with it still read — services/secrets_guard.py reports it as
+            # weak and deploy/harden.sh moves them to a key of your own. A
+            # fresh random key here would make every saved key unreadable.
+            from .services.secrets_guard import PUBLISHED_MASTER_KEY
+
+            key_bytes = PUBLISHED_MASTER_KEY.encode("utf-8")
 
         self._fernet = Fernet(key_bytes)
         self.provider_credentials: dict[str, ProviderCredential] = {
@@ -71,13 +77,6 @@ class RuntimeState:
         }
         self.stage_bindings: dict[str, StageBinding] = {}
         self.run_registry: dict[str, dict] = {}
-        self.user_accounts = {
-            username: {
-                "password": details.get("password", ""),
-                "role": details.get("role", "developer"),
-            }
-            for username, details in settings.user_accounts.items()
-        }
 
         if settings.openai_api_key:
             self.save_api_key(Provider.OPENAI.value, settings.openai_api_key)
@@ -145,29 +144,13 @@ class RuntimeState:
         )
 
     def sync_users_from_env(self) -> None:
-        for username, details in self.user_accounts.items():
-            execute(
-                """
-                INSERT INTO app_users (username, password_plain, role, is_active, updated_at)
-                VALUES (:username, :password_plain, :role, TRUE, NOW())
-                ON CONFLICT (username)
-                DO UPDATE SET
-                    password_plain = EXCLUDED.password_plain,
-                    role = EXCLUDED.role,
-                    updated_at = NOW()
-                """,
-                {
-                    "username": username,
-                    "password_plain": details.get("password", ""),
-                    "role": details.get("role", "developer"),
-                },
-            )
+        """Kept for the callers that run it at startup: see harden_users."""
+        harden_users()
 
     def load_from_db(self) -> None:
         self._load_provider_configs()
         self._load_stage_bindings()
         self._load_pipeline_runs()
-        self._load_user_accounts()
 
     def _load_provider_configs(self) -> None:
         provider_rows = fetch_all("SELECT provider, base_url, encrypted_api_key, credential_ref_id, ollama_models FROM provider_configs")
@@ -234,19 +217,6 @@ class RuntimeState:
                 "updated_at": str(row.get("updated_at")),
             }
 
-    def _load_user_accounts(self) -> None:
-        user_rows = fetch_all("SELECT username, password_plain, role FROM app_users WHERE is_active = TRUE")
-        if not user_rows:
-            return
-
-        self.user_accounts = {
-            row["username"]: {
-                "password": row.get("password_plain", ""),
-                "role": row.get("role", "developer"),
-            }
-            for row in user_rows
-        }
-
     @staticmethod
     def _parse_json(value: object, fallback: object):
         if isinstance(value, str):
@@ -301,3 +271,76 @@ class RuntimeState:
 
 
 runtime_state = RuntimeState()
+
+
+# ── accounts ─────────────────────────────────────────────────────────────────
+
+# Passwords this code once shipped as defaults, and the obvious ones: an
+# account still using one is switched off at startup.
+KNOWN_WEAK = {"admin123", "operator123", "reviewer123", "developer123", "admin", "password", "changeme",
+              "change-me", "12345678", "123456789", "password123", "qwerty123"}
+MIN_BUILTIN_PASSWORD = 12
+
+
+def harden_users() -> dict[str, list[str]]:
+    """At every start: no account keeps a plain-text password, no built-in
+    account gets a default one, and an account still using a known default
+    is switched off. What happened is logged and returned (names only).
+
+    * Plain-text passwords are hashed with bcrypt and the text is wiped.
+    * ADMIN_PASSWORD (and OPERATOR_, REVIEWER_, DEVELOPER_) set to a strong
+      value — 12 characters or more, not a known default — sets that
+      account's password. Unset, the account is left as it is: set its
+      password with `docker compose exec api python -m app.admin_tools reset-password --username <name>`.
+    * An account whose password is a known default is switched off.
+    """
+    import logging
+    import os
+
+    from .infra.db import execute, fetch_all
+    from .services.auth import hash_password, verify_password
+
+    log = logging.getLogger("cbc-security")
+    done: dict[str, list[str]] = {"hashed": [], "set_from_env": [], "switched_off": [], "weak_env": []}
+
+    for row in fetch_all("SELECT username, password_plain, password_hash FROM app_users "
+                         "WHERE COALESCE(password_plain, '') <> ''") or []:
+        if not str(row.get("password_hash") or "").startswith("$2"):
+            execute("UPDATE app_users SET password_hash = :h, password_plain = '', updated_at = NOW() WHERE username = :u",
+                    {"h": hash_password(str(row["password_plain"])), "u": row["username"]})
+        else:
+            execute("UPDATE app_users SET password_plain = '', updated_at = NOW() WHERE username = :u",
+                    {"u": row["username"]})
+        done["hashed"].append(row["username"])
+
+    for username, (env_name, role) in settings.builtin_accounts.items():
+        wanted = os.getenv(env_name, "")
+        if wanted and (len(wanted) < MIN_BUILTIN_PASSWORD or wanted.lower() in KNOWN_WEAK):
+            done["weak_env"].append(env_name)
+            wanted = ""
+        if wanted:
+            execute("""INSERT INTO app_users (username, password_plain, password_hash, role, is_active, updated_at)
+                       VALUES (:u, '', :h, :r, TRUE, NOW())
+                       ON CONFLICT (username) DO UPDATE SET password_plain = '', password_hash = EXCLUDED.password_hash,
+                           role = EXCLUDED.role, is_active = TRUE, updated_at = NOW()""",
+                    {"u": username, "h": hash_password(wanted), "r": role})
+            done["set_from_env"].append(username)
+
+    # Staff accounts only (a handful): bcrypt is slow on purpose, and public
+    # sign-ups meet the password rule when they register.
+    for row in fetch_all("""SELECT username, password_hash FROM app_users WHERE is_active = TRUE
+                            AND role IN ('admin', 'operator', 'reviewer', 'developer')""") or []:
+        stored = str(row.get("password_hash") or "")
+        if stored and any(verify_password(weak, stored) for weak in KNOWN_WEAK):
+            execute("UPDATE app_users SET is_active = FALSE, updated_at = NOW() WHERE username = :u",
+                    {"u": row["username"]})
+            done["switched_off"].append(row["username"])
+
+    for name in done["weak_env"]:
+        log.error("%s is too weak (12+ characters, not a default) and was ignored.", name)
+    for name in done["switched_off"]:
+        log.error("Account %r used a known default password and is switched off. Give it a new one: "
+                  "docker compose exec api python -m app.admin_tools reset-password --username %s", name, name)
+    if done["hashed"]:
+        log.warning("Hashed %d plain-text password(s).", len(done["hashed"]))
+    return done
