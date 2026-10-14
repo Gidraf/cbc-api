@@ -35,6 +35,7 @@ const NAV: { group: string; items: NavItem[] }[] = [
       { to: "/play", label: "Play", icon: "▶", right: "build", hint: "Every question as a game, a simulator and a narrated walkthrough" },
       { to: "/classroom", label: "Online tests", icon: "✓", right: "build", hint: "Your class takes a paper on their phones; each gets their own random questions" },
       { to: "/my-questions", label: "My questions", icon: "✍", right: "build", hint: "Write your own questions for your papers and tests" },
+      { to: "/my-videos", label: "My videos", icon: "🎬", right: "build", hint: "Every question you bought, as a narrated whiteboard video" },
       { to: "/questions", label: "Question bank", icon: "?", right: "read", hint: "Every approved item, in curriculum order" },
       { to: "/exams", label: "Exam builder", icon: "▦", right: "read", hint: "Compose and print papers" },
       { to: "/diagrams", label: "Diagram library", icon: "◈", right: "read", hint: "Reusable visuals and their parts" },

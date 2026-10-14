@@ -1051,7 +1051,10 @@ function PrintSection({ d, params, save }: { d: ExamDraft; params: Record<string
       <BuyCard d={d} />
       {!locked && (d.items || []).length > 0 && (
         <Card title="Take it online" description="Your class answers this paper on their phones, each with their own random questions; it is marked as they hand in.">
-          <a href={`/classroom?draft=${encodeURIComponent(d.draft_id)}`}><Button>Make an online test from this paper</Button></a>
+          <Stack direction="row" gap="var(--s2)" wrap>
+            <a href={`/classroom?draft=${encodeURIComponent(d.draft_id)}`}><Button>Make an online test from this paper</Button></a>
+            <a href={`/my-videos?draft=${encodeURIComponent(d.draft_id)}`}><Button variant="ghost">🎬 Watch this paper as videos</Button></a>
+          </Stack>
         </Card>
       )}
       <OwnLinesCard d={d} save={save} frozen={frozen} />

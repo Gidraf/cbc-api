@@ -351,6 +351,12 @@ def _render_limit() -> int:
 
 
 _RENDERS = "('social', 'video')"
+def _priority(table: str) -> str:
+    """A job's priority (payload.priority, a whole number; 0 when absent)."""
+    return (f"(CASE WHEN {table}.payload->>'priority' ~ '^[0-9]{{1,4}}$' "
+            f"THEN ({table}.payload->>'priority')::int ELSE 0 END)")
+
+
 _FREE_SCOPE = f"""
     (
         jobs.kind IN {_RENDERS}
@@ -368,6 +374,16 @@ _FREE_SCOPE = f"""
         jobs.kind NOT IN {_RENDERS}
         OR (SELECT COUNT(*) FROM jobs rendering WHERE rendering.status = 'running'
             AND rendering.kind IN {_RENDERS} AND rendering.job_id <> jobs.job_id) < {_render_limit()}
+    )
+    AND (
+        -- A render waits while a more urgent one is queued: a video someone
+        -- bought a paper for goes before the daily batch.
+        jobs.kind NOT IN {_RENDERS}
+        OR NOT EXISTS (
+            SELECT 1 FROM jobs urgent
+            WHERE urgent.status = 'queued' AND urgent.kind IN {_RENDERS} AND urgent.job_id <> jobs.job_id
+              AND {_priority('urgent')} > {_priority('jobs')}
+        )
     )
 """
 
@@ -403,10 +419,10 @@ def _claim() -> dict[str, Any] | None:
         WHERE job_id = (
             SELECT job_id FROM jobs
             WHERE status = 'queued' AND %s
-            ORDER BY created_at ASC FOR UPDATE SKIP LOCKED LIMIT 1
+            ORDER BY %s DESC, created_at ASC FOR UPDATE SKIP LOCKED LIMIT 1
         )
         RETURNING *
-        """ % _FREE_SCOPE
+        """ % (_FREE_SCOPE, _priority("jobs"))
     )
 
 
