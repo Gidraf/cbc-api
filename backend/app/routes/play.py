@@ -842,6 +842,113 @@ def book_social(payload: BookAhead, auth: AuthContext = Depends(ANY)) -> dict[st
         return {}
 
 
+# ── photo cards ──────────────────────────────────────────────────────────────
+
+def _card_states(q: dict[str, Any]) -> dict[str, Any]:
+    from ..services import social_cards
+
+    out = {}
+    for step in social_cards.STEPS:
+        st = social_cards.status(str(q["question_id"]), step, q)
+        out[step] = {"status": st["status"], "url": st.get("url")}
+    return out
+
+
+@router.get("/social/cards")
+def social_cards_library(grade: str = Query(...), subject: str = Query(...), sub_strand: str = Query(""),
+                         limit: int = Query(40, ge=1, le=120), auth: AuthContext = Depends(ANY)) -> dict[str, Any]:
+    """Each question in a scope with its three cards — teaser, question,
+    answer — made or not, with a preview of each that is."""
+    from ..infra.db import fetch_all
+
+    _may_make_videos(auth)
+    pool = _bank(grade, subject, sub_strand, limit)
+    ids = [str(q.get("question_id")) for q in pool]
+    busy = {r["q"] for r in (fetch_all("""SELECT payload->>'artifact_id' AS q FROM jobs WHERE kind = 'social_card'
+                                          AND status IN ('queued', 'running') AND payload->>'artifact_id' = ANY(:ids)""",
+                                       {"ids": ids}) or [])}
+    items = []
+    for q in pool:
+        try:
+            cards = _card_states(q)
+        except Exception as exc:  # noqa: BLE001
+            logger.info("Cards of %s: %s", q.get("question_id"), exc)
+            continue
+        made = sum(1 for c in cards.values() if c["status"] == "ready")
+        items.append({"question_id": q.get("question_id"), "question_text": str(q.get("question_text") or "")[:200],
+                      "sub_strand": (q.get("curriculum") or {}).get("sub_strand"), "has_figure": _has_figure(q),
+                      "cards": cards, "status": "ready" if made == 3 else "making" if q.get("question_id") in busy
+                      else "partial" if made else "none"})
+    return {"items": items, "ready": sum(1 for i in items if i["status"] == "ready")}
+
+
+class MakeCards(BaseModel):
+    grade: str
+    subject: str
+    sub_strand: str = ""
+    limit: int = Field(default=40, ge=1, le=200)
+    figures_only: bool = False
+
+
+@router.post("/social/cards")
+def make_social_cards(payload: MakeCards, auth: AuthContext = Depends(ANY)) -> dict[str, Any]:
+    """Make the cards the questions in a scope do not have yet."""
+    from ..services import social_cards
+
+    _may_make_videos(auth)
+    pool = _bank(payload.grade, payload.subject, payload.sub_strand, payload.limit)
+    if payload.figures_only:
+        pool = [q for q in pool if _has_figure(q)]
+    counts: dict[str, int] = {}
+    for q in pool:
+        try:
+            st = social_cards.enqueue(str(q["question_id"]), queued_by=str(getattr(auth, "subject", "") or "cards"))
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Could not queue the cards of %s: %s", q.get("question_id"), exc)
+            st = {"status": "failed"}
+        counts[st.get("status", "failed")] = counts.get(st.get("status", "failed"), 0) + 1
+    return {"counts": counts}
+
+
+@router.post("/items/{question_id}/cards")
+def make_question_cards(question_id: str, auth: AuthContext = Depends(ANY)) -> dict[str, Any]:
+    from ..services import social_cards
+
+    _may_make_videos(auth)
+    return social_cards.enqueue(question_id, queued_by=str(getattr(auth, "subject", "") or "cards"))
+
+
+@router.get("/social/photo-posts")
+def photo_posts(days_back: int = Query(3, ge=0, le=60), limit: int = Query(200, ge=1, le=1000),
+                auth: AuthContext = Depends(ANY)) -> dict[str, Any]:
+    """The photo posts: what is booked from now on, and what went out lately —
+    each with its card's preview, its time and how it went."""
+    from ..infra.db import fetch_all
+    from ..services import social_cards
+
+    _may_make_videos(auth)
+    rows = fetch_all("""SELECT p.post_id, p.question_id, p.platform, p.step, p.scheduled_for, p.posted_at, p.status,
+                               p.attempts, p.last_error, p.url, LEFT(COALESCE(q.content->>'question_text', ''), 160) AS question_text
+                        FROM social_posts p LEFT JOIN question_dna q ON q.question_id = p.question_id
+                        WHERE p.format = 'photo' AND (p.posted_at IS NULL OR p.posted_at > NOW() - make_interval(days => :d))
+                        ORDER BY COALESCE(p.posted_at, p.scheduled_for) LIMIT :n""", {"d": days_back, "n": limit}) or []
+    loaded: dict[str, dict[str, Any]] = {}
+    out = []
+    for r in rows:
+        qid = str(r["question_id"])
+        try:
+            if qid not in loaded:
+                loaded[qid] = _one(qid)
+            card = social_cards.status(qid, str(r["step"]), loaded[qid])
+        except Exception:  # noqa: BLE001
+            card = {"status": "none"}
+        out.append({**{k: (v.isoformat() if hasattr(v, "isoformat") else v) for k, v in r.items()},
+                    "card_status": card["status"], "card_url": card.get("url")})
+    upcoming = [p for p in out if not p["posted_at"]]
+    return {"posts": out, "upcoming": len(upcoming), "posted": len(out) - len(upcoming),
+            "cards_missing": sum(1 for p in upcoming if p["card_status"] != "ready")}
+
+
 class BookSeries(BaseModel):
     grade: str
     subject: str
