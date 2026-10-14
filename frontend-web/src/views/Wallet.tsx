@@ -1,9 +1,9 @@
 import React from "react";
 import { Badge, Button, Card, ErrorNotice, Field, Input, LoadingBlock, PageHeader, Stack, Stat, Table, useToast } from "../ui/components";
-import { useTopUp, useTopUpStatus, useWallet } from "../lib/queries";
+import { usePlan, useSubscribe, useTopUp, useTopUpStatus, useWallet } from "../lib/queries";
 
 const KIND_LABEL: Record<string, string> = {
-  topup: "M-Pesa top-up", paper: "Paper", api: "API calls", admin: "Added by CBC", refund: "Refund",
+  topup: "M-Pesa top-up", paper: "Paper", api: "API calls", admin: "Added by CBC", refund: "Refund", plan: "Video plan",
 };
 
 function ksh(n: number) {
@@ -29,6 +29,7 @@ export function Wallet() {
               sub="a text question · a diagram question, paid once each" />
       </div>
       <TopUp min={w.prices.topup.min_ksh} max={w.prices.topup.max_ksh} ready={w.topups_ready} note={w.topups_note} />
+      {!w.exempt && <PlanCard balance={w.balance_ksh} />}
       <Card title="History" description="Every top-up and every charge.">
         {w.entries.length ? (
           <Table caption="Wallet history">
@@ -110,6 +111,34 @@ export function TopUp({ min, max, ready, note, suggested }: { min: number; max: 
           )}
         </form>
       )}
+    </Card>
+  );
+}
+
+
+/** The video plan: every video (streamed), and every question's games and walkthroughs. */
+function PlanCard({ balance }: { balance: number }) {
+  const plan = usePlan();
+  const subscribe = useSubscribe();
+  const toast = useToast();
+  const p = plan.data;
+  if (!p || !p.on_sale) return null;
+  const until = p.until ? new Date(p.until).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" }) : "";
+  async function go() {
+    try {
+      const out = await subscribe.mutateAsync();
+      toast(`Video plan on until ${new Date(out.until).toLocaleDateString()}.`, "ok");
+    } catch (err) { toast(err instanceof Error ? err.message : "Could not start the plan.", "danger"); }
+  }
+  return (
+    <Card title={p.active ? `Video plan — on until ${until}` : `Video plan — KSh ${p.price_ksh} for ${p.days} days`}
+          description="Every question's whiteboard video, game and animated walkthrough — watched here, not downloaded.">
+      <Stack direction="row" gap="var(--s2)" align="center" wrap>
+        <Button variant={p.active ? "ghost" : "primary"} loading={subscribe.isPending} disabled={balance < p.price_ksh} onClick={go}>
+          {p.active ? `Add ${p.days} more days (KSh ${p.price_ksh})` : `Start it — KSh ${p.price_ksh}`}
+        </Button>
+        {balance < p.price_ksh && <span style={{ color: "var(--ink-3)", fontSize: "var(--text-sm)" }}>Top up first: the wallet has KSh {balance}.</span>}
+      </Stack>
     </Card>
   );
 }

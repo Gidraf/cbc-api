@@ -413,6 +413,14 @@ def next_for_poster(now: datetime | None = None, *, platform: str = "", post_id:
                 st = social.status(chosen["question_id"])
                 if st.get("status") == "ready":
                     break
+                if st.get("status") == "none":
+                    # Its video is out of date (the item or the board changed
+                    # since it was made) or was never made: make it now, so
+                    # the post goes out on a later look instead of never.
+                    try:
+                        social.enqueue(chosen["question_id"], queued_by="poster")
+                    except Exception as exc:  # noqa: BLE001
+                        logger.warning("Could not queue the video for %s: %s", chosen["question_id"], exc)
                 waiting += 1
             candidates = [c for c in candidates if c["post_id"] != chosen["post_id"]]
             chosen = None

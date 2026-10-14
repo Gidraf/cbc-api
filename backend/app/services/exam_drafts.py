@@ -430,6 +430,11 @@ def live(row: dict[str, Any], sub_strand: str) -> dict[str, Any]:
 
 # ── the paper as it stands ──────────────────────────────────────────────────
 
+def owner_subject(row: dict[str, Any]) -> str:
+    """The account a draft belongs to ("user:amina" -> "amina")."""
+    return str(row.get("owner") or "").split(":", 1)[-1]
+
+
 def paper_for(row: dict[str, Any]) -> Any:
     """The draft as a Paper: the snapshot's sections, the bank's items, the
     builder's corrections laid over them."""
@@ -439,10 +444,15 @@ def paper_for(row: dict[str, Any]) -> Any:
     ids = [str(i.get("question_id")) for i in (row.get("items") or []) if isinstance(i, dict)]
     overrides = {str(i.get("question_id")): dict(i.get("overrides") or {}) for i in (row.get("items") or [])
                  if isinstance(i, dict)}
+    from . import user_questions
+
+    owner = owner_subject(row)
     questions = []
     for qid in ids:
         try:
-            q = question_rows.flatten(question_dna_service.get_question(qid))
+            # The account's own questions load for that account only; anyone
+            # else's id is simply not on the paper.
+            q = user_questions.load(qid, owner)
         except Exception:  # noqa: BLE001
             continue
         q = {**q, **{k: v for k, v in overrides.get(qid, {}).items() if k in EDITABLE and v is not None}}
@@ -531,7 +541,7 @@ def make_versions(draft_id: str, *, versions: int = 2, mode: str = "shuffle", ow
 def items_detail(row: dict[str, Any]) -> list[dict[str, Any]]:
     """Every item on the draft with its DNA: the bank row, the corrections,
     the engine's working, the checks' verdict, and who wrote it."""
-    from . import question_check, question_rows, solution_builder
+    from . import question_check, question_rows, solution_builder, user_questions
     from .question_dna import question_dna_service
 
     out = []
@@ -541,11 +551,17 @@ def items_detail(row: dict[str, Any]) -> list[dict[str, Any]]:
             continue
         qid = str(entry.get("question_id"))
         try:
-            stored = question_dna_service.get_question(qid)
+            if user_questions.is_own(qid):
+                public = user_questions.get(owner_subject(row), qid)
+                stored = {"status": "own", "version": 1, "curriculum_link": public.get("curriculum") or {},
+                          "pedagogical_dna": public.get("pedagogy") or {}, "provenance": {"written_by": "you"},
+                          "review_audit": {}}
+            else:
+                stored = question_dna_service.get_question(qid)
+                public = question_rows.flatten(stored)
         except Exception:  # noqa: BLE001
             out.append({"question_id": qid, "missing": True})
             continue
-        public = question_rows.flatten(stored)
         shown = {**public, **{k: v for k, v in (entry.get("overrides") or {}).items() if k in EDITABLE}}
         worked = solution_builder.build(shown)
         try:
@@ -696,6 +712,8 @@ def freeze(draft_id: str, *, created_by: str, base: str, owner: str = "") -> dic
         if not isinstance(entry, dict) or not entry.get("overrides"):
             continue
         qid = str(entry.get("question_id"))
+        if qid.startswith("uq-"):
+            continue                        # an account's own question never goes into the bank
         try:
             stored = question_dna_service.get_question(qid)
             content = {**(stored.get("content") or {}),

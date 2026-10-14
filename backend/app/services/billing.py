@@ -164,13 +164,10 @@ def entries(owner: str, limit: int = 50) -> list[dict[str, Any]]:
 # ── papers ───────────────────────────────────────────────────────────────────
 
 def _owned(owner: str, question_ids: list[str]) -> set[str]:
-    from ..infra.db import fetch_all
+    """Paid for, or written by the account itself (never charged)."""
+    from .entitlements import owned_ids
 
-    if not question_ids:
-        return set()
-    rows = fetch_all("SELECT question_id FROM question_purchases WHERE owner = :o AND question_id = ANY(:ids)",
-                     {"o": owner, "ids": list(question_ids)}) or []
-    return {r["question_id"] for r in rows}
+    return owned_ids(owner, list(question_ids))
 
 
 def free_used(owner: str) -> int:

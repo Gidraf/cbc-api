@@ -23,27 +23,37 @@ _RANGE = re.compile(r"bytes=(\d*)-(\d*)")
 
 @router.get("/{bucket}/{object_path:path}")
 def asset(bucket: str, object_path: str, request: Request) -> Response:
-    from ..infra.storage import object_storage
-
     if bucket != settings.minio_bucket or ".." in object_path:
         return Response(status_code=404)
+    out = serve_object(object_path, request.headers.get("range", ""), cache="public, max-age=86400")
+    if out is not None:
+        return out
+    # A video moved to Google Drive: a link already posted somewhere
+    # keeps working.
+    from ..services import drive_store
+
+    moved = drive_store.record(object_path)
+    if moved and moved.get("url"):
+        return Response(status_code=302, headers={"Location": str(moved["url"])})
+    return Response(status_code=404)
+
+
+def serve_object(object_path: str, range_header: str, *, cache: str, extra: dict[str, str] | None = None) -> Response | None:
+    """One stored object, with byte ranges (a video can be scrubbed), or
+    None when the server does not have it (it may have moved to Drive)."""
+    from ..infra.storage import object_storage
+
+    bucket = settings.minio_bucket
     client = object_storage._get_client()
     try:
         stat = client.stat_object(bucket, object_path)
     except Exception:  # noqa: BLE001
-        # A video moved to Google Drive: a link already posted somewhere
-        # keeps working.
-        from ..services import drive_store
-
-        moved = drive_store.record(object_path)
-        if moved and moved.get("url"):
-            return Response(status_code=302, headers={"Location": str(moved["url"])})
-        return Response(status_code=404)
+        return None
     size = int(stat.size)
     media = stat.content_type or mimetypes.guess_type(object_path)[0] or "application/octet-stream"
-    headers = {"Accept-Ranges": "bytes", "Cache-Control": "public, max-age=86400"}
+    headers = {"Accept-Ranges": "bytes", "Cache-Control": cache, **(extra or {})}
     start, end, status = 0, size - 1, 200
-    match = _RANGE.match(request.headers.get("range", ""))
+    match = _RANGE.match(range_header or "")
     if match and size:
         a, b = match.groups()
         start = int(a) if a else max(0, size - int(b or 0))

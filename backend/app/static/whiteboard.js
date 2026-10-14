@@ -358,6 +358,109 @@
       cursorY = y + 20;
       return { at, y };
     },
+    figure(s, at, dur) {
+      // The item's own figure, drawn by the marker: every line traced as a
+      // teacher would draw it, then the shading and the labels. It sits at
+      // the top of a fresh page and stays there while the working is
+      // written underneath.
+      const parsed = new DOMParser().parseFromString(String(s.svg || ""), "image/svg+xml");
+      const src = parsed.documentElement;
+      if (!src || src.nodeName.toLowerCase() !== "svg" || parsed.getElementsByTagName("parsererror").length) return { at };
+      // A drawing only: nothing that runs, nothing fetched from outside.
+      src.querySelectorAll("script, foreignObject, iframe").forEach((n) => n.remove());
+      for (const n of [src, ...src.querySelectorAll("*")]) {
+        for (const a of [...n.attributes]) {
+          const v = a.value.trim().toLowerCase();
+          if (/^on/i.test(a.name) || (/href$/i.test(a.name) && !(v.startsWith("#") || v.startsWith("data:image/")))) n.removeAttribute(a.name);
+        }
+      }
+      at = newPage(at); cursorY = 110;
+      const fig = document.importNode(src, true);
+      // Ids made unique, so two figures (or the board's own defs) never clash.
+      const tag = `f${clipN++}_`;
+      for (const n of fig.querySelectorAll("[id]")) n.id = tag + n.id;
+      for (const n of [fig, ...fig.querySelectorAll("*")]) {
+        for (const a of [...n.attributes]) {
+          if (a.value.includes("url(#")) n.setAttribute(a.name, a.value.replace(/url\(#/g, `url(#${tag}`));
+          else if (/href$/i.test(a.name) && a.value.startsWith("#")) n.setAttribute(a.name, "#" + tag + a.value.slice(1));
+        }
+      }
+      let vb = (fig.getAttribute("viewBox") || "").trim().split(/[\s,]+/).map(Number);
+      if (vb.length !== 4 || vb.some((v) => !isFinite(v)) || vb[2] <= 0 || vb[3] <= 0) {
+        const w = parseFloat(fig.getAttribute("width")) || 600, h = parseFloat(fig.getAttribute("height")) || 400;
+        vb = [0, 0, w, h];
+        fig.setAttribute("viewBox", vb.join(" "));
+      }
+      const boxW = W - 2 * LEFT, boxH = 470, top = 80;
+      const k = Math.min(boxW / vb[2], boxH / vb[3]);
+      const fw = vb[2] * k, fh = vb[3] * k;
+      fig.setAttribute("x", (W - fw) / 2); fig.setAttribute("y", top);
+      fig.setAttribute("width", fw); fig.setAttribute("height", fh);
+      fig.setAttribute("preserveAspectRatio", "xMidYMid meet");
+      fig.removeAttribute("style");
+      page.appendChild(fig);
+
+      // Where a point of the figure is on the board, for the hand.
+      const toBoard = (node) => {
+        const own = node.getScreenCTM(), board = svg.getScreenCTM();
+        const m = own && board ? board.inverse().multiply(own) : new DOMMatrix();
+        return (x, y) => { const p = new DOMPoint(x, y).matrixTransform(m); return { x: p.x, y: p.y, tilt: 0 }; };
+      };
+      const hidden = "defs, clipPath, marker, pattern, mask, symbol, linearGradient, radialGradient, filter";
+      const marks = [...fig.querySelectorAll("path, line, polyline, polygon, rect, circle, ellipse, text, image")]
+        .filter((n) => !n.closest(hidden) && !(n.parentNode && n.parentNode.closest && n.parentNode.closest("text")));
+      const area = vb[2] * vb[3];
+      const jobs = [];
+      for (const n of marks) {
+        const cs = getComputedStyle(n);
+        if (cs.display === "none" || cs.visibility === "hidden") continue;
+        const name = n.nodeName.toLowerCase();
+        if (name === "rect") {
+          // The figure's own background: there from the start, not drawn.
+          const b = n.getBBox();
+          if (b.width * b.height >= area * 0.8) {
+            if (/^rgb\(255, 255, 255\)$/.test(cs.fill)) n.style.fill = "transparent";  // the board shows through
+            continue;
+          }
+        }
+        const stroked = cs.stroke !== "none" && parseFloat(cs.strokeWidth) > 0 && name !== "text" && name !== "image";
+        const dashed = cs.strokeDasharray && cs.strokeDasharray !== "none";
+        let len = 0;
+        if (stroked && !dashed && typeof n.getTotalLength === "function") { try { len = n.getTotalLength(); } catch (e) { len = 0; } }
+        const filled = cs.fill !== "none" && name !== "line" && parseFloat(cs.fillOpacity) > 0;
+        jobs.push({ n, name, len, filled, fillOpacity: cs.fillOpacity, weight: len > 0 ? Math.max(0.12, Math.sqrt(len * k) / 22) : 0.18 });
+      }
+      // Long figures are drawn quicker, never past the narration.
+      const budget = dur * 0.85, total = jobs.reduce((a, j) => a + j.weight, 0) || 1;
+      const scale = Math.min(1, budget / total);
+      for (const j of jobs) {
+        const d = j.weight * scale, n = j.n;
+        if (j.len > 0) {
+          const len = j.len, map = toBoard(n);
+          n.style.strokeDasharray = `${len} ${len}`;
+          n.style.strokeDashoffset = `${len}`;
+          n.style.opacity = 0;
+          tl.set(n, { opacity: 1 }, at);
+          if (j.filled) n.style.fillOpacity = 0;
+          const o = { t: 0 };
+          tl.to(o, { t: 1, duration: d, ease: "power1.inOut", onUpdate() { n.style.strokeDashoffset = `${len * (1 - o.t)}`; } }, at);
+          track.push({ t0: at, t1: at + d, at(q) { const p = n.getPointAtLength(len * ease(q)); return map(p.x, p.y); } });
+          if (j.filled) {
+            const f = { v: 0 }, to = parseFloat(j.fillOpacity) || 1;
+            tl.to(f, { v: to, duration: 0.25, onUpdate() { n.style.fillOpacity = f.v; } }, at + d * 0.7);
+          }
+        } else {
+          // A label, a shaded shape or a dashed line: the hand goes to it and it appears.
+          let b; try { b = n.getBBox(); } catch (e) { b = { x: 0, y: 0, width: 0, height: 0 }; }
+          const map = toBoard(n), a = map(b.x, b.y + b.height * 0.8), z = map(b.x + b.width, b.y + b.height * 0.8);
+          track.push({ t0: at, t1: at + d, at(q) { return { x: a.x + (z.x - a.x) * q, y: a.y + (z.y - a.y) * q, tilt: 0 }; } });
+          show(n, at, Math.max(0.12, d));
+        }
+        at += d;
+      }
+      cursorY = top + fh + 56;
+      return { at };
+    },
     working(s, at, dur) {
       // A line of the item's own solution, written as the voice reads it.
       const lines = wrap(s.text, Math.round(54 / ZOOM)).slice(0, 4);

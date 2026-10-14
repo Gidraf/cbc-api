@@ -36,10 +36,11 @@ def db(monkeypatch):
     engine = create_engine(DB)
     monkeypatch.setattr(infra, "get_engine", lambda: engine)
     monkeypatch.setattr(platform_settings, "_load", lambda: {})
-    sql = dict(infra.MIGRATIONS)["049_billing"]
     with engine.begin() as c:
-        c.execute(text("DROP TABLE IF EXISTS wallets, wallet_entries, mpesa_payments, question_purchases, api_usage"))
-        c.execute(text(sql))
+        c.execute(text("DROP TABLE IF EXISTS wallets, wallet_entries, mpesa_payments, question_purchases, api_usage, "
+                       "subscriptions, user_questions, online_tests, test_attempts"))
+        for name in ("049_billing", "050_classroom"):     # owning a question reads both
+            c.execute(text(dict(infra.MIGRATIONS)[name]))
     yield engine
     engine.dispose()
 

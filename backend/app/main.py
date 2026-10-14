@@ -39,6 +39,7 @@ from .routes.pipelines import router as pipelines_router
 from .routes.math import router as math_router
 from .routes.billing import router as billing_router
 from .routes.content import router as content_router
+from .routes.classroom import public as tests_public_router, router as classroom_router, watch as watch_router
 from .services.auth import AuthContext, authenticate_login, create_access_token, get_auth_context, require_roles
 from .services.browser_agent import browse_page
 from .services.metrics import metrics_service
@@ -123,6 +124,9 @@ app.include_router(pipelines_router)
 app.include_router(math_router)
 app.include_router(billing_router)
 app.include_router(content_router)
+app.include_router(classroom_router)
+app.include_router(tests_public_router)
+app.include_router(watch_router)
 
 router = ProviderRouter(runtime_state)
 pipeline_service = PipelineService(router)

@@ -1,4 +1,5 @@
 import React from "react";
+import { useAuth } from "../lib/auth";
 import gsap from "gsap";
 import {
   Badge,
@@ -55,6 +56,8 @@ import {
   useMakeVideos,
   useVideoLibrary,
   useVideoStatus,
+  usePlan,
+  useWatchLink,
   useVoices,
   useWalkthroughHtml,
   useWhiteboardHtml,
@@ -111,6 +114,10 @@ export function PlayArcade() {
 
   const subStrands = ((structure.data?.strands || []) as any[]).flatMap((s) => (s.sub_strands || []).map((x: any) => x.sub_strand_name || x.name));
   const counts = items.data?.counts || {};
+  const { role } = useAuth();
+  // Staff run the factory's tools here; a parent's or teacher's account plays and watches.
+  const staff = role === "admin" || role === "operator" || role === "reviewer" || role === "developer";
+  const lockedCount = (items.data?.items || []).filter((it) => it.locked).length;
 
   return (
     <>
@@ -151,30 +158,32 @@ export function PlayArcade() {
       {grade && (items.data?.items || []).length === 0 && !items.isLoading && (
         <EmptyState title="Nothing playable here yet" description="Write questions for this topic in the Exam studio; every item with a calculation becomes a game." />
       )}
+      {!staff && lockedCount > 0 && <PlanBanner locked={lockedCount} />}
       {(items.data?.items || []).length > 0 && (
         <Card title={`${items.data!.items.length} playable items`}>
           {items.data!.items.map((it) => (
-            <div key={it.question_id} style={{ display: "flex", gap: "var(--s2)", alignItems: "center", padding: "6px 0", borderBottom: "1px solid var(--line-2)", fontSize: "var(--text-sm)" }}>
-              <Badge tone="info">{KIND_ICON[it.kind]} {KIND_LABEL[it.kind]}</Badge>
+            <div key={it.question_id} style={{ display: "flex", gap: "var(--s2)", alignItems: "center", padding: "6px 0", borderBottom: "1px solid var(--line-2)", fontSize: "var(--text-sm)", opacity: it.locked ? 0.6 : 1 }}>
+              <Badge tone={it.locked ? "neutral" : "info"}>{it.locked ? "🔒" : KIND_ICON[it.kind]} {KIND_LABEL[it.kind]}</Badge>
               <span style={{ flex: 1, minWidth: 0 }}>{plain(it.question_text).slice(0, 140)}</span>
               <span style={{ color: "var(--ink-3)", fontSize: "var(--text-xs)" }}>{it.sub_strand}</span>
-              <Button size="sm" onClick={() => playOne(it.question_id)}>Play</Button>
-              <Button size="sm" variant="ghost" onClick={() => setWatching(it.question_id)}>✎ Whiteboard</Button>
+              <Button size="sm" disabled={it.locked} title={it.locked ? "Buy a paper with it, or take the video plan" : undefined}
+                      onClick={() => playOne(it.question_id)}>Play</Button>
+              <Button size="sm" variant="ghost" disabled={it.locked} onClick={() => setWatching(it.question_id)}>✎ Whiteboard</Button>
             </div>
           ))}
         </Card>
       )}
 
-      {grade && (items.data?.items || []).length > 0 && (
+      {staff && grade && (items.data?.items || []).length > 0 && (
         <VideoLibrary grade={grade} subject={subject} subStrand={subStrand} open={showLibrary}
                       onToggle={() => setShowLibrary((v) => !v)} onWatch={(qid) => setWatching(qid)} />
       )}
 
-      {grade && (items.data?.items || []).length > 0 && (
+      {staff && grade && (items.data?.items || []).length > 0 && (
         <SocialLibrary grade={grade} subject={subject} subStrand={subStrand} topics={subStrands} onWatch={(qid) => setSocialWatch(qid)} />
       )}
-      {grade && <Performance grade={grade} subject={subject} subStrand={subStrand} />}
-      <AutoPost />
+      {staff && grade && <Performance grade={grade} subject={subject} subStrand={subStrand} />}
+      {staff && <AutoPost />}
 
       {playing && <Round items={playing} onClose={() => setPlaying(null)} onWatch={(qid) => setWatching(qid)} />}
       {watching && <WatchModal questionId={watching} onClose={() => setWatching(null)} />}
@@ -650,13 +659,62 @@ function SocialLibrary({ grade, subject, subStrand, topics, onWatch }: {
   );
 }
 
-/** The item's MP4: make it, watch it, download it. */
+/** For a parent's or teacher's account: what the video plan opens, and the way to it. */
+function PlanBanner({ locked }: { locked: number }) {
+  const plan = usePlan();
+  const p = plan.data;
+  return (
+    <Card>
+      <Stack direction="row" gap="var(--s3)" align="center" wrap style={{ fontSize: "var(--text-sm)" }}>
+        <span style={{ flex: 1, minWidth: 220 }}>
+          🔒 {locked} question(s) here are locked. A question opens — game, walkthrough, answers — once it is on a paper you bought,
+          or when you wrote it yourself{p?.on_sale ? `. The video plan (KSh ${p.price_ksh} for ${p.days} days) opens them all, with every video.` : "."}
+        </span>
+        {p?.on_sale && <a href="/wallet"><Button size="sm" variant="primary">See the video plan</Button></a>}
+      </Stack>
+    </Card>
+  );
+}
+
+/** Streams a video in the page: a short-lived link, no download, no picture-in-picture. */
+function StreamedVideo({ questionId }: { questionId: string }) {
+  const link = useWatchLink();
+  const toast = useToast();
+  const [src, setSrc] = React.useState("");
+  React.useEffect(() => {
+    let alive = true;
+    link.mutateAsync(questionId).then((out) => { if (alive) setSrc(out.stream_url); })
+      .catch((err) => toast(err instanceof Error ? err.message : "Could not open the video.", "danger"));
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [questionId]);
+  if (!src) return <span style={{ color: "var(--ink-3)", fontSize: "var(--text-xs)" }}>Opening the video…</span>;
+  return (
+    <video src={src} controls autoPlay controlsList="nodownload noplaybackrate" disablePictureInPicture disableRemotePlayback
+           onContextMenu={(e) => e.preventDefault()}
+           style={{ flexBasis: "100%", width: "100%", borderRadius: "var(--radius)", background: "#000" }} />
+  );
+}
+
+/** The item's MP4: make it, watch it, download it (staff) — or stream it (the video plan). */
 function VideoControl({ questionId, voice = "" }: { questionId: string; voice?: string }) {
   const video = useVideoStatus(questionId, voice);
   const make = useMakeVideo();
   const toast = useToast();
   const [show, setShow] = React.useState(false);
   const v = video.data;
+  const { role } = useAuth();
+  const staff = role === "admin" || role === "operator" || role === "reviewer" || role === "developer";
+  if (v && !staff) {
+    if (v.status !== "ready") return <span style={{ color: "var(--ink-3)", fontSize: "var(--text-xs)" }}>No video for this one yet.</span>;
+    if (!v.watch) return <span style={{ color: "var(--ink-3)", fontSize: "var(--text-xs)" }}>🎬 Its video comes with the video plan (Wallet).</span>;
+    return (
+      <>
+        <Button size="sm" variant="ghost" onClick={() => setShow((x) => !x)}>{show ? "Hide video" : "▶ Watch the video"}</Button>
+        {show && <StreamedVideo questionId={questionId} />}
+      </>
+    );
+  }
   async function start() {
     try { await make.mutateAsync({ questionId, voice }); toast("Video queued — it is drawn and voiced in the worker.", "ok"); }
     catch (err) { toast(err instanceof Error ? err.message : "Could not queue the video.", "danger"); }

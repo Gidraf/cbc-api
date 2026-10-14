@@ -4002,7 +4002,7 @@ export function usePlayItems(grade: string, subject: string, subStrand: string) 
     queryFn: () => {
       const qs = new URLSearchParams({ grade, subject });
       if (subStrand) qs.set("sub_strand", subStrand);
-      return api<{ items: { question_id: string; question_text: string; sub_strand: string; kind: PlayKind; also_choice: boolean; key_agrees: boolean | null; status: string }[]; counts: Record<string, number> }>(
+      return api<{ items: { question_id: string; question_text: string; sub_strand: string; kind: PlayKind; also_choice: boolean; key_agrees: boolean | null; status: string; locked?: boolean }[]; counts: Record<string, number> }>(
         `/api/v1/play/items?${qs}`);
     },
     enabled: Boolean(grade && subject),
@@ -4061,6 +4061,8 @@ export type VideoState = {
   question_id: string; key: string; scenes: number;
   status: "ready" | "queued" | "running" | "failed" | "none" | "skipped";
   url?: string; job_id?: string; error?: string; question_text?: string;
+  /** For a parent's or teacher's account: whether it may stream the video (the video plan). */
+  watch?: boolean;
 };
 
 /** One item's MP4: polls while it is being made. */
@@ -4738,3 +4740,149 @@ export function useBuyDraft() {
 
 export const useDraftVersions = draftMutation<{ draft_id: string; versions: number; mode: "shuffle" | "fresh" }>(
   (v) => `/api/v1/builder/drafts/${v.draft_id}/versions`, "POST", (v) => ({ versions: v.versions, mode: v.mode }));
+
+// ── Phase 2: the video plan, own questions, online tests ─────────────────────
+
+export type PlanStatus = { on_sale: boolean; price_ksh: number; days: number; active: boolean; staff: boolean; until: string | null };
+
+export function usePlan() {
+  const api = useApi();
+  return useQuery({ queryKey: ["plan"], queryFn: () => api<PlanStatus>("/api/v1/classroom/plan") });
+}
+
+export function useSubscribe() {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api<{ until: string; charged_ksh: number }>("/api/v1/classroom/plan", { method: "POST" }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["plan"] });
+      qc.invalidateQueries({ queryKey: ["wallet"] });
+      qc.invalidateQueries({ queryKey: ["play-items"] });
+      qc.invalidateQueries({ queryKey: ["video"] });
+    },
+  });
+}
+
+/** A short-lived link that streams one video in the page. */
+export function useWatchLink() {
+  const api = useApi();
+  return useMutation({
+    mutationFn: (questionId: string) =>
+      api<{ stream_url: string; expires_in: number }>(`/api/v1/play/items/${encodeURIComponent(questionId)}/watch`),
+  });
+}
+
+export type OwnQuestion = {
+  question_id: string; question_text: string; question_type: string; stimulus_context?: string;
+  options: { id: string; text: string; is_correct: boolean }[]; correct_answer: string; marking_scheme: string;
+  model_answer: string; curriculum: { grade?: string; subject?: string; strand?: string; sub_strand?: string };
+  pedagogy: { max_marks?: number }; updated_at?: string;
+};
+export type OwnQuestionInput = {
+  question_text: string; question_type: string; stimulus_context?: string;
+  options: { text: string; is_correct: boolean }[]; correct_answer: string; marking_scheme: string; model_answer: string;
+  marks: number; grade: string; subject: string; strand?: string; sub_strand?: string;
+};
+
+export function useMyQuestions() {
+  const api = useApi();
+  return useQuery({ queryKey: ["my-questions"], queryFn: () => api<{ items: OwnQuestion[] }>("/api/v1/classroom/questions").then((r) => r.items) });
+}
+
+export function useSaveMyQuestion() {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { id?: string; body: OwnQuestionInput }) =>
+      api<OwnQuestion>(v.id ? `/api/v1/classroom/questions/${encodeURIComponent(v.id)}` : "/api/v1/classroom/questions",
+                       { method: v.id ? "PUT" : "POST", body: JSON.stringify(v.body) }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["my-questions"] }),
+  });
+}
+
+export function useDeleteMyQuestion() {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api(`/api/v1/classroom/questions/${encodeURIComponent(id)}`, { method: "DELETE" }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["my-questions"] }),
+  });
+}
+
+export function useAddToPaper() {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { draft_id: string; question_ids: string[] }) =>
+      api<{ draft_id: string; items: number }>("/api/v1/classroom/questions/to-paper", { method: "POST", body: JSON.stringify(v) }),
+    onSuccess: (_d, v) => {
+      qc.invalidateQueries({ queryKey: ["drafts"] });
+      qc.invalidateQueries({ queryKey: ["draft", v.draft_id] });
+      qc.invalidateQueries({ queryKey: ["draft-items", v.draft_id] });
+      qc.invalidateQueries({ queryKey: ["draft-quote", v.draft_id] });
+    },
+  });
+}
+
+export type OnlineTest = {
+  test_id: string; title: string; code: string; per_student: number; minutes: number; show_answers: string;
+  shuffle_options: boolean; status: "open" | "closed"; pool_size: number; created_at: string; closes_at: string | null;
+  draft_id: string; started: number; handed_in: number;
+};
+
+export function useTests() {
+  const api = useApi();
+  return useQuery({ queryKey: ["tests"], queryFn: () => api<{ tests: OnlineTest[] }>("/api/v1/classroom/tests").then((r) => r.tests) });
+}
+
+export function useCreateTest() {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { draft_id: string; title?: string; per_student: number; minutes: number; show_answers: string;
+                      shuffle_options: boolean; days_open: number }) =>
+      api<OnlineTest>("/api/v1/classroom/tests", { method: "POST", body: JSON.stringify(v) }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["tests"] }),
+  });
+}
+
+export type TestResults = {
+  test: OnlineTest;
+  attempts: { attempt_id: string; name: string; score: number; out_of: number; late: boolean; submitted: boolean;
+              to_mark: { question_id: string; given: string; out_of: number }[] }[];
+  questions: Record<string, { question: string; answer: string; marking_scheme: string; marks: number }>;
+};
+
+export function useTestResults(testId: string) {
+  const api = useApi();
+  return useQuery({
+    queryKey: ["test-results", testId],
+    queryFn: () => api<TestResults>(`/api/v1/classroom/tests/${encodeURIComponent(testId)}/results`),
+    enabled: Boolean(testId),
+    refetchInterval: 15_000,
+  });
+}
+
+export function useMarkAnswer() {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { test_id: string; attempt_id: string; question_id: string; score: number }) =>
+      api(`/api/v1/classroom/tests/${encodeURIComponent(v.test_id)}/mark`, { method: "POST",
+          body: JSON.stringify({ attempt_id: v.attempt_id, question_id: v.question_id, score: v.score }) }),
+    onSuccess: (_d, v) => qc.invalidateQueries({ queryKey: ["test-results", v.test_id] }),
+  });
+}
+
+export function useTestAction() {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { test_id: string; action: "open" | "closed" | "delete" }) =>
+      v.action === "delete"
+        ? api(`/api/v1/classroom/tests/${encodeURIComponent(v.test_id)}`, { method: "DELETE" })
+        : api(`/api/v1/classroom/tests/${encodeURIComponent(v.test_id)}/status`, { method: "POST", body: JSON.stringify({ status: v.action }) }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["tests"] }),
+  });
+}

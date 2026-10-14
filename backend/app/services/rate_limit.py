@@ -28,6 +28,9 @@ LIMITS: dict[str, tuple[int, int]] = {
     "topup_phone": (3, 10 * 60),        # prompts one phone may receive
     "content_key": (120, 60),           # developer API calls, per account
     "link_owner": (10, 60 * 60),        # install links made
+    "test_start_ip": (150, 10 * 60),    # students opening tests from one address (a whole class shares one)
+    "test_code_ip": (60, 10 * 60),      # test codes looked up: no guessing them
+    "watch_owner": (300, 60 * 60),      # video links handed out
 }
 
 
