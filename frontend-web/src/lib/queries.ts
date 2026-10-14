@@ -4443,6 +4443,27 @@ export type BookingPlan = {
 };
 
 /** Keep the next weeks booked for the poster (dry: preview only). */
+export type SeriesPlan = {
+  booked: boolean; platform: string; first_day: string | null; last_day: string | null; photos: number; videos: number;
+  questions: number; days: { date: string; times: string[] }[]; notes: string[];
+};
+
+/** Days of series: "Can you solve this?" card, question, answer, then the walkthrough. */
+export function useBookSeries() {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { grade: string; subject: string; sub_strand?: string; days: number; photos: number; videos: number; dry: boolean }) =>
+      api<SeriesPlan>("/api/v1/play/social/book-series", { method: "POST", body: JSON.stringify({ ...v, platform: "facebook" }) }),
+    onSuccess: (_, v) => {
+      if (!v.dry) {
+        qc.invalidateQueries({ queryKey: ["poster"] });
+        qc.invalidateQueries({ queryKey: ["social-posts"] });
+      }
+    },
+  });
+}
+
 export function useBookAhead() {
   const api = useApi();
   const qc = useQueryClient();

@@ -61,6 +61,8 @@ import {
   usePlan,
   usePlayCatalog,
   useWatchLink,
+  useBookSeries,
+  type SeriesPlan,
   useVoices,
   useWalkthroughHtml,
   useWhiteboardHtml,
@@ -645,6 +647,7 @@ function SocialLibrary({ grade, subject, subStrand, topics, onWatch }: {
       {b && <BrandEditor brand={b} />}
       <VideoBatches grade={grade} subject={subject} subStrand={subStrand} topics={topics} />
       <BookAhead grade={grade} subject={subject} subStrand={subStrand} />
+      <BookSeries grade={grade} subject={subject} subStrand={subStrand} />
       <ScheduleExport grade={grade} subject={subject} subStrand={subStrand} ready={library.data?.ready} />
       {b && (
         <Stack direction="row" gap="var(--s3)" wrap align="center" style={{ marginTop: "var(--s2)", fontSize: "var(--text-sm)" }}>
@@ -1271,6 +1274,61 @@ function AnotherMac() {
 }
 
 /** Keep the next weeks booked for the browser poster. */
+const STEP_LABEL: Record<string, string> = { teaser: "🤔 card", question: "❓ question", answer: "✅ answer", walkthrough: "🎬 video" };
+
+/** Days of photo + video series on Facebook. */
+function BookSeries({ grade, subject, subStrand }: { grade: string; subject: string; subStrand: string }) {
+  const book = useBookSeries();
+  const toast = useToast();
+  const [days, setDays] = React.useState(7);
+  const [photos, setPhotos] = React.useState(8);
+  const [videos, setVideos] = React.useState(8);
+  const [wholeSubject, setWholeSubject] = React.useState(true);
+  const [plan, setPlan] = React.useState<SeriesPlan | null>(null);
+  async function go(dry: boolean) {
+    try {
+      const out = await book.mutateAsync({ grade, subject, sub_strand: wholeSubject ? "" : subStrand, days, photos, videos, dry });
+      setPlan(out);
+      if (!dry) toast(out.days.length ? `Booked ${out.photos} photos and ${out.videos} videos (${out.questions} questions) from ${out.first_day} to ${out.last_day}.`
+                                      : out.notes[0] || "Nothing to add.", out.days.length ? "ok" : "info");
+    } catch (err) { toast(err instanceof Error ? err.message : "Could not book.", "danger"); }
+  }
+  const fmt = (d: string) => new Date(`${d}T12:00:00`).toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" });
+  return (
+    <details style={{ marginTop: "var(--s3)" }}>
+      <summary style={{ cursor: "pointer", fontSize: "var(--text-sm)" }}>📸 Book photo + video series (Facebook)</summary>
+      <p style={{ margin: "var(--s2) 0", color: "var(--ink-3)", fontSize: "var(--text-xs)" }}>
+        One question told in steps through the day, to keep people coming back: a “Can you solve this?” card, then the
+        question (no answer), then a card with the answer, then its walkthrough video — mixed with single videos. Up to
+        {` ${photos} photos and ${videos} videos`} a day, at random times, each question's steps always in order. Questions with a
+        figure go first; cards and videos not made yet are made now.
+      </p>
+      <Stack direction="row" gap="var(--s3)" wrap align="end">
+        <label style={lbl}>Days<Input type="number" min={1} max={31} value={days} onChange={(e) => setDays(Math.max(1, Number(e.target.value) || 7))} style={{ width: 70 }} /></label>
+        <label style={lbl}>Photos a day<Input type="number" min={0} max={16} value={photos} onChange={(e) => setPhotos(Math.max(0, Number(e.target.value) || 0))} style={{ width: 70 }} /></label>
+        <label style={lbl}>Videos a day<Input type="number" min={0} max={16} value={videos} onChange={(e) => setVideos(Math.max(0, Number(e.target.value) || 0))} style={{ width: 70 }} /></label>
+        <label style={{ display: "inline-flex", gap: 4, alignItems: "center", fontSize: "var(--text-sm)" }}>
+          <input type="checkbox" checked={wholeSubject || !subStrand} disabled={!subStrand} onChange={() => setWholeSubject((x) => !x)} />
+          Whole subject
+        </label>
+        <Button size="sm" variant="ghost" disabled={book.isPending || !subject} onClick={() => go(true)}>Preview</Button>
+        <Button size="sm" variant="primary" disabled={book.isPending || !subject} onClick={() => go(false)}>{book.isPending ? "Booking…" : `Book ${days} days`}</Button>
+      </Stack>
+      {plan && (
+        <div style={{ marginTop: "var(--s2)", fontSize: "var(--text-sm)", display: "grid", gap: 6 }}>
+          <strong>{plan.booked ? "Booked" : "Preview"}: {plan.photos} photos, {plan.videos} videos, {plan.questions} questions
+            {plan.first_day ? ` · ${fmt(plan.first_day)} – ${fmt(plan.last_day || plan.first_day)}` : ""}</strong>
+          {plan.notes.map((n, i) => <span key={i} style={{ color: "var(--ink-3)" }}>{n}</span>)}
+          {plan.days.slice(0, 3).map((d) => (
+            <div key={d.date}><b>{fmt(d.date)}</b> — {d.times.map((t) => { const [time, step] = t.split(" "); return `${time} ${STEP_LABEL[step] || step}`; }).join(" · ")}</div>
+          ))}
+          {plan.days.length > 3 && <span style={{ color: "var(--ink-3)" }}>… and {plan.days.length - 3} more days.</span>}
+        </div>
+      )}
+    </details>
+  );
+}
+
 function BookAhead({ grade, subject, subStrand }: { grade: string; subject: string; subStrand: string }) {
   const book = useBookAhead();
   const toast = useToast();

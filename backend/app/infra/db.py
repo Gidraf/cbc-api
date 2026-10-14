@@ -1514,6 +1514,15 @@ MIGRATIONS: list[tuple[str, str]] = [
         ALTER TABLE drive_objects ADD COLUMN IF NOT EXISTS private_at TIMESTAMPTZ;
         """,
     ),
+    (
+        "052_photo_series",
+        """
+        -- A post is a video (the walkthrough) or a photo (a card), and a step
+        -- of a question's series: teaser, question, answer, walkthrough.
+        ALTER TABLE social_posts ADD COLUMN IF NOT EXISTS format TEXT NOT NULL DEFAULT 'video';
+        ALTER TABLE social_posts ADD COLUMN IF NOT EXISTS step TEXT NOT NULL DEFAULT 'walkthrough';
+        """,
+    ),
 ]
 
 

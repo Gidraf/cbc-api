@@ -132,7 +132,8 @@ async def publish(post: dict[str, Any], *, dry_run: bool) -> dict[str, Any]:
         return {"ok": False, "error": f"No steps for {post['platform']}."}
     async with browser.lock:
         state["busy"] = (f"{'Dry run' if dry_run else 'Scheduling' if post.get('schedule_at') else 'Posting'} "
-                         f"on {post['platform']}")
+                         f"{'a ' + str(post.get('step') or 'photo') + ' card' if post.get('format') == 'photo' else ''} "
+                         f"on {post['platform']}").replace("  ", " ")
         page = None
         result: dict[str, Any] = {"post_id": post["post_id"], "platform": post["platform"], "dry_run": dry_run}
         try:
@@ -144,10 +145,18 @@ async def publish(post: dict[str, Any], *, dry_run: bool) -> dict[str, Any]:
                 extra["schedule_at"] = schedule_at
             if flow.can_share_groups:
                 extra["groups"] = groups
-            video = await cbc.download(post["video_url"], f"{post['post_id']}.mp4")
-            page = await browser.page()
-            url = await flow.post(page, video=video, caption=post["caption"], title=post.get("title", ""),
-                                  dry_run=dry_run, **extra)
+            if post.get("format") == "photo":
+                # A card of a question's series: the teaser, the question, or its answer.
+                if not getattr(flow, "can_post_photos", False):
+                    raise StepFailed(f"The poster cannot post photos on {post['platform']} yet.")
+                image = await cbc.download(post["image_url"], f"{post['post_id']}.jpg")
+                page = await browser.page()
+                url = await flow.post_photo(page, image=image, caption=post["caption"], dry_run=dry_run)
+            else:
+                video = await cbc.download(post["video_url"], f"{post['post_id']}.mp4")
+                page = await browser.page()
+                url = await flow.post(page, video=video, caption=post["caption"], title=post.get("title", ""),
+                                      dry_run=dry_run, **extra)
             shared = list(getattr(flow, "shared_groups", []) or [])
             places = list(getattr(flow, "destinations", []) or [])
             result.update(ok=True, url=url, scheduled=bool(schedule_at), schedule_at=schedule_at, groups=shared,
@@ -181,10 +190,11 @@ async def publish(post: dict[str, Any], *, dry_run: bool) -> dict[str, Any]:
                     await page.close()
                 except Exception:  # noqa: BLE001
                     pass
-            try:
-                os.remove(os.path.join(config.TMP_DIR, f"{post['post_id']}.mp4"))
-            except OSError:
-                pass
+            for ext in ("mp4", "jpg"):
+                try:
+                    os.remove(os.path.join(config.TMP_DIR, f"{post['post_id']}.{ext}"))
+                except OSError:
+                    pass
         if config.POSTER_MODE == "local" and result.get("shot"):
             try:
                 await cbc.upload_shot(result["shot"])
