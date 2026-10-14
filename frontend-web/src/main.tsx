@@ -32,6 +32,8 @@ import { PromptFragments } from "./views/PromptFragments";
 import { QuestionBank } from "./views/QuestionBank";
 import { Review } from "./views/Review";
 import { SignIn } from "./views/SignIn";
+import { Wallet } from "./views/Wallet";
+import { Developer } from "./views/Developer";
 
 import "./ui/tokens.css";
 import "katex/dist/katex.min.css";
@@ -70,6 +72,7 @@ function Screen({ name, children }: { name: string; children: React.ReactNode })
 function Home() {
   const { role } = useAuth();
   if (role === "user") return <Navigate to="/studio" replace />;
+  if (role === "api") return <Navigate to="/developer" replace />;
   return <Screen name="Overview"><Overview /></Screen>;
 }
 
@@ -123,6 +126,8 @@ function Router() {
         <Route path="agents" element={<Screen name="Agent tasks"><AgentTasks /></Screen>} />
         <Route path="keys" element={<Screen name="API keys"><ProviderKeys /></Screen>} />
         <Route path="settings" element={<Screen name="Settings"><PlatformSettings /></Screen>} />
+        <Route path="wallet" element={<Screen name="Wallet"><Wallet /></Screen>} />
+        <Route path="developer" element={<Screen name="Developer"><Developer /></Screen>} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>

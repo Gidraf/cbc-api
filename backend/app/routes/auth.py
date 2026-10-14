@@ -32,7 +32,7 @@ class RegisterRequest(BaseModel):
     username: str
     password: str
     email: str | None = None
-    role: str = "developer"
+    role: str = "user"          # "developer" signs up for the content API
 
 
 class RefreshRequest(BaseModel):
@@ -81,9 +81,11 @@ def register(payload: RegisterRequest) -> dict[str, Any]:
         {
             "uname": payload.username,
             "phash": pwd_hash,
-            # A signup is a USER: the builder, their own drafts and papers,
-            # nothing of the factory. Staff roles are given by an admin.
-            "role": payload.role if payload.role in {"developer", "reviewer"} else "user",
+            # A signup is a USER (a parent or a teacher: the builder, their
+            # own drafts and papers) or an API developer (the content API and
+            # their own keys). Neither reaches the factory: "developer",
+            # "reviewer" and the other staff roles are given by an admin only.
+            "role": "api" if payload.role in {"developer", "api"} else "user",
             "email": payload.email,
         },
     )
@@ -121,9 +123,10 @@ def get_current_session(context: AuthContext = Depends(get_auth_context)) -> dic
 @router.post("/api-keys")
 def create_developer_api_key(
     payload: CreateApiKeyRequest,
-    context: AuthContext = Depends(require_roles("admin", "developer")),
+    context: AuthContext = Depends(require_roles("admin", "developer", "api")),
 ) -> dict[str, Any]:
-    ranks = {"reviewer": 1, "developer": 2, "operator": 3, "admin": 4}
+    # An API developer's keys carry "api" — the content API, nothing more.
+    ranks = {"api": 1, "reviewer": 2, "developer": 3, "operator": 4, "admin": 5}
     wanted = (payload.role or context.role).strip().lower()
     if wanted not in ranks or ranks[wanted] > ranks.get(context.role, 0):
         raise_api_error("FORBIDDEN", f"A {context.role} cannot make a {wanted} key.")
@@ -155,7 +158,7 @@ def create_developer_api_key(
 
 
 @router.get("/api-keys")
-def list_api_keys(context: AuthContext = Depends(require_roles("admin", "developer"))) -> dict[str, Any]:
+def list_api_keys(context: AuthContext = Depends(require_roles("admin", "developer", "api"))) -> dict[str, Any]:
     # An admin sees every key on the deployment; anyone else sees their own.
     if context.role == "admin":
         keys = fetch_all(
@@ -173,7 +176,7 @@ def list_api_keys(context: AuthContext = Depends(require_roles("admin", "develop
 @router.delete("/api-keys/{key_id}")
 def revoke_api_key(
     key_id: str,
-    context: AuthContext = Depends(require_roles("admin", "developer")),
+    context: AuthContext = Depends(require_roles("admin", "developer", "api")),
 ) -> dict[str, Any]:
     if context.role == "admin":
         execute("DELETE FROM api_keys WHERE key_id = :kid", {"kid": key_id})

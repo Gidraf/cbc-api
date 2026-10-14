@@ -238,9 +238,11 @@ def test_a_user_builds_a_paper_through_the_api_but_may_not_spend_tokens(client):
     assert client.post(f"/api/v1/builder/drafts/{draft_id}/generate", json={"count": 30}).status_code == 403
     assert client.post(f"/api/v1/builder/drafts/{draft_id}/review", json={}).status_code == 403
 
+    # Freezing writes corrections into the shared bank and makes public
+    # links: staff only. A user buys the paper and downloads it instead.
     r = client.post(f"/api/v1/builder/drafts/{draft_id}/freeze")
-    assert r.status_code == 200 and r.json()["exam_id"].startswith("exam-")
-    assert client.get(f"/api/v1/builder/drafts/{draft_id}").json()["status"] == "frozen"
+    assert r.status_code == 403
+    assert client.get(f"/api/v1/builder/drafts/{draft_id}").json()["status"] != "frozen"
 
 
 def test_one_sub_strand_can_be_written_there_and_then_and_the_row_says_so(world, monkeypatch):

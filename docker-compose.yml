@@ -18,6 +18,15 @@ x-backend-env: &backend-env
   GOOGLE_DRIVE_REFRESH_TOKEN: ${GOOGLE_DRIVE_REFRESH_TOKEN:-}
   GOOGLE_DRIVE_FOLDER_ID: ${GOOGLE_DRIVE_FOLDER_ID:-}
   DRIVE_KEEP_LOCAL_DAYS: ${DRIVE_KEEP_LOCAL_DAYS:-7}
+  # Wallet top-ups with M-Pesa STK push (backend/app/services/mpesa.py).
+  MPESA_ENV: ${MPESA_ENV:-sandbox}
+  MPESA_CONSUMER_KEY: ${MPESA_CONSUMER_KEY:-}
+  MPESA_CONSUMER_SECRET: ${MPESA_CONSUMER_SECRET:-}
+  MPESA_SHORTCODE: ${MPESA_SHORTCODE:-}
+  MPESA_PASSKEY: ${MPESA_PASSKEY:-}
+  MPESA_TYPE: ${MPESA_TYPE:-paybill}
+  MPESA_TILL_NUMBER: ${MPESA_TILL_NUMBER:-}
+  MPESA_CALLBACK_TOKEN: ${MPESA_CALLBACK_TOKEN:-}
   # Video renders at once (each drives a browser and ffmpeg). They have their
   # own lane: with CELERY_CONCURRENCY=2, one slot renders while one generates.
   RENDER_WORKERS: ${RENDER_WORKERS:-1}

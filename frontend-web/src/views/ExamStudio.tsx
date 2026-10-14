@@ -14,6 +14,7 @@ import {
   useToast,
 } from "../ui/components";
 import { useAuth } from "../lib/auth";
+import { TopUp } from "./Wallet";
 import {
   gradeOptionLabel,
   subjectOptionLabel,
@@ -30,6 +31,10 @@ import {
   useDuplicateDraft,
   useFillDraft,
   useFreezeDraft,
+  useBuyDraft,
+  useDraftQuote,
+  useDraftVersions,
+  useWallet,
   useGenerateForDraft,
   useGrades,
   useOverrideItem,
@@ -213,7 +218,7 @@ function Studio({ draftId }: { draftId: string }) {
           {section === "questions" && <QuestionsSection d={d} frozen={frozen} />}
           {section === "design" && <DesignSection d={d} tryout={tryout} setTryout={setTryout} save={save} frozen={frozen} />}
           {section === "review" && <ReviewSection d={d} />}
-          {section === "print" && <PrintSection d={d} params={previewParams} />}
+          {section === "print" && <PrintSection d={d} params={previewParams} save={save} />}
         </div>
       </div>
 
@@ -908,10 +913,125 @@ function ReviewSection({ d }: { d: ExamDraft }) {
 
 // ── Print ───────────────────────────────────────────────────────────────────
 
-function PrintSection({ d, params }: { d: ExamDraft; params: Record<string, any> }) {
+/** What the paper costs, and the button that pays for it from the wallet. */
+function BuyCard({ d }: { d: ExamDraft }) {
+  const itemsKey = (d.items || []).map((i) => i.question_id).join(",");
+  const quote = useDraftQuote(d.draft_id, itemsKey);
+  const buy = useBuyDraft();
+  const wallet = useWallet();
+  const toast = useToast();
+  const q = quote.data;
+  if (!q || q.exempt) return null;
+  if (!(d.items || []).length) return null;
+  async function pay() {
+    try {
+      const out = await buy.mutateAsync({ draft_id: d.draft_id });
+      toast(out.charged_ksh ? `Paid KSh ${out.charged_ksh}. Download as often as you like.` : "Done: it was free.", "ok");
+    } catch (err) { toast(err instanceof Error ? err.message : "Could not pay.", "danger"); }
+  }
+  const balance = q.balance_ksh ?? wallet.data?.balance_ksh ?? 0;
+  const short = Math.max(0, q.total_ksh - balance);
+  return (
+    <Card title={q.paid ? "Paid ✓" : `Download this paper: KSh ${q.total_ksh}`}
+          description={q.paid ? "Download the paper, its marking scheme and the booklet as often as you like."
+            : "Pay once per question. A question you have paid for is free on every paper after."}>
+      {!q.paid && (
+        <Stack gap="var(--s3)">
+          <div style={{ fontSize: "var(--text-sm)", display: "grid", gap: 2 }}>
+            {q.owned > 0 && <span>{q.owned} question(s) already yours</span>}
+            {q.free > 0 && <span>{q.free} free (of your first {q.prices.paper.free_questions})</span>}
+            {!!q.text && <span>{q.text} text × KSh {q.prices.paper.text_ksh}</span>}
+            {!!q.diagram && <span>{q.diagram} with a diagram × KSh {q.prices.paper.diagram_ksh}</span>}
+            <span style={{ color: "var(--ink-3)" }}>Wallet: KSh {balance}</span>
+          </div>
+          {short > 0 ? (
+            <TopUp min={wallet.data?.prices.topup.min_ksh ?? 10} max={wallet.data?.prices.topup.max_ksh ?? 70000}
+                   ready={wallet.data?.topups_ready ?? false} note={wallet.data?.topups_note} suggested={short} />
+          ) : (
+            <div><Button variant="primary" loading={buy.isPending} onClick={pay}>
+              {q.total_ksh ? `Pay KSh ${q.total_ksh} from the wallet` : "Unlock (free)"}</Button></div>
+          )}
+        </Stack>
+      )}
+    </Card>
+  );
+}
+
+/** Anything they want at the head of the paper, and a name on the name line. */
+function OwnLinesCard({ d, save, frozen }: { d: ExamDraft; save: (p: any) => Promise<void>; frozen: boolean }) {
+  const toast = useToast();
+  const [lines, setLines] = React.useState<string[]>(() => {
+    const got = (d.settings?.header_lines || []) as string[];
+    return [...got, "", "", "", ""].slice(0, 4);
+  });
+  const [name, setName] = React.useState<string>(d.settings?.name_line || "");
+  async function store() {
+    await save({ settings: { ...(d.settings || {}), header_lines: lines.map((x) => x.trim()).filter(Boolean), name_line: name.trim() } });
+    toast("Saved: it prints on the paper.", "ok");
+  }
+  return (
+    <Card title="Print on the paper" description="Your own lines at the top — a school, a class, a term, anything — and a name already on the name line.">
+      <Stack gap="var(--s2)">
+        {lines.map((v, i) => (
+          <Input key={i} value={v} maxLength={120} disabled={frozen} placeholder={["e.g. Moi Avenue Primary School", "e.g. Grade 9 Blue — Term 3 revision", "", ""][i]}
+                 onChange={(e) => setLines(lines.map((x, j) => (j === i ? e.target.value : x)))} />
+        ))}
+        <label style={lbl}>Name on the name line (optional)
+          <Input value={name} maxLength={80} disabled={frozen} placeholder="e.g. a child's name" onChange={(e) => setName(e.target.value)} />
+        </label>
+        <div><Button disabled={frozen} onClick={store}>Save</Button></div>
+      </Stack>
+    </Card>
+  );
+}
+
+/** Versions A, B, C… so neighbours cannot copy. */
+function VersionsCard({ d }: { d: ExamDraft }) {
+  const make = useDraftVersions();
+  const toast = useToast();
+  const nav = useNavigate();
+  const [count, setCount] = React.useState(2);
+  const [mode, setMode] = React.useState<"shuffle" | "fresh">("shuffle");
+  async function go() {
+    try {
+      const out = await make.mutateAsync({ draft_id: d.draft_id, versions: count, mode });
+      toast(`Made ${out.versions.length} more version(s): this paper is Version A.`, "ok");
+      nav("/studio");
+    } catch (err) { toast(err instanceof Error ? err.message : "Could not make the versions.", "danger"); }
+  }
+  return (
+    <Card title="Versions" description="Hand neighbours different papers. Each version prints its letter at the top.">
+      <Stack gap="var(--s2)">
+        <label style={{ ...lbl, flexDirection: "row", alignItems: "center", gap: 8 }}>
+          <input type="radio" name="vmode" checked={mode === "shuffle"} onChange={() => setMode("shuffle")} />
+          Same questions, mixed order — nothing more to pay
+        </label>
+        <label style={{ ...lbl, flexDirection: "row", alignItems: "center", gap: 8 }}>
+          <input type="radio" name="vmode" checked={mode === "fresh"} onChange={() => setMode("fresh")} />
+          New random questions from the same topics — new questions are paid for
+        </label>
+        <Stack direction="row" gap="var(--s2)" align="center">
+          <label style={{ ...lbl, flexDirection: "row", alignItems: "center", gap: 8 }}>How many in all
+            <Select value={count} onChange={(e) => setCount(Number(e.target.value))} style={{ width: "auto" }}>
+              {[2, 3, 4, 5].map((n) => <option key={n} value={n}>{n} (A–{"ABCDE"[n - 1]})</option>)}
+            </Select>
+          </label>
+          <Button loading={make.isPending} disabled={!(d.items || []).length || d.status === "frozen"} onClick={go}>Make versions</Button>
+        </Stack>
+      </Stack>
+    </Card>
+  );
+}
+
+function PrintSection({ d, params, save }: { d: ExamDraft; params: Record<string, any>; save: (p: any) => Promise<void> }) {
   const pdf = useDraftPdf();
   const freeze = useFreezeDraft();
   const toast = useToast();
+  const { role } = useAuth();
+  const staff = role === "admin" || role === "operator" || role === "reviewer";
+  const itemsKey = (d.items || []).map((i) => i.question_id).join(",");
+  const quote = useDraftQuote(d.draft_id, itemsKey);
+  const locked = Boolean(quote.data && !quote.data.exempt && !quote.data.paid);
   const [links, setLinks] = React.useState<Record<string, string> | null>(null);
   const frozen = d.status === "frozen";
   async function doFreeze() {
@@ -928,7 +1048,11 @@ function PrintSection({ d, params }: { d: ExamDraft; params: Record<string, any>
   const base = { ...params, pages: pages === "range" ? range : pages === "all" ? "" : pages, reverse: reverse ? "true" : "" };
   return (
     <Stack gap="var(--s3)">
-      <Card title="Download" description="PDFs of the paper as previewed. Freezing is what makes the links a school can be handed.">
+      <BuyCard d={d} />
+      <OwnLinesCard d={d} save={save} frozen={frozen} />
+      <VersionsCard d={d} />
+      <Card title="Download" description={locked ? "Pay for the paper above first; then download it, its marking scheme and the booklet."
+                                          : "PDFs of the paper as previewed." + (staff ? " Freezing is what makes the links a school can be handed." : "")}>
         <Stack gap="var(--s3)">
           <Stack direction="row" gap="var(--s3)" align="end" wrap>
             <label style={lbl}>Pages
@@ -946,9 +1070,9 @@ function PrintSection({ d, params }: { d: ExamDraft; params: Record<string, any>
             </label>
           </Stack>
           <Stack direction="row" gap="var(--s2)" wrap>
-            <Button onClick={() => pdf.mutate({ draft_id: d.draft_id, params: { ...base, answers: false, with_scheme: false, answer_sheet: false } })}>Question paper PDF</Button>
-            <Button onClick={() => pdf.mutate({ draft_id: d.draft_id, params: { ...base, answers: true, with_scheme: false, answer_sheet: false } })}>Marking scheme PDF</Button>
-            <Button onClick={() => pdf.mutate({ draft_id: d.draft_id, params: { ...base, answers: false, with_scheme: true, answer_sheet: true } })}>Booklet + answer sheet PDF</Button>
+            <Button disabled={locked} onClick={() => pdf.mutate({ draft_id: d.draft_id, params: { ...base, answers: false, with_scheme: false, answer_sheet: false } })}>Question paper PDF</Button>
+            <Button disabled={locked} onClick={() => pdf.mutate({ draft_id: d.draft_id, params: { ...base, answers: true, with_scheme: false, answer_sheet: false } })}>Marking scheme PDF</Button>
+            <Button disabled={locked} onClick={() => pdf.mutate({ draft_id: d.draft_id, params: { ...base, answers: false, with_scheme: true, answer_sheet: true } })}>Booklet + answer sheet PDF</Button>
           </Stack>
           <div style={{ fontSize: "var(--text-xs)", color: "var(--ink-3)" }}>
             Two-sided on a single-sided printer (an L3250): download <b>odd</b>, print the stack; put it back, download <b>even</b> — with <i>reverse</i> if your printer stacks face up — and print again.
@@ -956,14 +1080,14 @@ function PrintSection({ d, params }: { d: ExamDraft; params: Record<string, any>
         </Stack>
         {pdf.error && <ErrorNotice error={pdf.error} />}
       </Card>
-      <Card title={frozen ? "Frozen" : "Freeze"} description={frozen ? `This paper is ${d.exam_id}. Its links keep working; the questions are locked.` : "Lock the exact questions, write your corrections to the bank, and get share links (no sign-in needed) with the QR code to the scheme."}>
+      {(staff || frozen) && <Card title={frozen ? "Frozen" : "Freeze"} description={frozen ? `This paper is ${d.exam_id}. Its links keep working; the questions are locked.` : "Lock the exact questions, write your corrections to the bank, and get share links (no sign-in needed) with the QR code to the scheme."}>
         {!frozen && <Button variant="primary" loading={freeze.isPending} onClick={doFreeze}>Freeze this paper</Button>}
         {links && (
           <Stack gap="4px" style={{ fontSize: "var(--text-sm)", marginTop: "var(--s2)" }}>
             {Object.entries(links).map(([k, v]) => <div key={k}><b>{k.replace(/_/g, " ")}:</b> <a href={v} target="_blank" rel="noreferrer">{v}</a></div>)}
           </Stack>
         )}
-      </Card>
+      </Card>}
     </Stack>
   );
 }

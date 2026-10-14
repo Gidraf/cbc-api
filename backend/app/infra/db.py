@@ -1376,6 +1376,61 @@ MIGRATIONS: list[tuple[str, str]] = [
         ALTER TABLE poster_commands ADD COLUMN IF NOT EXISTS options JSONB NOT NULL DEFAULT '{}'::jsonb;
         """,
     ),
+    (
+        "049_billing",
+        """
+        -- The wallet (services/billing.py): balances in cents of a shilling,
+        -- every movement as an entry, M-Pesa top-ups, the questions each
+        -- account has paid for, and the content API's calls per day.
+        CREATE TABLE IF NOT EXISTS wallets (
+            owner TEXT PRIMARY KEY,
+            balance_cents BIGINT NOT NULL DEFAULT 0 CHECK (balance_cents >= 0),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        CREATE TABLE IF NOT EXISTS wallet_entries (
+            entry_id BIGSERIAL PRIMARY KEY,
+            owner TEXT NOT NULL,
+            amount_cents BIGINT NOT NULL,
+            kind TEXT NOT NULL,
+            ref TEXT NOT NULL DEFAULT '',
+            note TEXT NOT NULL DEFAULT '',
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS idx_wallet_entries_owner ON wallet_entries(owner, created_at DESC);
+        CREATE TABLE IF NOT EXISTS mpesa_payments (
+            checkout_request_id TEXT PRIMARY KEY,
+            merchant_request_id TEXT NOT NULL DEFAULT '',
+            owner TEXT NOT NULL,
+            phone TEXT NOT NULL DEFAULT '',
+            amount INTEGER NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending',
+            result_code TEXT NOT NULL DEFAULT '',
+            result_desc TEXT NOT NULL DEFAULT '',
+            receipt TEXT NOT NULL DEFAULT '',
+            raw JSONB NOT NULL DEFAULT '{}'::jsonb,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS idx_mpesa_payments_owner ON mpesa_payments(owner, created_at DESC);
+        CREATE TABLE IF NOT EXISTS question_purchases (
+            owner TEXT NOT NULL,
+            question_id TEXT NOT NULL,
+            price_cents INTEGER NOT NULL DEFAULT 0,
+            free BOOLEAN NOT NULL DEFAULT FALSE,
+            ref TEXT NOT NULL DEFAULT '',
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            PRIMARY KEY (owner, question_id)
+        );
+        CREATE TABLE IF NOT EXISTS api_usage (
+            owner TEXT NOT NULL,
+            day DATE NOT NULL,
+            calls INTEGER NOT NULL DEFAULT 0,
+            questions INTEGER NOT NULL DEFAULT 0,
+            charged_cents BIGINT NOT NULL DEFAULT 0,
+            PRIMARY KEY (owner, day)
+        );
+        """,
+    ),
 ]
 
 

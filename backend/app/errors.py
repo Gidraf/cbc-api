@@ -106,6 +106,8 @@ ERRORS = {
     # Raised across the queue and the model scout, and missing from this map —
     # so a request refused for a bad value came back as a 500.
     "VALIDATION_FAILED": (400, False),
+    # The wallet cannot pay for this (services/billing.py); nothing was charged.
+    "PAYMENT_REQUIRED": (402, False),
 }
 
 

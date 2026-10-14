@@ -212,6 +212,54 @@ def candidates(draft_id: str, sub_strand: str = Query(""), limit: int = Query(20
     return {"items": items}
 
 
+def _quote(row: dict[str, Any], auth: AuthContext) -> dict[str, Any]:
+    from ..services import billing, exam_drafts
+
+    return billing.quote_paper(auth.subject, auth.role, list(exam_drafts.paper_for(row).items))
+
+
+class VersionsRequest(BaseModel):
+    versions: int = Field(default=2, ge=2, le=5)
+    mode: str = Field(default="shuffle", pattern="^(shuffle|fresh)$")
+
+
+@router.get("/drafts/{draft_id}/quote")
+def quote(draft_id: str, auth: AuthContext = Depends(ANY)) -> dict[str, Any]:
+    """What downloading this paper costs now: questions already paid for are
+    free, then the account's free questions, then KSh per question."""
+    from ..services import exam_drafts
+
+    row = exam_drafts.get(draft_id, _owner(auth))
+    out = _quote(row, auth)
+    out.pop("lines", None)
+    return out
+
+
+@router.post("/drafts/{draft_id}/buy")
+def buy(draft_id: str, auth: AuthContext = Depends(ANY)) -> dict[str, Any]:
+    """Pay for the paper's questions from the wallet; then it downloads, with
+    its marking scheme, as often as wanted."""
+    from ..services import billing, exam_drafts
+
+    row = exam_drafts.get(draft_id, _owner(auth))
+    try:
+        out = billing.buy_paper(auth.subject, auth.role, list(exam_drafts.paper_for(row).items), ref=draft_id)
+    except billing.PaymentRequired as exc:
+        raise_api_error("PAYMENT_REQUIRED", str(exc), detail=exc.detail())
+    out.pop("lines", None)
+    return out
+
+
+@router.post("/drafts/{draft_id}/versions")
+def versions(draft_id: str, payload: VersionsRequest, auth: AuthContext = Depends(ANY)) -> dict[str, Any]:
+    """Versions A, B, C… so neighbours cannot copy. "shuffle": the same
+    questions in another order (nothing more to pay). "fresh": new random
+    questions from the same topics (new questions are paid for)."""
+    from ..services import exam_drafts
+
+    return exam_drafts.make_versions(draft_id, versions=payload.versions, mode=payload.mode, owner=_owner(auth))
+
+
 @router.get("/drafts/{draft_id}/preview.html")
 def preview_html(draft_id: str, request: Request, answers: bool = Query(False), with_scheme: bool = Query(False),
                  answer_sheet: bool = Query(False), auth: AuthContext = Depends(ANY)) -> Any:
@@ -221,9 +269,14 @@ def preview_html(draft_id: str, request: Request, answers: bool = Query(False), 
     # The query string wins over the saved settings, so the builder can
     # try a knob without saving it.
     merged = {**(row.get("settings") or {}), **dict(request.query_params)}
+    # Until it is paid for, the preview is for building: marked, and no
+    # marking scheme.
+    paid = _quote(row, auth)["paid"]
+    if not paid:
+        answers = with_scheme = False
     return HTMLResponse(exam_drafts.render(row, answers=answers, with_scheme=with_scheme,
                                            answer_sheet=answer_sheet,
-                                           settings=print_settings.from_params(merged)))
+                                           settings=print_settings.from_params(merged), preview_mark=not paid))
 
 
 @router.get("/drafts/{draft_id}/preview.pdf")
@@ -232,6 +285,12 @@ def preview_pdf(draft_id: str, request: Request, answers: bool = Query(False), w
     from ..services import exam_drafts, pdf, print_settings
 
     row = exam_drafts.get(draft_id, _owner(auth))
+    q = _quote(row, auth)
+    if not q["paid"]:
+        raise_api_error("PAYMENT_REQUIRED",
+                        f"Buy this paper first: KSh {q['total_ksh']:g} for {q['unpaid']} question(s) "
+                        f"({q['free']} of them free). Then it downloads with its marking scheme.",
+                        detail={"total_ksh": q["total_ksh"], "balance_ksh": q.get("balance_ksh", 0)})
     merged = {**(row.get("settings") or {}), **dict(request.query_params)}
     html = exam_drafts.render(row, answers=answers, with_scheme=with_scheme, answer_sheet=answer_sheet,
                               settings=print_settings.from_params(merged))
@@ -260,6 +319,12 @@ def review_draft(draft_id: str, payload: ReviewRequest, auth: AuthContext = Depe
 @router.post("/drafts/{draft_id}/freeze")
 def freeze_draft(draft_id: str, request: Request, auth: AuthContext = Depends(ANY)) -> dict[str, Any]:
     from ..services import exam_drafts, platform_settings
+
+    if auth.role in ("user", "developer", "api"):
+        # Freezing writes the corrections into the shared bank and makes
+        # public links: staff only. An account's papers are bought and
+        # downloaded (their corrections print on their own copy).
+        raise_api_error("FORBIDDEN", "Buy the paper and download its PDF; share links are made by staff for now.")
 
     return exam_drafts.freeze(draft_id, created_by=auth.subject, base=platform_settings.public_base_url(request),
                               owner=_owner(auth))

@@ -4655,3 +4655,86 @@ export const useRunModelScout = scoutMutation<void>(() => "/api/v1/model-scout/r
 export const useRefreshPrices = scoutMutation<void>(() => "/api/v1/model-scout/refresh-prices");
 export const useScoutDecision = scoutMutation<{ rec_id: string; action: "approve" | "reject" | "rollback" }>(
   (v) => `/api/v1/model-scout/recommendations/${encodeURIComponent(v.rec_id)}/${v.action}`);
+
+// ── the wallet (billing) ─────────────────────────────────────────────────────
+
+export type Wallet = {
+  owner: string;
+  exempt: boolean;
+  balance_ksh: number;
+  free_questions_left: number;
+  api: { calls_today: number; calls_this_month: number; free_left_today: number; charged_this_month_ksh: number;
+         balance_ksh: number; prices: Record<string, number> };
+  prices: { paper: { text_ksh: number; diagram_ksh: number; free_questions: number };
+            api: { text_ksh: number; diagram_ksh: number; free_calls_per_day: number; free_calls_per_month: number };
+            topup: { min_ksh: number; max_ksh: number } };
+  topups_ready: boolean;
+  topups_note: string;
+  entries: { amount_ksh: number; kind: string; ref: string; note: string; at: string }[];
+};
+
+export function useWallet() {
+  const api = useApi();
+  return useQuery({ queryKey: ["wallet"], queryFn: () => api<Wallet>("/api/v1/billing/wallet"), staleTime: 5_000 });
+}
+
+/** Send the M-Pesa PIN prompt; then poll useTopUpStatus with the id. */
+export function useTopUp() {
+  const api = useApi();
+  return useMutation({
+    mutationFn: (v: { phone: string; amount: number }) =>
+      api<{ checkout_request_id: string; status: string; message: string }>("/api/v1/billing/topup", {
+        method: "POST", body: JSON.stringify(v) }),
+  });
+}
+
+export function useTopUpStatus(checkoutId: string) {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useQuery({
+    queryKey: ["topup", checkoutId],
+    queryFn: async () => {
+      const out = await api<{ status: "pending" | "paid" | "failed" | "cancelled"; amount_ksh: number; receipt: string;
+                              message: string; balance_ksh: number }>(`/api/v1/billing/topup/${encodeURIComponent(checkoutId)}`);
+      if (out.status !== "pending") {
+        qc.invalidateQueries({ queryKey: ["wallet"] });
+        qc.invalidateQueries({ queryKey: ["draft-quote"] });
+      }
+      return out;
+    },
+    enabled: Boolean(checkoutId),
+    refetchInterval: (q) => (q.state.data && q.state.data.status !== "pending" ? false : 4000),
+  });
+}
+
+export type PaperQuote = {
+  exempt: boolean; paid: boolean; total_ksh: number; unpaid: number; owned: number; free: number; free_left?: number;
+  diagram?: number; text?: number; balance_ksh?: number;
+  prices: Wallet["prices"];
+};
+
+export function useDraftQuote(draftId: string, itemsKey: string) {
+  const api = useApi();
+  return useQuery({
+    queryKey: ["draft-quote", draftId, itemsKey],
+    queryFn: () => api<PaperQuote>(`/api/v1/builder/drafts/${draftId}/quote`),
+    enabled: Boolean(draftId),
+  });
+}
+
+export function useBuyDraft() {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { draft_id: string }) =>
+      api<PaperQuote & { charged_ksh: number }>(`/api/v1/builder/drafts/${v.draft_id}/buy`, { method: "POST" }),
+    onSuccess: (_d, v) => {
+      qc.invalidateQueries({ queryKey: ["wallet"] });
+      qc.invalidateQueries({ queryKey: ["draft-quote", v.draft_id] });
+      qc.invalidateQueries({ queryKey: ["draft-preview", v.draft_id] });
+    },
+  });
+}
+
+export const useDraftVersions = draftMutation<{ draft_id: string; versions: number; mode: "shuffle" | "fresh" }>(
+  (v) => `/api/v1/builder/drafts/${v.draft_id}/versions`, "POST", (v) => ({ versions: v.versions, mode: v.mode }));

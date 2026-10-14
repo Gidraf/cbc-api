@@ -11,8 +11,10 @@ export function SignIn() {
   const [busy, setBusy] = React.useState(false);
   const [mode, setMode] = React.useState<"signin" | "signup">("signin");
   const [email, setEmail] = React.useState("");
+  const [kind, setKind] = React.useState<"user" | "developer">("user");
 
-  // A signup is a USER account: the exam studio and their own papers.
+  // A signup is a USER account (a parent or a teacher: the exam studio and
+  // their own papers) or a developer's (the content API and their keys).
   async function signUp(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
@@ -20,7 +22,7 @@ export function SignIn() {
     try {
       await fetchJson<any>("/api/v1/auth/register", {
         method: "POST",
-        body: JSON.stringify({ username, password, email: email || null, role: "user" }),
+        body: JSON.stringify({ username, password, email: email || null, role: kind }),
       });
       await signIn(username, password);
     } catch (err) {
@@ -89,6 +91,20 @@ export function SignIn() {
               ))}
             </div>
             {mode === "signup" && (
+              <fieldset style={{ border: 0, padding: 0, margin: 0, display: "grid", gap: 6 }}>
+                <legend style={{ fontSize: "var(--text-sm)", fontWeight: 550, color: "var(--ink-2)", marginBottom: 4 }}>I am</legend>
+                {([["user", "A parent or a teacher", "Build exam papers with marking schemes and print them."],
+                   ["developer", "A developer", "Use the questions in my own app through the API."]] as const).map(([value, title, sub]) => (
+                  <label key={value} style={{ display: "flex", gap: 8, alignItems: "flex-start", padding: "8px 10px", cursor: "pointer",
+                                              border: `1px solid ${kind === value ? "var(--accent)" : "var(--line)"}`, borderRadius: "var(--radius)" }}>
+                    <input type="radio" name="kind" value={value} checked={kind === value} onChange={() => setKind(value)} style={{ marginTop: 3 }} />
+                    <span><strong style={{ fontSize: "var(--text-sm)" }}>{title}</strong><br />
+                      <span style={{ fontSize: "var(--text-xs)", color: "var(--ink-3)" }}>{sub}</span></span>
+                  </label>
+                ))}
+              </fieldset>
+            )}
+            {mode === "signup" && (
               <Field label="Email (optional)">
                 {(props) => <Input {...props} type="email" value={email} autoComplete="email" onChange={(e) => setEmail(e.target.value)} />}
               </Field>
@@ -119,12 +135,13 @@ export function SignIn() {
             </Field>
 
             <Button type="submit" variant="primary" loading={busy} style={{ justifyContent: "center" }}>
-              {mode === "signup" ? "Create account and open the studio" : "Sign in"}
+              {mode === "signup" ? (kind === "developer" ? "Create my developer account" : "Create account and open the studio") : "Sign in"}
             </Button>
             {mode === "signup" && (
               <p style={{ fontSize: "var(--text-xs)", color: "var(--ink-3)", margin: 0 }}>
-                An account builds exam papers from the question bank — topical, mid-term, end of term, with figures,
-                marking schemes and answer sheets — and prints them.
+                {kind === "developer"
+                  ? "100 free API calls a day (1,000 a month), then KSh 1.50 a question (KSh 2.50 with a figure), paid with M-Pesa."
+                  : "Build exam papers from the question bank — topical, mid-term, end of term, with figures, marking schemes and answer sheets. Your first 10 questions are free."}
               </p>
             )}
           </form>

@@ -691,9 +691,22 @@ def _numbered(paper: Any) -> list[tuple[int, dict[str, Any]]]:
     return out
 
 
+OWN_CSS = """
+.mast .ownline { text-align: center; font-weight: 700; font-size: 1.05em; letter-spacing: .02em; }
+.mast .version { text-align: center; font-weight: 700; border: 1.5px solid #111; display: inline-block;
+                 padding: 1px 8px; margin: 2px auto; }
+.previewmark { position: fixed; top: 30%; left: 50%; transform: translate(-50%, -50%) rotate(-30deg);
+               font: 700 110px/1 sans-serif; color: rgba(200, 30, 30, .13); letter-spacing: .1em;
+               pointer-events: none; z-index: 50; user-select: none; }
+.previewmark.two { top: 62%; }
+.previewmark.three { top: 92%; }
+"""
+
+
 def render_paper(paper: Any, *, answers: bool = False, with_scheme: bool = False,
                  assets: dict[str, Any] | None = None, scheme_url: str = "",
-                 series: str = "", answer_sheet: bool = False, settings: Any = None) -> str:
+                 series: str = "", answer_sheet: bool = False, settings: Any = None,
+                 preview_mark: bool = False) -> str:
     """A composed paper as the national paper prints it, or its marking
     scheme. `with_scheme` prints both, the scheme after a page break.
     `settings` (PrintSettings) sets how dense it prints."""
@@ -712,9 +725,12 @@ def render_paper(paper: Any, *, answers: bool = False, with_scheme: bool = False
 
     def masthead(scheme: bool) -> str:
         code = "".join(w[:1] for w in str(paper.subject).split()[:3]).upper()
+        own = "".join(f"<div class='ownline'>{_esc(x)}</div>" for x in (mast.get("header_lines") or []))
+        version = f"<div class='version'>VERSION {_esc(mast['version'])}</div>" if mast.get("version") else ""
         return (
             "<div class='mast'>"
-            f"<div class='code'>{_esc(code[:3])}</div>"
+            + own + version
+            + f"<div class='code'>{_esc(code[:3])}</div>"
             + (f"<div class='series'>{_esc(series)}</div>" if series else "")
             + f"<div class='assessment'>{_esc(mast.get('assessment') or paper.title)}</div>"
             f"<div class='gradeline'>{_esc(mast.get('grade_line') or grade_label.upper())}</div>"
@@ -726,7 +742,8 @@ def render_paper(paper: Any, *, answers: bool = False, with_scheme: bool = False
         )
 
     def candidate_lines() -> str:
-        return ("<div class='cand'><span>(i) Your name</span><span>(ii) Name of your school</span>"
+        name = (f"(i) Name: <b>{_esc(mast['candidate'])}</b>" if mast.get("candidate") else "(i) Your name")
+        return (f"<div class='cand'><span>{name}</span><span>(ii) Name of your school</span>"
                 "<span>(iii) Assessment number</span></div>")
 
     def rules() -> str:
@@ -804,6 +821,10 @@ def render_paper(paper: Any, *, answers: bool = False, with_scheme: bool = False
         return "".join(out)
 
     draft = "<div class='draftmark'>DRAFT</div>" if paper.has_drafts else ""
+    if preview_mark:
+        # Not yet paid for: readable for building, not for handing out.
+        draft = ("<div class='previewmark'>PREVIEW</div><div class='previewmark two'>PREVIEW</div>"
+                 "<div class='previewmark three'>PREVIEW</div>")
     shortfall = f"<div class='shortfall'>Incomplete: {_esc(paper.shortfall)}.</div>" if paper.shortfall else ""
     parts: list[str] = [draft]
     if not answers:
@@ -823,7 +844,7 @@ def render_paper(paper: Any, *, answers: bool = False, with_scheme: bool = False
         "<!doctype html><html lang='en'><head><meta charset='utf-8'>"
         "<meta name='viewport' content='width=device-width, initial-scale=1'>"
         f"<title>{_esc(title)}</title>"
-        f"<style>{PRINT_CSS}{PAPER_CSS}{EXAM_CSS}{settings.css()}{_KATEX_CRITICAL}</style>{_KATEX}</head>"
+        f"<style>{PRINT_CSS}{PAPER_CSS}{EXAM_CSS}{OWN_CSS}{settings.css()}{_KATEX_CRITICAL}</style>{_KATEX}</head>"
         f"<body class='exam'><span style='string-set: paper-foot \"{foot}\"; position:absolute; left:-9999px'>{foot}</span>"
         f"<div class='sheet exam'>{''.join(parts)}</div></body></html>"
     )

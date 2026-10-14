@@ -45,6 +45,13 @@ const NAV: { group: string; items: NavItem[] }[] = [
     ],
   },
   {
+    group: "Account",
+    items: [
+      { to: "/wallet", label: "Wallet", icon: "◉", right: "wallet", hint: "Your balance, M-Pesa top-ups and what you paid for" },
+      { to: "/developer", label: "Developer", icon: "{}", right: "api", hint: "API keys, free calls left, and the docs" },
+    ],
+  },
+  {
     group: "Operate",
     items: [
       // "generate" is admin + operator, matching who the sync/process endpoints

@@ -463,12 +463,20 @@ def paper_for(row: dict[str, Any]) -> Any:
         mast["kind_line"] = (KINDS[kind] + (f" — TERM {row.get('term')}" if row.get("term") and kind != "topical" else "")).upper()
     elif kind == "custom" and row.get("title"):
         mast["kind_line"] = str(row.get("title")).upper()
+    # What the owner chose to print: their own lines at the head (a school,
+    # a class, a child's name — anything), a name already on the name line,
+    # and the version letter when the paper has versions.
+    custom = row.get("settings") or {}
+    lines = [str(x).strip()[:120] for x in (custom.get("header_lines") or []) if str(x).strip()][:4]
+    mast["header_lines"] = lines
+    mast["candidate"] = str(custom.get("name_line") or "").strip()[:80]
+    mast["version"] = str(custom.get("version_label") or "").strip()[:12]
     snapshot["masthead"] = mast
     return paper_builder.thaw(snapshot, questions)
 
 
 def render(row: dict[str, Any], *, answers: bool = False, with_scheme: bool = False,
-           answer_sheet: bool = False, settings: Any = None) -> str:
+           answer_sheet: bool = False, settings: Any = None, preview_mark: bool = False) -> str:
     from . import print_settings, question_paper
 
     paper = paper_for(row)
@@ -476,7 +484,48 @@ def render(row: dict[str, Any], *, answers: bool = False, with_scheme: bool = Fa
         settings = print_settings.from_params(row.get("settings") or {})
     return question_paper.render_paper(
         paper, answers=answers, with_scheme=with_scheme, answer_sheet=answer_sheet,
-        assets=question_paper.figures_for(paper.items), settings=settings)
+        assets=question_paper.figures_for(paper.items), settings=settings, preview_mark=preview_mark)
+
+
+VERSION_LETTERS = "ABCDE"
+
+
+def make_versions(draft_id: str, *, versions: int = 2, mode: str = "shuffle", owner: str = "") -> dict[str, Any]:
+    """Versions of a paper so neighbours cannot copy: this draft becomes
+    Version A and each copy the next letter. "shuffle" keeps the questions
+    and changes their order (and the options' letters stay as printed);
+    "fresh" deals new random questions from the same scope, the same number
+    and the same figure floor."""
+    import random
+
+    row = get(draft_id, owner)
+    if not (row.get("items") or []):
+        from ..errors import raise_api_error
+
+        raise_api_error("VALIDATION_FAILED", "Fill the paper first: versions are made from it.")
+    versions = max(2, min(int(versions), len(VERSION_LETTERS)))
+    base_title = str(row.get("title") or "").split(" — Version ")[0].strip()
+    settings = dict(row.get("settings") or {})
+    update(draft_id, {"title": f"{base_title} — Version A".strip(" —"),
+                      "settings": {**settings, "version_label": "A"}}, owner=owner)
+    made = []
+    for letter in VERSION_LETTERS[1:versions]:
+        copy = duplicate(draft_id, owner=owner)
+        cid = copy["draft_id"]
+        update(cid, {"title": f"{base_title} — Version {letter}".strip(" —"),
+                     "settings": {**settings, "version_label": letter}}, owner=owner)
+        if mode == "fresh":
+            fill(cid, count=int(settings.get("count") or len(row.get("items") or []) or 30),
+                 diagram_count=settings.get("diagram_count"), seed=secrets.token_hex(3),
+                 format_key=str(settings.get("format") or "auto"), owner=owner)
+            update(cid, {"settings": {**get(cid, owner).get("settings", {}), "version_label": letter}}, owner=owner)
+        else:
+            ids = [str(i.get("question_id")) for i in (row.get("items") or []) if isinstance(i, dict)]
+            rng = random.Random(f"{draft_id}:{letter}:{secrets.token_hex(4)}")
+            rng.shuffle(ids)
+            reorder(cid, ids, owner=owner)
+        made.append({"draft_id": cid, "version": letter})
+    return {"draft_id": draft_id, "version": "A", "versions": made, "mode": mode}
 
 
 def items_detail(row: dict[str, Any]) -> list[dict[str, Any]]:
