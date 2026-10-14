@@ -125,6 +125,24 @@ def move_videos_to_drive() -> dict:
     return drive_store.enqueue(queued_by="drive schedule") or {"status": "not set up"}
 
 
+@celery_app.task(name="app.tasks.make_daily_videos")
+def make_daily_videos() -> dict:
+    """Lesson videos for questions without one, every half hour, until the
+    day's target (video_daily_target, 200) is made."""
+    from .routes import curriculum  # noqa: F401  (registers the job handlers)
+    from .services import video_factory
+
+    return video_factory.top_up()
+
+
+@celery_app.task(name="app.tasks.backfill_video_registry")
+def backfill_video_registry() -> dict:
+    """Record videos storage already holds, once a day."""
+    from .services import video_factory
+
+    return {"recorded": video_factory.backfill()}
+
+
 @celery_app.task(name="app.tasks.prune_service_logs")
 def prune_service_logs() -> dict:
     """Drop log lines past their retention, on the hour."""

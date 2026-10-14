@@ -255,12 +255,9 @@ def asset_base() -> str:
 
 
 def public_object_url(object_name: str) -> str:
-    # A video moved to Google Drive is linked there.
-    from ..services import drive_store
-
-    moved = drive_store.record(object_name)
-    if moved and moved.get("url"):
-        return str(moved["url"])
+    """Always the platform's own address — a video moved to Google Drive
+    too: the platform streams it from Drive to whoever may watch, and a
+    Drive link is never handed out."""
     return f"{asset_base()}/{object_name}"
 
 

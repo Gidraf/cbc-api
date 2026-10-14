@@ -1486,6 +1486,34 @@ MIGRATIONS: list[tuple[str, str]] = [
         CREATE INDEX IF NOT EXISTS idx_test_attempts_test ON test_attempts(test_id, submitted_at DESC);
         """,
     ),
+    (
+        "051_play_videos",
+        """
+        -- The questions an account has opened in Play (the free plays), and
+        -- every rendered video: which question has one, of which kind, made when.
+        CREATE TABLE IF NOT EXISTS play_opens (
+            owner TEXT NOT NULL,
+            question_id TEXT NOT NULL,
+            opened_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            PRIMARY KEY (owner, question_id)
+        );
+        CREATE TABLE IF NOT EXISTS question_videos (
+            question_id TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            video_key TEXT NOT NULL,
+            object_name TEXT NOT NULL,
+            made_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            PRIMARY KEY (question_id, kind)
+        );
+        CREATE INDEX IF NOT EXISTS idx_question_videos_made ON question_videos(kind, made_at DESC);
+        CREATE TABLE IF NOT EXISTS platform_secrets (
+            name TEXT PRIMARY KEY, value TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        -- A Drive file is private once "anyone with the link" is taken away
+        -- (moves no longer share; drive_store.privatize fixes the older ones).
+        ALTER TABLE drive_objects ADD COLUMN IF NOT EXISTS private_at TIMESTAMPTZ;
+        """,
+    ),
 ]
 
 

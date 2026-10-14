@@ -38,12 +38,28 @@ def _gate(auth: AuthContext, question_id: str) -> None:
 
 
 def _open_ids(auth: AuthContext, ids: list[str]) -> set[str] | None:
-    """Of these, the ones this account may open — None meaning all of them."""
+    """Of these, the ones this account has open already (owned, or opened
+    with a free play) — None meaning all of them (staff, the pass)."""
     from ..services import entitlements
 
     if entitlements.staff(auth.role) or entitlements.has_video_plan(auth.subject, auth.role):
         return None
-    return entitlements.owned_ids(auth.subject, ids)
+    return entitlements.owned_ids(auth.subject, ids) | entitlements.opened_ids(auth.subject, ids)
+
+
+def _with_videos(ids: list[str], kind: str = "lesson") -> set[str]:
+    from ..infra.db import fetch_all
+
+    if not ids:
+        return set()
+    rows = fetch_all("SELECT question_id FROM question_videos WHERE kind = :k AND question_id = ANY(:ids)",
+                     {"k": kind, "ids": ids}) or []
+    return {r["question_id"] for r in rows}
+
+
+def _has_figure(q: dict[str, Any]) -> bool:
+    binding = q.get("diagram")
+    return isinstance(binding, dict) and bool(binding.get("diagram_id") or binding.get("svg_markup"))
 
 
 def _bank(grade: str, subject: str, sub_strand: str, limit: int) -> list[dict[str, Any]]:
@@ -65,34 +81,64 @@ def _one(question_id: str, owner: str = "") -> dict[str, Any]:
     return {}
 
 
+@router.get("/catalog")
+def video_catalog(auth: AuthContext = Depends(CONTENT)) -> dict[str, Any]:
+    """The grades and subjects that have videos, with how many — what Play
+    lists first, so nobody picks a topic with nothing to watch."""
+    from ..infra.db import fetch_all
+
+    rows = fetch_all("""SELECT d.curriculum_link->>'grade' AS grade, d.curriculum_link->>'subject' AS subject,
+                               MIN(d.grade_ordinal) AS ordinal, COUNT(*) AS videos
+                        FROM question_videos v JOIN question_dna d ON d.question_id = v.question_id
+                        WHERE v.kind = 'lesson' AND d.status <> ALL(:hidden)
+                        GROUP BY 1, 2 ORDER BY MIN(d.grade_ordinal) NULLS LAST, 2""", {"hidden": list(_HIDDEN)}) or []
+    return {"items": [{"grade": r["grade"], "subject": r["subject"], "videos": int(r["videos"])} for r in rows]}
+
+
 @router.get("/items")
 def playable_items(grade: str = Query(""), subject: str = Query(""), sub_strand: str = Query(""),
                    kind: str = Query("", description="number_line | balance | bodmas | fraction_bar | choice"),
+                   figures: Literal["any", "only", "none"] = Query("any", description="only: with a figure; none: without"),
+                   videos: bool = Query(False, description="only questions that have a video"),
                    limit: int = Query(200, ge=1, le=1000),
                    auth: AuthContext = Depends(CONTENT)) -> dict[str, Any]:
-    """Items in a scope with the kind each plays as — what a game picker lists.
-    Each says whether this account may open it (`locked`)."""
-    from ..services import play_engine, user_questions
+    """Items in a scope — what Play lists. Each says how it plays, whether it
+    has a figure and a video, and whether this account has it open
+    (`locked`: no free plays left and not owned)."""
+    from ..services import entitlements, play_engine, user_questions
 
     out = []
     counts: dict[str, int] = {}
     pool = _bank(grade, subject, sub_strand, limit)
     if auth.role == "user":
         pool += user_questions.list_for(auth.subject, grade=grade, subject=subject)
-    opened = _open_ids(auth, [str(q.get("question_id")) for q in pool])
+    if figures != "any":
+        pool = [q for q in pool if _has_figure(q) == (figures == "only")]
+    ids = [str(q.get("question_id")) for q in pool]
+    with_video = _with_videos(ids)
+    if videos:
+        pool = [q for q in pool if str(q.get("question_id")) in with_video]
+    opened = _open_ids(auth, ids)
+    left = None if opened is None else entitlements.free_left(auth.subject)
     for q in pool:
         play = play_engine.spec_for(q)
         primary = play.get("primary") or {}
         k = primary.get("kind")
-        if not k or (kind and k != kind):
+        has_video = str(q.get("question_id")) in with_video
+        if kind and k != kind:
             continue
-        counts[k] = counts.get(k, 0) + 1
+        if not k and not has_video and not _has_figure(q):
+            continue                         # nothing to play and nothing to watch
+        if k:
+            counts[k] = counts.get(k, 0) + 1
+        is_open = opened is None or str(q.get("question_id")) in opened
         out.append({"question_id": q.get("question_id"), "question_text": q.get("question_text"),
-                    "sub_strand": (q.get("curriculum") or {}).get("sub_strand"), "kind": k,
+                    "sub_strand": (q.get("curriculum") or {}).get("sub_strand"), "kind": k or "watch",
                     "also_choice": bool(play.get("choice")) and k != "choice",
                     "key_agrees": play.get("key_agrees"), "status": q.get("status"),
-                    "locked": opened is not None and str(q.get("question_id")) not in opened})
-    return {"items": out, "counts": counts}
+                    "has_video": has_video, "has_figure": _has_figure(q), "open": is_open,
+                    "locked": not is_open and not left})
+    return {"items": out, "counts": counts, "free_left": left}
 
 
 @router.get("/items/{question_id}")
@@ -124,7 +170,15 @@ def game_session(grade: str = Query(...), subject: str = Query(...), sub_strand:
         pool += user_questions.list_for(auth.subject, grade=grade, subject=subject)
     opened = _open_ids(auth, [str(q.get("question_id")) for q in pool])
     if opened is not None:
-        pool = [q for q in pool if str(q.get("question_id")) in opened]
+        from ..services import entitlements
+
+        # What is open already, then as many new ones as free plays are left
+        # (each one dealt spends a play, and stays open after).
+        left = entitlements.free_left(auth.subject)
+        random.Random(seed or None).shuffle(pool)
+        fresh = [q for q in pool if str(q.get("question_id")) not in opened][:max(0, min(left, count))]
+        fresh = [q for q in fresh if entitlements.may_open(auth.subject, auth.role, str(q.get("question_id")))]
+        pool = [q for q in pool if str(q.get("question_id")) in opened] + fresh
     random.Random(seed or None).shuffle(pool)
     items = play_engine.session(pool, mode=mode, count=count)
     if not items:
@@ -181,31 +235,32 @@ def whiteboard_page(question_id: str, autoplay: bool = Query(False), voice: str 
 
 @router.get("/items/{question_id}/video")
 def video_status(question_id: str, voice: str = Query(""), auth: AuthContext = Depends(CONTENT)) -> dict[str, Any]:
-    """The MP4 for this item: ready, queued, running, failed or none. Staff
-    get its file link; everyone else watches it through /watch, on the plan."""
+    """The MP4 for this item: ready, queued, running, failed or none. Only
+    staff see its file's address (and fetch it signed in); everyone else
+    watches it through /watch."""
     from ..services import entitlements, whiteboard
 
     out = whiteboard.status(question_id, _one(question_id, auth.subject), _voice(voice))
     if not entitlements.staff(auth.role):
-        out.pop("url", None)
-        out.pop("job_id", None)
-        out["watch"] = entitlements.has_video_plan(auth.subject, auth.role)
+        # Staff fetch the file with their sign-in (the asset route checks it);
+        # everyone else never sees its address, and streams it.
+        for key in ("url", "thumbnail_url", "job_id"):
+            out.pop(key, None)
+    out["watch"] = entitlements.may_open(auth.subject, auth.role, question_id, spend=False)
     return out
 
 
 @router.get("/items/{question_id}/watch")
 def watch_link(question_id: str, voice: str = Query(""), auth: AuthContext = Depends(CONTENT)) -> dict[str, Any]:
     """A short-lived link that streams this item's video in the page — on the
-    video plan (staff always). Never a file to keep."""
+    pass, for a question owned, or with a free play (staff always)."""
     from ..services import entitlements, rate_limit, streaming, whiteboard
 
-    if not entitlements.has_video_plan(auth.subject, auth.role):
-        raise_api_error("PAYMENT_REQUIRED", "Videos come with the video plan.",
-                        detail={"plan": entitlements.plan_status(auth.subject, auth.role)})
     rate_limit.hit("watch_owner", auth.subject)
     st = whiteboard.status(question_id, _one(question_id, auth.subject), _voice(voice))
     if st.get("status") != "ready":
         raise_api_error("NOT_FOUND", "This question's video is not made yet.")
+    _gate(auth, question_id)            # the pass, owning it, or one free play
     return streaming.watch_link(auth.subject, whiteboard.object_name(question_id, st["key"]))
 
 

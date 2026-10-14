@@ -152,6 +152,20 @@ You can also top up from the console under *Wallet*.
   diagram questions, or `figures=none` for text only.
 * `marking_scheme` uses the KNEC style: **M** marks for method, **A** for accuracy, **B** for a stated fact.
 
+# Embed a video on your page
+
+Every question with a video can be played on your own site in an `<iframe>`, like a YouTube video — streamed
+from us, watched by your visitors, never downloaded. Give it your own heading and colour (or let us pick a colour).
+
+```python
+r = requests.get(f"{BASE}/questions/{question_id}/embed", headers=HEADERS, timeout=30,
+                 params={"heading": "Integers in real life", "color": "#0f766e"})
+iframe = r.json()["iframe"]          # put this in your page
+```
+
+The link works for 7 days: fetch a fresh one when you build the page. Each embed link is counted and charged like
+fetching the question.
+
 # Pages of results
 
 `limit` is 1–50 (default 20); `offset` skips that many. `total` says how many match.
@@ -446,3 +460,112 @@ DOCS = """<!doctype html>
 def content_docs() -> HTMLResponse:
     """The developer documentation (Redoc), open to everyone."""
     return HTMLResponse(DOCS)
+
+
+# ── the embeddable player (an iframe, like YouTube's) ────────────────────────
+
+embed = APIRouter(prefix="/api/v1/embed", tags=["Content API"])
+EMBED_DAYS = 7
+PALETTE = ("#1d4ed8", "#7c3aed", "#0f766e", "#b45309", "#be185d", "#15803d", "#c2410c", "#0369a1", "#4338ca")
+
+
+def _embed_secret() -> str:
+    from ..settings import settings
+
+    return "embed:" + settings.jwt_secret
+
+
+class EmbedLink(BaseModel):
+    embed_url: str = Field(examples=["https://cbc.gidraf.dev/api/v1/embed/eyJhbGciOi…"])
+    iframe: str = Field(examples=['<iframe src="https://cbc.gidraf.dev/api/v1/embed/eyJ…" width="640" height="400" '
+                                  'allow="fullscreen" style="border:0"></iframe>'])
+    expires_in_days: int = Field(examples=[EMBED_DAYS])
+    charged_ksh: float = Field(examples=[0])
+
+
+@router.get("/questions/{question_id}/embed", summary="An embeddable video player for one question",
+            response_model=EmbedLink, responses={**ERRORS, 404: {"model": ErrorBody, "description": "No video yet"}},
+            openapi_extra=samples("/api/v1/content/questions/q-grade-9-math-integers-apply-intege-mu02dhacaf40d3/embed",
+                                  "heading=Integers%20in%20real%20life&color=%230f766e"))
+def content_embed(question_id: str, request: Request,
+                  heading: str = Query("", max_length=80, description="Your own heading over the video"),
+                  color: str = Query("", description="Your colour, e.g. #0f766e — a random one if left out"),
+                  auth: AuthContext = Depends(DEVELOPER)) -> JSONResponse:
+    """The question's whiteboard video as an `<iframe>` for your page. It
+    streams from us — your visitors watch it, never download it. Counted and
+    charged like fetching the question; the link works for 7 days, so fetch a
+    fresh one when you build the page."""
+    import re
+    import secrets as _secrets
+    import time
+
+    import jwt
+
+    from ..services import content_api, platform_settings, whiteboard
+
+    row = content_api.one(question_id)
+    if not row:
+        raise_api_error("NOT_FOUND", "No such question.")
+    q = whiteboard.load(question_id)
+    st = whiteboard.status(question_id, q)
+    if st.get("status") != "ready":
+        raise_api_error("NOT_FOUND", "This question's video is not made yet.")
+    if color and not re.fullmatch(r"#[0-9a-fA-F]{6}", color):
+        raise_api_error("VALIDATION_FAILED", "A colour is #RRGGBB, e.g. #0f766e.")
+    bill = _charge(auth, [content_api.public(row, figures=False)], ref=f"embed {question_id}")
+    token = jwt.encode({"type": "embed", "sub": auth.subject, "q": question_id,
+                        "obj": whiteboard.object_name(question_id, st["key"]),
+                        "h": re.sub(r"\s+", " ", heading).strip()[:80], "c": color or _secrets.choice(PALETTE),
+                        "exp": int(time.time()) + EMBED_DAYS * 86400}, _embed_secret(), algorithm="HS256")
+    url = f"{platform_settings.public_base_url(request)}/api/v1/embed/{token}"
+    iframe = f'<iframe src="{url}" width="640" height="400" allow="fullscreen" style="border:0;max-width:100%"></iframe>'
+    return JSONResponse({"embed_url": url, "iframe": iframe, "expires_in_days": EMBED_DAYS,
+                         "charged_ksh": bill.get("charged_ksh", 0)}, headers=_usage_headers(auth.subject))
+
+
+PLAYER = """<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><title>__TITLE__</title>
+<style>
+ html,body{margin:0;height:100%;background:#0b0f17;font-family:Inter,system-ui,sans-serif;color:#fff}
+ .wrap{height:100%;display:flex;flex-direction:column}
+ header{padding:10px 14px;background:linear-gradient(135deg,__COLOR__,#0b0f17);font-weight:600;font-size:15px;
+        white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+ video{flex:1;width:100%;min-height:0;background:#000;outline:none}
+ footer{font-size:11px;padding:4px 10px;color:#9aa4b2;text-align:right}
+ footer a{color:#9aa4b2}
+</style></head><body><div class="wrap">
+__HEADER__
+<video src="__SRC__" controls playsinline preload="metadata" controlsList="nodownload noplaybackrate"
+       disablepictureinpicture disableremoteplayback oncontextmenu="return false"></video>
+<footer>CBC lessons · <a href="__HOME__" target="_blank" rel="noopener">cbc.gidraf.dev</a></footer>
+</div></body></html>"""
+
+
+@embed.get("/{token}", include_in_schema=False)
+def embed_player(token: str, request: Request) -> HTMLResponse:
+    """The player a developer's page frames: their heading and colour, our
+    stream. A fresh short-lived stream link is made on every view."""
+    import html as _html
+
+    import jwt
+
+    from ..services import platform_settings, streaming
+
+    try:
+        claims = jwt.decode(token, _embed_secret(), algorithms=["HS256"])
+    except jwt.PyJWTError:
+        return HTMLResponse("<p style='font-family:sans-serif'>This video link has expired. Ask the site to refresh it.</p>",
+                            status_code=410)
+    if claims.get("type") != "embed" or not claims.get("obj"):
+        return HTMLResponse("", status_code=404)
+    src = streaming.watch_link(f"embed:{claims.get('sub')}", str(claims["obj"]))["stream_url"]
+    heading = str(claims.get("h") or "")
+    page = (PLAYER.replace("__TITLE__", _html.escape(heading or "CBC lesson"))
+            .replace("__COLOR__", _html.escape(str(claims.get("c") or PALETTE[0])))
+            .replace("__HEADER__", f"<header>{_html.escape(heading)}</header>" if heading else "")
+            .replace("__SRC__", _html.escape(src))
+            .replace("__HOME__", _html.escape(platform_settings.public_base_url(request))))
+    # Meant to be framed by any site — the only page that is.
+    return HTMLResponse(page, headers={"Content-Security-Policy": "default-src 'none'; media-src 'self'; "
+                                       "style-src 'unsafe-inline'; frame-ancestors *",
+                                       "Cache-Control": "no-store"})

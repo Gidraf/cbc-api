@@ -355,6 +355,7 @@ def render(data: dict[str, Any], *, title: str = "", voice: str = "", subject: s
     name = f"{prefix}/{qid}/{key}.mp4"
     thumb_name = f"{prefix}/{qid}/{key}.jpg"
     if object_storage.object_exists(name):
+        record_video(qid, prefix, key, name)
         return {"url": public_url(name), "key": key, "cached": True,
                 **({"thumbnail_url": public_url(thumb_name)} if social else {})}
 
@@ -391,7 +392,27 @@ def render(data: dict[str, Any], *, title: str = "", voice: str = "", subject: s
         if thumb:
             out["thumbnail_url"] = object_storage.save_bytes(thumb_name, thumb, "image/jpeg")
     logger.info("Whiteboard %s for %s: %.1fs, %s", "social cut" if social else "video", qid, seconds, name)
+    record_video(qid, prefix, key, name)
     return out
+
+
+def record_video(question_id: str, prefix: str, key: str, object_name: str) -> None:
+    """Note that this question has a video (Play's filters and the daily job
+    read it). Never fails a render."""
+    if not question_id or question_id == "item":
+        return
+    try:
+        from ..infra.db import execute
+
+        execute("""INSERT INTO question_videos (question_id, kind, video_key, object_name, made_at)
+                   VALUES (:q, :k, :key, :o, NOW())
+                   ON CONFLICT (question_id, kind) DO UPDATE SET video_key = EXCLUDED.video_key,
+                       object_name = EXCLUDED.object_name,
+                       made_at = CASE WHEN question_videos.video_key = EXCLUDED.video_key
+                                      THEN question_videos.made_at ELSE NOW() END""",
+                {"q": question_id, "k": "lesson" if prefix == "videos" else prefix, "key": key, "o": object_name})
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Could not record the video of %s: %s", question_id, exc)
 
 
 def _countdown_ticks(ffmpeg: str, folder: Path, scenes: list[dict[str, Any]],

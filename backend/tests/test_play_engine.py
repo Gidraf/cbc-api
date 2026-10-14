@@ -131,6 +131,9 @@ def client(monkeypatch):
     # Amina is on the video plan: every question opens (test_classroom covers the locks).
     monkeypatch.setattr(entitlements, "has_video_plan", lambda owner, role: True)
     monkeypatch.setattr(user_questions, "list_for", lambda owner, **kw: [])
+    import app.routes.play as play_routes
+
+    monkeypatch.setattr(play_routes, "_with_videos", lambda ids, kind="lesson": set())
     app.dependency_overrides[get_auth_context] = lambda: AuthContext(subject="amina", role="user", auth_type="session")
     try:
         yield TestClient(app)
@@ -160,6 +163,9 @@ def test_without_the_plan_a_users_play_list_says_what_is_locked(client, monkeypa
 
     monkeypatch.setattr(entitlements, "has_video_plan", lambda owner, role: False)
     monkeypatch.setattr(entitlements, "owned_ids", lambda owner, ids: {"q2"})
+    monkeypatch.setattr(entitlements, "opened_ids", lambda owner, ids: set())
+    monkeypatch.setattr(entitlements, "free_left", lambda owner: 0)               # free plays used up
+    monkeypatch.setattr(entitlements, "_use_free_play", lambda owner, q: False)
     monkeypatch.setattr(entitlements, "plan_status", lambda owner, role: {"on_sale": False})
     items = {i["question_id"]: i["locked"] for i in client.get("/api/v1/play/items?grade=grade-9&subject=Mathematics").json()["items"]}
     assert items == {"q1": True, "q2": False}

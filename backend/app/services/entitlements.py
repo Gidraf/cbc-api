@@ -4,12 +4,12 @@
 * A parent's or teacher's account ("user") owns the questions it paid for
   (on a paper it bought) and the questions it wrote itself. For those it gets
   the answers, the marking scheme, the games and the animated walkthrough.
-* The video plan — a monthly subscription paid from the wallet — opens every
-  question's games and walkthroughs, and the whiteboard videos, which are only
-  ever streamed (services/streaming.py), never handed out as files.
-
-The plan's price is a setting (billing_video_plan_ksh); 0 means it is not on
-sale yet, and only staff watch videos.
+* Every account has free plays (billing_free_play_items, 100): the first time
+  it opens a question in Play — its video, game or walkthrough — one is spent,
+  and that question stays open for good.
+* The play pass — KSh 50 a day by default (billing_video_plan_ksh / _days),
+  paid from the wallet — opens every question's video, game and walkthrough.
+  Videos are only ever streamed (services/streaming.py), never handed out.
 """
 from __future__ import annotations
 
@@ -31,13 +31,13 @@ def plan_price() -> tuple[int, int]:
     from . import platform_settings as ps
 
     try:
-        cents = max(0, int(round(float(ps.get("billing_video_plan_ksh", 0) or 0) * 100)))
+        cents = max(0, int(round(float(ps.get("billing_video_plan_ksh", 50) or 0) * 100)))
     except (TypeError, ValueError):
         cents = 0
     try:
-        days = max(1, int(ps.get("billing_video_plan_days", 30) or 30))
+        days = max(1, int(ps.get("billing_video_plan_days", 1) or 1))
     except (TypeError, ValueError):
-        days = 30
+        days = 1
     return cents, days
 
 
@@ -89,7 +89,8 @@ def plan_status(owner: str, role: str) -> dict[str, Any]:
     until = plan_until(owner)
     return {"on_sale": bool(cents), "price_ksh": billing.ksh(cents), "days": days,
             "active": has_video_plan(owner, role), "staff": staff(role),
-            "until": until.isoformat() if until else None}
+            "until": until.isoformat() if until else None,
+            "free_plays": free_plays(), "free_left": free_left(owner) if not staff(role) else None}
 
 
 # ── owning questions ─────────────────────────────────────────────────────────
@@ -107,11 +108,64 @@ def owned_ids(owner: str, question_ids: list[str]) -> set[str]:
     return {r["question_id"] for r in rows}
 
 
-def may_open(owner: str, role: str, question_id: str) -> bool:
-    """The answers, games and walkthrough of one question."""
+def free_plays() -> int:
+    from . import platform_settings as ps
+
+    try:
+        return max(0, int(ps.get("billing_free_play_items", 100)))
+    except (TypeError, ValueError):
+        return 100
+
+
+def opened_ids(owner: str, question_ids: list[str]) -> set[str]:
+    """Of these, the ones the account already opened with a free play."""
+    from ..infra.db import fetch_all
+
+    ids = [str(q) for q in question_ids if q]
+    if not ids:
+        return set()
+    rows = fetch_all("SELECT question_id FROM play_opens WHERE owner = :o AND question_id = ANY(:ids)",
+                     {"o": owner, "ids": ids}) or []
+    return {r["question_id"] for r in rows}
+
+
+def free_left(owner: str) -> int:
+    from ..infra.db import fetch_one
+
+    used = (fetch_one("SELECT COUNT(*) AS n FROM play_opens WHERE owner = :o", {"o": owner}) or {}).get("n") or 0
+    return max(0, free_plays() - int(used))
+
+
+def _use_free_play(owner: str, question_id: str) -> bool:
+    """Spend one free play on this question (once per question, ever)."""
+    from sqlalchemy import text
+
+    from ..infra.db import get_engine
+
+    with get_engine().begin() as c:
+        c.execute(text("SELECT pg_advisory_xact_lock(hashtext(:o))"), {"o": "plays:" + owner})
+        if c.execute(text("SELECT 1 FROM play_opens WHERE owner = :o AND question_id = :q"),
+                     {"o": owner, "q": question_id}).first():
+            return True
+        used = c.execute(text("SELECT COUNT(*) FROM play_opens WHERE owner = :o"), {"o": owner}).scalar() or 0
+        if int(used) >= free_plays():
+            return False
+        c.execute(text("INSERT INTO play_opens (owner, question_id) VALUES (:o, :q) ON CONFLICT DO NOTHING"),
+                  {"o": owner, "q": question_id})
+        return True
+
+
+def may_open(owner: str, role: str, question_id: str, *, spend: bool = True) -> bool:
+    """One question's video, game, walkthrough and answers: staff and the
+    pass open everything; a question owned (bought or written) is open; else
+    one of the account's free plays opens it — for good, the first time."""
     if staff(role) or has_video_plan(owner, role):
         return True
-    return question_id in owned_ids(owner, [question_id])
+    if question_id in owned_ids(owner, [question_id]):
+        return True
+    if not spend:
+        return question_id in opened_ids(owner, [question_id]) or free_left(owner) > 0
+    return _use_free_play(owner, question_id)
 
 
 def redact(question: dict[str, Any]) -> dict[str, Any]:
@@ -127,10 +181,14 @@ def redact(question: dict[str, Any]) -> dict[str, Any]:
 
 
 def locked_reason(role: str) -> str:
-    cents, _ = plan_price()
+    from . import billing
+
+    cents, days = plan_price()
+    period = "a day" if days == 1 else f"for {days} days"
     if cents:
-        return "Buy a paper with this question, or take the video plan, to open its answers and animations."
-    return "Buy a paper with this question to open its answers and animations."
+        return (f"Your {free_plays()} free plays are used up. The play pass (KSh {billing.ksh(cents):g} {period}) opens "
+                "every video, game and walkthrough — or buy a paper with this question.")
+    return "Your free plays are used up. Buy a paper with this question to open it."
 
 
 def days_left(owner: str) -> int:

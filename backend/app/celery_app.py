@@ -93,6 +93,17 @@ celery_app.conf.update(
             "task": "app.tasks.move_videos_to_drive",
             "schedule": 1800.0,
         },
+        # Lesson videos for questions with none, towards the day's target
+        # (video_daily_target, 200): a batch every half hour, one render at a time.
+        "make-daily-videos": {
+            "task": "app.tasks.make_daily_videos",
+            "schedule": 1800.0,
+        },
+        # The registry of made videos, from storage and Drive: 00:30 Nairobi.
+        "backfill-video-registry": {
+            "task": "app.tasks.backfill_video_registry",
+            "schedule": crontab(hour=21, minute=30),
+        },
         # Once a week, at a quiet hour: Sunday 23:00 UTC is 02:00 Monday in
         # Nairobi, so the trials never compete with a working day's queue and
         # the admins read the result first thing on Monday.
