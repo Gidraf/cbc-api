@@ -157,3 +157,84 @@ def test_captions_tease_ask_then_answer(monkeypatch):
     assert "Can you solve this?" in teaser and "-5 + 8" not in teaser          # no question yet
     assert "-5 + 8" in ask and "3" not in ask.split("Drop")[0].replace("-5 + 8", "")
     assert "The answer: 3" in answer and "Move 8 to the right." in answer
+
+
+@needs_db
+def test_the_photo_schedule_shows_each_post_with_its_card(db, monkeypatch):
+    from fastapi.testclient import TestClient
+    from sqlalchemy import text
+
+    from app.main import app
+    from app.routes import play
+    from app.services import social_cards
+    from app.services.auth import AuthContext, get_auth_context
+
+    monkeypatch.setattr(play, "_one", lambda qid, owner="": {"question_id": qid, "question_text": "2+2?"})
+    monkeypatch.setattr(social_cards, "status", lambda qid, step, q=None: {"status": "ready", "url": f"https://x/{qid}-{step}.jpg"}
+                        if step != "answer" else {"status": "none"})
+    now = datetime.now(timezone.utc)
+    with db.begin() as c:
+        for pid, step, at, posted in (("p1", "teaser", now + timedelta(hours=1), None), ("p2", "answer", now + timedelta(hours=3), None),
+                                      ("p3", "question", now - timedelta(hours=5), now - timedelta(hours=5)),
+                                      ("v1", "walkthrough", now + timedelta(hours=4), None)):
+            c.execute(text("""INSERT INTO social_posts (post_id, question_id, platform, scheduled_for, posted_at, format, step)
+                              VALUES (:p, 'q1', 'facebook', :t, :posted, :f, :s)"""),
+                      {"p": pid, "t": at, "posted": posted, "f": "video" if step == "walkthrough" else "photo", "s": step})
+    app.dependency_overrides[get_auth_context] = lambda: AuthContext("gidraf", "admin", "bearer")
+    try:
+        out = TestClient(app).get("/api/v1/play/social/photo-posts").json()
+    finally:
+        app.dependency_overrides.pop(get_auth_context, None)
+    assert [p["post_id"] for p in out["posts"]] == ["p3", "p1", "p2"]           # photos only, in time order
+    assert out["upcoming"] == 2 and out["posted"] == 1 and out["cards_missing"] == 1
+    p1 = next(p for p in out["posts"] if p["post_id"] == "p1")
+    assert p1["card_url"] == "https://x/q1-teaser.jpg" and p1["card_status"] == "ready"
+
+
+def test_the_card_library_says_what_is_made(monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from app.infra import db
+    from app.main import app
+    from app.routes import play
+    from app.services import social_cards
+    from app.services.auth import AuthContext, get_auth_context
+
+    monkeypatch.setattr(play, "_bank", lambda g, s, ss, limit: [{"question_id": "q1", "question_text": "A?", "curriculum": {}},
+                                                               {"question_id": "q2", "question_text": "B?", "curriculum": {},
+                                                                "diagram": {"diagram_id": "d"}}])
+    monkeypatch.setattr(db, "fetch_all", lambda sql, p=None: [{"q": "q2"}])          # q2's cards are being made
+    monkeypatch.setattr(social_cards, "status", lambda qid, step, q=None: {"status": "ready", "url": f"u/{step}"} if qid == "q1" else {"status": "none"})
+    app.dependency_overrides[get_auth_context] = lambda: AuthContext("gidraf", "admin", "bearer")
+    try:
+        out = TestClient(app).get("/api/v1/play/social/cards", params={"grade": "grade-9", "subject": "Mathematics"}).json()
+    finally:
+        app.dependency_overrides.pop(get_auth_context, None)
+    rows = {r["question_id"]: r for r in out["items"]}
+    assert rows["q1"]["status"] == "ready" and rows["q1"]["cards"]["answer"]["url"] == "u/answer"
+    assert rows["q2"]["status"] == "making" and rows["q2"]["has_figure"] and out["ready"] == 1
+
+
+def test_post_now_for_one_booked_post_carries_its_id(monkeypatch):
+    import asyncio
+    import importlib
+    import sys
+
+    sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parents[2] / "poster"))
+    try:
+        main = importlib.import_module("poster.__main__")
+    except Exception as exc:  # noqa: BLE001 — the poster needs playwright; skip where it is not installed
+        pytest.skip(f"poster not importable here: {exc}")
+    asked = {}
+
+    async def next_post(**kw):
+        asked.update(kw)
+        return {"post": {"post_id": "p9", "platform": "facebook", "format": "photo"}}
+
+    async def publish(post, dry_run):
+        return {"ok": True, "post_id": post["post_id"], "dry_run": dry_run}
+
+    monkeypatch.setattr(main.cbc, "next_post", next_post)
+    monkeypatch.setattr(main, "publish", publish)
+    out = asyncio.run(main.run("run_now", "facebook", "p9", None))
+    assert out == {"ok": True, "post_id": "p9", "dry_run": False} and asked["post_id"] == "p9" and asked["dry"] is True

@@ -4322,6 +4322,8 @@ export type TrackedPost = {
   shares: number; saves: number; follows: number; watch_pct: number | null; notes: string; question_text?: string;
   /** Where it went on the platform (reel, feed, story) and the groups it was shared to. */
   destinations?: string[]; groups?: string[]; status?: string; platform_scheduled?: boolean;
+  /** A video, or a photo card of a series (its step: teaser, question, answer). */
+  format?: "video" | "photo"; step?: string;
 };
 export type PostRollup = { posts: number; planned: number; views: number; likes: number; comments: number; shares: number;
   saves: number; follows: number; views_per_post: number; engagement_rate: number; follows_per_1000_views: number;
@@ -4922,5 +4924,54 @@ export function useTestAction() {
         ? api(`/api/v1/classroom/tests/${encodeURIComponent(v.test_id)}`, { method: "DELETE" })
         : api(`/api/v1/classroom/tests/${encodeURIComponent(v.test_id)}/status`, { method: "POST", body: JSON.stringify({ status: v.action }) }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["tests"] }),
+  });
+}
+
+// ── photo cards and photo posts ──────────────────────────────────────────────
+
+export type CardState = { status: "ready" | "none"; url?: string | null };
+export type CardRow = { question_id: string; question_text: string; sub_strand: string; has_figure: boolean;
+                        status: "ready" | "making" | "partial" | "none";
+                        cards: { teaser: CardState; question: CardState; answer: CardState } };
+
+export function useCardLibrary(grade: string, subject: string, subStrand: string, enabled = true) {
+  const api = useApi();
+  return useQuery({
+    queryKey: ["social-cards", grade, subject, subStrand],
+    queryFn: () => {
+      const qs = new URLSearchParams({ grade, subject });
+      if (subStrand) qs.set("sub_strand", subStrand);
+      return api<{ items: CardRow[]; ready: number }>(`/api/v1/play/social/cards?${qs}`);
+    },
+    enabled: enabled && Boolean(grade && subject),
+    refetchInterval: (q) => ((q.state.data?.items || []).some((i) => i.status === "making") ? 6000 : false),
+  });
+}
+
+export function useMakeCards() {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { grade: string; subject: string; sub_strand?: string; figures_only?: boolean; question_id?: string }) =>
+      v.question_id
+        ? api<any>(`/api/v1/play/items/${encodeURIComponent(v.question_id)}/cards`, { method: "POST" })
+        : api<{ counts: Record<string, number> }>("/api/v1/play/social/cards", { method: "POST", body: JSON.stringify(v) }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["social-cards"] });
+      setTimeout(() => qc.invalidateQueries({ queryKey: ["social-cards"] }), 4000);
+    },
+  });
+}
+
+export type PhotoPost = { post_id: string; question_id: string; platform: string; step: "teaser" | "question" | "answer";
+                          scheduled_for: string | null; posted_at: string | null; status: string; attempts: number;
+                          last_error: string; url: string; question_text: string; card_status: string; card_url?: string | null };
+
+export function usePhotoPosts() {
+  const api = useApi();
+  return useQuery({
+    queryKey: ["photo-posts"],
+    queryFn: () => api<{ posts: PhotoPost[]; upcoming: number; posted: number; cards_missing: number }>("/api/v1/play/social/photo-posts"),
+    refetchInterval: 30_000,
   });
 }

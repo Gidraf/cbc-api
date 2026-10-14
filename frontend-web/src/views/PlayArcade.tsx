@@ -2,6 +2,7 @@ import React from "react";
 import { useAuth } from "../lib/auth";
 import { fetchBlob } from "../api";
 import { StreamedVideo } from "../ui/StreamedVideo";
+import { PhotoStudio } from "./PhotoStudio";
 import gsap from "gsap";
 import {
   Badge,
@@ -129,11 +130,29 @@ export function PlayArcade() {
   // Staff run the factory's tools here; a parent's or teacher's account plays and watches.
   const staff = role === "admin" || role === "operator" || role === "reviewer" || role === "developer";
   const lockedCount = (items.data?.items || []).filter((it) => it.locked).length;
+  // Staff work in four places; a parent or teacher only plays.
+  type Tab = "play" | "videos" | "photos" | "autopost";
+  const [tab, setTabState] = React.useState<Tab>(() => {
+    try { return (localStorage.getItem("cbc_play_tab") as Tab) || "play"; } catch { return "play"; }
+  });
+  const setTab = (t: Tab) => { setTabState(t); try { localStorage.setItem("cbc_play_tab", t); } catch { /* private window */ } };
+  const view: Tab = staff ? tab : "play";
 
   return (
     <>
       <PageHeader eyebrow="Assess" title="Play"
         description="Every question in the bank as a game, a simulator and a narrated walkthrough. The numbers come from the maths engine, so a game can never teach a wrong sum." />
+      {staff && (
+        <div role="tablist" aria-label="Play sections" style={{ display: "flex", gap: 4, borderBottom: "1px solid var(--line)", marginBottom: "var(--s3)", overflowX: "auto" }}>
+          {([["play", "🎮 Play"], ["videos", "🎬 Videos"], ["photos", "📸 Photos"], ["autopost", "📤 Auto-post"]] as const).map(([id, label]) => (
+            <button key={id} role="tab" aria-selected={view === id} onClick={() => setTab(id)}
+                    style={{ background: "transparent", border: "none", padding: "8px 14px", cursor: "pointer", whiteSpace: "nowrap",
+                             borderBottom: `2px solid ${view === id ? "var(--accent)" : "transparent"}`, fontWeight: view === id ? 650 : 500, color: "var(--ink)" }}>
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
       <Card>
         <Stack direction="row" gap="var(--s3)" wrap align="end">
           <label style={lbl}>Grade
@@ -172,10 +191,10 @@ export function PlayArcade() {
               {subStrands.map((n: string) => <option key={n} value={n}>{n}</option>)}
             </Select>
           </label>
-          <Button variant="primary" disabled={!grade || round.isPending} onClick={() => startRound("mixed")}>▶ Start a round</Button>
-          <Button disabled={!grade || round.isPending} onClick={() => startRound("choice")}>Quiz race</Button>
+          {view === "play" && <Button variant="primary" disabled={!grade || round.isPending} onClick={() => startRound("mixed")}>▶ Start a round</Button>}
+          {view === "play" && <Button disabled={!grade || round.isPending} onClick={() => startRound("choice")}>Quiz race</Button>}
         </Stack>
-        {grade && Object.keys(counts).length > 0 && (
+        {view === "play" && grade && Object.keys(counts).length > 0 && (
           <Stack direction="row" gap="var(--s2)" wrap style={{ marginTop: "var(--s3)" }}>
             {Object.entries(counts).map(([k, n]) => (
               <Button key={k} size="sm" variant="ghost" onClick={() => startRound(k)}>{KIND_ICON[k]} {KIND_LABEL[k] || k} · {n}</Button>
@@ -184,6 +203,7 @@ export function PlayArcade() {
         )}
       </Card>
 
+      {view === "play" && <>
       {items.error && <ErrorNotice error={items.error} />}
       {grade && (items.data?.items || []).length === 0 && !items.isLoading && (
         <EmptyState title="Nothing playable here yet" description="Write questions for this topic in the Exam studio; every item with a calculation becomes a game." />
@@ -205,17 +225,21 @@ export function PlayArcade() {
           ))}
         </Card>
       )}
+      </>}
 
-      {staff && grade && (items.data?.items || []).length > 0 && (
+      {view === "videos" && (grade ? <>
         <VideoLibrary grade={grade} subject={subject} subStrand={subStrand} open={showLibrary}
                       onToggle={() => setShowLibrary((v) => !v)} onWatch={(qid) => setWatching(qid)} />
+        <SocialLibrary grade={grade} subject={subject} subStrand={subStrand} topics={subStrands} onWatch={(qid) => setSocialWatch(qid)} />
+        <Performance grade={grade} subject={subject} subStrand={subStrand} format="video" />
+      </> : <EmptyState title="Choose a grade and subject" description="Videos are made and booked per subject or topic." />)}
+
+      {view === "photos" && (
+        <PhotoStudio grade={grade} subject={subject} subStrand={subStrand}
+                     bookSeries={<BookSeries grade={grade} subject={subject} subStrand={subStrand} />} />
       )}
 
-      {staff && grade && (items.data?.items || []).length > 0 && (
-        <SocialLibrary grade={grade} subject={subject} subStrand={subStrand} topics={subStrands} onWatch={(qid) => setSocialWatch(qid)} />
-      )}
-      {staff && grade && <Performance grade={grade} subject={subject} subStrand={subStrand} />}
-      {staff && <AutoPost />}
+      {view === "autopost" && <AutoPost />}
 
       {playing && <Round items={playing} onClose={() => setPlaying(null)} onWatch={(qid) => setWatching(qid)} />}
       {watching && <WatchModal questionId={watching} onClose={() => setWatching(null)} />}
@@ -647,7 +671,6 @@ function SocialLibrary({ grade, subject, subStrand, topics, onWatch }: {
       {b && <BrandEditor brand={b} />}
       <VideoBatches grade={grade} subject={subject} subStrand={subStrand} topics={topics} />
       <BookAhead grade={grade} subject={subject} subStrand={subStrand} />
-      <BookSeries grade={grade} subject={subject} subStrand={subStrand} />
       <ScheduleExport grade={grade} subject={subject} subStrand={subStrand} ready={library.data?.ready} />
       {b && (
         <Stack direction="row" gap="var(--s3)" wrap align="center" style={{ marginTop: "var(--s2)", fontSize: "var(--text-sm)" }}>
@@ -1295,8 +1318,8 @@ function BookSeries({ grade, subject, subStrand }: { grade: string; subject: str
   }
   const fmt = (d: string) => new Date(`${d}T12:00:00`).toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" });
   return (
-    <details style={{ marginTop: "var(--s3)" }}>
-      <summary style={{ cursor: "pointer", fontSize: "var(--text-sm)" }}>📸 Book photo + video series (Facebook)</summary>
+    <details open>
+      <summary style={{ cursor: "pointer", fontSize: "var(--text-sm)" }}>📸 Facebook: photos and videos a day</summary>
       <p style={{ margin: "var(--s2) 0", color: "var(--ink-3)", fontSize: "var(--text-xs)" }}>
         One question told in steps through the day, to keep people coming back: a “Can you solve this?” card, then the
         question (no answer), then a card with the answer, then its walkthrough video — mixed with single videos. Up to
@@ -1460,10 +1483,11 @@ function ScheduleExport({ grade, subject, subStrand, ready }: { grade: string; s
 }
 
 /** How each video did, platform by platform and topic by topic. */
-function Performance({ grade, subject, subStrand }: { grade: string; subject: string; subStrand: string }) {
+function Performance({ grade, subject, subStrand, format }: { grade: string; subject: string; subStrand: string; format?: "video" | "photo" }) {
   const posts = useSocialPosts(grade, subject, subStrand);
   const [platform, setPlatform] = React.useState("");
-  const data = posts.data;
+  const raw = posts.data;
+  const data = raw && format ? { ...raw, posts: raw.posts.filter((p) => (p.format || "video") === format) } : raw;
   if (!data || !data.posts.length) {
     return (
       <Card title="Performance">

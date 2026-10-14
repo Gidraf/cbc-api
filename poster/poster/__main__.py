@@ -287,6 +287,15 @@ async def post_now(platform: str = "", options: dict[str, Any] | None = None) ->
     feed and the next groups in turn, or the `groups` picked (5 at most)."""
     options = options or {}
     share = str(options.get("share") or "")
+    wanted = str(options.get("post_id") or "")
+    if wanted:
+        # One booked post, now — a photo card or a video picked in the console.
+        if state["paused"]:
+            return {"ok": False, "error": "The poster is paused — resume it first."}
+        nxt = await cbc.next_post(platform=platform, post_id=wanted, dry=True)
+        if not nxt.get("post"):
+            return {"ok": False, "error": nxt.get("reason") or "That post is not ready (its card or video is still being made)."}
+        return await publish({**nxt["post"], "schedule_at": ""}, dry_run=False)
     picked = [str(g) for g in (options.get("groups") or [])][:5]
     if state["paused"]:
         return {"ok": False, "error": "The poster is paused — resume it first."}
@@ -355,7 +364,10 @@ async def run(action: str, platform: str = "", post_id: str = "",
     if action == "dry_run":
         return await do_dry_run(platform, post_id)
     if action == "run_now":
-        return await post_now(platform, options)
+        opts = dict(options or {})
+        if post_id:
+            opts.setdefault("post_id", post_id)      # one booked post, picked in the console
+        return await post_now(platform, opts)
     if action in ("pause", "resume"):
         return set_paused(action == "pause")
     if action == "groups":
