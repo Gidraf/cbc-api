@@ -4,6 +4,11 @@
         A new random password for an account, printed once (or, with --ask, one
         you type); switches it on.
 
+    docker compose exec api python -m app.admin_tools test-email you@example.com
+        Checks each step of sending email — settings, Public address, the mail
+        server's name, connecting, encryption, signing in — and sends a test
+        email. Says which step fails and why; never prints the password.
+
     docker compose run --rm -e OLD_MASTER_KEY -e NEW_MASTER_KEY api python -m app.admin_tools rotate-master-key [--dry-run]
         Moves the saved provider keys from one CBC_MASTER_KEY to another. Both
         keys come from the environment, never the command line (shell history,
@@ -98,6 +103,34 @@ def reset_password(username: str, role: str = "", ask: bool = False) -> int:
     return 0
 
 
+def test_email(to: str) -> int:
+    from .infra.db import fetch_all
+    from .services import email_links, mailer
+
+    ok_all = True
+    for step, ok, detail in mailer.diagnose(""):
+        print(f"[{'ok' if ok else 'FAIL'}] {step}: {detail}")
+        ok_all = ok_all and ok
+    base = email_links.base_url()
+    print(f"[{'ok' if base else 'FAIL'}] public address: "
+          + (f"links point to {base}" if base else "not set — the console's Settings → Public address (or PUBLIC_BASE_URL). No link is sent without it."))
+    try:
+        rows = fetch_all("SELECT username, role, COALESCE(email, '') AS email, email_verified_at FROM app_users WHERE is_active ORDER BY username")
+        with_email = [r for r in rows if r["email"]]
+        print(f"[info] accounts: {len(rows)} active, {len(with_email)} with an email — a reset link only goes to an account that has one.")
+        for r in rows:
+            if r["role"] == "admin":
+                print(f"[info]   {r['username']} (admin): {r['email'] or 'NO EMAIL — add it in Account → Email & password'}"
+                      + (" (confirmed)" if r["email_verified_at"] else ""))
+    except Exception as exc:  # noqa: BLE001
+        print(f"[info] accounts: could not read ({type(exc).__name__})")
+    if ok_all and to:
+        sent = mailer.send(to, "CBC Factory test email", "Email from the platform works.", "<p>Email from the platform works.</p>")
+        print(f"[{'ok' if sent else 'FAIL'}] send: " + (f"sent to {to} — check the inbox and the spam folder" if sent else mailer.LAST_ERROR["error"]))
+        ok_all = sent
+    return 0 if ok_all and base else 1
+
+
 def main(argv: list[str] | None = None) -> int:
     import argparse
 
@@ -109,7 +142,11 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--ask", action="store_true", help="type the password yourself instead of a random one")
     k = sub.add_parser("rotate-master-key", help="move saved provider keys to NEW_MASTER_KEY")
     k.add_argument("--dry-run", action="store_true")
+    t = sub.add_parser("test-email", help="check each step of sending email, and send a test")
+    t.add_argument("to", nargs="?", default="", help="send a test email here")
     args = parser.parse_args(argv)
+    if args.cmd == "test-email":
+        return test_email(args.to)
     if args.cmd == "reset-password":
         return reset_password(args.username, args.role, ask=args.ask)
     return rotate_master_key(args.dry_run)
