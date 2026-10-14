@@ -170,3 +170,23 @@ def test_the_station_offers_both_documents() -> None:
     assert "Read the paper" in factory
     assert "Read the marking scheme" in factory
     assert 'station.id === "questions"' in factory
+
+
+def test_the_answer_key_spans_both_columns_as_a_block_not_as_tables():
+    """A table given column-span is not laid out as spanning by older
+    Chromium print engines, and the answers then flow under the key grid.
+    The grids sit in one spanning block, like the section headings."""
+    import re
+
+    from app.services import question_paper
+    from app.services.paper_builder import thaw
+
+    qs = [{"question_id": f"q{i}", "question_text": f"Q{i}?", "options": [{"id": "A", "text": "x", "is_correct": True},
+                                                                         {"id": "B", "text": "y"}]} for i in range(22)]
+    paper = thaw({"kind": "topical", "title": "Area", "grade": "grade-9", "subject": "Mathematics",
+                  "sections": [{"letter": "A", "heading": "Section A", "question_ids": [q["question_id"] for q in qs]}]}, qs)
+    html = question_paper.render_paper(paper, answers=True)
+    block = re.search(r"<div class='keyblock'>(.*?)</div>", html, re.S)
+    assert block and block.group(1).count("class='keygrid'") == 3          # 1–10, 11–20, 21–22
+    assert ".exam .keyblock { column-span: all;" in html
+    assert re.search(r"\.exam \.keygrid \{[^}]*column-span", html) is None
