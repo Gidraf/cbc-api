@@ -393,6 +393,12 @@ def render(data: dict[str, Any], *, title: str = "", voice: str = "", subject: s
             out["thumbnail_url"] = object_storage.save_bytes(thumb_name, thumb, "image/jpeg")
     logger.info("Whiteboard %s for %s: %.1fs, %s", "social cut" if social else "video", qid, seconds, name)
     record_video(qid, prefix, key, name)
+    try:                                     # to Google Drive now, not in half an hour
+        from . import drive_store
+
+        drive_store.copy_now(name, thumb_name if out.get("thumbnail_url") else "")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Drive copy after render skipped: %s", exc)
     return out
 
 

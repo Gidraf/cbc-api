@@ -134,15 +134,55 @@ def test_the_storage_layer_answers_for_a_moved_video_from_drive(monkeypatch, env
     assert storage.object_storage.object_name_of(moved["url"]) == "social/q1/k1.mp4"
 
 
-def test_server_copies_go_only_after_the_safety_window(monkeypatch, env):
+def test_server_copies_go_after_the_safety_window_or_once_posted_everywhere(monkeypatch, env):
     from app.infra import db, storage
 
     seen, removed = {}, []
-    monkeypatch.setattr(db, "fetch_all", lambda q, p=None: seen.update(p or {}) or [{"object_name": "social/q1/k1.mp4"}])
+    rows = [{"object_name": "videos/q0/k0.mp4", "old": True},          # past the window
+            {"object_name": "social/q1/k1.mp4", "old": False},         # posted on every platform planned
+            {"object_name": "social/q2/k2.mp4", "old": False},         # a post still waiting for it
+            {"object_name": "videos/q3/k3.mp4", "old": False}]         # a lesson video, inside the window
+    monkeypatch.setattr(db, "fetch_all", lambda q, p=None: seen.update(p or {}) or rows)
+    monkeypatch.setattr(db, "fetch_one", lambda q, p=None: {"posts": 3, "waiting": 0 if p["q"] == "q1" else 1})
     monkeypatch.setattr(db, "execute", lambda q, p=None: None)
     monkeypatch.setattr(storage.object_storage, "remove_object", lambda n: removed.append(n) or True)
-    monkeypatch.setenv("DRIVE_KEEP_LOCAL_DAYS", "7")
-    assert D.remove_local_copies() == 1 and seen["d"] == 7.0 and removed == ["social/q1/k1.mp4"]
+    monkeypatch.delenv("DRIVE_KEEP_LOCAL_DAYS", raising=False)
+    assert D.remove_local_copies() == 2 and seen["d"] == 2.0
+    assert removed == ["videos/q0/k0.mp4", "social/q1/k1.mp4"]
+
+
+def test_a_video_never_planned_for_a_post_is_not_posted_everywhere(monkeypatch):
+    from app.infra import db
+
+    monkeypatch.setattr(db, "fetch_one", lambda q, p=None: {"posts": 0, "waiting": 0})
+    assert not D.posted_everywhere("social/q9/k.mp4")
+    assert not D.posted_everywhere("videos/q9/k.mp4"), "only social cuts are posted"
+
+
+def test_a_render_goes_to_drive_at_once_and_a_failure_leaves_it_for_the_job(monkeypatch, env):
+    from app.infra import db
+
+    moved = []
+    monkeypatch.setattr(db, "fetch_one", lambda q, p=None: {"x": 1} if p["n"] == "social/q1/old.mp4" else None)
+    monkeypatch.setattr(D, "Drive", lambda: object())
+
+    def fake_move(name, drive):
+        if name.endswith("bad.mp4"):
+            raise RuntimeError("Drive said no")
+        moved.append(name)
+
+    monkeypatch.setattr(D, "move", fake_move)
+    assert D.copy_now("social/q1/new.mp4", "social/q1/new.jpg", "social/q1/old.mp4", "social/q1/bad.mp4", "") == 2
+    assert moved == ["social/q1/new.mp4", "social/q1/new.jpg"]
+
+
+def test_a_post_going_out_runs_the_move(monkeypatch):
+    import inspect
+
+    from app.services import social_export
+
+    assert "_free_space_after_post()" in inspect.getsource(social_export.record_attempt)
+    assert "drive_store.copy_now(" in inspect.getsource(__import__("app.services.whiteboard", fromlist=["x"]))
 
 
 def test_not_set_up_moves_nothing_and_a_move_is_queued_once(monkeypatch):
