@@ -894,6 +894,33 @@ def book_social_month(payload: BookMonth, auth: AuthContext = Depends(ANY)) -> d
         return {}
 
 
+class TeacherNow(BaseModel):
+    mode: Literal["female", "male", "alternate"] = "alternate"
+    limit: int = Field(60, ge=1, le=500)
+    pause_lessons: bool = True
+
+
+@router.post("/social/teacher-now")
+def teacher_now(payload: TeacherNow, auth: AuthContext = Depends(require_roles("admin"))) -> dict[str, Any]:
+    """Teacher videos first: the teacher on, the lesson videos paused, the
+    booked posts' videos queued again with the teacher, soonest first."""
+    from ..services import teacher
+
+    return teacher.render_now(payload.mode, limit=payload.limit, pause_lessons=payload.pause_lessons,
+                              by=str(getattr(auth, "subject", "") or ""))
+
+
+class LessonsResume(BaseModel):
+    target: int = Field(200, ge=0, le=1000)
+
+
+@router.post("/social/lessons-resume")
+def lessons_resume(payload: LessonsResume, auth: AuthContext = Depends(require_roles("admin"))) -> dict[str, Any]:
+    from ..services import teacher
+
+    return {"video_daily_target": teacher.resume_lessons(payload.target, by=str(getattr(auth, "subject", "") or ""))}
+
+
 class LivePerDay(BaseModel):
     live_per_day: int = Field(ge=0, le=30)
 

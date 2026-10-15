@@ -1,6 +1,8 @@
 import React from "react";
 import { Badge, Button, Card, Input, Select, Stack, useToast } from "../ui/components";
-import { type MonthDay, type MonthPlan, useBookMonth, useSetLivePerDay, useSocialMonth } from "../lib/queries";
+import { type MonthDay, type MonthPlan, type MonthView, useBookMonth, useLessonsResume, useSetLivePerDay, useSocialMonth,
+         useTeacherNow } from "../lib/queries";
+import { useAuth } from "../lib/auth";
 
 const PLATFORMS: [string, string][] = [["facebook", "Facebook"], ["tiktok", "TikTok"], ["instagram", "Instagram"],
   ["youtube", "YouTube"], ["linkedin", "LinkedIn"]];
@@ -178,8 +180,51 @@ export function MonthPlanner({ grade, subject, subStrand }: { grade: string; sub
             </span>
           </Stack>
         )}
+        {v && <TeacherSwitch view={v} onDone={() => month.refetch()} />}
       </div>
     </Card>
+  );
+}
+
+/** Admins: render the booked posts' videos with the 3D teacher, first. */
+function TeacherSwitch({ view, onDone }: { view: MonthView; onDone: () => void }) {
+  const { role } = useAuth();
+  const toast = useToast();
+  const go = useTeacherNow();
+  const resume = useLessonsResume();
+  const [mode, setMode] = React.useState(view.rules.teacher === "off" ? "alternate" : view.rules.teacher);
+  const [limit, setLimit] = React.useState(60);
+  if (role !== "admin") return null;
+  const on = view.rules.teacher !== "off";
+  return (
+    <Stack direction="row" gap="var(--s2)" wrap align="center" style={{ fontSize: "var(--text-sm)", borderTop: "1px dashed var(--line)", paddingTop: "var(--s2)" }}>
+      <span>🎬 Teacher videos{on ? <> — <Badge tone="ok">on: {view.rules.teacher}</Badge></> : ""}</span>
+      <Select value={mode} onChange={(e) => setMode(e.target.value as any)} style={{ width: "auto" }}>
+        <option value="alternate">Woman and man, half each</option>
+        <option value="female">A woman teacher</option>
+        <option value="male">A man teacher</option>
+      </Select>
+      <label style={{ display: "inline-flex", gap: 4, alignItems: "center" }}>next
+        <Input type="number" min={1} max={500} value={limit} onChange={(e) => setLimit(Math.max(1, Number(e.target.value) || 60))} style={{ width: 70 }} />
+        booked videos</label>
+      <Button size="sm" variant="primary" loading={go.isPending}
+              onClick={async () => {
+                try {
+                  const out = await go.mutateAsync({ mode, limit, pause_lessons: true });
+                  onDone();
+                  toast(`Teacher on. ${out.queued} booked videos queued first${out.lessons_cancelled ? `; ${out.lessons_cancelled} lesson videos paused` : ""}.`, "ok");
+                } catch (err) { toast(err instanceof Error ? err.message : "Could not start.", "danger"); }
+              }}>Render them with the teacher now</Button>
+      {view.rules.lessons_per_day === 0 && (
+        <Button size="sm" variant="ghost" loading={resume.isPending}
+                onClick={async () => { try { await resume.mutateAsync(200); onDone(); toast("Daily lesson videos back on: 200 a day.", "ok"); } catch (err) { toast(err instanceof Error ? err.message : "Could not.", "danger"); } }}>
+          Lesson videos are paused — resume 200 a day</Button>
+      )}
+      <span style={{ color: "var(--ink-3)", fontSize: "var(--text-xs)", flexBasis: "100%" }}>
+        Pauses the daily lesson videos, then makes the booked posts' videos again with the teacher, the soonest post first.
+        Until a new one is ready, the old video still posts. Posts already on Facebook keep the video Facebook has.
+      </span>
+    </Stack>
   );
 }
 

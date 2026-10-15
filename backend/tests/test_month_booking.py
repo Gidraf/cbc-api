@@ -151,3 +151,28 @@ def test_a_live_extra_posts_a_finished_unbooked_video_while_the_day_allows(db, m
 def test_live_extras_are_off_unless_asked(db) -> None:
     se._no_extra_until["t"] = 0.0
     assert se.live_extra(NOW, se.poster_rules()) == (None, {})
+
+
+@needs_db
+def test_teacher_now_pauses_lessons_and_queues_the_soonest_booked_videos_first(db, monkeypatch) -> None:
+    from app.infra.db import execute, fetch_one
+    from app.services import platform_settings, social, teacher
+
+    written = {}
+    monkeypatch.setattr(platform_settings, "set_many", lambda values, updated_by="": written.update(values) or values)
+    execute("""INSERT INTO jobs (job_id, kind, grade, subject, status, payload, queued_by)
+               VALUES ('L1', 'video', '', '', 'queued', '{}'::jsonb, 'daily')""")
+    for n, day in enumerate((5, 2, 9)):
+        se._plan_post({"question_id": f"b{n}", "curriculum": {}}, "facebook",
+                      datetime(2026, 11, day, 10, 0, tzinfo=EAT), "me")
+    se._plan_post({"question_id": "gone", "curriculum": {}}, "facebook", datetime(2026, 11, 1, 10, 0, tzinfo=EAT), "me")
+    execute("UPDATE social_posts SET handed_at = NOW() WHERE question_id = 'gone'")      # Facebook has it already
+    queued = []
+    monkeypatch.setattr(social, "enqueue", lambda qid, **k: queued.append((qid, k["fresh"], k["priority"])) or {"status": "queued"})
+
+    out = teacher.render_now("alternate", limit=10)
+    assert written["social_teacher"] == "alternate" and written["video_daily_target"] == 0
+    assert out["lessons_cancelled"] == 1
+    assert fetch_one("SELECT status FROM jobs WHERE job_id = 'L1'")["status"] == "cancelled"
+    assert [q for q, _, _ in queued] == ["b1", "b0", "b2"], "the soonest post first; a handed one is left alone"
+    assert all(fresh and prio > 0 for _, fresh, prio in queued)

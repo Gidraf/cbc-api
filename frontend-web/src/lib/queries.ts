@@ -4490,8 +4490,31 @@ export type MonthDay = {
 export type MonthView = {
   year: number; month: number; per_day: number; platforms: string[]; days: MonthDay[]; open_days: number; free: number;
   facebook_until: string; today: string;
-  rules: { hours: { start: string; end: string }; min_gap_minutes: number; live_per_day: number; daily_cap: number };
+  rules: { hours: { start: string; end: string }; min_gap_minutes: number; live_per_day: number; daily_cap: number;
+           teacher: "off" | "female" | "male" | "alternate"; lessons_per_day: number };
 };
+export type TeacherNowResult = { teacher: string; lessons_cancelled: number; daily_target_was: number | null;
+  booked_videos: number; queued: number; already_with_teacher: number; failed: string[] };
+
+/** Teacher videos first: teacher on, lessons paused, booked videos re-queued with the teacher. */
+export function useTeacherNow() {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { mode: string; limit: number; pause_lessons: boolean }) =>
+      api<TeacherNowResult>("/api/v1/play/social/teacher-now", { method: "POST", body: JSON.stringify(v) }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["poster"] }),
+  });
+}
+
+export function useLessonsResume() {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (target: number) => api<{ video_daily_target: number }>("/api/v1/play/social/lessons-resume", { method: "POST", body: JSON.stringify({ target }) }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["poster"] }),
+  });
+}
 export type MonthPlan = {
   booked: boolean; platforms: string[]; videos: number; posts: number; to_render: number; ready: number; notes: string[];
   first_day: string | null; last_day: string | null; days: { date: string; add: number; times: string[] }[];

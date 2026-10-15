@@ -1060,7 +1060,23 @@ def month_view(year: int, month: int, *, platforms: list[str] | None = None, per
     return {"year": year, "month": month, "per_day": per_day, "platforms": platforms, "days": out,
             "open_days": open_days, "free": free_total, "facebook_until": window_end.isoformat(),
             "today": today.isoformat(), "rules": {"hours": rules["hours"], "min_gap_minutes": rules["min_gap_minutes"],
-                                                  "live_per_day": rules["live_per_day"], "daily_cap": rules["daily_cap"]}}
+                                                  "live_per_day": rules["live_per_day"], "daily_cap": rules["daily_cap"],
+                                                  "teacher": _teacher_now(), "lessons_per_day": _lessons_target()}}
+
+
+def _teacher_now() -> str:
+    from . import teacher
+
+    return teacher.mode()
+
+
+def _lessons_target() -> int:
+    from . import platform_settings
+
+    try:
+        return int(platform_settings.get("video_daily_target", 200) or 0)
+    except (TypeError, ValueError):
+        return 0
 
 
 def spaced_times(rng: Any, day: date, count: int, rules: dict[str, Any], *, gap_min: int, gap_max: int,

@@ -148,3 +148,51 @@ def mood_tracks(ffmpeg: str, folder: Path, scenes: list[dict[str, Any]], starts:
             if made:
                 out.append((made, a))
     return out
+
+
+# ── switching over ───────────────────────────────────────────────────────────
+
+def render_now(how: str = "alternate", *, limit: int = 60, pause_lessons: bool = True, by: str = "") -> dict[str, Any]:
+    """Teacher videos first: turn the teacher on, pause the lesson videos
+    (the queued ones are cancelled and the daily batch set to 0), and queue
+    the booked posts' videos again with the teacher — soonest post first, at
+    the front of the render queue. Posts already handed to a platform keep
+    the video the platform has."""
+    from ..infra.db import execute, fetch_all, fetch_one
+    from . import platform_settings, social
+    from .whiteboard import JOB_KIND as LESSON
+
+    if how not in ("female", "male", "alternate"):
+        raise ValueError("The teacher is female, male or alternate.")
+    platform_settings.set_many({"social_teacher": how}, updated_by=by or "teacher-now")
+    out: dict[str, Any] = {"teacher": how, "lessons_cancelled": 0, "daily_target_was": None}
+    if pause_lessons:
+        out["daily_target_was"] = int(platform_settings.get("video_daily_target", 200) or 0)
+        platform_settings.set_many({"video_daily_target": 0}, updated_by=by or "teacher-now")
+        row = fetch_one("SELECT COUNT(*) AS n FROM jobs WHERE kind = :k AND status = 'queued'", {"k": LESSON}) or {}
+        execute("UPDATE jobs SET status = 'cancelled', finished_at = NOW() WHERE kind = :k AND status = 'queued'",
+                {"k": LESSON})
+        out["lessons_cancelled"] = int(row.get("n") or 0)
+    rows = fetch_all("""SELECT question_id, MIN(scheduled_for) AS first FROM social_posts
+                        WHERE COALESCE(format, 'video') = 'video' AND posted_at IS NULL AND handed_at IS NULL
+                          AND status IN ('planned', 'failed') AND scheduled_for IS NOT NULL
+                        GROUP BY question_id ORDER BY first LIMIT :n""", {"n": max(1, int(limit))}) or []
+    queued, already, failed = 0, 0, []
+    for r in rows:
+        try:
+            st = social.enqueue(str(r["question_id"]), queued_by=by or "teacher-now", fresh=True, priority=8)
+            if st.get("status") == "queued":
+                queued += 1
+            elif st.get("status") in ("ready", "running"):
+                already += 1
+        except Exception as exc:  # noqa: BLE001
+            failed.append(f"{r['question_id']}: {str(exc)[:120]}")
+    return {**out, "booked_videos": len(rows), "queued": queued, "already_with_teacher": already, "failed": failed[:5]}
+
+
+def resume_lessons(target: int = 200, *, by: str = "") -> int:
+    """Back to the daily lesson videos after the switch."""
+    from . import platform_settings
+
+    platform_settings.set_many({"video_daily_target": max(0, int(target))}, updated_by=by or "teacher-now")
+    return max(0, int(target))

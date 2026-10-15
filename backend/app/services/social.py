@@ -310,7 +310,7 @@ def _prepare(q: dict[str, Any], voice: str = "", *, teacher_mode: str | None = N
     return data, sdata, voice, title, b, cache_key(sdata, voice, b, gender)
 
 
-def status(question_id: str, q: dict[str, Any] | None = None, voice: str = "") -> dict[str, Any]:
+def status(question_id: str, q: dict[str, Any] | None = None, voice: str = "", *, legacy: bool = True) -> dict[str, Any]:
     from ..infra.db import fetch_one
     from ..infra.storage import object_storage
     from . import whiteboard
@@ -324,7 +324,7 @@ def status(question_id: str, q: dict[str, Any] | None = None, voice: str = "") -
     if object_storage.object_exists(name):
         return {**out, "status": "ready", "url": whiteboard.public_url(name),
                 "thumbnail_url": whiteboard.public_url(f"{PREFIX}/{question_id}/{key}.jpg")}
-    if b.get("teacher", "off") != "off" and not asked_voice:
+    if legacy and b.get("teacher", "off") != "off" and not asked_voice:
         # Turning the teacher on does not unmake what was made: a video cut
         # before it still serves until it is made again with the teacher.
         old = _prepare(q, teacher_mode="off")[5]
@@ -342,11 +342,14 @@ def status(question_id: str, q: dict[str, Any] | None = None, voice: str = "") -
     return {**out, "status": "none"}
 
 
-def enqueue(question_id: str, *, queued_by: str = "", batch_id: str = "", voice: str = "") -> dict[str, Any]:
+def enqueue(question_id: str, *, queued_by: str = "", batch_id: str = "", voice: str = "",
+            fresh: bool = False, priority: int = 0) -> dict[str, Any]:
+    """Queue the cut. `fresh`: make it as the settings say now (with the
+    teacher) even when a video cut before the teacher still serves."""
     from . import job_queue, whiteboard
 
     q = whiteboard.load(question_id)
-    now = status(question_id, q, voice)
+    now = status(question_id, q, voice, legacy=not fresh)
     if now["status"] in ("ready", "queued", "running"):
         return now
     if not now["scenes"]:
@@ -356,7 +359,8 @@ def enqueue(question_id: str, *, queued_by: str = "", batch_id: str = "", voice:
         JOB_KIND, str(link.get("grade") or ""), str(link.get("subject") or ""),
         {"artifact_id": f"social:{question_id}", "question_id": question_id, "voice": voice,
          # What the batch screen shows while it renders.
-         "title": " ".join(str(q.get("question_text") or "").split())[:90]},
+         "title": " ".join(str(q.get("question_text") or "").split())[:90],
+         **({"priority": priority} if priority else {})},
         strand=str(link.get("strand") or ""), sub_strand=str(link.get("sub_strand") or ""),
         batch_id=batch_id, queued_by=queued_by or "social")
     job_queue.start_worker()
