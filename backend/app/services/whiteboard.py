@@ -167,9 +167,23 @@ def page(data: dict[str, Any], *, title: str = "", voice: str = "en-KE", duratio
             .replace("__GSAP__", _script(_asset("gsap.min.js")))
             .replace("__DATA__", json.dumps(payload).replace("</", "<\\/"))
             .replace("__ENGINE__", _script(_asset("whiteboard.js")))
-            .replace("__TEACHER__", (f"<script>{_script(_asset('three.min.js'))}</script>"
-                                     f"<script>{_script(_asset('teacher.js'))}</script>")
-                     if (social or {}).get("teacher") else ""))
+            .replace("__TEACHER__", _teacher_scripts((social or {}).get("teacher"))))
+
+
+def _teacher_scripts(teacher: dict[str, Any] | None) -> str:
+    """three.js, the realistic avatar for the teacher's gender (if it is
+    there; otherwise the drawn figure), and the teacher's code."""
+    if not teacher:
+        return ""
+    import base64
+
+    model = STATIC / "teachers" / f"{teacher.get('gender') or 'female'}.glb"
+    real = ""
+    if model.exists():
+        real = (f"<script>{_script(_asset('GLTFLoader.js'))}</script>"
+                f"<script>window.TEACHER_GLB = \"{base64.b64encode(model.read_bytes()).decode()}\";</script>")
+    return (f"<script>{_script(_asset('three.min.js'))}</script>{real}"
+            f"<script>{_script(_asset('teacher.js'))}</script>")
 
 
 def cache_key(data: dict[str, Any], voice: str, fps: int = FPS) -> str:

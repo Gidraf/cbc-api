@@ -28,7 +28,7 @@ from typing import Any
 
 logger = logging.getLogger("cbc-teacher")
 
-VERSION = "t1"
+VERSION = "t2"          # t2: the realistic Rocketbox teachers
 VOICES = {"female": "en-KE-AsiliaNeural", "male": "en-KE-ChilembaNeural"}
 CHECK_LINE = "Did you get it right? Tell me in the comments!"
 CHECK_CAPTION = "Did you get it right? Comment ✅ or ❌"

@@ -777,5 +777,8 @@
   window.__seek = (t) => { tl.pause(); tl.seek(t, false); return true; };
 
   const fonts = document.fonts && document.fonts.ready ? document.fonts.ready : Promise.resolve();
-  window.__ready = Promise.race([fonts, new Promise((r) => setTimeout(r, 2500))]).then(() => { build(); tl.seek(0); status(); return window.__total; });
+  // The teacher's model, if there is one, loads before the first frame is taken.
+  window.__ready = Promise.race([fonts, new Promise((r) => setTimeout(r, 2500))])
+    .then(() => Promise.race([window.__teacherReady || null, new Promise((r) => setTimeout(r, 20000))]))
+    .then(() => { build(); tl.seek(0); status(); return window.__total; });
 })();

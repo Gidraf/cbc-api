@@ -149,3 +149,17 @@ def test_the_lips_take_the_shape_of_the_words() -> None:
     assert shapes[:5] == "XXXXX" and shapes[-4:] == "XXXX", "silence is a closed mouth"
     assert "M" in shapes and "F" in shapes, "m closes the lips, f puts them to the teeth"
     assert shapes.index("M") < shapes.index("F"), "in the order they are said"
+
+
+def test_the_realistic_teachers_ship_with_their_licence_and_load_in_the_page() -> None:
+    from app.services import whiteboard
+
+    folder = whiteboard.STATIC / "teachers"
+    for g in ("female", "male"):
+        glb = (folder / f"{g}.glb").read_bytes()
+        assert glb[:4] == b"glTF" and len(glb) < 6_000_000, "a binary glTF, a few MB"
+    assert "MIT License" in (folder / "LICENSE-Rocketbox.txt").read_text()
+    page = whiteboard.page(DATA, render=True, social={"hook": "x", "teacher": {"gender": "male", "mouth": [], "fps": 30}})
+    assert "window.TEACHER_GLB" in page and "GLTFLoader" in page
+    # And the first frame waits for the model to load.
+    assert "__teacherReady" in (whiteboard.STATIC / "whiteboard.js").read_text()
