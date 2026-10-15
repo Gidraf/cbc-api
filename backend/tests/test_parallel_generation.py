@@ -248,10 +248,33 @@ def test_renders_are_capped_by_render_workers() -> None:
     assert job_queue._render_limit() >= 1
 
 
-def test_the_render_limit_reads_the_environment(monkeypatch) -> None:
+def test_the_render_limit_reads_the_environment_or_uses_half_the_cores(monkeypatch) -> None:
+    import os
+
     monkeypatch.setenv("RENDER_WORKERS", "3")
     assert job_queue._render_limit() == 3
     monkeypatch.setenv("RENDER_WORKERS", "50")
-    assert job_queue._render_limit() == 8
-    monkeypatch.setenv("RENDER_WORKERS", "x")
+    assert job_queue._render_limit() == 16
+    monkeypatch.setattr(os, "cpu_count", lambda: 8)
+    for unset in ("", "x"):
+        monkeypatch.setenv("RENDER_WORKERS", unset)
+        assert job_queue._render_limit() == 4, "a render keeps two cores busy"
+    monkeypatch.setattr(os, "cpu_count", lambda: 1)
+    monkeypatch.setenv("RENDER_WORKERS", "")
     assert job_queue._render_limit() == 1
+
+
+def test_renders_go_to_their_own_queue_and_the_rest_to_generation(monkeypatch) -> None:
+    from app import celery_app, tasks
+
+    sent = []
+    monkeypatch.setattr(celery_app, "broker_available", lambda: True)
+    monkeypatch.setattr(tasks.run_job, "apply_async", lambda args, **k: sent.append((args[0], k.get("queue"))))
+    monkeypatch.setenv("CELERY_RENDER_QUEUE", "cbc_render")
+    kinds = {"j-video": "social", "j-notes": "notes"}
+    monkeypatch.setattr(job_queue, "_kind_of", lambda job_id: kinds[job_id])
+    job_queue.dispatch("j-video"); job_queue.dispatch("j-notes")
+    assert sent == [("j-video", "cbc_render"), ("j-notes", None)]
+    monkeypatch.setenv("CELERY_RENDER_QUEUE", "")
+    job_queue.dispatch("j-video")
+    assert sent[-1] == ("j-video", None), "no render queue set: renders share the generation queue"

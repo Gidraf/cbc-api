@@ -31,7 +31,10 @@ x-backend-env: &backend-env
   MPESA_CALLBACK_TOKEN: ${MPESA_CALLBACK_TOKEN:-}
   # Video renders at once (each drives a browser and ffmpeg). They have their
   # own lane: with CELERY_CONCURRENCY=2, one slot renders while one generates.
-  RENDER_WORKERS: ${RENDER_WORKERS:-1}
+  # Videos rendering at once — empty: one for every two cores. They render in
+  # render-worker, on their own queue, so they never wait behind generation.
+  RENDER_WORKERS: ${RENDER_WORKERS:-}
+  CELERY_RENDER_QUEUE: ${CELERY_RENDER_QUEUE:-cbc_render}
   # Database 1, so the generation broker cannot be confused with — or flushed
   # alongside — the older pipeline queue on database 0.
   CELERY_BROKER_URL: ${CELERY_BROKER_URL:-redis://redis:6379/1}
@@ -195,6 +198,26 @@ services:
     # in hand before it exits. Docker's default of 10 seconds killed every
     # render mid-way. A job still running after this is cut off, and the new
     # worker resumes it at once (its attempt refunded).
+    stop_grace_period: 3m
+
+  # Videos: the whiteboard walkthroughs, the social cuts and their cards.
+  # Each render keeps about two cores busy, so it runs one per two cores
+  # (RENDER_WORKERS overrides), at a lower priority (nice) so the API and
+  # the poster's calls always get the CPU first.
+  render-worker:
+    build: *backend-build
+    command: >
+      sh -c 'exec nice -n 10 celery -A app.celery_app worker --loglevel=info
+      --queues=$${CELERY_RENDER_QUEUE:-cbc_render}
+      --concurrency=$${RENDER_WORKERS:-$$(( ($$(nproc) + 1) / 2 ))}
+      --prefetch-multiplier=1 --hostname=render@%h'
+    environment:
+      <<: *backend-env
+      CELERY_BROKER_URL: ${CELERY_BROKER_URL:-redis://redis:6379/1}
+      CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND:-redis://redis:6379/1}
+    depends_on: *backend-depends
+    extra_hosts: *extra-hosts
+    restart: unless-stopped
     stop_grace_period: 3m
 
   # The clock: the job sweep every two minutes, the log prune every hour.
