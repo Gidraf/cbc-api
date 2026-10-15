@@ -275,7 +275,15 @@
   const capEl = document.getElementById("sc-caption"), count = document.getElementById("sc-count");
   const foot = root.querySelector(".foot"), hook = root.querySelector(".hook");
   const hookText = hook ? hook.textContent : "";
-  function layout(big, i) {
+  const panelLook = panel.style.cssText;
+  function layout(big, i, cover) {
+    if (cover) {              // on the cover: big, cut out, pointing at the viewer
+      panel.style.cssText = panelLook + ";z-index:6;left:560px;background:transparent;border:0;box-shadow:none";
+      panel.style.transform = "scale(1.08)";
+      panel.style.top = `${1640 - H}px`;
+      return;
+    }
+    if (panel.style.zIndex === "6") panel.style.cssText = panelLook;
     const s = 0.42 + 0.58 * big;
     panel.style.transform = `scale(${s})`;
     panel.style.top = `${1580 - H}px`;
@@ -329,10 +337,16 @@
     const prevBig = i > 0 && TEACHER_SCENES[(scenes[i - 1] || {}).scene] ? 1 : 0;
     const nowBig = i < 0 || TEACHER_SCENES[sc.scene] ? 1 : 0;
     const big = prevBig + (nowBig - prevBig) * ease(into / 0.55);
-    layout(big, i);
+    const cover = window.__coverUntil != null && t < window.__coverUntil;
+    layout(big, i, cover);
 
     const m = moodAt(i, into);
     const e = Math.min(1, energy(i, into) * 1.5);
+    if (REAL && cover) {
+      REAL.draw({ t, i: -1, into: t, sc: { scene: "cover" }, m: { tense: 0, lively: 1 }, e: 0, shape: null, k: 1,
+                  from: "point", to: "point", talk: 0, dance: 0, think: 0, blink: 0, surprise: 1 });
+      return;
+    }
     if (REAL) {
       let k = ease(into / 0.5);
       if (sc.scene === "answer" && into > 1.6) k = ease((into - 1.6) / 0.4);
@@ -616,6 +630,10 @@
       face("AK_07_CheekSquintLeft", 0.3 * m.lively); face("AK_08_CheekSquintRight", 0.3 * m.lively);
       face("AK_17_EyeLookUpLeft", 0.45 * st.think); face("AK_18_EyeLookUpRight", 0.45 * st.think);
       face("AK_19_EyeSquintLeft", 0.25 * m.tense); face("AK_20_EyeSquintRight", 0.25 * m.tense);
+      if (st.surprise) {      // the cover: wide eyes, brows up, an "oh!"
+        face("AK_21_EyeWideLeft", 0.7 * st.surprise); face("AK_22_EyeWideRight", 0.7 * st.surprise);
+        face("AK_03_BrowInnerUp", 0.5 * st.surprise); face("AA_VI_13_O", 0.55 * st.surprise);
+      }
 
       // Camera: head and shoulders to the waist; a push in under tension, a shake on each second.
       let cx = 0, cy = 0;

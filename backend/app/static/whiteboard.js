@@ -703,7 +703,7 @@
   });
 
   function build() {
-    let at = 0.3;
+    let at = data.lead || 0.3;      // a social cut opens on its cover first
     const starts = [];
     scenes.forEach((s, i) => {
       starts.push(at);
@@ -717,7 +717,7 @@
     tl.to({}, { duration: 0.6 }, at);   // a beat on the finished board
     const end = tl.duration(), clock = { t: 0 };
     track.sort((a, b) => a.t0 - b.t0);
-    tl.fromTo(clock, { t: 0 }, { t: end, duration: end, ease: "none", onUpdate() { const p = handAt(clock.t); pose(p.x, p.y, p.tilt); overlay(clock.t); if (window.__onTime) window.__onTime(clock.t); } }, 0);
+    tl.fromTo(clock, { t: 0 }, { t: end, duration: end, ease: "none", onUpdate() { const p = handAt(clock.t); pose(p.x, p.y, p.tilt); overlay(clock.t); if (window.__onCover) window.__onCover(clock.t); if (window.__onTime) window.__onTime(clock.t); } }, 0);
     pose(OFF.x, OFF.y, 0);
     window.__starts = starts;
     window.__total = tl.duration();

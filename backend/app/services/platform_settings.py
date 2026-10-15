@@ -175,6 +175,10 @@ SETTINGS: tuple[Setting, ...] = (
             "Shown under the captions and in each post. Empty: the public address.", "", "Social"),
     Setting("social_cta", "", "string", "Call to action",
             "Said and written at the end of every social video.", "Follow for a new question every day", "Social"),
+    Setting("social_cover", "SOCIAL_COVER", "bool", "Open on a cover",
+            "Every social video opens on a bright cover for a second — a big hook, the question and its choices, the "
+            "teacher pointing at the viewer — which is also its thumbnail. The look and the hook change from question to "
+            "question.", True, "Social"),
     Setting("social_teacher", "SOCIAL_TEACHER", "string", "Teacher in social videos",
             "A 3D teacher reads the question, thinks through the countdown, cheers the answer and asks \"Did you get it "
             "right?\". off, female, male, or alternate (half and half, by question). A woman teacher speaks with "

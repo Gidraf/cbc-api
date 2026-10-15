@@ -163,3 +163,21 @@ def test_the_realistic_teachers_ship_with_their_licence_and_load_in_the_page() -
     assert "window.TEACHER_GLB" in page and "GLTFLoader" in page
     # And the first frame waits for the model to load.
     assert "__teacherReady" in (whiteboard.STATIC / "whiteboard.js").read_text()
+
+
+def test_every_social_video_opens_on_a_cover_that_differs_by_question() -> None:
+    from app.services import whiteboard
+
+    b = {"name": "CBC Maths", "cover": True}
+    covers = [social.cover_for({"question_id": f"q{n}", "question_text": "What is 2 + 3?",
+                                "options": [{"id": "A", "text": "5"}], "curriculum": {"grade": "grade-9", "subject": "Mathematics"}}, b)
+              for n in range(12)]
+    assert len({(c["bg_from"], c["hook"]) for c in covers}) > 4, "the look and the hook change"
+    assert covers[3] == social.cover_for({"question_id": "q3", "question_text": "What is 2 + 3?",
+                                         "options": [{"id": "A", "text": "5"}], "curriculum": {"grade": "grade-9", "subject": "Mathematics"}}, b)
+    assert covers[0]["tag"] == "GRADE 9 · MATHEMATICS" and covers[0]["choices"] == ["A) 5"]
+    # The lead-in makes room for it, on the board and in the voice's timing alike.
+    page = whiteboard.page(DATA, render=True, social={"hook": "x", "cover": covers[0]})
+    assert '"lead": 1.3' in page and "__onCover" in page
+    assert whiteboard._starts([2.0], whiteboard.LEAD + whiteboard.COVER)[0] == 1.3
+    assert '"lead": 0.3' in whiteboard.page(DATA, render=True, social={"hook": "x"})
