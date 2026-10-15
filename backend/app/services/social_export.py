@@ -364,6 +364,57 @@ def decide(now: datetime, rules: dict[str, Any], *, posted_today: list[dict[str,
     return None, ("Nothing due" + (f" ({'; '.join(sorted(skipped))})" if skipped else "") + ".")
 
 
+def schedule_next(now: datetime | None = None) -> dict[str, Any]:
+    """"Schedule now": the next booked video to hand to Facebook's own
+    scheduler at once — the soonest inside its window, its video made — with
+    no wait between hand-overs, while today's limit has room."""
+    from ..infra.db import fetch_all, fetch_one
+    from . import social
+
+    now = now or datetime.now(timezone.utc)
+    rules = poster_rules()
+    day_start = now.astimezone(EAT).replace(hour=0, minute=0, second=0, microsecond=0)
+    done = int((fetch_one("SELECT COUNT(*) AS n FROM social_posts WHERE handed_at >= :d", {"d": day_start}) or {}).get("n") or 0)
+    if done >= rules["daily_cap"]:
+        return {"post": None, "reason": f"Today's limit of {rules['daily_cap']} is used — more tomorrow (or raise it in Settings → Auto-post)."}
+    rows = fetch_all(
+        """SELECT * FROM social_posts WHERE platform = 'facebook' AND COALESCE(format, 'video') = 'video'
+           AND posted_at IS NULL AND handed_at IS NULL AND status IN ('planned', 'failed') AND attempts < :tries
+           AND groups = '[]'::jsonb AND scheduled_for > :soon AND scheduled_for <= :until
+           ORDER BY scheduled_for LIMIT 40""",
+        {"tries": MAX_ATTEMPTS, "soon": now + AHEAD_LEAD, "until": now + timedelta(days=rules["ahead_days"])}) or []
+    waiting = 0
+    for row in rows:
+        st = _media(row)
+        if st.get("status") != "ready":
+            if st.get("status") == "none":
+                try:
+                    social.enqueue(row["question_id"], queued_by="schedule-now")
+                except Exception:  # noqa: BLE001
+                    pass
+            waiting += 1
+            continue
+        from .whiteboard import load
+
+        q_text = social.display(load(row["question_id"]).get("question_text") or "")
+        title = (f"{social.brand().get('hook') or 'Can you solve this?'} {q_text}")[:90].rstrip() + " #Shorts"
+        try:
+            from ..infra.db import execute
+
+            execute("UPDATE social_posts SET teacher = :t WHERE post_id = :id", {"t": str(st.get("teacher") or ""), "id": row["post_id"]})
+        except Exception:  # noqa: BLE001
+            pass
+        return {"post": {"post_id": row["post_id"], "platform": "facebook", "question_id": row["question_id"],
+                         "format": "video", "step": row.get("step") or "walkthrough", "video_url": st["url"],
+                         "image_url": "", "thumbnail_url": st.get("thumbnail_url"), "caption": st.get("post") or "",
+                         "title": title, "attempts": row.get("attempts") or 0,
+                         "schedule_at": row["scheduled_for"].astimezone(EAT).isoformat(), "groups": []},
+                "reason": "", "left_today": rules["daily_cap"] - done}
+    why = (f"{waiting} booked video(s) in Facebook's window are still being made." if waiting
+           else "Nothing booked inside Facebook's 29-day window is waiting — book more first.")
+    return {"post": None, "reason": why}
+
+
 def next_for_poster(now: datetime | None = None, *, platform: str = "", post_id: str = "",
                     dry: bool = False, share: str = "", groups: list[str] | None = None) -> dict[str, Any]:
     """What the poster's browser should publish now, with its files and text.
@@ -717,6 +768,13 @@ def poster_overview() -> dict[str, Any]:
             "states": states, "queue": queue, "recent": recent,
             "scheduled_ahead": {"count": int(ahead.get("n") or 0), "until": until.isoformat() if hasattr(until, "isoformat") else until},
             "handed_today": int(handed.get("n") or 0), "waiting": int(waiting.get("n") or 0),
+            # What "Schedule now" and "Post now" may still do today.
+            "left_today": max(0, poster_rules()["daily_cap"] - int(handed.get("n") or 0)),
+            "schedulable": int((fetch_one(
+                """SELECT COUNT(*) AS n FROM social_posts WHERE platform = 'facebook' AND COALESCE(format, 'video') = 'video'
+                   AND posted_at IS NULL AND handed_at IS NULL AND status IN ('planned', 'failed')
+                   AND groups = '[]'::jsonb AND scheduled_for > :soon AND scheduled_for <= :until""",
+                {"soon": now + AHEAD_LEAD, "until": now + timedelta(days=poster_rules()["ahead_days"])}) or {}).get("n") or 0),
             "groups": list_groups("facebook")}
 
 

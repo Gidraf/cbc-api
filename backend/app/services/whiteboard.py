@@ -374,8 +374,10 @@ def render(data: dict[str, Any], *, title: str = "", voice: str = "", subject: s
         if teach:
             from . import teacher
 
-            social = {**social, "teacher": {**social["teacher"], "fps": fps,
-                                            "mouth": teacher.mouth_envelopes(ffmpeg, [p for p, _ in spoken], fps)}}
+            mouth = teacher.mouth_envelopes(ffmpeg, [p for p, _ in spoken], fps)
+            social = {**social, "teacher": {**social["teacher"], "fps": fps, "mouth": mouth,
+                                            "shapes": [teacher.visemes(str(sc.get("say") or ""), env)
+                                                       for sc, env in zip(scenes, mouth)]}}
         doc = page(data, title=title, voice=voice, durations=durations, render=True, social=social)
         thumb_at = None
         if social:

@@ -137,3 +137,15 @@ def test_the_command_registers_the_jobs_and_leaves_rendering_to_the_api() -> Non
     source = inspect.getsource(admin_tools.teacher_now)
     assert "from .routes import curriculum" in source
     assert "job_queue.start_worker = lambda: False" in source
+
+
+def test_the_lips_take_the_shape_of_the_words() -> None:
+    assert teacher.spoken_words("18 divided by 3") == ["eighteen", "divided", "by", "three"]
+    assert teacher.word_visemes("mama")[0] == "M" and "O" in teacher.word_visemes("book")
+    assert teacher.word_visemes("five").startswith("F")
+    env = [0.0] * 5 + [0.8] * 30 + [0.0] * 6 + [0.7] * 25 + [0.0] * 4
+    shapes = teacher.visemes("Hello my friend", env)
+    assert len(shapes) == len(env)
+    assert shapes[:5] == "XXXXX" and shapes[-4:] == "XXXX", "silence is a closed mouth"
+    assert "M" in shapes and "F" in shapes, "m closes the lips, f puts them to the teeth"
+    assert shapes.index("M") < shapes.index("F"), "in the order they are said"

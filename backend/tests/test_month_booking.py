@@ -228,3 +228,24 @@ def test_post_now_uses_a_new_question_and_leaves_the_bookings_alone(db, monkeypa
     execute("UPDATE social_posts SET posted_at = NOW(), handed_at = NOW() WHERE question_id = 'fresh1'")
     out = se.next_for_poster(NOW, dry=True, share="feed")
     assert out["post"]["question_id"] == "booked1"
+
+
+@needs_db
+def test_schedule_now_hands_the_soonest_ready_booking_within_the_window_and_the_limit(db, monkeypatch) -> None:
+    from app.infra.db import execute
+    from app.services import social, whiteboard
+
+    db["poster_daily_cap"] = 2
+    for qid, days in (("far", 40), ("soon", 2), ("later", 5), ("grp", 1)):
+        se._plan_post({"question_id": qid, "curriculum": {}}, "facebook", NOW + timedelta(days=days), "me")
+    execute("UPDATE social_posts SET groups = '[\"G\"]'::jsonb WHERE question_id = 'grp'")   # goes out live with a share
+    monkeypatch.setattr(social, "status", lambda qid, q=None, **k: {"status": "ready", "url": "u", "post": "p", "teacher": ""})
+    monkeypatch.setattr(whiteboard, "load", lambda qid: {"question_id": qid, "question_text": "?"})
+    first = se.schedule_next(NOW)["post"]
+    assert first["question_id"] == "soon" and first["schedule_at"]
+    se.record_attempt(first["post_id"], ok=True, scheduled=True)
+    execute("UPDATE social_posts SET handed_at = :t WHERE post_id = :id", {"t": NOW, "id": first["post_id"]})
+    assert se.schedule_next(NOW)["post"]["question_id"] == "later", "beyond 29 days and group posts are skipped"
+    execute("UPDATE social_posts SET handed_at = :t WHERE question_id = 'later'", {"t": NOW})
+    out = se.schedule_next(NOW)
+    assert out["post"] is None and "limit" in out["reason"]

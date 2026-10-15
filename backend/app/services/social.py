@@ -424,8 +424,10 @@ def live_page(q: dict[str, Any], voice: str = "", *, teacher_mode: str | None = 
 
         ffmpeg = whiteboard.ffmpeg_binary()
         if ffmpeg:
-            framing["teacher"] = {**framing["teacher"], "fps": 30,
-                                  "mouth": teacher.mouth_envelopes(ffmpeg, [a for a, _ in clips], 30)}
+            mouth = teacher.mouth_envelopes(ffmpeg, [a for a, _ in clips], 30)
+            framing["teacher"] = {**framing["teacher"], "fps": 30, "mouth": mouth,
+                                  "shapes": [teacher.visemes(str(sc.get("say") or ""), env)
+                                             for sc, env in zip(sdata["scenes"], mouth)]}
     return whiteboard.page(sdata, title=title, voice=lang, durations=durations, audio=audio, social=framing)
 
 

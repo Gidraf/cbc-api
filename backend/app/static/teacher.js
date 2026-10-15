@@ -211,7 +211,7 @@
     // where it should: on the chin to think, at the viewer to point.
     rest: { a: [0.14, 0, -0.25], b: [-0.14, 0, -0.25] },
     present: { a: [1.3, -0.4, -1.75], b: [-0.14, 0, -0.3] },
-    think: { a: [-1.3, -0.8, -1.9], b: [1.35, 0.2, -1.65] },
+    think: { a: [-0.7, -1.45, -2.1], b: [1.35, 0.2, -1.65] },       // knuckles on the cheek
     point: { a: [-0.05, -1.75, 0], b: [-0.14, 0, -0.3] },
     thumbs: { a: [-0.4, -0.55, -2.1], b: [-0.14, 0, -0.3] },
     celebrate: { a: [2.95, -0.15, -0.5], b: [-2.95, -0.15, -0.5] },
@@ -233,6 +233,23 @@
     let i = -1;
     for (let k = 0; k < starts.length; k++) if (starts[k] <= t) i = k;
     return { i, into: i >= 0 ? t - starts[i] : t, start: i >= 0 ? starts[i] : 0 };
+  }
+  // Mouth shapes (visemes), one per frame, from the words: [width, open, round, teeth].
+  const SHAPE = {
+    X: [1.0, 0.0, 0.0, 0], M: [0.95, 0.0, 0.0, 0], A: [1.05, 0.95, 0.0, 1], E: [1.25, 0.38, 0.0, 1],
+    O: [0.7, 0.62, 1.0, 0], L: [1.0, 0.38, 0.0, 1], S: [1.18, 0.14, 0.0, 1], F: [1.06, 0.12, 0.0, 1],
+    R: [0.84, 0.32, 0.6, 0], K: [1.0, 0.52, 0.0, 1],
+  };
+  function shapeAt(i, into) {
+    const seq = ((cfg.shapes || [])[i]) || "";
+    if (!seq.length || into < 0) return null;
+    const f = into * FPS, k = Math.floor(f), r = f - k;
+    if (k >= seq.length) return SHAPE.X;
+    const a = SHAPE[seq[k]] || SHAPE.X, b = SHAPE[seq[Math.min(seq.length - 1, k + 1)]] || SHAPE.X;
+    // Lips move between shapes, not jump: blend toward the next frame's.
+    const out = a.map((v, n) => v + (b[n] - v) * r * 0.8);
+    out.c = seq[k];
+    return out;
   }
   function energy(i, into) {
     const env = ((cfg.mouth || [])[i]) || [];
@@ -347,7 +364,7 @@
       body.rotation.y = Math.sin(d * Math.PI) * 0.3 * dance;
     }
     head.rotation.set(Math.sin(t * 7.3) * 0.05 * e - 0.12 * think + Math.sin(t * 0.9) * 0.02,
-                      Math.sin(t * 0.6) * 0.09 * (1 - think), Math.sin(t * 0.45) * 0.03 + 0.14 * think
+                      Math.sin(t * 0.6) * 0.09 * (1 - think), Math.sin(t * 0.45) * 0.03 - 0.13 * think
                       + Math.sin((into - 1.2) * Math.PI * 4) * 0.12 * dance);
 
     // Face: eyes glance up to think; brows knit under tension, lift for joy.
@@ -363,15 +380,22 @@
       b.mesh.rotation.z = b.side * (0.28 * m.tense - 0.18 * m.lively);   // inner ends down to focus, up for joy
       b.mesh.position.y = 0.14 - 0.012 * m.tense + 0.02 * m.lively + 0.008 * e;
     }
-    const opening = e > 0.06 ? e : 0;
-    open.visible = teeth.visible = tongue.visible = lips.visible = opening > 0;
+    // The lips: the shape of the sound being said, opened by how loud it is.
+    const sh = shapeAt(i, into);
+    const width = sh ? sh[0] : 1, round = sh ? sh[2] : 0;
+    const opening = sh ? (sh[1] > 0 ? sh[1] * (0.45 + 0.55 * Math.min(1, e * 1.3)) : 0) : (e > 0.06 ? e : 0);
+    const pressed = sh && sh[1] === 0 && e > 0.06;          // m, b, p: lips together, mid-speech
+    open.visible = tongue.visible = lips.visible = opening > 0.02;
+    teeth.visible = open.visible && (sh ? sh[3] === 1 : true);
     smile.visible = !open.visible;
-    open.scale.set(0.95 + 0.2 * m.lively, 0.1 + 0.55 * opening, 0.35);
-    lips.scale.set(1 + 0.15 * m.lively, 0.14 + 0.52 * opening, 1);
+    const w = width * (1 + 0.12 * m.lively) * (1 - 0.32 * round);
+    open.scale.set(w, 0.1 + 0.62 * opening, 0.35);
+    lips.scale.set(w, 0.14 + 0.58 * opening, 1 + 0.4 * round);
+    lips.position.z = 0.004 + 0.012 * round;
     teeth.position.y = 0.008 + 0.014 * opening;
-    tongue.position.y = -0.014 - 0.014 * opening;
+    tongue.position.y = (sh && sh.c === "L" ? 0.004 : -0.014) - 0.014 * opening;
     const grin = 0.35 + 0.65 * m.lively - 0.3 * m.tense;
-    smile.scale.set(0.8 + 0.4 * m.lively, Math.max(0.12, grin), 1);
+    smile.scale.set((0.8 + 0.4 * m.lively) * (pressed ? 0.85 : 1), pressed ? 0.1 : Math.max(0.12, grin), pressed ? 1.6 : 1);
 
     // Camera: a slow push in under tension, a shake on each second of the count.
     let cz = 3.75 - 0.45 * m.tense, cy = 1.45, cx = 0;
