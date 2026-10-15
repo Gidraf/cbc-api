@@ -1,6 +1,9 @@
 """The CBC API, from the poster's side: what to post, and how it went."""
 from __future__ import annotations
 
+import asyncio
+import json
+import logging
 import os
 from typing import Any
 
@@ -8,9 +11,38 @@ import httpx
 
 from . import config
 
+log = logging.getLogger("poster")
+
+# The server can be slow to answer while it renders: a timeout or a dropped
+# connection is tried again, with growing waits, before it counts as failed.
+WAITS = (2, 5, 10, 20)
+TRANSIENT = (httpx.ConnectTimeout, httpx.ConnectError, httpx.ReadTimeout, httpx.WriteTimeout,
+             httpx.PoolTimeout, httpx.RemoteProtocolError)
+
 
 def _headers() -> dict[str, str]:
     return {"X-API-Key": config.CBC_API_KEY}
+
+
+async def _call(method: str, path: str, *, timeout: float = 30, waits: tuple[int, ...] | None = None,
+                **kw: Any) -> httpx.Response:
+    """One request to the API, tried again on a timeout, a lost connection or
+    a 502/503/504 (the proxy saying the API is busy)."""
+    waits = WAITS if waits is None else waits
+    for attempt in range(len(waits) + 1):
+        try:
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                r = await client.request(method, f"{config.CBC_API_URL}{path}", headers=_headers(), **kw)
+            if r.status_code in (502, 503, 504) and attempt < len(waits):
+                raise httpx.RemoteProtocolError(f"the API answered {r.status_code}")
+            r.raise_for_status()
+            return r
+        except TRANSIENT as exc:
+            if attempt >= len(waits):
+                raise
+            log.info("API %s %s: %s — trying again in %ss", method, path, type(exc).__name__, waits[attempt])
+            await asyncio.sleep(waits[attempt])
+    raise RuntimeError("unreachable")
 
 
 async def next_post(*, platform: str = "", post_id: str = "", dry: bool = False, share: str = "",
@@ -21,35 +53,69 @@ async def next_post(*, platform: str = "", post_id: str = "", dry: bool = False,
         params["schedule"] = "true"
     if share:                       # a post-now button: the feed only, or the feed and groups
         params.update(share=share, groups=list(groups or []))
-    async with httpx.AsyncClient(timeout=60) as client:
-        r = await client.get(f"{config.CBC_API_URL}/api/v1/play/poster/next", params=params, headers=_headers())
-        r.raise_for_status()
-        return r.json()
+    return (await _call("GET", "/api/v1/play/poster/next", timeout=60, params=params)).json()
+
+
+def _unsent_path() -> str:
+    return os.path.join(os.path.dirname(config.SHOTS_DIR.rstrip("/")) or ".", "unsent_results.json")
+
+
+def _unsent() -> list[dict[str, Any]]:
+    try:
+        with open(_unsent_path()) as fh:
+            return json.load(fh)
+    except (OSError, ValueError):
+        return []
+
+
+def _save_unsent(items: list[dict[str, Any]]) -> None:
+    try:
+        with open(_unsent_path(), "w") as fh:
+            json.dump(items[-200:], fh)
+    except OSError as exc:
+        log.warning("Could not keep the unsent results: %s", exc)
 
 
 async def report(post_id: str, *, ok: bool, url: str = "", error: str = "", dry_run: bool = False,
                  scheduled: bool = False, groups: list[str] | None = None,
                  destinations: list[str] | None = None) -> None:
-    async with httpx.AsyncClient(timeout=30) as client:
-        r = await client.post(f"{config.CBC_API_URL}/api/v1/play/poster/result", headers=_headers(),
-                              json={"post_id": post_id, "ok": ok, "url": url, "error": error[:900], "dry_run": dry_run,
-                                    "scheduled": scheduled, "groups": groups or [],
-                                    "destinations": destinations or []})
-        r.raise_for_status()
+    """How a post went. It MUST reach the server — a post it never hears of
+    would be posted again — so one that cannot be sent is kept on disk and
+    sent later (send_unsent)."""
+    body = {"post_id": post_id, "ok": ok, "url": url, "error": error[:900], "dry_run": dry_run,
+            "scheduled": scheduled, "groups": groups or [], "destinations": destinations or []}
+    try:
+        await _call("POST", "/api/v1/play/poster/result", json=body)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Could not report %s now (%s): kept, to send when the server answers.", post_id, type(exc).__name__)
+        _save_unsent(_unsent() + [body])
+
+
+async def send_unsent() -> int:
+    """Results kept while the server was not answering, sent now."""
+    items = _unsent()
+    if not items:
+        return 0
+    left = []
+    for body in items:
+        try:
+            await _call("POST", "/api/v1/play/poster/result", json=body, waits=WAITS[:1])
+        except Exception:  # noqa: BLE001
+            left.append(body)
+    _save_unsent(left)
+    sent = len(items) - len(left)
+    if sent:
+        log.info("Sent %d result(s) kept while the server was not answering.", sent)
+    return sent
 
 
 async def groups_found(platform: str, names: list[str]) -> list[dict[str, Any]]:
-    async with httpx.AsyncClient(timeout=30) as client:
-        r = await client.post(f"{config.CBC_API_URL}/api/v1/play/poster/groups/found", headers=_headers(),
-                              json={"platform": platform, "names": names})
-        r.raise_for_status()
-        return r.json().get("groups", [])
+    r = await _call("POST", "/api/v1/play/poster/groups/found", json={"platform": platform, "names": names})
+    return r.json().get("groups", [])
 
 
 async def login_state(platform: str, logged_in: bool, note: str = "") -> None:
-    async with httpx.AsyncClient(timeout=30) as client:
-        await client.post(f"{config.CBC_API_URL}/api/v1/play/poster/state", headers=_headers(),
-                          json={"platform": platform, "logged_in": logged_in, "note": note[:300]})
+    await _call("POST", "/api/v1/play/poster/state", json={"platform": platform, "logged_in": logged_in, "note": note[:300]})
 
 
 async def heartbeat(status: dict[str, Any]) -> None:
@@ -59,17 +125,13 @@ async def heartbeat(status: dict[str, Any]) -> None:
 
 
 async def take_command() -> dict[str, Any] | None:
-    async with httpx.AsyncClient(timeout=20) as client:
-        r = await client.post(f"{config.CBC_API_URL}/api/v1/play/poster/commands/next", headers=_headers(),
-                              params={"poster_id": config.POSTER_ID})
-        r.raise_for_status()
-        return r.json().get("command")
+    r = await _call("POST", "/api/v1/play/poster/commands/next", timeout=20, waits=WAITS[:2],
+                    params={"poster_id": config.POSTER_ID})
+    return r.json().get("command")
 
 
 async def command_done(command_id: int, result: dict[str, Any]) -> None:
-    async with httpx.AsyncClient(timeout=20) as client:
-        await client.post(f"{config.CBC_API_URL}/api/v1/play/poster/commands/{command_id}/done",
-                          headers=_headers(), json={"result": result})
+    await _call("POST", f"/api/v1/play/poster/commands/{command_id}/done", timeout=20, json={"result": result})
 
 
 async def upload_shot(name: str) -> None:
@@ -92,10 +154,18 @@ def internal(url: str) -> str:
 async def download(url: str, name: str) -> str:
     os.makedirs(config.TMP_DIR, exist_ok=True)
     path = os.path.join(config.TMP_DIR, name)
-    async with httpx.AsyncClient(timeout=300, follow_redirects=True) as client:
-        async with client.stream("GET", internal(url), headers=_headers()) as r:
-            r.raise_for_status()
-            with open(path, "wb") as fh:
-                async for chunk in r.aiter_bytes(1 << 16):
-                    fh.write(chunk)
+    for attempt, wait in enumerate((*WAITS, None)):
+        try:
+            async with httpx.AsyncClient(timeout=300, follow_redirects=True) as client:
+                async with client.stream("GET", internal(url), headers=_headers()) as r:
+                    r.raise_for_status()
+                    with open(path, "wb") as fh:
+                        async for chunk in r.aiter_bytes(1 << 16):
+                            fh.write(chunk)
+            break
+        except TRANSIENT as exc:
+            if wait is None:
+                raise
+            log.info("Downloading %s: %s — trying again in %ss", name, type(exc).__name__, wait)
+            await asyncio.sleep(wait)
     return path
