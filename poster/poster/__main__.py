@@ -443,6 +443,7 @@ async def checkin_loop() -> None:
     while True:
         try:
             await cbc.heartbeat(status_now())
+            await cbc.send_unsent()            # results kept while the server was not answering
         except Exception as exc:  # noqa: BLE001
             log.warning("Could not check in with %s: %s", config.CBC_API_URL, _why(exc))
         await asyncio.sleep(15)
@@ -463,7 +464,11 @@ async def command_loop() -> None:
                 result = await run(cmd["action"], cmd.get("platform") or "", cmd.get("post_id") or "",
                                    opts if isinstance(opts, dict) else None)
             except Exception as exc:  # noqa: BLE001
-                result = {"ok": False, "error": str(exc)[:400]}
+                result = {"ok": False, "error": _why(exc)[:400]}
+            # Every command's outcome in the log — not only the ones that posted.
+            log.info("Command %s done: %s", cmd["command_id"],
+                     "ok" + (f" — {result.get('message')}" if result.get("message") else "") if result.get("ok")
+                     else f"not done — {result.get('error') or result.get('skipped') or 'no reason given'}")
             try:
                 await cbc.command_done(int(cmd["command_id"]), result)
                 await cbc.heartbeat(status_now())     # the console sees the change at once
