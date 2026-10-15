@@ -139,7 +139,13 @@ def test_email(to: str) -> int:
 
 
 def teacher_now(how: str, limit: int, keep_lessons: bool) -> int:
-    from .services import teacher
+    from .services import job_queue, teacher
+
+    # The job kinds are registered where the web app loads them; this is a
+    # separate process. And it only adds rows: the api's own worker renders
+    # them — a worker started here would die with this command mid-video.
+    from .routes import curriculum  # noqa: F401
+    job_queue.start_worker = lambda: False
 
     out = teacher.render_now(how, limit=limit, pause_lessons=not keep_lessons, by="admin_tools")
     print(f"Teacher: {out['teacher']}")
