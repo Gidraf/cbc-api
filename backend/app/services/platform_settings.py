@@ -104,6 +104,9 @@ SETTINGS: tuple[Setting, ...] = (
             "Walkthrough videos the poster puts out on a platform in a day.", 8, "Auto-post"),
     Setting("poster_photos_per_day", "POSTER_PHOTOS_PER_DAY", "int", "Photos a day (per platform)",
             "Photo cards a day — a question's teaser, the question, then its answer, before its video.", 8, "Auto-post"),
+    Setting("poster_live_per_day", "POSTER_LIVE_PER_DAY", "int", "Live posts a day, besides the booked",
+            "When the computer is on and the day has room, the poster also posts up to this many finished videos "
+            "that no booking uses, live. 0 turns it off.", 0, "Auto-post"),
     Setting("poster_group_shares_per_day", "POSTER_GROUP_SHARES_PER_DAY", "int", "Group shares a day",
             "How many of a day's videos are also shared to your ticked groups (one in the morning, one later). "
             "0 turns group sharing off.", 2, "Auto-post"),
@@ -157,6 +160,11 @@ SETTINGS: tuple[Setting, ...] = (
             "Shown under the captions and in each post. Empty: the public address.", "", "Social"),
     Setting("social_cta", "", "string", "Call to action",
             "Said and written at the end of every social video.", "Follow for a new question every day", "Social"),
+    Setting("social_teacher", "SOCIAL_TEACHER", "string", "Teacher in social videos",
+            "A 3D teacher reads the question, thinks through the countdown, cheers the answer and asks \"Did you get it "
+            "right?\". off, female, male, or alternate (half and half, by question). A woman teacher speaks with "
+            "the Kenyan woman's voice (Asilia), a man with the Kenyan man's (Chilemba). Videos already made keep "
+            "serving until they are made again.", "off", "Social"),
     Setting("social_countdown_seconds", "", "int", "Countdown (seconds)",
             "How long a social video counts down after the question, for the viewer to pause and try. 3–10.",
             3, "Social"),

@@ -2,6 +2,7 @@ import React from "react";
 import { useAuth } from "../lib/auth";
 import { fetchBlob } from "../api";
 import { StreamedVideo } from "../ui/StreamedVideo";
+import { MonthPlanner } from "./MonthPlanner";
 import { PhotoStudio } from "./PhotoStudio";
 import gsap from "gsap";
 import {
@@ -239,7 +240,10 @@ export function PlayArcade() {
                      bookSeries={<BookSeries grade={grade} subject={subject} subStrand={subStrand} />} />
       )}
 
-      {view === "autopost" && <AutoPost />}
+      {view === "autopost" && <>
+        <MonthPlanner grade={grade} subject={subject} subStrand={subStrand} />
+        <AutoPost />
+      </>}
 
       {playing && <Round items={playing} onClose={() => setPlaying(null)} onWatch={(qid) => setWatching(qid)} />}
       {watching && <WatchModal questionId={watching} onClose={() => setWatching(null)} />}

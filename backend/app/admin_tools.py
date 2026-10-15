@@ -9,6 +9,13 @@
         server's name, connecting, encryption, signing in — and sends a test
         email. Says which step fails and why; never prints the password.
 
+    docker compose exec api python -m app.admin_tools teacher-now [--mode alternate] [--limit 60] [--keep-lessons]
+        Teacher videos first: turns the 3D teacher on, pauses the lesson videos
+        (queued ones cancelled, daily batch 0) and queues the booked posts'
+        videos again with the teacher, the soonest post first.
+    docker compose exec api python -m app.admin_tools lessons-resume [--target 200]
+        The daily lesson videos again.
+
     docker compose run --rm -e OLD_MASTER_KEY -e NEW_MASTER_KEY api python -m app.admin_tools rotate-master-key [--dry-run]
         Moves the saved provider keys from one CBC_MASTER_KEY to another. Both
         keys come from the environment, never the command line (shell history,
@@ -131,6 +138,22 @@ def test_email(to: str) -> int:
     return 0 if ok_all and base else 1
 
 
+def teacher_now(how: str, limit: int, keep_lessons: bool) -> int:
+    from .services import teacher
+
+    out = teacher.render_now(how, limit=limit, pause_lessons=not keep_lessons, by="admin_tools")
+    print(f"Teacher: {out['teacher']}")
+    if not keep_lessons:
+        print(f"Lesson videos paused: {out['lessons_cancelled']} queued cancelled; daily batch 0 "
+              f"(was {out['daily_target_was']}). Bring them back: python -m app.admin_tools lessons-resume --target {out['daily_target_was'] or 200}")
+    print(f"Booked posts' videos: {out['booked_videos']} — {out['queued']} queued with the teacher, "
+          f"{out['already_with_teacher']} already made or rendering.")
+    for f in out["failed"]:
+        print("  not queued:", f)
+    print("Watch them render in the console: Videos → batches, or the Jobs screen.")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     import argparse
 
@@ -142,9 +165,22 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--ask", action="store_true", help="type the password yourself instead of a random one")
     k = sub.add_parser("rotate-master-key", help="move saved provider keys to NEW_MASTER_KEY")
     k.add_argument("--dry-run", action="store_true")
+    tn = sub.add_parser("teacher-now", help="turn the teacher on and render the booked posts' videos with it first")
+    tn.add_argument("--mode", default="alternate", choices=["female", "male", "alternate"])
+    tn.add_argument("--limit", type=int, default=60, help="how many booked videos to queue (soonest first)")
+    tn.add_argument("--keep-lessons", action="store_true", help="do not pause the daily lesson videos")
+    lr = sub.add_parser("lessons-resume", help="the daily lesson videos again")
+    lr.add_argument("--target", type=int, default=200)
     t = sub.add_parser("test-email", help="check each step of sending email, and send a test")
     t.add_argument("to", nargs="?", default="", help="send a test email here")
     args = parser.parse_args(argv)
+    if args.cmd == "teacher-now":
+        return teacher_now(args.mode, args.limit, args.keep_lessons)
+    if args.cmd == "lessons-resume":
+        from .services import teacher
+
+        print("Daily lesson videos:", teacher.resume_lessons(args.target, by="admin_tools"), "a day")
+        return 0
     if args.cmd == "test-email":
         return test_email(args.to)
     if args.cmd == "reset-password":

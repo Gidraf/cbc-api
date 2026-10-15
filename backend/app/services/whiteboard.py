@@ -166,7 +166,10 @@ def page(data: dict[str, Any], *, title: str = "", voice: str = "en-KE", duratio
             .replace("__CONTROLS__", chrome)
             .replace("__GSAP__", _script(_asset("gsap.min.js")))
             .replace("__DATA__", json.dumps(payload).replace("</", "<\\/"))
-            .replace("__ENGINE__", _script(_asset("whiteboard.js"))))
+            .replace("__ENGINE__", _script(_asset("whiteboard.js")))
+            .replace("__TEACHER__", (f"<script>{_script(_asset('three.min.js'))}</script>"
+                                     f"<script>{_script(_asset('teacher.js'))}</script>")
+                     if (social or {}).get("teacher") else ""))
 
 
 def cache_key(data: dict[str, Any], voice: str, fps: int = FPS) -> str:
@@ -367,6 +370,12 @@ def render(data: dict[str, Any], *, title: str = "", voice: str = "", subject: s
         spoken = narrate(scenes, voice, folder)
         durations = [round(d, 3) for _, d in spoken]
         starts = _starts(durations)
+        teach = bool(social and social.get("teacher"))
+        if teach:
+            from . import teacher
+
+            social = {**social, "teacher": {**social["teacher"], "fps": fps,
+                                            "mouth": teacher.mouth_envelopes(ffmpeg, [p for p, _ in spoken], fps)}}
         doc = page(data, title=title, voice=voice, durations=durations, render=True, social=social)
         thumb_at = None
         if social:
@@ -375,12 +384,16 @@ def render(data: dict[str, Any], *, title: str = "", voice: str = "", subject: s
             thumb_at = starts[k] + 0.4
         video = folder / "board.mp4"
         seconds, thumb = _capture(cdp, doc, video, ffmpeg, fps, tick, size=size,
-                                  selector="#social" if social else "#wb", thumb_at=thumb_at)
+                                  selector="#social" if social else "#wb", thumb_at=thumb_at, webgl=teach)
         extras: list[tuple[Path, float]] = []
         music = None
         if social:
             extras = _countdown_ticks(ffmpeg, folder, scenes, starts)
             music = _music_file(folder, social.get("music_url") or "")
+            if teach:
+                from . import teacher
+
+                extras += teacher.mood_tracks(ffmpeg, folder, scenes, starts, seconds, beds=music is None)
         final = folder / "final.mp4"
         tick("mux", 0, 1)
         _mux(ffmpeg, video, spoken, starts, seconds, final, extras=extras, music=music)
@@ -587,9 +600,14 @@ def run_job(job: dict[str, Any]) -> dict[str, Any]:
     return {"status": "done", "question_id": qid, **made}
 
 
+# Software WebGL for the teacher: the server has no GPU, and Chromium only
+# lets SwiftShader draw WebGL when asked.
+WEBGL_ARGS = ["--enable-unsafe-swiftshader", "--use-angle=swiftshader", "--ignore-gpu-blocklist", "--enable-webgl"]
+
+
 def _capture(cdp: str, doc: str, out: Path, ffmpeg: str, fps: int, tick: Any, *,
              size: tuple[int, int] = (WIDTH, HEIGHT), selector: str = "#wb",
-             thumb_at: float | None = None) -> tuple[float, bytes | None]:
+             thumb_at: float | None = None, webgl: bool = False) -> tuple[float, bytes | None]:
     """Every frame of the page, piped into ffmpeg.
 
     A video is a minute or two of screenshots, longer than the browser
@@ -619,7 +637,7 @@ def _capture(cdp: str, doc: str, out: Path, ffmpeg: str, fps: int, tick: Any, *,
                 browser = None
                 try:
                     try:
-                        browser = p.chromium.launch(headless=True, args=LAUNCH_ARGS)
+                        browser = p.chromium.launch(headless=True, args=LAUNCH_ARGS + (WEBGL_ARGS if webgl else []))
                     except Exception as exc:  # noqa: BLE001
                         if not cdp:
                             raise

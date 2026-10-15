@@ -1,0 +1,178 @@
+"""Booking a month at a time, and live posts when there is a chance.
+
+The calendar and booking run against a real Postgres (CBC_TEST_PHASE2_DATABASE_URL,
+an empty database); the spacing needs none.
+"""
+from __future__ import annotations
+
+import os
+import random
+from datetime import date, datetime, time, timedelta, timezone
+
+import pytest
+
+from app.services import social_export as se
+
+DB = os.getenv("CBC_TEST_PHASE2_DATABASE_URL", "")
+needs_db = pytest.mark.skipif(not DB, reason="set CBC_TEST_PHASE2_DATABASE_URL to an empty Postgres database")
+EAT = se.EAT
+RULES = {"hours": {"start": "06:00", "end": "22:00"}, "min_gap_minutes": 20}
+
+
+def test_posts_are_30_to_60_minutes_apart_inside_the_hours() -> None:
+    times = se.spaced_times(random.Random(1), date(2026, 11, 3), 10, RULES, gap_min=30, gap_max=60)
+    assert len(times) == 10
+    gaps = [(b - a).total_seconds() / 60 for a, b in zip(times, times[1:])]
+    assert all(29.5 <= g <= 60.5 for g in gaps), gaps
+    assert all(time(6, 0) <= t.astimezone(EAT).time() <= time(21, 45) for t in times)
+
+
+def test_new_posts_keep_clear_of_what_the_day_already_has() -> None:
+    day = date(2026, 11, 3)
+    taken = [datetime.combine(day, time(h, 0), tzinfo=EAT) for h in (7, 9, 11, 13)]
+    times = se.spaced_times(random.Random(2), day, 12, RULES, gap_min=30, gap_max=45, taken=taken)
+    for t in times:
+        assert all(abs((t - x).total_seconds()) >= 30 * 60 for x in taken), t
+
+
+def test_a_day_holds_only_what_fits() -> None:
+    short = {"hours": {"start": "18:00", "end": "21:00"}, "min_gap_minutes": 20}
+    times = se.spaced_times(random.Random(3), date(2026, 11, 3), 30, short, gap_min=30, gap_max=60)
+    assert 3 <= len(times) <= 6
+
+
+def test_the_gap_is_never_below_the_posters_own() -> None:
+    times = se.spaced_times(random.Random(4), date(2026, 11, 3), 5, {**RULES, "min_gap_minutes": 40},
+                            gap_min=10, gap_max=10)
+    assert all((b - a).total_seconds() >= 40 * 60 for a, b in zip(times, times[1:]))
+
+
+def test_months_have_their_days() -> None:
+    assert len(se.month_days(2026, 2)) == 28 and len(se.month_days(2028, 2)) == 29
+    assert se.month_days(2026, 12)[-1] == date(2026, 12, 31)
+
+
+# ── against the database ─────────────────────────────────────────────────────
+
+@pytest.fixture()
+def db(monkeypatch):
+    from sqlalchemy import create_engine, text
+
+    from app.infra import db as infra
+    from app.services import platform_settings
+
+    engine = create_engine(DB)
+    with engine.begin() as c:
+        c.execute(text("DROP SCHEMA public CASCADE; CREATE SCHEMA public;"))
+    monkeypatch.setattr(infra, "get_engine", lambda: engine)
+    settings = {"poster_enabled": True, "poster_platforms": ["facebook"], "poster_min_gap_minutes": 20}
+    monkeypatch.setattr(platform_settings, "_load", lambda: settings)
+    infra.run_migrations()
+    yield settings
+    engine.dispose()
+
+
+def _questions(n: int) -> dict[str, dict]:
+    return {f"q{i}": {"question_id": f"q{i}", "curriculum": {"grade": "Grade 9", "subject": "Mathematics",
+                                                             "sub_strand": "Integers"}} for i in range(n)}
+
+
+NOW = datetime(2026, 10, 15, 9, 0, tzinfo=timezone.utc)      # 12:00 in Nairobi
+
+
+@needs_db
+def test_the_month_shows_room_and_booking_fills_only_the_room(db, monkeypatch) -> None:
+    from app.infra.db import fetch_all
+    from app.services import social
+
+    qs = _questions(400)
+    monkeypatch.setattr(se, "_unbooked", lambda g, s, ss, need, ready_only=False:
+                        (list(qs)[:need], {k: "ready" for k in list(qs)[:need]}, qs))
+    monkeypatch.setattr(social, "enqueue", lambda *a, **k: None)
+    # Something on the 20th already: 4 booked.
+    for i, h in enumerate((8, 10, 12, 14)):
+        se._plan_post({"question_id": f"old{i}", "curriculum": {}}, "facebook",
+                      datetime(2026, 10, 20, h, 0, tzinfo=EAT), "earlier")
+
+    view = se.month_view(2026, 10, per_day=10, now=NOW)
+    days = {d["date"]: d for d in view["days"]}
+    assert days["2026-10-15"]["free"] == 0 and not days["2026-10-15"]["bookable"], "today is not booked into"
+    assert days["2026-10-20"]["booked"] == 4 and days["2026-10-20"]["free"] == 6
+    assert days["2026-10-16"]["free"] == 10
+    assert view["open_days"] == 16 and view["free"] == 15 * 10 + 6
+
+    plan = se.book_month("Grade 9", "Mathematics", year=2026, month=10, per_day=10, dry=True, now=NOW, seed=1)
+    assert plan["posts"] == 156 and not plan["booked"]
+    assert not fetch_all("SELECT 1 FROM social_posts WHERE created_by = 'me'"), "a preview books nothing"
+
+    out = se.book_month("Grade 9", "Mathematics", year=2026, month=10, per_day=10, now=NOW, seed=1, created_by="me")
+    assert out["booked"] and out["posts"] == 156
+    after = {d["date"]: d for d in se.month_view(2026, 10, per_day=10, now=NOW)["days"]}
+    assert all(d["free"] == 0 for d in after.values())
+    assert after["2026-10-20"]["booked"] == 10
+    again = se.book_month("Grade 9", "Mathematics", year=2026, month=10, per_day=10, now=NOW, seed=2)
+    assert again["posts"] == 0 and "full" in again["notes"][0]
+
+
+@needs_db
+def test_days_beyond_facebooks_window_say_when_they_reach_it(db) -> None:
+    view = se.month_view(2026, 12, per_day=10, now=NOW)
+    days = {d["date"]: d for d in view["days"]}
+    assert view["facebook_until"] == "2026-11-12"
+    assert days["2026-12-01"]["to_platform_on"] == "2026-11-03"
+
+
+@needs_db
+def test_a_live_extra_posts_a_finished_unbooked_video_while_the_day_allows(db, monkeypatch) -> None:
+    from app.infra.db import execute
+    from app.services import social, whiteboard
+
+    db["poster_live_per_day"] = 2
+    se._no_extra_until["t"] = 0.0
+    execute("INSERT INTO question_videos (question_id, kind, video_key, object_name) VALUES ('made1', 'social', 'k', 'o')")
+    execute("INSERT INTO question_videos (question_id, kind, video_key, object_name) VALUES ('made2', 'social', 'k', 'o')")
+    monkeypatch.setattr(social, "status", lambda qid, q=None: {"status": "ready", "url": "u", "post": "p"})
+    monkeypatch.setattr(whiteboard, "load", lambda qid: {"question_id": qid, "curriculum": {}})
+    rules = se.poster_rules()
+    post, st = se.live_extra(NOW, rules)
+    assert post and post["created_by"] == se.LIVE_EXTRA and post["platform"] == "facebook"
+    se.record_attempt(post["post_id"], ok=True)
+    execute("UPDATE social_posts SET handed_at = :t WHERE post_id = :id", {"t": NOW, "id": post["post_id"]})
+    assert se.live_extra(NOW, rules)[0] is None, "the gap since the last post holds the next"
+    later = NOW + timedelta(minutes=30)
+    second, _ = se.live_extra(later, rules)
+    assert second and second["question_id"] != post["question_id"]
+    se.record_attempt(second["post_id"], ok=True)
+    execute("UPDATE social_posts SET handed_at = :t WHERE post_id = :id", {"t": later, "id": second["post_id"]})
+    assert se.live_extra(later + timedelta(hours=1), rules)[0] is None, "two a day, as set"
+
+
+@needs_db
+def test_live_extras_are_off_unless_asked(db) -> None:
+    se._no_extra_until["t"] = 0.0
+    assert se.live_extra(NOW, se.poster_rules()) == (None, {})
+
+
+@needs_db
+def test_teacher_now_pauses_lessons_and_queues_the_soonest_booked_videos_first(db, monkeypatch) -> None:
+    from app.infra.db import execute, fetch_one
+    from app.services import platform_settings, social, teacher
+
+    written = {}
+    monkeypatch.setattr(platform_settings, "set_many", lambda values, updated_by="": written.update(values) or values)
+    execute("""INSERT INTO jobs (job_id, kind, grade, subject, status, payload, queued_by)
+               VALUES ('L1', 'video', '', '', 'queued', '{}'::jsonb, 'daily')""")
+    for n, day in enumerate((5, 2, 9)):
+        se._plan_post({"question_id": f"b{n}", "curriculum": {}}, "facebook",
+                      datetime(2026, 11, day, 10, 0, tzinfo=EAT), "me")
+    se._plan_post({"question_id": "gone", "curriculum": {}}, "facebook", datetime(2026, 11, 1, 10, 0, tzinfo=EAT), "me")
+    execute("UPDATE social_posts SET handed_at = NOW() WHERE question_id = 'gone'")      # Facebook has it already
+    queued = []
+    monkeypatch.setattr(social, "enqueue", lambda qid, **k: queued.append((qid, k["fresh"], k["priority"])) or {"status": "queued"})
+
+    out = teacher.render_now("alternate", limit=10)
+    assert written["social_teacher"] == "alternate" and written["video_daily_target"] == 0
+    assert out["lessons_cancelled"] == 1
+    assert fetch_one("SELECT status FROM jobs WHERE job_id = 'L1'")["status"] == "cancelled"
+    assert [q for q, _, _ in queued] == ["b1", "b0", "b2"], "the soonest post first; a handed one is left alone"
+    assert all(fresh and prio > 0 for _, fresh, prio in queued)
