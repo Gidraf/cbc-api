@@ -1561,6 +1561,17 @@ MIGRATIONS: list[tuple[str, str]] = [
         CREATE INDEX IF NOT EXISTS idx_social_posts_comments ON social_posts(comments_state, comments_next_at);
         """,
     ),
+    (
+        "056_notices",
+        """
+        -- What the owner was last told by email, and when (videos made, videos waiting).
+        CREATE TABLE IF NOT EXISTS notices (
+            name TEXT PRIMARY KEY,
+            sent_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            value JSONB NOT NULL DEFAULT '{}'::jsonb
+        );
+        """,
+    ),
 ]
 
 

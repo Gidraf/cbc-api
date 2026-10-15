@@ -76,7 +76,41 @@ def brand() -> dict[str, Any]:
         "logo_url": str(get("social_logo_url", "") or "").strip(),
         "music_url": str(get("social_music_url", "") or "").strip(),
         "teacher": _teacher_mode(),
+        "cover": bool(get("social_cover", True)),
     }
+
+
+# The cover's looks: background from, to, and the headline's colour.
+COVER_PALETTES = [("#ff006e", "#3a0ca3", "#ffbe0b"), ("#06d6a0", "#118ab2", "#ffd166"), ("#f72585", "#7209b7", "#4cc9f0"),
+                  ("#ff5400", "#c9184a", "#ffee32"), ("#00b4d8", "#03045e", "#fca311"), ("#ffbe0b", "#fb5607", "#ffffff"),
+                  ("#ef233c", "#2b2d42", "#ffd60a"), ("#2ec4b6", "#011627", "#ff9f1c")]
+COVER_HOOKS = ["Can you solve this? 🤔", "Bet you can't solve this 😏", "Solve it in 10 seconds ⏱️",
+               "Think you're smart? 🧠", "Test your brain! 🔥", "Quick! What's the answer? ⚡",
+               "Don't scroll — try it! ✋", "Can you get it right? 🎯"]
+COVER_EMOJI = ["🤔", "😱", "🧠", "🔥", "⚡", "🎯", "👀", "💯"]
+
+
+def cover_for(q: dict[str, Any], b: dict[str, Any]) -> dict[str, Any]:
+    """What the cover shows — its look and hook picked by the question, so
+    each video looks different and the same video always looks the same."""
+    qid = str(q.get("question_id") or q.get("question_text") or "")
+    n = int(hashlib.sha256(qid.encode()).hexdigest(), 16)
+    bg_from, bg_to, accent = COVER_PALETTES[n % len(COVER_PALETTES)]
+    link = q.get("curriculum") or {}
+    text = " ".join(display(q.get("question_text") or "").split())
+    if len(text) > 110:
+        text = text[:107].rsplit(" ", 1)[0] + "…"
+    options = [o for o in (q.get("options") or []) if isinstance(o, dict)][:4]
+    chips = []
+    for o in options:
+        t = " ".join(display(o.get("text") or "").split())
+        chips.append(f"{o.get('id')}) " + (t if len(t) <= 22 else t[:20] + "…"))
+    return {"bg_from": bg_from, "bg_to": bg_to, "accent": accent,
+            "hook": COVER_HOOKS[(n // 7) % len(COVER_HOOKS)], "emoji": COVER_EMOJI[(n // 11) % len(COVER_EMOJI)],
+            "tilt": [-4, -2, 2, 3][(n // 13) % 4],
+            "tag": " · ".join(x for x in (_grade_label(str(link.get("grade") or "")).upper(),
+                                          str(link.get("subject") or "").upper()) if x),
+            "question": text, "choices": chips, "brand": b.get("name") or ""}
 
 
 def _teacher_mode() -> str:
@@ -159,6 +193,7 @@ def frame_payload(q: dict[str, Any], b: dict[str, Any]) -> dict[str, Any]:
     return {"hook": b.get("hook") or "Can you solve this?", "tag": tag, "brand": b["name"], "handle": b["handle"],
             "bg_from": b["bg_from"], "bg_to": b["bg_to"], "accent": b["accent"], "text": b["text"],
             "website": b["website"], "countdown": b["countdown"], "logo": logo, "music_url": b["music_url"],
+            **({"cover": cover_for(q, b)} if b.get("cover", True) else {}),
             **({"teacher": {"gender": g}} if (g := teacher.gender_for(str(q.get("question_id") or ""),
                                                                       b.get("teacher", "off"))) else {})}
 
@@ -406,7 +441,7 @@ def enqueue(question_id: str, *, queued_by: str = "", batch_id: str = "", voice:
          **({"priority": priority} if priority else {})},
         strand=str(link.get("strand") or ""), sub_strand=str(link.get("sub_strand") or ""),
         batch_id=batch_id, queued_by=queued_by or "social")
-    job_queue.start_worker()
+    job_queue.dispatch(job.job_id)          # the render runs in the worker, not in the API
     return {**now, "status": "queued", "job_id": job.job_id}
 
 
@@ -518,6 +553,21 @@ _FRAME = """<!doctype html><html lang="en"><head><meta charset="utf-8">
  .foot{position:absolute;left:60px;right:150px;top:1440px;font-size:40px;font-weight:600;opacity:.95}
  .foot b{color:var(--accent)}
  body.live{background:#0f172a;overflow:hidden}
+ /* The cover: the first second of the video, and its thumbnail. */
+ #cover{position:absolute;inset:0;z-index:5;display:none;overflow:hidden;font-family:'Baloo 2',system-ui,sans-serif}
+ #cover .rays{position:absolute;inset:-40%;background:repeating-conic-gradient(from 0deg at 50% 45%,rgba(255,255,255,.13) 0deg 9deg,transparent 9deg 18deg)}
+ #cover .tag{position:absolute;left:60px;top:140px;background:#111;color:#fff;border-radius:40px;padding:10px 30px;font-size:38px;font-weight:800;letter-spacing:1px}
+ #cover .hook{position:absolute;left:50px;right:140px;top:225px;margin:0;font-size:124px;line-height:.98;font-weight:800;
+   -webkit-text-stroke:7px #111;paint-order:stroke fill;text-shadow:0 12px 0 rgba(0,0,0,.35);transform-origin:left center}
+ #cover .emoji{position:absolute;right:150px;top:150px;font-size:130px;transform:rotate(12deg)}
+ #cover .card{position:absolute;left:50px;right:150px;top:680px;background:#fff;color:#111;border-radius:34px;padding:34px 38px;
+   box-shadow:0 22px 0 rgba(0,0,0,.28);font-size:52px;line-height:1.18;font-weight:700}
+ #cover .card .q{display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden}
+ #cover .chips{display:flex;flex-wrap:wrap;gap:14px;margin-top:22px}
+ #cover .chips span{font-size:36px;font-weight:800;padding:8px 20px;border-radius:18px;background:#111;color:#fff}
+ #cover .sticker{position:absolute;left:60px;top:1330px;background:#111;color:#fff;font-size:50px;font-weight:800;
+   padding:16px 34px;border-radius:22px;transform:rotate(-4deg);box-shadow:0 10px 0 rgba(0,0,0,.3)}
+ #cover .sticker b{color:var(--cover-accent)}
  .bar{position:fixed;left:0;right:0;bottom:0;height:54px;display:flex;gap:8px;align-items:center;justify-content:center;
    background:#0f172a}
  .bar button{font:inherit;font-size:18px;padding:4px 16px;border-radius:8px;border:0;cursor:pointer}
@@ -525,6 +575,8 @@ _FRAME = """<!doctype html><html lang="en"><head><meta charset="utf-8">
  .bar p{display:none}
 </style></head><body class="__BODY_CLASS__">
 <div id="social">
+  <div id="cover"><div class="rays"></div><div class="tag"></div><h1 class="hook"></h1><div class="emoji"></div>
+    <div class="card"><div class="q"></div><div class="chips"></div></div><div class="sticker">ANSWER INSIDE <b>▶</b></div></div>
   <div class="top">
     <div class="chip">__LOGO__<span class="dot"></span><span>__BRAND__</span></div>
     <div class="hook">__HOOK__</div>
@@ -537,6 +589,31 @@ _FRAME = """<!doctype html><html lang="en"><head><meta charset="utf-8">
 </div>
 <script>__GSAP__</script>
 <script>window.WB_DATA = __DATA__;</script>
+<script>
+ // The cover: shown for the first second (the lead-in), then it slides away.
+ (function () {
+   const c = (window.WB_DATA.social || {}).cover, el = document.getElementById("cover");
+   if (!c || !el) return;
+   const lead = window.WB_DATA.lead || 1.3, set = (s, v) => { el.querySelector(s).textContent = v; };
+   el.style.background = `linear-gradient(160deg, ${c.bg_from}, ${c.bg_to})`;
+   el.style.setProperty("--cover-accent", c.accent);
+   set(".tag", c.tag || c.brand); set(".hook", c.hook); set(".emoji", c.emoji); set(".q", c.question);
+   const hook = el.querySelector(".hook");
+   hook.style.color = c.accent; hook.style.transform = `rotate(${c.tilt}deg)`;
+   el.querySelector(".chips").innerHTML = (c.choices || []).map((x) => `<span>${x.replace(/[<&>]/g, "")}</span>`).join("");
+   if ((window.WB_DATA.social || {}).teacher) el.querySelector(".emoji").style.display = "none";
+   window.__coverUntil = lead - 0.1;
+   window.__onCover = (t) => {
+     const out = Math.min(1, Math.max(0, (t - (lead - 0.4)) / 0.3));
+     el.style.display = out >= 1 ? "none" : "block";
+     el.style.opacity = String(1 - out);
+     el.style.transform = `translateY(${-out * 120}px)`;
+     const s = el.querySelector(".sticker");
+     s.style.transform = `rotate(-4deg) scale(${1 + 0.06 * Math.sin(t * 9)})`;
+   };
+   window.__onCover(0);
+ })();
+</script>
 <script>__ENGINE__</script>
 __TEACHER__
 __CONTROLS__

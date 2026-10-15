@@ -125,6 +125,14 @@ def move_videos_to_drive() -> dict:
     return drive_store.enqueue(queued_by="drive schedule") or {"status": "not set up"}
 
 
+@celery_app.task(name="app.tasks.video_news")
+def video_news() -> dict:
+    """Email the owner when 100 new videos are finished, or unposted ones pile up (hourly)."""
+    from .services import notices
+
+    return notices.video_news()
+
+
 @celery_app.task(name="app.tasks.auto_book_posts")
 def auto_book_posts() -> dict:
     """Keep the posting calendar full, when Auto-book is on (every two hours)."""

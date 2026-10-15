@@ -119,6 +119,12 @@ SETTINGS: tuple[Setting, ...] = (
             "ones once they are out. Comments only go up within posting hours.", False, "Auto-post"),
     Setting("poster_answer_delay_seconds", "POSTER_ANSWER_DELAY_SECONDS", "int", "Seconds before the answer comments",
             "How long after the choices the answer is commented.", 60, "Auto-post"),
+    Setting("notify_email", "NOTIFY_EMAIL", "string", "Email me video news at",
+            "An address told when every 100 new videos are finished (how many are booked, how many wait) and when "
+            "finished videos pile up unposted. Empty: no emails.", "", "Auto-post"),
+    Setting("notify_every_videos", "NOTIFY_EVERY_VIDEOS", "int", "Email after this many new videos", "", 100, "Auto-post"),
+    Setting("notify_surplus_at", "NOTIFY_SURPLUS_AT", "int", "Email when this many finished videos wait unposted",
+            "At most once a day.", 20, "Auto-post"),
     Setting("poster_live_per_day", "POSTER_LIVE_PER_DAY", "int", "Live posts a day, besides the booked",
             "When the computer is on and the day has room, the poster also posts up to this many finished videos "
             "that no booking uses, live. 0 turns it off.", 0, "Auto-post"),
@@ -175,6 +181,10 @@ SETTINGS: tuple[Setting, ...] = (
             "Shown under the captions and in each post. Empty: the public address.", "", "Social"),
     Setting("social_cta", "", "string", "Call to action",
             "Said and written at the end of every social video.", "Follow for a new question every day", "Social"),
+    Setting("social_cover", "SOCIAL_COVER", "bool", "Open on a cover",
+            "Every social video opens on a bright cover for a second — a big hook, the question and its choices, the "
+            "teacher pointing at the viewer — which is also its thumbnail. The look and the hook change from question to "
+            "question.", True, "Social"),
     Setting("social_teacher", "SOCIAL_TEACHER", "string", "Teacher in social videos",
             "A 3D teacher reads the question, thinks through the countdown, cheers the answer and asks \"Did you get it "
             "right?\". off, female, male, or alternate (half and half, by question). A woman teacher speaks with "

@@ -198,7 +198,7 @@ def enqueue(question_id: str, *, queued_by: str = "cards") -> dict[str, Any]:
                             {"artifact_id": question_id, "question_id": question_id},
                             strand=str(link.get("strand") or ""), sub_strand=str(link.get("sub_strand") or ""),
                             queued_by=queued_by)
-    job_queue.start_worker()
+    job_queue.dispatch(job.job_id)          # the render runs in the worker, not in the API
     return {"status": "queued", "job_id": job.job_id}
 
 

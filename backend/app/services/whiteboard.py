@@ -11,6 +11,7 @@ per (scenes, voice, fps) and reused.
 """
 from __future__ import annotations
 
+import base64
 import hashlib
 import html
 import json
@@ -145,7 +146,8 @@ def page(data: dict[str, Any], *, title: str = "", voice: str = "en-KE", duratio
     With `social`, the board sits in a vertical 1080×1920 frame with a
     hook, captions, a countdown and the brand (see services/social.py)."""
     payload = {"scenes": _written(data.get("scenes") or []), "seed": str(data.get("question_id") or title or "wb"),
-               "voice": voice, "durations": durations or [], "audio": audio or []}
+               "voice": voice, "durations": durations or [], "audio": audio or [],
+               "lead": LEAD + (COVER if (social or {}).get("cover") else 0.0)}
     if social:
         payload["social"] = {k: v for k, v in social.items() if k not in ("logo", "music_url")}
     try:
@@ -340,10 +342,14 @@ def live_page(data: dict[str, Any], *, title: str, voice: str, autoplay: bool = 
     return page(data, title=title, voice=lang, durations=durations, audio=audio, autoplay=autoplay)
 
 
-def _starts(durations: list[float]) -> list[float]:
+LEAD = 0.3            # the board's lead-in before the first scene
+COVER = 1.0           # a social cut opens on its cover for this long (the thumbnail platforms pick)
+
+
+def _starts(durations: list[float], lead: float = LEAD) -> list[float]:
     """Where each scene's voice begins — the board's own arithmetic:
-    a 0.3 s lead-in, then each scene plus the 0.4 s gap after it."""
-    at, out = 0.3, []
+    the lead-in, then each scene plus the 0.4 s gap after it."""
+    at, out = lead, []
     for d in durations:
         out.append(at)
         at += d + 0.4
@@ -383,7 +389,7 @@ def render(data: dict[str, Any], *, title: str = "", voice: str = "", subject: s
         tick("voice", 0, len(scenes))
         spoken = narrate(scenes, voice, folder)
         durations = [round(d, 3) for _, d in spoken]
-        starts = _starts(durations)
+        starts = _starts(durations, LEAD + (COVER if (social or {}).get("cover") else 0.0))
         teach = bool(social and social.get("teacher"))
         if teach:
             from . import teacher
@@ -398,6 +404,8 @@ def render(data: dict[str, Any], *, title: str = "", voice: str = "", subject: s
             # The question written out and the countdown at its first number.
             k = next((i for i, sc in enumerate(scenes) if sc.get("scene") == "countdown"), 0)
             thumb_at = starts[k] + 0.4
+            if social.get("cover"):
+                thumb_at = COVER * 0.55            # the cover, fully drawn
         video = folder / "board.mp4"
         seconds, thumb = _capture(cdp, doc, video, ffmpeg, fps, tick, size=size,
                                   selector="#social" if social else "#wb", thumb_at=thumb_at, webgl=teach)
@@ -582,7 +590,7 @@ def enqueue(question_id: str, *, queued_by: str = "", batch_id: str = "", voice:
          **({"priority": str(int(priority))} if priority else {})},
         strand=str(link.get("strand") or ""), sub_strand=str(link.get("sub_strand") or ""),
         batch_id=batch_id, queued_by=queued_by or "whiteboard")
-    job_queue.start_worker()
+    job_queue.dispatch(job.job_id)          # the render runs in the worker, not in the API
     return {**now, "status": "queued", "job_id": job.job_id}
 
 
@@ -666,10 +674,21 @@ def _capture(cdp: str, doc: str, out: Path, ffmpeg: str, fps: int, tick: Any, *,
                     frames = int(total * fps) + 1
                     box = pg.locator(selector).bounding_box() or {"x": 0, "y": 0, "width": size[0], "height": size[1]}
                     clip = {"x": box["x"], "y": box["y"], "width": box["width"], "height": box["height"]}
+                    # Chrome's own capture, asked for speed: ~12% quicker a frame than
+                    # Playwright's screenshot, which waits on fonts and animations first.
+                    try:
+                        cdp = context.new_cdp_session(pg)
+                    except Exception:  # noqa: BLE001
+                        cdp = None
+                    shot_clip = {**clip, "scale": 1}
                     while frame < frames:
                         pg.evaluate("t => window.__seek(t)", frame / fps)
-                        encoder.stdin.write(pg.screenshot(type="jpeg", quality=88, clip=clip,  # type: ignore[union-attr]
-                                                          animations="disabled"))
+                        if cdp is not None:
+                            jpeg = base64.b64decode(cdp.send("Page.captureScreenshot", {
+                                "format": "jpeg", "quality": 86, "optimizeForSpeed": True, "clip": shot_clip})["data"])
+                        else:
+                            jpeg = pg.screenshot(type="jpeg", quality=88, clip=clip, animations="disabled")
+                        encoder.stdin.write(jpeg)  # type: ignore[union-attr]
                         if frame % (fps * 2) == 0:
                             tick("draw", frame, frames)
                         frame += 1
