@@ -1,8 +1,11 @@
 """Facebook: a reel on your own profile (the default) or on a Page.
 
-Profile: facebook.com/reels/create — one screen: description, the video,
-then Post. Post lights up before the upload is done, so it waits for the
-preview's "Uploading N%" to go first.
+Profile: facebook.com/reels/create — the video and the description, then
+Post. Post lights up before the upload is done, so it waits for the
+preview's "Uploading N%" to go first. Facebook now splits the composer into
+steps ("Edit › Settings") with a Next between them; Next is pressed until
+the step with Post (and Schedule, groups, story) shows. The old one-screen
+composer has no Next, and is posted as before.
 
 Ahead of time: with `schedule_at`, the composer's Schedule button opens
 "Scheduling options"; the date ("Nov 7, 2026") and time ("8:47 AM", the
@@ -53,6 +56,28 @@ async def _uploaded(page: Page, timeout: float = 900.0) -> None:
             return
         await asyncio.sleep(2)
     raise StepFailed("The video did not finish uploading in time.")
+
+
+async def _to_last_step(page: Page, steps: int = 4) -> None:
+    """Press Next until the composer's last step (the one with Post) shows.
+
+    Facebook's reel composer is "Edit › Settings": the description is on
+    Edit, and Post, Schedule, groups and the story switch are on Settings.
+    """
+    post = page.get_by_role("button", name=re.compile(r"^(Post|Schedule|Share)$"))
+    nxt = page.get_by_role("button", name="Next", exact=True)
+    for _ in range(steps):
+        try:
+            if await post.count() and await post.last.is_visible():
+                return
+            if not (await nxt.count() and await nxt.last.is_visible()):
+                return                              # the one-screen composer: nothing to step through
+        except Exception:  # noqa: BLE001
+            return
+        await enabled(nxt.last, timeout=300)
+        await nxt.last.click()
+        await asyncio.sleep(3)
+    raise StepFailed("Pressed Next but never reached the step with Post — the composer may have changed.")
 
 
 async def _settled(page: Page, pattern: str, seconds: float) -> None:
@@ -196,6 +221,7 @@ class Facebook(Flow):
         await write(page, box, self.fit(caption))
         await _uploaded(page)
         await _settled(page, r"Checking for copyrighted", 120)   # posting can go ahead without it, but give it a moment
+        await _to_last_step(page)                                  # Edit › Settings: Next, to where Post is
         if groups and schedule_at:
             raise StepFailed("Facebook cannot schedule a reel that is shared to a group — one or the other.")
         # A profile reel shows on the profile and in friends' and followers'
