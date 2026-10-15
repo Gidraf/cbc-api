@@ -547,9 +547,10 @@ function FractionGame({ spec, onDone }: { spec: PlaySpec; onDone: (c: boolean) =
 function WatchModal({ questionId, onClose, start = "whiteboard" }: { questionId: string; onClose: () => void; start?: "whiteboard" | "classic" | "social" }) {
   const [view, setView] = React.useState<"whiteboard" | "classic" | "social">(start);
   const [voice, setVoice] = React.useState("");
+  const [teacher, setTeacher] = React.useState("");          // "": as Settings say
   const board = useWhiteboardHtml(view === "whiteboard" ? questionId : "", voice);
   const classic = useWalkthroughHtml(view === "classic" ? questionId : "");
-  const vertical = useSocialHtml(view === "social" ? questionId : "", voice);
+  const vertical = useSocialHtml(view === "social" ? questionId : "", voice, teacher);
   const page = view === "whiteboard" ? board : view === "classic" ? classic : vertical;
   const frame = (
     <iframe key={view} title="Walkthrough" srcDoc={page.data || "<p style='font-family:sans-serif;padding:2rem'>Preparing — the voice is being recorded…</p>"}
@@ -563,6 +564,17 @@ function WatchModal({ questionId, onClose, start = "whiteboard" }: { questionId:
         <Button size="sm" variant={view === "social" ? "primary" : "ghost"} onClick={() => setView("social")}>📱 Social post</Button>
         <Button size="sm" variant={view === "classic" ? "primary" : "ghost"} onClick={() => setView("classic")}>Animated</Button>
         <VoicePicker value={voice} onChange={setVoice} label="Voice" />
+        {view === "social" && (
+          <label style={{ display: "inline-flex", gap: 6, alignItems: "center", fontSize: "var(--text-sm)" }}>Teacher
+            <Select value={teacher} onChange={(e) => setTeacher(e.target.value)} style={{ width: "auto" }}
+                    title="Preview with a teacher, whatever Settings say — the voice follows the teacher">
+              <option value="">As in Settings</option>
+              <option value="female">🎓 A woman</option>
+              <option value="male">🎓 A man</option>
+              <option value="off">None</option>
+            </Select>
+          </label>
+        )}
         <span style={{ flex: 1 }} />
         {view !== "social" && <VideoControl questionId={questionId} voice={voice} />}
       </Stack>
@@ -594,6 +606,13 @@ function SocialControl({ questionId, voice }: { questionId: string; voice: strin
         {v.status === "ready" && v.url ? (
           <>
             <Badge tone="ok">Video ready</Badge>
+            <TeacherBadge v={v} />
+            {v.teacher_pending && (
+              <Button size="sm" disabled={make.isPending} title="Make it again with the teacher; this one serves until then"
+                      onClick={async () => { try { await make.mutateAsync({ questionId, voice, fresh: true }); toast("Queued with the teacher, first in line.", "ok"); }
+                                           catch (err) { toast(err instanceof Error ? err.message : "Could not queue it.", "danger"); } }}>
+                🎓 Make with the teacher</Button>
+            )}
             <DownloadMp4 url={v.url} name={`${v.question_id}.mp4`} label="⬇ Video (MP4)" primary />
             {v.thumbnail_url && <a href={v.thumbnail_url} download target="_blank" rel="noreferrer"><Button size="sm">⬇ Thumbnail</Button></a>}
           </>
@@ -609,6 +628,12 @@ function SocialControl({ questionId, voice }: { questionId: string; voice: strin
       <PostText post={v.post} />
     </div>
   );
+}
+
+function TeacherBadge({ v }: { v: SocialState }) {
+  if (v.teacher) return <Badge tone="accent" title={`With the ${v.teacher === "female" ? "woman" : "man"} teacher`}>🎓 {v.teacher === "female" ? "woman" : "man"} teacher</Badge>;
+  if (v.teacher_pending) return <Badge tone="neutral" title="Made before the teacher was turned on">no teacher yet</Badge>;
+  return null;
 }
 
 function PostText({ post }: { post: string }) {
@@ -636,12 +661,17 @@ function SocialLibrary({ grade, subject, subStrand, topics, onWatch }: {
   grade: string; subject: string; subStrand: string; topics: string[]; onWatch: (qid: string) => void;
 }) {
   const [open, setOpen] = React.useState(false);
+  const [teacherFilter, setTeacherFilter] = React.useState<"all" | "with" | "without">("all");
   const library = useSocialLibrary(grade, subject, subStrand, open);
   const makeAll = useMakeSocials();
+  const makeOne = useMakeSocial();
   const brand = useSocialBrand();
   const asset = useSocialAsset();
   const toast = useToast();
-  const rows = library.data?.items || [];
+  const allRows = library.data?.items || [];
+  // "With the teacher": made with one, or being made with one.
+  const hasTeacher = (v: SocialState) => Boolean(v.teacher) && v.status !== "none" && v.status !== "failed";
+  const rows = allRows.filter((v) => teacherFilter === "all" || (teacherFilter === "with" ? hasTeacher(v) : !hasTeacher(v)));
   const busy = rows.filter((v) => v.status === "queued" || v.status === "running").length;
   const b = brand.data;
   async function all() {
@@ -694,9 +724,16 @@ function SocialLibrary({ grade, subject, subStrand, topics, onWatch }: {
       {open && library.error && <ErrorNotice error={library.error} />}
       {open && rows.length > 0 && (
         <>
-          <p style={{ fontSize: "var(--text-sm)", margin: "var(--s3) 0 var(--s2)" }}>
-            <strong>{library.data?.ready || 0}</strong> of {rows.length} ready{busy ? ` · ${busy} being made` : ""}
-          </p>
+          <Stack direction="row" gap="var(--s2)" wrap align="center" style={{ fontSize: "var(--text-sm)", margin: "var(--s3) 0 var(--s2)" }}>
+            <span><strong>{library.data?.ready || 0}</strong> of {allRows.length} ready{busy ? ` · ${busy} being made` : ""}
+              {" · "}🎓 {allRows.filter((v) => hasTeacher(v) && v.status === "ready").length} with the teacher</span>
+            <span style={{ flex: 1 }} />
+            <Select value={teacherFilter} onChange={(e) => setTeacherFilter(e.target.value as any)} style={{ width: "auto" }}>
+              <option value="all">All videos</option>
+              <option value="with">🎓 With the teacher</option>
+              <option value="without">Without the teacher</option>
+            </Select>
+          </Stack>
           {rows.map((v: SocialState) => (
             <div key={v.question_id} style={{ display: "flex", gap: "var(--s2)", alignItems: "center", padding: "6px 0", borderBottom: "1px solid var(--line-2)", fontSize: "var(--text-sm)" }}>
               {v.thumbnail_url && v.status === "ready"
@@ -705,7 +742,13 @@ function SocialLibrary({ grade, subject, subStrand, topics, onWatch }: {
               <Badge tone={v.status === "ready" ? "ok" : v.status === "failed" ? "danger" : v.status === "none" ? "neutral" : "info"}>
                 {{ ready: "ready", queued: "queued", running: "making", failed: "failed", none: "not made", skipped: "skipped" }[v.status]}
               </Badge>
+              <TeacherBadge v={v} />
               <span style={{ flex: 1, minWidth: 0 }} title={v.error}>{plain(v.question_text || "").slice(0, 110)}</span>
+              {v.teacher_pending && (
+                <Button size="sm" variant="ghost" disabled={makeOne.isPending} title="Make it again with the teacher"
+                        onClick={async () => { try { await makeOne.mutateAsync({ questionId: v.question_id, fresh: true }); toast("Queued with the teacher.", "ok"); }
+                                             catch (err) { toast(err instanceof Error ? err.message : "Could not queue it.", "danger"); } }}>🎓 Remake</Button>
+              )}
               <Button size="sm" variant="ghost" onClick={() => onWatch(v.question_id)}>Preview</Button>
               <Button size="sm" variant="ghost" onClick={() => copy(v.post)}>📋 Post</Button>
               {v.status === "ready" && v.url && (
@@ -1577,6 +1620,7 @@ function PostRow({ post }: { post: TrackedPost }) {
     <tr style={{ borderTop: "1px solid var(--line-2)" }}>
       <td style={{ padding: 4, whiteSpace: "nowrap" }}>
         {when ? new Date(when).toLocaleString([], { dateStyle: "medium", timeStyle: "short" }) : "—"}
+        {post.teacher && <span title={`With the ${post.teacher === "female" ? "woman" : "man"} teacher`}> 🎓</span>}
         <div>{post.posted_at
           ? (post.platform_scheduled && new Date(post.posted_at) > new Date() ? <Badge tone="info">scheduled on {PLATFORM_LABEL[post.platform] || post.platform}</Badge> : <Badge tone="ok">posted</Badge>)
           : <Button size="sm" variant="ghost" onClick={() => commit({ posted: true })}>Mark posted</Button>}</div>

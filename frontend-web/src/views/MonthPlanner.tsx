@@ -273,6 +273,7 @@ function DayDetail({ day, add }: { day: MonthDay; add: string[] }) {
           <span key={`p${i}`} style={{ display: "flex", gap: 6, alignItems: "center" }}>
             <span style={{ fontFamily: "var(--font-mono)" }}>{p.time}</span>
             <Badge tone={STATE[p.state]?.[1] || "neutral"}>{STATE[p.state]?.[0] || p.state}</Badge>
+            {p.teacher && <span title={`With the ${p.teacher === "female" ? "woman" : "man"} teacher`}>🎓</span>}
             {p.platform !== "facebook" && <span style={{ color: "var(--ink-3)", fontSize: "var(--text-xs)" }}>{p.platform}</span>}
           </span>
         ))}

@@ -4179,6 +4179,10 @@ export type SocialState = {
   question_id: string; key: string; scenes: number; post: string;
   status: "ready" | "queued" | "running" | "failed" | "none" | "skipped";
   url?: string; thumbnail_url?: string; job_id?: string; error?: string; question_text?: string;
+  /** "female" / "male": this video has (or will have) the teacher; "" none. */
+  teacher?: string;
+  /** Made before the teacher was turned on: it serves until made again. */
+  teacher_pending?: boolean;
 };
 export type SocialBrand = { name: string; handle: string; website: string; cta: string; countdown: number;
   hashtags: string; logo_url: string; music_url: string; hook: string; bg_from: string; bg_to: string;
@@ -4203,12 +4207,15 @@ export function useSaveBrand() {
 }
 
 /** The vertical cut, live and voiced, for the console's preview. */
-export function useSocialHtml(questionId: string, voice = "") {
+export function useSocialHtml(questionId: string, voice = "", teacher = "") {
   const { token } = useAuth();
   return useQuery({
-    queryKey: ["social-html", questionId, voice],
+    queryKey: ["social-html", questionId, voice, teacher],
     queryFn: async () => {
-      const { blob } = await fetchBlob(`/api/v1/play/items/${encodeURIComponent(questionId)}/social.html${voice ? `?voice=${voice}` : ""}`, { bearerToken: token });
+      const qs = new URLSearchParams();
+      if (voice) qs.set("voice", voice);
+      if (teacher) qs.set("teacher", teacher);
+      const { blob } = await fetchBlob(`/api/v1/play/items/${encodeURIComponent(questionId)}/social.html${qs.toString() ? `?${qs}` : ""}`, { bearerToken: token });
       return await blob.text();
     },
     enabled: Boolean(questionId),
@@ -4231,8 +4238,12 @@ export function useMakeSocial() {
   const api = useApi();
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (v: { questionId: string; voice?: string }) =>
-      api<SocialState>(`/api/v1/play/items/${encodeURIComponent(v.questionId)}/social${v.voice ? `?voice=${v.voice}` : ""}`, { method: "POST" }),
+    mutationFn: (v: { questionId: string; voice?: string; fresh?: boolean }) => {
+      const qs = new URLSearchParams();
+      if (v.voice) qs.set("voice", v.voice);
+      if (v.fresh) qs.set("fresh", "true");
+      return api<SocialState>(`/api/v1/play/items/${encodeURIComponent(v.questionId)}/social${qs.toString() ? `?${qs}` : ""}`, { method: "POST" });
+    },
     onSuccess: (data, v) => {
       qc.setQueryData(["social", v.questionId, v.voice || ""], data);
       qc.invalidateQueries({ queryKey: ["social-library"] });
@@ -4320,6 +4331,8 @@ export type TrackedPost = {
   post_id: string; question_id: string; platform: string; grade: string; subject: string; sub_strand: string;
   scheduled_for: string | null; posted_at: string | null; url: string; views: number; likes: number; comments: number;
   shares: number; saves: number; follows: number; watch_pct: number | null; notes: string; question_text?: string;
+  /** The teacher in the video that went out ("female", "male", or "" for none). */
+  teacher?: string;
   /** Where it went on the platform (reel, feed, story) and the groups it was shared to. */
   destinations?: string[]; groups?: string[]; status?: string; platform_scheduled?: boolean;
   /** A video, or a photo card of a series (its step: teaser, question, answer). */
@@ -4485,7 +4498,7 @@ export function useBookAhead() {
 export type MonthDay = {
   date: string; bookable: boolean; free: number; booked: number; on_platform: number; posted: number; failed: number;
   live_extra: number; to_platform_on: string;
-  posts: { time: string; platform: string; state: "booked" | "on_platform" | "posted" | "failed"; question_id: string }[];
+  posts: { time: string; platform: string; state: "booked" | "on_platform" | "posted" | "failed"; question_id: string; teacher: string }[];
 };
 export type MonthView = {
   year: number; month: number; per_day: number; platforms: string[]; days: MonthDay[]; open_days: number; free: number;

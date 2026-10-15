@@ -1541,6 +1541,14 @@ MIGRATIONS: list[tuple[str, str]] = [
         CREATE INDEX IF NOT EXISTS auth_links_user ON auth_links (username, purpose);
         """,
     ),
+    (
+        "054_post_teacher",
+        """
+        -- Which teacher the posted video had ('' for none): set when the
+        -- poster is handed the video.
+        ALTER TABLE social_posts ADD COLUMN IF NOT EXISTS teacher TEXT NOT NULL DEFAULT '';
+        """,
+    ),
 ]
 
 

@@ -64,7 +64,29 @@ def test_turning_the_teacher_on_does_not_unmake_what_was_made(monkeypatch) -> No
     have = {f"social/q1/{old_key}.mp4"}
     monkeypatch.setattr(storage.object_storage, "object_exists", lambda n: n in have)
     st = social.status("q1", {"question_id": "q1"})
-    assert st["status"] == "ready" and old_key in st["url"] and st["teacher"] is False
+    assert st["status"] == "ready" and old_key in st["url"] and st["teacher"] == "" and st["teacher_pending"]
+    # Asked to make it fresh, it is not "ready": the teacher's video is still to make.
+    from app.infra import db
+
+    monkeypatch.setattr(db, "fetch_one", lambda q, p=None: None)
+    fresh = social.status("q1", {"question_id": "q1"}, legacy=False)
+    assert fresh["status"] != "ready" and fresh["teacher"] == "female"
+
+
+def test_the_preview_can_show_a_teacher_whatever_the_setting(monkeypatch) -> None:
+    from app.services import whiteboard
+
+    monkeypatch.setattr(social, "brand", lambda: _brand())                       # the setting: off
+    monkeypatch.setattr(whiteboard, "_script_for", lambda q, voice="": (DATA, voice or "en-KE-AsiliaNeural", "t"))
+    monkeypatch.setattr(whiteboard, "speak_all", lambda scenes, voice: [(None, 2.0) for _ in scenes])
+    seen = {}
+    real_page = whiteboard.page
+    monkeypatch.setattr(whiteboard, "page", lambda data, **k: seen.update(k) or real_page(data, **k))
+    with_t = social.live_page({"question_id": "q1"}, teacher_mode="male")
+    assert "WebGLRenderer" in with_t and seen["voice"].startswith("en-KE")
+    assert any(s["scene"] == "check" for s in social._prepare({"question_id": "q1"}, teacher_mode="male")[1]["scenes"])
+    plain = social.live_page({"question_id": "q1"})
+    assert "WebGLRenderer" not in plain
 
 
 def test_the_page_carries_the_teacher_only_when_asked() -> None:
@@ -102,3 +124,16 @@ def test_moods_are_made_for_the_question_and_the_answer(tmp_path: Path) -> None:
     assert names == {"mood_tense.wav": 0.3, "mood_chime.wav": 12.2, "mood_lively.wav": 12.0}
     only_chime = teacher.mood_tracks(ff, tmp_path, scenes, starts, 20.0, beds=False)
     assert [p.name for p, _ in only_chime] == ["mood_chime.wav"], "an uploaded track replaces the beds"
+
+
+def test_the_command_registers_the_jobs_and_leaves_rendering_to_the_api() -> None:
+    """Run in its own process, the queue there knew no job kinds ("'social'
+    is not a job this queue can run. Known: .") — and a worker started there
+    would die with the command."""
+    import inspect
+
+    from app import admin_tools
+
+    source = inspect.getsource(admin_tools.teacher_now)
+    assert "from .routes import curriculum" in source
+    assert "job_queue.start_worker = lambda: False" in source

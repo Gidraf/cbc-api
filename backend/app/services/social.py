@@ -315,12 +315,15 @@ def status(question_id: str, q: dict[str, Any] | None = None, voice: str = "", *
     from ..infra.storage import object_storage
     from . import whiteboard
 
+    from . import teacher
+
     q = q or whiteboard.load(question_id)
     asked_voice = voice
     data, sdata, voice, _, b, key = _prepare(q, voice)
     name = f"{PREFIX}/{question_id}/{key}.mp4"
+    # Which teacher this video has ('' for none) — the console marks and filters by it.
     out: dict[str, Any] = {"question_id": question_id, "key": key, "scenes": len(data.get("scenes") or []),
-                           "post": post_text(q, data, b)}
+                           "post": post_text(q, data, b), "teacher": teacher.gender_for(question_id, b.get("teacher", "off"))}
     if object_storage.object_exists(name):
         return {**out, "status": "ready", "url": whiteboard.public_url(name),
                 "thumbnail_url": whiteboard.public_url(f"{PREFIX}/{question_id}/{key}.jpg")}
@@ -330,7 +333,8 @@ def status(question_id: str, q: dict[str, Any] | None = None, voice: str = "", *
         old = _prepare(q, teacher_mode="off")[5]
         if object_storage.object_exists(f"{PREFIX}/{question_id}/{old}.mp4"):
             return {**out, "status": "ready", "key": old, "url": whiteboard.public_url(f"{PREFIX}/{question_id}/{old}.mp4"),
-                    "thumbnail_url": whiteboard.public_url(f"{PREFIX}/{question_id}/{old}.jpg"), "teacher": False}
+                    "thumbnail_url": whiteboard.public_url(f"{PREFIX}/{question_id}/{old}.jpg"), "teacher": "",
+                    "teacher_pending": True}
     job = fetch_one(
         "SELECT job_id, status, error FROM jobs WHERE kind = :kind "
         "AND payload->>'question_id' = :qid ORDER BY created_at DESC LIMIT 1",
@@ -402,13 +406,14 @@ def run_job(job: dict[str, Any]) -> dict[str, Any]:
     return {"status": "done", "question_id": qid, "post": post, **made}
 
 
-def live_page(q: dict[str, Any], voice: str = "") -> str:
-    """The vertical cut in the console, voiced by the server."""
+def live_page(q: dict[str, Any], voice: str = "", *, teacher_mode: str | None = None) -> str:
+    """The vertical cut in the console, voiced by the server. `teacher_mode`
+    previews it with a teacher (or none) whatever the setting says."""
     import base64
 
     from . import whiteboard
 
-    _, sdata, voice, title, b, _ = _prepare(q, voice)
+    _, sdata, voice, title, b, _ = _prepare(q, voice, teacher_mode=teacher_mode)
     clips = whiteboard.speak_all(sdata["scenes"], voice)
     audio = ["data:audio/mpeg;base64," + base64.b64encode(a).decode() if a else None for a, _ in clips]
     durations = [float(sc["hold"]) if sc.get("hold") else round(d, 3) for sc, (_, d) in zip(sdata["scenes"], clips)]

@@ -374,7 +374,7 @@ def next_for_poster(now: datetime | None = None, *, platform: str = "", post_id:
     `share` (with `dry`) is a post-now button: "feed" — the feed only;
     "groups" — the feed and the next groups in turn, or the `groups` the
     owner picked. Either way it goes out live, now."""
-    from ..infra.db import fetch_all, fetch_one
+    from ..infra.db import execute, fetch_all, fetch_one
     from . import social
 
     now = now or datetime.now(timezone.utc)
@@ -469,6 +469,12 @@ def next_for_poster(now: datetime | None = None, *, platform: str = "", post_id:
     photo = str(chosen.get("format") or "video") == "photo"
     if photo:
         ahead, to_groups = False, []            # a card goes out live, to the feed
+    if not photo:
+        try:                                    # remember which teacher this video has
+            execute("UPDATE social_posts SET teacher = :t WHERE post_id = :id",
+                    {"t": str(st.get("teacher") or ""), "id": chosen["post_id"]})
+        except Exception:  # noqa: BLE001
+            pass
     return {"post": {"post_id": chosen["post_id"], "platform": chosen["platform"], "question_id": chosen["question_id"],
                      "format": "photo" if photo else "video", "step": chosen.get("step") or "walkthrough",
                      "video_url": "" if photo else st["url"], "image_url": st.get("url") if photo else "",
@@ -1029,7 +1035,7 @@ def month_view(year: int, month: int, *, platforms: list[str] | None = None, per
     hi = datetime.combine(days[-1] + timedelta(days=1), time(0, 0), tzinfo=EAT)
     rows = fetch_all(
         """SELECT post_id, question_id, platform, scheduled_for, posted_at, handed_at, platform_scheduled, status,
-                  created_by, COALESCE(format, 'video') AS format
+                  created_by, COALESCE(format, 'video') AS format, teacher
            FROM social_posts WHERE platform = ANY(:p) AND COALESCE(format, 'video') = 'video'
              AND COALESCE(scheduled_for, posted_at) >= :lo AND COALESCE(scheduled_for, posted_at) < :hi""",
         {"p": platforms, "lo": lo, "hi": hi}) or []
@@ -1056,7 +1062,8 @@ def month_view(year: int, month: int, *, platforms: list[str] | None = None, per
                     "to_platform_on": (d - timedelta(days=rules["ahead_days"])).isoformat()
                     if d > window_end and "facebook" in platforms else "",
                     "posts": [{"time": f"{r['_when'].astimezone(EAT):%H:%M}", "platform": r["platform"],
-                               "state": r["_state"], "question_id": r["question_id"]} for r in items]})
+                               "state": r["_state"], "question_id": r["question_id"],
+                               "teacher": str(r.get("teacher") or "")} for r in items]})
     return {"year": year, "month": month, "per_day": per_day, "platforms": platforms, "days": out,
             "open_days": open_days, "free": free_total, "facebook_until": window_end.isoformat(),
             "today": today.isoformat(), "rules": {"hours": rules["hours"], "min_gap_minutes": rules["min_gap_minutes"],

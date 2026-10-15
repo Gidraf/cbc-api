@@ -352,12 +352,16 @@ def list_videos(grade: str = Query(...), subject: str = Query(...), sub_strand: 
 # ── social posts ──────────────────────────────────────────────────────────────
 
 @router.get("/items/{question_id}/social.html")
-def social_page(question_id: str, voice: str = Query(""), auth: AuthContext = Depends(ANY)) -> HTMLResponse:
-    """The vertical cut, live and voiced — what the post's video will be."""
+def social_page(question_id: str, voice: str = Query(""),
+                teacher: Literal["", "off", "female", "male", "alternate"] = Query(""),
+                auth: AuthContext = Depends(ANY)) -> HTMLResponse:
+    """The vertical cut, live and voiced — what the post's video will be.
+    `teacher` previews it with a woman or a man teacher, or none, whatever
+    Settings says; empty follows Settings."""
     _may_make_videos(auth)            # production tools: file links and posts
     from ..services import social
 
-    return HTMLResponse(social.live_page(_one(question_id), _voice(voice)))
+    return HTMLResponse(social.live_page(_one(question_id), _voice(voice), teacher_mode=teacher or None))
 
 
 @router.get("/items/{question_id}/social")
@@ -370,12 +374,16 @@ def social_status(question_id: str, voice: str = Query(""), auth: AuthContext = 
 
 
 @router.post("/items/{question_id}/social")
-def make_social(question_id: str, voice: str = Query(""), auth: AuthContext = Depends(ANY)) -> dict[str, Any]:
+def make_social(question_id: str, voice: str = Query(""), fresh: bool = Query(False),
+                auth: AuthContext = Depends(ANY)) -> dict[str, Any]:
+    """Queue the social video. `fresh`: make it again as Settings say now —
+    with the teacher — even if one made before the teacher still serves."""
     from ..services import social
 
     _may_make_videos(auth)
     _one(question_id)
-    return social.enqueue(question_id, queued_by=str(getattr(auth, "subject", "") or "social"), voice=_voice(voice))
+    return social.enqueue(question_id, queued_by=str(getattr(auth, "subject", "") or "social"), voice=_voice(voice),
+                          fresh=fresh, priority=5 if fresh else 0)
 
 
 @router.post("/social")
