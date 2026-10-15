@@ -842,6 +842,73 @@ def book_social(payload: BookAhead, auth: AuthContext = Depends(ANY)) -> dict[st
         return {}
 
 
+# ── a month at a time ────────────────────────────────────────────────────────
+
+def _platform_list(raw: str | list[str]) -> list[str]:
+    items = raw if isinstance(raw, list) else str(raw or "").split(",")
+    return [p.strip().lower() for p in items if p.strip()]
+
+
+@router.get("/social/month")
+def social_month(year: int = Query(..., ge=2024, le=2100), month: int = Query(..., ge=1, le=12),
+                 per_day: int = Query(10, ge=1, le=30), platforms: str = Query("facebook"),
+                 auth: AuthContext = Depends(ANY)) -> dict[str, Any]:
+    """The month as a calendar: per day what is booked, already on the
+    platform, posted — and the room left for `per_day` videos."""
+    from ..services import social_export
+
+    _may_make_videos(auth)
+    return social_export.month_view(year, month, platforms=_platform_list(platforms), per_day=per_day)
+
+
+class BookMonth(BaseModel):
+    grade: str = ""
+    subject: str
+    sub_strand: str = ""
+    year: int = Field(ge=2024, le=2100)
+    month: int = Field(ge=1, le=12)
+    per_day: int = Field(10, ge=1, le=30)
+    gap_min: int = Field(30, ge=5, le=240)       # minutes between posts, at least …
+    gap_max: int = Field(60, ge=5, le=480)       # … and at most
+    platforms: list[str] = ["facebook"]
+    ready_only: bool = False
+    dry: bool = False
+
+
+@router.post("/social/book-month")
+def book_social_month(payload: BookMonth, auth: AuthContext = Depends(ANY)) -> dict[str, Any]:
+    """Fill the month's open room, each post 30–60 minutes from the next."""
+    from ..services import social_export
+
+    _may_make_videos(auth)
+    if payload.gap_max < payload.gap_min:
+        raise_api_error("VALIDATION_FAILED", "The longest gap must be at least the shortest.")
+    try:
+        return social_export.book_month(payload.grade, payload.subject, payload.sub_strand, year=payload.year,
+                                        month=payload.month, per_day=payload.per_day, gap_min=payload.gap_min,
+                                        gap_max=payload.gap_max, platforms=_platform_list(payload.platforms),
+                                        ready_only=payload.ready_only, dry=payload.dry,
+                                        created_by=str(getattr(auth, "subject", "") or ""))
+    except ValueError as exc:
+        raise_api_error("VALIDATION_FAILED", str(exc))
+        return {}
+
+
+class LivePerDay(BaseModel):
+    live_per_day: int = Field(ge=0, le=30)
+
+
+@router.put("/social/live-per-day")
+def set_live_per_day(payload: LivePerDay, auth: AuthContext = Depends(ANY)) -> dict[str, Any]:
+    """How many finished, unbooked videos the poster also posts live a day."""
+    from ..services import platform_settings
+
+    _may_make_videos(auth)
+    platform_settings.set_many({"poster_live_per_day": payload.live_per_day},
+                               updated_by=str(getattr(auth, "subject", "") or ""))
+    return {"live_per_day": payload.live_per_day}
+
+
 # ── photo cards ──────────────────────────────────────────────────────────────
 
 def _card_states(q: dict[str, Any]) -> dict[str, Any]:

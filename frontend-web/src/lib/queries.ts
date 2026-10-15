@@ -4482,6 +4482,56 @@ export function useBookAhead() {
   });
 }
 
+export type MonthDay = {
+  date: string; bookable: boolean; free: number; booked: number; on_platform: number; posted: number; failed: number;
+  live_extra: number; to_platform_on: string;
+  posts: { time: string; platform: string; state: "booked" | "on_platform" | "posted" | "failed"; question_id: string }[];
+};
+export type MonthView = {
+  year: number; month: number; per_day: number; platforms: string[]; days: MonthDay[]; open_days: number; free: number;
+  facebook_until: string; today: string;
+  rules: { hours: { start: string; end: string }; min_gap_minutes: number; live_per_day: number; daily_cap: number };
+};
+export type MonthPlan = {
+  booked: boolean; platforms: string[]; videos: number; posts: number; to_render: number; ready: number; notes: string[];
+  first_day: string | null; last_day: string | null; days: { date: string; add: number; times: string[] }[];
+};
+
+/** A month as a calendar: what each day holds and the room left. */
+export function useSocialMonth(year: number, month: number, perDay: number, platforms: string[]) {
+  const api = useApi();
+  return useQuery({
+    queryKey: ["poster", "month", year, month, perDay, platforms.join(",")],
+    queryFn: () => api<MonthView>(`/api/v1/play/social/month?year=${year}&month=${month}&per_day=${perDay}&platforms=${encodeURIComponent(platforms.join(","))}`),
+    enabled: platforms.length > 0,
+  });
+}
+
+export function useBookMonth() {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { grade: string; subject: string; sub_strand?: string; year: number; month: number; per_day: number;
+                      gap_min: number; gap_max: number; platforms: string[]; ready_only: boolean; dry: boolean }) =>
+      api<MonthPlan>("/api/v1/play/social/book-month", { method: "POST", body: JSON.stringify(v) }),
+    onSuccess: (_, v) => {
+      if (!v.dry) {
+        qc.invalidateQueries({ queryKey: ["poster"] });
+        qc.invalidateQueries({ queryKey: ["social-posts"] });
+      }
+    },
+  });
+}
+
+export function useSetLivePerDay() {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (n: number) => api<{ live_per_day: number }>("/api/v1/play/social/live-per-day", { method: "PUT", body: JSON.stringify({ live_per_day: n }) }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["poster"] }),
+  });
+}
+
 export type PosterOverview = {
   rules: { enabled: boolean; daily_cap: number; platform_cap: number; min_gap_minutes: number;
            hours: { start: string; end: string }; platforms: string[]; ahead_platforms?: string[]; ahead_days?: number;

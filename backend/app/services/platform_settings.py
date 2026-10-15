@@ -104,6 +104,9 @@ SETTINGS: tuple[Setting, ...] = (
             "Walkthrough videos the poster puts out on a platform in a day.", 8, "Auto-post"),
     Setting("poster_photos_per_day", "POSTER_PHOTOS_PER_DAY", "int", "Photos a day (per platform)",
             "Photo cards a day — a question's teaser, the question, then its answer, before its video.", 8, "Auto-post"),
+    Setting("poster_live_per_day", "POSTER_LIVE_PER_DAY", "int", "Live posts a day, besides the booked",
+            "When the computer is on and the day has room, the poster also posts up to this many finished videos "
+            "that no booking uses, live. 0 turns it off.", 0, "Auto-post"),
     Setting("poster_group_shares_per_day", "POSTER_GROUP_SHARES_PER_DAY", "int", "Group shares a day",
             "How many of a day's videos are also shared to your ticked groups (one in the morning, one later). "
             "0 turns group sharing off.", 2, "Auto-post"),
