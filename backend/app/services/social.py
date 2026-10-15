@@ -441,7 +441,7 @@ def enqueue(question_id: str, *, queued_by: str = "", batch_id: str = "", voice:
          **({"priority": priority} if priority else {})},
         strand=str(link.get("strand") or ""), sub_strand=str(link.get("sub_strand") or ""),
         batch_id=batch_id, queued_by=queued_by or "social")
-    job_queue.start_worker()
+    job_queue.dispatch(job.job_id)          # the render runs in the worker, not in the API
     return {**now, "status": "queued", "job_id": job.job_id}
 
 
