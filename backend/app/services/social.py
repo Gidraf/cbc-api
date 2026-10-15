@@ -293,6 +293,44 @@ def post_text(q: dict[str, Any], data: dict[str, Any], b: dict[str, Any] | None 
     return "\n".join(lines).strip() + "\n"
 
 
+def thread(q: dict[str, Any], data: dict[str, Any], b: dict[str, Any] | None = None) -> dict[str, Any]:
+    """The post as a conversation: the question as the caption, then four
+    comments — the choices, "can you solve it?", the answer, and the answer
+    with its working — so every post opens with people answering in it.
+
+    `find` is what the poster looks for to find the post again once it is
+    out (the question's opening words, as the caption shows them)."""
+    b = b or brand()
+    question = display(q.get("question_text") or "")
+    context = display(q.get("stimulus_context") or "")
+    options = [o for o in (q.get("options") or []) if isinstance(o, dict)]
+    caption_lines = [context, ""] if context else []
+    caption_lines += [question, "", "👇 The choices are in the comments — can you solve it?" if options
+                      else "👇 Can you solve it? Answer in the comments!", "", " ".join(hashtags(q, b))]
+    scenes = data.get("scenes") or []
+    answer = next((s for s in scenes if s.get("scene") == "answer"), None)
+    letter = f"{answer.get('option')}) " if answer and answer.get("option") else ""
+    answer_line = f"✅ Answer: {letter}{display(answer.get('text'))}" if answer else ""
+    choices = ("Choices:\n" + "\n".join(f"{o.get('id')}) {display(o.get('text'))}" for o in options)) if options else ""
+    ask = ("🤔 Can you solve it? Drop your answer (" + ", ".join(str(o.get("id")) for o in options) + ") below — "
+           "the answer comes in a minute! ⏳") if options else "🤔 Can you solve it? Drop your answer below — the answer comes in a minute! ⏳"
+    steps = _steps(scenes)
+    key = next((o for o in options if o.get("is_correct") or o.get("correct")), None)
+    why = display((key or {}).get("distractor_rationale") or (key or {}).get("why") or "")
+    explain = [answer_line] if answer_line else []
+    if steps:
+        explain += ["", "💡 How to solve it:"] + [f"{n}. {step}" for n, step in enumerate(steps, 1)]
+    if why:
+        explain += ["", f"Why: {why}"]
+    explain += ["", f"📚 {b['cta']}" + (f" — {b['handle']}" if b["handle"] else "")]
+    if b["website"]:
+        explain.append(f"🌐 {b['website']}")
+    first = [c for c in (choices, ask) if c]
+    later = [c for c in (answer_line, "\n".join(explain).strip()) if c]
+    find = " ".join(question.split())[:60]
+    return {"caption": "\n".join(caption_lines).strip() + "\n", "first": first, "later": later, "find": find}
+
+
 # ── the queue ────────────────────────────────────────────────────────────────
 
 def _prepare(q: dict[str, Any], voice: str = "", *, teacher_mode: str | None = None
@@ -323,7 +361,8 @@ def status(question_id: str, q: dict[str, Any] | None = None, voice: str = "", *
     name = f"{PREFIX}/{question_id}/{key}.mp4"
     # Which teacher this video has ('' for none) — the console marks and filters by it.
     out: dict[str, Any] = {"question_id": question_id, "key": key, "scenes": len(data.get("scenes") or []),
-                           "post": post_text(q, data, b), "teacher": teacher.gender_for(question_id, b.get("teacher", "off"))}
+                           "post": post_text(q, data, b), "thread": thread(q, data, b),
+                           "teacher": teacher.gender_for(question_id, b.get("teacher", "off"))}
     if object_storage.object_exists(name):
         return {**out, "status": "ready", "url": whiteboard.public_url(name),
                 "thumbnail_url": whiteboard.public_url(f"{PREFIX}/{question_id}/{key}.jpg")}

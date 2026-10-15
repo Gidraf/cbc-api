@@ -113,6 +113,12 @@ SETTINGS: tuple[Setting, ...] = (
     Setting("poster_auto_book_scopes", "POSTER_AUTO_BOOK_SCOPES", "list", "Auto-book: from",
             "grade|subject pairs to book from, mixed day by day, e.g. grade-9|Mathematics. Empty: the grades and "
             "subjects booked before.", [], "Auto-post"),
+    Setting("poster_comment_thread", "POSTER_COMMENT_THREAD", "bool", "Question in the caption, the rest in comments",
+            "The caption is the question; the poster then comments the choices and \"can you solve it?\", and a minute "
+            "later the answer and its working (with the answer card) — on posts that go out live at once, on scheduled "
+            "ones once they are out. Comments only go up within posting hours.", False, "Auto-post"),
+    Setting("poster_answer_delay_seconds", "POSTER_ANSWER_DELAY_SECONDS", "int", "Seconds before the answer comments",
+            "How long after the choices the answer is commented.", 60, "Auto-post"),
     Setting("poster_live_per_day", "POSTER_LIVE_PER_DAY", "int", "Live posts a day, besides the booked",
             "When the computer is on and the day has room, the poster also posts up to this many finished videos "
             "that no booking uses, live. 0 turns it off.", 0, "Auto-post"),

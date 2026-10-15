@@ -249,3 +249,92 @@ def test_schedule_now_hands_the_soonest_ready_booking_within_the_window_and_the_
     execute("UPDATE social_posts SET handed_at = :t WHERE question_id = 'later'", {"t": NOW})
     out = se.schedule_next(NOW)
     assert out["post"] is None and "limit" in out["reason"]
+
+
+@needs_db
+def test_schedule_now_books_the_window_first_when_it_is_empty(db, monkeypatch) -> None:
+    from app.services import social, whiteboard
+
+    called = {}
+
+    def fake_book(**k):
+        called.update(k)
+        se._plan_post({"question_id": "new1", "curriculum": {}}, "facebook", NOW + timedelta(days=3), "auto-book")
+        return {"posts": 1}
+
+    monkeypatch.setattr(se, "auto_book", fake_book)
+    monkeypatch.setattr(social, "status", lambda qid, q=None, **k: {"status": "ready", "url": "u", "post": "p", "thread": {}})
+    monkeypatch.setattr(whiteboard, "load", lambda qid: {"question_id": qid, "question_text": "?"})
+    out = se.schedule_next(NOW)
+    assert called["force"] and called["days"] == 28 and out["post"]["question_id"] == "new1"
+
+
+THREAD_Q = {"question_id": "q1", "question_text": "What is $2 + 3$?",
+            "options": [{"id": "A", "text": "4"}, {"id": "B", "text": "5", "is_correct": True}],
+            "curriculum": {"grade": "grade-9", "subject": "Mathematics", "sub_strand": "Integers"}}
+THREAD_DATA = {"scenes": [{"scene": "answer", "option": "B", "text": "5"}]}
+
+
+def test_the_question_is_the_caption_and_the_rest_are_comments(monkeypatch) -> None:
+    from app.services import social
+
+    b = {"hook": "Can you solve this?", "name": "CBC Maths", "handle": "@cbc", "website": "cbc.example", "cta": "Follow",
+         "hashtags": "", "countdown": 3, "teacher": "off"}
+    t = social.thread(THREAD_Q, THREAD_DATA, b)
+    assert t["caption"].startswith("What is 2 + 3?") and "choices are in the comments" in t["caption"]
+    assert "A) 4" not in t["caption"], "the choices are not in the caption"
+    assert t["first"][0].startswith("Choices:") and "A) 4" in t["first"][0] and "B) 5" in t["first"][0]
+    assert "Can you solve it?" in t["first"][1]
+    assert t["later"][0] == "✅ Answer: B) 5" and t["later"][1].startswith("✅ Answer: B) 5") and "Follow" in t["later"][1]
+    assert t["find"] == "What is 2 + 3?"
+
+
+@needs_db
+def test_comments_go_up_in_two_steps_a_minute_apart_within_posting_hours(db, monkeypatch) -> None:
+    from app.infra.db import fetch_one
+    from app.services import social
+
+    db.update({"poster_comment_thread": True, "poster_answer_delay_seconds": 60})
+    monkeypatch.setattr(social, "status", lambda qid, q=None, **k: {"status": "ready", "url": "u", "post": "p",
+                        "thread": {"caption": "c", "first": ["Choices", "Try"], "later": ["Ans", "Why"], "find": "What is"}})
+    se._plan_post({"question_id": "q1", "curriculum": {}}, "facebook", NOW - timedelta(minutes=5), "me")
+    pid = se._post_id("q1", "facebook")
+    se.record_attempt(pid, ok=True)
+    from app.infra.db import execute
+    execute("UPDATE social_posts SET posted_at = :t WHERE post_id = :id", {"t": NOW - timedelta(minutes=2), "id": pid})
+    execute("UPDATE social_posts SET comments_next_at = :t WHERE post_id = :id", {"t": NOW - timedelta(minutes=2), "id": pid})
+    job = se.comments_next(NOW)["job"]
+    assert job["stage"] == "first" and job["comments"] == ["Choices", "Try"] and job["find"] == "What is"
+    se.comments_result(pid, stage="first", ok=True, now=NOW)
+    assert se.comments_next(NOW)["job"] is None, "the answer waits its minute"
+    job = se.comments_next(NOW + timedelta(seconds=95))["job"]
+    assert job["stage"] == "later" and job["comments"] == ["Ans", "Why"]
+    se.comments_result(pid, stage="later", ok=True, now=NOW + timedelta(seconds=95))
+    assert fetch_one("SELECT comments_state FROM social_posts WHERE post_id = :id", {"id": pid})["comments_state"] == "done"
+    night = datetime(2026, 10, 15, 21, 0, tzinfo=timezone.utc)          # midnight in Nairobi
+    assert se.comments_next(night)["reason"] == "Outside posting hours."
+
+
+@needs_db
+def test_a_post_it_cannot_find_is_tried_again_then_given_up(db) -> None:
+    from app.infra.db import execute, fetch_one
+
+    se._plan_post({"question_id": "q2", "curriculum": {}}, "facebook", NOW - timedelta(minutes=5), "me")
+    pid = se._post_id("q2", "facebook")
+    execute("UPDATE social_posts SET comments_state = 'pending', comments_next_at = :t, posted_at = :t, handed_at = :t WHERE post_id = :id",
+            {"t": NOW - timedelta(minutes=5), "id": pid})
+    for _ in range(se.COMMENT_TRIES):
+        se.comments_result(pid, stage="first", ok=False, error="not found", now=NOW)
+    row = fetch_one("SELECT comments_state, comments_error FROM social_posts WHERE post_id = :id", {"id": pid})
+    assert row["comments_state"] == "failed" and row["comments_error"] == "not found"
+
+
+@needs_db
+def test_posts_already_out_get_the_same_comments(db) -> None:
+    from app.infra.db import execute
+
+    for n, days in enumerate((1, 3, 20)):
+        se._plan_post({"question_id": f"old{n}", "curriculum": {}}, "facebook", NOW - timedelta(days=days), "me")
+    execute("UPDATE social_posts SET posted_at = scheduled_for, handed_at = scheduled_for")
+    assert se.comments_backfill(7, now=NOW) == 2, "the last 7 days only"
+    assert se.comments_backfill(7, now=NOW) == 0, "once"

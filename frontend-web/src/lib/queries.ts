@@ -4506,6 +4506,21 @@ export type MonthView = {
   rules: { hours: { start: string; end: string }; min_gap_minutes: number; live_per_day: number; daily_cap: number;
            teacher: "off" | "female" | "male" | "alternate"; lessons_per_day: number };
 };
+export function useCommentThread() {
+  const api = useApi();
+  const qc = useQueryClient();
+  return {
+    save: useMutation({
+      mutationFn: (v: { enabled: boolean; delay_seconds: number }) => api("/api/v1/play/social/comments", { method: "PUT", body: JSON.stringify(v) }),
+      onSuccess: () => qc.invalidateQueries({ queryKey: ["poster"] }),
+    }),
+    backfill: useMutation({
+      mutationFn: (days: number) => api<{ queued: number }>("/api/v1/play/social/comments/backfill", { method: "POST", body: JSON.stringify({ days }) }),
+      onSuccess: () => qc.invalidateQueries({ queryKey: ["poster"] }),
+    }),
+  };
+}
+
 export type AutoBookState = { enabled: boolean; per_day: number; days: number; scopes: string[]; booked_before: string[]; platforms: string[] };
 export type AutoBookResult = { booked: boolean; posts: number; videos?: number; to_render?: number; notes: string[] };
 
@@ -4602,6 +4617,8 @@ export type PosterOverview = {
   posted_today: Record<string, number>;
   /** Hand-overs and posts today has room for; bookings inside Facebook's window waiting to be scheduled. */
   left_today?: number; schedulable?: number;
+  /** The comment thread under posts: on/off, the answer's delay, and how many posts are at each step. */
+  comments?: { enabled: boolean; delay: number; pending?: number; part?: number; done?: number; failed?: number };
   states: { platform: string; logged_in: boolean; note: string; checked_at: string }[];
   queue: { post_id: string; platform: string; question_id: string; scheduled_for: string | null; status: string;
            attempts: number; last_error: string }[];
@@ -4646,7 +4663,7 @@ export function usePosterCommand() {
   const api = useApi();
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (v: { action: "login" | "check" | "dry_run" | "run_now" | "schedule_now" | "pause" | "resume" | "groups"; platform?: string; post_id?: string;
+    mutationFn: (v: { action: "login" | "check" | "dry_run" | "run_now" | "schedule_now" | "comments_check" | "pause" | "resume" | "groups"; platform?: string; post_id?: string;
                       /** run_now: the feed only, or the feed and groups — the next in turn, or the ones picked (5 at most).
                        *  schedule_now: how many bookings to hand to Facebook's scheduler. */
                       options?: { share?: "feed" | "groups"; groups?: string[]; count?: number } }) =>

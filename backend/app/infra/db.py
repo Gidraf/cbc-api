@@ -1549,6 +1549,18 @@ MIGRATIONS: list[tuple[str, str]] = [
         ALTER TABLE social_posts ADD COLUMN IF NOT EXISTS teacher TEXT NOT NULL DEFAULT '';
         """,
     ),
+    (
+        "055_post_comments",
+        """
+        -- The comment thread under a post: '' none · pending (the choices next)
+        -- · part (the answer next) · done · failed.
+        ALTER TABLE social_posts ADD COLUMN IF NOT EXISTS comments_state TEXT NOT NULL DEFAULT '';
+        ALTER TABLE social_posts ADD COLUMN IF NOT EXISTS comments_next_at TIMESTAMPTZ NULL;
+        ALTER TABLE social_posts ADD COLUMN IF NOT EXISTS comments_attempts INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE social_posts ADD COLUMN IF NOT EXISTS comments_error TEXT NOT NULL DEFAULT '';
+        CREATE INDEX IF NOT EXISTS idx_social_posts_comments ON social_posts(comments_state, comments_next_at);
+        """,
+    ),
 ]
 
 
