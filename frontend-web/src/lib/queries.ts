@@ -4506,6 +4506,33 @@ export type MonthView = {
   rules: { hours: { start: string; end: string }; min_gap_minutes: number; live_per_day: number; daily_cap: number;
            teacher: "off" | "female" | "male" | "alternate"; lessons_per_day: number };
 };
+export type AutoBookState = { enabled: boolean; per_day: number; days: number; scopes: string[]; booked_before: string[]; platforms: string[] };
+export type AutoBookResult = { booked: boolean; posts: number; videos?: number; to_render?: number; notes: string[] };
+
+export function useAutoBook() {
+  const api = useApi();
+  return useQuery({ queryKey: ["poster", "auto-book"], queryFn: () => api<AutoBookState>("/api/v1/play/social/auto-book") });
+}
+
+export function useSaveAutoBook() {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { enabled: boolean; per_day: number; days: number; scopes: string[] }) =>
+      api<{ enabled: boolean; booked: AutoBookResult }>("/api/v1/play/social/auto-book", { method: "PUT", body: JSON.stringify(v) }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["poster"] }),
+  });
+}
+
+export function useAutoBookNow() {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api<AutoBookResult>("/api/v1/play/social/auto-book/now", { method: "POST" }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["poster"] }),
+  });
+}
+
 export type TeacherNowResult = { teacher: string; lessons_cancelled: number; daily_target_was: number | null;
   booked_videos: number; queued: number; already_with_teacher: number; failed: string[] };
 

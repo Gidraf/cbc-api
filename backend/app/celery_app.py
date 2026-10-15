@@ -95,6 +95,11 @@ celery_app.conf.update(
         },
         # Lesson videos for questions with none, towards the day's target
         # (video_daily_target, 200): a batch every half hour, one render at a time.
+        # The posting calendar topped up with new questions (Auto-book).
+        "auto-book-posts": {
+            "task": "app.tasks.auto_book_posts",
+            "schedule": 7200.0,
+        },
         "make-daily-videos": {
             "task": "app.tasks.make_daily_videos",
             "schedule": 1800.0,
