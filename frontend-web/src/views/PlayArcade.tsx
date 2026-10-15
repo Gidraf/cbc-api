@@ -1110,7 +1110,7 @@ function VideoBatches({ grade, subject, subStrand, topics }: { grade: string; su
               <span>
                 ☁️ Google Drive: {drive.data.moved ?? 0} file(s) moved ({drive.data.moved_mb ?? 0} MB)
                 {drive.data.freed ? ` · ${drive.data.freed_mb} MB freed on the server` : ""}
-                {` · the server keeps its copy ${drive.data.keep_local_days} day(s)`}
+                {` · a posted video leaves the server at once; anything else after ${drive.data.keep_local_days} day(s)`}
               </span>
               {drive.data.job ? (
                 <Badge tone="info">

@@ -17,7 +17,13 @@ Drive.
 Settings (environment):
     GOOGLE_DRIVE_CLIENT_ID, GOOGLE_DRIVE_CLIENT_SECRET, GOOGLE_DRIVE_REFRESH_TOKEN
     GOOGLE_DRIVE_FOLDER_ID      optional; else a folder "CBC videos" is made
-    DRIVE_KEEP_LOCAL_DAYS       days the server keeps its copy after a move (7)
+    DRIVE_KEEP_LOCAL_DAYS       days the server keeps its copy after a move (2)
+
+When: a video goes to Drive the moment it is rendered (`copy_now`), and the
+half-hourly job catches anything that missed it. The server's copy is a
+cache from then on — every read falls back to Drive — so it goes as soon as
+nothing needs it nearby: a social video once it has been posted on every
+platform it was planned for, anything else after DRIVE_KEEP_LOCAL_DAYS.
 """
 from __future__ import annotations
 
@@ -47,9 +53,9 @@ PER_JOB = int(os.getenv("DRIVE_FILES_PER_JOB", "40"))
 
 def keep_local_days() -> float:
     try:
-        return max(0.0, float(os.getenv("DRIVE_KEEP_LOCAL_DAYS", "7")))
+        return max(0.0, float(os.getenv("DRIVE_KEEP_LOCAL_DAYS", "2")))
     except ValueError:
-        return 7.0
+        return 2.0
 
 
 SECRET_NAME = "google_drive"
@@ -321,19 +327,68 @@ def move(object_name: str, drive: Drive) -> dict[str, Any]:
     return {"object_name": object_name, "file_id": made["id"], "bytes": len(payload)}
 
 
+def copy_now(*object_names: str) -> int:
+    """Straight to Drive, now — for a video just rendered, so it never waits
+    for the half-hourly move. Best effort: what fails here, the job retries."""
+    from ..infra.db import fetch_one
+
+    if not configured():
+        return 0
+    done, drive = 0, None
+    for name in object_names:
+        if not name or not movable(name):
+            continue
+        try:
+            if fetch_one("SELECT 1 AS x FROM drive_objects WHERE object_name = :n", {"n": name}):
+                continue
+            drive = drive or Drive()
+            move(name, drive)
+            done += 1
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Copying %s to Drive now failed (the half-hourly move retries): %s", name, exc)
+    return done
+
+
+def _question_of(object_name: str) -> str:
+    """social/<question>/<key>.mp4 → <question>."""
+    parts = object_name.split("/")
+    return parts[1] if len(parts) >= 3 else ""
+
+
+def posted_everywhere(object_name: str) -> bool:
+    """A social video (or its cover) whose posts have all gone out: none is
+    still waiting to be posted or retried, so the poster will not need it."""
+    from ..infra.db import fetch_one
+
+    if not object_name.startswith("social/"):
+        return False
+    qid = _question_of(object_name)
+    if not qid:
+        return False
+    row = fetch_one("""SELECT COUNT(*) FILTER (WHERE posted_at IS NULL AND handed_at IS NULL
+                                              AND status IN ('planned', 'failed')) AS waiting,
+                              COUNT(*) AS posts
+                       FROM social_posts WHERE question_id = :q AND COALESCE(format, 'video') = 'video'""",
+                    {"q": qid}) or {}
+    return int(row.get("posts") or 0) > 0 and int(row.get("waiting") or 0) == 0
+
+
 def remove_local_copies(days: float | None = None) -> int:
-    """The server's copies of objects moved more than `days` ago, deleted —
-    the disk space the move was for. Only objects whose Drive copy was
-    checked; never one still needed locally."""
+    """The server's copies of objects already on Drive, deleted — the disk
+    space the move was for. Only objects whose Drive copy was checked: a
+    social video once it is posted everywhere it was planned, anything else
+    after `days`."""
     from ..infra.db import execute, fetch_all
     from ..infra.storage import object_storage
 
     days = keep_local_days() if days is None else days
-    rows = fetch_all("""SELECT object_name FROM drive_objects WHERE local_removed_at IS NULL
-                        AND moved_at < NOW() - (:d * INTERVAL '1 day')""", {"d": days}) or []
+    rows = fetch_all("""SELECT object_name, moved_at < NOW() - (:d * INTERVAL '1 day') AS old
+                        FROM drive_objects WHERE local_removed_at IS NULL""", {"d": days}) or []
     removed = 0
     for row in rows:
         name = str(row["object_name"])
+        if not row.get("old") and not posted_everywhere(name):
+            continue
         if object_storage.remove_object(name):
             execute("UPDATE drive_objects SET local_removed_at = NOW() WHERE object_name = :n", {"n": name})
             removed += 1

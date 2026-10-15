@@ -612,11 +612,23 @@ def record_attempt(post_id: str, *, ok: bool, url: str = "", error: str = "", dr
                            ON CONFLICT (platform, name) DO UPDATE SET last_shared_for = GREATEST(
                                COALESCE(poster_groups.last_shared_for, EXCLUDED.last_shared_for), EXCLUDED.last_shared_for)""",
                         {"p": row.get("platform") or "facebook", "n": g, "t": row.get("posted_at")})
+        _free_space_after_post()
     else:
         execute("""UPDATE social_posts SET status = CASE WHEN attempts + 1 >= :tries THEN 'gave_up' ELSE 'failed' END,
                    attempts = attempts + 1, last_error = :e, last_attempt_at = NOW(), updated_at = NOW() WHERE post_id = :id""",
                 {"id": post_id, "e": error[:900], "tries": MAX_ATTEMPTS})
     return {"post_id": post_id, "ok": ok, "scheduled": scheduled, "groups": groups, "destinations": places}
+
+
+def _free_space_after_post() -> None:
+    """A post went out: the move job runs now, so a video posted on every
+    platform it was planned for leaves the server for Drive straight away."""
+    try:
+        from . import drive_store
+
+        drive_store.enqueue(queued_by="posted")
+    except Exception:  # noqa: BLE001
+        pass
 
 
 # ── the owner's groups ───────────────────────────────────────────────────────
