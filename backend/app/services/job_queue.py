@@ -181,7 +181,13 @@ def dispatch(job_id: str) -> str:
         if broker_available():
             from ..tasks import run_job
 
-            run_job.apply_async((job_id,))
+            queue = render_queue()
+            if queue and _kind_of(job_id) in RENDER_KINDS:
+                # Videos go to the render worker: as many at once as it has cores
+                # for, and never in line behind content generation.
+                run_job.apply_async((job_id,), queue=queue)
+            else:
+                run_job.apply_async((job_id,))
             return "celery"
     except Exception as exc:  # noqa: BLE001
         logger.warning("Could not dispatch %s to Celery: %s", job_id, exc)
@@ -189,6 +195,15 @@ def dispatch(job_id: str) -> str:
     # No broker, or Celery is not installed. The work still has to run.
     start_worker()
     return "in_process"
+
+
+def _kind_of(job_id: str) -> str:
+    from ..infra.db import fetch_one
+
+    try:
+        return str((fetch_one("SELECT kind FROM jobs WHERE job_id = :id", {"id": job_id}) or {}).get("kind") or "")
+    except Exception:  # noqa: BLE001
+        return ""
 
 
 def consume(job_id: str = "", *, kind: str = "", grade: str = "", subject: str = "",
@@ -342,12 +357,22 @@ RENDER_KINDS = ("social", "video")
 
 
 def _render_limit() -> int:
+    """How many videos render at once: RENDER_WORKERS, or — unset — one for
+    every two cores (a render keeps about two busy: Chrome drawing the
+    frames, ffmpeg encoding them)."""
     import os
 
     try:
-        return max(1, min(8, int(os.getenv("RENDER_WORKERS", "1"))))
+        return max(1, min(16, int(os.getenv("RENDER_WORKERS", "") or 0) or (os.cpu_count() or 2) // 2))
     except ValueError:
-        return 1
+        return max(1, min(16, (os.cpu_count() or 2) // 2))
+
+
+def render_queue() -> str:
+    """The Celery queue renders go to ('' when they share the generation queue)."""
+    import os
+
+    return os.getenv("CELERY_RENDER_QUEUE", "").strip()
 
 
 _RENDERS = "('social', 'video')"
