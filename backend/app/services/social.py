@@ -75,7 +75,14 @@ def brand() -> dict[str, Any]:
         "hashtags": str(get("social_hashtags", "") or "").strip(),
         "logo_url": str(get("social_logo_url", "") or "").strip(),
         "music_url": str(get("social_music_url", "") or "").strip(),
+        "teacher": _teacher_mode(),
     }
+
+
+def _teacher_mode() -> str:
+    from . import teacher
+
+    return teacher.mode()
 
 
 # ── the cut ──────────────────────────────────────────────────────────────────
@@ -106,6 +113,11 @@ def script(data: dict[str, Any], q: dict[str, Any], b: dict[str, Any] | None = N
                            "caption": "Pause the video and try it!"})
             continue
         scenes.append(scene)
+    if b.get("teacher", "off") != "off":
+        from . import teacher
+
+        # The teacher comes back to ask: the viewer answers in the comments.
+        scenes.append({"scene": "check", "say": teacher.CHECK_LINE, "caption": teacher.CHECK_CAPTION})
     who = b["handle"] or b["name"]
     scenes.append({"scene": "outro", "name": b["name"], "handle": b["handle"], "website": b["website"],
                    "cta": b["cta"], "say": f"{b['cta']}. Follow {spoken_handle(who)}.",
@@ -130,6 +142,7 @@ def spoken_handle(handle: str) -> str:
 
 def frame_payload(q: dict[str, Any], b: dict[str, Any]) -> dict[str, Any]:
     """What the vertical frame shows around the board."""
+    from . import teacher
     from .whiteboard import _hand_bytes
 
     link = q.get("curriculum") or {}
@@ -145,7 +158,9 @@ def frame_payload(q: dict[str, Any], b: dict[str, Any]) -> dict[str, Any]:
             logo = f"data:{kind};base64," + base64.b64encode(raw).decode()
     return {"hook": b.get("hook") or "Can you solve this?", "tag": tag, "brand": b["name"], "handle": b["handle"],
             "bg_from": b["bg_from"], "bg_to": b["bg_to"], "accent": b["accent"], "text": b["text"],
-            "website": b["website"], "countdown": b["countdown"], "logo": logo, "music_url": b["music_url"]}
+            "website": b["website"], "countdown": b["countdown"], "logo": logo, "music_url": b["music_url"],
+            **({"teacher": {"gender": g}} if (g := teacher.gender_for(str(q.get("question_id") or ""),
+                                                                      b.get("teacher", "off"))) else {})}
 
 
 def _grade_label(grade: str) -> str:
@@ -153,11 +168,13 @@ def _grade_label(grade: str) -> str:
     return f"Grade {m.group(1)}" if m else grade
 
 
-def cache_key(sdata: dict[str, Any], voice: str, b: dict[str, Any]) -> str:
-    from . import whiteboard
+def cache_key(sdata: dict[str, Any], voice: str, b: dict[str, Any], gender: str = "") -> str:
+    from . import teacher, whiteboard
 
     look = {k: b.get(k) for k in ("name", "handle", "website", "cta", "countdown", "logo_url", "music_url",
                                   "hook", "bg_from", "bg_to", "accent", "text")}
+    if gender:                  # a video without a teacher keeps the key it always had
+        look["teacher"] = f"{teacher.VERSION}:{gender}"
     blob = json.dumps({"v": VERSION, "board": whiteboard.cache_key(sdata, voice), "brand": look}, sort_keys=True)
     return hashlib.sha256(blob.encode()).hexdigest()[:20]
 
@@ -278,13 +295,19 @@ def post_text(q: dict[str, Any], data: dict[str, Any], b: dict[str, Any] | None 
 
 # ── the queue ────────────────────────────────────────────────────────────────
 
-def _prepare(q: dict[str, Any], voice: str = "") -> tuple[dict[str, Any], dict[str, Any], str, str, dict[str, Any], str]:
-    from . import whiteboard
+def _prepare(q: dict[str, Any], voice: str = "", *, teacher_mode: str | None = None
+             ) -> tuple[dict[str, Any], dict[str, Any], str, str, dict[str, Any], str]:
+    """The cut, its voice and its key. With a teacher, the voice is the
+    teacher's: a woman's face speaks with a woman's voice, a man's with a man's."""
+    from . import teacher, whiteboard
 
     b = brand()
-    data, voice, title = whiteboard._script_for(q, voice)
+    if teacher_mode is not None:
+        b["teacher"] = teacher_mode
+    gender = teacher.gender_for(str(q.get("question_id") or ""), b["teacher"])
+    data, voice, title = whiteboard._script_for(q, voice or teacher.voice_for(gender))
     sdata = script(data, q, b)
-    return data, sdata, voice, title, b, cache_key(sdata, voice, b)
+    return data, sdata, voice, title, b, cache_key(sdata, voice, b, gender)
 
 
 def status(question_id: str, q: dict[str, Any] | None = None, voice: str = "") -> dict[str, Any]:
@@ -293,6 +316,7 @@ def status(question_id: str, q: dict[str, Any] | None = None, voice: str = "") -
     from . import whiteboard
 
     q = q or whiteboard.load(question_id)
+    asked_voice = voice
     data, sdata, voice, _, b, key = _prepare(q, voice)
     name = f"{PREFIX}/{question_id}/{key}.mp4"
     out: dict[str, Any] = {"question_id": question_id, "key": key, "scenes": len(data.get("scenes") or []),
@@ -300,6 +324,13 @@ def status(question_id: str, q: dict[str, Any] | None = None, voice: str = "") -
     if object_storage.object_exists(name):
         return {**out, "status": "ready", "url": whiteboard.public_url(name),
                 "thumbnail_url": whiteboard.public_url(f"{PREFIX}/{question_id}/{key}.jpg")}
+    if b.get("teacher", "off") != "off" and not asked_voice:
+        # Turning the teacher on does not unmake what was made: a video cut
+        # before it still serves until it is made again with the teacher.
+        old = _prepare(q, teacher_mode="off")[5]
+        if object_storage.object_exists(f"{PREFIX}/{question_id}/{old}.mp4"):
+            return {**out, "status": "ready", "key": old, "url": whiteboard.public_url(f"{PREFIX}/{question_id}/{old}.mp4"),
+                    "thumbnail_url": whiteboard.public_url(f"{PREFIX}/{question_id}/{old}.jpg"), "teacher": False}
     job = fetch_one(
         "SELECT job_id, status, error FROM jobs WHERE kind = :kind "
         "AND payload->>'question_id' = :qid ORDER BY created_at DESC LIMIT 1",
@@ -378,8 +409,15 @@ def live_page(q: dict[str, Any], voice: str = "") -> str:
     audio = ["data:audio/mpeg;base64," + base64.b64encode(a).decode() if a else None for a, _ in clips]
     durations = [float(sc["hold"]) if sc.get("hold") else round(d, 3) for sc, (_, d) in zip(sdata["scenes"], clips)]
     lang = "-".join(voice.split("-")[:2]) or "en-KE"
-    return whiteboard.page(sdata, title=title, voice=lang, durations=durations, audio=audio,
-                           social=frame_payload(q, b))
+    framing = frame_payload(q, b)
+    if framing.get("teacher"):
+        from . import teacher
+
+        ffmpeg = whiteboard.ffmpeg_binary()
+        if ffmpeg:
+            framing["teacher"] = {**framing["teacher"], "fps": 30,
+                                  "mouth": teacher.mouth_envelopes(ffmpeg, [a for a, _ in clips], 30)}
+    return whiteboard.page(sdata, title=title, voice=lang, durations=durations, audio=audio, social=framing)
 
 
 # ── the frame ────────────────────────────────────────────────────────────────
@@ -450,6 +488,7 @@ _FRAME = """<!doctype html><html lang="en"><head><meta charset="utf-8">
 <script>__GSAP__</script>
 <script>window.WB_DATA = __DATA__;</script>
 <script>__ENGINE__</script>
+__TEACHER__
 __CONTROLS__
 <script>
  // In the console the 1080×1920 frame is scaled to fit the window.

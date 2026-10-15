@@ -160,6 +160,11 @@ SETTINGS: tuple[Setting, ...] = (
             "Shown under the captions and in each post. Empty: the public address.", "", "Social"),
     Setting("social_cta", "", "string", "Call to action",
             "Said and written at the end of every social video.", "Follow for a new question every day", "Social"),
+    Setting("social_teacher", "SOCIAL_TEACHER", "string", "Teacher in social videos",
+            "A 3D teacher reads the question, thinks through the countdown, cheers the answer and asks \"Did you get it "
+            "right?\". off, female, male, or alternate (half and half, by question). A woman teacher speaks with "
+            "the Kenyan woman's voice (Asilia), a man with the Kenyan man's (Chilemba). Videos already made keep "
+            "serving until they are made again.", "off", "Social"),
     Setting("social_countdown_seconds", "", "int", "Countdown (seconds)",
             "How long a social video counts down after the question, for the viewer to pause and try. 3–10.",
             3, "Social"),
