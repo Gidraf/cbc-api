@@ -109,6 +109,18 @@ async def send_unsent() -> int:
     return sent
 
 
+async def comments_next(*, check: bool = False) -> dict[str, Any] | None:
+    """The next comment step under a post that is out (or, `check`, the newest post)."""
+    r = await _call("GET", "/api/v1/play/poster/comments/next", timeout=60,
+                    params={"poster_id": config.POSTER_ID, "check": str(check).lower()})
+    return r.json().get("job")
+
+
+async def comments_done(post_id: str, stage: str, *, ok: bool, error: str = "", url: str = "") -> None:
+    await _call("POST", "/api/v1/play/poster/comments/result",
+                json={"post_id": post_id, "stage": stage, "ok": ok, "error": error[:900], "url": url})
+
+
 async def groups_found(platform: str, names: list[str]) -> list[dict[str, Any]]:
     r = await _call("POST", "/api/v1/play/poster/groups/found", json={"platform": platform, "names": names})
     return r.json().get("groups", [])

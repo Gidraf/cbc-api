@@ -364,7 +364,7 @@ def decide(now: datetime, rules: dict[str, Any], *, posted_today: list[dict[str,
     return None, ("Nothing due" + (f" ({'; '.join(sorted(skipped))})" if skipped else "") + ".")
 
 
-def schedule_next(now: datetime | None = None) -> dict[str, Any]:
+def schedule_next(now: datetime | None = None, *, book_if_empty: bool = True) -> dict[str, Any]:
     """"Schedule now": the next booked video to hand to Facebook's own
     scheduler at once — the soonest inside its window, its video made — with
     no wait between hand-overs, while today's limit has room."""
@@ -383,6 +383,14 @@ def schedule_next(now: datetime | None = None) -> dict[str, Any]:
            AND groups = '[]'::jsonb AND scheduled_for > :soon AND scheduled_for <= :until
            ORDER BY scheduled_for LIMIT 40""",
         {"tries": MAX_ATTEMPTS, "soon": now + AHEAD_LEAD, "until": now + timedelta(days=rules["ahead_days"])}) or []
+    if not rows and book_if_empty:
+        # A manual "Schedule now" with nothing booked inside the window: book
+        # the window first (the Auto-book subjects), then hand them over.
+        try:
+            auto_book(now=now, force=True, days=rules["ahead_days"])
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Booking for Schedule now failed: %s", exc)
+        return schedule_next(now, book_if_empty=False)
     waiting = 0
     for row in rows:
         st = _media(row)
@@ -406,12 +414,12 @@ def schedule_next(now: datetime | None = None) -> dict[str, Any]:
             pass
         return {"post": {"post_id": row["post_id"], "platform": "facebook", "question_id": row["question_id"],
                          "format": "video", "step": row.get("step") or "walkthrough", "video_url": st["url"],
-                         "image_url": "", "thumbnail_url": st.get("thumbnail_url"), "caption": st.get("post") or "",
+                         "image_url": "", "thumbnail_url": st.get("thumbnail_url"), "caption": _caption(st),
                          "title": title, "attempts": row.get("attempts") or 0,
                          "schedule_at": row["scheduled_for"].astimezone(EAT).isoformat(), "groups": []},
                 "reason": "", "left_today": rules["daily_cap"] - done}
-    why = (f"{waiting} booked video(s) in Facebook's window are still being made." if waiting
-           else "Nothing booked inside Facebook's 29-day window is waiting — book more first.")
+    why = (f"{waiting} booked video(s) in Facebook's window are still being made — they go as each is ready." if waiting
+           else "Nothing to schedule: no unposted questions left in the Auto-book subjects — add a subject or more questions.")
     return {"post": None, "reason": why}
 
 
@@ -447,8 +455,17 @@ def next_for_poster(now: datetime | None = None, *, platform: str = "", post_id:
             if st.get("status") == "ready":
                 chosen = row
                 break
-        why = ("" if chosen else "Nothing booked for that platform yet — book the next weeks first." if not rows
-               else "The booked posts' videos are still being made — try again shortly.")
+        rendering = 0
+        if not chosen and not rows:
+            try:
+                rendering = int((fetch_one("""SELECT COUNT(*) AS n FROM jobs WHERE kind = 'social'
+                                              AND status IN ('queued', 'running')""") or {}).get("n") or 0)
+            except Exception:  # noqa: BLE001
+                rendering = 0
+        why = ("" if chosen else
+               (f"Every finished video has been posted — {rendering} more are being made; Post now works again as each is ready."
+                if rendering else "Every finished video has been posted and none are being made — book or make more videos.")
+               if not rows else "The booked posts' videos are still being made — try again shortly.")
     else:
         day_start = now.astimezone(EAT).replace(hour=0, minute=0, second=0, microsecond=0)
         # The day's actions — a post going out live, or a video handed to a
@@ -535,10 +552,28 @@ def next_for_poster(now: datetime | None = None, *, platform: str = "", post_id:
     return {"post": {"post_id": chosen["post_id"], "platform": chosen["platform"], "question_id": chosen["question_id"],
                      "format": "photo" if photo else "video", "step": chosen.get("step") or "walkthrough",
                      "video_url": "" if photo else st["url"], "image_url": st.get("url") if photo else "",
-                     "thumbnail_url": None if photo else st.get("thumbnail_url"), "caption": st.get("post") or "",
+                     "thumbnail_url": None if photo else st.get("thumbnail_url"),
+                     "caption": st.get("post") or "" if photo else _caption(st),
                      "title": title, "attempts": chosen.get("attempts") or 0,
                      "schedule_at": when.astimezone(EAT).isoformat() if ahead else "",
                      "groups": to_groups}, "reason": "", "rules": rules}
+
+
+def comment_rules() -> dict[str, Any]:
+    from . import platform_settings as ps
+
+    try:
+        delay = max(0, min(int(ps.get("poster_answer_delay_seconds", 60) or 60), 24 * 3600))
+    except (TypeError, ValueError):
+        delay = 60
+    return {"enabled": bool(ps.get("poster_comment_thread", False)), "delay": delay}
+
+
+def _caption(st: dict[str, Any]) -> str:
+    """The post's text: the question alone when the rest goes in comments."""
+    if comment_rules()["enabled"] and (st.get("thread") or {}).get("caption"):
+        return st["thread"]["caption"]
+    return st.get("post") or ""
 
 
 def _media(row: dict[str, Any]) -> dict[str, Any]:
@@ -671,6 +706,12 @@ def record_attempt(post_id: str, *, ok: bool, url: str = "", error: str = "", dr
                    last_attempt_at = NOW(), updated_at = NOW() WHERE post_id = :id""",
                 {"id": post_id, "u": url, "st": "scheduled" if scheduled else "posted", "sch": scheduled,
                  "g": to_json(groups), "d": to_json(places)})
+        if comment_rules()["enabled"]:
+            # The comments follow once the post is out: now, or at its scheduled time.
+            execute("""UPDATE social_posts SET comments_state = 'pending', comments_next_at = posted_at,
+                       comments_attempts = 0, comments_error = ''
+                       WHERE post_id = :id AND COALESCE(format, 'video') = 'video' AND comments_state = ''""",
+                    {"id": post_id})
         if groups:
             row = fetch_one("SELECT platform, posted_at FROM social_posts WHERE post_id = :id", {"id": post_id}) or {}
             for g in groups:
@@ -695,6 +736,96 @@ def _free_space_after_post() -> None:
         drive_store.enqueue(queued_by="posted")
     except Exception:  # noqa: BLE001
         pass
+
+
+# ── the comment thread ───────────────────────────────────────────────────────
+#
+# Once a post is out the poster comments under it: first the choices and
+# "can you solve it?", then — `poster_answer_delay_seconds` later — the
+# answer, and the answer with its working and the answer card. Only within
+# posting hours. A post it cannot find or comment on is tried again in ten
+# minutes, four times at most.
+
+COMMENT_TRIES = 4
+
+
+def comments_next(now: datetime | None = None, *, check: bool = False) -> dict[str, Any]:
+    """The next comment step that is due, with its text, or why none.
+    `check`: the newest post that is out, whatever its state — for a dry
+    run that finds it and its comment box and sends nothing."""
+    from ..infra.db import fetch_one
+    from . import social, social_cards
+    from .whiteboard import load
+
+    now = now or datetime.now(timezone.utc)
+    rules = poster_rules()
+    local = now.astimezone(EAT)
+    start = local.replace(hour=int(rules["hours"]["start"][:2]), minute=int(rules["hours"]["start"][3:]), second=0, microsecond=0)
+    end = local.replace(hour=int(rules["hours"]["end"][:2]), minute=int(rules["hours"]["end"][3:]), second=0, microsecond=0)
+    if check:
+        row = fetch_one("""SELECT post_id, question_id, platform, url, 'pending' AS comments_state FROM social_posts
+                           WHERE platform = 'facebook' AND COALESCE(format, 'video') = 'video' AND posted_at <= :now
+                             AND handed_at IS NOT NULL ORDER BY posted_at DESC LIMIT 1""", {"now": now})
+        if not row:
+            return {"job": None, "reason": "No post is out yet to check against."}
+    elif not (start <= local <= end):
+        return {"job": None, "reason": "Outside posting hours."}
+    else:
+        row = None
+    row = row or fetch_one(
+        """SELECT post_id, question_id, platform, url, comments_state FROM social_posts
+           WHERE comments_state IN ('pending', 'part') AND comments_attempts < :tries
+             AND comments_next_at <= :now AND posted_at <= :now
+           ORDER BY comments_next_at LIMIT 1""", {"tries": COMMENT_TRIES, "now": now - timedelta(seconds=30)})
+    if not row:
+        return {"job": None, "reason": "No comments due."}
+    st = social.status(row["question_id"])
+    t = st.get("thread") or {}
+    first = row["comments_state"] == "pending"
+    image = ""
+    if not first:
+        try:
+            card = social_cards.status(row["question_id"], "answer", load(row["question_id"]))
+            image = card.get("url") if card.get("status") == "ready" else ""
+        except Exception:  # noqa: BLE001
+            image = ""
+    return {"job": {"post_id": row["post_id"], "platform": row["platform"], "url": row.get("url") or "",
+                    "find": t.get("find") or "", "stage": "first" if first else "later",
+                    "comments": t.get("first" if first else "later") or [], "image_url": image}, "reason": ""}
+
+
+def comments_result(post_id: str, *, stage: str, ok: bool, error: str = "", url: str = "",
+                    now: datetime | None = None) -> dict[str, Any]:
+    from ..infra.db import execute
+
+    now = now or datetime.now(timezone.utc)
+    if ok:
+        delay = comment_rules()["delay"]
+        execute("""UPDATE social_posts SET comments_state = :st, comments_next_at = :next, comments_error = '',
+                   comments_attempts = 0, url = COALESCE(NULLIF(:u, ''), url), updated_at = NOW() WHERE post_id = :id""",
+                {"id": post_id, "st": "part" if stage == "first" else "done",
+                 "next": now + timedelta(seconds=delay) if stage == "first" else None, "u": url})
+    else:
+        execute("""UPDATE social_posts SET comments_attempts = comments_attempts + 1, comments_error = :e,
+                   comments_state = CASE WHEN comments_attempts + 1 >= :tries THEN 'failed' ELSE comments_state END,
+                   comments_next_at = :next, updated_at = NOW() WHERE post_id = :id""",
+                {"id": post_id, "e": error[:900], "tries": COMMENT_TRIES, "next": now + timedelta(minutes=10)})
+    return {"post_id": post_id, "ok": ok}
+
+
+def comments_backfill(days: int = 7, *, now: datetime | None = None) -> int:
+    """Posts already out (the last `days` days) get the same comments."""
+    from ..infra.db import fetch_one
+
+    now = now or datetime.now(timezone.utc)
+    row = fetch_one("""WITH up AS (
+                         UPDATE social_posts SET comments_state = 'pending', comments_next_at = posted_at,
+                                comments_attempts = 0, comments_error = ''
+                         WHERE COALESCE(format, 'video') = 'video' AND platform = 'facebook' AND comments_state = ''
+                           AND posted_at IS NOT NULL AND posted_at >= :since AND handed_at IS NOT NULL
+                         RETURNING 1)
+                       SELECT COUNT(*) AS n FROM up""", {"since": now - timedelta(days=max(1, days))}) or {}
+    return int(row.get("n") or 0)
 
 
 # ── the owner's groups ───────────────────────────────────────────────────────
@@ -768,6 +899,9 @@ def poster_overview() -> dict[str, Any]:
             "states": states, "queue": queue, "recent": recent,
             "scheduled_ahead": {"count": int(ahead.get("n") or 0), "until": until.isoformat() if hasattr(until, "isoformat") else until},
             "handed_today": int(handed.get("n") or 0), "waiting": int(waiting.get("n") or 0),
+            "comments": {**comment_rules(), **{r["comments_state"]: int(r["n"]) for r in (fetch_all(
+                """SELECT comments_state, COUNT(*) AS n FROM social_posts WHERE comments_state <> ''
+                   GROUP BY comments_state""") or [])}},
             # What "Schedule now" and "Post now" may still do today.
             "left_today": max(0, poster_rules()["daily_cap"] - int(handed.get("n") or 0)),
             "schedulable": int((fetch_one(
@@ -1382,7 +1516,7 @@ def _scopes_booked_before() -> list[Scope]:
 
 
 def auto_book(*, now: datetime | None = None, force: bool = False, dry: bool = False,
-              seed: int | None = None) -> dict[str, Any]:
+              seed: int | None = None, days: int | None = None) -> dict[str, Any]:
     """Top the calendar up: tomorrow to `days` ahead, `per_day` a day."""
     import random
 
@@ -1394,7 +1528,8 @@ def auto_book(*, now: datetime | None = None, force: bool = False, dry: bool = F
         return {"booked": False, "posts": 0, "notes": ["Nothing to book from: set the subjects to book (Auto-book)."]}
     now = now or datetime.now(timezone.utc)
     today = now.astimezone(EAT).date()
-    days = _days_view(today + timedelta(days=1), today + timedelta(days=rules["days"]), platforms=rules["platforms"],
+    span = rules["days"] if days is None else max(1, int(days))
+    days = _days_view(today + timedelta(days=1), today + timedelta(days=span), platforms=rules["platforms"],
                       per_day=rules["per_day"], now=now)
     out = _fill(days, scopes, per_day=rules["per_day"], gap_min=30, gap_max=60, platforms=rules["platforms"],
                 ready_only=False, dry=dry, created_by=AUTO_BOOK, rng=random.Random(seed),

@@ -217,8 +217,58 @@ async def tick() -> dict[str, Any]:
         return {"skipped": state["note"]}
     state["note"] = nxt.get("reason") or ""
     if not nxt.get("post"):
+        # Nothing to post: the comments due under posts that are out.
+        try:
+            await comment_step()
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Comment step failed: %s", _why(exc))
         return {"skipped": state["note"]}
     return await publish(nxt["post"], dry_run=False)
+
+
+async def comment_step(*, check: bool = False) -> dict[str, Any]:
+    """One step of a post's comment thread: the choices and "can you solve
+    it?", or — a minute later — the answer and its working with the card."""
+    from .flows import fb_comments
+
+    job = await cbc.comments_next(check=check)
+    if not job:
+        return {"ok": False, "error": "No post to comment on."}
+    if job.get("platform") != "facebook":
+        await cbc.comments_done(job["post_id"], job["stage"], ok=False, error="Comments are set up for Facebook only.")
+        return {"ok": False, "error": "Comments are set up for Facebook only."}
+    image = ""
+    if job.get("image_url") and not check:
+        try:
+            image = await cbc.download(job["image_url"], f"answer-{job['post_id']}.jpg")
+        except Exception as exc:  # noqa: BLE001
+            log.info("No answer card for %s: %s", job["post_id"], _why(exc))
+    async with browser.lock:
+        state["busy"] = "Checking the comment box" if check else f"Commenting ({job['stage']}) on facebook"
+        page = await browser.page()
+        try:
+            out = await fb_comments.comment(page, find=job.get("find") or "", url=job.get("url") or "",
+                                            comments=job.get("comments") or [], image=image, check=check)
+            if not check:
+                await cbc.comments_done(job["post_id"], job["stage"], ok=True, url=out.get("url") or "")
+            log.info("Comments %s on %s: %s", "checked" if check else job["stage"], job["post_id"], out)
+            return {"ok": True, "message": ("Found the newest post and its comment box — see the screenshot."
+                                            if check else f"Commented ({job['stage']})."), "shot": out.get("shot")}
+        except NotLoggedIn as exc:
+            await _set_login("facebook", False, "Log in on the screen.")
+            return {"ok": False, "error": str(exc)}
+        except Exception as exc:  # noqa: BLE001
+            why = _why(exc)
+            if not check:
+                await cbc.comments_done(job["post_id"], job["stage"], ok=False, error=why)
+            log.info("Comments %s on %s failed: %s", job["stage"], job["post_id"], why)
+            return {"ok": False, "error": why, "shot": await shot(page, "facebook-comments-failed")}
+        finally:
+            state["busy"] = ""
+            try:
+                await page.close()
+            except Exception:  # noqa: BLE001
+                pass
 
 
 async def loop() -> None:
@@ -385,6 +435,8 @@ async def run(action: str, platform: str = "", post_id: str = "",
         return await do_check(platform)
     if action == "dry_run":
         return await do_dry_run(platform, post_id)
+    if action == "comments_check":
+        return await comment_step(check=True)
     if action == "schedule_now":
         return await schedule_now(int((options or {}).get("count") or 5))
     if action == "run_now":
@@ -420,7 +472,7 @@ async def command(action: str, body: dict[str, Any] | None = None,
                   x_poster_token: str | None = Header(default=None)) -> dict[str, Any]:
     _guard(x_poster_token)
     body = body or {}
-    if action not in ("login", "check", "dry_run", "run_now", "schedule_now", "pause", "resume", "groups"):
+    if action not in ("login", "check", "dry_run", "run_now", "schedule_now", "comments_check", "pause", "resume", "groups"):
         raise HTTPException(404, "No such action.")
     if action == "login" and str(body.get("platform") or "") not in FLOWS:
         raise HTTPException(400, "Unknown platform.")

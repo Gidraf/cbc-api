@@ -64,6 +64,7 @@ import {
   usePlayCatalog,
   useWatchLink,
   useBookSeries,
+  useCommentThread,
   type SeriesPlan,
   useVoices,
   useWalkthroughHtml,
@@ -1661,7 +1662,7 @@ function AutoPost() {
   const toast = useToast();
   const o = overview.data;
   const [picking, setPicking] = React.useState(false);
-  async function run(action: "login" | "check" | "dry_run" | "run_now" | "schedule_now" | "pause" | "resume" | "groups", platform = "",
+  async function run(action: "login" | "check" | "dry_run" | "run_now" | "schedule_now" | "comments_check" | "pause" | "resume" | "groups", platform = "",
                      options?: { share?: "feed" | "groups"; groups?: string[]; count?: number }) {
     try {
       const out = await command.mutateAsync({ action, platform, options });
@@ -1710,12 +1711,15 @@ function AutoPost() {
               <span style={{ color: "var(--ink-3)" }}>📅 Schedule on Facebook now:</span>
               <Input type="number" min={1} max={30} value={scheduleCount} style={{ width: 64 }}
                      onChange={(e) => setScheduleCount(Math.max(1, Math.min(30, Number(e.target.value) || 5)))} />
-              <Button size="sm" variant="primary" disabled={command.isPending || !left || !o.schedulable}
-                      title={!left ? "Today's limit is used" : !o.schedulable ? "Nothing booked inside Facebook's 29-day window is waiting" : "Hand the next bookings to Facebook's scheduler now"}
+              <Button size="sm" variant="primary" disabled={command.isPending || !left}
+                      title={!left ? "Today's limit is used" : "Hand the next bookings to Facebook's scheduler now (booking the window first if it is empty)"}
                       onClick={() => run("schedule_now", "facebook", { count: Math.min(scheduleCount, left) })}>
                 Schedule next {Math.min(scheduleCount, left || scheduleCount)}
               </Button>
-              <span style={{ color: "var(--ink-3)", fontSize: "var(--text-xs)" }}>{o.schedulable ?? 0} booked in Facebook's window, waiting</span>
+              <Button size="sm" variant="ghost" disabled={command.isPending || !left}
+                      title="As many as today's limit allows — booking the next 29 days first if they are empty"
+                      onClick={() => run("schedule_now", "facebook", { count: left })}>Schedule all ({left})</Button>
+              <span style={{ color: "var(--ink-3)", fontSize: "var(--text-xs)" }}>{o.schedulable ?? 0} booked in Facebook's window, waiting — empty days are booked first</span>
             </Stack>
           )}
           {o.live.online && (
@@ -1733,6 +1737,8 @@ function AutoPost() {
                       onClick={() => setPicking((x) => !x)}>Pick groups…</Button>
             </Stack>
           )}
+          {o.comments && <CommentThread c={o.comments} online={o.live.online} busy={command.isPending}
+                                        onCheck={() => run("comments_check", "facebook")} />}
           {o.live.online && picking && (
             <PickGroups groups={o.groups || []} busy={command.isPending}
                         onPost={async (names) => { await run("run_now", "facebook", { share: "groups", groups: names }); setPicking(false); }} />
@@ -1812,6 +1818,40 @@ function AutoPost() {
         </div>
       )}
     </Card>
+  );
+}
+
+/** The question in the caption, the rest as comments under the post. */
+function CommentThread({ c, online, busy, onCheck }: { c: NonNullable<PosterOverview["comments"]>; online: boolean; busy: boolean; onCheck: () => void }) {
+  const { save, backfill } = useCommentThread();
+  const toast = useToast();
+  const [delay, setDelay] = React.useState(c.delay);
+  async function toggle() {
+    try { await save.mutateAsync({ enabled: !c.enabled, delay_seconds: delay }); toast(c.enabled ? "Comments off: the whole post goes in the caption again." : "Comments on: the question is the caption, the rest goes in comments.", "ok"); }
+    catch (err) { toast(err instanceof Error ? err.message : "Could not save.", "danger"); }
+  }
+  return (
+    <div style={{ border: "1px solid var(--line)", borderRadius: "var(--radius)", padding: "var(--s2) var(--s3)", display: "grid", gap: 6, fontSize: "var(--text-sm)" }}>
+      <Stack direction="row" gap="var(--s2)" wrap align="center">
+        <strong>💬 Comments under each post</strong>
+        <Badge tone={c.enabled ? "ok" : "neutral"}>{c.enabled ? "on" : "off"}</Badge>
+        <span style={{ color: "var(--ink-3)", fontSize: "var(--text-xs)" }}>
+          {c.pending || 0} waiting · {c.part || 0} answer next · {c.done || 0} done{c.failed ? ` · ${c.failed} failed` : ""}</span>
+        <span style={{ flex: 1 }} />
+        <label style={{ display: "inline-flex", gap: 4, alignItems: "center" }}>answer after
+          <Input type="number" min={0} max={86400} value={delay} onChange={(e) => setDelay(Math.max(0, Number(e.target.value) || 0))} style={{ width: 70 }} /> s</label>
+        <Button size="sm" variant="ghost" disabled={!online || busy} onClick={onCheck}
+                title="Finds your newest post and its comment box and takes a screenshot — sends nothing">Check the comment box</Button>
+        <Button size="sm" variant={c.enabled ? "ghost" : "primary"} loading={save.isPending} onClick={toggle}>{c.enabled ? "Turn off" : "Turn on"}</Button>
+        <Button size="sm" variant="ghost" loading={backfill.isPending}
+                onClick={async () => { try { const out = await backfill.mutateAsync(7); toast(`${out.queued} posts from the last 7 days will get their comments.`, "ok"); } catch (err) { toast(err instanceof Error ? err.message : "Could not.", "danger"); } }}>
+          Comment on posts already out (7 days)</Button>
+      </Stack>
+      <span style={{ color: "var(--ink-3)", fontSize: "var(--text-xs)" }}>
+        The caption is the question. Then the poster comments the choices and "Can you solve it?", and {delay} seconds later the
+        answer and its working with the answer card — within posting hours; scheduled posts once they are out (found on your profile by their words).
+      </span>
+    </div>
   );
 }
 

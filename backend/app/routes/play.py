@@ -1216,6 +1216,65 @@ def poster_next(platform: str = Query(""), post_id: str = Query(""), dry: bool =
     return social_export.next_for_poster(platform=platform, post_id=post_id, dry=dry, share=share, groups=groups)
 
 
+@router.get("/poster/comments/next")
+def poster_comments_next(poster_id: str = Query(""), check: bool = Query(False),
+                         auth: AuthContext = Depends(ANY)) -> dict[str, Any]:
+    """The next comment step the poster should make under a post that is out
+    (`check`: the newest post, for a dry run)."""
+    from ..services import social_export
+
+    _may_make_videos(auth)
+    if social_export.standing_by(poster_id):
+        return {"job": None, "reason": "standing by"}
+    return social_export.comments_next(check=check)
+
+
+class CommentResult(BaseModel):
+    post_id: str
+    stage: Literal["first", "later"]
+    ok: bool
+    error: str = ""
+    url: str = ""
+
+
+@router.post("/poster/comments/result")
+def poster_comments_result(payload: CommentResult, auth: AuthContext = Depends(ANY)) -> dict[str, Any]:
+    from ..services import social_export
+
+    _may_make_videos(auth)
+    return social_export.comments_result(payload.post_id, stage=payload.stage, ok=payload.ok, error=payload.error,
+                                         url=payload.url)
+
+
+class CommentSwitch(BaseModel):
+    enabled: bool
+    delay_seconds: int = Field(60, ge=0, le=86400)
+
+
+@router.put("/social/comments")
+def social_comments_switch(payload: CommentSwitch, auth: AuthContext = Depends(ANY)) -> dict[str, Any]:
+    """Question in the caption and the rest in comments — on or off."""
+    from ..services import platform_settings
+
+    _may_make_videos(auth)
+    platform_settings.set_many({"poster_comment_thread": payload.enabled, "poster_answer_delay_seconds": payload.delay_seconds},
+                               updated_by=str(getattr(auth, "subject", "") or ""))
+    return {"enabled": payload.enabled, "delay_seconds": payload.delay_seconds}
+
+
+class CommentBackfill(BaseModel):
+    days: int = Field(7, ge=1, le=60)
+
+
+@router.post("/social/comments/backfill")
+def social_comments_backfill(payload: CommentBackfill, auth: AuthContext = Depends(ANY)) -> dict[str, Any]:
+    """Comment the same way under the posts already out."""
+    from ..services import social_export
+
+    _may_make_videos(auth)
+    return {"queued": social_export.comments_backfill(payload.days)}
+
+
 class PosterResult(BaseModel):
     post_id: str
     ok: bool
@@ -1293,7 +1352,7 @@ def poster_command(payload: PosterCommand, auth: AuthContext = Depends(ANY)) -> 
     from ..services import social_export
 
     _may_make_videos(auth)
-    if payload.action not in ("login", "check", "dry_run", "run_now", "schedule_now", "pause", "resume", "groups"):
+    if payload.action not in ("login", "check", "dry_run", "run_now", "schedule_now", "comments_check", "pause", "resume", "groups"):
         raise_api_error("VALIDATION_FAILED", "Unknown poster action.")
     options: dict[str, Any] = {}
     if payload.action == "schedule_now":
