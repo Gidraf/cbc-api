@@ -364,6 +364,57 @@ def decide(now: datetime, rules: dict[str, Any], *, posted_today: list[dict[str,
     return None, ("Nothing due" + (f" ({'; '.join(sorted(skipped))})" if skipped else "") + ".")
 
 
+def schedule_next(now: datetime | None = None) -> dict[str, Any]:
+    """"Schedule now": the next booked video to hand to Facebook's own
+    scheduler at once — the soonest inside its window, its video made — with
+    no wait between hand-overs, while today's limit has room."""
+    from ..infra.db import fetch_all, fetch_one
+    from . import social
+
+    now = now or datetime.now(timezone.utc)
+    rules = poster_rules()
+    day_start = now.astimezone(EAT).replace(hour=0, minute=0, second=0, microsecond=0)
+    done = int((fetch_one("SELECT COUNT(*) AS n FROM social_posts WHERE handed_at >= :d", {"d": day_start}) or {}).get("n") or 0)
+    if done >= rules["daily_cap"]:
+        return {"post": None, "reason": f"Today's limit of {rules['daily_cap']} is used — more tomorrow (or raise it in Settings → Auto-post)."}
+    rows = fetch_all(
+        """SELECT * FROM social_posts WHERE platform = 'facebook' AND COALESCE(format, 'video') = 'video'
+           AND posted_at IS NULL AND handed_at IS NULL AND status IN ('planned', 'failed') AND attempts < :tries
+           AND groups = '[]'::jsonb AND scheduled_for > :soon AND scheduled_for <= :until
+           ORDER BY scheduled_for LIMIT 40""",
+        {"tries": MAX_ATTEMPTS, "soon": now + AHEAD_LEAD, "until": now + timedelta(days=rules["ahead_days"])}) or []
+    waiting = 0
+    for row in rows:
+        st = _media(row)
+        if st.get("status") != "ready":
+            if st.get("status") == "none":
+                try:
+                    social.enqueue(row["question_id"], queued_by="schedule-now")
+                except Exception:  # noqa: BLE001
+                    pass
+            waiting += 1
+            continue
+        from .whiteboard import load
+
+        q_text = social.display(load(row["question_id"]).get("question_text") or "")
+        title = (f"{social.brand().get('hook') or 'Can you solve this?'} {q_text}")[:90].rstrip() + " #Shorts"
+        try:
+            from ..infra.db import execute
+
+            execute("UPDATE social_posts SET teacher = :t WHERE post_id = :id", {"t": str(st.get("teacher") or ""), "id": row["post_id"]})
+        except Exception:  # noqa: BLE001
+            pass
+        return {"post": {"post_id": row["post_id"], "platform": "facebook", "question_id": row["question_id"],
+                         "format": "video", "step": row.get("step") or "walkthrough", "video_url": st["url"],
+                         "image_url": "", "thumbnail_url": st.get("thumbnail_url"), "caption": st.get("post") or "",
+                         "title": title, "attempts": row.get("attempts") or 0,
+                         "schedule_at": row["scheduled_for"].astimezone(EAT).isoformat(), "groups": []},
+                "reason": "", "left_today": rules["daily_cap"] - done}
+    why = (f"{waiting} booked video(s) in Facebook's window are still being made." if waiting
+           else "Nothing booked inside Facebook's 29-day window is waiting — book more first.")
+    return {"post": None, "reason": why}
+
+
 def next_for_poster(now: datetime | None = None, *, platform: str = "", post_id: str = "",
                     dry: bool = False, share: str = "", groups: list[str] | None = None) -> dict[str, Any]:
     """What the poster's browser should publish now, with its files and text.
@@ -379,6 +430,12 @@ def next_for_poster(now: datetime | None = None, *, platform: str = "", post_id:
 
     now = now or datetime.now(timezone.utc)
     rules = poster_rules()
+    if dry and share and not post_id and platform in ("", "facebook"):
+        # A post-now button: a new question — a finished video no post has
+        # used — so the calendar keeps its bookings and nothing repeats.
+        fresh, fresh_st = fresh_video(now, "facebook", created_by=POST_NOW)
+        if fresh:
+            post_id, platform = fresh["post_id"], "facebook"
     if dry:
         rows = fetch_all(
             """SELECT * FROM social_posts WHERE posted_at IS NULL AND handed_at IS NULL
@@ -711,6 +768,13 @@ def poster_overview() -> dict[str, Any]:
             "states": states, "queue": queue, "recent": recent,
             "scheduled_ahead": {"count": int(ahead.get("n") or 0), "until": until.isoformat() if hasattr(until, "isoformat") else until},
             "handed_today": int(handed.get("n") or 0), "waiting": int(waiting.get("n") or 0),
+            # What "Schedule now" and "Post now" may still do today.
+            "left_today": max(0, poster_rules()["daily_cap"] - int(handed.get("n") or 0)),
+            "schedulable": int((fetch_one(
+                """SELECT COUNT(*) AS n FROM social_posts WHERE platform = 'facebook' AND COALESCE(format, 'video') = 'video'
+                   AND posted_at IS NULL AND handed_at IS NULL AND status IN ('planned', 'failed')
+                   AND groups = '[]'::jsonb AND scheduled_for > :soon AND scheduled_for <= :until""",
+                {"soon": now + AHEAD_LEAD, "until": now + timedelta(days=poster_rules()["ahead_days"])}) or {}).get("n") or 0),
             "groups": list_groups("facebook")}
 
 
@@ -1001,6 +1065,7 @@ def book_ahead(grade: str, subject: str, sub_strand: str = "", *, days: int = 25
 # its 29-day window, so a month booked today reaches Facebook day by day.
 
 LIVE_EXTRA = "live-extra"
+POST_NOW = "post-now"
 
 
 def month_days(year: int, month: int) -> list[date]:
@@ -1144,34 +1209,62 @@ def _unbooked(grade: str, subject: str, sub_strand: str, need: int, *, ready_onl
     return usable, state, {str(q["question_id"]): q for q in candidates}
 
 
-def book_month(grade: str, subject: str, sub_strand: str = "", *, year: int, month: int, per_day: int = 10,
-               gap_min: int = 30, gap_max: int = 60, platforms: list[str] | None = None, ready_only: bool = False,
-               dry: bool = False, created_by: str = "", seed: int | None = None,
-               now: datetime | None = None) -> dict[str, Any]:
-    """Fill the month's open room: each day from tomorrow up to `per_day`
-    videos (on each platform), 30–60 minutes apart, around what it already
-    holds. Videos not made yet are queued, the soonest first. `dry` shows
-    the plan and writes nothing."""
-    import random
+def _days_view(first: date, last: date, *, platforms: list[str], per_day: int,
+               now: datetime | None = None) -> list[dict[str, Any]]:
+    """The calendar's days from `first` to `last`, across months."""
+    out: list[dict[str, Any]] = []
+    y, m = first.year, first.month
+    while (y, m) <= (last.year, last.month):
+        out += [d for d in month_view(y, m, platforms=platforms, per_day=per_day, now=now)["days"]
+                if first <= date.fromisoformat(d["date"]) <= last]
+        y, m = (y + 1, 1) if m == 12 else (y, m + 1)
+    return out
 
+
+Scope = tuple[str, str, str]          # grade, subject, sub-strand ("" for the whole subject)
+
+
+def _pool(scopes: list[Scope], need: int, *, ready_only: bool = False
+          ) -> tuple[list[str], dict[str, str], dict[str, dict[str, Any]]]:
+    """Unbooked questions from every scope, taken in turn (subjects mixed),
+    made videos first — never one with a post already."""
+    per = -(-need // max(1, len(scopes))) + 2
+    lists, state, by_id = [], {}, {}
+    for g, subj, ss in scopes:
+        try:
+            ids, st, qs = _unbooked(g, subj, ss, per, ready_only=ready_only)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Could not read the bank for %s %s: %s", g, subj, exc)
+            continue
+        lists.append(ids)
+        state.update(st)
+        by_id.update(qs)
+    pool: list[str] = []
+    while any(lists) and len(pool) < need:
+        for ids in lists:
+            if ids and len(pool) < need:
+                q = ids.pop(0)
+                if q not in pool:
+                    pool.append(q)
+    pool.sort(key=lambda q: state.get(q) != "ready")
+    return pool, state, by_id
+
+
+def _fill(days: list[dict[str, Any]], scopes: list[Scope], *, per_day: int, gap_min: int, gap_max: int,
+          platforms: list[str], ready_only: bool, dry: bool, created_by: str, rng: Any,
+          full_note: str) -> dict[str, Any]:
+    """Book the open room of these calendar days."""
     from . import social
 
-    rng = random.Random(seed)
     rules = poster_rules()
-    platforms = [p for p in (platforms or ["facebook"]) if p in POSTER_PLATFORMS]
-    if not platforms:
-        raise ValueError("Pick at least one of: " + ", ".join(POSTER_PLATFORMS))
-    per_day = max(1, min(int(per_day), HARD_DAILY_CAP))
-    view = month_view(year, month, platforms=platforms, per_day=per_day, now=now)
     notes: list[str] = []
-    room = {d["date"]: d["free"] for d in view["days"] if d["free"] > 0}
+    room = {d["date"]: d["free"] for d in days if d["free"] > 0}
     if not room:
-        return {"booked": False, "days": [], "videos": 0, "posts": 0, "to_render": 0, "platforms": platforms,
-                "notes": ["Every day left in this month is already full at this many a day."], "first_day": None,
-                "last_day": None}
+        return {"booked": False, "days": [], "videos": 0, "posts": 0, "to_render": 0, "ready": 0, "platforms": platforms,
+                "notes": [full_note], "first_day": None, "last_day": None}
     taken = {d["date"]: [datetime.combine(date.fromisoformat(d["date"]), time(*map(int, p["time"].split(":"))), tzinfo=EAT)
-                         for p in d["posts"]] for d in view["days"]}
-    usable, state, by_id = _unbooked(grade, subject, sub_strand, sum(room.values()), ready_only=ready_only)
+                         for p in d["posts"]] for d in days}
+    usable, state, by_id = _pool(scopes, sum(room.values()), ready_only=ready_only)
     pool = list(usable)
     plan_days: list[dict[str, Any]] = []
     short_days = 0
@@ -1200,8 +1293,8 @@ def book_month(grade: str, subject: str, sub_strand: str = "", *, year: int, mon
     if len(used) < slots:
         notes.append(f"{len(used)} finished videos for {slots} open slots — make more videos and book again."
                      if ready_only else
-                     f"{len(used)} unbooked questions in this scope for {slots} open slots — widen it (the whole "
-                     "subject) or add questions.")
+                     f"{len(used)} unbooked questions for {slots} open slots — widen the scope (more subjects) "
+                     "or add questions.")
     to_render = [q for q in used if state.get(q) != "ready"]
     if not dry:
         for d in plan_days:
@@ -1224,6 +1317,117 @@ def book_month(grade: str, subject: str, sub_strand: str = "", *, year: int, mon
                      for d in plan_days]}
 
 
+def _platforms(platforms: list[str] | None) -> list[str]:
+    out = [p for p in (platforms or ["facebook"]) if p in POSTER_PLATFORMS]
+    if not out:
+        raise ValueError("Pick at least one of: " + ", ".join(POSTER_PLATFORMS))
+    return out
+
+
+def book_month(grade: str, subject: str, sub_strand: str = "", *, year: int, month: int, per_day: int = 10,
+               gap_min: int = 30, gap_max: int = 60, platforms: list[str] | None = None, ready_only: bool = False,
+               dry: bool = False, created_by: str = "", seed: int | None = None,
+               now: datetime | None = None) -> dict[str, Any]:
+    """Fill the month's open room: each day from tomorrow up to `per_day`
+    videos (on each platform), 30–60 minutes apart, around what it already
+    holds. Videos not made yet are queued, the soonest first. `dry` shows
+    the plan and writes nothing."""
+    import random
+
+    platforms = _platforms(platforms)
+    per_day = max(1, min(int(per_day), HARD_DAILY_CAP))
+    days = month_view(year, month, platforms=platforms, per_day=per_day, now=now)["days"]
+    return _fill(days, [(grade, subject, sub_strand)], per_day=per_day, gap_min=gap_min, gap_max=gap_max,
+                 platforms=platforms, ready_only=ready_only, dry=dry, created_by=created_by, rng=random.Random(seed),
+                 full_note="Every day left in this month is already full at this many a day.")
+
+
+# ── booking itself ───────────────────────────────────────────────────────────
+#
+# With Auto-book on, the calendar keeps itself full: every two hours the next
+# `poster_auto_book_days` days are topped up to `poster_auto_book_per_day`
+# videos, from the scopes in `poster_auto_book_scopes` (or, if none are set,
+# the grades and subjects booked before). New questions are booked as they
+# come into the bank, their videos queued at once; no question is booked twice.
+
+AUTO_BOOK = "auto-book"
+
+
+def auto_book_rules() -> dict[str, Any]:
+    from . import platform_settings as ps
+
+    def num(key: str, default: int, lo: int, hi: int) -> int:
+        try:
+            return max(lo, min(int(ps.get(key, default) or default), hi))
+        except (TypeError, ValueError):
+            return default
+
+    raw = ps.get("poster_auto_book_scopes", None) or []
+    items = raw if isinstance(raw, list) else str(raw).split(",")
+    scopes: list[Scope] = []
+    for item in items:
+        parts = [x.strip() for x in str(item).split("|")]
+        if len(parts) >= 2 and parts[0] and parts[1]:
+            scopes.append((parts[0], parts[1], parts[2] if len(parts) > 2 else ""))
+    return {"enabled": bool(ps.get("poster_auto_book", False)), "per_day": num("poster_auto_book_per_day", 10, 1, HARD_DAILY_CAP),
+            "days": num("poster_auto_book_days", 30, 1, 62), "scopes": scopes, "platforms": ["facebook"]}
+
+
+def _scopes_booked_before() -> list[Scope]:
+    from ..infra.db import fetch_all
+
+    rows = fetch_all("""SELECT grade, subject, COUNT(*) AS n FROM social_posts
+                        WHERE grade <> '' AND subject <> '' GROUP BY grade, subject ORDER BY n DESC LIMIT 6""") or []
+    return [(str(r["grade"]), str(r["subject"]), "") for r in rows]
+
+
+def auto_book(*, now: datetime | None = None, force: bool = False, dry: bool = False,
+              seed: int | None = None) -> dict[str, Any]:
+    """Top the calendar up: tomorrow to `days` ahead, `per_day` a day."""
+    import random
+
+    rules = auto_book_rules()
+    if not (rules["enabled"] or force):
+        return {"booked": False, "posts": 0, "notes": ["Auto-book is off."]}
+    scopes = rules["scopes"] or _scopes_booked_before()
+    if not scopes:
+        return {"booked": False, "posts": 0, "notes": ["Nothing to book from: set the subjects to book (Auto-book)."]}
+    now = now or datetime.now(timezone.utc)
+    today = now.astimezone(EAT).date()
+    days = _days_view(today + timedelta(days=1), today + timedelta(days=rules["days"]), platforms=rules["platforms"],
+                      per_day=rules["per_day"], now=now)
+    out = _fill(days, scopes, per_day=rules["per_day"], gap_min=30, gap_max=60, platforms=rules["platforms"],
+                ready_only=False, dry=dry, created_by=AUTO_BOOK, rng=random.Random(seed),
+                full_note=f"The next {rules['days']} days are full at {rules['per_day']} a day.")
+    return {**out, "scopes": [list(sc) for sc in scopes], "days_ahead": rules["days"], "per_day": rules["per_day"]}
+
+
+def fresh_video(now: datetime, platform: str = "facebook", *, created_by: str) -> tuple[dict[str, Any] | None, dict[str, Any]]:
+    """A finished video no post has ever used, booked for now — a new
+    question each time, so nothing goes out twice."""
+    from ..infra.db import fetch_all, fetch_one
+    from . import social
+    from .whiteboard import load
+
+    made = fetch_all("""SELECT question_id FROM question_videos v WHERE kind = 'social'
+                        AND NOT EXISTS (SELECT 1 FROM social_posts s WHERE s.question_id = v.question_id)
+                        ORDER BY made_at DESC LIMIT 25""") or []
+    for row in made:
+        qid = str(row["question_id"])
+        try:
+            st = social.status(qid)
+            if st.get("status") != "ready":
+                continue
+            q = load(qid)
+        except Exception:  # noqa: BLE001
+            continue
+        _plan_post(q, platform, now, created_by)
+        post = fetch_one("SELECT * FROM social_posts WHERE post_id = :id", {"id": _post_id(qid, platform)})
+        if post:
+            return post, st
+    return None, {}
+
+
 _no_extra_until: dict[str, float] = {"t": 0.0}
 
 
@@ -1233,8 +1437,7 @@ def live_extra(now: datetime, rules: dict[str, Any]) -> tuple[dict[str, Any] | N
     computer is on. Booked as it goes out, so the calendar shows it."""
     import time as _time
 
-    from ..infra.db import fetch_all, fetch_one
-    from . import social
+    from ..infra.db import fetch_one
 
     n = int(rules.get("live_per_day") or 0)
     if n <= 0 or not rules["enabled"] or "facebook" not in rules["platforms"] or _time.time() < _no_extra_until["t"]:
@@ -1255,24 +1458,9 @@ def live_extra(now: datetime, rules: dict[str, Any]) -> tuple[dict[str, Any] | N
         return None, {}
     if fetch_one("SELECT 1 AS x FROM poster_state WHERE platform = 'facebook' AND NOT logged_in"):
         return None, {}
-    made = fetch_all("""SELECT question_id FROM question_videos v WHERE kind = 'social'
-                        AND NOT EXISTS (SELECT 1 FROM social_posts s WHERE s.question_id = v.question_id)
-                        ORDER BY made_at DESC LIMIT 25""") or []
-    from .whiteboard import load
-
-    for row in made:
-        qid = str(row["question_id"])
-        try:
-            st = social.status(qid)
-            if st.get("status") != "ready":
-                continue
-            q = load(qid)
-        except Exception:  # noqa: BLE001
-            continue
-        _plan_post(q, "facebook", now, LIVE_EXTRA)
-        post = fetch_one("SELECT * FROM social_posts WHERE post_id = :id", {"id": _post_id(qid, "facebook")})
-        if post:
-            return post, st
+    post, st = fresh_video(now, "facebook", created_by=LIVE_EXTRA)
+    if post:
+        return post, st
     _no_extra_until["t"] = _time.time() + 15 * 60      # none ready: look again in a quarter of an hour
     return None, {}
 

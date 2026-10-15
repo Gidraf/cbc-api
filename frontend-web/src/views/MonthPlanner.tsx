@@ -1,7 +1,7 @@
 import React from "react";
 import { Badge, Button, Card, Input, Select, Stack, useToast } from "../ui/components";
-import { type MonthDay, type MonthPlan, type MonthView, useBookMonth, useLessonsResume, useSetLivePerDay, useSocialMonth,
-         useTeacherNow } from "../lib/queries";
+import { type MonthDay, type MonthPlan, type MonthView, useAutoBook, useAutoBookNow, useBookMonth, useLessonsResume,
+         useSaveAutoBook, useSetLivePerDay, useSocialMonth, useTeacherNow } from "../lib/queries";
 import { useAuth } from "../lib/auth";
 
 const PLATFORMS: [string, string][] = [["facebook", "Facebook"], ["tiktok", "TikTok"], ["instagram", "Instagram"],
@@ -79,8 +79,9 @@ export function MonthPlanner({ grade, subject, subStrand }: { grade: string; sub
             <strong style={{ minWidth: 130, textAlign: "center" }}>{monthName(ym[0], ym[1])}</strong>
             <Button size="sm" variant="ghost" aria-label="Next month" disabled={maxAhead} onClick={() => shift(1)}>›</Button>
           </Stack>}>
+      <AutoBook grade={grade} subject={subject} onBooked={() => month.refetch()} />
       <p style={{ margin: "0 0 var(--s3)", color: "var(--ink-3)", fontSize: "var(--text-sm)" }}>
-        Pick how many videos a day and how far apart; the calendar shows the room each day has. Booking fills only that room.
+        Or book by hand: pick how many videos a day and how far apart; the calendar shows the room each day has. Booking fills only that room.
         The poster hands each post to Facebook's own scheduler once it is within {v ? "its 29-day window" : "29 days"} — so
         Facebook publishes on time even with the Mac off.
       </p>
@@ -183,6 +184,69 @@ export function MonthPlanner({ grade, subject, subStrand }: { grade: string; sub
         {v && <TeacherSwitch view={v} onDone={() => month.refetch()} />}
       </div>
     </Card>
+  );
+}
+
+/** Auto-book: the calendar keeps itself full with new questions. */
+function AutoBook({ grade, subject, onBooked }: { grade: string; subject: string; onBooked: () => void }) {
+  const state = useAutoBook();
+  const save = useSaveAutoBook();
+  const now = useAutoBookNow();
+  const toast = useToast();
+  const s = state.data;
+  const [perDay, setPerDay] = React.useState(10);
+  const [days, setDays] = React.useState(30);
+  const [scopes, setScopes] = React.useState<string[]>([]);
+  React.useEffect(() => { if (s) { setPerDay(s.per_day); setDays(s.days); setScopes(s.scopes); } }, [s?.per_day, s?.days, s?.scopes.join(",")]);
+  if (!s) return null;
+  const here = grade && subject ? `${grade}|${subject}` : "";
+  const shown = scopes.length ? scopes : s.booked_before;
+  const label = (x: string) => { const [g, sub] = x.split("|"); return `${g.replace("grade-", "Grade ")} · ${sub}`; };
+  async function apply(enabled: boolean, next = scopes) {
+    try {
+      const out = await save.mutateAsync({ enabled, per_day: perDay, days, scopes: next });
+      onBooked();
+      toast(enabled ? `Auto-book on${out.booked.posts ? ` — ${out.booked.posts} posts booked now` : ""}. It tops up every two hours.` : "Auto-book off.", "ok");
+    } catch (err) { toast(err instanceof Error ? err.message : "Could not save.", "danger"); }
+  }
+  return (
+    <div style={{ border: `1px solid ${s.enabled ? "var(--ok)" : "var(--line)"}`, background: s.enabled ? "var(--ok-wash)" : "transparent",
+                  borderRadius: "var(--radius)", padding: "var(--s3)", marginBottom: "var(--s3)", display: "grid", gap: "var(--s2)", fontSize: "var(--text-sm)" }}>
+      <Stack direction="row" gap="var(--s2)" wrap align="center">
+        <strong>⚙️ Auto-book</strong>
+        <Badge tone={s.enabled ? "ok" : "neutral"}>{s.enabled ? "on — keeps the calendar full" : "off"}</Badge>
+        <span style={{ flex: 1 }} />
+        <label style={{ display: "inline-flex", gap: 4, alignItems: "center" }}>
+          <Input type="number" min={1} max={30} value={perDay} onChange={(e) => setPerDay(Math.max(1, Math.min(30, Number(e.target.value) || 10)))} style={{ width: 64 }} /> a day,</label>
+        <label style={{ display: "inline-flex", gap: 4, alignItems: "center" }}>
+          <Input type="number" min={1} max={62} value={days} onChange={(e) => setDays(Math.max(1, Math.min(62, Number(e.target.value) || 30)))} style={{ width: 64 }} /> days ahead</label>
+        <Button size="sm" variant={s.enabled ? "ghost" : "primary"} loading={save.isPending} onClick={() => apply(!s.enabled)}>
+          {s.enabled ? "Turn off" : "Turn on"}</Button>
+        {s.enabled && (perDay !== s.per_day || days !== s.days) && <Button size="sm" onClick={() => apply(true)}>Save</Button>}
+        <Button size="sm" variant="ghost" loading={now.isPending}
+                onClick={async () => { try { const out = await now.mutateAsync(); onBooked(); toast(out.posts ? `${out.posts} posts booked${out.to_render ? `, ${out.to_render} videos queued` : ""}.` : out.notes[0] || "Nothing to add.", out.posts ? "ok" : "info"); }
+                                     catch (err) { toast(err instanceof Error ? err.message : "Could not book.", "danger"); } }}>Top up now</Button>
+      </Stack>
+      <Stack direction="row" gap="6px" wrap align="center">
+        <span style={{ color: "var(--ink-3)" }}>From{scopes.length ? "" : " (booked before)"}:</span>
+        {shown.map((x) => (
+          <span key={x} style={{ display: "inline-flex", gap: 4, alignItems: "center", border: "1px solid var(--line)", borderRadius: 999, padding: "2px 4px 2px 10px" }}>
+            {label(x)}
+            {scopes.length > 0 && <button type="button" aria-label={`Remove ${label(x)}`} onClick={() => { const next = scopes.filter((y) => y !== x); setScopes(next); apply(s.enabled, next); }}
+                                         style={{ border: 0, background: "transparent", cursor: "pointer", color: "var(--ink-3)" }}>✕</button>}
+          </span>
+        ))}
+        {!shown.length && <span style={{ color: "var(--warn)" }}>nothing yet — add the subject chosen above</span>}
+        {here && !scopes.includes(here) && (
+          <Button size="sm" variant="ghost" onClick={() => { const next = [...(scopes.length ? scopes : s.booked_before), here].filter((x, i, a) => a.indexOf(x) === i); setScopes(next); apply(s.enabled, next); }}>
+            + {label(here)}</Button>
+        )}
+      </Stack>
+      <span style={{ color: "var(--ink-3)", fontSize: "var(--text-xs)" }}>
+        Every two hours the next {days} days are topped up to {perDay} a day with questions never posted — new ones as they
+        reach the bank, subjects mixed. Their videos are queued at once (with the teacher, if it is on). No question is ever booked twice.
+      </span>
+    </div>
   );
 }
 

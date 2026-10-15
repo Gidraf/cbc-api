@@ -322,6 +322,28 @@ async def post_now(platform: str = "", options: dict[str, Any] | None = None) ->
     return {"ok": False, "error": why or "Nothing queued to post."}
 
 
+async def schedule_now(count: int = 5) -> dict[str, Any]:
+    """"Schedule now": hand the next `count` booked videos to Facebook's own
+    scheduler, one after another, while today's limit has room."""
+    if state["paused"]:
+        return {"ok": False, "error": "The poster is paused — resume it first."}
+    done, why = [], ""
+    for _ in range(max(1, min(count, 30))):
+        nxt = await cbc.next_post(platform="facebook", schedule=True)
+        post = nxt.get("post")
+        if not post:
+            why = nxt.get("reason") or ""
+            break
+        out = await publish(post, dry_run=False)
+        if not out.get("ok"):
+            why = out.get("error") or "Facebook did not take it."
+            break
+        done.append(post.get("schedule_at") or "")
+    if done:
+        return {"ok": True, "message": f"Scheduled {len(done)} on Facebook" + (f" — {why}" if why else "."), "scheduled": len(done)}
+    return {"ok": False, "error": why or "Nothing to schedule."}
+
+
 async def do_groups(platform: str = "facebook") -> dict[str, Any]:
     """Read the owner's groups from the platform's share picker and send the
     list to the console, where the owner ticks the ones to share to."""
@@ -363,6 +385,8 @@ async def run(action: str, platform: str = "", post_id: str = "",
         return await do_check(platform)
     if action == "dry_run":
         return await do_dry_run(platform, post_id)
+    if action == "schedule_now":
+        return await schedule_now(int((options or {}).get("count") or 5))
     if action == "run_now":
         opts = dict(options or {})
         if post_id:
@@ -396,7 +420,7 @@ async def command(action: str, body: dict[str, Any] | None = None,
                   x_poster_token: str | None = Header(default=None)) -> dict[str, Any]:
     _guard(x_poster_token)
     body = body or {}
-    if action not in ("login", "check", "dry_run", "run_now", "pause", "resume", "groups"):
+    if action not in ("login", "check", "dry_run", "run_now", "schedule_now", "pause", "resume", "groups"):
         raise HTTPException(404, "No such action.")
     if action == "login" and str(body.get("platform") or "") not in FLOWS:
         raise HTTPException(400, "Unknown platform.")

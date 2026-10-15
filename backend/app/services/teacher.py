@@ -28,7 +28,7 @@ from typing import Any
 
 logger = logging.getLogger("cbc-teacher")
 
-VERSION = "t1"
+VERSION = "t2"          # t2: the realistic Rocketbox teachers
 VOICES = {"female": "en-KE-AsiliaNeural", "male": "en-KE-ChilembaNeural"}
 CHECK_LINE = "Did you get it right? Tell me in the comments!"
 CHECK_CAPTION = "Did you get it right? Comment ✅ or ❌"
@@ -196,3 +196,100 @@ def resume_lessons(target: int = 200, *, by: str = "") -> int:
 
     platform_settings.set_many({"video_daily_target": max(0, int(target))}, updated_by=by or "teacher-now")
     return max(0, int(target))
+
+
+# ── the words on the lips ────────────────────────────────────────────────────
+#
+# Loudness alone opens and shuts the mouth like a puppet's. Each frame also
+# gets a mouth SHAPE — a viseme — from the words being said: the words are
+# laid over the stretches where the voice is sounding (pauses between them
+# are where it is quiet), each word's frames shared by its sounds, and each
+# sound drawn as the shape the lips make for it.
+#
+#   X rest   M m/b/p (lips together)   F f/v (lip on teeth)   O o/u/w (round)
+#   E e/i/y (wide)   A a (open)   L l/t/d/n/th (tongue)   S s/z/sh/ch/j (teeth)
+#   R r (a little round)   K k/g/h (open, back)
+
+_DIGRAPHS = [("th", "L"), ("sh", "S"), ("ch", "S"), ("ph", "F"), ("oo", "O"), ("ee", "E"), ("ea", "E"),
+             ("ou", "O"), ("ow", "O"), ("ai", "E"), ("ay", "E"), ("oa", "O"), ("qu", "K"), ("ck", "K"), ("ng", "K")]
+_LETTER = {**{c: "A" for c in "a"}, **{c: "E" for c in "eiy"}, **{c: "O" for c in "ouw"}, **{c: "M" for c in "bmp"},
+           **{c: "F" for c in "fv"}, "r": "R", **{c: "L" for c in "ltdn"}, **{c: "S" for c in "szxcj"},
+           **{c: "K" for c in "kgqh"}}
+_ONES = "zero one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen " \
+        "seventeen eighteen nineteen".split()
+_TENS = "_ _ twenty thirty forty fifty sixty seventy eighty ninety".split()
+
+
+def _number_words(n: int) -> str:
+    if n < 20:
+        return _ONES[n]
+    if n < 100:
+        return _TENS[n // 10] + ("" if n % 10 == 0 else " " + _ONES[n % 10])
+    if n < 1000:
+        return _ONES[n // 100] + " hundred" + ("" if n % 100 == 0 else " and " + _number_words(n % 100))
+    if n < 1_000_000:
+        return _number_words(n // 1000) + " thousand" + ("" if n % 1000 == 0 else " " + _number_words(n % 1000))
+    return " ".join(_ONES[int(d)] for d in str(n))
+
+
+def spoken_words(text: str) -> list[str]:
+    """The words as the voice says them: digits read out, symbols dropped."""
+    import re
+
+    text = re.sub(r"(\d+)\.(\d+)", lambda m: f"{m.group(1)} point {' '.join(m.group(2))}", text or "")
+    text = re.sub(r"\d+", lambda m: f" {_number_words(int(m.group(0)))} " if len(m.group(0)) < 7 else m.group(0), text)
+    text = text.replace("%", " percent ").replace("=", " equals ").replace("+", " plus ")
+    return [w for w in re.findall(r"[a-z']+", text.lower()) if w.strip("'")]
+
+
+def word_visemes(word: str) -> str:
+    """'square' → 'SKOER': one shape per sound, digraphs first."""
+    out, k = [], 0
+    w = word.replace("'", "")
+    while k < len(w):
+        pair = w[k:k + 2]
+        hit = next((v for d, v in _DIGRAPHS if pair == d), None)
+        if hit:
+            out.append(hit)
+            k += 2
+            continue
+        if w[k] == "e" and k == len(w) - 1 and len(w) > 2:   # a silent final e
+            k += 1
+            continue
+        out.append(_LETTER.get(w[k], "L"))
+        k += 1
+    # A shape held across a doubled letter is one shape.
+    return "".join(c for i, c in enumerate(out) if i == 0 or c != out[i - 1]) or "A"
+
+
+def visemes(text: str, envelope: list[float], *, quiet: float = 0.06) -> str:
+    """One shape per frame of a scene: the words laid over where the voice sounds."""
+    n = len(envelope)
+    if not n:
+        return ""
+    words = spoken_words(text)
+    voiced = [k for k, v in enumerate(envelope) if v > quiet]
+    frames = ["X"] * n
+    if not words or not voiced:
+        return "".join(frames)
+    # Runs of sound, split where the voice drops for 3+ frames (a pause).
+    runs: list[list[int]] = [[voiced[0]]]
+    for k in voiced[1:]:
+        (runs[-1].append(k) if k - runs[-1][-1] <= 3 else runs.append([k]))
+    sounds = [word_visemes(w) for w in words]
+    weights = [max(2, len(s)) for s in sounds]
+    total = sum(weights)
+    # Words share the sounding frames in order, in proportion to their length.
+    flat = [k for run in runs for k in range(run[0], run[-1] + 1)]
+    cursor = 0.0
+    for shapes, wgt in zip(sounds, weights):
+        a = int(round(cursor / total * len(flat)))
+        cursor += wgt
+        b = int(round(cursor / total * len(flat)))
+        span = flat[a:b] or flat[min(a, len(flat) - 1):min(a, len(flat) - 1) + 1]
+        for j, k in enumerate(span):
+            frames[k] = shapes[min(len(shapes) - 1, j * len(shapes) // max(1, len(span)))]
+    for k, v in enumerate(envelope):          # where the voice is silent, the lips rest
+        if v <= quiet * 0.5:
+            frames[k] = "X"
+    return "".join(frames)

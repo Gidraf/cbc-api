@@ -176,3 +176,76 @@ def test_teacher_now_pauses_lessons_and_queues_the_soonest_booked_videos_first(d
     assert fetch_one("SELECT status FROM jobs WHERE job_id = 'L1'")["status"] == "cancelled"
     assert [q for q, _, _ in queued] == ["b1", "b0", "b2"], "the soonest post first; a handed one is left alone"
     assert all(fresh and prio > 0 for _, fresh, prio in queued)
+
+
+@needs_db
+def test_auto_book_keeps_the_next_days_full_across_months_and_never_repeats(db, monkeypatch) -> None:
+    from app.infra.db import fetch_all
+    from app.services import social
+
+    db.update({"poster_auto_book": True, "poster_auto_book_per_day": 3, "poster_auto_book_days": 30,
+               "poster_auto_book_scopes": ["grade-9|Mathematics", "grade-9|Integrated Science"]})
+    pools = {"Mathematics": [f"m{i}" for i in range(200)], "Integrated Science": [f"s{i}" for i in range(200)]}
+    used: set[str] = set()
+
+    def unbooked(g, subj, ss, need, ready_only=False):
+        booked = {r["question_id"] for r in fetch_all("SELECT question_id FROM social_posts")}
+        ids = [q for q in pools[subj] if q not in booked][:need]
+        return ids, {q: "none" for q in ids}, {q: {"question_id": q, "curriculum": {"grade": g, "subject": subj}} for q in ids}
+
+    monkeypatch.setattr(se, "_unbooked", unbooked)
+    queued = []
+    monkeypatch.setattr(social, "enqueue", lambda qid, **k: queued.append(qid))
+    out = se.auto_book(now=NOW, seed=3)
+    assert out["posts"] == 90 and out["to_render"] == 90, "30 days × 3, every video queued to render"
+    rows = fetch_all("SELECT question_id, subject FROM social_posts")
+    assert len({r["question_id"] for r in rows}) == 90, "no question twice"
+    subjects = [r["subject"] for r in rows]
+    assert subjects.count("Mathematics") == 45 and subjects.count("Integrated Science") == 45, "subjects mixed"
+    again = se.auto_book(now=NOW, seed=4)
+    assert again["posts"] == 0, "a full calendar is left alone"
+    later = se.auto_book(now=NOW + timedelta(days=2), seed=5)
+    assert later["posts"] == 6, "two new days at the far end"
+
+
+@needs_db
+def test_auto_book_off_books_nothing(db) -> None:
+    assert se.auto_book(now=NOW)["posts"] == 0
+
+
+@needs_db
+def test_post_now_uses_a_new_question_and_leaves_the_bookings_alone(db, monkeypatch) -> None:
+    from app.infra.db import execute
+    from app.services import social, whiteboard
+
+    se._plan_post({"question_id": "booked1", "curriculum": {}}, "facebook", NOW + timedelta(days=3), "me")
+    execute("INSERT INTO question_videos (question_id, kind, video_key, object_name) VALUES ('fresh1', 'social', 'k', 'o')")
+    monkeypatch.setattr(social, "status", lambda qid, q=None, **k: {"status": "ready", "url": "u", "post": "p", "teacher": "female"})
+    monkeypatch.setattr(whiteboard, "load", lambda qid: {"question_id": qid, "question_text": "?", "curriculum": {}})
+    out = se.next_for_poster(NOW, dry=True, share="feed")
+    assert out["post"]["question_id"] == "fresh1"
+    # The next press finds no new video, so it takes the booked one.
+    execute("UPDATE social_posts SET posted_at = NOW(), handed_at = NOW() WHERE question_id = 'fresh1'")
+    out = se.next_for_poster(NOW, dry=True, share="feed")
+    assert out["post"]["question_id"] == "booked1"
+
+
+@needs_db
+def test_schedule_now_hands_the_soonest_ready_booking_within_the_window_and_the_limit(db, monkeypatch) -> None:
+    from app.infra.db import execute
+    from app.services import social, whiteboard
+
+    db["poster_daily_cap"] = 2
+    for qid, days in (("far", 40), ("soon", 2), ("later", 5), ("grp", 1)):
+        se._plan_post({"question_id": qid, "curriculum": {}}, "facebook", NOW + timedelta(days=days), "me")
+    execute("UPDATE social_posts SET groups = '[\"G\"]'::jsonb WHERE question_id = 'grp'")   # goes out live with a share
+    monkeypatch.setattr(social, "status", lambda qid, q=None, **k: {"status": "ready", "url": "u", "post": "p", "teacher": ""})
+    monkeypatch.setattr(whiteboard, "load", lambda qid: {"question_id": qid, "question_text": "?"})
+    first = se.schedule_next(NOW)["post"]
+    assert first["question_id"] == "soon" and first["schedule_at"]
+    se.record_attempt(first["post_id"], ok=True, scheduled=True)
+    execute("UPDATE social_posts SET handed_at = :t WHERE post_id = :id", {"t": NOW, "id": first["post_id"]})
+    assert se.schedule_next(NOW)["post"]["question_id"] == "later", "beyond 29 days and group posts are skipped"
+    execute("UPDATE social_posts SET handed_at = :t WHERE question_id = 'later'", {"t": NOW})
+    out = se.schedule_next(NOW)
+    assert out["post"] is None and "limit" in out["reason"]

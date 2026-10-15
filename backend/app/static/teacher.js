@@ -211,7 +211,7 @@
     // where it should: on the chin to think, at the viewer to point.
     rest: { a: [0.14, 0, -0.25], b: [-0.14, 0, -0.25] },
     present: { a: [1.3, -0.4, -1.75], b: [-0.14, 0, -0.3] },
-    think: { a: [-1.3, -0.8, -1.9], b: [1.35, 0.2, -1.65] },
+    think: { a: [-0.7, -1.45, -2.1], b: [1.35, 0.2, -1.65] },       // knuckles on the cheek
     point: { a: [-0.05, -1.75, 0], b: [-0.14, 0, -0.3] },
     thumbs: { a: [-0.4, -0.55, -2.1], b: [-0.14, 0, -0.3] },
     celebrate: { a: [2.95, -0.15, -0.5], b: [-2.95, -0.15, -0.5] },
@@ -219,13 +219,14 @@
   };
   const ease = (x) => (x <= 0 ? 0 : x >= 1 ? 1 : x * x * (3 - 2 * x));
   const mix = (p, q, k) => p.map((v, i) => v + (q[i] - v) * k);
-  function poseOf(i, into) {
+  function poseName(i, into) {
     const sc = scenes[i] || {};
     let name = POSE[sc.scene] || (TEACHER_SCENES[sc.scene] ? "present" : "rest");
     if (name === "celebrate" && into > 1.6) name = "rest";
     if (name === "point" && into > 1.8) name = "thumbs";
-    return P[name];
+    return name;
   }
+  function poseOf(i, into) { return P[poseName(i, into)]; }
 
   // ── the clock ──
   function sceneAt(t) {
@@ -233,6 +234,23 @@
     let i = -1;
     for (let k = 0; k < starts.length; k++) if (starts[k] <= t) i = k;
     return { i, into: i >= 0 ? t - starts[i] : t, start: i >= 0 ? starts[i] : 0 };
+  }
+  // Mouth shapes (visemes), one per frame, from the words: [width, open, round, teeth].
+  const SHAPE = {
+    X: [1.0, 0.0, 0.0, 0], M: [0.95, 0.0, 0.0, 0], A: [1.05, 0.95, 0.0, 1], E: [1.25, 0.38, 0.0, 1],
+    O: [0.7, 0.62, 1.0, 0], L: [1.0, 0.38, 0.0, 1], S: [1.18, 0.14, 0.0, 1], F: [1.06, 0.12, 0.0, 1],
+    R: [0.84, 0.32, 0.6, 0], K: [1.0, 0.52, 0.0, 1],
+  };
+  function shapeAt(i, into) {
+    const seq = ((cfg.shapes || [])[i]) || "";
+    if (!seq.length || into < 0) return null;
+    const f = into * FPS, k = Math.floor(f), r = f - k;
+    if (k >= seq.length) return SHAPE.X;
+    const a = SHAPE[seq[k]] || SHAPE.X, b = SHAPE[seq[Math.min(seq.length - 1, k + 1)]] || SHAPE.X;
+    // Lips move between shapes, not jump: blend toward the next frame's.
+    const out = a.map((v, n) => v + (b[n] - v) * r * 0.8);
+    out.c = seq[k];
+    return out;
   }
   function energy(i, into) {
     const env = ((cfg.mouth || [])[i]) || [];
@@ -315,6 +333,17 @@
 
     const m = moodAt(i, into);
     const e = Math.min(1, energy(i, into) * 1.5);
+    if (REAL) {
+      let k = ease(into / 0.5);
+      if (sc.scene === "answer" && into > 1.6) k = ease((into - 1.6) / 0.4);
+      REAL.draw({ t, i, into, sc, m, e, shape: shapeAt(i, into), k,
+                  from: i > 0 ? poseName(i - 1, 99) : "rest", to: poseName(i, into),
+                  talk: e * (TEACHER_SCENES[sc.scene] || i < 0 ? 1 : 0.4),
+                  dance: sc.scene === "outro" ? ease((into - 1.2) / 0.5) : 0,
+                  think: sc.scene === "countdown" ? ease(into / 0.6) : 0, blink: blink(t) });
+      effects(t, i, into, sc, m);
+      return;
+    }
     // Pose: from the last scene's to this one's over half a second.
     const from = i > 0 ? poseOf(i - 1, 99) : P.rest, to = poseOf(i, into);
     let k = ease(into / 0.5);
@@ -347,7 +376,7 @@
       body.rotation.y = Math.sin(d * Math.PI) * 0.3 * dance;
     }
     head.rotation.set(Math.sin(t * 7.3) * 0.05 * e - 0.12 * think + Math.sin(t * 0.9) * 0.02,
-                      Math.sin(t * 0.6) * 0.09 * (1 - think), Math.sin(t * 0.45) * 0.03 + 0.14 * think
+                      Math.sin(t * 0.6) * 0.09 * (1 - think), Math.sin(t * 0.45) * 0.03 - 0.13 * think
                       + Math.sin((into - 1.2) * Math.PI * 4) * 0.12 * dance);
 
     // Face: eyes glance up to think; brows knit under tension, lift for joy.
@@ -363,15 +392,22 @@
       b.mesh.rotation.z = b.side * (0.28 * m.tense - 0.18 * m.lively);   // inner ends down to focus, up for joy
       b.mesh.position.y = 0.14 - 0.012 * m.tense + 0.02 * m.lively + 0.008 * e;
     }
-    const opening = e > 0.06 ? e : 0;
-    open.visible = teeth.visible = tongue.visible = lips.visible = opening > 0;
+    // The lips: the shape of the sound being said, opened by how loud it is.
+    const sh = shapeAt(i, into);
+    const width = sh ? sh[0] : 1, round = sh ? sh[2] : 0;
+    const opening = sh ? (sh[1] > 0 ? sh[1] * (0.45 + 0.55 * Math.min(1, e * 1.3)) : 0) : (e > 0.06 ? e : 0);
+    const pressed = sh && sh[1] === 0 && e > 0.06;          // m, b, p: lips together, mid-speech
+    open.visible = tongue.visible = lips.visible = opening > 0.02;
+    teeth.visible = open.visible && (sh ? sh[3] === 1 : true);
     smile.visible = !open.visible;
-    open.scale.set(0.95 + 0.2 * m.lively, 0.1 + 0.55 * opening, 0.35);
-    lips.scale.set(1 + 0.15 * m.lively, 0.14 + 0.52 * opening, 1);
+    const w = width * (1 + 0.12 * m.lively) * (1 - 0.32 * round);
+    open.scale.set(w, 0.1 + 0.62 * opening, 0.35);
+    lips.scale.set(w, 0.14 + 0.58 * opening, 1 + 0.4 * round);
+    lips.position.z = 0.004 + 0.012 * round;
     teeth.position.y = 0.008 + 0.014 * opening;
-    tongue.position.y = -0.014 - 0.014 * opening;
+    tongue.position.y = (sh && sh.c === "L" ? 0.004 : -0.014) - 0.014 * opening;
     const grin = 0.35 + 0.65 * m.lively - 0.3 * m.tense;
-    smile.scale.set(0.8 + 0.4 * m.lively, Math.max(0.12, grin), 1);
+    smile.scale.set((0.8 + 0.4 * m.lively) * (pressed ? 0.85 : 1), pressed ? 0.1 : Math.max(0.12, grin), pressed ? 1.6 : 1);
 
     // Camera: a slow push in under tension, a shake on each second of the count.
     let cz = 3.75 - 0.45 * m.tense, cy = 1.45, cx = 0;
@@ -383,14 +419,215 @@
     camera.position.set(cx, cy, cz);
     camera.lookAt(0, 1.42 - 0.04 * m.tense, 0);
     renderer.render(scene, camera);
+    effects(t, i, into, sc, m);
+  }
 
-    // The frame around: a dark pulsing vignette, then a warm glow and confetti.
+  // The frame around: a dark pulsing vignette, then a warm glow and confetti.
+  function effects(t, i, into, sc, m) {
     const pulse = sc.scene === "countdown" ? 0.12 * Math.exp(-(into - Math.floor(into)) * 5) : 0;
     vignette.style.opacity = String(Math.min(0.85, 0.55 * m.tense + pulse));
     glow.style.opacity = String(0.6 * m.lively * (sc.scene === "answer" ? Math.max(0.35, 1 - into / 3) : 0.35));
     const answerAt = scenes.findIndex((s) => s.scene === "answer");
     const starts = window.__starts || [];
     confettiAt(answerAt >= 0 && starts[answerAt] != null ? t - starts[answerAt] - 0.3 : -1);
+  }
+
+  // ── the realistic teacher: a Microsoft Rocketbox avatar (MIT) ──
+  let REAL = null;
+  function b64(s) { const bin = atob(s), out = new Uint8Array(bin.length); for (let k = 0; k < bin.length; k++) out[k] = bin.charCodeAt(k); return out.buffer; }
+  window.__teacherReady = (window.TEACHER_GLB && THREE.GLTFLoader && cfg.model !== false)
+    ? new Promise((resolve) => new THREE.GLTFLoader().parse(b64(window.TEACHER_GLB), "", (g) => {
+        try { REAL = makeReal(g); window.__teacher = "real"; } catch (err) { console.warn("teacher model", err); }
+        resolve(REAL); draw(0);
+      }, (err) => { console.warn("teacher model", err); resolve(null); }))
+    : Promise.resolve(null);
+
+  function makeReal(gltf) {
+    const V = (x, y, z) => new THREE.Vector3(x, y, z);
+    renderer.outputEncoding = THREE.sRGBEncoding;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.05;
+    const stage = new THREE.Scene();
+    stage.add(new THREE.HemisphereLight(0xfff4e6, 0x2c3448, 0.8));
+    const keyL = new THREE.DirectionalLight(0xffffff, 1.25); keyL.position.set(1.2, 2.4, 2.6); stage.add(keyL);
+    const fillL = new THREE.DirectionalLight(0xdfe8ff, 0.4); fillL.position.set(-1.8, 1.4, 1.6); stage.add(fillL);
+    const rimL = new THREE.DirectionalLight(0xbcd2ff, 0.7); rimL.position.set(0, 2.2, -2.2); stage.add(rimL);
+    const cam = new THREE.PerspectiveCamera(26, W / H, 0.05, 30);
+    const model = gltf.scene;
+    stage.add(model);
+    const bones = {}, faces = [];
+    model.traverse((o) => {
+      if (o.isBone) bones[o.name.replace(/^Bip01_/, "")] = o;
+      if (o.isMesh) { o.frustumCulled = false; if (o.morphTargetDictionary) faces.push(o); }
+    });
+    const B = (n) => bones[n];
+    const rest = new Map();
+    Object.values(bones).forEach((b) => rest.set(b, b.quaternion.clone()));
+    model.updateMatrixWorld(true);
+    const at = (n) => B(n).getWorldPosition(new THREE.Vector3());
+    const H0 = at("Head"), J0 = at("MJaw");
+    const sideOf = (n) => Math.sign(at(n).x) || 1;
+    // A: the arm on the viewer's right, the one that gestures.
+    const A = sideOf("L_UpperArm") > 0 ? "L" : "R", Bs = A === "L" ? "R" : "L";
+    const arm = (s) => ({ up: B(`${s}_UpperArm`), fore: B(`${s}_Forearm`), hand: B(`${s}_Hand`), side: sideOf(`${s}_UpperArm`),
+                          fingers: Object.keys(bones).filter((n) => n.startsWith(`${s}_Finger`)).map((n) => bones[n]) });
+    const armA = arm(A), armB = arm(Bs);
+    const SA = at(`${A}_UpperArm`), SB = at(`${Bs}_UpperArm`);
+    const sa = armA.side, sb = armB.side;
+
+    // Where each hand goes (and which way its elbow points) for each pose.
+    const T = {
+      rest: { a: [V(SA.x + sa * 0.05, SA.y - 0.58, SA.z + 0.07), V(sa * 0.3, -0.3, -0.35)],
+              b: [V(SB.x + sb * 0.05, SB.y - 0.58, SB.z + 0.07), V(sb * 0.3, -0.3, -0.35)] },
+      present: { a: [V(SA.x + sa * 0.26, SA.y - 0.27, SA.z + 0.3), V(sa * 0.4, -0.7, -0.1)] },
+      think: { a: [V(J0.x + sa * 0.04, J0.y - 0.14, J0.z + 0.11), V(sa * 0.05, -1, 0.35)],
+               b: [V(SB.x * 0.05, SB.y - 0.42, SB.z + 0.24), V(sb * 0.2, -0.45, 0.05)] },
+      point: { a: [V(SA.x + sa * 0.04, SA.y - 0.06, SA.z + 0.55), V(sa * 0.2, -0.5, 0.0)] },
+      thumbs: { a: [V(SA.x - sa * 0.04, SA.y - 0.26, SA.z + 0.33), V(sa * 0.25, -0.5, -0.05)] },
+      celebrate: { a: [V(SA.x + sa * 0.22, SA.y + 0.5, SA.z + 0.06), V(sa * 0.6, 0.0, -0.25)],
+                   b: [V(SB.x + sb * 0.22, SB.y + 0.5, SB.z + 0.06), V(sb * 0.6, 0.0, -0.25)] },
+      wave: { a: [V(SA.x + sa * 0.2, SA.y + 0.38, SA.z + 0.12), V(sa * 0.6, -0.6, -0.1)] },
+    };
+    let thinkAt = null;          // the cheek, where the head is this frame
+    const pick = (name, which) => (name === "think" && which === "a" && thinkAt ? [thinkAt, T.think.a[1]]
+                                   : (T[name] && T[name][which]) || T.rest[which]);
+
+    // ── turning bones by world axes, whatever the rig's own axes are ──
+    const qa = new THREE.Quaternion(), qb = new THREE.Quaternion(), qc = new THREE.Quaternion();
+    function turn(bone, axis, angle) {
+      if (!bone || !angle) return;
+      bone.parent.getWorldQuaternion(qa);
+      qb.setFromAxisAngle(axis, angle);
+      qc.copy(qa).invert().multiply(qb).multiply(qa);
+      bone.quaternion.premultiply(qc);
+      bone.updateMatrixWorld(true);
+    }
+    const X = V(1, 0, 0), Y = V(0, 1, 0), Z = V(0, 0, 1);
+    const angle = (u, v) => u.angleTo(v);
+    // Two-bone IK: shoulder–elbow–wrist reaches `target`, the elbow toward `pole`.
+    function reach(ch, target, pole) {
+      const a = ch.up.getWorldPosition(V()), b = ch.fore.getWorldPosition(V()), c = ch.hand.getWorldPosition(V());
+      const lab = a.distanceTo(b), lcb = b.distanceTo(c);
+      const lat = Math.min(Math.max(a.distanceTo(target), 0.02), lab + lcb - 0.005);
+      const ac = c.clone().sub(a), ab = b.clone().sub(a), ba = a.clone().sub(b), bc = c.clone().sub(b), at_ = target.clone().sub(a);
+      const ac_ab0 = angle(ac, ab), ba_bc0 = angle(ba, bc), ac_at0 = angle(ac, at_);
+      const clamp = (x) => Math.min(1, Math.max(-1, x));
+      const ac_ab1 = Math.acos(clamp((lcb * lcb - lab * lab - lat * lat) / (-2 * lab * lat)));
+      const ba_bc1 = Math.acos(clamp((lat * lat - lab * lab - lcb * lcb) / (-2 * lab * lcb)));
+      const axis0 = ac.clone().cross(ab).normalize();
+      if (axis0.lengthSq() < 1e-8) axis0.copy(Z);
+      turn(ch.up, axis0, ac_ab1 - ac_ab0);
+      turn(ch.fore, axis0, ba_bc1 - ba_bc0);
+      const c2 = ch.hand.getWorldPosition(V()).sub(a);
+      const axis1 = c2.clone().cross(at_).normalize();
+      if (axis1.lengthSq() > 1e-8) turn(ch.up, axis1, angle(c2, at_));
+      // Swing the elbow round the shoulder–hand line toward the pole.
+      const dir = at_.clone().normalize();
+      const elbow = ch.fore.getWorldPosition(V()).sub(a);
+      const e1 = elbow.clone().sub(dir.clone().multiplyScalar(elbow.dot(dir)));
+      const p = pole.clone().sub(dir.clone().multiplyScalar(pole.dot(dir)));
+      if (e1.lengthSq() > 1e-8 && p.lengthSq() > 1e-8) {
+        let ang = angle(e1, p);
+        if (e1.clone().cross(p).dot(dir) < 0) ang = -ang;
+        turn(ch.up, dir, ang);
+      }
+    }
+    function curl(ch, amount, thumbIn) {
+      ch.fingers.forEach((f) => {
+        const isThumb = /Finger0/.test(f.name);
+        const amt = isThumb ? (thumbIn ? 0.5 : 0.15) : amount;
+        f.quaternion.multiply(qb.setFromAxisAngle(Z, -amt * ch.side));
+      });
+    }
+
+    // The face: viseme shapes from the words, and the mood's expressions.
+    const VIS = { X: "AA_VI_00_Sil", M: "AA_VI_01_PP", F: "AA_VI_02_FF", L: "AA_VI_04_DD", S: "AA_VI_07_SS",
+                  A: "AA_VI_10_aa", E: "AA_VI_11_E", O: "AA_VI_13_O", R: "AA_VI_09_RR", K: "AA_VI_05_KK" };
+    const SEC = { L: "AA_VI_08_nn", E: "AA_VI_12_I", O: "AA_VI_14_U" };
+    function face(name, value) {
+      for (const f of faces) {
+        const k = f.morphTargetDictionary[name];
+        if (k !== undefined) f.morphTargetInfluences[k] = Math.min(1, Math.max(0, (f.morphTargetInfluences[k] || 0) + value));
+      }
+    }
+
+    function draw(st) {
+      const { t, into, m, e } = st;
+      // Back to rest, then the frame's pose on top.
+      rest.forEach((q, b) => b.quaternion.copy(q));
+      model.position.set(0, 0, 0); model.rotation.set(0, 0, 0);
+      if (st.dance > 0) {
+        const d = into - 1.2;
+        model.position.x = Math.sin(d * Math.PI * 2) * 0.07 * st.dance;
+        model.position.y = Math.abs(Math.sin(d * Math.PI * 4)) * 0.035 * st.dance;
+        model.rotation.y = Math.sin(d * Math.PI) * 0.25 * st.dance;
+      }
+      if (st.sc.scene === "answer" && into < 1.6) model.position.y += Math.abs(Math.sin(into * 7)) * 0.03 * (1 - into / 1.6);
+      model.updateMatrixWorld(true);
+      turn(B("Spine1"), X, Math.sin(t * 1.6) * 0.012);                      // breath
+      turn(B("Spine"), Z, st.dance ? Math.sin((into - 1.2) * Math.PI * 2) * 0.06 * st.dance : 0);
+      const nod = Math.sin(t * 7.3) * 0.05 * e + Math.sin(t * 0.9) * 0.02 + 0.1 * st.think;
+      turn(B("Neck"), X, nod * 0.4);
+      turn(B("Head"), X, nod * 0.6);
+      turn(B("Head"), Y, Math.sin(t * 0.6) * 0.08 * (1 - st.think));
+      turn(B("Head"), Z, -sa * 0.12 * st.think + Math.sin(t * 0.45) * 0.03
+                        + Math.sin((into - 1.2) * Math.PI * 4) * 0.1 * st.dance);
+      model.updateMatrixWorld(true);
+      const Jn = B("MJaw").getWorldPosition(V());
+      thinkAt = V(Jn.x + sa * 0.04, Jn.y - 0.14, Jn.z + 0.11).sub(model.position);   // under the chin
+
+      // Hands: from the last pose's spot to this one's, with the voice's beat.
+      const ta = pick(st.from, "a")[0].clone().lerp(pick(st.to, "a")[0], st.k);
+      const pa = pick(st.from, "a")[1].clone().lerp(pick(st.to, "a")[1], st.k);
+      const tb = pick(st.from, "b")[0].clone().lerp(pick(st.to, "b")[0], st.k);
+      const pb = pick(st.from, "b")[1].clone().lerp(pick(st.to, "b")[1], st.k);
+      ta.x += Math.sin(t * 5.1) * 0.03 * st.talk * sa; ta.y += Math.sin(t * 6.3) * 0.035 * st.talk;
+      if (st.to === "wave") ta.x += Math.sin(t * 9) * 0.07 * st.k * sa;
+      if (st.dance > 0) {
+        const beat = Math.sin((into - 1.2) * Math.PI * 4);
+        ta.lerp(V(SA.x + sa * 0.08, SA.y - 0.08 + 0.16 * beat, SA.z + 0.32), st.dance);
+        tb.lerp(V(SB.x + sb * 0.08, SB.y - 0.08 - 0.16 * beat, SB.z + 0.32), st.dance);
+        pa.lerp(V(sa * 0.25, -1, 0.1), st.dance); pb.lerp(V(sb * 0.25, -1, 0.1), st.dance);
+      }
+      const shift = model.position;
+      reach(armA, ta.add(shift), pa);
+      reach(armB, tb.add(shift), pb);
+      // To think, the wrist bends the knuckles in under the chin.
+      const thinking = (st.to === "think" ? st.k : 0) + (st.from === "think" ? 1 - st.k : 0);
+      turn(armA.hand, X, -1.0 * thinking);
+      const fist = st.to === "thumbs" || st.to === "celebrate" ? st.k : 0;
+      curl(armA, 0.25 + 0.6 * fist + (st.to === "think" ? 0.65 * st.k : 0), fist > 0.5);
+      curl(armB, 0.3 + (st.to === "celebrate" ? 0.6 * st.k : 0), false);
+
+      // Face.
+      for (const f of faces) f.morphTargetInfluences.fill(0);
+      const sh = st.shape;
+      if (sh && sh.c && sh.c !== "X") {
+        const open = 0.45 + 0.55 * Math.min(1, e * 1.3);
+        face(VIS[sh.c], 0.95 * open);
+        if (SEC[sh.c]) face(SEC[sh.c], 0.35 * open);
+      } else if (e > 0.08) face("AA_VI_10_aa", e * 0.6);
+      face("AK_09_EyeBlinkLeft", st.blink); face("AK_10_EyeBlinkRight", st.blink);
+      face("AK_01_BrowDownLeft", 0.6 * m.tense); face("AK_02_BrowDownRight", 0.6 * m.tense);
+      face("AK_03_BrowInnerUp", 0.45 * m.lively + 0.25 * st.think);
+      face("AK_04_BrowOuterUpLeft", 0.3 * m.lively); face("AK_05_BrowOuterUpRight", 0.3 * m.lively);
+      const smile = 0.12 + 0.55 * m.lively - 0.12 * m.tense;
+      face("AK_44_MouthSmileLeft", smile); face("AK_45_MouthSmileRight", smile);
+      face("AK_07_CheekSquintLeft", 0.3 * m.lively); face("AK_08_CheekSquintRight", 0.3 * m.lively);
+      face("AK_17_EyeLookUpLeft", 0.45 * st.think); face("AK_18_EyeLookUpRight", 0.45 * st.think);
+      face("AK_19_EyeSquintLeft", 0.25 * m.tense); face("AK_20_EyeSquintRight", 0.25 * m.tense);
+
+      // Camera: head and shoulders to the waist; a push in under tension, a shake on each second.
+      let cx = 0, cy = 0;
+      if (st.sc.scene === "countdown") {
+        const age = into - Math.floor(into), shake = Math.exp(-age * 14) * 0.006;
+        cx = Math.sin(into * 61) * shake; cy = Math.cos(into * 47) * shake;
+      }
+      cam.position.set(H0.x + cx, H0.y - 0.08 + cy, H0.z + 1.95 - 0.45 * m.tense);
+      cam.lookAt(H0.x, H0.y - 0.16 + 0.04 * m.tense, H0.z);
+      renderer.render(stage, cam);
+    }
+    return { draw };
   }
 
   window.__onTime = draw;

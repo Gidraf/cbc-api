@@ -594,21 +594,31 @@
       return { at };
     },
     answer(s, at, dur) {
+      // Never over what is written: the answer wraps to the board's width and
+      // goes below the working — or, if it does not fit there, on a clean page.
       const words = `Answer: ${s.option ? s.option + ".  " : ""}${plain(s.text)}`;
-      let t;
-      if (cursorY + 120 > H - 40) {
-        // A full board keeps its working: the answer goes in the top corner.
-        const probe = text(0, -100, words, { size: 46 });
-        const w = probe.getBBox().width;
+      const size = 46, lineH = Math.round(62 * ZOOM), maxW = W - LEFT - 90;
+      const lines = [];
+      let line = "";
+      for (const word of words.split(/\s+/)) {
+        const probe = text(0, -200, line ? `${line} ${word}` : word, { size });
+        const wide = probe.getBBox().width > maxW;
         probe.remove();
-        t = text(W - w - 80, 92, words, { size: 46, color: INK.green });
-      } else {
-        t = text(LEFT, cursorY + 20, words, { size: 46, color: INK.green });
-        cursorY += 110;
+        if (wide && line) { lines.push(line); line = word; } else line = line ? `${line} ${word}` : word;
       }
-      at = write(t, at, dur * 0.45);
-      const bb = t.getBBox();
-      at = draw(sketchBox(bb.x - 18, bb.y - 10, bb.width + 36, bb.height + 20), at, dur * 0.25);
+      if (line) lines.push(line);
+      const need = lines.length * lineH + 50;
+      if (cursorY + need > H - 40) { at = newPage(at); cursorY = 110; }
+      let y = cursorY + 20, x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+      for (const l of lines) {
+        const t = text(LEFT, y, l, { size, color: INK.green });
+        at = write(t, at, (dur * 0.45) / lines.length);
+        const bb = t.getBBox();
+        x0 = Math.min(x0, bb.x); y0 = Math.min(y0, bb.y); x1 = Math.max(x1, bb.x + bb.width); y1 = Math.max(y1, bb.y + bb.height);
+        y += lineH;
+      }
+      cursorY = y + 40;
+      at = draw(sketchBox(x0 - 18, y0 - 10, x1 - x0 + 36, y1 - y0 + 20), at, dur * 0.25);
       return { at };
     },
     countdown(s, at, dur) {
@@ -767,5 +777,8 @@
   window.__seek = (t) => { tl.pause(); tl.seek(t, false); return true; };
 
   const fonts = document.fonts && document.fonts.ready ? document.fonts.ready : Promise.resolve();
-  window.__ready = Promise.race([fonts, new Promise((r) => setTimeout(r, 2500))]).then(() => { build(); tl.seek(0); status(); return window.__total; });
+  // The teacher's model, if there is one, loads before the first frame is taken.
+  window.__ready = Promise.race([fonts, new Promise((r) => setTimeout(r, 2500))])
+    .then(() => Promise.race([window.__teacherReady || null, new Promise((r) => setTimeout(r, 20000))]))
+    .then(() => { build(); tl.seek(0); status(); return window.__total; });
 })();

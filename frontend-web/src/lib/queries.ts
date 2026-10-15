@@ -4506,6 +4506,33 @@ export type MonthView = {
   rules: { hours: { start: string; end: string }; min_gap_minutes: number; live_per_day: number; daily_cap: number;
            teacher: "off" | "female" | "male" | "alternate"; lessons_per_day: number };
 };
+export type AutoBookState = { enabled: boolean; per_day: number; days: number; scopes: string[]; booked_before: string[]; platforms: string[] };
+export type AutoBookResult = { booked: boolean; posts: number; videos?: number; to_render?: number; notes: string[] };
+
+export function useAutoBook() {
+  const api = useApi();
+  return useQuery({ queryKey: ["poster", "auto-book"], queryFn: () => api<AutoBookState>("/api/v1/play/social/auto-book") });
+}
+
+export function useSaveAutoBook() {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { enabled: boolean; per_day: number; days: number; scopes: string[] }) =>
+      api<{ enabled: boolean; booked: AutoBookResult }>("/api/v1/play/social/auto-book", { method: "PUT", body: JSON.stringify(v) }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["poster"] }),
+  });
+}
+
+export function useAutoBookNow() {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api<AutoBookResult>("/api/v1/play/social/auto-book/now", { method: "POST" }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["poster"] }),
+  });
+}
+
 export type TeacherNowResult = { teacher: string; lessons_cancelled: number; daily_target_was: number | null;
   booked_videos: number; queued: number; already_with_teacher: number; failed: string[] };
 
@@ -4573,6 +4600,8 @@ export type PosterOverview = {
            hours: { start: string; end: string }; platforms: string[]; ahead_platforms?: string[]; ahead_days?: number;
            group_shares_per_day?: number; group_rest_days?: number; groups_per_post?: number };
   posted_today: Record<string, number>;
+  /** Hand-overs and posts today has room for; bookings inside Facebook's window waiting to be scheduled. */
+  left_today?: number; schedulable?: number;
   states: { platform: string; logged_in: boolean; note: string; checked_at: string }[];
   queue: { post_id: string; platform: string; question_id: string; scheduled_for: string | null; status: string;
            attempts: number; last_error: string }[];
@@ -4617,9 +4646,10 @@ export function usePosterCommand() {
   const api = useApi();
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (v: { action: "login" | "check" | "dry_run" | "run_now" | "pause" | "resume" | "groups"; platform?: string; post_id?: string;
-                      /** run_now: the feed only, or the feed and groups — the next in turn, or the ones picked (5 at most). */
-                      options?: { share?: "feed" | "groups"; groups?: string[] } }) =>
+    mutationFn: (v: { action: "login" | "check" | "dry_run" | "run_now" | "schedule_now" | "pause" | "resume" | "groups"; platform?: string; post_id?: string;
+                      /** run_now: the feed only, or the feed and groups — the next in turn, or the ones picked (5 at most).
+                       *  schedule_now: how many bookings to hand to Facebook's scheduler. */
+                      options?: { share?: "feed" | "groups"; groups?: string[]; count?: number } }) =>
       api<Record<string, any>>("/api/v1/play/poster/command", { method: "POST", body: JSON.stringify(v) }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["poster"] }),
   });

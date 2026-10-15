@@ -125,6 +125,16 @@ def move_videos_to_drive() -> dict:
     return drive_store.enqueue(queued_by="drive schedule") or {"status": "not set up"}
 
 
+@celery_app.task(name="app.tasks.auto_book_posts")
+def auto_book_posts() -> dict:
+    """Keep the posting calendar full, when Auto-book is on (every two hours)."""
+    from .routes import curriculum  # noqa: F401  (registers the job handlers)
+    from .services import social_export
+
+    out = social_export.auto_book()
+    return {k: out.get(k) for k in ("booked", "posts", "to_render", "notes")}
+
+
 @celery_app.task(name="app.tasks.make_daily_videos")
 def make_daily_videos() -> dict:
     """Lesson videos for questions without one, every half hour, until the

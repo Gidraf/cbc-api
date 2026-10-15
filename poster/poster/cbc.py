@@ -14,9 +14,11 @@ def _headers() -> dict[str, str]:
 
 
 async def next_post(*, platform: str = "", post_id: str = "", dry: bool = False, share: str = "",
-                    groups: list[str] | None = None) -> dict[str, Any]:
+                    groups: list[str] | None = None, schedule: bool = False) -> dict[str, Any]:
     params: dict[str, Any] = {"platform": platform, "post_id": post_id, "dry": str(dry).lower(),
                               "poster_id": config.POSTER_ID}
+    if schedule:                    # "Schedule now": the next booking for Facebook's scheduler
+        params["schedule"] = "true"
     if share:                       # a post-now button: the feed only, or the feed and groups
         params.update(share=share, groups=list(groups or []))
     async with httpx.AsyncClient(timeout=60) as client:

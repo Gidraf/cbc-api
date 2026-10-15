@@ -1661,8 +1661,8 @@ function AutoPost() {
   const toast = useToast();
   const o = overview.data;
   const [picking, setPicking] = React.useState(false);
-  async function run(action: "login" | "check" | "dry_run" | "run_now" | "pause" | "resume" | "groups", platform = "",
-                     options?: { share?: "feed" | "groups"; groups?: string[] }) {
+  async function run(action: "login" | "check" | "dry_run" | "run_now" | "schedule_now" | "pause" | "resume" | "groups", platform = "",
+                     options?: { share?: "feed" | "groups"; groups?: string[]; count?: number }) {
     try {
       const out = await command.mutateAsync({ action, platform, options });
       if (out?.error) toast(String(out.error), "danger");
@@ -1674,6 +1674,8 @@ function AutoPost() {
   const states = Object.fromEntries((o?.states || []).map((s) => [s.platform, s]));
   const platforms = o?.live?.online ? ["tiktok", "instagram", "facebook", "youtube", "linkedin"] : (o?.rules.platforms || []);
   const today = Object.values(o?.posted_today || {}).reduce((a, b) => a + b, 0);
+  const [scheduleCount, setScheduleCount] = React.useState(5);
+  const left = o?.left_today ?? 0;
   const local = o?.live?.mode === "local";
   return (
     <Card title="Auto-post (browser)"
@@ -1704,11 +1706,25 @@ function AutoPost() {
           </Stack>
           {o.live.online && (
             <Stack direction="row" gap="var(--s2)" wrap align="center" style={{ fontSize: "var(--text-sm)" }}>
-              <span style={{ color: "var(--ink-3)" }}>Post the next video now:</span>
-              <Button size="sm" variant="ghost" disabled={command.isPending} onClick={() => run("run_now", "", { share: "feed" })}>
+              <Badge tone={left ? "info" : "warn"}>{left} of {o.rules.daily_cap} left today</Badge>
+              <span style={{ color: "var(--ink-3)" }}>📅 Schedule on Facebook now:</span>
+              <Input type="number" min={1} max={30} value={scheduleCount} style={{ width: 64 }}
+                     onChange={(e) => setScheduleCount(Math.max(1, Math.min(30, Number(e.target.value) || 5)))} />
+              <Button size="sm" variant="primary" disabled={command.isPending || !left || !o.schedulable}
+                      title={!left ? "Today's limit is used" : !o.schedulable ? "Nothing booked inside Facebook's 29-day window is waiting" : "Hand the next bookings to Facebook's scheduler now"}
+                      onClick={() => run("schedule_now", "facebook", { count: Math.min(scheduleCount, left) })}>
+                Schedule next {Math.min(scheduleCount, left || scheduleCount)}
+              </Button>
+              <span style={{ color: "var(--ink-3)", fontSize: "var(--text-xs)" }}>{o.schedulable ?? 0} booked in Facebook's window, waiting</span>
+            </Stack>
+          )}
+          {o.live.online && (
+            <Stack direction="row" gap="var(--s2)" wrap align="center" style={{ fontSize: "var(--text-sm)" }}>
+              <span style={{ color: "var(--ink-3)" }}>Post now (a new question, live):</span>
+              <Button size="sm" variant="ghost" disabled={command.isPending || !left} onClick={() => run("run_now", "", { share: "feed" })}>
                 Post to feed
               </Button>
-              <Button size="sm" variant="ghost" disabled={command.isPending || !(o.groups || []).some((g) => g.enabled)}
+              <Button size="sm" variant="ghost" disabled={command.isPending || !left || !(o.groups || []).some((g) => g.enabled)}
                       title="Facebook: your feed and the next ticked groups in turn, the ones rested longest"
                       onClick={() => run("run_now", "facebook", { share: "groups" })}>
                 Post to feed + {o.rules.groups_per_post ?? 5} groups

@@ -902,6 +902,47 @@ def book_social_month(payload: BookMonth, auth: AuthContext = Depends(ANY)) -> d
         return {}
 
 
+class AutoBook(BaseModel):
+    enabled: bool
+    per_day: int = Field(10, ge=1, le=30)
+    days: int = Field(30, ge=1, le=62)
+    scopes: list[str] = []          # "grade|subject"
+
+
+@router.get("/social/auto-book")
+def auto_book_status(auth: AuthContext = Depends(ANY)) -> dict[str, Any]:
+    from ..services import social_export
+
+    _may_make_videos(auth)
+    r = social_export.auto_book_rules()
+    return {**r, "scopes": ["|".join(x for x in sc if x) for sc in r["scopes"]],
+            "booked_before": ["|".join(x for x in sc if x) for sc in social_export._scopes_booked_before()]}
+
+
+@router.put("/social/auto-book")
+def auto_book_settings(payload: AutoBook, auth: AuthContext = Depends(ANY)) -> dict[str, Any]:
+    """Turn Auto-book on or off, and say how much and from where. Turning it
+    on books at once."""
+    from ..services import platform_settings, social_export
+
+    _may_make_videos(auth)
+    scopes = [s.strip() for s in payload.scopes if "|" in s and s.strip()][:12]
+    platform_settings.set_many({"poster_auto_book": payload.enabled, "poster_auto_book_per_day": payload.per_day,
+                                "poster_auto_book_days": payload.days, "poster_auto_book_scopes": scopes or ""},
+                               updated_by=str(getattr(auth, "subject", "") or ""))
+    out = social_export.auto_book() if payload.enabled else {"posts": 0}
+    return {"enabled": payload.enabled, "booked": out}
+
+
+@router.post("/social/auto-book/now")
+def auto_book_now(auth: AuthContext = Depends(ANY)) -> dict[str, Any]:
+    """Top the calendar up now, Auto-book on or not."""
+    from ..services import social_export
+
+    _may_make_videos(auth)
+    return social_export.auto_book(force=True)
+
+
 class TeacherNow(BaseModel):
     mode: Literal["female", "male", "alternate"] = "alternate"
     limit: int = Field(60, ge=1, le=500)
@@ -1158,7 +1199,8 @@ def _poster_call(method: str, path: str, body: dict[str, Any] | None = None, tim
 @router.get("/poster/next")
 def poster_next(platform: str = Query(""), post_id: str = Query(""), dry: bool = Query(False),
                 share: Literal["", "feed", "groups"] = Query(""), groups: list[str] = Query(default=[]),
-                poster_id: str = Query(""), auth: AuthContext = Depends(ANY)) -> dict[str, Any]:
+                poster_id: str = Query(""), schedule: bool = Query(False),
+                auth: AuthContext = Depends(ANY)) -> dict[str, Any]:
     """The one post the browser may publish now, or why there is none. A dry
     run takes the next queued post for a platform, rules aside, since it
     publishes nothing. `share` with `dry`: a post-now button (feed only, or
@@ -1169,6 +1211,8 @@ def poster_next(platform: str = Query(""), post_id: str = Query(""), dry: bool =
     why = social_export.standing_by(poster_id)
     if why:
         return {"post": None, "reason": why, "standby": True}
+    if schedule:                      # "Schedule now": the next booking to Facebook's scheduler, at once
+        return social_export.schedule_next()
     return social_export.next_for_poster(platform=platform, post_id=post_id, dry=dry, share=share, groups=groups)
 
 
@@ -1249,9 +1293,11 @@ def poster_command(payload: PosterCommand, auth: AuthContext = Depends(ANY)) -> 
     from ..services import social_export
 
     _may_make_videos(auth)
-    if payload.action not in ("login", "check", "dry_run", "run_now", "pause", "resume", "groups"):
+    if payload.action not in ("login", "check", "dry_run", "run_now", "schedule_now", "pause", "resume", "groups"):
         raise_api_error("VALIDATION_FAILED", "Unknown poster action.")
     options: dict[str, Any] = {}
+    if payload.action == "schedule_now":
+        options = {"count": max(1, min(int((payload.options or {}).get("count") or 5), 30))}
     share = str((payload.options or {}).get("share") or "")
     if payload.action == "run_now" and share:
         if share not in ("feed", "groups"):

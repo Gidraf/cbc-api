@@ -104,6 +104,15 @@ SETTINGS: tuple[Setting, ...] = (
             "Walkthrough videos the poster puts out on a platform in a day.", 8, "Auto-post"),
     Setting("poster_photos_per_day", "POSTER_PHOTOS_PER_DAY", "int", "Photos a day (per platform)",
             "Photo cards a day — a question's teaser, the question, then its answer, before its video.", 8, "Auto-post"),
+    Setting("poster_auto_book", "POSTER_AUTO_BOOK", "bool", "Auto-book",
+            "Keep the calendar full by itself: every two hours the next days are topped up with new questions "
+            "(their videos queued at once). No question is ever booked twice.", False, "Auto-post"),
+    Setting("poster_auto_book_per_day", "POSTER_AUTO_BOOK_PER_DAY", "int", "Auto-book: videos a day", "", 10, "Auto-post"),
+    Setting("poster_auto_book_days", "POSTER_AUTO_BOOK_DAYS", "int", "Auto-book: days ahead",
+            "How far ahead to keep booked (Facebook is handed each post within 29 days of its time).", 30, "Auto-post"),
+    Setting("poster_auto_book_scopes", "POSTER_AUTO_BOOK_SCOPES", "list", "Auto-book: from",
+            "grade|subject pairs to book from, mixed day by day, e.g. grade-9|Mathematics. Empty: the grades and "
+            "subjects booked before.", [], "Auto-post"),
     Setting("poster_live_per_day", "POSTER_LIVE_PER_DAY", "int", "Live posts a day, besides the booked",
             "When the computer is on and the day has room, the poster also posts up to this many finished videos "
             "that no booking uses, live. 0 turns it off.", 0, "Auto-post"),
