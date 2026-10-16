@@ -121,6 +121,18 @@ async def comments_done(post_id: str, stage: str, *, ok: bool, error: str = "", 
                 json={"post_id": post_id, "stage": stage, "ok": ok, "error": error[:900], "url": url})
 
 
+async def engage_next() -> dict[str, Any]:
+    """The next like-back step (read a post's comments, or like a person's posts), or why none."""
+    r = await _call("GET", "/api/v1/play/poster/engage/next", timeout=60, params={"poster_id": config.POSTER_ID})
+    return r.json()
+
+
+async def engage_done(kind: str, target: str, *, likes: int = 0, people: list[dict[str, str]] | None = None,
+                      error: str = "") -> None:
+    await _call("POST", "/api/v1/play/poster/engage/result",
+                json={"kind": kind, "target": target, "likes": likes, "people": people or [], "error": error[:500]})
+
+
 async def groups_found(platform: str, names: list[str]) -> list[dict[str, Any]]:
     r = await _call("POST", "/api/v1/play/poster/groups/found", json={"platform": platform, "names": names})
     return r.json().get("groups", [])

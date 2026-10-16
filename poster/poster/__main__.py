@@ -217,13 +217,64 @@ async def tick() -> dict[str, Any]:
         return {"skipped": state["note"]}
     state["note"] = nxt.get("reason") or ""
     if not nxt.get("post"):
-        # Nothing to post: the comments due under posts that are out.
+        # Nothing to post: the comments due under posts that are out — or,
+        # with none due, the next like-back step.
         try:
-            await comment_step()
+            done = await comment_step()
+            if not done.get("ok") and done.get("error") == "No post to comment on.":
+                await engage_step()
         except Exception as exc:  # noqa: BLE001
-            log.warning("Comment step failed: %s", _why(exc))
+            log.warning("Comment or like-back step failed: %s", _why(exc))
         return {"skipped": state["note"]}
     return await publish(nxt["post"], dry_run=False)
+
+
+async def engage_step(*, check: bool = False) -> dict[str, Any]:
+    """One like-back step: like the comments under one of your posts and note
+    who wrote them, or like a few posts of one person who commented.
+    `check`: read the newest post's commenters, liking nothing."""
+    from .flows import fb_engage
+
+    if check:
+        job = await cbc.comments_next(check=True)
+        if not job:
+            return {"ok": False, "error": "No post is out yet to check against."}
+        act = {"kind": "scan", "post_id": job["post_id"], "find": job.get("find") or "", "url": job.get("url") or "", "count": 0}
+    else:
+        nxt = await cbc.engage_next()
+        act = nxt.get("action")
+        if not act:
+            return {"ok": False, "error": nxt.get("reason") or "Nothing to like now."}
+    target = act.get("post_id") if act["kind"] == "scan" else act.get("url")
+    async with browser.lock:
+        state["busy"] = "Reading the comments" if act["kind"] == "scan" else f"Liking {act.get('name') or 'a commenter'}'s posts"
+        page = await browser.page()
+        try:
+            if act["kind"] == "scan":
+                out = await fb_engage.scan(page, find=act.get("find") or "", url=act.get("url") or "", count=int(act.get("count") or 0))
+            else:
+                out = await fb_engage.like_person(page, url=act["url"], count=int(act.get("count") or 1))
+            if not check:
+                await cbc.engage_done(act["kind"], str(target), likes=out.get("likes", 0), people=out.get("people"))
+            log.info("Like-back %s %s: %s likes, %s people", act["kind"], "(check)" if check else "", out.get("likes", 0),
+                     len(out.get("people") or []))
+            return {"ok": True, "message": (f"Found {len(out.get('people') or [])} commenters under your newest post (nothing liked)."
+                                            if check else f"{out.get('likes', 0)} like(s)."), "shot": out.get("shot"),
+                    "people": [p.get("name") for p in (out.get("people") or [])][:20]}
+        except NotLoggedIn as exc:
+            await _set_login("facebook", False, "Log in on the screen.")
+            return {"ok": False, "error": str(exc)}
+        except Exception as exc:  # noqa: BLE001
+            why = _why(exc)
+            if not check:
+                await cbc.engage_done(act["kind"], str(target), error=why)
+            return {"ok": False, "error": why, "shot": await shot(page, "facebook-engage-failed")}
+        finally:
+            state["busy"] = ""
+            try:
+                await page.close()
+            except Exception:  # noqa: BLE001
+                pass
 
 
 async def comment_step(*, check: bool = False) -> dict[str, Any]:
@@ -437,6 +488,8 @@ async def run(action: str, platform: str = "", post_id: str = "",
         return await do_dry_run(platform, post_id)
     if action == "comments_check":
         return await comment_step(check=True)
+    if action == "engage_check":
+        return await engage_step(check=True)
     if action == "schedule_now":
         return await schedule_now(int((options or {}).get("count") or 5))
     if action == "run_now":
@@ -472,7 +525,7 @@ async def command(action: str, body: dict[str, Any] | None = None,
                   x_poster_token: str | None = Header(default=None)) -> dict[str, Any]:
     _guard(x_poster_token)
     body = body or {}
-    if action not in ("login", "check", "dry_run", "run_now", "schedule_now", "comments_check", "pause", "resume", "groups"):
+    if action not in ("login", "check", "dry_run", "run_now", "schedule_now", "comments_check", "engage_check", "pause", "resume", "groups"):
         raise HTTPException(404, "No such action.")
     if action == "login" and str(body.get("platform") or "") not in FLOWS:
         raise HTTPException(400, "Unknown platform.")

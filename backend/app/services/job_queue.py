@@ -499,7 +499,9 @@ def run_job_by_id(job_id: str, *, redelivered: bool = False) -> dict[str, Any]:
             {"job_id": job_id, "max": MAX_INTERRUPTIONS, "minutes": RESTART_ABANDONED_MINUTES},
         )
     if scope_is_busy(job_id):
-        logger.info("Job %s waits: its sub-strand is already being built.", job_id)
+        logger.info("Job %s waits: %s", job_id,
+                    "every render slot is busy, or a more urgent video is next" if _kind_of(job_id) in RENDER_KINDS
+                    else "its sub-strand is already being built.")
         return {"job_id": job_id, "status": WAITING}
 
     job = _claim_by_id(job_id)

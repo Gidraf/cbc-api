@@ -1275,6 +1275,85 @@ def social_comments_backfill(payload: CommentBackfill, auth: AuthContext = Depen
     return {"queued": social_export.comments_backfill(payload.days)}
 
 
+# ── liking back, and the posts that get comments ─────────────────────────────
+
+@router.get("/poster/engage/next")
+def poster_engage_next(poster_id: str = Query(""), auth: AuthContext = Depends(ANY)) -> dict[str, Any]:
+    """The next like-back step: read a post's comments, or like a person's posts."""
+    from ..services import engage, social_export
+
+    _may_make_videos(auth)
+    if social_export.standing_by(poster_id):
+        return {"action": None, "reason": "standing by"}
+    return engage.next_action()
+
+
+class EngageResult(BaseModel):
+    kind: Literal["scan", "like_person"]
+    target: str
+    likes: int = Field(0, ge=0, le=100)
+    people: list[dict[str, str]] = []
+    error: str = ""
+
+
+@router.post("/poster/engage/result")
+def poster_engage_result(payload: EngageResult, auth: AuthContext = Depends(ANY)) -> dict[str, Any]:
+    from ..services import engage
+
+    _may_make_videos(auth)
+    return engage.record(payload.kind, target=payload.target, likes=payload.likes, people=payload.people, error=payload.error)
+
+
+@router.get("/social/engage")
+def social_engage(auth: AuthContext = Depends(ANY)) -> dict[str, Any]:
+    from datetime import datetime, timezone
+
+    from ..services import engage
+
+    _may_make_videos(auth)
+    t = engage.today(datetime.now(timezone.utc))
+    return {**engage.rules(), **{k: v for k, v in t.items() if not k.startswith("_")}}
+
+
+class EngageSettings(BaseModel):
+    enabled: bool
+    per_day: int = Field(40, ge=1, le=300)
+    per_person: int = Field(2, ge=1, le=5)
+
+
+@router.put("/social/engage")
+def social_engage_settings(payload: EngageSettings, auth: AuthContext = Depends(ANY)) -> dict[str, Any]:
+    from ..services import platform_settings
+
+    _may_make_videos(auth)
+    platform_settings.set_many({"engage_enabled": payload.enabled, "engage_likes_per_day": payload.per_day,
+                                "engage_likes_per_person": payload.per_person},
+                               updated_by=str(getattr(auth, "subject", "") or ""))
+    return payload.model_dump()
+
+
+@router.get("/social/comments/posts")
+def social_comment_posts(days: int = Query(14, ge=1, le=60), auth: AuthContext = Depends(ANY)) -> dict[str, Any]:
+    """Your posts that are out, with where their comment thread stands."""
+    from ..services import engage
+
+    _may_make_videos(auth)
+    return {"posts": engage.recent_posts(days)}
+
+
+class CommentQueue(BaseModel):
+    post_ids: list[str] = Field(default_factory=list, max_length=200)
+
+
+@router.post("/social/comments/queue")
+def social_comment_queue(payload: CommentQueue, auth: AuthContext = Depends(ANY)) -> dict[str, Any]:
+    """These posts get the comment thread: the poster finds each one and comments."""
+    from ..services import engage
+
+    _may_make_videos(auth)
+    return {"queued": engage.queue_comments(payload.post_ids)}
+
+
 class PosterResult(BaseModel):
     post_id: str
     ok: bool
@@ -1352,7 +1431,8 @@ def poster_command(payload: PosterCommand, auth: AuthContext = Depends(ANY)) -> 
     from ..services import social_export
 
     _may_make_videos(auth)
-    if payload.action not in ("login", "check", "dry_run", "run_now", "schedule_now", "comments_check", "pause", "resume", "groups"):
+    if payload.action not in ("login", "check", "dry_run", "run_now", "schedule_now", "comments_check", "engage_check",
+                              "pause", "resume", "groups"):
         raise_api_error("VALIDATION_FAILED", "Unknown poster action.")
     options: dict[str, Any] = {}
     if payload.action == "schedule_now":
