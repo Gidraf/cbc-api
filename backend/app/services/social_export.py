@@ -790,7 +790,8 @@ def comments_next(now: datetime | None = None, *, check: bool = False) -> dict[s
         except Exception:  # noqa: BLE001
             image = ""
     return {"job": {"post_id": row["post_id"], "platform": row["platform"], "url": row.get("url") or "",
-                    "find": t.get("find") or "", "stage": "first" if first else "later",
+                    "find": t.get("find") or "", "find_also": t.get("find_also") or [],
+                    "stage": "first" if first else "later",
                     "comments": t.get("first" if first else "later") or [], "image_url": image}, "reason": ""}
 
 

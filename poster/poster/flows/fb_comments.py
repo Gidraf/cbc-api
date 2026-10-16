@@ -35,8 +35,58 @@ def _norm(text: str) -> str:
 _ALL_ARTICLES = """els => els.map(a => [!a.parentElement.closest('[role=article]'), (a.innerText || '').slice(0, 1500)])"""
 
 
-async def find_post(page: Page, find: str, url: str = "", scrolls: int = 14) -> Locator:
-    """The post (its article on the profile, or the post page), by its words."""
+# Mark the post holding any of the words: the nearest block around them that
+# has its own comment button (Facebook does not always call posts "articles").
+_MARK = r"""needles => {
+  const norm = s => (s || '').normalize('NFKD').toLowerCase().replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ').trim();
+  document.querySelectorAll('[data-cbc-post]').forEach(e => e.removeAttribute('data-cbc-post'));
+  const ACTION = '[aria-label="Leave a comment"], [aria-label="Comment"], [aria-label^="Comment as"], [contenteditable="true"][role="textbox"]';
+  for (const a of document.querySelectorAll(ACTION)) {
+    let el = a.parentElement;
+    for (let depth = 0; el && depth < 30; depth++, el = el.parentElement) {
+      if (!needles.some(n => n && norm(el.innerText).includes(n))) continue;
+      const actions = el.querySelectorAll('[aria-label="Leave a comment"], [aria-label="Comment"]').length;
+      if (actions <= 2) { el.setAttribute('data-cbc-post', '1'); return true; }
+      break;                                   // reached a block holding several posts: not this one
+    }
+  }
+  return false;
+}"""
+
+# Open the captions Facebook folds behind "See more" / "…more".
+_EXPAND = r"""() => {
+  let n = 0;
+  for (const b of document.querySelectorAll('[role=button], span, div')) {
+    const t = (b.innerText || '').trim();
+    if ((t === 'See more' || t === 'more' || t === '… more' || t === '...more') && b.offsetParent && n < 25) {
+      try { b.click(); n++; } catch (e) {}
+    }
+  }
+  return n;
+}"""
+
+_DOM = r"""() => ({
+  url: location.href,
+  articles: document.querySelectorAll('[role=article]').length,
+  posinset: document.querySelectorAll('[aria-posinset]').length,
+  comment_buttons: document.querySelectorAll('[aria-label="Leave a comment"], [aria-label="Comment"]').length,
+  boxes: [...document.querySelectorAll('[contenteditable="true"][role="textbox"]')].map(b => b.getAttribute('aria-label')).slice(0, 5),
+  samples: [...document.querySelectorAll('[role=article], [aria-posinset]')].slice(0, 6).map(a => (a.innerText || '').slice(0, 240)),
+})"""
+
+
+def needles(find: str, also: list[str] | None = None) -> list[str]:
+    """What to look for: the question's opening words (and the context's), long enough to be its own."""
+    out = []
+    for text in [find, *(also or [])]:
+        n = _norm(text)
+        if len(n) >= 14:
+            out.append(n[:40])
+    return list(dict.fromkeys(out))
+
+
+async def find_post(page: Page, find: str, url: str = "", scrolls: int = 40, also: list[str] | None = None) -> Locator:
+    """The post (on the profile, or the post page), by its words."""
     if url:
         await page.goto(url, wait_until="domcontentloaded", timeout=60_000)
         await asyncio.sleep(5)
@@ -49,20 +99,38 @@ async def find_post(page: Page, find: str, url: str = "", scrolls: int = 14) -> 
     if re.search(r"/login|checkpoint", page.url) or await page.locator('input[name="pass"]').count():
         raise NotLoggedIn("Facebook is logged out.")
     await check_for_human(page)
-    want = _norm(find)[:45]
-    if len(want) < 12:
+    want = needles(find, also)
+    if not want:
         raise StepFailed("The question is too short to find its post by.")
-    articles = page.locator("[role=article]")
     for _ in range(scrolls):
-        texts = await articles.evaluate_all(_ALL_ARTICLES)
-        for n, (top, text) in enumerate(texts):
-            if top and want in _norm(text):
-                post = articles.nth(n)
-                await post.scroll_into_view_if_needed()
-                return post
+        await page.evaluate(_EXPAND)
+        await asyncio.sleep(0.8)
+        if await page.evaluate(_MARK, want):
+            post = page.locator('[data-cbc-post="1"]').first
+            await post.scroll_into_view_if_needed()
+            return post
         await page.mouse.wheel(0, 1600)
         await asyncio.sleep(2.5)
+    await _dump(page, want)
     raise StepFailed("Could not find the post on the profile — it may not be out yet.")
+
+
+async def _dump(page: Page, want: list[str]) -> None:
+    """What the page looked like when the post was not found — for fixing the steps."""
+    import json
+    import os
+    import time
+
+    from .. import config
+
+    try:
+        info = await page.evaluate(_DOM)
+        info["looked_for"] = want
+        os.makedirs(config.SHOTS_DIR, exist_ok=True)
+        with open(os.path.join(config.SHOTS_DIR, f"facebook-comments-dom-{int(time.time())}.json"), "w") as fh:
+            json.dump(info, fh, indent=1)
+    except Exception:  # noqa: BLE001
+        pass
 
 
 async def comment_box(page: Page, post: Locator) -> Locator:
@@ -129,9 +197,9 @@ async def _landed(page: Page, post: Locator, text: str, timeout: float = 20.0) -
 
 
 async def comment(page: Page, *, find: str, url: str, comments: list[str], image: str = "",
-                  check: bool = False) -> dict:
+                  check: bool = False, also: list[str] | None = None) -> dict:
     """Find the post and comment under it, one comment after the other."""
-    post = await find_post(page, find, url)
+    post = await find_post(page, find, url, also=also)
     box = await comment_box(page, post)
     if check:
         await box.click()

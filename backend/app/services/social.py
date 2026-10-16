@@ -363,7 +363,11 @@ def thread(q: dict[str, Any], data: dict[str, Any], b: dict[str, Any] | None = N
     first = [c for c in (choices, ask) if c]
     later = [c for c in (answer_line, "\n".join(explain).strip()) if c]
     find = " ".join(question.split())[:60]
-    return {"caption": "\n".join(caption_lines).strip() + "\n", "first": first, "later": later, "find": find}
+    # Older captions open with the context, or the hook and the topic: the
+    # poster looks for any of these when the question's words are folded away.
+    also = [" ".join(context.split())[:60]] if context else []
+    return {"caption": "\n".join(caption_lines).strip() + "\n", "first": first, "later": later, "find": find,
+            "find_also": also}
 
 
 # ── the queue ────────────────────────────────────────────────────────────────
