@@ -398,7 +398,8 @@ _FREE_SCOPE = f"""
     AND (
         jobs.kind NOT IN {_RENDERS}
         OR (SELECT COUNT(*) FROM jobs rendering WHERE rendering.status = 'running'
-            AND rendering.kind IN {_RENDERS} AND rendering.job_id <> jobs.job_id) < {_render_limit()}
+            AND rendering.kind IN {_RENDERS} AND rendering.job_id <> jobs.job_id
+            AND COALESCE(rendering.live->>'where', '') <> 'mac') < {_render_limit()}
     )
     AND (
         -- A render waits while a more urgent one is queued: a video someone
