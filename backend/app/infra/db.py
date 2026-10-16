@@ -1572,6 +1572,33 @@ MIGRATIONS: list[tuple[str, str]] = [
         );
         """,
     ),
+    (
+        "057_engage",
+        """
+        -- People who comment on the owner's posts, and the likes given back:
+        -- their comment liked, then a few of their own recent posts.
+        CREATE TABLE IF NOT EXISTS engage_people (
+            profile_url TEXT PRIMARY KEY,
+            name TEXT NOT NULL DEFAULT '',
+            platform TEXT NOT NULL DEFAULT 'facebook',
+            first_seen TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            seen_on TEXT NOT NULL DEFAULT '',
+            last_liked_at TIMESTAMPTZ NULL,
+            likes INTEGER NOT NULL DEFAULT 0,
+            tries INTEGER NOT NULL DEFAULT 0,
+            note TEXT NOT NULL DEFAULT ''
+        );
+        CREATE TABLE IF NOT EXISTS engage_log (
+            id BIGSERIAL PRIMARY KEY,
+            at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            kind TEXT NOT NULL,
+            target TEXT NOT NULL DEFAULT '',
+            likes INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE INDEX IF NOT EXISTS idx_engage_log_at ON engage_log(at);
+        ALTER TABLE social_posts ADD COLUMN IF NOT EXISTS scanned_at TIMESTAMPTZ NULL;
+        """,
+    ),
 ]
 
 

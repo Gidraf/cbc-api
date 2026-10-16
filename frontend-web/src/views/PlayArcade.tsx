@@ -64,7 +64,10 @@ import {
   usePlayCatalog,
   useWatchLink,
   useBookSeries,
+  useCommentPosts,
   useCommentThread,
+  useEngage,
+  useQueueComments,
   type SeriesPlan,
   useVoices,
   useWalkthroughHtml,
@@ -1662,7 +1665,7 @@ function AutoPost() {
   const toast = useToast();
   const o = overview.data;
   const [picking, setPicking] = React.useState(false);
-  async function run(action: "login" | "check" | "dry_run" | "run_now" | "schedule_now" | "comments_check" | "pause" | "resume" | "groups", platform = "",
+  async function run(action: "login" | "check" | "dry_run" | "run_now" | "schedule_now" | "comments_check" | "engage_check" | "pause" | "resume" | "groups", platform = "",
                      options?: { share?: "feed" | "groups"; groups?: string[]; count?: number }) {
     try {
       const out = await command.mutateAsync({ action, platform, options });
@@ -1739,6 +1742,7 @@ function AutoPost() {
           )}
           {o.comments && <CommentThread c={o.comments} online={o.live.online} busy={command.isPending}
                                         onCheck={() => run("comments_check", "facebook")} />}
+          <LikeBack online={o.live.online} busy={command.isPending} onCheck={() => run("engage_check", "facebook")} />
           {o.live.online && picking && (
             <PickGroups groups={o.groups || []} busy={command.isPending}
                         onPost={async (names) => { await run("run_now", "facebook", { share: "groups", groups: names }); setPicking(false); }} />
@@ -1826,6 +1830,7 @@ function CommentThread({ c, online, busy, onCheck }: { c: NonNullable<PosterOver
   const { save, backfill } = useCommentThread();
   const toast = useToast();
   const [delay, setDelay] = React.useState(c.delay);
+  const [choosing, setChoosing] = React.useState(false);
   async function toggle() {
     try { await save.mutateAsync({ enabled: !c.enabled, delay_seconds: delay }); toast(c.enabled ? "Comments off: the whole post goes in the caption again." : "Comments on: the question is the caption, the rest goes in comments.", "ok"); }
     catch (err) { toast(err instanceof Error ? err.message : "Could not save.", "danger"); }
@@ -1846,10 +1851,91 @@ function CommentThread({ c, online, busy, onCheck }: { c: NonNullable<PosterOver
         <Button size="sm" variant="ghost" loading={backfill.isPending}
                 onClick={async () => { try { const out = await backfill.mutateAsync(7); toast(`${out.queued} posts from the last 7 days will get their comments.`, "ok"); } catch (err) { toast(err instanceof Error ? err.message : "Could not.", "danger"); } }}>
           Comment on posts already out (7 days)</Button>
+        <Button size="sm" variant={choosing ? "primary" : "ghost"} onClick={() => setChoosing((x) => !x)}>Choose posts…</Button>
       </Stack>
+      {choosing && <ChoosePosts onDone={() => setChoosing(false)} />}
       <span style={{ color: "var(--ink-3)", fontSize: "var(--text-xs)" }}>
         The caption is the question. Then the poster comments the choices and "Can you solve it?", and {delay} seconds later the
         answer and its working with the answer card — within posting hours; scheduled posts once they are out (found on your profile by their words).
+      </span>
+    </div>
+  );
+}
+
+/** Pick which of your posts get the comment thread. */
+function ChoosePosts({ onDone }: { onDone: () => void }) {
+  const posts = useCommentPosts(true);
+  const queue = useQueueComments();
+  const toast = useToast();
+  const [picked, setPicked] = React.useState<string[]>([]);
+  const rows = posts.data?.posts || [];
+  const STATE: Record<string, [string, "ok" | "info" | "warn" | "danger" | "neutral"]> = {
+    "": ["no comments yet", "neutral"], pending: ["choices next", "info"], part: ["answer next", "info"], done: ["commented", "ok"], failed: ["failed", "danger"] };
+  return (
+    <div style={{ display: "grid", gap: 6, maxHeight: 360, overflowY: "auto", borderTop: "1px solid var(--line-2)", paddingTop: 6 }}>
+      {posts.isLoading && <span style={{ color: "var(--ink-3)" }}>Loading your posts…</span>}
+      {!posts.isLoading && !rows.length && <span style={{ color: "var(--ink-3)" }}>No posts out in the last 14 days.</span>}
+      {rows.map((p) => {
+        const can = p.comments_state === "" || p.comments_state === "failed";
+        const st = STATE[p.comments_state] || [p.comments_state, "neutral"];
+        return (
+          <label key={p.post_id} style={{ display: "flex", gap: 8, alignItems: "center", fontSize: "var(--text-xs)", opacity: can ? 1 : 0.7 }}>
+            <input type="checkbox" disabled={!can} checked={picked.includes(p.post_id)}
+                   onChange={() => setPicked((x) => (x.includes(p.post_id) ? x.filter((y) => y !== p.post_id) : [...x, p.post_id]))} />
+            <span style={{ width: 110, color: "var(--ink-3)" }}>{new Date(p.posted_at).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })}</span>
+            <span style={{ flex: 1, minWidth: 0 }} title={p.comments_error}>{plain(p.question_text || p.question_id).slice(0, 110)}</span>
+            <Badge tone={st[1]}>{st[0]}</Badge>
+          </label>
+        );
+      })}
+      {rows.length > 0 && (
+        <Stack direction="row" gap="var(--s2)" align="center">
+          <Button size="sm" variant="ghost" onClick={() => setPicked(rows.filter((p) => p.comments_state === "" || p.comments_state === "failed").map((p) => p.post_id))}>Select all without comments</Button>
+          <Button size="sm" variant="primary" disabled={!picked.length} loading={queue.isPending}
+                  onClick={async () => { try { const out = await queue.mutateAsync(picked); toast(`${out.queued} posts will get their comments — the poster finds each one.`, "ok"); setPicked([]); onDone(); }
+                                       catch (err) { toast(err instanceof Error ? err.message : "Could not.", "danger"); } }}>
+            Comment on {picked.length || ""} post{picked.length === 1 ? "" : "s"}</Button>
+        </Stack>
+      )}
+    </div>
+  );
+}
+
+/** Like back: the comments on your posts, then the commenters' own posts. Likes only. */
+function LikeBack({ online, busy, onCheck }: { online: boolean; busy: boolean; onCheck: () => void }) {
+  const { state, save } = useEngage();
+  const toast = useToast();
+  const s = state.data;
+  const [perDay, setPerDay] = React.useState(40);
+  const [perPerson, setPerPerson] = React.useState(2);
+  React.useEffect(() => { if (s) { setPerDay(s.per_day); setPerPerson(s.per_person); } }, [s?.per_day, s?.per_person]);
+  if (!s) return null;
+  async function apply(enabled: boolean) {
+    try { await save.mutateAsync({ enabled, per_day: perDay, per_person: perPerson }); toast(enabled ? "Liking back is on." : "Liking back is off.", "ok"); }
+    catch (err) { toast(err instanceof Error ? err.message : "Could not save.", "danger"); }
+  }
+  return (
+    <div style={{ border: "1px solid var(--line)", borderRadius: "var(--radius)", padding: "var(--s2) var(--s3)", display: "grid", gap: 6, fontSize: "var(--text-sm)" }}>
+      <Stack direction="row" gap="var(--s2)" wrap align="center">
+        <strong>❤️ Like back the people who comment</strong>
+        <Badge tone={s.enabled ? "ok" : "neutral"}>{s.enabled ? "on" : "off"}</Badge>
+        <span style={{ color: "var(--ink-3)", fontSize: "var(--text-xs)" }}>{s.likes} of {s.per_day} likes today · {s.people} people met · {s.waiting} to like</span>
+        <span style={{ flex: 1 }} />
+        <label style={{ display: "inline-flex", gap: 4, alignItems: "center" }}>
+          <Input type="number" min={1} max={300} value={perDay} onChange={(e) => setPerDay(Math.max(1, Math.min(300, Number(e.target.value) || 40)))} style={{ width: 70 }} /> likes a day</label>
+        <label style={{ display: "inline-flex", gap: 4, alignItems: "center" }}>
+          <Input type="number" min={1} max={5} value={perPerson} onChange={(e) => setPerPerson(Math.max(1, Math.min(5, Number(e.target.value) || 2)))} style={{ width: 56 }} /> posts each</label>
+        <Button size="sm" variant="ghost" disabled={!online || busy} onClick={onCheck}
+                title="Reads the commenters under your newest post — likes nothing">Check</Button>
+        <Button size="sm" variant={s.enabled ? "ghost" : "primary"} loading={save.isPending} onClick={() => apply(!s.enabled)}>{s.enabled ? "Turn off" : "Turn on"}</Button>
+        {s.enabled && (perDay !== s.per_day || perPerson !== s.per_person) && <Button size="sm" onClick={() => apply(true)}>Save</Button>}
+      </Stack>
+      {perDay > 100 && <span style={{ color: "var(--warn)", fontSize: "var(--text-xs)" }}>
+        Over 100 automated likes a day often gets "You're temporarily blocked" from Facebook, and repeated blocks can restrict the
+        whole profile. Raise it a little each week while nothing is blocked.</span>}
+      <span style={{ color: "var(--ink-3)", fontSize: "var(--text-xs)" }}>
+        The poster reads the comments on your posts from the last 14 days, likes each comment, then visits each new commenter and
+        likes {perPerson} of their recent posts — never a comment on anyone else's post. One to four minutes between actions, within posting hours.
       </span>
     </div>
   );

@@ -4521,6 +4521,38 @@ export function useCommentThread() {
   };
 }
 
+export type CommentPost = { post_id: string; question_id: string; posted_at: string; comments_state: string;
+  comments_error: string; scanned_at: string | null; question_text: string };
+
+export function useCommentPosts(enabled: boolean) {
+  const api = useApi();
+  return useQuery({ queryKey: ["poster", "comment-posts"], enabled,
+                    queryFn: () => api<{ posts: CommentPost[] }>("/api/v1/play/social/comments/posts?days=14") });
+}
+
+export function useQueueComments() {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (post_ids: string[]) => api<{ queued: number }>("/api/v1/play/social/comments/queue", { method: "POST", body: JSON.stringify({ post_ids }) }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["poster"] }),
+  });
+}
+
+export type EngageState = { enabled: boolean; per_day: number; per_person: number; likes: number; people: number; waiting: number };
+
+export function useEngage() {
+  const api = useApi();
+  const qc = useQueryClient();
+  return {
+    state: useQuery({ queryKey: ["poster", "engage"], queryFn: () => api<EngageState>("/api/v1/play/social/engage"), refetchInterval: 60_000 }),
+    save: useMutation({
+      mutationFn: (v: { enabled: boolean; per_day: number; per_person: number }) => api("/api/v1/play/social/engage", { method: "PUT", body: JSON.stringify(v) }),
+      onSuccess: () => qc.invalidateQueries({ queryKey: ["poster"] }),
+    }),
+  };
+}
+
 export type AutoBookState = { enabled: boolean; per_day: number; days: number; scopes: string[]; booked_before: string[]; platforms: string[] };
 export type AutoBookResult = { booked: boolean; posts: number; videos?: number; to_render?: number; notes: string[] };
 
@@ -4663,7 +4695,7 @@ export function usePosterCommand() {
   const api = useApi();
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (v: { action: "login" | "check" | "dry_run" | "run_now" | "schedule_now" | "comments_check" | "pause" | "resume" | "groups"; platform?: string; post_id?: string;
+    mutationFn: (v: { action: "login" | "check" | "dry_run" | "run_now" | "schedule_now" | "comments_check" | "engage_check" | "pause" | "resume" | "groups"; platform?: string; post_id?: string;
                       /** run_now: the feed only, or the feed and groups — the next in turn, or the ones picked (5 at most).
                        *  schedule_now: how many bookings to hand to Facebook's scheduler. */
                       options?: { share?: "feed" | "groups"; groups?: string[]; count?: number } }) =>
