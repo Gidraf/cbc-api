@@ -1275,6 +1275,61 @@ def social_comments_backfill(payload: CommentBackfill, auth: AuthContext = Depen
     return {"queued": social_export.comments_backfill(payload.days)}
 
 
+# ── videos rendered on the owner's Mac ───────────────────────────────────────
+
+@router.post("/render/claim")
+def render_claim(worker: str = Query("mac", max_length=80), auth: AuthContext = Depends(ANY)) -> dict[str, Any]:
+    """A render helper takes the next queued video, with everything needed to draw it."""
+    from ..services import remote_render
+
+    _may_make_videos(auth)
+    return remote_render.claim(worker)
+
+
+class RenderBeat(BaseModel):
+    stage: str = ""
+    pct: float = 0.0
+
+
+@router.post("/render/{job_id}/heartbeat")
+def render_heartbeat(job_id: str, payload: RenderBeat, auth: AuthContext = Depends(ANY)) -> dict[str, Any]:
+    from ..services import remote_render
+
+    _may_make_videos(auth)
+    return {"ok": remote_render.heartbeat(job_id, payload.stage, payload.pct)}
+
+
+@router.post("/render/{job_id}/done")
+async def render_done(job_id: str, video: UploadFile = File(...), thumbnail: UploadFile | None = File(None),
+                      seconds: float = Form(0.0), auth: AuthContext = Depends(ANY)) -> dict[str, Any]:
+    """The helper's finished MP4 (and thumbnail), stored as the server would have."""
+    from ..services import remote_render
+
+    _may_make_videos(auth)
+    body = await video.read()
+    if len(body) > 300_000_000:
+        raise_api_error("VALIDATION_FAILED", "That video is too large.")
+    thumb = await thumbnail.read() if thumbnail is not None else None
+    try:
+        return remote_render.done(job_id, body, thumb, seconds)
+    except ValueError as exc:
+        raise_api_error("VALIDATION_FAILED", str(exc))
+        return {}
+
+
+class RenderFailed(BaseModel):
+    error: str = ""
+    worker: str = ""
+
+
+@router.post("/render/{job_id}/failed")
+def render_failed(job_id: str, payload: RenderFailed, auth: AuthContext = Depends(ANY)) -> dict[str, Any]:
+    from ..services import remote_render
+
+    _may_make_videos(auth)
+    return remote_render.fail(job_id, payload.error, worker=payload.worker)
+
+
 # ── liking back, and the posts that get comments ─────────────────────────────
 
 @router.get("/poster/engage/next")
