@@ -353,7 +353,7 @@ def list_videos(grade: str = Query(...), subject: str = Query(...), sub_strand: 
 
 @router.get("/items/{question_id}/social.html")
 def social_page(question_id: str, voice: str = Query(""),
-                teacher: Literal["", "off", "female", "male", "alternate"] = Query(""),
+                teacher: Literal["", "off", "female", "male", "alternate", "classroom"] = Query(""),
                 auth: AuthContext = Depends(ANY)) -> HTMLResponse:
     """The vertical cut, live and voiced — what the post's video will be.
     `teacher` previews it with a woman or a man teacher, or none, whatever
@@ -944,7 +944,7 @@ def auto_book_now(auth: AuthContext = Depends(ANY)) -> dict[str, Any]:
 
 
 class TeacherNow(BaseModel):
-    mode: Literal["female", "male", "alternate"] = "alternate"
+    mode: Literal["female", "male", "alternate", "classroom"] = "alternate"
     limit: int = Field(60, ge=1, le=500)
     pause_lessons: bool = True
 

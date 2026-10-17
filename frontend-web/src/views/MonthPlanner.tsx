@@ -264,6 +264,7 @@ function TeacherSwitch({ view, onDone }: { view: MonthView; onDone: () => void }
     <Stack direction="row" gap="var(--s2)" wrap align="center" style={{ fontSize: "var(--text-sm)", borderTop: "1px dashed var(--line)", paddingTop: "var(--s2)" }}>
       <span>🎬 Teacher videos{on ? <> — <Badge tone="ok">on: {view.rules.teacher}</Badge></> : ""}</span>
       <Select value={mode} onChange={(e) => setMode(e.target.value as any)} style={{ width: "auto" }}>
+        <option value="classroom">A classroom: teacher and two students</option>
         <option value="alternate">Woman and man, half each</option>
         <option value="female">A woman teacher</option>
         <option value="male">A man teacher</option>

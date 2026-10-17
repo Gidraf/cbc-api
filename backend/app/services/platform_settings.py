@@ -200,7 +200,7 @@ SETTINGS: tuple[Setting, ...] = (
             "question.", True, "Social"),
     Setting("social_teacher", "SOCIAL_TEACHER", "string", "Teacher in social videos",
             "A 3D teacher reads the question, thinks through the countdown, cheers the answer and asks \"Did you get it "
-            "right?\". off, female, male, or alternate (half and half, by question). A woman teacher speaks with "
+            "right?\". off, female, male, alternate (half and half, by question), or classroom (a teacher and two students: the teacher asks, a student works it out in a young voice, \"Did Juma get it right?\"). A woman teacher speaks with "
             "the Kenyan woman's voice (Asilia), a man with the Kenyan man's (Chilemba). Videos already made keep "
             "serving until they are made again.", "off", "Social"),
     Setting("social_countdown_seconds", "", "int", "Countdown (seconds)",

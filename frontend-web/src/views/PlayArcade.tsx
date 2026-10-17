@@ -576,6 +576,7 @@ function WatchModal({ questionId, onClose, start = "whiteboard" }: { questionId:
               <option value="">As in Settings</option>
               <option value="female">🎓 A woman</option>
               <option value="male">🎓 A man</option>
+              <option value="classroom">🏫 A classroom</option>
               <option value="off">None</option>
             </Select>
           </label>

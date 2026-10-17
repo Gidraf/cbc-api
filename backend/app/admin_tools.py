@@ -172,7 +172,7 @@ def main(argv: list[str] | None = None) -> int:
     k = sub.add_parser("rotate-master-key", help="move saved provider keys to NEW_MASTER_KEY")
     k.add_argument("--dry-run", action="store_true")
     tn = sub.add_parser("teacher-now", help="turn the teacher on and render the booked posts' videos with it first")
-    tn.add_argument("--mode", default="alternate", choices=["female", "male", "alternate"])
+    tn.add_argument("--mode", default="alternate", choices=["female", "male", "alternate", "classroom"])
     tn.add_argument("--limit", type=int, default=60, help="how many booked videos to queue (soonest first)")
     tn.add_argument("--keep-lessons", action="store_true", help="do not pause the daily lesson videos")
     lr = sub.add_parser("lessons-resume", help="the daily lesson videos again")

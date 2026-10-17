@@ -41,7 +41,7 @@ def mode() -> str:
         value = str(platform_settings.get("social_teacher", "off") or "off").strip().lower()
     except Exception:  # noqa: BLE001
         value = "off"
-    return value if value in ("female", "male", "alternate") else "off"
+    return value if value in ("female", "male", "alternate", "classroom") else "off"
 
 
 def gender_for(question_id: str, how: str | None = None) -> str:
@@ -49,6 +49,8 @@ def gender_for(question_id: str, how: str | None = None) -> str:
     how = mode() if how is None else how
     if how == "off":
         return ""
+    if how == "classroom":
+        return cast_for(question_id)["teacher"]["gender"]
     if how == "alternate":
         return "female" if int(hashlib.sha256(question_id.encode()).hexdigest(), 16) % 2 == 0 else "male"
     return how
@@ -162,8 +164,8 @@ def render_now(how: str = "alternate", *, limit: int = 60, pause_lessons: bool =
     from . import platform_settings, social
     from .whiteboard import JOB_KIND as LESSON
 
-    if how not in ("female", "male", "alternate"):
-        raise ValueError("The teacher is female, male or alternate.")
+    if how not in ("female", "male", "alternate", "classroom"):
+        raise ValueError("The teacher is female, male, alternate or classroom.")
     platform_settings.set_many({"social_teacher": how}, updated_by=by or "teacher-now")
     out: dict[str, Any] = {"teacher": how, "lessons_cancelled": 0, "daily_target_was": None}
     if pause_lessons:
@@ -293,3 +295,85 @@ def visemes(text: str, envelope: list[float], *, quiet: float = 0.06) -> str:
         if v <= quiet * 0.5:
             frames[k] = "X"
     return "".join(frames)
+
+
+# ── the classroom: a teacher and two students ────────────────────────────────
+#
+# Mode "classroom" (Settings → Social → Teacher): the teacher reads the
+# question, the class thinks through the countdown, one student works the
+# solution in a young voice, and the teacher asks "Did Juma get it right?".
+# Who teaches, who answers and in which voices is picked by the question, so
+# every video differs and a video never changes.
+
+TEACHERS = [
+    {"model": "female", "gender": "female", "older": False},
+    {"model": "male", "gender": "male", "older": False},
+    {"model": "teacher_older_f", "gender": "female", "older": True},
+    {"model": "teacher_older_m", "gender": "male", "older": True},
+]
+STUDENTS = [
+    {"model": "student_boy", "gender": "male",
+     "names": ["Juma", "Kamau", "Otieno", "Kiprop", "Baraka", "Wafula", "Mutua", "Omondi"]},
+    {"model": "student_girl", "gender": "female",
+     "names": ["Nekesa", "Wanjiku", "Amina", "Zainab", "Halima", "Fatuma", "Rehema", "Aisha"]},
+]
+TEACHER_VOICES = {"female": ["en-KE-AsiliaNeural", "en-NG-EzinneNeural", "en-ZA-LeahNeural", "en-TZ-ImaniNeural"],
+                  "male": ["en-KE-ChilembaNeural", "en-NG-AbeoNeural", "en-ZA-LukeNeural", "en-TZ-ElimuNeural"]}
+# Young voices: a Kenyan voice raised in pitch and a little quicker, or a child's voice.
+STUDENT_VOICES = {"female": ["en-KE-AsiliaNeural|+30Hz|+6%", "en-US-AnaNeural", "en-TZ-ImaniNeural|+28Hz|+6%"],
+                  "male": ["en-KE-ChilembaNeural|+45Hz|+7%", "en-NG-AbeoNeural|+45Hz|+7%", "en-TZ-ElimuNeural|+42Hz|+7%"]}
+PLACES = {"teacher": {"x": -0.6, "ry": 0.3}, "s1": {"x": 0.32, "ry": -0.25}, "s2": {"x": 0.92, "ry": -0.4}}
+
+
+def _model_exists(name: str) -> bool:
+    from .whiteboard import STATIC
+
+    return (STATIC / "teachers" / f"{name}.glb").exists()
+
+
+def cast_for(question_id: str) -> dict[str, Any]:
+    """The classroom for one question: the teacher, the two students (s1
+    answers), their models, names and voices."""
+    n = int(hashlib.sha256(f"class:{question_id}".encode()).hexdigest(), 16)
+    teachers = [t for t in TEACHERS if _model_exists(t["model"])] or TEACHERS[:2]
+    t = teachers[n % len(teachers)]
+    tv = TEACHER_VOICES[t["gender"]][(n // 7) % len(TEACHER_VOICES[t["gender"]])]
+    if t["older"]:
+        tv = f"{tv}|-6Hz|-7%"
+    students = [s for s in STUDENTS if _model_exists(s["model"])]
+    answering = students[(n // 11) % len(students)] if students else None
+    other = next((s for s in students if s is not answering), None)
+    cast = {"teacher": {"id": "teacher", "model": t["model"], "gender": t["gender"], "voice": tv, **PLACES["teacher"]}}
+    if answering:
+        cast["s1"] = {"id": "s1", "model": answering["model"], "gender": answering["gender"],
+                      "name": answering["names"][(n // 13) % len(answering["names"])],
+                      "voice": STUDENT_VOICES[answering["gender"]][(n // 17) % len(STUDENT_VOICES[answering["gender"]])],
+                      **PLACES["s1"]}
+    if other:
+        cast["s2"] = {"id": "s2", "model": other["model"], "gender": other["gender"],
+                      "name": other["names"][(n // 19) % len(other["names"])], **PLACES["s2"]}
+    return cast
+
+
+STUDENT_SCENES = {"setup", "rewrite", "step", "working", "answer", "number_line_start", "number_line_jump",
+                  "balance_move", "fraction_bars", "figure_read"}
+
+
+def classroom_script(scenes: list[dict[str, Any]], cast: dict[str, Any]) -> list[dict[str, Any]]:
+    """Who says each scene: the teacher asks, the student answers, the teacher checks."""
+    s1 = cast.get("s1")
+    out = []
+    for sc in scenes:
+        sc = dict(sc)
+        kind = str(sc.get("scene") or "")
+        if s1 and kind in STUDENT_SCENES:
+            sc["speaker"], sc["voice"] = "s1", s1["voice"]
+            if sc.get("say"):
+                sc["caption"] = f"{s1['name']}: {sc.get('caption') or sc['say']}"
+        else:
+            sc["speaker"], sc["voice"] = "teacher", cast["teacher"]["voice"]
+        if kind == "check" and s1:
+            sc["say"] = f"Did {s1['name']} get it right? Tell us in the comments!"
+            sc["caption"] = f"Did {s1['name']} get it right? Comment ✅ or ❌"
+        out.append(sc)
+    return out
