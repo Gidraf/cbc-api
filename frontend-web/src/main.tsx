@@ -32,6 +32,7 @@ import { PromptFragments } from "./views/PromptFragments";
 import { QuestionBank } from "./views/QuestionBank";
 import { Review } from "./views/Review";
 import { SignIn } from "./views/SignIn";
+import { Signups } from "./views/Signups";
 import { Wallet } from "./views/Wallet";
 import { Developer } from "./views/Developer";
 import { Classroom } from "./views/Classroom";
@@ -119,6 +120,7 @@ function Router() {
             </Screen>
           }
         />
+        <Route path="accounts" element={<Screen name="Accounts & payments"><Signups /></Screen>} />
         <Route path="coverage" element={<Screen name="Curriculum coverage"><Coverage /></Screen>} />
         <Route path="factory" element={<Screen name="Content factory"><ContentFactory /></Screen>} />
         <Route path="questions" element={<Screen name="Question bank"><QuestionBank /></Screen>} />

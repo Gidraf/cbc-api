@@ -62,6 +62,7 @@ const NAV: { group: string; items: NavItem[] }[] = [
       // "generate" is admin + operator, matching who the sync/process endpoints
       // actually accept. There is no "datasets" right, so naming one would have
       // hidden this screen from every role.
+      { to: "/accounts", label: "Accounts & payments", icon: "₭", right: "configure", hint: "Who signed up, when, and who pays" },
       { to: "/queue", label: "Queue", icon: "≡", right: "generate", hint: "Every job live: running, waiting, done, failed — and why" },
       { to: "/datasets", label: "Datasets", icon: "▤", right: "generate", hint: "Curriculum designs waiting to be ingested" },
       { to: "/skills", label: "Teaching skills", icon: "◎", right: "generate", hint: "Per-subject expertise injected into every prompt" },

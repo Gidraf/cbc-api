@@ -34,6 +34,15 @@ x-backend-env: &backend-env
   # Videos rendering at once — empty: one for every two cores. They render in
   # render-worker, on their own queue, so they never wait behind generation.
   RENDER_WORKERS: ${RENDER_WORKERS:-}
+  # M-Pesa (Daraja) — the api needs these for top-ups; they were never passed in.
+  MPESA_ENV: ${MPESA_ENV:-sandbox}
+  MPESA_CONSUMER_KEY: ${MPESA_CONSUMER_KEY:-}
+  MPESA_CONSUMER_SECRET: ${MPESA_CONSUMER_SECRET:-}
+  MPESA_SHORTCODE: ${MPESA_SHORTCODE:-}
+  MPESA_PASSKEY: ${MPESA_PASSKEY:-}
+  MPESA_TYPE: ${MPESA_TYPE:-paybill}
+  MPESA_TILL_NUMBER: ${MPESA_TILL_NUMBER:-}
+  MPESA_CALLBACK_TOKEN: ${MPESA_CALLBACK_TOKEN:-}
   CELERY_RENDER_QUEUE: ${CELERY_RENDER_QUEUE:-cbc_render}
   # Database 1, so the generation broker cannot be confused with — or flushed
   # alongside — the older pipeline queue on database 0.

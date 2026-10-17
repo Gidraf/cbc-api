@@ -1622,6 +1622,16 @@ MIGRATIONS: list[tuple[str, str]] = [
         ALTER TABLE social_posts ADD COLUMN IF NOT EXISTS boost_base REAL NULL;
         """,
     ),
+    (
+        "059_account_signups",
+        """
+        -- When each account was made. Accounts from before this have only
+        -- their last change: that stands in for the day they joined.
+        ALTER TABLE app_users ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NULL;
+        UPDATE app_users SET created_at = updated_at WHERE created_at IS NULL;
+        ALTER TABLE app_users ALTER COLUMN created_at SET DEFAULT NOW();
+        """,
+    ),
 ]
 
 
