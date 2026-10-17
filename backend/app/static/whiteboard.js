@@ -38,6 +38,7 @@
   el("rect", { x: 14, y: 14, width: W - 28, height: H - 28, rx: 6, fill: "none", stroke: "#d6d3cb", "stroke-width": 3 }, svg);
   const ink = el("g", {}, svg);
   const hand = buildHand();
+  if (data.no_hand) hand.style.display = "none";   // a developer's video: the work speaks, no hand
 
   function el(tag, attrs, parent) {
     const node = document.createElementNS(NS, tag);
@@ -358,6 +359,105 @@
       cursorY = y + 20;
       return { at, y };
     },
+    arch(s, at, dur) {
+      // An architecture: the parts as boxes, left to right in the order data
+      // reaches them, the arrows drawn between, then the data itself — dots
+      // running along each arrow in turn, again and again while it is said.
+      at = newPage(at); cursorY = H;
+      const nodes = (s.nodes || []).slice(0, 9), edges = (s.edges || []).filter((e) => e && e.from && e.to).slice(0, 14);
+      if (!nodes.length) return at + dur;
+      const col = {};
+      nodes.forEach((n) => { col[n.id] = 0; });
+      for (let pass = 0; pass < nodes.length; pass++) {
+        for (const e of edges) if (e.from in col && e.to in col && col[e.to] < col[e.from] + 1 && col[e.from] + 1 < nodes.length) col[e.to] = col[e.from] + 1;
+      }
+      const cols = Math.max(...Object.values(col)) + 1, byCol = {};
+      nodes.forEach((n) => { (byCol[col[n.id]] = byCol[col[n.id]] || []).push(n); });
+      const top = s.title ? 120 : 70, bw = Math.min(230, (W - 120) / cols - 40), bh = 78, pos = {};
+      if (s.title) at = write(centered(70, String(s.title), { size: 34, color: INK.blue }), at, Math.min(1, dur * 0.12));
+      Object.entries(byCol).forEach(([c, list]) => {
+        const x = 60 + (Number(c) + 0.5) * ((W - 120) / cols) - bw / 2;
+        list.forEach((n, r) => { pos[n.id] = { x, y: top + (r + 0.5) * ((H - top - 40) / list.length) - bh / 2, n }; });
+      });
+      const COLORS = { ui: INK.blue, user: INK.green, api: INK.red, data: "#7c3aed", logic: INK.black, external: INK.grey };
+      const per = (dur * 0.45) / (nodes.length + edges.length);
+      for (const id in pos) {
+        const p = pos[id], color = COLORS[p.n.kind] || INK.black;
+        at = draw(sketchBox(p.x, p.y, bw, bh, color), at, per * 0.6);
+        const words = wrap(p.n.label || id, Math.round(bw / 13));
+        words.slice(0, 2).forEach((line, k) => {
+          const t = text(0, -200, line, { size: 22, color });
+          const w = t.getBBox().width; t.remove();
+          at = write(text(p.x + (bw - w) / 2, p.y + (words.length > 1 ? 32 + k * 30 : 48), line, { size: 22, color }), at, per * 0.4 / Math.min(2, words.length));
+        });
+      }
+      const paths = [];
+      for (const e of edges) {
+        const a = pos[e.from], b = pos[e.to];
+        if (!a || !b) continue;
+        const x1 = a.x + bw, y1 = a.y + bh / 2, x2 = b.x, y2 = b.y + bh / 2;
+        const back = x2 <= x1;
+        const sx = back ? a.x + bw / 2 : x1, sy = back ? (a.y < b.y ? a.y + bh : a.y) : y1;
+        const ex = back ? b.x + bw / 2 : x2 - 6, ey = back ? (a.y < b.y ? b.y : b.y + bh) : y2;
+        const line = sketchLine(sx, sy, ex, ey, INK.grey, 3);
+        at = draw(line, at, per * 0.7);
+        const ang = Math.atan2(ey - sy, ex - sx);
+        const head = path(`M${ex - 16 * Math.cos(ang - 0.45)},${ey - 16 * Math.sin(ang - 0.45)} L${ex},${ey} L${ex - 16 * Math.cos(ang + 0.45)},${ey - 16 * Math.sin(ang + 0.45)}`, INK.grey, 3);
+        show(head, at - 0.1, 0.15);
+        if (e.label) {
+          const t = text((sx + ex) / 2 - 40, (sy + ey) / 2 - 10, String(e.label).slice(0, 18), { size: 16, color: INK.grey });
+          show(t, at, 0.2);
+          t._clip.setAttribute("width", 400);
+        }
+        paths.push(line);
+      }
+      // The data, moving.
+      const end = at + Math.max(1, dur * 0.5) - 0.2;
+      let k = 0, t0 = at;
+      while (paths.length && t0 < end) {
+        const p = paths[k % paths.length], len = p.getTotalLength();
+        const dot = el("circle", { r: 9, fill: INK.red, opacity: 0 }, page);
+        const o = { t: 0 };
+        tl.set(dot, { opacity: 1 }, t0);
+        tl.to(o, { t: 1, duration: 0.7, ease: "none", onUpdate() { const pt = p.getPointAtLength(len * o.t); dot.setAttribute("cx", pt.x); dot.setAttribute("cy", pt.y); } }, t0);
+        tl.set(dot, { opacity: 0 }, t0 + 0.72);
+        t0 += 0.55; k++;
+      }
+      return Math.max(at, end) + 0.2;
+    },
+
+    code(s, at, dur) {
+      // An editor: a dark page, the file's name, the code typed line by line.
+      at = newPage(at); cursorY = H;
+      // The editor's frame and gutter: drawn now, there from this scene on.
+      const frame = el("g", { opacity: 0 }, page);
+      tl.to(frame, { opacity: 1, duration: 0.3 }, at);
+      el("rect", { x: 20, y: 20, width: W - 40, height: H - 40, rx: 14, fill: "#0f172a" }, frame);
+      el("rect", { x: 20, y: 20, width: W - 40, height: 46, rx: 14, fill: "#1e293b" }, frame);
+      ["#ef4444", "#f59e0b", "#22c55e"].forEach((c, k) => el("circle", { cx: 50 + k * 24, cy: 43, r: 7, fill: c }, frame));
+      const mono = "'JetBrains Mono', 'Fira Code', Menlo, Consolas, monospace";
+      const name = text(130, 52, String(s.file || ""), { size: 15, color: "#94a3b8" });
+      name.setAttribute("font-family", mono); name._clip.setAttribute("width", 900);
+      frame.appendChild(name);
+      const lines = String(s.code || "").replace(/\t/g, "  ").split("\n").slice(0, 16);
+      const size = 15, lh = Math.min(38, (H - 110) / Math.max(8, lines.length));
+      const light = new Set((s.highlight || []).map(Number));
+      const typed = lines.reduce((a, l) => a + Math.max(1, l.trim().length), 0) || 1;
+      const budget = dur * 0.85;
+      lines.forEach((line, k) => {
+        const y = 100 + k * lh;
+        const comment = /^\s*(\/\/|#|\/\*|\*|<!--)/.test(line);
+        el("text", { x: 34, y, "font-size": Math.round(size * ZOOM * 0.8), fill: "#475569", "font-family": mono }, frame).textContent = String(k + 1);
+        if (light.has(k + 1)) el("rect", { x: 22, y: y - lh * 0.72, width: W - 44, height: lh, fill: "rgba(250,204,21,.13)" }, frame);
+        if (!line.trim()) return;
+        const t = text(80, y, line, { size, color: comment ? "#64748b" : light.has(k + 1) ? "#fde68a" : "#e2e8f0" });
+        t.setAttribute("font-family", mono);
+        t.style.whiteSpace = "pre";
+        at = write(t, at, budget * Math.max(1, line.trim().length) / typed);
+      });
+      return at + dur * 0.1;
+    },
+
     screen(s, at, dur) {
       // A screen of the app, the whole board: it slides in, then the hand
       // goes to what to press and rings it, as a teacher shows a projector.

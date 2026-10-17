@@ -658,6 +658,9 @@ class LangfuseContextService:
     # work this is supposed to make easier, thrown away to make it tidier.
     FOLDERS: dict[str, str] = {
         "curriculum-extractor": "extract/curriculum",
+        "dev-project-planner": "developer/project-planner",
+        "dev-file-writer": "developer/file-writer",
+        "dev-file-fixer": "developer/file-fixer",
         "grade-scope-extractor": "extract/grade-scope",
         "profile-generator": "extract/teaching-profile",
         "rubric-generator": "extract/rubrics",

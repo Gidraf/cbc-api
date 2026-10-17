@@ -220,6 +220,8 @@ async def tick() -> dict[str, Any]:
         # Nothing to post: the comments due under posts that are out — or,
         # with none due, the next like-back step.
         try:
+            if await linkedin_step():
+                return {"skipped": state["note"]}
             done = await comment_step()
             if not done.get("ok") and done.get("error") == "No post to comment on.":
                 await engage_step()
@@ -227,6 +229,51 @@ async def tick() -> dict[str, Any]:
             log.warning("Comment or like-back step failed: %s", _why(exc))
         return {"skipped": state["note"]}
     return await publish(nxt["post"], dry_run=False)
+
+
+async def linkedin_step() -> bool:
+    """A developer-studio post on LinkedIn, if one is queued: True when one was tried."""
+    try:
+        post = await cbc.linkedin_next()
+    except Exception:  # noqa: BLE001
+        return False                      # an older server: no LinkedIn queue
+    if not post:
+        return False
+    flow = FLOWS.get("linkedin")
+    kind = "pdf" if post["kind"] == "document" else "mp4"
+    path = ""
+    async with browser.lock:
+        state["busy"] = f"Posting a {post['kind']} on LinkedIn"
+        page = None
+        try:
+            path = await cbc.download(post["media_url"], f"li-{post['post_id']}.{kind}")
+            page = await browser.page()
+            if post["kind"] == "document":
+                url = await flow.post_document(page, pdf=path, caption=post["body"], title=post["title"], dry_run=False)
+            else:
+                url = await flow.post(page, video=path, caption=post["body"], title=post["title"], dry_run=False)
+            await cbc.linkedin_done(post["post_id"], ok=True, url=url or "")
+            await _set_login("linkedin", True)
+            log.info("LinkedIn %s posted: %s", post["kind"], post["post_id"])
+        except NotLoggedIn as exc:
+            await _set_login("linkedin", False, "Log in on the screen.")
+            await cbc.linkedin_done(post["post_id"], ok=False, error=str(exc))
+        except Exception as exc:  # noqa: BLE001
+            log.info("LinkedIn %s failed: %s", post["post_id"], _why(exc))
+            await cbc.linkedin_done(post["post_id"], ok=False, error=_why(exc))
+        finally:
+            state["busy"] = ""
+            if page is not None:
+                try:
+                    await page.close()
+                except Exception:  # noqa: BLE001
+                    pass
+            if path:
+                try:
+                    os.remove(path)
+                except OSError:
+                    pass
+    return True
 
 
 async def engage_step(*, check: bool = False) -> dict[str, Any]:

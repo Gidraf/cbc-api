@@ -147,7 +147,8 @@ def page(data: dict[str, Any], *, title: str = "", voice: str = "en-KE", duratio
     hook, captions, a countdown and the brand (see services/social.py)."""
     payload = {"scenes": _written(data.get("scenes") or []), "seed": str(data.get("question_id") or title or "wb"),
                "voice": voice, "durations": durations or [], "audio": audio or [],
-               "lead": LEAD + (COVER if (social or {}).get("cover") else 0.0)}
+               "lead": LEAD + (COVER if (social or {}).get("cover") else 0.0),
+               "no_hand": bool(data.get("no_hand"))}
     if social:
         payload["social"] = {k: v for k, v in social.items() if k not in ("logo", "music_url")}
         if (social.get("teacher") or {}).get("cast"):

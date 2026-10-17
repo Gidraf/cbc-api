@@ -51,7 +51,9 @@ def test_no_prompt_hardcodes_an_agriculture_example(agent: str) -> None:
 # `curriculum-extractor` runs before the grade is known, and `prompt-improver`
 # edits a prompt rather than authoring anything — giving it a learner register
 # and a faith scope would be describing an audience it does not have.
-NOT_ABOUT_A_LEARNER = {"curriculum-extractor", "prompt-improver"}
+NOT_ABOUT_A_LEARNER = {"curriculum-extractor", "prompt-improver",
+                       # The developer studio writes apps for developers: code, not a lesson.
+                       "dev-project-planner", "dev-file-writer", "dev-file-fixer"}
 
 
 @pytest.mark.parametrize(

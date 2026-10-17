@@ -1622,6 +1622,46 @@ MIGRATIONS: list[tuple[str, str]] = [
         ALTER TABLE social_posts ADD COLUMN IF NOT EXISTS boost_base REAL NULL;
         """,
     ),
+    (
+        "060_dev_projects",
+        """
+        -- The developer studio: an idea built into an app on the CBC API, its
+        -- videos and its book; and what goes out on LinkedIn.
+        CREATE TABLE IF NOT EXISTS dev_projects (
+            project_id TEXT PRIMARY KEY,
+            idea TEXT NOT NULL,
+            category TEXT NOT NULL DEFAULT 'productivity',
+            provider TEXT NOT NULL DEFAULT '',
+            model TEXT NOT NULL DEFAULT '',
+            title TEXT NOT NULL DEFAULT '',
+            stage TEXT NOT NULL DEFAULT 'queued',
+            status TEXT NOT NULL DEFAULT 'queued',
+            error TEXT NOT NULL DEFAULT '',
+            plan JSONB NULL,
+            files JSONB NULL,
+            tests JSONB NULL,
+            shots JSONB NULL,
+            urls JSONB NOT NULL DEFAULT '{}'::jsonb,
+            created_by TEXT NOT NULL DEFAULT '',
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        CREATE TABLE IF NOT EXISTS linkedin_posts (
+            post_id TEXT PRIMARY KEY,
+            project_id TEXT NOT NULL DEFAULT '',
+            kind TEXT NOT NULL,
+            media_url TEXT NOT NULL DEFAULT '',
+            title TEXT NOT NULL DEFAULT '',
+            body TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'queued',
+            attempts INTEGER NOT NULL DEFAULT 0,
+            url TEXT NOT NULL DEFAULT '',
+            error TEXT NOT NULL DEFAULT '',
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            posted_at TIMESTAMPTZ NULL
+        );
+        """,
+    ),
 ]
 
 

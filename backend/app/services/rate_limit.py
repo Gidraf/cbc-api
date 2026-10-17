@@ -35,6 +35,7 @@ LIMITS: dict[str, tuple[int, int]] = {
     "forgot_who": (3, 60 * 60),         # ... and per username or email: no inbox flooding
     "email_link_ip": (30, 15 * 60),     # reset / confirm links tried: no guessing them
     "confirm_owner": (5, 60 * 60),      # confirm emails an account may resend
+    "devdemo_ip": (60, 10 * 60),        # a developer demo's questions, per address (no key, so few)
 }
 
 

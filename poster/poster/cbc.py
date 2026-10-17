@@ -123,6 +123,16 @@ async def comments_done(post_id: str, stage: str, *, ok: bool, error: str = "", 
                       **({"metrics": metrics} if metrics else {})})
 
 
+async def linkedin_next() -> dict[str, Any] | None:
+    """The next developer-studio post for LinkedIn: a document (PDF) or a video."""
+    r = await _call("GET", "/api/v1/dev/linkedin/next", timeout=60)
+    return r.json().get("post")
+
+
+async def linkedin_done(post_id: str, *, ok: bool, url: str = "", error: str = "") -> None:
+    await _call("POST", f"/api/v1/dev/linkedin/{post_id}/done", json={"ok": ok, "url": url, "error": error[:450]})
+
+
 async def engage_next() -> dict[str, Any]:
     """The next like-back step (read a post's comments, or like a person's posts), or why none."""
     r = await _call("GET", "/api/v1/play/poster/engage/next", timeout=60, params={"poster_id": config.POSTER_ID})

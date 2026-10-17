@@ -27,7 +27,7 @@ export default defineConfig(({ mode }) => {
   // Shared between `server` and `preview`: the deployed console serves a built
   // bundle through `preview`, and an API that is only reachable in dev is an
   // API that works on a laptop and 502s in production.
-  const API_PREFIXES = ["/api", "/admin", "/generate", "/auth", "/pipeline", "/health"];
+  const API_PREFIXES = ["/api", "/admin", "/generate", "/auth", "/pipeline", "/health", "/p"];
   const proxy = Object.fromEntries(
     API_PREFIXES.map((path) => [
       `^${path}(?:[/?]|$)`,
