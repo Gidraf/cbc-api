@@ -139,3 +139,16 @@ def test_a_due_answer_goes_before_other_posts_first_comments(db) -> None:
     execute("UPDATE social_posts SET comments_next_at = :t WHERE post_id = :id", {"t": NOW - timedelta(minutes=1), "id": fresh})
     job = se.comments_next(NOW)["job"]
     assert job["post_id"] == fresh and job["stage"] == "later"
+
+
+def test_the_post_insights_page_is_read_as_facebook_shows_it() -> None:
+    import sys
+    from pathlib import Path
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "poster"))
+    from poster.flows import fb_comments
+
+    page = "Post insights\nViews over time\n20\n15\nViews\n22\nViewers\n7\nAverage views per viewer\n2.6\n4 Engagement\nComments\n2\nShares\n0"
+    got = fb_comments.parse_insights(page)
+    assert got["views"] == 22 and got["viewers"] == 7 and got["engagement"] == 4
+    assert got["reactions"] == 2, "the total less comments and shares"
