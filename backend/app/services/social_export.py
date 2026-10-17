@@ -809,7 +809,11 @@ def comments_next(now: datetime | None = None, *, check: bool = False) -> dict[s
         """SELECT post_id, question_id, platform, url, comments_state, boost_index FROM social_posts
            WHERE comments_state IN ('pending', 'part', 'boost') AND comments_attempts < :tries
              AND comments_next_at <= :now AND posted_at <= :now
-           ORDER BY comments_next_at LIMIT 1""", {"tries": COMMENT_TRIES, "now": now - timedelta(seconds=30)})
+           -- An answer that is due goes before other posts' first comments (it
+           -- follows its choices by a minute, not after a whole backlog), and
+           -- the loop's extra comments come last.
+           ORDER BY CASE comments_state WHEN 'part' THEN 0 WHEN 'pending' THEN 1 ELSE 2 END, comments_next_at
+           LIMIT 1""", {"tries": COMMENT_TRIES, "now": now - timedelta(seconds=30)})
     if row and row["comments_state"] == "boost":
         extras = _extras(row["question_id"])
         k = int(row.get("boost_index") or 0)

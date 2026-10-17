@@ -127,3 +127,15 @@ def test_the_weakest_post_is_read_first(db) -> None:
     execute("UPDATE social_posts SET metrics_at = :t, score = 50 WHERE post_id = :id", {"t": NOW - timedelta(hours=4), "id": strong})
     execute("UPDATE social_posts SET metrics_at = :t, score = 1 WHERE post_id = :id", {"t": NOW - timedelta(hours=4), "id": weak})
     assert se.comments_next(NOW)["job"]["post_id"] == weak
+
+
+@needs_db
+def test_a_due_answer_goes_before_other_posts_first_comments(db) -> None:
+    from app.infra.db import execute
+
+    old = _post("old", state="pending", hours_ago=30)          # queued from the backlog, long due
+    fresh = _post("fresh", state="part", hours_ago=1)          # its choices went up a minute ago
+    execute("UPDATE social_posts SET comments_next_at = :t WHERE post_id = :id", {"t": NOW - timedelta(hours=30), "id": old})
+    execute("UPDATE social_posts SET comments_next_at = :t WHERE post_id = :id", {"t": NOW - timedelta(minutes=1), "id": fresh})
+    job = se.comments_next(NOW)["job"]
+    assert job["post_id"] == fresh and job["stage"] == "later"
