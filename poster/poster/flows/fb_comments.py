@@ -240,6 +240,21 @@ def parse_insights(text: str) -> dict[str, int]:
     return out
 
 
+def _keep_text(text: str) -> None:
+    """The insights page's words beside the screenshots — for reading its labels right."""
+    import os
+    import time
+
+    from .. import config
+
+    try:
+        os.makedirs(config.SHOTS_DIR, exist_ok=True)
+        with open(os.path.join(config.SHOTS_DIR, f"facebook-insights-{int(time.time())}.txt"), "w") as fh:
+            fh.write(text[:20_000])
+    except OSError:
+        pass
+
+
 async def read_metrics(page: Page, post: Locator) -> dict[str, int]:
     """The post's numbers. "See insights" opens a whole "Post insights" page
     on a profile (Views, Viewers, then Engagement: reactions, comments,
@@ -265,6 +280,7 @@ async def read_metrics(page: Page, post: Locator) -> dict[str, int]:
                 await page.keyboard.press("Escape")
             else:
                 text = await page.locator("body").inner_text(timeout=15_000)
+            _keep_text(text)
             got = parse_insights(text)
             if got:
                 return {**shown, **got}
