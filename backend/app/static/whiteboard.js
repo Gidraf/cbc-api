@@ -358,6 +358,37 @@
       cursorY = y + 20;
       return { at, y };
     },
+    screen(s, at, dur) {
+      // A screen of the app, the whole board: it slides in, then the hand
+      // goes to what to press and rings it, as a teacher shows a projector.
+      at = newPage(at); cursorY = H;
+      const src = String(s.img || "");
+      if (!/^data:image\/(png|jpeg|webp);base64,/.test(src)) return at;
+      const g = el("g", {}, page);
+      const img = el("image", { href: src, x: 0, y: 0, width: W, height: H, preserveAspectRatio: "xMidYMid meet" }, g);
+      tl.fromTo(img, { opacity: 0 }, { opacity: 1, duration: 0.35 }, at);
+      const b = Array.isArray(s.box) ? s.box.map(Number) : [];
+      if (b.length === 4 && b[2] > 0 && b[3] > 0) {
+        const cx = b[0] + b[2] / 2, cy = b[1] + b[3] / 2;
+        const ring = sketchEllipse(cx, cy, b[2] / 2 + 26, b[3] / 2 + 18, INK.red);
+        g.appendChild(ring);
+        ring.setAttribute("stroke-width", 6);
+        const ringAt = at + Math.min(1.2, dur * 0.25), ringDur = Math.min(1.1, dur * 0.25);
+        draw(ring, ringAt, ringDur);
+        // Then closer: a phone shows the board small, so the screen grows
+        // round what was ringed (never past its own edges).
+        const k = Math.max(1, Math.min(2.1, W / (b[2] + 560)));
+        const tx = Math.min(0, Math.max(W - W * k, W / 2 - cx * k)), ty = Math.min(0, Math.max(H - H * k, H / 2 - cy * k));
+        const z = { k: 1, x: 0, y: 0 };
+        const zoomAt = ringAt + ringDur + 0.35;
+        if (k > 1.05 && zoomAt < at + dur - 0.8) {
+          tl.to(z, { k, x: tx, y: ty, duration: Math.min(1.2, at + dur - zoomAt - 0.4), ease: "power2.inOut",
+                     onUpdate() { g.setAttribute("transform", `translate(${z.x} ${z.y}) scale(${z.k})`); } }, zoomAt);
+        }
+      }
+      return at + dur;
+    },
+
     figure(s, at, dur) {
       // The item's own figure, drawn by the marker: every line traced as a
       // teacher would draw it, then the shading and the labels. It sits at

@@ -754,7 +754,10 @@ def _mux(ffmpeg: str, video: Path, spoken: list[tuple[Path | None, float]], star
         fade = max(0.0, seconds - 1.5)
         chains.append(f"[{m}:a]volume=0.10,afade=t=in:d=1,afade=t=out:st={fade:.2f}:d=1.5[mus]")
         labels.append("[mus]")
-    graph = ";".join(chains) + f";{''.join(labels)}amix=inputs={len(labels)}:normalize=0:dropout_transition=0,apad[aout]"
+    # The voice track ends with the video: padded to it and cut there, so a
+    # stray timestamp can never run the mix on (-t alone once wrote 90 MB).
+    graph = (";".join(chains) + f";{''.join(labels)}amix=inputs={len(labels)}:normalize=0:dropout_transition=0,"
+             f"apad=whole_dur={seconds:.2f},atrim=0:{seconds:.2f}[aout]")
     args += ["-filter_complex", graph, "-map", "0:v", "-map", "[aout]", "-c:v", "copy", "-c:a", "aac",
              "-b:a", "128k", "-t", f"{seconds:.2f}", "-movflags", "+faststart", str(out)]
     done = subprocess.run(args, capture_output=True, timeout=600)
