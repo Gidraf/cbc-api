@@ -256,6 +256,8 @@ def _browser(files: dict[str, str], *, run_tests: bool = True, demo: list[dict[s
 
     from playwright.sync_api import sync_playwright
 
+    from .browser import LAUNCH_ARGS
+
     host = "http://app.localhost"
     shots: list[dict[str, Any]] = []
 
@@ -277,7 +279,7 @@ def _browser(files: dict[str, str], *, run_tests: bool = True, demo: list[dict[s
 
     report: dict[str, Any] = {"tests": [], "errors": [], "console": []}
     with sync_playwright() as p:
-        br = p.chromium.launch(headless=True)
+        br = p.chromium.launch(headless=True, args=LAUNCH_ARGS)
         try:
             ctx = br.new_context(viewport={"width": 1280, "height": 720}, device_scale_factor=1.5)
             ctx.route("**/*", handle)
@@ -482,9 +484,10 @@ def render_book(row: dict[str, Any]) -> str:
     from playwright.sync_api import sync_playwright
 
     from ..infra.storage import object_storage, public_object_url
+    from .browser import LAUNCH_ARGS
 
     with sync_playwright() as p:
-        br = p.chromium.launch(headless=True)
+        br = p.chromium.launch(headless=True, args=LAUNCH_ARGS)
         try:
             page = br.new_page()
             page.set_content(book_html(row), wait_until="load")
