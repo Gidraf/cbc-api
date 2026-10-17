@@ -839,7 +839,8 @@
     scenes.forEach((s, i) => {
       starts.push(at);
       tl.addLabel(`s${i}`, at);
-      const fn = builders[s.scene];
+      // A scene Manim animates is laid over the board afterwards: nothing drawn here.
+      const fn = s.manim ? null : builders[s.scene];
       if (fn) {
         try { fn(s, at, durations[i] - GAP); } catch (e) { console.warn("scene", i, s.scene, e); }
       }

@@ -414,6 +414,20 @@ def render(data: dict[str, Any], *, title: str = "", voice: str = "", subject: s
             social = {**social, "teacher": {**social["teacher"], "fps": fps, "mouth": mouth,
                                             "shapes": [teacher.visemes(str(sc.get("say") or ""), env)
                                                        for sc, env in zip(scenes, mouth)]}}
+        # The working, animated with Manim from the engine's steps (no model):
+        # the board leaves those scenes to the clips laid over it below.
+        clips: list[Any] = []
+        try:
+            from . import manim_steps
+
+            if manim_steps.enabled():
+                tick("manim", 0, 1)
+                marked, clips = manim_steps.plan(scenes, durations, starts, folder, fps)
+                if clips:
+                    data = {**data, "scenes": marked}
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Manim skipped: %s", exc)
+            clips = []
         doc = page(data, title=title, voice=voice, durations=durations, render=True, social=social)
         thumb_at = None
         if social:
@@ -425,6 +439,13 @@ def render(data: dict[str, Any], *, title: str = "", voice: str = "", subject: s
         video = folder / "board.mp4"
         seconds, thumb = _capture(cdp, doc, video, ffmpeg, fps, tick, size=size,
                                   selector="#social" if social else "#wb", thumb_at=thumb_at, webgl=teach)
+        if clips:
+            from . import manim_steps
+
+            laid = folder / "board-manim.mp4"
+            box = manim_steps.BOX_SOCIAL if social else manim_steps.BOX_PLAIN
+            if manim_steps.overlay(ffmpeg, video, clips, box, laid):
+                video = laid
         extras: list[tuple[Path, float]] = []
         music = None
         if social:

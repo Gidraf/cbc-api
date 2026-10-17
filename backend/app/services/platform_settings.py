@@ -224,6 +224,12 @@ SETTINGS: tuple[Setting, ...] = (
     Setting("social_music_url", "", "string", "Background music",
             "An MP3 played quietly under the voice. Use a track you own or that is royalty-free for social "
             "media. Upload it from Play → Social posts. Empty: no music.", "", "Social"),
+    Setting("whiteboard_manim", "", "bool", "Animate the working with Manim",
+            "The steps of a calculation, a number line, an equation balanced and fraction bars are animated with "
+            "Manim — the part done next ringed, its sum worked beside it, then turned into its result in place — "
+            "from the maths engine's own steps (no model, no tokens). The question, figure and countdown stay on "
+            "the whiteboard. Needs Manim and LaTeX on the renderer; without them the board draws everything.",
+            True, "Videos"),
     Setting("whiteboard_hand_style", "", "string", "Whiteboard hand",
             "Which hand writes on the whiteboard: emoji-dark (✍🏿, the default), emoji-medium-dark (✍🏾) or "
             "drawn. An uploaded hand photo, below, takes the place of all three.", "emoji-dark", "Whiteboard"),
