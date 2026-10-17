@@ -78,8 +78,11 @@ export default defineConfig(({ mode }) => {
           "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com",
           "font-src 'self' data: https://cdn.jsdelivr.net https://fonts.gstatic.com",
           "img-src 'self' data: blob: https:",
-          "media-src 'self' blob: https:",
-          "connect-src 'self'",
+          // The Play preview is a srcdoc page under this policy: its voice is
+          // data: audio, and the 3D teacher's textures are unpacked to blob:
+          // URLs and fetched. Both are the page's own bytes, never another site.
+          "media-src 'self' blob: data: https:",
+          "connect-src 'self' blob: data:",
           "frame-src 'self' blob: data:",
           "worker-src 'self' blob:",
           "object-src 'none'",
