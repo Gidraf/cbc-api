@@ -1599,6 +1599,29 @@ MIGRATIONS: list[tuple[str, str]] = [
         ALTER TABLE social_posts ADD COLUMN IF NOT EXISTS scanned_at TIMESTAMPTZ NULL;
         """,
     ),
+    (
+        "058_post_insights",
+        """
+        -- A post's numbers as the platform shows them, each time they are read,
+        -- and how far the engagement loop has gone through its comments.
+        CREATE TABLE IF NOT EXISTS post_insights (
+            id BIGSERIAL PRIMARY KEY,
+            post_id TEXT NOT NULL,
+            at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            views INTEGER NOT NULL DEFAULT 0,
+            reactions INTEGER NOT NULL DEFAULT 0,
+            comments INTEGER NOT NULL DEFAULT 0,
+            shares INTEGER NOT NULL DEFAULT 0,
+            score REAL NOT NULL DEFAULT 0
+        );
+        CREATE INDEX IF NOT EXISTS idx_post_insights_post ON post_insights(post_id, at DESC);
+        ALTER TABLE social_posts ADD COLUMN IF NOT EXISTS metrics_at TIMESTAMPTZ NULL;
+        ALTER TABLE social_posts ADD COLUMN IF NOT EXISTS score REAL NULL;
+        ALTER TABLE social_posts ADD COLUMN IF NOT EXISTS boost_index INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE social_posts ADD COLUMN IF NOT EXISTS boost_last_at TIMESTAMPTZ NULL;
+        ALTER TABLE social_posts ADD COLUMN IF NOT EXISTS boost_base REAL NULL;
+        """,
+    ),
 ]
 
 

@@ -67,6 +67,7 @@ import {
   useCommentPosts,
   useCommentThread,
   useEngage,
+  useInsights,
   useQueueComments,
   type SeriesPlan,
   useVoices,
@@ -1742,6 +1743,7 @@ function AutoPost() {
           )}
           {o.comments && <CommentThread c={o.comments} online={o.live.online} busy={command.isPending}
                                         onCheck={() => run("comments_check", "facebook")} />}
+          <KeepEngaged />
           <LikeBack online={o.live.online} busy={command.isPending} onCheck={() => run("engage_check", "facebook")} />
           {o.live.online && picking && (
             <PickGroups groups={o.groups || []} busy={command.isPending}
@@ -1896,6 +1898,62 @@ function ChoosePosts({ onDone }: { onDone: () => void }) {
                                        catch (err) { toast(err instanceof Error ? err.message : "Could not.", "danger"); } }}>
             Comment on {picked.length || ""} post{picked.length === 1 ? "" : "s"}</Button>
         </Stack>
+      )}
+    </div>
+  );
+}
+
+/** Keep posts engaged: insights read, the weakest first; a quiet post gets its next comment. */
+function KeepEngaged() {
+  const { state, save } = useInsights();
+  const toast = useToast();
+  const s = state.data;
+  const [perDay, setPerDay] = React.useState(40);
+  const [hours, setHours] = React.useState(3);
+  const [open, setOpen] = React.useState(false);
+  React.useEffect(() => { if (s) { setPerDay(s.per_day); setHours(s.hours); } }, [s?.per_day, s?.hours]);
+  if (!s) return null;
+  async function apply(enabled: boolean) {
+    try { await save.mutateAsync({ enabled, per_day: perDay, hours }); toast(enabled ? "Keeping posts engaged." : "Stopped adding comments.", "ok"); }
+    catch (err) { toast(err instanceof Error ? err.message : "Could not save.", "danger"); }
+  }
+  const fmt = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(1)}K` : String(n || 0));
+  return (
+    <div style={{ border: "1px solid var(--line)", borderRadius: "var(--radius)", padding: "var(--s2) var(--s3)", display: "grid", gap: 6, fontSize: "var(--text-sm)" }}>
+      <Stack direction="row" gap="var(--s2)" wrap align="center">
+        <strong>📈 Keep posts engaged</strong>
+        <Badge tone={s.enabled ? "ok" : "neutral"}>{s.enabled ? "on" : "off"}</Badge>
+        <span style={{ color: "var(--ink-3)", fontSize: "var(--text-xs)" }}>{s.measured} posts read · {s.boosts_today} of {s.per_day} extra comments today</span>
+        <span style={{ flex: 1 }} />
+        <label style={{ display: "inline-flex", gap: 4, alignItems: "center" }}>
+          <Input type="number" min={1} max={300} value={perDay} onChange={(e) => setPerDay(Math.max(1, Math.min(300, Number(e.target.value) || 40)))} style={{ width: 66 }} /> a day,</label>
+        <label style={{ display: "inline-flex", gap: 4, alignItems: "center" }}>every
+          <Input type="number" min={1} max={48} value={hours} onChange={(e) => setHours(Math.max(1, Math.min(48, Number(e.target.value) || 3)))} style={{ width: 56 }} /> h</label>
+        <Button size="sm" variant={s.enabled ? "ghost" : "primary"} loading={save.isPending} onClick={() => apply(!s.enabled)}>{s.enabled ? "Turn off" : "Turn on"}</Button>
+        {s.enabled && (perDay !== s.per_day || hours !== s.hours) && <Button size="sm" onClick={() => apply(true)}>Save</Button>}
+        <Button size="sm" variant="ghost" onClick={() => setOpen((x) => !x)}>{open ? "Hide insights" : "Insights"}</Button>
+      </Stack>
+      <span style={{ color: "var(--ink-3)", fontSize: "var(--text-xs)" }}>
+        The poster reads each post's insights — the weakest first — and every {hours} h, if a post has not improved, adds its next comment:
+        where it sits in the KICD design, what it tests, why each wrong choice is wrong, a hint, a similar question… up to 20 a post.
+      </span>
+      {open && (
+        <div style={{ maxHeight: 340, overflowY: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "var(--text-xs)" }}>
+            <thead><tr style={{ textAlign: "left", color: "var(--ink-3)" }}>
+              <th>Question</th><th>Views</th><th>Reactions</th><th>Comments</th><th>Shares</th><th>Score</th><th>Extra</th><th>Read</th></tr></thead>
+            <tbody>
+              {s.posts.map((p) => (
+                <tr key={p.post_id} style={{ borderTop: "1px solid var(--line-2)" }}>
+                  <td style={{ padding: "3px 4px", maxWidth: 300 }}>{plain(p.question_text).slice(0, 70)}</td>
+                  <td>{fmt(p.views)}</td><td>{fmt(p.reactions)}</td><td>{fmt(p.comments)}</td><td>{fmt(p.shares)}</td>
+                  <td>{p.score == null ? "—" : p.score}</td><td>{p.boost_index}</td>
+                  <td style={{ color: "var(--ink-3)" }}>{p.metrics_at ? new Date(p.metrics_at).toLocaleString([], { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "not yet"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
     </div>
   );

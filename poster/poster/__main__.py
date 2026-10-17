@@ -299,9 +299,11 @@ async def comment_step(*, check: bool = False) -> dict[str, Any]:
         page = await browser.page()
         try:
             out = await fb_comments.comment(page, find=job.get("find") or "", url=job.get("url") or "",
-                                            comments=job.get("comments") or [], image=image, check=check)
+                                            comments=job.get("comments") or [], image=image, check=check,
+                                            also=job.get("find_also") or [], measure=bool(job.get("measure")))
             if not check:
-                await cbc.comments_done(job["post_id"], job["stage"], ok=True, url=out.get("url") or "")
+                await cbc.comments_done(job["post_id"], job["stage"], ok=True, url=out.get("url") or "",
+                                        metrics=out.get("metrics") or None)
             log.info("Comments %s on %s: %s", "checked" if check else job["stage"], job["post_id"], out)
             return {"ok": True, "message": ("Found the newest post and its comment box — see the screenshot."
                                             if check else f"Commented ({job['stage']})."), "shot": out.get("shot")}

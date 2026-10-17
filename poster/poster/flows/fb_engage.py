@@ -51,9 +51,9 @@ _COMMENTS = """post => {
 }"""
 
 
-async def scan(page: Page, *, find: str, url: str, count: int) -> dict:
+async def scan(page: Page, *, find: str, url: str, count: int, also: list[str] | None = None) -> dict:
     """Like the comments under one of the owner's posts; return who wrote them."""
-    post = await find_post(page, find, url)
+    post = await find_post(page, find, url, also=also)
     await _more_comments(page, post)
     comments = await post.evaluate(_COMMENTS)
     people, liked = [], 0

@@ -116,9 +116,11 @@ async def comments_next(*, check: bool = False) -> dict[str, Any] | None:
     return r.json().get("job")
 
 
-async def comments_done(post_id: str, stage: str, *, ok: bool, error: str = "", url: str = "") -> None:
+async def comments_done(post_id: str, stage: str, *, ok: bool, error: str = "", url: str = "",
+                        metrics: dict[str, int] | None = None) -> None:
     await _call("POST", "/api/v1/play/poster/comments/result",
-                json={"post_id": post_id, "stage": stage, "ok": ok, "error": error[:900], "url": url})
+                json={"post_id": post_id, "stage": stage, "ok": ok, "error": error[:900], "url": url,
+                      **({"metrics": metrics} if metrics else {})})
 
 
 async def engage_next() -> dict[str, Any]:

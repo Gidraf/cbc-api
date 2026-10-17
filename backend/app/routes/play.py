@@ -1231,10 +1231,11 @@ def poster_comments_next(poster_id: str = Query(""), check: bool = Query(False),
 
 class CommentResult(BaseModel):
     post_id: str
-    stage: Literal["first", "later"]
+    stage: Literal["first", "later", "boost", "measure"]
     ok: bool
     error: str = ""
     url: str = ""
+    metrics: dict[str, int] | None = None     # views, reactions, comments, shares as read on the post
 
 
 @router.post("/poster/comments/result")
@@ -1243,7 +1244,7 @@ def poster_comments_result(payload: CommentResult, auth: AuthContext = Depends(A
 
     _may_make_videos(auth)
     return social_export.comments_result(payload.post_id, stage=payload.stage, ok=payload.ok, error=payload.error,
-                                         url=payload.url)
+                                         url=payload.url, metrics=payload.metrics)
 
 
 class CommentSwitch(BaseModel):
@@ -1384,6 +1385,49 @@ def social_engage_settings(payload: EngageSettings, auth: AuthContext = Depends(
     platform_settings.set_many({"engage_enabled": payload.enabled, "engage_likes_per_day": payload.per_day,
                                 "engage_likes_per_person": payload.per_person},
                                updated_by=str(getattr(auth, "subject", "") or ""))
+    return payload.model_dump()
+
+
+@router.get("/social/insights")
+def social_insights(days: int = Query(21, ge=1, le=90), auth: AuthContext = Depends(ANY)) -> dict[str, Any]:
+    """Each post's numbers as last read, the weakest first, and the loop's day."""
+    from datetime import datetime, timedelta, timezone
+
+    from ..infra.db import fetch_all, fetch_one
+    from ..services import social_export
+
+    _may_make_videos(auth)
+    rows = fetch_all("""SELECT p.post_id, p.posted_at, p.views, p.likes AS reactions, p.comments, p.shares, p.score,
+                               p.boost_index, p.metrics_at, p.comments_state,
+                               LEFT(COALESCE(q.content->>'question_text', ''), 120) AS question_text
+                        FROM social_posts p LEFT JOIN question_dna q ON q.question_id = p.question_id
+                        WHERE p.platform = 'facebook' AND p.handed_at IS NOT NULL AND p.posted_at <= NOW()
+                          AND p.posted_at >= NOW() - (:d * INTERVAL '1 day')
+                        ORDER BY p.score NULLS FIRST, p.posted_at DESC LIMIT 200""", {"d": days}) or []
+    for r in rows:
+        for k, v in list(r.items()):
+            if hasattr(v, "isoformat"):
+                r[k] = v.isoformat()
+    now = datetime.now(timezone.utc)
+    day = now.astimezone(social_export.EAT).replace(hour=0, minute=0, second=0, microsecond=0)
+    today = fetch_one("SELECT COUNT(*) AS n FROM social_posts WHERE boost_last_at >= :d", {"d": day}) or {}
+    return {**social_export.boost_rules(), "boosts_today": int(today.get("n") or 0), "posts": rows,
+            "measured": sum(1 for r in rows if r.get("metrics_at"))}
+
+
+class BoostSettings(BaseModel):
+    enabled: bool
+    per_day: int = Field(40, ge=1, le=300)
+    hours: int = Field(3, ge=1, le=48)
+
+
+@router.put("/social/insights")
+def social_insights_settings(payload: BoostSettings, auth: AuthContext = Depends(ANY)) -> dict[str, Any]:
+    from ..services import platform_settings
+
+    _may_make_videos(auth)
+    platform_settings.set_many({"engage_boost": payload.enabled, "engage_boosts_per_day": payload.per_day,
+                                "engage_boost_hours": payload.hours}, updated_by=str(getattr(auth, "subject", "") or ""))
     return payload.model_dump()
 
 

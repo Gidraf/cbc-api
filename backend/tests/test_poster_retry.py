@@ -70,3 +70,13 @@ def test_every_command_says_how_it_went_in_the_log() -> None:
     source = inspect.getsource(main.command_loop)
     assert 'log.info("Command %s done: %s"' in source
     assert "cbc.send_unsent()" in inspect.getsource(main.checkin_loop)
+
+
+def test_a_post_is_looked_for_by_the_questions_words_and_the_contexts() -> None:
+    from poster.flows import fb_comments as fc
+
+    got = fc.needles("Examine and evaluate the following expression: (∛−1000 × (−4))",
+                     ["Examine and evaluate a combined expression with directed numbers."])
+    assert got[0] == "examine and evaluate the following expre" and len(got) == 2
+    assert fc.needles("2 + 3?", []) == [], "too short to tell one post from another"
+    assert "See more" in fc._EXPAND and "data-cbc-post" in fc._MARK
