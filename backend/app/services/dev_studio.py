@@ -648,8 +648,14 @@ def queue_linkedin(project_id: str, *, kinds: tuple[str, ...] = ("document", "sh
 def linkedin_next() -> dict[str, Any] | None:
     from ..infra.db import fetch_one
 
-    row = fetch_one("""SELECT post_id, kind, media_url, title, body FROM linkedin_posts
-                       WHERE status = 'queued' AND attempts < 3 ORDER BY created_at LIMIT 1""")
+    # Claimed as it is handed out: asked twice, it is never posted twice. A
+    # claim with no answer in an hour goes back to the queue.
+    row = fetch_one("""UPDATE linkedin_posts SET status = 'posting', claimed_at = NOW()
+                       WHERE post_id = (SELECT post_id FROM linkedin_posts
+                                        WHERE attempts < 3 AND (status = 'queued' OR
+                                              (status = 'posting' AND claimed_at < NOW() - INTERVAL '1 hour'))
+                                        ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT 1)
+                       RETURNING post_id, kind, media_url, title, body""")
     return dict(row) if row else None
 
 

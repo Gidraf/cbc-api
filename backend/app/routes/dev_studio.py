@@ -69,9 +69,13 @@ def to_linkedin(project_id: str, auth: AuthContext = Depends(ADMIN)) -> dict[str
 
 
 @router.get("/linkedin/next")
-def linkedin_next(auth: AuthContext = Depends(POSTER)) -> dict[str, Any]:
-    from ..services import dev_studio
+def linkedin_next(poster_id: str = Query(""), auth: AuthContext = Depends(POSTER)) -> dict[str, Any]:
+    """The next LinkedIn post — only for the active poster (with two Macs, one posts)."""
+    from ..services import dev_studio, social_export
 
+    why = social_export.standing_by(poster_id)
+    if why:
+        return {"post": None, "reason": why}
     return {"post": dev_studio.linkedin_next()}
 
 

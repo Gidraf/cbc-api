@@ -1670,6 +1670,7 @@ MIGRATIONS: list[tuple[str, str]] = [
             created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
             posted_at TIMESTAMPTZ NULL
         );
+        ALTER TABLE linkedin_posts ADD COLUMN IF NOT EXISTS claimed_at TIMESTAMPTZ NULL;
         """,
     ),
     (
