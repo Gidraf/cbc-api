@@ -370,6 +370,114 @@ def thread(q: dict[str, Any], data: dict[str, Any], b: dict[str, Any] | None = N
             "find_also": also}
 
 
+def _curriculum_row(q: dict[str, Any]) -> dict[str, Any]:
+    """The sub-strand this question comes from, as the curriculum design gives it."""
+    from ..infra.db import fetch_one
+
+    link = q.get("curriculum") or {}
+    try:
+        return fetch_one("""SELECT strand_name, sub_strand_name, slos, key_inquiry_questions, core_competencies, values,
+                                   source_pages FROM curriculum_substrands
+                            WHERE LOWER(grade) = LOWER(:g) AND LOWER(subject) = LOWER(:s)
+                              AND LOWER(sub_strand_name) = LOWER(:ss) LIMIT 1""",
+                         {"g": str(link.get("grade") or ""), "s": str(link.get("subject") or ""),
+                          "ss": str(link.get("sub_strand") or "")}) or {}
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def _texts(items: Any) -> list[str]:
+    out = []
+    for x in items or []:
+        if isinstance(x, dict):
+            x = x.get("text") or x.get("description") or x.get("name") or x.get("statement") or ""
+        x = " ".join(display(str(x)).split())
+        if x:
+            out.append(x)
+    return out
+
+
+def _pages(pages: Any) -> str:
+    nums = sorted({int(p) for p in (pages or []) if str(p).isdigit()})
+    if not nums:
+        return ""
+    return f"page {nums[0]}" if len(nums) == 1 else f"pages {nums[0]}–{nums[-1]}"
+
+
+def _similar(q: dict[str, Any]) -> dict[str, Any] | None:
+    """Another question from the same sub-strand, to try next."""
+    try:
+        from . import question_rows
+        from .question_dna import question_dna_service
+
+        link = q.get("curriculum") or {}
+        rows = question_dna_service.list_questions(grade=link.get("grade") or None, subject=link.get("subject") or None,
+                                                   sub_strand=link.get("sub_strand") or None, limit=40)
+        others = [r for r in question_rows.flatten_all(rows)
+                  if str(r.get("question_id")) != str(q.get("question_id")) and r.get("question_text")
+                  and str(r.get("status") or "") not in ("needs_review", "rejected", "superseded")]
+        if not others:
+            return None
+        n = int(hashlib.sha256(str(q.get("question_id")).encode()).hexdigest(), 16)
+        return others[n % len(others)]
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def comment_library(q: dict[str, Any], data: dict[str, Any], b: dict[str, Any] | None = None) -> list[str]:
+    """Every comment a post can carry, in the order they go up: the thread
+    (choices, can you solve it, the answer, the working) and then the ones the
+    engagement loop adds while a post is quiet — where it sits in the KICD
+    curriculum design, what it tests, why each wrong choice is wrong, a hint, a
+    similar question, a question back to the reader. Up to twenty."""
+    b = b or brand()
+    t = thread(q, data, b)
+    out: list[str] = [*t["first"], *t["later"]]
+    link = q.get("curriculum") or {}
+    grade = _grade_label(str(link.get("grade") or ""))
+    subject = str(link.get("subject") or "")
+    row = _curriculum_row(q)
+    strand, sub = str(row.get("strand_name") or ""), str(row.get("sub_strand_name") or link.get("sub_strand") or "")
+    where = " › ".join(x for x in (strand, sub) if x)
+    pages = _pages(row.get("source_pages"))
+    if where:
+        out.append(f"📘 From the KICD {grade} {subject} curriculum design — {where}" + (f" ({pages})." if pages else "."))
+    slos = _texts(row.get("slos"))
+    if slos:
+        out.append(f"🎯 What this question tests: {slos[0]}")
+    options = [o for o in (q.get("options") or []) if isinstance(o, dict)]
+    for o in options:
+        if o.get("is_correct") or o.get("correct"):
+            continue
+        why = " ".join(display(o.get("distractor_rationale") or o.get("why") or "").split())
+        if why:
+            out.append(f"❌ Why not {o.get('id')}) {display(o.get('text'))}? {why}")
+    kiq = _texts(row.get("key_inquiry_questions"))
+    if kiq:
+        out.append(f"🤔 Think about it: {kiq[0]}")
+    comps, values = _texts(row.get("core_competencies")), _texts(row.get("values"))
+    if comps or values:
+        out.append("🌱 This builds " + " and ".join(x for x in (
+            f"the competency of {comps[0].rstrip('.')}" if comps else "", f"the value of {values[0].rstrip('.')}" if values else "") if x) + ".")
+    steps = _steps(data.get("scenes") or [])
+    if steps:
+        out.append(f"💡 Stuck? Start here: {steps[0]}")
+    other = _similar(q)
+    if other:
+        lines = [f"🔁 Try a similar one: {display(other.get('question_text'))}"]
+        for o in (other.get("options") or [])[:4]:
+            if isinstance(o, dict):
+                lines.append(f"{o.get('id')}) {display(o.get('text'))}")
+        out.append("\n".join(lines))
+    out += [
+        "👍 Was this one easy or 😮 hard? Tell us below!",
+        "👥 Tag a friend who should try this one!",
+        f"📄 Teachers and parents: printable {grade} {subject} papers with marking schemes are at {b['website']}." if b.get("website") else "",
+        f"📚 {b['cta']}" + (f" — {b['handle']}" if b.get("handle") else "") + " 🔔",
+    ]
+    return [c for c in out if c][:20]
+
+
 # ── the queue ────────────────────────────────────────────────────────────────
 
 def _prepare(q: dict[str, Any], voice: str = "", *, teacher_mode: str | None = None

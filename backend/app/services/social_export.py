@@ -749,11 +749,44 @@ def _free_space_after_post() -> None:
 COMMENT_TRIES = 4
 
 
+def boost_rules() -> dict[str, Any]:
+    from . import platform_settings as ps
+
+    def num(key: str, default: int, lo: int, hi: int) -> int:
+        try:
+            return max(lo, min(int(ps.get(key, default) or default), hi))
+        except (TypeError, ValueError):
+            return default
+
+    return {"enabled": bool(ps.get("engage_boost", False)), "per_day": num("engage_boosts_per_day", 40, 1, 300),
+            "hours": num("engage_boost_hours", 3, 1, 48)}
+
+
+def score_of(m: dict[str, Any], own_comments: int = 0) -> float:
+    """How a post is doing: reactions, others' comments (twice), shares (three
+    times), and views (one point per fifty)."""
+    others = max(0, int(m.get("comments") or 0) - own_comments)
+    return round(int(m.get("reactions") or 0) + 2 * others + 3 * int(m.get("shares") or 0) + int(m.get("views") or 0) / 50, 2)
+
+
+def _extras(question_id: str) -> list[str]:
+    """The comments past the thread's four, for the engagement loop."""
+    from . import social
+    from .whiteboard import load
+
+    q = load(question_id)
+    data, _, _, _, b, _ = social._prepare(q)
+    t = social.thread(q, data, b)
+    return social.comment_library(q, data, b)[len(t["first"]) + len(t["later"]):]
+
+
 def comments_next(now: datetime | None = None, *, check: bool = False) -> dict[str, Any]:
-    """The next comment step that is due, with its text, or why none.
+    """The next comment step that is due, with its text, or why none: the
+    thread's two steps, then — with Keep posts engaged on — a post's next
+    extra comment, or a reading of a post's insights (the weakest first).
     `check`: the newest post that is out, whatever its state — for a dry
     run that finds it and its comment box and sends nothing."""
-    from ..infra.db import fetch_one
+    from ..infra.db import execute, fetch_one
     from . import social, social_cards
     from .whiteboard import load
 
@@ -773,11 +806,37 @@ def comments_next(now: datetime | None = None, *, check: bool = False) -> dict[s
     else:
         row = None
     row = row or fetch_one(
-        """SELECT post_id, question_id, platform, url, comments_state FROM social_posts
-           WHERE comments_state IN ('pending', 'part') AND comments_attempts < :tries
+        """SELECT post_id, question_id, platform, url, comments_state, boost_index FROM social_posts
+           WHERE comments_state IN ('pending', 'part', 'boost') AND comments_attempts < :tries
              AND comments_next_at <= :now AND posted_at <= :now
            ORDER BY comments_next_at LIMIT 1""", {"tries": COMMENT_TRIES, "now": now - timedelta(seconds=30)})
+    if row and row["comments_state"] == "boost":
+        extras = _extras(row["question_id"])
+        k = int(row.get("boost_index") or 0)
+        if k >= len(extras):
+            execute("UPDATE social_posts SET comments_state = 'complete' WHERE post_id = :id", {"id": row["post_id"]})
+            return {"job": None, "reason": "That post has every comment it can carry."}
+        t = social.status(row["question_id"]).get("thread") or {}
+        return {"job": {"post_id": row["post_id"], "platform": row["platform"], "url": row.get("url") or "",
+                        "find": t.get("find") or "", "find_also": t.get("find_also") or [], "stage": "boost",
+                        "comments": [extras[k]], "image_url": "", "measure": True}, "reason": ""}
     if not row:
+        br = boost_rules()
+        if br["enabled"] and not check:
+            # Read a post's insights: the weakest (or never read) first.
+            row = fetch_one("""SELECT post_id, question_id, platform, url FROM social_posts
+                               WHERE platform = 'facebook' AND COALESCE(format, 'video') = 'video'
+                                 AND handed_at IS NOT NULL AND posted_at <= :ripe AND posted_at >= :since
+                                 AND comments_state IN ('done', '')
+                                 AND (metrics_at IS NULL OR metrics_at < :stale)
+                               ORDER BY metrics_at NULLS FIRST, score NULLS FIRST, posted_at DESC LIMIT 1""",
+                            {"ripe": now - timedelta(hours=1), "since": now - timedelta(days=21),
+                             "stale": now - timedelta(hours=br["hours"])})
+            if row:
+                t = social.status(row["question_id"]).get("thread") or {}
+                return {"job": {"post_id": row["post_id"], "platform": row["platform"], "url": row.get("url") or "",
+                                "find": t.get("find") or "", "find_also": t.get("find_also") or [], "stage": "measure",
+                                "comments": [], "image_url": "", "measure": True}, "reason": ""}
         return {"job": None, "reason": "No comments due."}
     st = social.status(row["question_id"])
     t = st.get("thread") or {}
@@ -792,26 +851,92 @@ def comments_next(now: datetime | None = None, *, check: bool = False) -> dict[s
     return {"job": {"post_id": row["post_id"], "platform": row["platform"], "url": row.get("url") or "",
                     "find": t.get("find") or "", "find_also": t.get("find_also") or [],
                     "stage": "first" if first else "later",
-                    "comments": t.get("first" if first else "later") or [], "image_url": image}, "reason": ""}
+                    "comments": t.get("first" if first else "later") or [], "image_url": image,
+                    "measure": not first}, "reason": ""}
+
+
+def _save_metrics(post_id: str, m: dict[str, Any], now: datetime) -> float:
+    """Store a reading of the post's numbers; its score, counting out our own comments."""
+    from ..infra.db import execute, fetch_one
+
+    row = fetch_one("SELECT comments_state, boost_index FROM social_posts WHERE post_id = :id", {"id": post_id}) or {}
+    own = (4 if row.get("comments_state") in ("done", "boost", "complete") else 2 if row.get("comments_state") == "part" else 0) \
+        + int(row.get("boost_index") or 0)
+    score = score_of(m, own)
+    vals = {k: max(0, int(m.get(k) or 0)) for k in ("views", "reactions", "comments", "shares")}
+    execute("""INSERT INTO post_insights (post_id, at, views, reactions, comments, shares, score)
+               VALUES (:id, :t, :views, :reactions, :comments, :shares, :score)""",
+            {"id": post_id, "t": now, **vals, "score": score})
+    execute("""UPDATE social_posts SET metrics_at = :t, score = :score, views = GREATEST(views, :views),
+               likes = GREATEST(likes, :reactions), comments = GREATEST(comments, :comments),
+               shares = GREATEST(shares, :shares), updated_at = NOW() WHERE post_id = :id""",
+            {"id": post_id, "t": now, **vals, "score": score})
+    return score
+
+
+def _maybe_boost(post_id: str, score: float, now: datetime) -> bool:
+    """A quiet post gets its next comment: the first right after its thread,
+    then only if it has not improved since the last one (and the day allows)."""
+    from ..infra.db import execute, fetch_one
+
+    br = boost_rules()
+    if not br["enabled"]:
+        return False
+    row = fetch_one("SELECT comments_state, boost_last_at, boost_base FROM social_posts WHERE post_id = :id",
+                    {"id": post_id}) or {}
+    if row.get("comments_state") != "done":
+        return False
+    last = row.get("boost_last_at")
+    if last is not None:
+        if now - last < timedelta(hours=br["hours"]):
+            return False
+        base = float(row.get("boost_base") or 0)
+        if score > base * 1.1 + 1:
+            execute("UPDATE social_posts SET boost_base = :s WHERE post_id = :id", {"id": post_id, "s": score})
+            return False                               # it is improving: leave it be
+    day = now.astimezone(EAT).replace(hour=0, minute=0, second=0, microsecond=0)
+    done_today = int((fetch_one("SELECT COUNT(*) AS n FROM social_posts WHERE boost_last_at >= :d", {"d": day}) or {}).get("n") or 0)
+    if done_today >= br["per_day"]:
+        return False
+    execute("""UPDATE social_posts SET comments_state = 'boost', comments_next_at = :t, comments_attempts = 0
+               WHERE post_id = :id""", {"id": post_id, "t": now})
+    return True
 
 
 def comments_result(post_id: str, *, stage: str, ok: bool, error: str = "", url: str = "",
-                    now: datetime | None = None) -> dict[str, Any]:
+                    metrics: dict[str, Any] | None = None, now: datetime | None = None) -> dict[str, Any]:
     from ..infra.db import execute
 
     now = now or datetime.now(timezone.utc)
-    if ok:
+    score = _save_metrics(post_id, metrics, now) if metrics else None
+    if stage == "measure":
+        if not ok:
+            execute("UPDATE social_posts SET metrics_at = :t, comments_error = :e WHERE post_id = :id",
+                    {"id": post_id, "t": now, "e": error[:900]})
+            return {"post_id": post_id, "ok": False}
+        return {"post_id": post_id, "ok": True, "score": score,
+                "boost": _maybe_boost(post_id, score if score is not None else 0.0, now)}
+    if ok and stage == "boost":
+        execute("""UPDATE social_posts SET comments_state = 'done', boost_index = boost_index + 1, boost_last_at = :t,
+                   boost_base = COALESCE(:s, score, 0), comments_error = '', comments_attempts = 0,
+                   url = COALESCE(NULLIF(:u, ''), url), updated_at = NOW() WHERE post_id = :id""",
+                {"id": post_id, "t": now, "s": score, "u": url})
+    elif ok:
         delay = comment_rules()["delay"]
         execute("""UPDATE social_posts SET comments_state = :st, comments_next_at = :next, comments_error = '',
                    comments_attempts = 0, url = COALESCE(NULLIF(:u, ''), url), updated_at = NOW() WHERE post_id = :id""",
                 {"id": post_id, "st": "part" if stage == "first" else "done",
                  "next": now + timedelta(seconds=delay) if stage == "first" else None, "u": url})
+        if stage == "later" and score is not None:
+            _maybe_boost(post_id, score, now)        # the first extra comment follows the thread
     else:
         execute("""UPDATE social_posts SET comments_attempts = comments_attempts + 1, comments_error = :e,
-                   comments_state = CASE WHEN comments_attempts + 1 >= :tries THEN 'failed' ELSE comments_state END,
+                   comments_state = CASE WHEN comments_attempts + 1 >= :tries
+                                         THEN (CASE WHEN comments_state = 'boost' THEN 'done' ELSE 'failed' END)
+                                         ELSE comments_state END,
                    comments_next_at = :next, updated_at = NOW() WHERE post_id = :id""",
                 {"id": post_id, "e": error[:900], "tries": COMMENT_TRIES, "next": now + timedelta(minutes=10)})
-    return {"post_id": post_id, "ok": ok}
+    return {"post_id": post_id, "ok": ok, "score": score}
 
 
 def comments_backfill(days: int = 7, *, now: datetime | None = None) -> int:

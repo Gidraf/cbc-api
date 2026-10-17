@@ -4539,6 +4539,22 @@ export function useQueueComments() {
   });
 }
 
+export type InsightRow = { post_id: string; posted_at: string; views: number; reactions: number; comments: number;
+  shares: number; score: number | null; boost_index: number; metrics_at: string | null; comments_state: string; question_text: string };
+export type Insights = { enabled: boolean; per_day: number; hours: number; boosts_today: number; measured: number; posts: InsightRow[] };
+
+export function useInsights() {
+  const api = useApi();
+  const qc = useQueryClient();
+  return {
+    state: useQuery({ queryKey: ["poster", "insights"], queryFn: () => api<Insights>("/api/v1/play/social/insights"), refetchInterval: 120_000 }),
+    save: useMutation({
+      mutationFn: (v: { enabled: boolean; per_day: number; hours: number }) => api("/api/v1/play/social/insights", { method: "PUT", body: JSON.stringify(v) }),
+      onSuccess: () => qc.invalidateQueries({ queryKey: ["poster"] }),
+    }),
+  };
+}
+
 export type EngageState = { enabled: boolean; per_day: number; per_person: number; likes: number; people: number; waiting: number };
 
 export function useEngage() {

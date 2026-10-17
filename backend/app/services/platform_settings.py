@@ -125,6 +125,13 @@ SETTINGS: tuple[Setting, ...] = (
     Setting("notify_every_videos", "NOTIFY_EVERY_VIDEOS", "int", "Email after this many new videos", "", 100, "Auto-post"),
     Setting("notify_surplus_at", "NOTIFY_SURPLUS_AT", "int", "Email when this many finished videos wait unposted",
             "At most once a day.", 20, "Auto-post"),
+    Setting("engage_boost", "ENGAGE_BOOST", "bool", "Keep posts engaged",
+            "The poster reads each post's insights (the weakest first) and, when a post is not improving, adds its "
+            "next comment — where it sits in the KICD design, what it tests, why each wrong choice is wrong, a hint, a "
+            "similar question… up to twenty — then reads it again later.", False, "Auto-post"),
+    Setting("engage_boosts_per_day", "ENGAGE_BOOSTS_PER_DAY", "int", "Extra comments a day", "", 40, "Auto-post"),
+    Setting("engage_boost_hours", "ENGAGE_BOOST_HOURS", "int", "Hours between a post's extra comments",
+            "And between readings of its insights.", 3, "Auto-post"),
     Setting("engage_enabled", "ENGAGE_ENABLED", "bool", "Like back the people who comment",
             "The poster reads the comments on your recent posts, likes each comment, then visits each new commenter "
             "and likes a few of their recent posts. It never comments on other people's posts.", False, "Auto-post"),

@@ -196,10 +196,75 @@ async def _landed(page: Page, post: Locator, text: str, timeout: float = 20.0) -
     return False
 
 
+def number(text: str) -> int:
+    """'1.2K' → 1200, '3,456' → 3456, '2M' → 2000000."""
+    m = re.match(r"\s*([\d.,]+)\s*([KkMm]?)", text or "")
+    if not m:
+        return 0
+    raw = m.group(1).replace(",", "")
+    try:
+        val = float(raw)
+    except ValueError:
+        return 0
+    return int(val * {"k": 1_000, "m": 1_000_000}.get(m.group(2).lower(), 1))
+
+
+_LABELS = {"views": r"^(views|plays|video views|reel plays)$", "reactions": r"^(reactions|likes|post reactions)$",
+           "comments": r"^comments$", "shares": r"^shares$"}
+
+
+def parse_insights(text: str) -> dict[str, int]:
+    """Numbers beside their labels, as an insights window lists them (label, then number — or number, then label)."""
+    lines = [x.strip() for x in (text or "").splitlines() if x.strip()]
+    out: dict[str, int] = {}
+    for k, line in enumerate(lines):
+        for key, rx in _LABELS.items():
+            if key in out or not re.match(rx, line, re.I):
+                continue
+            for near in (lines[k + 1] if k + 1 < len(lines) else "", lines[k - 1] if k else ""):
+                if re.match(r"^[\d.,]+\s*[KkMm]?$", near):
+                    out[key] = number(near)
+                    break
+    for key, rx in (("comments", r"([\d.,]+[KkMm]?)\s+comments?"), ("shares", r"([\d.,]+[KkMm]?)\s+shares?"),
+                    ("views", r"([\d.,]+[KkMm]?)\s+(?:views|plays)"), ("reactions", r"([\d.,]+[KkMm]?)\s+reactions?")):
+        if key not in out:
+            m = re.search(rx, text or "", re.I)
+            if m:
+                out[key] = number(m.group(1))
+    return out
+
+
+async def read_metrics(page: Page, post: Locator) -> dict[str, int]:
+    """The post's numbers: its "See insights" window if it opens, else what the post shows."""
+    try:
+        link = post.get_by_text(re.compile(r"^See insights$", re.I))
+        if await link.count():
+            await link.first.click()
+            await asyncio.sleep(4)
+            dialog = page.get_by_role("dialog").last
+            text = await dialog.inner_text(timeout=10_000) if await dialog.count() else ""
+            await page.keyboard.press("Escape")
+            await asyncio.sleep(1.5)
+            got = parse_insights(text)
+            if got:
+                return got
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        return parse_insights(await post.inner_text(timeout=10_000))
+    except Exception:  # noqa: BLE001
+        return {}
+
+
 async def comment(page: Page, *, find: str, url: str, comments: list[str], image: str = "",
-                  check: bool = False, also: list[str] | None = None) -> dict:
-    """Find the post and comment under it, one comment after the other."""
-    post = await find_post(page, find, url, also=also)
+                  check: bool = False, also: list[str] | None = None, measure: bool = False) -> dict:
+    """Find the post and comment under it, one comment after the other (and
+    read its numbers first, when asked). The post is always found on the
+    profile by its words: a reel's own page hides its comment box."""
+    post = await find_post(page, find, "", also=also)
+    metrics = await read_metrics(page, post) if measure else {}
+    if not comments and not check:
+        return {"found": True, "metrics": metrics, "shot": await shot(page, "facebook-insights")}
     box = await comment_box(page, post)
     if check:
         await box.click()
@@ -221,4 +286,4 @@ async def comment(page: Page, *, find: str, url: str, comments: list[str], image
             permalink = (await link.get_attribute("href") or "").split("?")[0]
     except Exception:  # noqa: BLE001
         pass
-    return {"found": True, "url": permalink, "shot": await shot(page, "facebook-comments")}
+    return {"found": True, "url": permalink, "metrics": metrics, "shot": await shot(page, "facebook-comments")}
