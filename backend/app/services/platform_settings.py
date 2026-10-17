@@ -206,9 +206,13 @@ SETTINGS: tuple[Setting, ...] = (
             "voice and the teacher asks \"Did Juma get it right?\". Names and voices change every video; a question "
             "made again gets a new cast. Videos already made keep serving until they are made again.",
             "classroom", "Social"),
+    Setting("social_marketing", "", "bool", "Platform pitch in every video",
+            "A few seconds before the end, every social video shows the console — setting an exam, an online test, "
+            "a student's marks — and says what the platform does, to teachers or to students by turns, with the "
+            "website. On: videos made before it stop serving and are made again with it.", True, "Social"),
     Setting("social_students", "", "string", "Students in social videos",
-            "How many students sit in with the teacher: 0, 1 or 2 — or random, a different number every video.",
-            "random", "Social"),
+            "Kept for later: the videos have the teacher alone (0).",
+            "0", "Social"),
     Setting("social_countdown_seconds", "", "int", "Countdown (seconds)",
             "How long a social video counts down after the question, for the viewer to pause and try. 3–10.",
             3, "Social"),

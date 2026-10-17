@@ -220,6 +220,24 @@ services:
     restart: unless-stopped
     stop_grace_period: 3m
 
+  # Videos asked for on the spot (Library → Make now): one at a time, on a
+  # worker that waits for nothing else, so it starts at once even while the
+  # batch renders.
+  render-now:
+    build: *backend-build
+    command: >
+      sh -c 'exec celery -A app.celery_app worker --loglevel=info
+      --queues=$${CELERY_RENDER_NOW_QUEUE:-cbc_render_now}
+      --concurrency=1 --prefetch-multiplier=1 --hostname=render-now@%h'
+    environment:
+      <<: *backend-env
+      CELERY_BROKER_URL: ${CELERY_BROKER_URL:-redis://redis:6379/1}
+      CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND:-redis://redis:6379/1}
+    depends_on: *backend-depends
+    extra_hosts: *extra-hosts
+    restart: unless-stopped
+    stop_grace_period: 3m
+
   # The clock: the job sweep every two minutes, the log prune every hour.
   # One of these, however many workers — a beat in every worker replica
   # would run every schedule N times.

@@ -4207,6 +4207,15 @@ export function useSaveBrand() {
 }
 
 /** The vertical cut, live and voiced, for the console's preview. */
+export type TeacherInfo = { id: string; name: string; gender: "female" | "male"; older: boolean };
+
+/** The teachers a video can have, by name. */
+export function useTeachers() {
+  const api = useApi();
+  return useQuery({ queryKey: ["teachers"], queryFn: () => api<{ teachers: TeacherInfo[]; mode: string }>("/api/v1/play/teachers"),
+                    staleTime: 10 * 60_000 });
+}
+
 export function useSocialHtml(questionId: string, voice = "", teacher = "", students = "") {
   const { token } = useAuth();
   return useQuery({

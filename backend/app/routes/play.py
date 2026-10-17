@@ -95,6 +95,80 @@ def video_catalog(auth: AuthContext = Depends(CONTENT)) -> dict[str, Any]:
     return {"items": [{"grade": r["grade"], "subject": r["subject"], "videos": int(r["videos"])} for r in rows]}
 
 
+# ── the library: every question in one place ─────────────────────────────────
+
+@router.get("/library/tree")
+def library_tree(auth: AuthContext = Depends(CONTENT)) -> dict[str, Any]:
+    """Grades → subjects → strands → sub-strands, with how many questions each has."""
+    from ..services import content_api
+
+    return {"rows": content_api.curriculum()}
+
+
+@router.get("/library")
+def library(grade: str = Query(""), subject: str = Query(""), strand: str = Query(""), sub_strand: str = Query(""),
+            search: str = Query("", max_length=120),
+            show: Literal["all", "video", "no_video", "posted", "not_posted", "boosted"] = Query("all"),
+            limit: int = Query(40, ge=1, le=200), offset: int = Query(0, ge=0),
+            auth: AuthContext = Depends(CONTENT)) -> dict[str, Any]:
+    """The questions of a scope with their videos and — for the team — how
+    their posts are doing: views, reactions, comments, the pitch, the boost."""
+    from ..infra.db import fetch_all
+    from ..services import whiteboard
+
+    staff = auth.role in ("admin", "operator", "reviewer")
+    pool = _bank(grade, subject, sub_strand, 3000)
+    if strand:
+        pool = [q for q in pool if str((q.get("curriculum") or {}).get("strand") or "").lower() == strand.lower()]
+    words = [w for w in search.lower().split() if w]
+    if words:
+        pool = [q for q in pool if all(w in str(q.get("question_text") or "").lower() for w in words)]
+    ids = [str(q.get("question_id")) for q in pool]
+    videos: dict[str, dict[str, Any]] = {}
+    for r in fetch_all("""SELECT question_id, kind, object_name, made_at FROM question_videos
+                          WHERE question_id = ANY(:ids) AND kind IN ('social', 'lesson')""", {"ids": ids}) or []:
+        if r["kind"] == "social" or r["question_id"] not in videos:
+            videos[r["question_id"]] = r
+    posts: dict[str, dict[str, Any]] = {}
+    if staff:
+        for r in fetch_all("""SELECT DISTINCT ON (p.question_id) p.question_id, p.post_id, p.status, p.posted_at,
+                                     p.handed_at, p.scheduled_for, p.url, p.score, p.marketing, p.boost_state,
+                                     p.boost_daily_ksh, p.boost_days, p.teacher,
+                                     i.views, i.reactions, i.comments, i.shares
+                              FROM social_posts p
+                              LEFT JOIN LATERAL (SELECT views, reactions, comments, shares FROM post_insights
+                                                 WHERE post_id = p.post_id ORDER BY at DESC LIMIT 1) i ON TRUE
+                              WHERE p.question_id = ANY(:ids) AND COALESCE(p.format, 'video') = 'video'
+                              ORDER BY p.question_id, p.handed_at DESC NULLS LAST, p.scheduled_for DESC NULLS LAST""",
+                           {"ids": ids}) or []:
+            posts[r["question_id"]] = {k: (v.isoformat() if hasattr(v, "isoformat") else v) for k, v in r.items()}
+
+    def keep(qid: str) -> bool:
+        post = posts.get(qid) or {}
+        return {"all": True, "video": qid in videos, "no_video": qid not in videos,
+                "posted": bool(post.get("handed_at")), "not_posted": not post.get("handed_at"),
+                "boosted": bool(post.get("boost_state"))}[show]
+
+    chosen = [q for q in pool if keep(str(q.get("question_id")))]
+    items = []
+    for q in chosen[offset:offset + limit]:
+        qid = str(q.get("question_id"))
+        link = q.get("curriculum") or {}
+        v = videos.get(qid)
+        items.append({
+            "question_id": qid, "question_text": q.get("question_text") or "", "type": q.get("question_type") or "",
+            "grade": link.get("grade"), "subject": link.get("subject"), "strand": link.get("strand"),
+            "sub_strand": link.get("sub_strand"), "has_figure": _has_figure(q), "status": q.get("status"),
+            "video": ({"kind": v["kind"], "url": whiteboard.public_url(v["object_name"]),
+                       "thumbnail_url": whiteboard.public_url(v["object_name"][:-4] + ".jpg") if v["kind"] == "social" else None,
+                       "made_at": v["made_at"].isoformat() if hasattr(v["made_at"], "isoformat") else v["made_at"]}
+                      if v else None),
+            "post": posts.get(qid)})
+    return {"items": items, "total": len(chosen), "in_scope": len(pool),
+            "with_video": sum(1 for q in pool if str(q.get("question_id")) in videos),
+            "posted": sum(1 for p in posts.values() if p.get("handed_at")), "staff": staff}
+
+
 @router.get("/items")
 def playable_items(grade: str = Query(""), subject: str = Query(""), sub_strand: str = Query(""),
                    kind: str = Query("", description="number_line | balance | bodmas | fraction_bar | choice"),
@@ -351,8 +425,23 @@ def list_videos(grade: str = Query(...), subject: str = Query(...), sub_strand: 
 
 # ── social posts ──────────────────────────────────────────────────────────────
 
-TeacherPick = Literal["", "off", "classroom", "female", "male", "alternate", "female_young", "male_young",
-                      "teacher_older_f", "teacher_older_m"]
+TeacherPick = str      # off, classroom, female, male, alternate, or one teacher (GET /teachers)
+
+
+@router.get("/teachers")
+def teachers(auth: AuthContext = Depends(ANY)) -> dict[str, Any]:
+    """The teachers a video can have, by name, for the pickers."""
+    from ..services import teacher
+
+    return {"teachers": teacher.roster(), "mode": teacher.mode()}
+
+
+def _pick(value: str | None) -> str | None:
+    from ..services import teacher
+
+    if value and value not in teacher.MODES:
+        raise_api_error("VALIDATION_FAILED", f"No teacher called {value!r}.")
+    return value
 
 
 @router.get("/items/{question_id}/social.html")
@@ -366,7 +455,7 @@ def social_page(question_id: str, voice: str = Query(""), teacher: TeacherPick =
     _may_make_videos(auth)            # production tools: file links and posts
     from ..services import social
 
-    return HTMLResponse(social.live_page(_one(question_id), _voice(voice), teacher_mode=teacher or None,
+    return HTMLResponse(social.live_page(_one(question_id), _voice(voice), teacher_mode=_pick(teacher) or None,
                                          students=students))
 
 
@@ -382,6 +471,7 @@ def social_status(question_id: str, voice: str = Query(""), auth: AuthContext = 
 @router.post("/items/{question_id}/social")
 def make_social(question_id: str, voice: str = Query(""), fresh: bool = Query(False),
                 teacher: TeacherPick | None = Query(None), students: int | None = Query(None, ge=0, le=2),
+                now: bool = Query(False, description="make it on the spot, on the standby worker"),
                 auth: AuthContext = Depends(ANY)) -> dict[str, Any]:
     """Queue the social video. `fresh`: make it again — a new cast — even if
     one already serves. `teacher` / `students`: kept for this question."""
@@ -391,7 +481,7 @@ def make_social(question_id: str, voice: str = Query(""), fresh: bool = Query(Fa
     _one(question_id)
     return social.enqueue(question_id, queued_by=str(getattr(auth, "subject", "") or "social"), voice=_voice(voice),
                           fresh=fresh or teacher is not None or students is not None, priority=5 if fresh else 0,
-                          teacher=teacher, students=students)
+                          teacher=_pick(teacher), students=students, on_demand=now)
 
 
 @router.post("/social")
@@ -952,8 +1042,7 @@ def auto_book_now(auth: AuthContext = Depends(ANY)) -> dict[str, Any]:
 
 
 class TeacherNow(BaseModel):
-    mode: Literal["classroom", "female", "male", "alternate", "female_young", "male_young",
-                  "teacher_older_f", "teacher_older_m"] = "classroom"
+    mode: str = Field("classroom", max_length=40, description="classroom, female, male, alternate, or one teacher (GET /teachers)")
     limit: int = Field(60, ge=1, le=500)
     pause_lessons: bool = True
 
@@ -964,8 +1053,12 @@ def teacher_now(payload: TeacherNow, auth: AuthContext = Depends(require_roles("
     booked posts' videos queued again with the teacher, soonest first."""
     from ..services import teacher
 
-    return teacher.render_now(payload.mode, limit=payload.limit, pause_lessons=payload.pause_lessons,
-                              by=str(getattr(auth, "subject", "") or ""))
+    try:
+        return teacher.render_now(payload.mode, limit=payload.limit, pause_lessons=payload.pause_lessons,
+                                  by=str(getattr(auth, "subject", "") or ""))
+    except ValueError as exc:
+        raise_api_error("VALIDATION_FAILED", str(exc))
+    return {}
 
 
 class LessonsResume(BaseModel):
@@ -1706,6 +1799,35 @@ def poster_heartbeat(payload: Heartbeat, auth: AuthContext = Depends(ANY)) -> di
     _may_make_videos(auth)
     social_export.heartbeat(payload.poster_id, {**payload.status, "mode": payload.status.get("mode") or "local"})
     return {"ok": True}
+
+
+class BoostRequest(BaseModel):
+    daily_ksh: int = Field(200, ge=50, le=5000)
+    days: int = Field(5, ge=1, le=30)
+    again: bool = False
+
+
+@router.get("/poster/boosts")
+def boosts(auth: AuthContext = Depends(require_roles("admin"))) -> dict[str, Any]:
+    """Posts that are out — those with the platform pitch first — and their boosts."""
+    from ..services import social_export
+
+    return {"posts": social_export.boost_candidates(), "daily_ksh": social_export.BOOST_DAILY_KSH,
+            "days": social_export.BOOST_DAYS}
+
+
+@router.post("/poster/posts/{post_id}/boost")
+def boost_post(post_id: str, payload: BoostRequest, auth: AuthContext = Depends(require_roles("admin"))) -> dict[str, Any]:
+    """Boost one post on Facebook — only when the owner presses it. The poster
+    fills Facebook's boost form and confirms only if its total matches."""
+    from ..services import social_export
+
+    try:
+        return social_export.boost(post_id, daily_ksh=payload.daily_ksh, days=payload.days, again=payload.again,
+                                   by=str(getattr(auth, "subject", "") or ""))
+    except ValueError as exc:
+        raise_api_error("VALIDATION_FAILED", str(exc))
+    return {}
 
 
 @router.post("/poster/commands/next")

@@ -1688,6 +1688,24 @@ MIGRATIONS: list[tuple[str, str]] = [
         );
         """,
     ),
+    (
+        "062_post_marketing_boost",
+        """
+        -- A post whose video carries the platform pitch, and its boost: asked
+        -- for by the owner (never on its own), its budget, and how it went.
+        ALTER TABLE social_posts ADD COLUMN IF NOT EXISTS marketing BOOLEAN NOT NULL DEFAULT FALSE;
+        ALTER TABLE social_posts ADD COLUMN IF NOT EXISTS boost_state TEXT NOT NULL DEFAULT '';
+        ALTER TABLE social_posts ADD COLUMN IF NOT EXISTS boost_daily_ksh INTEGER NULL;
+        ALTER TABLE social_posts ADD COLUMN IF NOT EXISTS boost_days INTEGER NULL;
+        ALTER TABLE social_posts ADD COLUMN IF NOT EXISTS boost_error TEXT NOT NULL DEFAULT '';
+        ALTER TABLE social_posts ADD COLUMN IF NOT EXISTS boosted_at TIMESTAMPTZ NULL;
+        -- Posts set aside when every video was made again with the pitch: the
+        -- question goes out afresh, its old post kept here.
+        CREATE TABLE IF NOT EXISTS social_posts_history (LIKE social_posts INCLUDING DEFAULTS);
+        ALTER TABLE social_posts_history ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ NULL;
+        ALTER TABLE social_posts_history ADD COLUMN IF NOT EXISTS archived_why TEXT NOT NULL DEFAULT '';
+        """,
+    ),
 ]
 
 

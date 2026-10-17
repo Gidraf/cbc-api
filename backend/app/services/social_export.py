@@ -409,7 +409,8 @@ def schedule_next(now: datetime | None = None, *, book_if_empty: bool = True) ->
         try:
             from ..infra.db import execute
 
-            execute("UPDATE social_posts SET teacher = :t WHERE post_id = :id", {"t": str(st.get("teacher") or ""), "id": row["post_id"]})
+            execute("UPDATE social_posts SET teacher = :t, marketing = :m WHERE post_id = :id",
+                    {"t": str(st.get("teacher") or ""), "m": bool(st.get("marketing")), "id": row["post_id"]})
         except Exception:  # noqa: BLE001
             pass
         return {"post": {"post_id": row["post_id"], "platform": "facebook", "question_id": row["question_id"],
@@ -545,8 +546,8 @@ def next_for_poster(now: datetime | None = None, *, platform: str = "", post_id:
         ahead, to_groups = False, []            # a card goes out live, to the feed
     if not photo:
         try:                                    # remember which teacher this video has
-            execute("UPDATE social_posts SET teacher = :t WHERE post_id = :id",
-                    {"t": str(st.get("teacher") or ""), "id": chosen["post_id"]})
+            execute("UPDATE social_posts SET teacher = :t, marketing = :m WHERE post_id = :id",
+                    {"t": str(st.get("teacher") or ""), "m": bool(st.get("marketing")), "id": chosen["post_id"]})
         except Exception:  # noqa: BLE001
             pass
     return {"post": {"post_id": chosen["post_id"], "platform": chosen["platform"], "question_id": chosen["question_id"],
@@ -1117,14 +1118,75 @@ def take_command() -> dict[str, Any] | None:
                SELECT command_id FROM poster_commands WHERE taken_at IS NULL ORDER BY created_at
                LIMIT 1 FOR UPDATE SKIP LOCKED)
            RETURNING command_id, action, platform, post_id, options""")
+    # A boost nobody took: say so on the post, so it can be pressed again.
+    execute("""UPDATE social_posts SET boost_state = 'failed', boost_error = 'The poster was not running — press Boost again.'
+               WHERE boost_state = 'queued' AND post_id IN (SELECT post_id FROM poster_commands
+                     WHERE action = 'boost' AND result->>'expired' = 'true')""")
     return dict(row) if row else None
 
 
 def finish_command(command_id: int, result: dict[str, Any]) -> None:
-    from ..infra.db import execute, to_json
+    from ..infra.db import execute, fetch_one, to_json
 
-    execute("UPDATE poster_commands SET done_at = NOW(), result = CAST(:r AS jsonb) WHERE command_id = :id",
-            {"id": command_id, "r": to_json(result)})
+    row = fetch_one("""UPDATE poster_commands SET done_at = NOW(), result = CAST(:r AS jsonb) WHERE command_id = :id
+                       RETURNING action, post_id""", {"id": command_id, "r": to_json(result)}) or {}
+    if row.get("action") == "boost" and row.get("post_id"):
+        ok = bool(result.get("ok"))
+        state = "boosted" if ok else "check" if result.get("unsure") else "failed"
+        execute("""UPDATE social_posts SET boost_state = :st, boost_error = :e,
+                          boosted_at = CASE WHEN :ok THEN NOW() ELSE boosted_at END WHERE post_id = :id""",
+                {"st": state, "e": "" if ok else str(result.get("error") or "")[:500], "ok": ok, "id": row["post_id"]})
+
+
+# ── boosting: paid reach for a post, only when the owner presses Boost ───────
+
+BOOST_DAILY_KSH = 200
+BOOST_DAYS = 5
+
+
+def boost(post_id: str, *, daily_ksh: int = BOOST_DAILY_KSH, days: int = BOOST_DAYS, by: str = "",
+          again: bool = False) -> dict[str, Any]:
+    """Ask the poster to boost one post that is out — at `daily_ksh` a day for
+    `days` days. Nothing is ever boosted without this call; the poster checks
+    Facebook's total against these numbers before it confirms."""
+    from ..infra.db import execute, fetch_one
+    from . import social
+
+    daily_ksh, days = int(daily_ksh), int(days)
+    if not (50 <= daily_ksh <= 5000) or not (1 <= days <= 30):
+        raise ValueError("A boost is KSh 50–5,000 a day, for 1–30 days.")
+    row = fetch_one("""SELECT post_id, question_id, platform, url, handed_at, boost_state FROM social_posts
+                       WHERE post_id = :id""", {"id": post_id})
+    if not row or not row.get("handed_at"):
+        raise ValueError("Only a post that is out can be boosted.")
+    if row["platform"] != "facebook":
+        raise ValueError("Boosting is set up for Facebook only.")
+    if row.get("boost_state") == "queued":
+        raise ValueError("This post's boost is already on its way.")
+    if row.get("boost_state") in ("boosted", "check") and not again:
+        raise ValueError("This post was boosted (or may have been — check Ads Manager). Press Boost again to add another.")
+    t = social.status(row["question_id"]).get("thread") or {}
+    command_id = queue_command("boost", "facebook", post_id, by=by,
+                               options={"daily_ksh": daily_ksh, "days": days, "find": t.get("find") or "",
+                                        "find_also": t.get("find_also") or [], "url": row.get("url") or ""})
+    execute("""UPDATE social_posts SET boost_state = 'queued', boost_daily_ksh = :d, boost_days = :n, boost_error = ''
+               WHERE post_id = :id""", {"d": daily_ksh, "n": days, "id": post_id})
+    return {"post_id": post_id, "command_id": command_id, "daily_ksh": daily_ksh, "days": days,
+            "total_ksh": daily_ksh * days}
+
+
+def boost_candidates(limit: int = 50) -> list[dict[str, Any]]:
+    """Posts that are out with the platform pitch, newest first, with their
+    numbers — the ones worth paying to show more people."""
+    from ..infra.db import fetch_all
+
+    rows = fetch_all("""SELECT p.post_id, p.question_id, p.posted_at, p.url, p.score, p.marketing, p.boost_state,
+                               p.boost_daily_ksh, p.boost_days, p.boost_error, p.boosted_at, p.teacher,
+                               LEFT(COALESCE(q.content->>'question_text', ''), 140) AS question_text
+                        FROM social_posts p LEFT JOIN question_dna q ON q.question_id = p.question_id
+                        WHERE p.platform = 'facebook' AND p.handed_at IS NOT NULL AND COALESCE(p.format, 'video') = 'video'
+                        ORDER BY p.marketing DESC, p.posted_at DESC LIMIT :n""", {"n": limit}) or []
+    return [{k: (v.isoformat() if hasattr(v, "isoformat") else v) for k, v in r.items()} for r in rows]
 
 
 def command_result(command_id: int) -> dict[str, Any] | None:
@@ -1888,3 +1950,30 @@ def book_series(grade: str, subject: str, sub_strand: str = "", *, days: int = 7
             "questions": len(chosen),
             "days": [{"date": d["date"], "times": [f"{p['at'].astimezone(EAT):%H:%M} {p['step']}" for p in d["posts"]]}
                      for d in calendar], "notes": notes}
+
+
+# ── starting again: every video with the pitch, every question out afresh ───
+
+def relaunch(*, render_limit: int = 200, by: str = "") -> dict[str, Any]:
+    """Every video made again with the platform pitch, and the questions that
+    went out posted afresh: their posts are kept in social_posts_history and
+    taken off, so booking treats each as never posted. Posts booked but not
+    out stay booked; their videos are queued again, the soonest first."""
+    from ..infra.db import execute, fetch_one
+    from . import platform_settings, teacher
+
+    platform_settings.set_many({"social_marketing": True}, updated_by=by or "relaunch")
+    moved = fetch_one("""WITH out AS (
+                             INSERT INTO social_posts_history
+                             SELECT p.*, NOW() AS archived_at, 'relaunch with the platform pitch' AS archived_why
+                             FROM social_posts p
+                             WHERE p.handed_at IS NOT NULL AND COALESCE(p.format, 'video') = 'video'
+                               AND COALESCE(p.posted_at, NOW()) <= NOW()     -- out, not waiting in Facebook's scheduler
+                             RETURNING post_id)
+                         SELECT COUNT(*) AS n FROM out""") or {}
+    execute("""DELETE FROM social_posts WHERE post_id IN (SELECT post_id FROM social_posts_history
+                                                         WHERE archived_why = 'relaunch with the platform pitch')
+               AND handed_at IS NOT NULL AND COALESCE(posted_at, NOW()) <= NOW()""")
+    queued = teacher.render_now(teacher.mode() if teacher.mode() != "off" else "classroom", limit=render_limit,
+                                pause_lessons=True, by=by or "relaunch")
+    return {"archived_posts": int(moved.get("n") or 0), **queued}

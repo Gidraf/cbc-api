@@ -23,7 +23,8 @@ KEEP = (
     # Expressions: blinks, brows, smiles, eyes, jaw.
     "AK_01_BrowDownLeft", "AK_02_BrowDownRight", "AK_03_BrowInnerUp", "AK_04_BrowOuterUpLeft",
     "AK_05_BrowOuterUpRight", "AK_07_CheekSquintLeft", "AK_08_CheekSquintRight", "AK_09_EyeBlinkLeft",
-    "AK_10_EyeBlinkRight", "AK_11_EyeLookDownLeft", "AK_12_EyeLookDownRight", "AK_17_EyeLookUpLeft",
+    "AK_10_EyeBlinkRight", "AK_11_EyeLookDownLeft", "AK_12_EyeLookDownRight", "AK_13_EyeLookInLeft",
+    "AK_14_EyeLookInRight", "AK_15_EyeLookOutLeft", "AK_16_EyeLookOutRight", "AK_17_EyeLookUpLeft",
     "AK_18_EyeLookUpRight", "AK_19_EyeSquintLeft", "AK_20_EyeSquintRight", "AK_21_EyeWideLeft",
     "AK_22_EyeWideRight", "AK_25_JawOpen", "AK_27_MouthClose", "AK_30_MouthFrownLeft", "AK_31_MouthFrownRight",
     "AK_44_MouthSmileLeft", "AK_45_MouthSmileRight",

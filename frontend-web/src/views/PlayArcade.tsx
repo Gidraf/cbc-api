@@ -54,6 +54,7 @@ import {
   useSocialAsset,
   useSocialBrand,
   useSocialHtml,
+  useTeachers,
   useSocialLibrary,
   useSocialStatus,
   useSetHandPhoto,
@@ -553,7 +554,8 @@ function WatchModal({ questionId, onClose, start = "whiteboard" }: { questionId:
   const [view, setView] = React.useState<"whiteboard" | "classic" | "social">(start);
   const [voice, setVoice] = React.useState("");
   const [teacher, setTeacher] = React.useState("");          // "": as Settings say
-  const [students, setStudents] = React.useState("");        // "": a different number each video
+  const students = "";                                       // the teacher teaches alone
+  const teachers = useTeachers();
   const board = useWhiteboardHtml(view === "whiteboard" ? questionId : "", voice);
   const classic = useWalkthroughHtml(view === "classic" ? questionId : "");
   const vertical = useSocialHtml(view === "social" ? questionId : "", voice, teacher, students);
@@ -575,25 +577,13 @@ function WatchModal({ questionId, onClose, start = "whiteboard" }: { questionId:
             <Select value={teacher} onChange={(e) => setTeacher(e.target.value)} style={{ width: "auto" }}
                     title="Preview with a teacher, whatever Settings say — the voice follows the teacher">
               <option value="">As in Settings</option>
-              <option value="classroom">🏫 A class — any teacher</option>
-              <option value="female">👩‍🏫 A woman (young or older)</option>
-              <option value="male">👨‍🏫 A man (young or older)</option>
-              <option value="female_young">Ms — young woman</option>
-              <option value="male_young">Mr — young man</option>
-              <option value="teacher_older_f">Mrs — older woman</option>
-              <option value="teacher_older_m">Mzee — older man</option>
+              <option value="classroom">🎓 Any teacher — a different one each video</option>
+              <option value="female">👩‍🏫 Any woman teacher</option>
+              <option value="male">👨‍🏫 Any man teacher</option>
+              {(teachers.data?.teachers || []).map((t) => (
+                <option key={t.id} value={t.id}>{t.name}{t.older ? " (older)" : ""}</option>
+              ))}
               <option value="off">No teacher</option>
-            </Select>
-          </label>
-        )}
-        {view === "social" && teacher !== "off" && (
-          <label style={{ display: "inline-flex", gap: 6, alignItems: "center", fontSize: "var(--text-sm)" }}>Students
-            <Select value={students} onChange={(e) => setStudents(e.target.value)} style={{ width: "auto" }}
-                    title="How many students sit in; a student works the question out in a young voice">
-              <option value="">Any — a different class each video</option>
-              <option value="0">None</option>
-              <option value="1">One</option>
-              <option value="2">Two</option>
             </Select>
           </label>
         )}
@@ -636,10 +626,10 @@ function SocialControl({ questionId, voice, teacher = "", students = "" }: { que
                 🎓 Make with the teacher</Button>
             )}
             <Button size="sm" disabled={make.isPending}
-                    title="Make this video again with the teacher and students chosen above (a new cast each time); it is kept for this question"
-                    onClick={async () => { try { await make.mutateAsync({ questionId, voice, fresh: true, teacher, students }); toast("Queued with this cast.", "ok"); }
+                    title="Make this video again with the teacher chosen above; it is kept for this question"
+                    onClick={async () => { try { await make.mutateAsync({ questionId, voice, fresh: true, teacher, students }); toast("Queued with this teacher.", "ok"); }
                                          catch (err) { toast(err instanceof Error ? err.message : "Could not queue it.", "danger"); } }}>
-              🎬 Make again with this cast</Button>
+              🎬 Make again with this teacher</Button>
             <DownloadMp4 url={v.url} name={`${v.question_id}.mp4`} label="⬇ Video (MP4)" primary />
             {v.thumbnail_url && <a href={v.thumbnail_url} download target="_blank" rel="noreferrer"><Button size="sm">⬇ Thumbnail</Button></a>}
           </>

@@ -231,6 +231,33 @@ async def tick() -> dict[str, Any]:
     return await publish(nxt["post"], dry_run=False)
 
 
+async def boost_step(post_id: str, options: dict[str, Any]) -> dict[str, Any]:
+    """Boost one post — pressed in the console, with its budget."""
+    from .flows import fb_boost
+
+    async with browser.lock:
+        state["busy"] = f"Boosting a post (KSh {options.get('daily_ksh')} a day, {options.get('days')} days)"
+        page = await browser.page()
+        try:
+            out = await fb_boost.boost(page, find=str(options.get("find") or ""), also=options.get("find_also") or [],
+                                       daily_ksh=int(options.get("daily_ksh") or 0), days=int(options.get("days") or 0))
+            if out.get("unsure"):
+                return {"ok": False, "unsure": True, "error": "Pressed Boost, but Facebook did not confirm — check Ads Manager.",
+                        "shot": out.get("shot")}
+            return {"ok": True, "message": f"Boosted: KSh {out['total_ksh']:,} in all.", "shot": out.get("shot")}
+        except NotLoggedIn as exc:
+            await _set_login("facebook", False, "Log in on the screen.")
+            return {"ok": False, "error": str(exc)}
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "error": _why(exc), "shot": await shot(page, "facebook-boost-failed")}
+        finally:
+            state["busy"] = ""
+            try:
+                await page.close()
+            except Exception:  # noqa: BLE001
+                pass
+
+
 async def linkedin_step() -> bool:
     """A developer-studio post on LinkedIn, if one is queued: True when one was tried."""
     try:
@@ -550,6 +577,8 @@ async def run(action: str, platform: str = "", post_id: str = "",
         return set_paused(action == "pause")
     if action == "groups":
         return await do_groups(platform or "facebook")
+    if action == "boost":
+        return await boost_step(post_id, options or {})
     return {"ok": False, "error": f"Unknown action {action!r}."}
 
 

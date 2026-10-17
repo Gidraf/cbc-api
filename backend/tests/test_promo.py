@@ -25,14 +25,10 @@ def test_the_script_opens_on_the_hook_shows_each_screen_and_ends_on_the_call_to_
     assert data["scenes"][-1]["say"] == "Start free today at cbc.example."
 
 
-def test_in_the_classroom_a_student_says_what_a_student_does() -> None:
+def test_the_teacher_says_every_line_in_their_own_voice() -> None:
     data = promo._cast(promo.script("teachers", B), "teachers", "classroom")
-    by = {s.get("shot"): s["speaker"] for s in data["scenes"]}
-    assert by["signup"] == "teacher" and by["student_start"] == "s1"
-    student = next(s for s in data["scenes"] if s.get("shot") == "student_start")
-    assert ":" in student["caption"] and "|" in student["voice"] or student["voice"] == "en-US-AnaNeural"
-    every = promo._cast(promo.script("students", B), "students", "classroom")
-    assert all(s["speaker"] == "s1" for s in every["scenes"] if s["scene"] == "screen")
+    voices = {s["voice"] for s in data["scenes"]}
+    assert len(voices) == 1 and all(s["speaker"] == "teacher" for s in data["scenes"])
 
 
 def test_the_board_draws_a_screen_and_rings_the_button() -> None:

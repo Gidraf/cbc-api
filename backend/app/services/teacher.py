@@ -37,8 +37,14 @@ CHECK_CAPTION = "Did you get it right? Comment ✅ or ❌"
 # What a video's teacher can be: none; a classroom (any teacher, chosen per
 # video); a woman or a man (young or older, chosen per video); one teacher in
 # particular; or half and half by question.
-PICKS = ("female_young", "male_young", "teacher_older_f", "teacher_older_m")
-MODES = ("off", "classroom", "female", "male", "alternate") + PICKS
+# One teacher in particular: by model, except the first two, whose model names
+# ("female", "male") are also the any-woman / any-man choices.
+PICK_ALIAS = {"female_01": "female", "male_01": "male"}
+PICKS = ("female_young", "male_young", "female_01", "male_01", "teacher_older_f", "teacher_older_m", "business_female_03",
+         "business_female_04", "female_adult_02", "female_adult_04", "female_adult_05", "female_adult_06",
+         "female_adult_07", "female_adult_14", "business_male_01", "business_male_02", "business_male_03",
+         "business_male_06", "business_male_07", "male_adult_04", "male_adult_08", "male_adult_12", "male_adult_15")
+MODES = tuple(dict.fromkeys(("off", "classroom", "female", "male", "alternate") + PICKS))
 
 
 def mode() -> str:
@@ -51,14 +57,21 @@ def mode() -> str:
     return value if value in MODES else "classroom"
 
 
+def roster() -> list[dict[str, Any]]:
+    """The teachers, for a picker: the choice's id, the name, woman or man, young or older."""
+    back = {v: k for k, v in PICK_ALIAS.items()}
+    return [{"id": back.get(t["model"], t["model"]), "name": t["name"], "gender": t["gender"], "older": t["older"]}
+            for t in TEACHERS if _model_exists(t["model"])]
+
+
 def students_setting() -> int | None:
     """How many students sit in: 0, 1 or 2 — or None, a different number each video."""
     from . import platform_settings
 
     try:
-        value = str(platform_settings.get("social_students", "random") or "random").strip().lower()
+        value = str(platform_settings.get("social_students", "0") or "0").strip().lower()
     except Exception:  # noqa: BLE001
-        value = "random"
+        value = "0"
     return int(value) if value in ("0", "1", "2") else None
 
 
@@ -319,23 +332,37 @@ def visemes(text: str, envelope: list[float], *, quiet: float = 0.06) -> str:
 # Who teaches, who answers and in which voices is picked by the question, so
 # every video differs and a video never changes.
 
+# The teachers: realistic Microsoft Rocketbox people (MIT), each with a voice
+# of their own — the same face always sounds the same. Most voices are
+# African English (Kenya, Nigeria, South Africa, Tanzania); a few others for
+# variety. "name|pitch|rate" lowers, raises, slows a voice (Edge TTS).
 TEACHERS = [
-    {"model": "female", "gender": "female", "older": False},
-    {"model": "male", "gender": "male", "older": False},
-    {"model": "teacher_older_f", "gender": "female", "older": True},
-    {"model": "teacher_older_m", "gender": "male", "older": True},
+    {"model": "female", "name": "Ms Achieng", "gender": "female", "older": False, "voice": "en-KE-AsiliaNeural"},
+    {"model": "business_female_03", "name": "Ms Wambui", "gender": "female", "older": False, "voice": "en-ZA-LeahNeural"},
+    {"model": "business_female_04", "name": "Ms Chebet", "gender": "female", "older": False, "voice": "en-NG-EzinneNeural"},
+    {"model": "female_adult_02", "name": "Ms Atieno", "gender": "female", "older": False, "voice": "en-TZ-ImaniNeural"},
+    {"model": "female_adult_04", "name": "Ms Njeri", "gender": "female", "older": False, "voice": "en-KE-AsiliaNeural|+5Hz|+2%"},
+    {"model": "female_adult_05", "name": "Ms Kerubo", "gender": "female", "older": False, "voice": "en-US-AvaNeural"},
+    {"model": "female_adult_06", "name": "Ms Mwanaisha", "gender": "female", "older": False, "voice": "en-TZ-ImaniNeural|-3Hz|-3%"},
+    {"model": "female_adult_07", "name": "Ms Nduta", "gender": "female", "older": False, "voice": "en-IN-NeerjaNeural"},
+    {"model": "female_adult_14", "name": "Ms Moraa", "gender": "female", "older": False, "voice": "en-IE-EmilyNeural"},
+    {"model": "teacher_older_f", "name": "Mrs Wanjala", "gender": "female", "older": True, "voice": "en-GB-SoniaNeural|-4Hz|-6%"},
+    {"model": "male", "name": "Mr Otieno", "gender": "male", "older": False, "voice": "en-KE-ChilembaNeural"},
+    {"model": "business_male_01", "name": "Mr Okafor", "gender": "male", "older": False, "voice": "en-NG-AbeoNeural"},
+    {"model": "business_male_02", "name": "Mr Kariuki", "gender": "male", "older": False, "voice": "en-ZA-LukeNeural"},
+    {"model": "business_male_03", "name": "Mr Mwakio", "gender": "male", "older": False, "voice": "en-TZ-ElimuNeural"},
+    {"model": "business_male_06", "name": "Mr Kiptoo", "gender": "male", "older": False, "voice": "en-US-AndrewNeural"},
+    {"model": "male_adult_04", "name": "Mr Omondi", "gender": "male", "older": False, "voice": "en-KE-ChilembaNeural|-4Hz|-3%"},
+    {"model": "male_adult_08", "name": "Mr Mutua", "gender": "male", "older": False, "voice": "en-AU-WilliamNeural"},
+    {"model": "male_adult_12", "name": "Mr Wafula", "gender": "male", "older": False, "voice": "en-NG-AbeoNeural|+4Hz|+2%"},
+    {"model": "male_adult_15", "name": "Mwalimu Bakari", "gender": "male", "older": False, "voice": "en-TZ-ElimuNeural|-5Hz|-4%"},
+    {"model": "business_male_07", "name": "Mr Kamau", "gender": "male", "older": True, "voice": "en-GB-ThomasNeural|-4Hz|-5%"},
+    {"model": "teacher_older_m", "name": "Mzee Odhiambo", "gender": "male", "older": True, "voice": "en-GB-RyanNeural|-6Hz|-7%"},
 ]
-STUDENTS = [
-    {"model": "student_boy", "gender": "male",
-     "names": ["Juma", "Kamau", "Otieno", "Kiprop", "Baraka", "Wafula", "Mutua", "Omondi"]},
-    {"model": "student_girl", "gender": "female",
-     "names": ["Nekesa", "Wanjiku", "Amina", "Zainab", "Halima", "Fatuma", "Rehema", "Aisha"]},
-]
-TEACHER_VOICES = {"female": ["en-KE-AsiliaNeural", "en-NG-EzinneNeural", "en-ZA-LeahNeural", "en-TZ-ImaniNeural"],
-                  "male": ["en-KE-ChilembaNeural", "en-NG-AbeoNeural", "en-ZA-LukeNeural", "en-TZ-ElimuNeural"]}
-# Young voices: a Kenyan voice raised in pitch and a little quicker, or a child's voice.
-STUDENT_VOICES = {"female": ["en-KE-AsiliaNeural|+30Hz|+6%", "en-US-AnaNeural", "en-TZ-ImaniNeural|+28Hz|+6%"],
-                  "male": ["en-KE-ChilembaNeural|+45Hz|+7%", "en-NG-AbeoNeural|+45Hz|+7%", "en-TZ-ElimuNeural|+42Hz|+7%"]}
+# The class is gone from the videos: the teacher alone. Kept empty so a cast
+# with students is never dealt.
+STUDENTS: list[dict[str, Any]] = []
+STUDENT_VOICES: dict[str, list[str]] = {"female": [], "male": []}
 PLACES = {"teacher": {"x": -0.6, "ry": 0.3}, "s1": {"x": 0.32, "ry": -0.25}, "s2": {"x": 0.92, "ry": -0.4}}
 
 
@@ -385,24 +412,25 @@ def cast_for(question_id: str, how: str | None = None, students: int | None = No
     take = choice(question_id)["take"] if take is None else take
     n = int(hashlib.sha256((f"class:{question_id}" + (f":{take}" if take else "")).encode()).hexdigest(), 16)
     teachers = [t for t in TEACHERS if _model_exists(t["model"])] or TEACHERS[:2]
-    if how in PICKS:
-        teachers = [t for t in teachers if t["model"] == {"female_young": "female", "male_young": "male"}.get(how, how)] or teachers
+    if how in ("female_young", "male_young"):
+        teachers = [t for t in teachers if t["gender"] == how.split("_")[0] and not t["older"]] or teachers
+    elif how in PICKS:
+        teachers = [t for t in teachers if t["model"] == PICK_ALIAS.get(how, how)] or teachers
     elif how in ("female", "male"):
         teachers = [t for t in teachers if t["gender"] == how] or teachers
     elif how == "alternate":
         g = "female" if int(hashlib.sha256(question_id.encode()).hexdigest(), 16) % 2 == 0 else "male"
         teachers = [t for t in teachers if t["gender"] == g] or teachers
     t = teachers[n % len(teachers)]
-    tv = TEACHER_VOICES[t["gender"]][(n // 7) % len(TEACHER_VOICES[t["gender"]])]
-    if t["older"]:
-        tv = f"{tv}|-6Hz|-7%"
-    count = students if students in (0, 1, 2) else (2, 2, 1, 1, 0)[(n // 23) % 5]
+    tv = t["voice"]                                   # each teacher's own voice
+    count = students if students in (0, 1, 2) else 0
+    count = count if STUDENTS else 0
     pool = [s for s in STUDENTS if _model_exists(s["model"])]
     answering = pool[(n // 11) % len(pool)] if pool and count >= 1 else None
     other = next((s for s in pool if s is not answering), None) if count >= 2 else None
     # Alone, the teacher stands in the middle; with students, to one side.
     place = PLACES["teacher"] if answering else {"x": 0.0, "ry": 0.0}
-    cast = {"teacher": {"id": "teacher", "model": t["model"], "gender": t["gender"], "voice": tv, **place}}
+    cast = {"teacher": {"id": "teacher", "model": t["model"], "name": t["name"], "gender": t["gender"], "voice": tv, **place}}
     if answering:
         cast["s1"] = {"id": "s1", "model": answering["model"], "gender": answering["gender"],
                       "name": answering["names"][(n // 13) % len(answering["names"])],
