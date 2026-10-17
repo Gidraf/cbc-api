@@ -209,8 +209,9 @@ def number(text: str) -> int:
     return int(val * {"k": 1_000, "m": 1_000_000}.get(m.group(2).lower(), 1))
 
 
-_LABELS = {"views": r"^(views|plays|video views|reel plays)$", "reactions": r"^(reactions|likes|post reactions)$",
-           "comments": r"^comments$", "shares": r"^shares$"}
+_LABELS = {"views": r"^(views|plays|video views|reel plays)$", "viewers": r"^(viewers|reach|accounts reached)$",
+           "reactions": r"^(reactions|likes|post reactions)$", "comments": r"^comments$", "shares": r"^shares$",
+           "saves": r"^saves$"}
 
 
 def parse_insights(text: str) -> dict[str, int]:
@@ -225,35 +226,51 @@ def parse_insights(text: str) -> dict[str, int]:
                 if re.match(r"^[\d.,]+\s*[KkMm]?$", near):
                     out[key] = number(near)
                     break
+    m = re.search(r"([\d.,]+[KkMm]?)\s+Engagement", text or "")
+    if m:
+        out["engagement"] = number(m.group(1))
     for key, rx in (("comments", r"([\d.,]+[KkMm]?)\s+comments?"), ("shares", r"([\d.,]+[KkMm]?)\s+shares?"),
                     ("views", r"([\d.,]+[KkMm]?)\s+(?:views|plays)"), ("reactions", r"([\d.,]+[KkMm]?)\s+reactions?")):
         if key not in out:
             m = re.search(rx, text or "", re.I)
             if m:
                 out[key] = number(m.group(1))
+    if "reactions" not in out and "engagement" in out:      # only the total shown: the rest is reactions
+        out["reactions"] = max(0, out["engagement"] - out.get("comments", 0) - out.get("shares", 0))
     return out
 
 
 async def read_metrics(page: Page, post: Locator) -> dict[str, int]:
-    """The post's numbers: its "See insights" window if it opens, else what the post shows."""
+    """The post's numbers. "See insights" opens a whole "Post insights" page
+    on a profile (Views, Viewers, then Engagement: reactions, comments,
+    shares) — or a window elsewhere; failing both, what the post shows. This
+    leaves the profile, so it runs after the comments."""
+    try:
+        shown = parse_insights(await post.inner_text(timeout=10_000))
+    except Exception:  # noqa: BLE001
+        shown = {}
     try:
         link = post.get_by_text(re.compile(r"^See insights$", re.I))
         if await link.count():
+            before = page.url
             await link.first.click()
-            await asyncio.sleep(4)
-            dialog = page.get_by_role("dialog").last
-            text = await dialog.inner_text(timeout=10_000) if await dialog.count() else ""
-            await page.keyboard.press("Escape")
-            await asyncio.sleep(1.5)
+            for _ in range(15):
+                await asyncio.sleep(1)
+                if page.url != before or await page.get_by_text(re.compile(r"^Post insights$", re.I)).count():
+                    break
+            await asyncio.sleep(3)                      # the numbers fill in
+            dialog = page.get_by_role("dialog")
+            if page.url == before and await dialog.count():
+                text = await dialog.last.inner_text(timeout=10_000)
+                await page.keyboard.press("Escape")
+            else:
+                text = await page.locator("body").inner_text(timeout=15_000)
             got = parse_insights(text)
             if got:
-                return got
+                return {**shown, **got}
     except Exception:  # noqa: BLE001
         pass
-    try:
-        return parse_insights(await post.inner_text(timeout=10_000))
-    except Exception:  # noqa: BLE001
-        return {}
+    return shown
 
 
 async def comment(page: Page, *, find: str, url: str, comments: list[str], image: str = "",
@@ -262,8 +279,8 @@ async def comment(page: Page, *, find: str, url: str, comments: list[str], image
     read its numbers first, when asked). The post is always found on the
     profile by its words: a reel's own page hides its comment box."""
     post = await find_post(page, find, "", also=also)
-    metrics = await read_metrics(page, post) if measure else {}
     if not comments and not check:
+        metrics = await read_metrics(page, post) if measure else {}
         return {"found": True, "metrics": metrics, "shot": await shot(page, "facebook-insights")}
     box = await comment_box(page, post)
     if check:
@@ -279,6 +296,7 @@ async def comment(page: Page, *, find: str, url: str, comments: list[str], image
         if not await _landed(page, post, text):
             raise StepFailed(f"Comment {k + 1} did not show under the post.")
         await asyncio.sleep(4)
+    shot_name = await shot(page, "facebook-comments")
     permalink = ""
     try:
         link = post.locator('a[href*="/posts/"], a[href*="/reel/"], a[href*="/videos/"]').first
@@ -286,4 +304,5 @@ async def comment(page: Page, *, find: str, url: str, comments: list[str], image
             permalink = (await link.get_attribute("href") or "").split("?")[0]
     except Exception:  # noqa: BLE001
         pass
-    return {"found": True, "url": permalink, "metrics": metrics, "shot": await shot(page, "facebook-comments")}
+    metrics = await read_metrics(page, post) if measure else {}    # last: it leaves the profile
+    return {"found": True, "url": permalink, "metrics": metrics, "shot": shot_name}
