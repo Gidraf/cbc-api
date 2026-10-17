@@ -342,6 +342,7 @@
 
     const m = moodAt(i, into);
     const e = Math.min(1, energy(i, into) * 1.5);
+    if (REAL) panel.style.visibility = "visible";
     if (REAL && cover) {
       REAL.draw({ t, i: -1, into: t, sc: { scene: "cover" }, m: { tense: 0, lively: 1 }, e: 0, shape: null, k: 1,
                   from: "point", to: "point", talk: 0, dance: 0, think: 0, blink: 0, surprise: 1 });
@@ -358,6 +359,10 @@
       effects(t, i, into, sc, m);
       return;
     }
+    // No realistic model (still loading, or it could not load): no teacher
+    // at all rather than the old drawn figure — the frame is complete without one.
+    panel.style.visibility = "hidden";
+    if (!window.__teacherDrawn) return;
     // Pose: from the last scene's to this one's over half a second.
     const from = i > 0 ? poseOf(i - 1, 99) : P.rest, to = poseOf(i, into);
     let k = ease(into / 0.5);
@@ -449,15 +454,21 @@
   // ── the realistic teacher: a Microsoft Rocketbox avatar (MIT) ──
   let REAL = null;
   function b64(s) { const bin = atob(s), out = new Uint8Array(bin.length); for (let k = 0; k < bin.length; k++) out[k] = bin.charCodeAt(k); return out.buffer; }
-  window.__teacherReady = (window.TEACHER_GLB && THREE.GLTFLoader && cfg.model !== false)
-    ? new Promise((resolve) => new THREE.GLTFLoader().parse(b64(window.TEACHER_GLB), "", (g) => {
-        try { REAL = makeReal(g); window.__teacher = "real"; } catch (err) { console.warn("teacher model", err); }
-        resolve(REAL); draw(0);
-      }, (err) => { console.warn("teacher model", err); resolve(null); }))
+  // The cast: one teacher (TEACHER_GLB), or a classroom — a teacher and
+  // students — each a model in TEACHER_GLBS, placed as cfg.cast says.
+  const GLBS = window.TEACHER_GLBS || (window.TEACHER_GLB ? { teacher: window.TEACHER_GLB } : null);
+  const parse = (data) => new Promise((ok, fail) => new THREE.GLTFLoader().parse(b64(data), "", ok, fail));
+  window.__teacherReady = (GLBS && THREE.GLTFLoader && cfg.model !== false)
+    ? Promise.all(Object.entries(GLBS).map(([id, data]) => parse(data).then((g) => [id, g])))
+        .then((loaded) => {
+          try { REAL = makeStage(loaded); window.__teacher = "real"; } catch (err) { console.warn("teacher model", err); }
+          draw(0);
+          return REAL;
+        })
+        .catch((err) => { console.warn("teacher model", err); return null; })
     : Promise.resolve(null);
 
-  function makeReal(gltf) {
-    const V = (x, y, z) => new THREE.Vector3(x, y, z);
+  function makeStage(loaded) {
     renderer.outputEncoding = THREE.sRGBEncoding;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure = 1.05;
@@ -467,7 +478,62 @@
     const fillL = new THREE.DirectionalLight(0xdfe8ff, 0.4); fillL.position.set(-1.8, 1.4, 1.6); stage.add(fillL);
     const rimL = new THREE.DirectionalLight(0xbcd2ff, 0.7); rimL.position.set(0, 2.2, -2.2); stage.add(rimL);
     const cam = new THREE.PerspectiveCamera(26, W / H, 0.05, 30);
+    const places = Object.fromEntries((cfg.cast || []).map((c) => [c.id, c]));
+    const actors = {};
+    for (const [id, g] of loaded) actors[id] = makeActor(g, stage, places[id] || { x: 0 });
+    const ids = Object.keys(actors);
+    const speakerAt = (i) => {
+      const who = (cfg.speakers || [])[i];
+      return actors[who] ? who : (actors.teacher ? "teacher" : ids[0]);
+    };
+    const V = (x, y, z) => new THREE.Vector3(x, y, z);
+
+    function draw(st) {
+      const who = st.i >= 0 ? speakerAt(st.i) : speakerAt(0);
+      const before = st.i > 0 ? speakerAt(st.i - 1) : who;
+      const head = actors[who].head;
+      for (const id of ids) {
+        const me = id === who;
+        const student = id !== "teacher";
+        let pose = "rest";
+        if (!me) {
+          if (st.sc.scene === "countdown" && student) pose = "think";          // the class thinks it through
+          else if (st.sc.scene === "answer" && student && st.into < 1.6) pose = "celebrate";
+        }
+        actors[id].draw(me ? st : { ...st, e: 0, shape: null, talk: 0, from: pose, to: pose, k: 1, surprise: 0,
+                                    dance: st.dance, think: pose === "think" ? st.think : 0 },
+                        head);
+      }
+      // Camera: on whoever speaks, moving there over half a second; the whole
+      // class for the first moments of the question.
+      let cx = 0, cy = 0;
+      if (st.sc.scene === "countdown") {
+        const age = st.into - Math.floor(st.into), shake = Math.exp(-age * 14) * 0.006;
+        cx = Math.sin(st.into * 61) * shake; cy = Math.cos(st.into * 47) * shake;
+      }
+      const kk = ease(st.into / 0.6);
+      const focus = actors[before].head.clone().lerp(head, kk);
+      let dist = 1.95 - 0.45 * st.m.tense;
+      if (ids.length > 1 && st.sc.scene === "title" && st.into < 2.2) {
+        const xs = ids.map((id) => actors[id].head.x);
+        const wide = V((Math.min(...xs) + Math.max(...xs)) / 2, Math.max(...ids.map((id) => actors[id].head.y)) - 0.15, focus.z);
+        const w = 1 - ease((st.into - 1.2) / 1.0);
+        focus.lerp(wide, w);
+        dist += (2.6 + (Math.max(...xs) - Math.min(...xs)) * 1.6 - dist) * w;
+      }
+      cam.position.set(focus.x + cx, focus.y - 0.08 + cy, focus.z + dist);
+      cam.lookAt(focus.x, focus.y - 0.16 + 0.04 * st.m.tense, focus.z);
+      renderer.render(stage, cam);
+    }
+    return { draw, actors };
+  }
+
+  function makeActor(gltf, stage, place) {
+    const V = (x, y, z) => new THREE.Vector3(x, y, z);
     const model = gltf.scene;
+    model.position.set(place.x || 0, 0, place.z || 0);
+    model.rotation.y = place.ry || 0;
+    const base = model.position.clone(), baseRy = model.rotation.y;
     stage.add(model);
     const bones = {}, faces = [];
     model.traverse((o) => {
@@ -565,16 +631,16 @@
       }
     }
 
-    function draw(st) {
+    function draw(st, speakerHead) {
       const { t, into, m, e } = st;
       // Back to rest, then the frame's pose on top.
       rest.forEach((q, b) => b.quaternion.copy(q));
-      model.position.set(0, 0, 0); model.rotation.set(0, 0, 0);
+      model.position.copy(base); model.rotation.set(0, baseRy, 0);
       if (st.dance > 0) {
         const d = into - 1.2;
-        model.position.x = Math.sin(d * Math.PI * 2) * 0.07 * st.dance;
+        model.position.x = base.x + Math.sin(d * Math.PI * 2) * 0.07 * st.dance;
         model.position.y = Math.abs(Math.sin(d * Math.PI * 4)) * 0.035 * st.dance;
-        model.rotation.y = Math.sin(d * Math.PI) * 0.25 * st.dance;
+        model.rotation.y = baseRy + Math.sin(d * Math.PI) * 0.25 * st.dance;
       }
       if (st.sc.scene === "answer" && into < 1.6) model.position.y += Math.abs(Math.sin(into * 7)) * 0.03 * (1 - into / 1.6);
       model.updateMatrixWorld(true);
@@ -583,12 +649,16 @@
       const nod = Math.sin(t * 7.3) * 0.05 * e + Math.sin(t * 0.9) * 0.02 + 0.1 * st.think;
       turn(B("Neck"), X, nod * 0.4);
       turn(B("Head"), X, nod * 0.6);
-      turn(B("Head"), Y, Math.sin(t * 0.6) * 0.08 * (1 - st.think));
+      // A listener turns toward whoever is speaking.
+      const toward = speakerHead && speakerHead.distanceTo(H0) > 0.05
+        ? Math.max(-0.5, Math.min(0.5, Math.atan2(speakerHead.x - H0.x, 1.6))) : 0;
+      turn(B("Head"), Y, Math.sin(t * 0.6) * 0.08 * (1 - st.think) + toward);
       turn(B("Head"), Z, -sa * 0.12 * st.think + Math.sin(t * 0.45) * 0.03
                         + Math.sin((into - 1.2) * Math.PI * 4) * 0.1 * st.dance);
       model.updateMatrixWorld(true);
       const Jn = B("MJaw").getWorldPosition(V());
-      thinkAt = V(Jn.x + sa * 0.04, Jn.y - 0.14, Jn.z + 0.11).sub(model.position);   // under the chin
+      const shift = model.position.clone().sub(base);
+      thinkAt = V(Jn.x + sa * 0.04, Jn.y - 0.14, Jn.z + 0.11).sub(shift);   // under the chin
 
       // Hands: from the last pose's spot to this one's, with the voice's beat.
       const ta = pick(st.from, "a")[0].clone().lerp(pick(st.to, "a")[0], st.k);
@@ -603,7 +673,6 @@
         tb.lerp(V(SB.x + sb * 0.08, SB.y - 0.08 - 0.16 * beat, SB.z + 0.32), st.dance);
         pa.lerp(V(sa * 0.25, -1, 0.1), st.dance); pb.lerp(V(sb * 0.25, -1, 0.1), st.dance);
       }
-      const shift = model.position;
       reach(armA, ta.add(shift), pa);
       reach(armB, tb.add(shift), pb);
       // To think, the wrist bends the knuckles in under the chin.
@@ -635,17 +704,8 @@
         face("AK_03_BrowInnerUp", 0.5 * st.surprise); face("AA_VI_13_O", 0.55 * st.surprise);
       }
 
-      // Camera: head and shoulders to the waist; a push in under tension, a shake on each second.
-      let cx = 0, cy = 0;
-      if (st.sc.scene === "countdown") {
-        const age = into - Math.floor(into), shake = Math.exp(-age * 14) * 0.006;
-        cx = Math.sin(into * 61) * shake; cy = Math.cos(into * 47) * shake;
-      }
-      cam.position.set(H0.x + cx, H0.y - 0.08 + cy, H0.z + 1.95 - 0.45 * m.tense);
-      cam.lookAt(H0.x, H0.y - 0.16 + 0.04 * m.tense, H0.z);
-      renderer.render(stage, cam);
     }
-    return { draw };
+    return { draw, head: H0 };
   }
 
   window.__onTime = draw;

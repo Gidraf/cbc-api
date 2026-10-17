@@ -9,10 +9,14 @@
         server's name, connecting, encryption, signing in — and sends a test
         email. Says which step fails and why; never prints the password.
 
-    docker compose exec api python -m app.admin_tools teacher-now [--mode alternate] [--limit 60] [--keep-lessons]
+    docker compose exec api python -m app.admin_tools teacher-now [--mode classroom] [--limit 60] [--keep-lessons]
         Teacher videos first: turns the 3D teacher on, pauses the lesson videos
         (queued ones cancelled, daily batch 0) and queues the booked posts'
         videos again with the teacher, the soonest post first.
+    docker compose exec api python -m app.admin_tools promo-video [--audience teachers] [--mode classroom]
+        A marketing video: the 3D teacher walks teachers, parents or students
+        through the console (sign up, set a paper, take it online, share the
+        link, see the marks). Prints where the MP4 is; it goes to Drive too.
     docker compose exec api python -m app.admin_tools lessons-resume [--target 200]
         The daily lesson videos again.
 
@@ -160,6 +164,20 @@ def teacher_now(how: str, limit: int, keep_lessons: bool) -> int:
     return 0
 
 
+def promo_video(audience: str, how: str) -> int:
+    from .services import promo
+
+    def tick(stage: str, n: int = 0, total: int = 0) -> None:
+        if stage != "draw" or n % 300 == 0:
+            print(f"  {stage} {n}/{total}", flush=True)
+
+    out = promo.render(audience, how=how, progress=tick)
+    print(f"Video ({out.get('seconds') or '?'} s): {out['url']}")
+    if out.get("thumbnail_url"):
+        print(f"Cover: {out['thumbnail_url']}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     import argparse
 
@@ -172,9 +190,13 @@ def main(argv: list[str] | None = None) -> int:
     k = sub.add_parser("rotate-master-key", help="move saved provider keys to NEW_MASTER_KEY")
     k.add_argument("--dry-run", action="store_true")
     tn = sub.add_parser("teacher-now", help="turn the teacher on and render the booked posts' videos with it first")
-    tn.add_argument("--mode", default="alternate", choices=["female", "male", "alternate"])
+    tn.add_argument("--mode", default="classroom", choices=["classroom", "female", "male", "alternate", "female_young",
+                                                            "male_young", "teacher_older_f", "teacher_older_m"])
     tn.add_argument("--limit", type=int, default=60, help="how many booked videos to queue (soonest first)")
     tn.add_argument("--keep-lessons", action="store_true", help="do not pause the daily lesson videos")
+    pv = sub.add_parser("promo-video", help="a marketing video: the teacher shows how to sign up, set a paper and test online")
+    pv.add_argument("--audience", default="teachers", choices=["teachers", "parents", "students"])
+    pv.add_argument("--mode", default="classroom", choices=["female", "male", "classroom"])
     lr = sub.add_parser("lessons-resume", help="the daily lesson videos again")
     lr.add_argument("--target", type=int, default=200)
     t = sub.add_parser("test-email", help="check each step of sending email, and send a test")
@@ -182,6 +204,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.cmd == "teacher-now":
         return teacher_now(args.mode, args.limit, args.keep_lessons)
+    if args.cmd == "promo-video":
+        return promo_video(args.audience, args.mode)
     if args.cmd == "lessons-resume":
         from .services import teacher
 

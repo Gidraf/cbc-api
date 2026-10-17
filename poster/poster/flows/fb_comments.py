@@ -168,15 +168,44 @@ async def _type(page: Page, box: Locator, text: str) -> None:
     await asyncio.sleep(0.6)
 
 
-async def _attach(box: Locator, image: str) -> bool:
-    """The answer card on the comment: the composer's own photo input."""
-    for up in range(1, 8):
-        holder = box.locator(f"xpath=ancestor::*[{up}]")
-        files = holder.locator('input[type="file"]')
+_PREVIEW = 'img[src^="blob:"], [aria-label*="Remove" i][role="button"]'
+
+
+async def _attach(page: Page, box: Locator, image: str) -> bool:
+    """The answer card on the comment. The composer's photo input is a few
+    levels up from the box — or, where Facebook hides it, behind its "Attach
+    a photo or video" button. True once the photo's preview shows."""
+    before = await page.locator(_PREVIEW).count()
+
+    async def previewed(wait: int = 20) -> bool:
+        for _ in range(wait):
+            if await page.locator(_PREVIEW).count() > before:
+                await asyncio.sleep(1.5)
+                return True
+            await asyncio.sleep(1)
+        return False
+
+    for up in range(1, 16):                       # the nearest input wins: never another comment's
+        files = box.locator(f"xpath=ancestor::*[{up}]").locator('input[type="file"]')
         if await files.count():
-            await files.first.set_input_files(image)
-            await asyncio.sleep(4)
-            return True
+            try:
+                await files.first.set_input_files(image)
+                if await previewed():
+                    return True
+            except Exception:  # noqa: BLE001
+                pass
+            break
+    for up in range(1, 16):
+        button = box.locator(f"xpath=ancestor::*[{up}]").locator(
+            '[aria-label*="photo" i][role="button"], [aria-label*="Attach" i][role="button"]')
+        if await button.count():
+            try:
+                async with page.expect_file_chooser(timeout=8_000) as chooser:
+                    await button.first.click()
+                await (await chooser.value).set_files(image)
+                return await previewed()
+            except Exception:  # noqa: BLE001
+                return False
     return False
 
 
@@ -307,12 +336,13 @@ async def comment(page: Page, *, find: str, url: str, comments: list[str], image
     if check:
         await box.click()
         return {"found": True, "shot": await shot(page, "facebook-comments-check")}
+    attached = None
     for k, text in enumerate(comments):
         box = await comment_box(page, post)
         await _type(page, box, text)
         if image and k == len(comments) - 1:
-            if not await _attach(box, image):
-                pass        # no photo input: the text still goes
+            attached = await _attach(page, box, image)    # no photo input: the text still goes
+            await box.focus()
         await page.keyboard.press("Enter")
         if not await _landed(page, post, text):
             raise StepFailed(f"Comment {k + 1} did not show under the post.")
@@ -326,4 +356,7 @@ async def comment(page: Page, *, find: str, url: str, comments: list[str], image
     except Exception:  # noqa: BLE001
         pass
     metrics = await read_metrics(page, post) if measure else {}    # last: it leaves the profile
-    return {"found": True, "url": permalink, "metrics": metrics, "shot": shot_name}
+    out = {"found": True, "url": permalink, "metrics": metrics, "shot": shot_name}
+    if attached is not None:
+        out["card"] = attached
+    return out

@@ -100,6 +100,51 @@ def admin_credit(payload: Credit, auth: AuthContext = Depends(ADMIN)) -> dict[st
     return {"owner": payload.owner, "balance_ksh": billing.ksh(new)}
 
 
+@router.get("/admin/accounts")
+def admin_accounts(days: int = Query(30, ge=1, le=365), auth: AuthContext = Depends(ADMIN)) -> dict[str, Any]:
+    """Who signed up, when, and who pays: every account with its wallet and
+    payments, and the totals for today, seven days and `days` days."""
+    from datetime import datetime, timedelta, timezone
+
+    from ..infra.db import fetch_all, fetch_one
+    from ..services import mpesa
+
+    now = datetime.now(timezone.utc)
+    day = now.astimezone(mpesa.EAT).replace(hour=0, minute=0, second=0, microsecond=0)
+    rows = fetch_all("""
+        SELECT u.username, u.role, COALESCE(u.email, '') AS email, u.email_verified_at IS NOT NULL AS email_verified,
+               u.is_active, u.created_at,
+               COALESCE(w.balance_cents, 0) AS balance_cents,
+               COALESCE(p.paid_ksh, 0) AS paid_ksh, COALESCE(p.payments, 0) AS payments, p.last_paid_at,
+               COALESCE(s.spent_cents, 0) AS spent_cents
+        FROM app_users u
+        LEFT JOIN wallets w ON w.owner = u.username
+        LEFT JOIN (SELECT owner, SUM(amount) AS paid_ksh, COUNT(*) AS payments, MAX(updated_at) AS last_paid_at
+                   FROM mpesa_payments WHERE status = 'paid' GROUP BY owner) p ON p.owner = u.username
+        LEFT JOIN (SELECT owner, -SUM(amount_cents) AS spent_cents FROM wallet_entries WHERE amount_cents < 0
+                   GROUP BY owner) s ON s.owner = u.username
+        WHERE u.role IN ('user', 'api')
+        ORDER BY u.created_at DESC NULLS LAST LIMIT 1000""") or []
+    for r in rows:
+        for k, v in list(r.items()):
+            if hasattr(v, "isoformat"):
+                r[k] = v.isoformat()
+
+    def count(sql: str, since: datetime) -> int:
+        return int((fetch_one(sql, {"t": since}) or {}).get("n") or 0)
+
+    signups = "SELECT COUNT(*) AS n FROM app_users WHERE role IN ('user', 'api') AND created_at >= :t"
+    revenue = "SELECT COALESCE(SUM(amount), 0) AS n FROM mpesa_payments WHERE status = 'paid' AND updated_at >= :t"
+    payers = "SELECT COUNT(DISTINCT owner) AS n FROM mpesa_payments WHERE status = 'paid' AND updated_at >= :t"
+    windows = {"today": day, "week": now - timedelta(days=7), "period": now - timedelta(days=days)}
+    ready, why = mpesa.ready()
+    return {"accounts": rows, "mpesa_ready": ready, "mpesa_note": why,
+            "totals": {w: {"signups": count(signups, t), "revenue_ksh": count(revenue, t), "payers": count(payers, t)}
+                       for w, t in windows.items()},
+            "all": {"accounts": len(rows), "paying": sum(1 for r in rows if int(r["payments"] or 0) > 0),
+                    "revenue_ksh": sum(int(r["paid_ksh"] or 0) for r in rows)}}
+
+
 @router.get("/admin/payments")
 def admin_payments(limit: int = Query(100, ge=1, le=500), auth: AuthContext = Depends(ADMIN)) -> dict[str, Any]:
     from ..infra.db import fetch_all

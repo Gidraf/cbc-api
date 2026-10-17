@@ -5439,6 +5439,9 @@ def _register_queue_handlers() -> None:
     # Finished videos moved to the owner's Google Drive, links and all.
     from ..services import drive_store as _drive
     job_queue.register(_drive.JOB_KIND, _drive.run_job)
+    # The developer studio: an idea built, tested, filmed and written up.
+    from ..services import dev_studio as _dev
+    job_queue.register(_dev.JOB_KIND, _dev.run_job)
 
 
 # One step, one implementation. The pipeline delegates to the same handlers the

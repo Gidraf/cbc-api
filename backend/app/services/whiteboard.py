@@ -147,9 +147,14 @@ def page(data: dict[str, Any], *, title: str = "", voice: str = "en-KE", duratio
     hook, captions, a countdown and the brand (see services/social.py)."""
     payload = {"scenes": _written(data.get("scenes") or []), "seed": str(data.get("question_id") or title or "wb"),
                "voice": voice, "durations": durations or [], "audio": audio or [],
-               "lead": LEAD + (COVER if (social or {}).get("cover") else 0.0)}
+               "lead": LEAD + (COVER if (social or {}).get("cover") else 0.0),
+               "no_hand": bool(data.get("no_hand"))}
     if social:
         payload["social"] = {k: v for k, v in social.items() if k not in ("logo", "music_url")}
+        if (social.get("teacher") or {}).get("cast"):
+            # Who speaks each scene, for the camera and the lips (the classroom).
+            payload["social"]["teacher"] = {**social["teacher"],
+                                            "speakers": [str(sc.get("speaker") or "teacher") for sc in payload["scenes"]]}
     try:
         photo = hand()
     except Exception as exc:  # noqa: BLE001
@@ -179,11 +184,21 @@ def _teacher_scripts(teacher: dict[str, Any] | None) -> str:
         return ""
     import base64
 
-    model = STATIC / "teachers" / f"{teacher.get('gender') or 'female'}.glb"
     real = ""
-    if model.exists():
-        real = (f"<script>{_script(_asset('GLTFLoader.js'))}</script>"
-                f"<script>window.TEACHER_GLB = \"{base64.b64encode(model.read_bytes()).decode()}\";</script>")
+    folder = STATIC / "teachers"
+    if teacher.get("cast"):                                    # the classroom: every member's model
+        glbs = {c["id"]: base64.b64encode((folder / f"{c['model']}.glb").read_bytes()).decode()
+                for c in teacher["cast"] if (folder / f"{c['model']}.glb").exists()}
+        if glbs:
+            import json as _json
+
+            real = (f"<script>{_script(_asset('GLTFLoader.js'))}</script>"
+                    f"<script>window.TEACHER_GLBS = {_json.dumps(glbs)};</script>")
+    else:
+        model = folder / f"{teacher.get('gender') or 'female'}.glb"
+        if model.exists():
+            real = (f"<script>{_script(_asset('GLTFLoader.js'))}</script>"
+                    f"<script>window.TEACHER_GLB = \"{base64.b64encode(model.read_bytes()).decode()}\";</script>")
     return (f"<script>{_script(_asset('three.min.js'))}</script>{real}"
             f"<script>{_script(_asset('teacher.js'))}</script>")
 
@@ -306,9 +321,10 @@ def speak_all(scenes: list[dict[str, Any]], voice: str) -> list[tuple[bytes | No
     """Every scene, four at a time — a walkthrough is ready in a few seconds."""
     from concurrent.futures import ThreadPoolExecutor
 
-    says = [str(s.get("say") or "") for s in scenes]
+    # A scene may name its own voice (the classroom: the teacher, a student).
+    work = [(str(s.get("say") or ""), str(s.get("voice") or voice)) for s in scenes]
     with ThreadPoolExecutor(max_workers=4) as pool:
-        return list(pool.map(lambda t: speak(t, voice), says))
+        return list(pool.map(lambda tv: speak(tv[0], tv[1]), work))
 
 
 def narrate(scenes: list[dict[str, Any]], voice: str, folder: Path) -> list[tuple[Path | None, float]]:
@@ -739,7 +755,10 @@ def _mux(ffmpeg: str, video: Path, spoken: list[tuple[Path | None, float]], star
         fade = max(0.0, seconds - 1.5)
         chains.append(f"[{m}:a]volume=0.10,afade=t=in:d=1,afade=t=out:st={fade:.2f}:d=1.5[mus]")
         labels.append("[mus]")
-    graph = ";".join(chains) + f";{''.join(labels)}amix=inputs={len(labels)}:normalize=0:dropout_transition=0,apad[aout]"
+    # The voice track ends with the video: padded to it and cut there, so a
+    # stray timestamp can never run the mix on (-t alone once wrote 90 MB).
+    graph = (";".join(chains) + f";{''.join(labels)}amix=inputs={len(labels)}:normalize=0:dropout_transition=0,"
+             f"apad=whole_dur={seconds:.2f},atrim=0:{seconds:.2f}[aout]")
     args += ["-filter_complex", graph, "-map", "0:v", "-map", "[aout]", "-c:v", "copy", "-c:a", "aac",
              "-b:a", "128k", "-t", f"{seconds:.2f}", "-movflags", "+faststart", str(out)]
     done = subprocess.run(args, capture_output=True, timeout=600)

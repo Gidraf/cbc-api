@@ -1622,6 +1622,71 @@ MIGRATIONS: list[tuple[str, str]] = [
         ALTER TABLE social_posts ADD COLUMN IF NOT EXISTS boost_base REAL NULL;
         """,
     ),
+    (
+        "059_account_signups",
+        """
+        -- When each account was made. Accounts from before this have only
+        -- their last change: that stands in for the day they joined.
+        ALTER TABLE app_users ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NULL;
+        UPDATE app_users SET created_at = updated_at WHERE created_at IS NULL;
+        ALTER TABLE app_users ALTER COLUMN created_at SET DEFAULT NOW();
+        """,
+    ),
+    (
+        "060_dev_projects",
+        """
+        -- The developer studio: an idea built into an app on the CBC API, its
+        -- videos and its book; and what goes out on LinkedIn.
+        CREATE TABLE IF NOT EXISTS dev_projects (
+            project_id TEXT PRIMARY KEY,
+            idea TEXT NOT NULL,
+            category TEXT NOT NULL DEFAULT 'productivity',
+            provider TEXT NOT NULL DEFAULT '',
+            model TEXT NOT NULL DEFAULT '',
+            title TEXT NOT NULL DEFAULT '',
+            stage TEXT NOT NULL DEFAULT 'queued',
+            status TEXT NOT NULL DEFAULT 'queued',
+            error TEXT NOT NULL DEFAULT '',
+            plan JSONB NULL,
+            files JSONB NULL,
+            tests JSONB NULL,
+            shots JSONB NULL,
+            urls JSONB NOT NULL DEFAULT '{}'::jsonb,
+            created_by TEXT NOT NULL DEFAULT '',
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        CREATE TABLE IF NOT EXISTS linkedin_posts (
+            post_id TEXT PRIMARY KEY,
+            project_id TEXT NOT NULL DEFAULT '',
+            kind TEXT NOT NULL,
+            media_url TEXT NOT NULL DEFAULT '',
+            title TEXT NOT NULL DEFAULT '',
+            body TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'queued',
+            attempts INTEGER NOT NULL DEFAULT 0,
+            url TEXT NOT NULL DEFAULT '',
+            error TEXT NOT NULL DEFAULT '',
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            posted_at TIMESTAMPTZ NULL
+        );
+        """,
+    ),
+    (
+        "061_social_casts",
+        """
+        -- Who is in a question's video when it was chosen in Play (a teacher, how
+        -- many students), and which take it is on: each "make it again" deals a
+        -- new cast.
+        CREATE TABLE IF NOT EXISTS social_casts (
+            question_id TEXT PRIMARY KEY,
+            take INTEGER NOT NULL DEFAULT 0,
+            teacher TEXT NOT NULL DEFAULT '',
+            students INTEGER NULL,
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        """,
+    ),
 ]
 
 

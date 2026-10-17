@@ -62,6 +62,7 @@ const NAV: { group: string; items: NavItem[] }[] = [
       // "generate" is admin + operator, matching who the sync/process endpoints
       // actually accept. There is no "datasets" right, so naming one would have
       // hidden this screen from every role.
+      { to: "/accounts", label: "Accounts & payments", icon: "₭", right: "configure", hint: "Who signed up, when, and who pays" },
       { to: "/queue", label: "Queue", icon: "≡", right: "generate", hint: "Every job live: running, waiting, done, failed — and why" },
       { to: "/datasets", label: "Datasets", icon: "▤", right: "generate", hint: "Curriculum designs waiting to be ingested" },
       { to: "/skills", label: "Teaching skills", icon: "◎", right: "generate", hint: "Per-subject expertise injected into every prompt" },
@@ -69,6 +70,7 @@ const NAV: { group: string; items: NavItem[] }[] = [
       // "configure" is admin only: approving a switch changes the model behind
       // every guide and question on the platform.
       { to: "/scout", label: "Model scout", icon: "◎", right: "configure", hint: "Weekly prices and trials of cheaper models — approve or roll back a switch" },
+      { to: "/dev-studio", label: "Developer studio", icon: "⌘", right: "configure", hint: "An idea in: a tested app on the CBC API, its videos, its book, a test link and LinkedIn posts" },
       { to: "/agents", label: "Agent tasks", icon: "⟳", right: "generate", hint: "What Antigravity, Claude Code, Codex or Ollama are doing here right now, and what they did" },
       { to: "/keys", label: "API keys", icon: "🔑", right: "generate", hint: "Add or rotate a provider key without rebuilding anything" },
       { to: "/settings", label: "Settings", icon: "⚙", right: "generate", hint: "Public address, the name on papers, log retention, webhooks" },

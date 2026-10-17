@@ -316,6 +316,41 @@ def test_comments_go_up_in_two_steps_a_minute_apart_within_posting_hours(db, mon
 
 
 @needs_db
+def test_the_answer_comment_carries_its_card_made_in_time(db, monkeypatch) -> None:
+    from app.infra.db import execute
+    from app.services import social, social_cards, whiteboard
+
+    db.update({"poster_comment_thread": True, "poster_answer_delay_seconds": 60})
+    monkeypatch.setattr(social, "status", lambda qid, q=None, **k: {"status": "ready", "url": "u", "post": "p",
+                        "thread": {"caption": "c", "first": ["Choices"], "later": ["Ans"], "find": "What is"}})
+    monkeypatch.setattr(whiteboard, "load", lambda qid: {"question_id": qid})
+    made = {"card": False, "queued": 0, "rendered": 0}
+
+    def status(qid, step, q=None):
+        return {"status": "ready", "url": "https://x/card.jpg"} if made["card"] else {"status": "none"}
+
+    def render(qid, step, q=None):
+        made["rendered"] += 1
+        made["card"] = True
+        return status(qid, step)
+
+    monkeypatch.setattr(social_cards, "status", status)
+    monkeypatch.setattr(social_cards, "render", render)
+    monkeypatch.setattr(social_cards, "enqueue", lambda qid, **k: made.__setitem__("queued", made["queued"] + 1))
+    se._plan_post({"question_id": "q1", "curriculum": {}}, "facebook", NOW - timedelta(minutes=5), "me")
+    pid = se._post_id("q1", "facebook")
+    se.record_attempt(pid, ok=True)
+    execute("UPDATE social_posts SET posted_at = :t, comments_next_at = :t WHERE post_id = :id",
+            {"t": NOW - timedelta(minutes=2), "id": pid})
+    job = se.comments_next(NOW)["job"]
+    assert job["image_url"] == "" and made["queued"] == 1, "the choices go now; the card is queued for the answer"
+    se.comments_result(pid, stage="first", ok=True, now=NOW)
+    job = se.comments_next(NOW + timedelta(seconds=95))["job"]
+    assert job["stage"] == "later" and job["image_url"] == "https://x/card.jpg"
+    assert made["rendered"] == 1, "not made by the queue in time: made then, so the answer never goes without it"
+
+
+@needs_db
 def test_a_post_it_cannot_find_is_tried_again_then_given_up(db) -> None:
     from app.infra.db import execute, fetch_one
 

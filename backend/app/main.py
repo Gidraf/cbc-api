@@ -40,6 +40,7 @@ from .routes.math import router as math_router
 from .routes.billing import router as billing_router
 from .routes.content import embed as embed_router, router as content_router
 from .routes.admin_drive import router as admin_drive_router
+from .routes.dev_studio import demo as dev_demo_router, router as dev_studio_router
 from .routes.classroom import public as tests_public_router, router as classroom_router, watch as watch_router
 from .services.auth import AuthContext, authenticate_login, create_access_token, get_auth_context, require_roles
 from .services.browser_agent import browse_page
@@ -132,6 +133,8 @@ app.include_router(admin_drive_router)
 app.include_router(classroom_router)
 app.include_router(tests_public_router)
 app.include_router(watch_router)
+app.include_router(dev_studio_router)
+app.include_router(dev_demo_router)
 
 router = ProviderRouter(runtime_state)
 pipeline_service = PipelineService(router)

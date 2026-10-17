@@ -846,12 +846,18 @@ def comments_next(now: datetime | None = None, *, check: bool = False) -> dict[s
     t = st.get("thread") or {}
     first = row["comments_state"] == "pending"
     image = ""
-    if not first:
-        try:
-            card = social_cards.status(row["question_id"], "answer", load(row["question_id"]))
+    try:
+        q = load(row["question_id"])
+        card = social_cards.status(row["question_id"], "answer", q)
+        if first and card.get("status") != "ready":
+            social_cards.enqueue(row["question_id"], queued_by="comments")   # made by the time the answer is due
+        elif not first:
+            if card.get("status") != "ready":
+                card = social_cards.render(row["question_id"], "answer", q)  # not made yet: one card, made now
             image = card.get("url") if card.get("status") == "ready" else ""
-        except Exception:  # noqa: BLE001
-            image = ""
+    except Exception as exc:  # noqa: BLE001
+        logger.info("No answer card for %s: %s", row["question_id"], exc)
+        image = ""
     return {"job": {"post_id": row["post_id"], "platform": row["platform"], "url": row.get("url") or "",
                     "find": t.get("find") or "", "find_also": t.get("find_also") or [],
                     "stage": "first" if first else "later",

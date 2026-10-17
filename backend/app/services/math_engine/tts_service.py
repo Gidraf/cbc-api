@@ -181,9 +181,16 @@ class TtsService:
         except Exception:  # noqa: BLE001
             rate = "+0%"
 
+        # "name|pitch|rate": a voice raised or lowered (a student, an older teacher).
+        parts = (voice or "").split("|")
+        voice = parts[0]
+        pitch = parts[1] if len(parts) > 1 and parts[1] else "+0Hz"
+        if len(parts) > 2 and parts[2]:
+            rate = parts[2]
+
         async def synthesise() -> bytes:
             audio = bytearray()
-            communicate = edge_tts.Communicate(text, voice, rate=rate)
+            communicate = edge_tts.Communicate(text, voice, rate=rate, pitch=pitch)
             async for chunk in communicate.stream():
                 if chunk.get("type") == "audio" and chunk.get("data"):
                     audio.extend(chunk["data"])

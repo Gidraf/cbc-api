@@ -110,7 +110,22 @@ def cover_for(q: dict[str, Any], b: dict[str, Any]) -> dict[str, Any]:
             "tilt": [-4, -2, 2, 3][(n // 13) % 4],
             "tag": " · ".join(x for x in (_grade_label(str(link.get("grade") or "")).upper(),
                                           str(link.get("subject") or "").upper()) if x),
-            "question": text, "choices": chips, "brand": b.get("name") or ""}
+            "question": text, "choices": chips, "brand": b.get("name") or "", "figure": _cover_figure(q)}
+
+
+def _cover_figure(q: dict[str, Any]) -> str:
+    """The question's figure as an image for the cover, or "" — a diagram
+    question shows its diagram on the thumbnail, so the feed sees the puzzle."""
+    if not isinstance(q.get("diagram"), dict):
+        return ""
+    import base64
+
+    from .whiteboard import figure_scene
+
+    scene = figure_scene(q)
+    if not scene:
+        return ""
+    return "data:image/svg+xml;base64," + base64.b64encode(scene["svg"].encode()).decode()
 
 
 def _teacher_mode() -> str:
@@ -152,10 +167,21 @@ def script(data: dict[str, Any], q: dict[str, Any], b: dict[str, Any] | None = N
 
         # The teacher comes back to ask: the viewer answers in the comments.
         scenes.append({"scene": "check", "say": teacher.CHECK_LINE, "caption": teacher.CHECK_CAPTION})
+    # The figure goes up with the question, before the countdown: it is on
+    # the board while the viewer works it out, and stays for the solution.
+    for k in range(len(scenes) - 1):
+        if scenes[k].get("scene") == "countdown" and scenes[k + 1].get("scene") == "figure":
+            scenes[k], scenes[k + 1] = scenes[k + 1], scenes[k]
+            break
     who = b["handle"] or b["name"]
     scenes.append({"scene": "outro", "name": b["name"], "handle": b["handle"], "website": b["website"],
                    "cta": b["cta"], "say": f"{b['cta']}. Follow {spoken_handle(who)}.",
                    "caption": f"{b['cta']}: {who}"})
+    if b.get("teacher", "off") != "off" and not b.get("single"):
+        from . import teacher
+
+        cast = teacher.cast_for(str(q.get("question_id") or data.get("question_id") or ""), b["teacher"], b.get("students"))
+        scenes = teacher.classroom_script(scenes, cast)
     out["scenes"] = scenes
     return out
 
@@ -194,8 +220,20 @@ def frame_payload(q: dict[str, Any], b: dict[str, Any]) -> dict[str, Any]:
             "bg_from": b["bg_from"], "bg_to": b["bg_to"], "accent": b["accent"], "text": b["text"],
             "website": b["website"], "countdown": b["countdown"], "logo": logo, "music_url": b["music_url"],
             **({"cover": cover_for(q, b)} if b.get("cover", True) else {}),
-            **({"teacher": {"gender": g}} if (g := teacher.gender_for(str(q.get("question_id") or ""),
-                                                                      b.get("teacher", "off"))) else {})}
+            **_teacher_frame(q, b)}
+
+
+def _teacher_frame(q: dict[str, Any], b: dict[str, Any]) -> dict[str, Any]:
+    """The teacher (or the classroom) the frame draws."""
+    from . import teacher
+
+    qid = str(q.get("question_id") or "")
+    how = b.get("teacher", "off")
+    if how == "off":
+        return {}
+    cast = teacher.cast_for(qid, how, b.get("students"))
+    return {"teacher": {"gender": cast["teacher"]["gender"], "mode": "classroom",
+                        "cast": [{"id": c["id"], "model": c["model"], "x": c["x"], "ry": c["ry"]} for c in cast.values()]}}
 
 
 def _grade_label(grade: str) -> str:
@@ -209,7 +247,9 @@ def cache_key(sdata: dict[str, Any], voice: str, b: dict[str, Any], gender: str 
     look = {k: b.get(k) for k in ("name", "handle", "website", "cta", "countdown", "logo_url", "music_url",
                                   "hook", "bg_from", "bg_to", "accent", "text")}
     if gender:                  # a video without a teacher keeps the key it always had
-        look["teacher"] = f"{teacher.VERSION}:{gender}"
+        look["teacher"] = f"{teacher.VERSION}:{gender}:{b.get('teacher', '')}"
+        if b.get("cast"):           # who is in it: a new cast is a new video
+            look["teacher"] += ":" + teacher.signature(b["cast"])
     blob = json.dumps({"v": VERSION, "board": whiteboard.cache_key(sdata, voice), "brand": look}, sort_keys=True)
     return hashlib.sha256(blob.encode()).hexdigest()[:20]
 
@@ -480,19 +520,49 @@ def comment_library(q: dict[str, Any], data: dict[str, Any], b: dict[str, Any] |
 
 # ── the queue ────────────────────────────────────────────────────────────────
 
-def _prepare(q: dict[str, Any], voice: str = "", *, teacher_mode: str | None = None
+def _prepare(q: dict[str, Any], voice: str = "", *, teacher_mode: str | None = None, students: int | None = None
              ) -> tuple[dict[str, Any], dict[str, Any], str, str, dict[str, Any], str]:
     """The cut, its voice and its key. With a teacher, the voice is the
     teacher's: a woman's face speaks with a woman's voice, a man's with a man's."""
     from . import teacher, whiteboard
 
     b = brand()
+    qid = str(q.get("question_id") or "")
+    if b.get("teacher", "off") != "off" or teacher_mode:
+        picked = teacher.choice(qid)              # what was asked for this question in Play
+        if picked["teacher"]:
+            b["teacher"] = picked["teacher"]
+        b["students"] = picked["students"] if picked["students"] is not None else teacher.students_setting()
     if teacher_mode is not None:
         b["teacher"] = teacher_mode
-    gender = teacher.gender_for(str(q.get("question_id") or ""), b["teacher"])
-    data, voice, title = whiteboard._script_for(q, voice or teacher.voice_for(gender))
+    if students is not None:
+        b["students"] = students
+    gender, lead = "", ""
+    if b.get("teacher", "off") != "off":
+        cast = teacher.cast_for(qid, b["teacher"], b.get("students"))
+        b["cast"] = cast
+        gender, lead = cast["teacher"]["gender"], cast["teacher"]["voice"]
+    data, voice, title = whiteboard._script_for(q, voice or lead)
     sdata = script(data, q, b)
     return data, sdata, voice, title, b, cache_key(sdata, voice, b, gender)
+
+
+def _single_teacher_keys(q: dict[str, Any]) -> list[tuple[str, str]]:
+    """The keys a one-teacher video had (Settings: female, male or alternate),
+    before every teacher video became a cast."""
+    from . import teacher, whiteboard
+
+    qid = str(q.get("question_id") or "")
+    out = []
+    for how in ("alternate", "female", "male"):
+        gender = how if how != "alternate" else (
+            "female" if int(hashlib.sha256(qid.encode()).hexdigest(), 16) % 2 == 0 else "male")
+        b = {**brand(), "teacher": how, "single": True}
+        data, voice, _ = whiteboard._script_for(q, teacher.voice_for(gender))
+        key = cache_key(script(data, q, b), voice, {k: v for k, v in b.items() if k != "single"}, gender)
+        if (gender, key) not in out:
+            out.append((gender, key))
+    return out
 
 
 def status(question_id: str, q: dict[str, Any] | None = None, voice: str = "", *, legacy: bool = True) -> dict[str, Any]:
@@ -509,18 +579,19 @@ def status(question_id: str, q: dict[str, Any] | None = None, voice: str = "", *
     # Which teacher this video has ('' for none) — the console marks and filters by it.
     out: dict[str, Any] = {"question_id": question_id, "key": key, "scenes": len(data.get("scenes") or []),
                            "post": post_text(q, data, b), "thread": thread(q, data, b),
-                           "teacher": teacher.gender_for(question_id, b.get("teacher", "off"))}
+                           "teacher": (b.get("cast") or {}).get("teacher", {}).get("gender", "")}
     if object_storage.object_exists(name):
         return {**out, "status": "ready", "url": whiteboard.public_url(name),
                 "thumbnail_url": whiteboard.public_url(f"{PREFIX}/{question_id}/{key}.jpg")}
     if legacy and b.get("teacher", "off") != "off" and not asked_voice:
         # Turning the teacher on does not unmake what was made: a video cut
         # before it still serves until it is made again with the teacher.
-        old = _prepare(q, teacher_mode="off")[5]
-        if object_storage.object_exists(f"{PREFIX}/{question_id}/{old}.mp4"):
-            return {**out, "status": "ready", "key": old, "url": whiteboard.public_url(f"{PREFIX}/{question_id}/{old}.mp4"),
-                    "thumbnail_url": whiteboard.public_url(f"{PREFIX}/{question_id}/{old}.jpg"), "teacher": "",
-                    "teacher_pending": True}
+        # A video with one teacher, made before the classroom, serves too.
+        for gender, old in [*_single_teacher_keys(q), ("", _prepare(q, teacher_mode="off")[5])]:
+            if object_storage.object_exists(f"{PREFIX}/{question_id}/{old}.mp4"):
+                return {**out, "status": "ready", "key": old, "url": whiteboard.public_url(f"{PREFIX}/{question_id}/{old}.mp4"),
+                        "thumbnail_url": whiteboard.public_url(f"{PREFIX}/{question_id}/{old}.jpg"), "teacher": gender,
+                        "teacher_pending": not gender}
     job = fetch_one(
         "SELECT job_id, status, error FROM jobs WHERE kind = :kind "
         "AND payload->>'question_id' = :qid ORDER BY created_at DESC LIMIT 1",
@@ -533,12 +604,20 @@ def status(question_id: str, q: dict[str, Any] | None = None, voice: str = "", *
 
 
 def enqueue(question_id: str, *, queued_by: str = "", batch_id: str = "", voice: str = "",
-            fresh: bool = False, priority: int = 0) -> dict[str, Any]:
+            fresh: bool = False, priority: int = 0, teacher: str | None = None,
+            students: int | None = None) -> dict[str, Any]:
     """Queue the cut. `fresh`: make it as the settings say now (with the
-    teacher) even when a video cut before the teacher still serves."""
+    teacher) even when a video cut before the teacher still serves — with a
+    new cast. `teacher` / `students`: kept for this question (from Play)."""
     from . import job_queue, whiteboard
+    from . import teacher as teachers
 
     q = whiteboard.load(question_id)
+    if fresh or teacher is not None or students is not None:
+        if teacher is None and students is None:
+            was = teachers.choice(question_id)
+            teacher, students = was["teacher"], was["students"]
+        teachers.choose(question_id, teacher=teacher or "", students=students, new_take=True)
     now = status(question_id, q, voice, legacy=not fresh)
     if now["status"] in ("ready", "queued", "running"):
         return now
@@ -592,14 +671,15 @@ def run_job(job: dict[str, Any]) -> dict[str, Any]:
     return {"status": "done", "question_id": qid, "post": post, **made}
 
 
-def live_page(q: dict[str, Any], voice: str = "", *, teacher_mode: str | None = None) -> str:
+def live_page(q: dict[str, Any], voice: str = "", *, teacher_mode: str | None = None,
+              students: int | None = None) -> str:
     """The vertical cut in the console, voiced by the server. `teacher_mode`
     previews it with a teacher (or none) whatever the setting says."""
     import base64
 
     from . import whiteboard
 
-    _, sdata, voice, title, b, _ = _prepare(q, voice, teacher_mode=teacher_mode)
+    _, sdata, voice, title, b, _ = _prepare(q, voice, teacher_mode=teacher_mode, students=students)
     clips = whiteboard.speak_all(sdata["scenes"], voice)
     audio = ["data:audio/mpeg;base64," + base64.b64encode(a).decode() if a else None for a, _ in clips]
     durations = [float(sc["hold"]) if sc.get("hold") else round(d, 3) for sc, (_, d) in zip(sdata["scenes"], clips)]
@@ -675,11 +755,21 @@ _FRAME = """<!doctype html><html lang="en"><head><meta charset="utf-8">
  #cover .card{position:absolute;left:50px;right:150px;top:680px;background:#fff;color:#111;border-radius:34px;padding:34px 38px;
    box-shadow:0 22px 0 rgba(0,0,0,.28);font-size:52px;line-height:1.18;font-weight:700}
  #cover .card .q{display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden}
+ #cover .fig{display:none;margin:18px 0 0;height:360px;background:#fff;border-radius:18px;text-align:center}
+ #cover .fig img{height:100%;max-width:100%;object-fit:contain}
+ #cover.has-fig .card{font-size:44px}
+ #cover.has-fig .card .q{-webkit-line-clamp:3}
+ #cover.has-fig .fig{display:block}
+ #cover.has-fig .sticker{top:1420px}
  #cover .chips{display:flex;flex-wrap:wrap;gap:14px;margin-top:22px}
  #cover .chips span{font-size:36px;font-weight:800;padding:8px 20px;border-radius:18px;background:#111;color:#fff}
  #cover .sticker{position:absolute;left:60px;top:1330px;background:#111;color:#fff;font-size:50px;font-weight:800;
    padding:16px 34px;border-radius:22px;transform:rotate(-4deg);box-shadow:0 10px 0 rgba(0,0,0,.3)}
  #cover .sticker b{color:var(--cover-accent)}
+ /* The figure, pinned below the board while the solution is worked: the board turns pages, the figure stays. */
+ #sc-fig{position:absolute;left:330px;right:60px;top:1370px;height:300px;display:none;background:#fff;border-radius:24px;
+   padding:14px;box-shadow:0 14px 0 rgba(0,0,0,.25);text-align:center;z-index:3}
+ #sc-fig img{height:100%;max-width:100%;object-fit:contain}
  .bar{position:fixed;left:0;right:0;bottom:0;height:54px;display:flex;gap:8px;align-items:center;justify-content:center;
    background:#0f172a}
  .bar button{font:inherit;font-size:18px;padding:4px 16px;border-radius:8px;border:0;cursor:pointer}
@@ -688,7 +778,7 @@ _FRAME = """<!doctype html><html lang="en"><head><meta charset="utf-8">
 </style></head><body class="__BODY_CLASS__">
 <div id="social">
   <div id="cover"><div class="rays"></div><div class="tag"></div><h1 class="hook"></h1><div class="emoji"></div>
-    <div class="card"><div class="q"></div><div class="chips"></div></div><div class="sticker">ANSWER INSIDE <b>▶</b></div></div>
+    <div class="card"><div class="q"></div><div class="fig"></div><div class="chips"></div></div><div class="sticker">ANSWER INSIDE <b>▶</b></div></div>
   <div class="top">
     <div class="chip">__LOGO__<span class="dot"></span><span>__BRAND__</span></div>
     <div class="hook">__HOOK__</div>
@@ -696,6 +786,7 @@ _FRAME = """<!doctype html><html lang="en"><head><meta charset="utf-8">
   </div>
   <div id="wb"></div>
   <div id="sc-caption"></div>
+  <div id="sc-fig"></div>
   <div id="sc-count"><div class="ring"><span id="sc-n"></span></div><div class="say">Pause and try it!</div></div>
   <div class="foot"><b>__HANDLE__</b> &nbsp; __WEBSITE__</div>
 </div>
@@ -713,6 +804,13 @@ _FRAME = """<!doctype html><html lang="en"><head><meta charset="utf-8">
    const hook = el.querySelector(".hook");
    hook.style.color = c.accent; hook.style.transform = `rotate(${c.tilt}deg)`;
    el.querySelector(".chips").innerHTML = (c.choices || []).map((x) => `<span>${x.replace(/[<&>]/g, "")}</span>`).join("");
+   if (c.figure) {
+     const img = new Image();
+     img.src = c.figure;
+     window.__coverReady = img.decode().catch(() => null);   // on the thumbnail, the first frame
+     el.querySelector(".fig").appendChild(img);
+     el.classList.add("has-fig");
+   }
    if ((window.WB_DATA.social || {}).teacher) el.querySelector(".emoji").style.display = "none";
    window.__coverUntil = lead - 0.1;
    window.__onCover = (t) => {
@@ -724,6 +822,33 @@ _FRAME = """<!doctype html><html lang="en"><head><meta charset="utf-8">
      s.style.transform = `rotate(-4deg) scale(${1 + 0.06 * Math.sin(t * 9)})`;
    };
    window.__onCover(0);
+ })();
+</script>
+<script>
+ // The figure stays in sight from the pause to the answer: the board's
+ // copy goes when the page turns, this one does not. It gives way to the
+ // big teacher (the question, the check, the end card).
+ (function () {
+   const scenes = window.WB_DATA.scenes || [], el = document.getElementById("sc-fig");
+   const at = scenes.findIndex((s) => s.scene === "figure");
+   if (at < 0 || !el) return;
+   const svg = String(scenes[at].svg || "");
+   const img = new Image();
+   img.src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg);
+   el.appendChild(img);
+   const BIG = { title: 1, countdown: 1, check: 1, outro: 1, figure: 1 };
+   window.__onFigure = (t) => {
+     const starts = window.__starts || [];
+     let i = -1;
+     for (let k = 0; k < starts.length; k++) if (t >= starts[k]) i = k;
+     const sc = scenes[i] || {};
+     const show = i > at && !BIG[sc.scene];
+     const into = show ? Math.min(1, (t - starts[i]) / 0.4) : 0;
+     const prev = scenes[i - 1] || {};
+     const k = show && (i - 1 > at && !BIG[prev.scene]) ? 1 : into;   // already showing: no fade again
+     el.style.display = k > 0 ? "block" : "none";
+     el.style.opacity = String(k);
+   };
  })();
 </script>
 <script>__ENGINE__</script>

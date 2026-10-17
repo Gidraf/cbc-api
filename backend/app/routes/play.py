@@ -351,17 +351,23 @@ def list_videos(grade: str = Query(...), subject: str = Query(...), sub_strand: 
 
 # ── social posts ──────────────────────────────────────────────────────────────
 
+TeacherPick = Literal["", "off", "classroom", "female", "male", "alternate", "female_young", "male_young",
+                      "teacher_older_f", "teacher_older_m"]
+
+
 @router.get("/items/{question_id}/social.html")
-def social_page(question_id: str, voice: str = Query(""),
-                teacher: Literal["", "off", "female", "male", "alternate"] = Query(""),
+def social_page(question_id: str, voice: str = Query(""), teacher: TeacherPick = Query(""),
+                students: int | None = Query(None, ge=0, le=2),
                 auth: AuthContext = Depends(ANY)) -> HTMLResponse:
     """The vertical cut, live and voiced — what the post's video will be.
-    `teacher` previews it with a woman or a man teacher, or none, whatever
-    Settings says; empty follows Settings."""
+    `teacher`: a classroom (any teacher), a woman or a man, one teacher in
+    particular, or none; `students`: 0, 1 or 2 (empty: a different number
+    each video). Empty follows Settings."""
     _may_make_videos(auth)            # production tools: file links and posts
     from ..services import social
 
-    return HTMLResponse(social.live_page(_one(question_id), _voice(voice), teacher_mode=teacher or None))
+    return HTMLResponse(social.live_page(_one(question_id), _voice(voice), teacher_mode=teacher or None,
+                                         students=students))
 
 
 @router.get("/items/{question_id}/social")
@@ -375,15 +381,17 @@ def social_status(question_id: str, voice: str = Query(""), auth: AuthContext = 
 
 @router.post("/items/{question_id}/social")
 def make_social(question_id: str, voice: str = Query(""), fresh: bool = Query(False),
+                teacher: TeacherPick | None = Query(None), students: int | None = Query(None, ge=0, le=2),
                 auth: AuthContext = Depends(ANY)) -> dict[str, Any]:
-    """Queue the social video. `fresh`: make it again as Settings say now —
-    with the teacher — even if one made before the teacher still serves."""
+    """Queue the social video. `fresh`: make it again — a new cast — even if
+    one already serves. `teacher` / `students`: kept for this question."""
     from ..services import social
 
     _may_make_videos(auth)
     _one(question_id)
     return social.enqueue(question_id, queued_by=str(getattr(auth, "subject", "") or "social"), voice=_voice(voice),
-                          fresh=fresh, priority=5 if fresh else 0)
+                          fresh=fresh or teacher is not None or students is not None, priority=5 if fresh else 0,
+                          teacher=teacher, students=students)
 
 
 @router.post("/social")
@@ -944,7 +952,8 @@ def auto_book_now(auth: AuthContext = Depends(ANY)) -> dict[str, Any]:
 
 
 class TeacherNow(BaseModel):
-    mode: Literal["female", "male", "alternate"] = "alternate"
+    mode: Literal["classroom", "female", "male", "alternate", "female_young", "male_young",
+                  "teacher_older_f", "teacher_older_m"] = "classroom"
     limit: int = Field(60, ge=1, le=500)
     pause_lessons: bool = True
 

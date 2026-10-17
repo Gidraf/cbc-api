@@ -34,24 +34,40 @@ CHECK_LINE = "Did you get it right? Tell me in the comments!"
 CHECK_CAPTION = "Did you get it right? Comment ✅ or ❌"
 
 
+# What a video's teacher can be: none; a classroom (any teacher, chosen per
+# video); a woman or a man (young or older, chosen per video); one teacher in
+# particular; or half and half by question.
+PICKS = ("female_young", "male_young", "teacher_older_f", "teacher_older_m")
+MODES = ("off", "classroom", "female", "male", "alternate") + PICKS
+
+
 def mode() -> str:
     from . import platform_settings
 
     try:
-        value = str(platform_settings.get("social_teacher", "off") or "off").strip().lower()
+        value = str(platform_settings.get("social_teacher", "classroom") or "classroom").strip().lower()
     except Exception:  # noqa: BLE001
-        value = "off"
-    return value if value in ("female", "male", "alternate") else "off"
+        value = "classroom"
+    return value if value in MODES else "classroom"
 
 
-def gender_for(question_id: str, how: str | None = None) -> str:
+def students_setting() -> int | None:
+    """How many students sit in: 0, 1 or 2 — or None, a different number each video."""
+    from . import platform_settings
+
+    try:
+        value = str(platform_settings.get("social_students", "random") or "random").strip().lower()
+    except Exception:  # noqa: BLE001
+        value = "random"
+    return int(value) if value in ("0", "1", "2") else None
+
+
+def gender_for(question_id: str, how: str | None = None, students: int | None = None) -> str:
     """'' when there is no teacher; else 'female' or 'male'."""
     how = mode() if how is None else how
     if how == "off":
         return ""
-    if how == "alternate":
-        return "female" if int(hashlib.sha256(question_id.encode()).hexdigest(), 16) % 2 == 0 else "male"
-    return how
+    return cast_for(question_id, how, students)["teacher"]["gender"]
 
 
 def voice_for(gender: str) -> str:
@@ -152,7 +168,7 @@ def mood_tracks(ffmpeg: str, folder: Path, scenes: list[dict[str, Any]], starts:
 
 # ── switching over ───────────────────────────────────────────────────────────
 
-def render_now(how: str = "alternate", *, limit: int = 60, pause_lessons: bool = True, by: str = "") -> dict[str, Any]:
+def render_now(how: str = "classroom", *, limit: int = 60, pause_lessons: bool = True, by: str = "") -> dict[str, Any]:
     """Teacher videos first: turn the teacher on, pause the lesson videos
     (the queued ones are cancelled and the daily batch set to 0), and queue
     the booked posts' videos again with the teacher — soonest post first, at
@@ -162,8 +178,8 @@ def render_now(how: str = "alternate", *, limit: int = 60, pause_lessons: bool =
     from . import platform_settings, social
     from .whiteboard import JOB_KIND as LESSON
 
-    if how not in ("female", "male", "alternate"):
-        raise ValueError("The teacher is female, male or alternate.")
+    if how not in MODES or how == "off":
+        raise ValueError(f"The teacher is one of {', '.join(m for m in MODES if m != 'off')}.")
     platform_settings.set_many({"social_teacher": how}, updated_by=by or "teacher-now")
     out: dict[str, Any] = {"teacher": how, "lessons_cancelled": 0, "daily_target_was": None}
     if pause_lessons:
@@ -293,3 +309,135 @@ def visemes(text: str, envelope: list[float], *, quiet: float = 0.06) -> str:
         if v <= quiet * 0.5:
             frames[k] = "X"
     return "".join(frames)
+
+
+# ── the classroom: a teacher and two students ────────────────────────────────
+#
+# Mode "classroom" (Settings → Social → Teacher): the teacher reads the
+# question, the class thinks through the countdown, one student works the
+# solution in a young voice, and the teacher asks "Did Juma get it right?".
+# Who teaches, who answers and in which voices is picked by the question, so
+# every video differs and a video never changes.
+
+TEACHERS = [
+    {"model": "female", "gender": "female", "older": False},
+    {"model": "male", "gender": "male", "older": False},
+    {"model": "teacher_older_f", "gender": "female", "older": True},
+    {"model": "teacher_older_m", "gender": "male", "older": True},
+]
+STUDENTS = [
+    {"model": "student_boy", "gender": "male",
+     "names": ["Juma", "Kamau", "Otieno", "Kiprop", "Baraka", "Wafula", "Mutua", "Omondi"]},
+    {"model": "student_girl", "gender": "female",
+     "names": ["Nekesa", "Wanjiku", "Amina", "Zainab", "Halima", "Fatuma", "Rehema", "Aisha"]},
+]
+TEACHER_VOICES = {"female": ["en-KE-AsiliaNeural", "en-NG-EzinneNeural", "en-ZA-LeahNeural", "en-TZ-ImaniNeural"],
+                  "male": ["en-KE-ChilembaNeural", "en-NG-AbeoNeural", "en-ZA-LukeNeural", "en-TZ-ElimuNeural"]}
+# Young voices: a Kenyan voice raised in pitch and a little quicker, or a child's voice.
+STUDENT_VOICES = {"female": ["en-KE-AsiliaNeural|+30Hz|+6%", "en-US-AnaNeural", "en-TZ-ImaniNeural|+28Hz|+6%"],
+                  "male": ["en-KE-ChilembaNeural|+45Hz|+7%", "en-NG-AbeoNeural|+45Hz|+7%", "en-TZ-ElimuNeural|+42Hz|+7%"]}
+PLACES = {"teacher": {"x": -0.6, "ry": 0.3}, "s1": {"x": 0.32, "ry": -0.25}, "s2": {"x": 0.92, "ry": -0.4}}
+
+
+def _model_exists(name: str) -> bool:
+    from .whiteboard import STATIC
+
+    return (STATIC / "teachers" / f"{name}.glb").exists()
+
+
+def choice(question_id: str) -> dict[str, Any]:
+    """What was asked for this question in Play (its teacher, its students) and
+    which take it is on — each "make it again" is a new cast."""
+    from ..infra.db import fetch_one
+
+    try:
+        row = fetch_one("SELECT take, teacher, students FROM social_casts WHERE question_id = :q",
+                        {"q": question_id}) or {}
+    except Exception:  # noqa: BLE001
+        row = {}
+    return {"take": int(row.get("take") or 0), "teacher": str(row.get("teacher") or ""),
+            "students": row.get("students")}
+
+
+def choose(question_id: str, *, teacher: str = "", students: int | None = None, new_take: bool = True) -> dict[str, Any]:
+    """Keep a teacher and students for one question (empty: as Settings say), and
+    deal a new cast."""
+    from ..infra.db import execute
+
+    if teacher and teacher not in MODES:
+        raise ValueError(f"The teacher is one of {', '.join(MODES)}.")
+    if students is not None and students not in (0, 1, 2):
+        raise ValueError("Students are 0, 1 or 2.")
+    execute("""INSERT INTO social_casts (question_id, take, teacher, students, updated_at)
+               VALUES (:q, :t, :teacher, :s, NOW())
+               ON CONFLICT (question_id) DO UPDATE SET take = social_casts.take + :t, teacher = :teacher,
+                      students = :s, updated_at = NOW()""",
+            {"q": question_id, "t": 1 if new_take else 0, "teacher": teacher, "s": students})
+    return choice(question_id)
+
+
+def cast_for(question_id: str, how: str | None = None, students: int | None = None, *,
+             take: int | None = None) -> dict[str, Any]:
+    """Who is in this question's video: the teacher, and up to two students (s1
+    answers) — their models, names and voices. `how` narrows the teacher
+    (a classroom: anyone); `students` fixes how many (None: dealt per video)."""
+    how = mode() if how is None else how
+    take = choice(question_id)["take"] if take is None else take
+    n = int(hashlib.sha256((f"class:{question_id}" + (f":{take}" if take else "")).encode()).hexdigest(), 16)
+    teachers = [t for t in TEACHERS if _model_exists(t["model"])] or TEACHERS[:2]
+    if how in PICKS:
+        teachers = [t for t in teachers if t["model"] == {"female_young": "female", "male_young": "male"}.get(how, how)] or teachers
+    elif how in ("female", "male"):
+        teachers = [t for t in teachers if t["gender"] == how] or teachers
+    elif how == "alternate":
+        g = "female" if int(hashlib.sha256(question_id.encode()).hexdigest(), 16) % 2 == 0 else "male"
+        teachers = [t for t in teachers if t["gender"] == g] or teachers
+    t = teachers[n % len(teachers)]
+    tv = TEACHER_VOICES[t["gender"]][(n // 7) % len(TEACHER_VOICES[t["gender"]])]
+    if t["older"]:
+        tv = f"{tv}|-6Hz|-7%"
+    count = students if students in (0, 1, 2) else (2, 2, 1, 1, 0)[(n // 23) % 5]
+    pool = [s for s in STUDENTS if _model_exists(s["model"])]
+    answering = pool[(n // 11) % len(pool)] if pool and count >= 1 else None
+    other = next((s for s in pool if s is not answering), None) if count >= 2 else None
+    # Alone, the teacher stands in the middle; with students, to one side.
+    place = PLACES["teacher"] if answering else {"x": 0.0, "ry": 0.0}
+    cast = {"teacher": {"id": "teacher", "model": t["model"], "gender": t["gender"], "voice": tv, **place}}
+    if answering:
+        cast["s1"] = {"id": "s1", "model": answering["model"], "gender": answering["gender"],
+                      "name": answering["names"][(n // 13) % len(answering["names"])],
+                      "voice": STUDENT_VOICES[answering["gender"]][(n // 17) % len(STUDENT_VOICES[answering["gender"]])],
+                      **(PLACES["s1"] if other else {"x": 0.55, "ry": -0.3})}
+    if other:
+        cast["s2"] = {"id": "s2", "model": other["model"], "gender": other["gender"],
+                      "name": other["names"][(n // 19) % len(other["names"])], **PLACES["s2"]}
+    return cast
+
+
+def signature(cast: dict[str, Any]) -> str:
+    """The cast in a few characters, for a video's key: a new cast is a new video."""
+    return "|".join(f"{c['id']}={c['model']}:{c.get('name', '')}:{c.get('voice', '')}" for c in cast.values())
+
+
+STUDENT_SCENES = {"setup", "rewrite", "step", "working", "answer", "number_line_start", "number_line_jump",
+                  "balance_move", "fraction_bars", "figure_read"}
+
+
+def classroom_script(scenes: list[dict[str, Any]], cast: dict[str, Any]) -> list[dict[str, Any]]:
+    """Who says each scene: the teacher asks, the student answers, the teacher checks."""
+    s1 = cast.get("s1")
+    out = []
+    for sc in scenes:
+        sc = dict(sc)
+        kind = str(sc.get("scene") or "")
+        if s1 and kind in STUDENT_SCENES:
+            sc["speaker"], sc["voice"] = "s1", s1["voice"]
+            if sc.get("say"):
+                sc["caption"] = f"{s1['name']}: {sc.get('caption') or sc['say']}"
+        else:
+            sc["speaker"], sc["voice"] = "teacher", cast["teacher"]["voice"]
+        if kind == "check" and s1:
+            sc["say"] = f"Did {s1['name']} get it right? Tell us in the comments!"
+            sc["caption"] = f"Did {s1['name']} get it right? Comment ✅ or ❌"
+        out.append(sc)
+    return out

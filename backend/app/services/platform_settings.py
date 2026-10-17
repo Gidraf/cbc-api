@@ -199,10 +199,16 @@ SETTINGS: tuple[Setting, ...] = (
             "teacher pointing at the viewer — which is also its thumbnail. The look and the hook change from question to "
             "question.", True, "Social"),
     Setting("social_teacher", "SOCIAL_TEACHER", "string", "Teacher in social videos",
-            "A 3D teacher reads the question, thinks through the countdown, cheers the answer and asks \"Did you get it "
-            "right?\". off, female, male, or alternate (half and half, by question). A woman teacher speaks with "
-            "the Kenyan woman's voice (Asilia), a man with the Kenyan man's (Chilemba). Videos already made keep "
-            "serving until they are made again.", "off", "Social"),
+            "Who teaches in social videos (realistic 3D people). classroom: any teacher, a different one each video "
+            "(young or older, a woman or a man), with students as below; female or male: a woman or a man, young or "
+            "older; female_young, male_young, teacher_older_f, teacher_older_m: that teacher only; alternate: a woman "
+            "and a man by turns; off: no teacher. A student, when there is one, works the question out in a young "
+            "voice and the teacher asks \"Did Juma get it right?\". Names and voices change every video; a question "
+            "made again gets a new cast. Videos already made keep serving until they are made again.",
+            "classroom", "Social"),
+    Setting("social_students", "", "string", "Students in social videos",
+            "How many students sit in with the teacher: 0, 1 or 2 — or random, a different number every video.",
+            "random", "Social"),
     Setting("social_countdown_seconds", "", "int", "Countdown (seconds)",
             "How long a social video counts down after the question, for the viewer to pause and try. 3–10.",
             3, "Social"),
