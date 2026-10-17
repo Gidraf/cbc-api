@@ -342,6 +342,7 @@
 
     const m = moodAt(i, into);
     const e = Math.min(1, energy(i, into) * 1.5);
+    if (REAL) panel.style.visibility = "visible";
     if (REAL && cover) {
       REAL.draw({ t, i: -1, into: t, sc: { scene: "cover" }, m: { tense: 0, lively: 1 }, e: 0, shape: null, k: 1,
                   from: "point", to: "point", talk: 0, dance: 0, think: 0, blink: 0, surprise: 1 });
@@ -358,6 +359,10 @@
       effects(t, i, into, sc, m);
       return;
     }
+    // No realistic model (still loading, or it could not load): no teacher
+    // at all rather than the old drawn figure — the frame is complete without one.
+    panel.style.visibility = "hidden";
+    if (!window.__teacherDrawn) return;
     // Pose: from the last scene's to this one's over half a second.
     const from = i > 0 ? poseOf(i - 1, 99) : P.rest, to = poseOf(i, into);
     let k = ease(into / 0.5);

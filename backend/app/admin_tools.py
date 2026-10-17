@@ -9,7 +9,7 @@
         server's name, connecting, encryption, signing in — and sends a test
         email. Says which step fails and why; never prints the password.
 
-    docker compose exec api python -m app.admin_tools teacher-now [--mode alternate] [--limit 60] [--keep-lessons]
+    docker compose exec api python -m app.admin_tools teacher-now [--mode classroom] [--limit 60] [--keep-lessons]
         Teacher videos first: turns the 3D teacher on, pauses the lesson videos
         (queued ones cancelled, daily batch 0) and queues the booked posts'
         videos again with the teacher, the soonest post first.
@@ -190,7 +190,8 @@ def main(argv: list[str] | None = None) -> int:
     k = sub.add_parser("rotate-master-key", help="move saved provider keys to NEW_MASTER_KEY")
     k.add_argument("--dry-run", action="store_true")
     tn = sub.add_parser("teacher-now", help="turn the teacher on and render the booked posts' videos with it first")
-    tn.add_argument("--mode", default="alternate", choices=["female", "male", "alternate", "classroom"])
+    tn.add_argument("--mode", default="classroom", choices=["classroom", "female", "male", "alternate", "female_young",
+                                                            "male_young", "teacher_older_f", "teacher_older_m"])
     tn.add_argument("--limit", type=int, default=60, help="how many booked videos to queue (soonest first)")
     tn.add_argument("--keep-lessons", action="store_true", help="do not pause the daily lesson videos")
     pv = sub.add_parser("promo-video", help="a marketing video: the teacher shows how to sign up, set a paper and test online")

@@ -177,10 +177,11 @@ def script(data: dict[str, Any], q: dict[str, Any], b: dict[str, Any] | None = N
     scenes.append({"scene": "outro", "name": b["name"], "handle": b["handle"], "website": b["website"],
                    "cta": b["cta"], "say": f"{b['cta']}. Follow {spoken_handle(who)}.",
                    "caption": f"{b['cta']}: {who}"})
-    if b.get("teacher") == "classroom":
+    if b.get("teacher", "off") != "off" and not b.get("single"):
         from . import teacher
 
-        scenes = teacher.classroom_script(scenes, teacher.cast_for(str(q.get("question_id") or data.get("question_id") or "")))
+        cast = teacher.cast_for(str(q.get("question_id") or data.get("question_id") or ""), b["teacher"], b.get("students"))
+        scenes = teacher.classroom_script(scenes, cast)
     out["scenes"] = scenes
     return out
 
@@ -228,14 +229,11 @@ def _teacher_frame(q: dict[str, Any], b: dict[str, Any]) -> dict[str, Any]:
 
     qid = str(q.get("question_id") or "")
     how = b.get("teacher", "off")
-    g = teacher.gender_for(qid, how)
-    if not g:
+    if how == "off":
         return {}
-    if how == "classroom":
-        cast = teacher.cast_for(qid)
-        return {"teacher": {"gender": g, "mode": "classroom",
-                            "cast": [{"id": c["id"], "model": c["model"], "x": c["x"], "ry": c["ry"]} for c in cast.values()]}}
-    return {"teacher": {"gender": g}}
+    cast = teacher.cast_for(qid, how, b.get("students"))
+    return {"teacher": {"gender": cast["teacher"]["gender"], "mode": "classroom",
+                        "cast": [{"id": c["id"], "model": c["model"], "x": c["x"], "ry": c["ry"]} for c in cast.values()]}}
 
 
 def _grade_label(grade: str) -> str:
@@ -250,6 +248,8 @@ def cache_key(sdata: dict[str, Any], voice: str, b: dict[str, Any], gender: str 
                                   "hook", "bg_from", "bg_to", "accent", "text")}
     if gender:                  # a video without a teacher keeps the key it always had
         look["teacher"] = f"{teacher.VERSION}:{gender}:{b.get('teacher', '')}"
+        if b.get("cast"):           # who is in it: a new cast is a new video
+            look["teacher"] += ":" + teacher.signature(b["cast"])
     blob = json.dumps({"v": VERSION, "board": whiteboard.cache_key(sdata, voice), "brand": look}, sort_keys=True)
     return hashlib.sha256(blob.encode()).hexdigest()[:20]
 
@@ -520,21 +520,49 @@ def comment_library(q: dict[str, Any], data: dict[str, Any], b: dict[str, Any] |
 
 # ── the queue ────────────────────────────────────────────────────────────────
 
-def _prepare(q: dict[str, Any], voice: str = "", *, teacher_mode: str | None = None
+def _prepare(q: dict[str, Any], voice: str = "", *, teacher_mode: str | None = None, students: int | None = None
              ) -> tuple[dict[str, Any], dict[str, Any], str, str, dict[str, Any], str]:
     """The cut, its voice and its key. With a teacher, the voice is the
     teacher's: a woman's face speaks with a woman's voice, a man's with a man's."""
     from . import teacher, whiteboard
 
     b = brand()
+    qid = str(q.get("question_id") or "")
+    if b.get("teacher", "off") != "off" or teacher_mode:
+        picked = teacher.choice(qid)              # what was asked for this question in Play
+        if picked["teacher"]:
+            b["teacher"] = picked["teacher"]
+        b["students"] = picked["students"] if picked["students"] is not None else teacher.students_setting()
     if teacher_mode is not None:
         b["teacher"] = teacher_mode
-    gender = teacher.gender_for(str(q.get("question_id") or ""), b["teacher"])
-    lead = (teacher.cast_for(str(q.get("question_id") or ""))["teacher"]["voice"] if b["teacher"] == "classroom"
-            else teacher.voice_for(gender))
+    if students is not None:
+        b["students"] = students
+    gender, lead = "", ""
+    if b.get("teacher", "off") != "off":
+        cast = teacher.cast_for(qid, b["teacher"], b.get("students"))
+        b["cast"] = cast
+        gender, lead = cast["teacher"]["gender"], cast["teacher"]["voice"]
     data, voice, title = whiteboard._script_for(q, voice or lead)
     sdata = script(data, q, b)
     return data, sdata, voice, title, b, cache_key(sdata, voice, b, gender)
+
+
+def _single_teacher_keys(q: dict[str, Any]) -> list[tuple[str, str]]:
+    """The keys a one-teacher video had (Settings: female, male or alternate),
+    before every teacher video became a cast."""
+    from . import teacher, whiteboard
+
+    qid = str(q.get("question_id") or "")
+    out = []
+    for how in ("alternate", "female", "male"):
+        gender = how if how != "alternate" else (
+            "female" if int(hashlib.sha256(qid.encode()).hexdigest(), 16) % 2 == 0 else "male")
+        b = {**brand(), "teacher": how, "single": True}
+        data, voice, _ = whiteboard._script_for(q, teacher.voice_for(gender))
+        key = cache_key(script(data, q, b), voice, {k: v for k, v in b.items() if k != "single"}, gender)
+        if (gender, key) not in out:
+            out.append((gender, key))
+    return out
 
 
 def status(question_id: str, q: dict[str, Any] | None = None, voice: str = "", *, legacy: bool = True) -> dict[str, Any]:
@@ -551,18 +579,19 @@ def status(question_id: str, q: dict[str, Any] | None = None, voice: str = "", *
     # Which teacher this video has ('' for none) — the console marks and filters by it.
     out: dict[str, Any] = {"question_id": question_id, "key": key, "scenes": len(data.get("scenes") or []),
                            "post": post_text(q, data, b), "thread": thread(q, data, b),
-                           "teacher": teacher.gender_for(question_id, b.get("teacher", "off"))}
+                           "teacher": (b.get("cast") or {}).get("teacher", {}).get("gender", "")}
     if object_storage.object_exists(name):
         return {**out, "status": "ready", "url": whiteboard.public_url(name),
                 "thumbnail_url": whiteboard.public_url(f"{PREFIX}/{question_id}/{key}.jpg")}
     if legacy and b.get("teacher", "off") != "off" and not asked_voice:
         # Turning the teacher on does not unmake what was made: a video cut
         # before it still serves until it is made again with the teacher.
-        old = _prepare(q, teacher_mode="off")[5]
-        if object_storage.object_exists(f"{PREFIX}/{question_id}/{old}.mp4"):
-            return {**out, "status": "ready", "key": old, "url": whiteboard.public_url(f"{PREFIX}/{question_id}/{old}.mp4"),
-                    "thumbnail_url": whiteboard.public_url(f"{PREFIX}/{question_id}/{old}.jpg"), "teacher": "",
-                    "teacher_pending": True}
+        # A video with one teacher, made before the classroom, serves too.
+        for gender, old in [*_single_teacher_keys(q), ("", _prepare(q, teacher_mode="off")[5])]:
+            if object_storage.object_exists(f"{PREFIX}/{question_id}/{old}.mp4"):
+                return {**out, "status": "ready", "key": old, "url": whiteboard.public_url(f"{PREFIX}/{question_id}/{old}.mp4"),
+                        "thumbnail_url": whiteboard.public_url(f"{PREFIX}/{question_id}/{old}.jpg"), "teacher": gender,
+                        "teacher_pending": not gender}
     job = fetch_one(
         "SELECT job_id, status, error FROM jobs WHERE kind = :kind "
         "AND payload->>'question_id' = :qid ORDER BY created_at DESC LIMIT 1",
@@ -575,12 +604,20 @@ def status(question_id: str, q: dict[str, Any] | None = None, voice: str = "", *
 
 
 def enqueue(question_id: str, *, queued_by: str = "", batch_id: str = "", voice: str = "",
-            fresh: bool = False, priority: int = 0) -> dict[str, Any]:
+            fresh: bool = False, priority: int = 0, teacher: str | None = None,
+            students: int | None = None) -> dict[str, Any]:
     """Queue the cut. `fresh`: make it as the settings say now (with the
-    teacher) even when a video cut before the teacher still serves."""
+    teacher) even when a video cut before the teacher still serves — with a
+    new cast. `teacher` / `students`: kept for this question (from Play)."""
     from . import job_queue, whiteboard
+    from . import teacher as teachers
 
     q = whiteboard.load(question_id)
+    if fresh or teacher is not None or students is not None:
+        if teacher is None and students is None:
+            was = teachers.choice(question_id)
+            teacher, students = was["teacher"], was["students"]
+        teachers.choose(question_id, teacher=teacher or "", students=students, new_take=True)
     now = status(question_id, q, voice, legacy=not fresh)
     if now["status"] in ("ready", "queued", "running"):
         return now
@@ -634,14 +671,15 @@ def run_job(job: dict[str, Any]) -> dict[str, Any]:
     return {"status": "done", "question_id": qid, "post": post, **made}
 
 
-def live_page(q: dict[str, Any], voice: str = "", *, teacher_mode: str | None = None) -> str:
+def live_page(q: dict[str, Any], voice: str = "", *, teacher_mode: str | None = None,
+              students: int | None = None) -> str:
     """The vertical cut in the console, voiced by the server. `teacher_mode`
     previews it with a teacher (or none) whatever the setting says."""
     import base64
 
     from . import whiteboard
 
-    _, sdata, voice, title, b, _ = _prepare(q, voice, teacher_mode=teacher_mode)
+    _, sdata, voice, title, b, _ = _prepare(q, voice, teacher_mode=teacher_mode, students=students)
     clips = whiteboard.speak_all(sdata["scenes"], voice)
     audio = ["data:audio/mpeg;base64," + base64.b64encode(a).decode() if a else None for a, _ in clips]
     durations = [float(sc["hold"]) if sc.get("hold") else round(d, 3) for sc, (_, d) in zip(sdata["scenes"], clips)]

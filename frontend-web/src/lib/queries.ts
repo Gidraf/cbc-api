@@ -4207,14 +4207,15 @@ export function useSaveBrand() {
 }
 
 /** The vertical cut, live and voiced, for the console's preview. */
-export function useSocialHtml(questionId: string, voice = "", teacher = "") {
+export function useSocialHtml(questionId: string, voice = "", teacher = "", students = "") {
   const { token } = useAuth();
   return useQuery({
-    queryKey: ["social-html", questionId, voice, teacher],
+    queryKey: ["social-html", questionId, voice, teacher, students],
     queryFn: async () => {
       const qs = new URLSearchParams();
       if (voice) qs.set("voice", voice);
       if (teacher) qs.set("teacher", teacher);
+      if (students) qs.set("students", students);
       const { blob } = await fetchBlob(`/api/v1/play/items/${encodeURIComponent(questionId)}/social.html${qs.toString() ? `?${qs}` : ""}`, { bearerToken: token });
       return await blob.text();
     },
@@ -4238,10 +4239,13 @@ export function useMakeSocial() {
   const api = useApi();
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (v: { questionId: string; voice?: string; fresh?: boolean }) => {
+    mutationFn: (v: { questionId: string; voice?: string; fresh?: boolean; teacher?: string; students?: string }) => {
       const qs = new URLSearchParams();
       if (v.voice) qs.set("voice", v.voice);
       if (v.fresh) qs.set("fresh", "true");
+      // A cast chosen in Play is kept for this question; "" teacher: as Settings say.
+      if (v.teacher !== undefined) qs.set("teacher", v.teacher);
+      if (v.students) qs.set("students", v.students);
       return api<SocialState>(`/api/v1/play/items/${encodeURIComponent(v.questionId)}/social${qs.toString() ? `?${qs}` : ""}`, { method: "POST" });
     },
     onSuccess: (data, v) => {

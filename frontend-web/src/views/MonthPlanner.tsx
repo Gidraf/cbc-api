@@ -256,7 +256,7 @@ function TeacherSwitch({ view, onDone }: { view: MonthView; onDone: () => void }
   const toast = useToast();
   const go = useTeacherNow();
   const resume = useLessonsResume();
-  const [mode, setMode] = React.useState(view.rules.teacher === "off" ? "alternate" : view.rules.teacher);
+  const [mode, setMode] = React.useState(view.rules.teacher === "off" ? "classroom" : view.rules.teacher);
   const [limit, setLimit] = React.useState(60);
   if (role !== "admin") return null;
   const on = view.rules.teacher !== "off";
@@ -264,10 +264,14 @@ function TeacherSwitch({ view, onDone }: { view: MonthView; onDone: () => void }
     <Stack direction="row" gap="var(--s2)" wrap align="center" style={{ fontSize: "var(--text-sm)", borderTop: "1px dashed var(--line)", paddingTop: "var(--s2)" }}>
       <span>🎬 Teacher videos{on ? <> — <Badge tone="ok">on: {view.rules.teacher}</Badge></> : ""}</span>
       <Select value={mode} onChange={(e) => setMode(e.target.value as any)} style={{ width: "auto" }}>
-        <option value="classroom">A classroom: teacher and two students</option>
+        <option value="classroom">A class: any teacher, a new cast every video</option>
         <option value="alternate">Woman and man, half each</option>
-        <option value="female">A woman teacher</option>
-        <option value="male">A man teacher</option>
+        <option value="female">A woman teacher (young or older)</option>
+        <option value="male">A man teacher (young or older)</option>
+        <option value="female_young">Ms — young woman only</option>
+        <option value="male_young">Mr — young man only</option>
+        <option value="teacher_older_f">Mrs — older woman only</option>
+        <option value="teacher_older_m">Mzee — older man only</option>
       </Select>
       <label style={{ display: "inline-flex", gap: 4, alignItems: "center" }}>next
         <Input type="number" min={1} max={500} value={limit} onChange={(e) => setLimit(Math.max(1, Number(e.target.value) || 60))} style={{ width: 70 }} />

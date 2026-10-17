@@ -553,9 +553,10 @@ function WatchModal({ questionId, onClose, start = "whiteboard" }: { questionId:
   const [view, setView] = React.useState<"whiteboard" | "classic" | "social">(start);
   const [voice, setVoice] = React.useState("");
   const [teacher, setTeacher] = React.useState("");          // "": as Settings say
+  const [students, setStudents] = React.useState("");        // "": a different number each video
   const board = useWhiteboardHtml(view === "whiteboard" ? questionId : "", voice);
   const classic = useWalkthroughHtml(view === "classic" ? questionId : "");
-  const vertical = useSocialHtml(view === "social" ? questionId : "", voice, teacher);
+  const vertical = useSocialHtml(view === "social" ? questionId : "", voice, teacher, students);
   const page = view === "whiteboard" ? board : view === "classic" ? classic : vertical;
   const frame = (
     <iframe key={view} title="Walkthrough" srcDoc={page.data || "<p style='font-family:sans-serif;padding:2rem'>Preparing — the voice is being recorded…</p>"}
@@ -574,10 +575,25 @@ function WatchModal({ questionId, onClose, start = "whiteboard" }: { questionId:
             <Select value={teacher} onChange={(e) => setTeacher(e.target.value)} style={{ width: "auto" }}
                     title="Preview with a teacher, whatever Settings say — the voice follows the teacher">
               <option value="">As in Settings</option>
-              <option value="female">🎓 A woman</option>
-              <option value="male">🎓 A man</option>
-              <option value="classroom">🏫 A classroom</option>
-              <option value="off">None</option>
+              <option value="classroom">🏫 A class — any teacher</option>
+              <option value="female">👩‍🏫 A woman (young or older)</option>
+              <option value="male">👨‍🏫 A man (young or older)</option>
+              <option value="female_young">Ms — young woman</option>
+              <option value="male_young">Mr — young man</option>
+              <option value="teacher_older_f">Mrs — older woman</option>
+              <option value="teacher_older_m">Mzee — older man</option>
+              <option value="off">No teacher</option>
+            </Select>
+          </label>
+        )}
+        {view === "social" && teacher !== "off" && (
+          <label style={{ display: "inline-flex", gap: 6, alignItems: "center", fontSize: "var(--text-sm)" }}>Students
+            <Select value={students} onChange={(e) => setStudents(e.target.value)} style={{ width: "auto" }}
+                    title="How many students sit in; a student works the question out in a young voice">
+              <option value="">Any — a different class each video</option>
+              <option value="0">None</option>
+              <option value="1">One</option>
+              <option value="2">Two</option>
             </Select>
           </label>
         )}
@@ -588,7 +604,7 @@ function WatchModal({ questionId, onClose, start = "whiteboard" }: { questionId:
       {view === "social" ? (
         <div style={{ display: "flex", gap: "var(--s4)", flexWrap: "wrap", alignItems: "flex-start" }}>
           {frame}
-          <div style={{ flex: "1 1 320px", minWidth: 0 }}><SocialControl questionId={questionId} voice={voice} /></div>
+          <div style={{ flex: "1 1 320px", minWidth: 0 }}><SocialControl questionId={questionId} voice={voice} teacher={teacher} students={students} /></div>
         </div>
       ) : frame}
     </Modal>
@@ -596,13 +612,13 @@ function WatchModal({ questionId, onClose, start = "whiteboard" }: { questionId:
 }
 
 /** The item's social post: the vertical MP4, its thumbnail, and the text to paste. */
-function SocialControl({ questionId, voice }: { questionId: string; voice: string }) {
+function SocialControl({ questionId, voice, teacher = "", students = "" }: { questionId: string; voice: string; teacher?: string; students?: string }) {
   const social = useSocialStatus(questionId, voice);
   const make = useMakeSocial();
   const toast = useToast();
   const v = social.data;
   async function start() {
-    try { await make.mutateAsync({ questionId, voice }); toast("Social video queued — drawn, voiced and captioned in the worker.", "ok"); }
+    try { await make.mutateAsync({ questionId, voice, ...(teacher || students ? { teacher, students } : {}) }); toast("Social video queued — drawn, voiced and captioned in the worker.", "ok"); }
     catch (err) { toast(err instanceof Error ? err.message : "Could not queue it.", "danger"); }
   }
   if (!v) return <p style={{ color: "var(--ink-3)" }}>{social.isLoading ? "Loading the post…" : ""}</p>;
@@ -619,6 +635,11 @@ function SocialControl({ questionId, voice }: { questionId: string; voice: strin
                                            catch (err) { toast(err instanceof Error ? err.message : "Could not queue it.", "danger"); } }}>
                 🎓 Make with the teacher</Button>
             )}
+            <Button size="sm" disabled={make.isPending}
+                    title="Make this video again with the teacher and students chosen above (a new cast each time); it is kept for this question"
+                    onClick={async () => { try { await make.mutateAsync({ questionId, voice, fresh: true, teacher, students }); toast("Queued with this cast.", "ok"); }
+                                         catch (err) { toast(err instanceof Error ? err.message : "Could not queue it.", "danger"); } }}>
+              🎬 Make again with this cast</Button>
             <DownloadMp4 url={v.url} name={`${v.question_id}.mp4`} label="⬇ Video (MP4)" primary />
             {v.thumbnail_url && <a href={v.thumbnail_url} download target="_blank" rel="noreferrer"><Button size="sm">⬇ Thumbnail</Button></a>}
           </>

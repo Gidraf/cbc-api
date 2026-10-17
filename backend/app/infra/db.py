@@ -1672,6 +1672,21 @@ MIGRATIONS: list[tuple[str, str]] = [
         );
         """,
     ),
+    (
+        "061_social_casts",
+        """
+        -- Who is in a question's video when it was chosen in Play (a teacher, how
+        -- many students), and which take it is on: each "make it again" deals a
+        -- new cast.
+        CREATE TABLE IF NOT EXISTS social_casts (
+            question_id TEXT PRIMARY KEY,
+            take INTEGER NOT NULL DEFAULT 0,
+            teacher TEXT NOT NULL DEFAULT '',
+            students INTEGER NULL,
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        """,
+    ),
 ]
 
 

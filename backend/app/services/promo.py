@@ -107,7 +107,7 @@ def _cast(data: dict[str, Any], audience: str, how: str) -> dict[str, Any]:
 
     if how != "classroom":
         return data
-    cast = teacher.cast_for(data["question_id"])
+    cast = teacher.cast_for(data["question_id"], how, 2)
     student_lines = STORYBOARDS[audience].get("student") or False
     for sc in data["scenes"]:
         by_student = cast.get("s1") and (student_lines or str(sc.get("shot") or "").startswith("student_")) \
@@ -123,7 +123,7 @@ def render(audience: str = "teachers", *, how: str = "classroom", progress: Any 
     """Make one marketing video; returns its url, thumbnail and key."""
     from . import drive_store, social, teacher, whiteboard
 
-    b = {**social.brand(), "teacher": how}
+    b = {**social.brand(), "teacher": how, "students": 2}
     data = _cast(script(audience, b), audience, how)
     q = {"question_id": data["question_id"], "question_text": STORYBOARDS[audience]["intro"], "curriculum": {}}
     framing = social.frame_payload(q, b)
@@ -131,8 +131,7 @@ def render(audience: str = "teachers", *, how: str = "classroom", progress: Any 
         framing["cover"].update({"hook": STORYBOARDS[audience]["hook"], "question": STORYBOARDS[audience]["intro"],
                                  "choices": [], "tag": "CBC EXAMS · FREE TO START"})
     framing["hook"] = STORYBOARDS[audience]["hook"]
-    gender = teacher.gender_for(data["question_id"], how) or "female"
-    voice = (teacher.cast_for(data["question_id"])["teacher"]["voice"] if how == "classroom" else teacher.voice_for(gender))
+    voice = teacher.cast_for(data["question_id"], how, 2)["teacher"]["voice"]
     key = hashlib.sha256(json.dumps([data, voice, framing.get("teacher")], sort_keys=True, default=str).encode()).hexdigest()[:20]
     made = whiteboard.render(data, title=STORYBOARDS[audience]["hook"], voice=voice, progress=progress, social=framing,
                              prefix=PREFIX, key=key)

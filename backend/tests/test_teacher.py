@@ -21,11 +21,12 @@ DATA = {"question_id": "q1", "scenes": [{"scene": "title", "say": "What is 2 + 3
                                         {"scene": "answer", "say": "Five.", "text": "5"}]}
 
 
-def test_off_by_default_and_the_cut_is_unchanged(monkeypatch) -> None:
+def test_the_classroom_is_the_default_and_off_leaves_the_cut_unchanged(monkeypatch) -> None:
     from app.services import platform_settings
 
     monkeypatch.setattr(platform_settings, "get", lambda k, d=None: d)
-    assert teacher.mode() == "off" and teacher.gender_for("q1") == ""
+    assert teacher.mode() == "classroom" and teacher.students_setting() is None
+    assert teacher.gender_for("q1", "off") == ""
     kinds = [s["scene"] for s in social.script(DATA, {}, _brand())["scenes"]]
     assert "check" not in kinds
 
@@ -83,7 +84,7 @@ def test_the_preview_can_show_a_teacher_whatever_the_setting(monkeypatch) -> Non
     real_page = whiteboard.page
     monkeypatch.setattr(whiteboard, "page", lambda data, **k: seen.update(k) or real_page(data, **k))
     with_t = social.live_page({"question_id": "q1"}, teacher_mode="male")
-    assert "WebGLRenderer" in with_t and seen["voice"].startswith("en-KE")
+    assert "WebGLRenderer" in with_t and seen["voice"].startswith("en-")
     assert any(s["scene"] == "check" for s in social._prepare({"question_id": "q1"}, teacher_mode="male")[1]["scenes"])
     plain = social.live_page({"question_id": "q1"})
     assert "WebGLRenderer" not in plain
@@ -186,8 +187,8 @@ def test_every_social_video_opens_on_a_cover_that_differs_by_question() -> None:
 # ── the classroom: a teacher, two students, one of them answers ─────────────
 
 def test_each_question_gets_its_own_classroom_the_same_every_time() -> None:
-    casts = [teacher.cast_for(f"q{n}") for n in range(40)]
-    assert casts[7] == teacher.cast_for("q7"), "a re-render draws the same class"
+    casts = [teacher.cast_for(f"q{n}", "classroom", 2, take=0) for n in range(40)]
+    assert casts[7] == teacher.cast_for("q7", "classroom", 2, take=0), "a render of the same take draws the same class"
     assert len({c["teacher"]["model"] for c in casts}) > 1, "the teacher changes"
     assert len({c["s1"]["name"] for c in casts}) > 3, "and so does the student who answers"
     for c in casts:
@@ -229,7 +230,7 @@ def test_the_figure_is_on_the_board_before_the_pause() -> None:
 def test_the_classroom_frame_carries_every_actor_and_the_page_loads_each_model() -> None:
     from app.services import whiteboard
 
-    frame = social._teacher_frame({"question_id": "q1"}, _brand(teacher="classroom"))["teacher"]
+    frame = social._teacher_frame({"question_id": "q1"}, {**_brand(teacher="classroom"), "students": 2})["teacher"]
     assert frame["mode"] == "classroom" and [c["id"] for c in frame["cast"]] == ["teacher", "s1", "s2"]
     page = whiteboard.page(DATA, render=True, social={"hook": "x", "teacher": {**frame, "mouth": [], "fps": 30}})
     assert "window.TEACHER_GLBS" in page
@@ -275,3 +276,52 @@ def test_a_figure_question_shows_its_figure_on_the_cover_and_beside_the_working(
                            render=True, social={"hook": "x", "cover": cover})
     assert 'id="sc-fig"' in page and "__onFigure" in page and "has-fig" in page
     assert "__coverReady" in (whiteboard.STATIC / "whiteboard.js").read_text()
+
+
+def test_every_video_deals_its_own_cast_and_a_choice_narrows_it() -> None:
+    counts = {len(teacher.cast_for(f"q{n}", "classroom", None, take=0)) - 1 for n in range(60)}
+    assert counts == {0, 1, 2}, "no students, one or two — a different number from video to video"
+    takes = {teacher.signature(teacher.cast_for("q1", "classroom", 2, take=k)) for k in range(8)}
+    assert len(takes) > 4, "making it again deals a new cast"
+    older = {teacher.cast_for(f"q{n}", "teacher_older_m", 0, take=0)["teacher"]["model"] for n in range(10)}
+    assert older == {"teacher_older_m"}
+    women = {teacher.cast_for(f"q{n}", "female", 1, take=0)["teacher"]["gender"] for n in range(20)}
+    assert women == {"female"}
+    alone = teacher.cast_for("q1", "male_young", 0, take=0)
+    assert set(alone) == {"teacher"} and alone["teacher"]["x"] == 0.0, "alone, the teacher stands in the middle"
+
+
+def test_a_new_cast_is_a_new_video(monkeypatch) -> None:
+    from app.services import whiteboard
+
+    monkeypatch.setattr(whiteboard, "cache_key", lambda data, voice, fps=30: "board")
+    one = {**_brand(teacher="classroom"), "cast": teacher.cast_for("q1", "classroom", 2, take=0)}
+    two = {**_brand(teacher="classroom"), "cast": teacher.cast_for("q1", "classroom", 2, take=3)}
+    assert social.cache_key(DATA, "v", one, "female") != social.cache_key(DATA, "v", two, "female")
+
+
+@pytest.mark.skipif(not __import__("os").getenv("CBC_TEST_PHASE2_DATABASE_URL"), reason="needs an empty Postgres")
+def test_a_choice_made_in_play_is_kept_and_each_make_again_is_a_new_take(monkeypatch) -> None:
+    import os
+
+    from sqlalchemy import create_engine, text
+
+    from app.infra import db as infra
+    from app.services import platform_settings
+
+    engine = create_engine(os.environ["CBC_TEST_PHASE2_DATABASE_URL"])
+    with engine.begin() as c:
+        c.execute(text("DROP SCHEMA public CASCADE; CREATE SCHEMA public;"))
+    monkeypatch.setattr(infra, "get_engine", lambda: engine)
+    monkeypatch.setattr(platform_settings, "_load", lambda: {})
+    infra.run_migrations()
+    try:
+        assert teacher.choice("q1") == {"take": 0, "teacher": "", "students": None}
+        first = teacher.cast_for("q1", "classroom", 2)
+        teacher.choose("q1", teacher="teacher_older_f", students=1)
+        assert teacher.choice("q1") == {"take": 1, "teacher": "teacher_older_f", "students": 1}
+        assert teacher.signature(teacher.cast_for("q1", "classroom", 2)) != teacher.signature(first)
+        with pytest.raises(ValueError):
+            teacher.choose("q1", students=5)
+    finally:
+        engine.dispose()
