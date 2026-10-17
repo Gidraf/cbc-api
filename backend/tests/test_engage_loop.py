@@ -148,7 +148,8 @@ def test_the_post_insights_page_is_read_as_facebook_shows_it() -> None:
     sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "poster"))
     from poster.flows import fb_comments
 
-    page = "Post insights\nViews over time\n20\n15\nViews\n22\nViewers\n7\nAverage views per viewer\n2.6\n4 Engagement\nComments\n2\nShares\n0"
+    # As the page reads: labels over their numbers up top, numbers over their labels under Engagement.
+    page = ("Post insights\nViews over time\n20\n15\nViews\n22\nViewers\n7\nAverage views per viewer\n2.6\n"
+            "6 Engagement\ufeff\n2\nReactions\n0\nClicks\n4\nComments\n0\nShares\nReaction by type\n0")
     got = fb_comments.parse_insights(page)
-    assert got["views"] == 22 and got["viewers"] == 7 and got["engagement"] == 4
-    assert got["reactions"] == 2, "the total less comments and shares"
+    assert got == {"views": 22, "viewers": 7, "reactions": 2, "comments": 4, "shares": 0, "engagement": 6}

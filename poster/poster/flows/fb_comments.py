@@ -216,13 +216,18 @@ _LABELS = {"views": r"^(views|plays|video views|reel plays)$", "viewers": r"^(vi
 
 def parse_insights(text: str) -> dict[str, int]:
     """Numbers beside their labels, as an insights window lists them (label, then number — or number, then label)."""
-    lines = [x.strip() for x in (text or "").splitlines() if x.strip()]
+    lines = [x.strip().strip("\ufeff") for x in (text or "").splitlines() if x.strip().strip("\ufeff")]
     out: dict[str, int] = {}
+    # Facebook's "Post insights" page puts the number under the label up top
+    # (Views / 22) but above it in the Engagement section (0 / Reactions).
+    engaged = next((k for k, x in enumerate(lines) if re.match(r"^[\d.,]+[KkMm]?\s*Engagement$", x)), None)
     for k, line in enumerate(lines):
         for key, rx in _LABELS.items():
             if key in out or not re.match(rx, line, re.I):
                 continue
-            for near in (lines[k + 1] if k + 1 < len(lines) else "", lines[k - 1] if k else ""):
+            below, above = (lines[k + 1] if k + 1 < len(lines) else ""), (lines[k - 1] if k else "")
+            order = (above, below) if engaged is not None and k > engaged else (below, above)
+            for near in order:
                 if re.match(r"^[\d.,]+\s*[KkMm]?$", near):
                     out[key] = number(near)
                     break
