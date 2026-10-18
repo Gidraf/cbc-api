@@ -72,12 +72,19 @@ def test_the_link_is_one_use_and_only_for_the_poster(monkeypatch):
     assert c.get("/api/v1/play/poster/mac-installer/nope").status_code == 404
 
 
-def test_with_two_macs_only_the_newest_posts(monkeypatch):
+def test_with_two_macs_each_job_goes_to_the_newest_mac_that_has_it(monkeypatch):
     from app.services import social_export as X
 
-    monkeypatch.setattr(X, "pull_poster", lambda: {"poster_id": "spare-mac", "online": True})
-    assert X.standing_by("spare-mac") == ""
-    assert "spare-mac is the active poster" in X.standing_by("main-mac")
-    assert X.standing_by("") == ""                      # an older poster that does not say who it is
-    monkeypatch.setattr(X, "pull_poster", lambda: None)
+    monkeypatch.setattr(X, "fresh_posters", lambda: [{"poster_id": "spare-mac"}, {"poster_id": "main-mac"}])
+    monkeypatch.setattr(X, "poster_roles", lambda: {})
+    assert X.standing_by("spare-mac") == ""                     # no jobs set: the newest does everything
+    assert "spare-mac does the post job" in X.standing_by("main-mac")
+    assert X.standing_by("") == ""                              # an older poster that does not say who it is
+    # The spare Mac only comments: posting falls to the main Mac, the campaign to the spare.
+    monkeypatch.setattr(X, "poster_roles", lambda: {"spare-mac": ["comments"], "main-mac": ["post", "likes"]})
+    assert X.standing_by("main-mac", "post") == "" and X.standing_by("main-mac", "likes") == ""
+    assert X.standing_by("spare-mac", "comments") == ""
+    assert "Not this Mac's job" in X.standing_by("spare-mac", "post")
+    assert "Not this Mac's job" in X.standing_by("main-mac", "comments")
+    monkeypatch.setattr(X, "fresh_posters", lambda: [])
     assert X.standing_by("main-mac") == ""

@@ -5,6 +5,7 @@ import { StreamedVideo } from "../ui/StreamedVideo";
 import { MonthPlanner } from "./MonthPlanner";
 import { PhotoStudio } from "./PhotoStudio";
 import gsap from "gsap";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   Badge,
   Button,
@@ -58,6 +59,10 @@ import {
   useRenderSchedule,
   useSaveRenderSchedule,
   useVideoCoverage,
+  usePerformance,
+  useCampaign,
+  usePosterMacs,
+  useSavePlatformSettings,
   type DaySchedule,
   type RenderSchedule,
   useSocialLibrary,
@@ -1369,6 +1374,167 @@ function AnotherMac() {
 // render helper needs (Homebrew, ffmpeg, Cairo, Pango, LaTeX for Manim).
 const RENDER_SETUP = "cd ~ && { [ -d cbc-api ] || git clone https://github.com/Gidraf/cbc-api.git; } && cd cbc-api && git checkout main && git pull && bash poster/mac/install-render.sh";
 
+/** The comment campaign: switch, limits, and today's progress. */
+function Campaign() {
+  const c = useCampaign();
+  const save = useSavePlatformSettings();
+  const qc = useQueryClient();
+  const toast = useToast();
+  const d = c.data;
+  const [draft, setDraft] = React.useState<Record<string, any> | null>(null);
+  React.useEffect(() => { if (d && !draft) setDraft({ floor: d.floor, target: d.target, views_goal: d.views_goal, focus: d.focus,
+                                                       per_post_day: d.per_post_day, daily: d.daily, share: d.share }); }, [d, draft]);
+  if (!d || !draft) return null;
+  async function apply(values: Record<string, any>, said: string) {
+    try { await save.mutateAsync(values); qc.invalidateQueries({ queryKey: ["campaign"] }); toast(said, "ok"); }
+    catch (err) { toast(err instanceof Error ? err.message : "Could not save.", "danger"); }
+  }
+  const field = (k: string, label: string, max: number) => (
+    <label style={{ display: "grid", gap: 2, fontSize: "var(--text-xs)" }}>{label}
+      <Input type="number" min={1} max={max} value={draft[k]} onChange={(e) => setDraft({ ...draft, [k]: Number(e.target.value) })} style={{ width: "6.5rem" }} />
+    </label>
+  );
+  return (
+    <details>
+      <summary style={{ cursor: "pointer", fontSize: "var(--text-sm)" }}>
+        💬 Comment campaign — {d.enabled ? <Badge tone="ok">on</Badge> : <Badge tone="neutral">off</Badge>}{" "}
+        {d.today.comments} of {d.daily} comments today · {d.today.shares} shares
+      </summary>
+      <div style={{ display: "grid", gap: "var(--s2)", marginTop: "var(--s2)", fontSize: "var(--text-sm)" }}>
+        <p style={{ margin: 0, color: "var(--ink-3)" }}>
+          Every post gets comments up to the floor first, the oldest first. Then the best-performing posts (views a day), a few at a time,
+          get more — and a share to your ticked groups once a day — up to the target, until each reaches the views goal; then the next best.
+          Comments are the post's own: its choices, the question and answer as pictures, its KICD outcomes quoted and credited, the
+          platform's features, and practice questions from the same topic with their answers. Within posting hours, one every 1–4 minutes.
+        </p>
+        <span>{d.posts.below_floor} post(s) below the floor · {d.posts.at_floor} at it or past · {d.posts.reached_goal} reached {d.views_goal.toLocaleString()} views
+          {d.today.failed ? ` · ${d.today.failed} failed today` : ""}</span>
+        <Stack direction="row" gap="var(--s2)" wrap align="end">
+          {field("floor", "Every post gets", 150)}
+          {field("target", "Top posts get up to", 150)}
+          {field("views_goal", "Until views reach", 1000000)}
+          {field("focus", "Top posts at a time", 30)}
+          {field("per_post_day", "A day on one post", 150)}
+          {field("daily", "A day in all", 5000)}
+          <label style={{ display: "inline-flex", gap: 6, alignItems: "center", fontSize: "var(--text-xs)" }}>
+            <input type="checkbox" checked={!!draft.share} onChange={(e) => setDraft({ ...draft, share: e.target.checked })} /> share top posts to groups
+          </label>
+        </Stack>
+        <span style={{ color: "var(--ink-3)", fontSize: "var(--text-xs)" }}>
+          Facebook limits the account, not the computer: start the day's total at 300 and raise it slowly if Facebook doesn't
+          push back ("you're commenting too fast").
+        </span>
+        <Stack direction="row" gap="var(--s2)" wrap>
+          <Button size="sm" variant="primary" loading={save.isPending}
+                  onClick={() => apply({ campaign_floor: draft.floor, campaign_target: draft.target, campaign_views_goal: draft.views_goal,
+                                         campaign_focus_posts: draft.focus, campaign_per_post_day: draft.per_post_day,
+                                         campaign_daily_limit: draft.daily, campaign_share: draft.share }, "Saved.")}>Save</Button>
+          <Button size="sm" variant={d.enabled ? "ghost" : "secondary"}
+                  onClick={() => apply({ campaign_enabled: !d.enabled }, d.enabled ? "Campaign off." : "Campaign on — the poster starts within minutes.")}>
+            {d.enabled ? "Turn off" : "Turn on"}</Button>
+        </Stack>
+      </div>
+    </details>
+  );
+}
+
+/** Posts ranked by what they earn a day, with each one's daily growth. */
+function Growth() {
+  const [sort, setSort] = React.useState("views_per_day");
+  const perf = usePerformance(sort);
+  const rows = perf.data?.posts || [];
+  const days = perf.data?.days || [];
+  const top = Math.max(1, ...days.map((d) => d.views));
+  return (
+    <details>
+      <summary style={{ cursor: "pointer", fontSize: "var(--text-sm)" }}>📈 Which posts do best, day by day</summary>
+      <div style={{ display: "grid", gap: "var(--s2)", marginTop: "var(--s2)", fontSize: "var(--text-sm)" }}>
+        {days.length > 0 && (
+          <div>
+            <span style={{ fontSize: "var(--text-xs)", color: "var(--ink-3)" }}>New views a day, all posts</span>
+            <div style={{ display: "flex", gap: 3, alignItems: "flex-end", height: 60 }}>
+              {days.map((d) => <div key={d.day} title={`${d.day}: ${d.views} views, ${d.reactions} reactions, ${d.comments} comments`}
+                                    style={{ flex: 1, height: `${(100 * d.views) / top}%`, minHeight: 2, background: "var(--accent)", borderRadius: 2 }} />)}
+            </div>
+          </div>
+        )}
+        <label style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>Rank by
+          <Select value={sort} onChange={(e) => setSort(e.target.value)} style={{ width: "auto" }}>
+            <option value="views_per_day">Views a day</option>
+            <option value="engagement_per_day">Reactions, comments and shares a day</option>
+            <option value="views_today">Views today</option>
+            <option value="comments">Comments</option>
+            <option value="newest">Newest</option>
+          </Select>
+        </label>
+        {rows.length === 0 && <span style={{ color: "var(--ink-3)" }}>No readings yet — the poster reads each post's insights as it goes.</span>}
+        <div style={{ display: "grid", gap: 4 }}>
+          {rows.slice(0, 30).map((p, k) => (
+            <div key={p.post_id} style={{ display: "grid", gridTemplateColumns: "2rem 1fr auto", gap: 8, alignItems: "center",
+                                          borderBottom: "1px solid var(--line-2)", padding: "4px 0" }}>
+              <b>{k + 1}</b>
+              <span style={{ minWidth: 0 }}>
+                <span style={{ display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {p.url ? <a href={p.url} target="_blank" rel="noreferrer">{p.question_text || p.question_id}</a> : (p.question_text || p.question_id)}
+                </span>
+                <span style={{ fontSize: "var(--text-xs)", color: "var(--ink-3)" }}>
+                  {p.sub_strand} · {p.age_days} days · today +{p.today.views} views, +{p.today.comments} comments {p.growing ? "↗" : ""}
+                  {p.marketing ? " · 📣" : ""}{p.boost_state ? ` · 🚀 ${p.boost_state}` : ""}
+                </span>
+              </span>
+              <span style={{ textAlign: "right", fontSize: "var(--text-xs)" }}>
+                <b>{p.views_per_day}</b> views/day<br />👁 {p.views} · ❤ {p.reactions} · 💬 {p.comments} · ↗ {p.shares}
+              </span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </details>
+  );
+}
+
+/** Which jobs each poster Mac does. */
+function MacJobs() {
+  const macs = usePosterMacs();
+  const save = useSavePlatformSettings();
+  const qc = useQueryClient();
+  const toast = useToast();
+  const list = macs.data?.macs || [];
+  if (!list.length) return null;
+  const NAMES: Record<string, string> = { post: "Posting", comments: "Comment campaign", likes: "Liking back" };
+  async function toggle(id: string, job: string) {
+    const roles = Object.fromEntries(list.map((m) => [m.poster_id, m.roles]));
+    const mine = new Set(roles[id] || []);
+    if (mine.has(job)) mine.delete(job); else mine.add(job);
+    roles[id] = [...mine];
+    try { await save.mutateAsync({ poster_roles: JSON.stringify(roles) }); qc.invalidateQueries({ queryKey: ["poster-macs"] });
+          toast("Saved — each Mac picks up its jobs within a minute.", "ok"); }
+    catch (err) { toast(err instanceof Error ? err.message : "Could not save.", "danger"); }
+  }
+  return (
+    <details>
+      <summary style={{ cursor: "pointer", fontSize: "var(--text-sm)" }}>🖥️ Jobs per Mac ({list.length} checked in)</summary>
+      <div style={{ display: "grid", gap: 6, marginTop: "var(--s2)", fontSize: "var(--text-sm)" }}>
+        <span style={{ color: "var(--ink-3)", fontSize: "var(--text-xs)" }}>
+          Each job goes to the newest Mac that has it ticked — one Mac can post while another runs the comment campaign all day.
+          Every Mac needs Facebook logged in.
+        </span>
+        {list.map((m) => (
+          <Stack key={m.poster_id} direction="row" gap="var(--s3)" align="center" wrap>
+            <b style={{ minWidth: "10rem" }}>{m.poster_id}</b>
+            {(macs.data?.jobs || []).map((job) => (
+              <label key={job} style={{ display: "inline-flex", gap: 4, alignItems: "center" }}>
+                <input type="checkbox" checked={m.roles.includes(job)} disabled={save.isPending} onChange={() => toggle(m.poster_id, job)} />
+                {NAMES[job] || job}
+              </label>
+            ))}
+          </Stack>
+        ))}
+      </div>
+    </details>
+  );
+}
+
 const DAY_NAMES: [string, string][] = [["mon", "Monday"], ["tue", "Tuesday"], ["wed", "Wednesday"], ["thu", "Thursday"],
                                        ["fri", "Friday"], ["sat", "Saturday"], ["sun", "Sunday"]];
 
@@ -1881,6 +2047,9 @@ function AutoPost() {
           {o.comments && <CommentThread c={o.comments} online={o.live.online} busy={command.isPending}
                                         onCheck={() => run("comments_check", "facebook")} />}
           <KeepEngaged />
+          <Campaign />
+          <Growth />
+          <MacJobs />
           <LikeBack online={o.live.online} busy={command.isPending} onCheck={() => run("engage_check", "facebook")} />
           {o.live.online && picking && (
             <PickGroups groups={o.groups || []} busy={command.isPending}

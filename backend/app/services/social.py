@@ -549,6 +549,107 @@ def comment_library(q: dict[str, Any], data: dict[str, Any], b: dict[str, Any] |
     return [c for c in out if c][:20]
 
 
+# ── the campaign: up to 150 comments a post can carry, none repeated ─────────
+
+KICD_DESIGNS = "https://kicd.ac.ke/cbc-materials/curriculum-designs/"
+CAMPAIGN_MAX = 150
+
+
+def _practice(q: dict[str, Any], limit: int = 75) -> list[dict[str, Any]]:
+    """Other questions from the same sub-strand, with their choices and answers."""
+    try:
+        from . import question_rows
+        from .question_dna import question_dna_service
+
+        link = q.get("curriculum") or {}
+        rows = question_dna_service.list_questions(grade=link.get("grade") or None, subject=link.get("subject") or None,
+                                                   sub_strand=link.get("sub_strand") or None, limit=limit + 1)
+        return [r for r in question_rows.flatten_all(rows)
+                if str(r.get("question_id")) != str(q.get("question_id")) and r.get("question_text")
+                and str(r.get("status") or "") not in ("needs_review", "rejected", "superseded")][:limit]
+    except Exception:  # noqa: BLE001
+        return []
+
+
+def campaign_comments(q: dict[str, Any], data: dict[str, Any], b: dict[str, Any] | None = None) -> list[dict[str, str]]:
+    """Every comment a post can carry, in order: the twenty of the engagement
+    loop, then the question and its answer as pictures, every outcome, inquiry
+    question, competency and value of its KICD sub-strand (quoted and credited
+    to KICD, with where to read the design), the walkthrough and the
+    platform's features, and practice questions from the same sub-strand —
+    each one, and its answer a comment later. Up to 150, none repeated."""
+    from . import social_cards
+
+    b = b or brand()
+    out: list[dict[str, str]] = [{"text": t} for t in comment_library(q, data, b)]
+    qid = str(q.get("question_id") or "")
+    link = q.get("curriculum") or {}
+    grade = _grade_label(str(link.get("grade") or ""))
+    subject = str(link.get("subject") or "")
+    site = (b.get("website") or "").rstrip("/")
+    row = _curriculum_row(q)
+    sub = str(row.get("sub_strand_name") or link.get("sub_strand") or "")
+    pages = _pages(row.get("source_pages"))
+    credit = (f"— KICD, {grade} {subject} Curriculum Design" + (f", {pages}" if pages else "")
+              + f". © Kenya Institute of Curriculum Development. Read the design: {KICD_DESIGNS}")
+    for step, line in (("question", "🖼️ Here is the question as a card — save it and try it later."),
+                       ("answer", "✅ The answer, worked out on one card."),
+                       ("teaser", "🤔 One to share with a friend who likes a challenge.")):
+        try:
+            card = social_cards.status(qid, step, q)
+            if card.get("status") == "ready" and card.get("url"):
+                out.append({"text": line, "image_url": card["url"]})
+        except Exception:  # noqa: BLE001
+            pass
+    for n, slo in enumerate(_texts(row.get("slos")), start=1):
+        out.append({"text": f"🎯 Learning outcome {n} for {sub}: “{slo}” {credit}"})
+    for kiq in _texts(row.get("key_inquiry_questions")):
+        out.append({"text": f"💭 Key inquiry question from KICD: “{kiq}” What would you answer? {credit}"})
+    for comp in _texts(row.get("core_competencies")):
+        out.append({"text": f"🌱 Core competency this develops (KICD): {comp}. {credit}"})
+    for value in _texts(row.get("values")):
+        out.append({"text": f"🤝 Value it builds (KICD): {value}. {credit}"})
+    out.append({"text": f"📄 Where this comes from: the KICD {grade} {subject} curriculum design, {sub}"
+                        + (f" ({pages})" if pages else "") + f". All KICD curriculum designs: {KICD_DESIGNS}"})
+    if site:
+        out += [{"text": f"🎬 Watch this question worked out step by step: {site}/play"},
+                {"text": f"📝 Teachers: set a full {grade} {subject} exam with its marking scheme in two minutes — free to start at {site}"},
+                {"text": f"🔀 Give every student their own random questions, in their own order, so nobody copies: online tests at {site}"},
+                {"text": f"🖨️ Print papers, marking schemes and answer sheets for any grade at {site}"},
+                {"text": f"📲 Share a test link with your class or your child — they answer on a phone, marked at once: {site}"},
+                {"text": f"👨‍👩‍👧 Parents: practise {subject} at home with tests that mark themselves: {site}"}]
+    practice = _practice(q)
+    previous = None
+    for k, other in enumerate(practice, start=1):
+        lines = [f"🔁 Practice {k} ({sub}): {display(other.get('question_text'))}"]
+        for o in (other.get("options") or [])[:4]:
+            if isinstance(o, dict):
+                lines.append(f"{o.get('id')}) {display(o.get('text'))}")
+        lines.append("Answer below 👇")
+        out.append({"text": "\n".join(lines)})
+        if previous is not None:
+            out.append({"text": _practice_answer(previous[0], previous[1])})
+        previous = (k, other)
+        if len(out) >= CAMPAIGN_MAX + 20:
+            break
+    if previous is not None:
+        out.append({"text": _practice_answer(previous[0], previous[1])})
+    seen, unique = set(), []
+    for c in out:
+        key = c["text"].strip()
+        if key and key not in seen:
+            seen.add(key)
+            unique.append(c)
+    return unique[:CAMPAIGN_MAX]
+
+
+def _practice_answer(k: int, other: dict[str, Any]) -> str:
+    key = next((o for o in (other.get("options") or []) if isinstance(o, dict) and (o.get("is_correct") or o.get("correct"))), None)
+    answer = f"{key.get('id')}) {display(key.get('text'))}" if key else display(other.get("correct_answer") or "")
+    why = display((key or {}).get("distractor_rationale") or other.get("model_answer") or "")
+    return f"✅ Practice {k} answer: {answer}" + (f" — {why[:220]}" if why else "")
+
+
 # ── the queue ────────────────────────────────────────────────────────────────
 
 def _prepare(q: dict[str, Any], voice: str = "", *, teacher_mode: str | None = None, students: int | None = None

@@ -372,6 +372,15 @@ async def comment_step(*, check: bool = False) -> dict[str, Any]:
         state["busy"] = "Checking the comment box" if check else f"Commenting ({job['stage']}) on facebook"
         page = await browser.page()
         try:
+            if job.get("stage") == "share":
+                # The campaign's daily share of a post doing well, to the ticked groups.
+                from .flows import fb_share
+
+                out = await fb_share.share_post(page, find=job.get("find") or "", also=job.get("find_also") or [],
+                                                groups=job.get("groups") or [])
+                await cbc.comments_done(job["post_id"], "share", ok=True, groups=out.get("groups") or [])
+                log.info("Shared %s to %s", job["post_id"], out.get("groups"))
+                return {"ok": True, "message": f"Shared to {', '.join(out.get('groups') or [])}.", "shot": out.get("shot")}
             out = await fb_comments.comment(page, find=job.get("find") or "", url=job.get("url") or "",
                                             comments=job.get("comments") or [], image=image, check=check,
                                             also=job.get("find_also") or [], measure=bool(job.get("measure")))

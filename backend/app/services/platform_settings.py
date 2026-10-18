@@ -178,6 +178,28 @@ SETTINGS: tuple[Setting, ...] = (
             "Every half hour a job queues the vertical social video for questions that have none (focus subjects, "
             "figures and lower grades first), until this many are made that day and never more than 30 waiting. "
             "Auto-book then books the ready ones for posting. 0 stops it.", 150, "Videos"),
+    Setting("campaign_enabled", "", "bool", "Comment campaign",
+            "The poster keeps commenting under the posts that are out: every post up to the floor first, then the "
+            "best performing posts (views a day) up to the target — sharing them to your groups once a day — until "
+            "each reaches the views goal, then the next. Within posting hours, paced like a person, never more than "
+            "the day's limit.", False, "Social"),
+    Setting("campaign_floor", "", "int", "Comments every post gets", "", 20, "Social"),
+    Setting("campaign_target", "", "int", "Comments on a well-performing post", "Up to 150.", 150, "Social"),
+    Setting("campaign_views_goal", "", "int", "Views before moving on",
+            "A focus post stops getting comments once it has this many views; the next best post takes its place.",
+            1000, "Social"),
+    Setting("campaign_focus_posts", "", "int", "Focus posts at a time", "", 3, "Social"),
+    Setting("campaign_per_post_day", "", "int", "Comments a day on one post", "", 25, "Social"),
+    Setting("campaign_daily_limit", "", "int", "Campaign comments a day (the whole account)",
+            "Facebook judges the account, not the computer: start at 300 and raise it slowly if Facebook does not "
+            "push back (\"you're commenting too fast\").", 300, "Social"),
+    Setting("campaign_share", "", "bool", "Share focus posts to groups",
+            "Once a day, a focus post is shared to your ticked groups (Auto-post → Groups), resting days as set.",
+            True, "Social"),
+    Setting("poster_roles", "", "string", "Jobs per Mac",
+            "Which jobs each poster Mac does: posting (and each post's own comments), the comment campaign, liking "
+            "back. Set in Play → Auto-post → Macs. A Mac not listed does them all; each job goes to the newest Mac "
+            "that has it.", "", "Social"),
     Setting("render_schedule", "", "string", "When the Macs render",
             "When a render helper on a Mac takes videos, per day: always, between two times, only while the Mac is "
             "idle, or never. Set it in Play → Auto-post → Render videos on a Mac. Empty: always.", "", "Videos"),
