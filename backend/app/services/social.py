@@ -639,7 +639,7 @@ def status(question_id: str, q: dict[str, Any] | None = None, voice: str = "", *
 
 def enqueue(question_id: str, *, queued_by: str = "", batch_id: str = "", voice: str = "",
             fresh: bool = False, priority: int = 0, teacher: str | None = None,
-            students: int | None = None, on_demand: bool = False) -> dict[str, Any]:
+            students: int | None = None, on_demand: bool = False, dispatch: bool = True) -> dict[str, Any]:
     """Queue the cut. `fresh`: make it as the settings say now (with the
     teacher) even when a video cut before the teacher still serves — with a
     new cast. `teacher` / `students`: kept for this question (from Play)."""
@@ -675,7 +675,8 @@ def enqueue(question_id: str, *, queued_by: str = "", batch_id: str = "", voice:
          **({"on_demand": True} if on_demand else {})},
         strand=str(link.get("strand") or ""), sub_strand=str(link.get("sub_strand") or ""),
         batch_id=batch_id, queued_by=queued_by or "social")
-    job_queue.dispatch(job.job_id)          # the render runs in the worker, not in the API
+    if dispatch:
+        job_queue.dispatch(job.job_id)      # the render runs in the worker, not in the API
     return {**now, "status": "queued", "job_id": job.job_id}
 
 

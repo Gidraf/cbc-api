@@ -463,9 +463,25 @@ def next_for_poster(now: datetime | None = None, *, platform: str = "", post_id:
                                               AND status IN ('queued', 'running')""") or {}).get("n") or 0)
             except Exception:  # noqa: BLE001
                 rendering = 0
+        making = ""
+        if not chosen and not rows and not rendering and share:
+            # Nothing ready and nothing being made: one made now, on the standby worker.
+            try:
+                from . import video_factory
+
+                # Queued, not dispatched: a Mac helper takes the most urgent video
+                # within half a minute, and the sweep hands it to a worker if not.
+                qid = video_factory.next_for_post_now()
+                if qid and social.enqueue(qid, queued_by="post-now", on_demand=True,
+                                          dispatch=False).get("status") in ("queued", "running"):
+                    making = qid
+            except Exception as exc:  # noqa: BLE001
+                logger.info("Could not make a video for Post now: %s", exc)
         why = ("" if chosen else
                (f"Every finished video has been posted — {rendering} more are being made; Post now works again as each is ready."
-                if rendering else "Every finished video has been posted and none are being made — book or make more videos.")
+                if rendering else
+                "No finished video to post, so one is being made now — press Post now again in about 5 minutes."
+                if making else "Every finished video has been posted and none are being made — book or make more videos.")
                if not rows else "The booked posts' videos are still being made — try again shortly.")
     else:
         day_start = now.astimezone(EAT).replace(hour=0, minute=0, second=0, microsecond=0)
@@ -709,7 +725,8 @@ def record_attempt(post_id: str, *, ok: bool, url: str = "", error: str = "", dr
                  "g": to_json(groups), "d": to_json(places)})
         if comment_rules()["enabled"]:
             # The comments follow once the post is out: now, or at its scheduled time.
-            execute("""UPDATE social_posts SET comments_state = 'pending', comments_next_at = posted_at,
+            # A few minutes after it is out: a reel takes a while to show on the profile.
+            execute("""UPDATE social_posts SET comments_state = 'pending', comments_next_at = posted_at + INTERVAL '3 minutes',
                        comments_attempts = 0, comments_error = ''
                        WHERE post_id = :id AND COALESCE(format, 'video') = 'video' AND comments_state = ''""",
                     {"id": post_id})
@@ -1977,3 +1994,65 @@ def relaunch(*, render_limit: int = 200, by: str = "") -> dict[str, Any]:
     queued = teacher.render_now(teacher.mode() if teacher.mode() != "off" else "classroom", limit=render_limit,
                                 pause_lessons=True, by=by or "relaunch")
     return {"archived_posts": int(moved.get("n") or 0), **queued}
+
+
+# ── performance: which posts do best, and how each grows day by day ──────────
+
+def performance(*, days: int = 14, sort: str = "views_per_day", now: datetime | None = None) -> dict[str, Any]:
+    """Posts that are out, ranked by what they earn a day since they went out,
+    each with its daily growth (views, reactions, comments, shares) from the
+    poster's readings of its insights — the last reading each day, less the
+    day before's."""
+    from ..infra.db import fetch_all
+
+    now = now or datetime.now(timezone.utc)
+    since = now - timedelta(days=max(1, min(days, 90)))
+    posts = fetch_all("""SELECT p.post_id, p.question_id, p.posted_at, p.url, p.marketing, p.boost_state, p.teacher,
+                                p.views, p.likes AS reactions, p.comments, p.shares, p.score,
+                                LEFT(COALESCE(q.content->>'question_text', ''), 140) AS question_text,
+                                q.curriculum_link->>'subject' AS subject, q.curriculum_link->>'sub_strand' AS sub_strand
+                         FROM social_posts p LEFT JOIN question_dna q ON q.question_id = p.question_id
+                         WHERE p.platform = 'facebook' AND p.handed_at IS NOT NULL AND p.posted_at <= :now
+                           AND COALESCE(p.format, 'video') = 'video'""", {"now": now}) or []
+    readings = fetch_all("""SELECT DISTINCT ON (post_id, (at AT TIME ZONE 'Africa/Nairobi')::date)
+                                   post_id, (at AT TIME ZONE 'Africa/Nairobi')::date AS day, views, reactions, comments, shares
+                            FROM post_insights WHERE at >= :since - INTERVAL '1 day'
+                            ORDER BY post_id, (at AT TIME ZONE 'Africa/Nairobi')::date, at DESC""", {"since": since}) or []
+    by_post: dict[str, list[dict[str, Any]]] = {}
+    for r in readings:
+        by_post.setdefault(r["post_id"], []).append(r)
+    keys = ("views", "reactions", "comments", "shares")
+    out = []
+    for p in posts:
+        age = max(1.0, (now - p["posted_at"]).total_seconds() / 86400) if p.get("posted_at") else 1.0
+        totals = {k: int(p.get(k) or 0) for k in keys}
+        daily, prev = [], None
+        for r in sorted(by_post.get(p["post_id"], []), key=lambda x: x["day"]):
+            vals = {k: int(r.get(k) or 0) for k in keys}
+            if prev is not None:
+                daily.append({"day": r["day"].isoformat(), **{k: max(0, vals[k] - prev[k]) for k in keys}})
+            prev = vals
+        daily = [d for d in daily if d["day"] >= since.astimezone(EAT).date().isoformat()]
+        engagement = totals["reactions"] + totals["comments"] + totals["shares"]
+        last = daily[-1] if daily else {k: 0 for k in keys}
+        before = daily[-2] if len(daily) > 1 else None
+        row = {**{k: (v.isoformat() if hasattr(v, "isoformat") else v) for k, v in p.items()},
+               "age_days": round(age, 1), "views_per_day": round(totals["views"] / age, 1),
+               "engagement_per_day": round(engagement / age, 1),
+               "today": {k: last.get(k, 0) for k in keys},
+               "growing": (before is not None and (last.get("views", 0) + 0.0) > before.get("views", 0)),
+               "daily": daily[-days:]}
+        out.append(row)
+    order = {"views_per_day": lambda r: r["views_per_day"], "engagement_per_day": lambda r: r["engagement_per_day"],
+             "views_today": lambda r: r["today"]["views"], "comments": lambda r: int(r.get("comments") or 0),
+             "newest": lambda r: r.get("posted_at") or ""}.get(sort, lambda r: r["views_per_day"])
+    out.sort(key=order, reverse=True)
+    # The account's own day by day: every post's growth added up.
+    totals_by_day: dict[str, dict[str, int]] = {}
+    for r in out:
+        for d in r["daily"]:
+            t = totals_by_day.setdefault(d["day"], {k: 0 for k in keys})
+            for k in keys:
+                t[k] += d[k]
+    return {"posts": out, "days": [{"day": d, **v} for d, v in sorted(totals_by_day.items())], "sort": sort}
+

@@ -1807,6 +1807,16 @@ class BoostRequest(BaseModel):
     again: bool = False
 
 
+@router.get("/poster/performance")
+def post_performance(days: int = Query(14, ge=1, le=90),
+                     sort: Literal["views_per_day", "engagement_per_day", "views_today", "comments", "newest"] = Query("views_per_day"),
+                     auth: AuthContext = Depends(STAFF)) -> dict[str, Any]:
+    """Posts ranked by what they earn a day, each with its daily growth, and the account's days added up."""
+    from ..services import social_export
+
+    return social_export.performance(days=days, sort=sort)
+
+
 @router.get("/poster/boosts")
 def boosts(auth: AuthContext = Depends(require_roles("admin"))) -> dict[str, Any]:
     """Posts that are out — those with the platform pitch first — and their boosts."""

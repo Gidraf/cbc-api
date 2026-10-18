@@ -32,6 +32,14 @@ from manim import (DOWN, LEFT, ORIGIN, RIGHT, UP, Arc, Create, CurvedArrow, Dot,
 INK, BLUE, RED, GREEN, AMBER, GREY = "#1b1f2a", "#1d4ed8", "#c2410c", "#15803d", "#d97706", "#6b7280"
 OP_COLOUR = {"\\times": BLUE, "\\div": BLUE, "+": GREEN, "-": RED}
 config.background_color = "#fdfdfb"
+# A plain article, not Manim's default `standalone` class: the basic LaTeX
+# packages are enough (texlive-latex-base + recommended), so the server image
+# does without texlive-latex-extra, the biggest of them. dvisvgm crops to the ink.
+from manim import TexTemplate  # noqa: E402
+
+config.tex_template = TexTemplate(documentclass=r"\documentclass{article}",
+                                  preamble=r"\usepackage{amsmath}\usepackage{amssymb}"
+                                           r"\pagestyle{empty}")
 
 
 import sys

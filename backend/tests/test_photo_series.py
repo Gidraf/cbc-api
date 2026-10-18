@@ -110,7 +110,8 @@ def test_a_week_of_series_is_booked_in_order(db, monkeypatch):
     out = X.book_series("Grade 9", "Mathematics", days=3, seed=1, created_by="gidraf")
     assert out["booked"] and len(out["days"]) == 3
     assert out["photos"] == 24 and out["videos"] == 24 and out["questions"] == 3 * 8
-    rows = db.connect().execute(text("SELECT question_id, format, step, scheduled_for FROM social_posts ORDER BY scheduled_for")).mappings().all()
+    with db.connect() as c:         # closed, so the next test can reset the schema
+        rows = c.execute(text("SELECT question_id, format, step, scheduled_for FROM social_posts ORDER BY scheduled_for")).mappings().all()
     assert len(rows) == 48
     for qid in {r["question_id"] for r in rows if r["format"] == "photo"}:
         steps = [r["step"] for r in rows if r["question_id"] == qid]
