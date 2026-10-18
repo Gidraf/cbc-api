@@ -1745,6 +1745,20 @@ MIGRATIONS: list[tuple[str, str]] = [
         ALTER TABLE poster_commands ADD COLUMN IF NOT EXISTS target TEXT NOT NULL DEFAULT '';
         """,
     ),
+    (
+        "066_device_activity",
+        """
+        -- Each Mac's activity, a row a day (its last count that day), for the
+        -- devices page's history: posts, comments, likes, videos made…
+        CREATE TABLE IF NOT EXISTS device_activity (
+            device TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            day DATE NOT NULL,
+            counts JSONB NOT NULL DEFAULT '{}'::jsonb,
+            PRIMARY KEY (device, kind, day)
+        );
+        """,
+    ),
 ]
 
 

@@ -1636,8 +1636,8 @@ def poster_command(payload: PosterCommand, auth: AuthContext = Depends(ANY)) -> 
     from ..services import social_export
 
     _may_make_videos(auth)
-    if payload.action not in ("login", "check", "dry_run", "run_now", "schedule_now", "comments_check", "engage_check",
-                              "pause", "resume", "groups"):
+    if payload.action not in ("login", "logout", "check", "dry_run", "run_now", "schedule_now", "comments_check",
+                              "engage_check", "pause", "resume", "groups", "uninstall"):
         raise_api_error("VALIDATION_FAILED", "Unknown poster action.")
     options: dict[str, Any] = {}
     if payload.action == "schedule_now":
@@ -1654,7 +1654,7 @@ def poster_command(payload: PosterCommand, auth: AuthContext = Depends(ANY)) -> 
         command_id = social_export.queue_command(payload.action, payload.platform, payload.post_id,
                                                  by=str(getattr(auth, "subject", "") or ""), options=options,
                                                  target=payload.target)
-        if payload.action in ("login", "pause", "resume", "check", "groups"):
+        if payload.action in ("login", "logout", "pause", "resume", "check", "groups", "uninstall"):
             for _ in range(40 if payload.action == "groups" else 24 if payload.action == "check" else 8):
                 time.sleep(1.0)
                 done = social_export.command_result(command_id)
@@ -1878,6 +1878,9 @@ def render_helper_status(payload: HelperStatus, auth: AuthContext = Depends(ANY)
     execute("""INSERT INTO render_helpers (worker, status, seen_at) VALUES (:w, CAST(:s AS jsonb), NOW())
                ON CONFLICT (worker) DO UPDATE SET status = EXCLUDED.status, seen_at = NOW()""",
             {"w": payload.worker[:80], "s": to_json(payload.model_dump())})
+    from ..services import social_export
+
+    social_export.record_activity(payload.worker, "render", payload.model_dump().get("today") or {})
     return {"ok": True}
 
 
@@ -1889,6 +1892,7 @@ def devices(auth: AuthContext = Depends(STAFF)) -> dict[str, Any]:
     from ..services import social_export
 
     roles = social_export.poster_roles()
+    names = social_export.device_names()
     active = {r: next((str(p["poster_id"]) for p in social_export.fresh_posters()
                        if r in roles.get(str(p["poster_id"]), list(social_export.ROLES))), "")
               for r in social_export.ROLES}
@@ -1901,7 +1905,7 @@ def devices(auth: AuthContext = Depends(STAFF)) -> dict[str, Any]:
                           FROM poster_heartbeat WHERE seen_at > NOW() - INTERVAL '7 days' ORDER BY seen_at DESC""",
                        {"age": social_export.PULL_FRESH_SECONDS}) or []:
         st, pid = dict(r.get("status") or {}), str(r["poster_id"])
-        posters.append({"poster_id": pid, "online": bool(r["online"]), "seen_at": when(r["seen_at"]),
+        posters.append({"poster_id": pid, "name": names.get(pid, ""), "online": bool(r["online"]), "seen_at": when(r["seen_at"]),
                         "busy": st.get("busy") or "", "paused": bool(st.get("paused")), "note": st.get("note") or "",
                         "mode": st.get("mode") or "", "browser": st.get("browser") or "", "machine": st.get("machine") or {},
                         "logins": st.get("logins") or {}, "today": st.get("today") or {}, "last": st.get("last") or None,
@@ -1911,10 +1915,49 @@ def devices(auth: AuthContext = Depends(STAFF)) -> dict[str, Any]:
     for r in fetch_all("""SELECT worker, status, seen_at, NOW() - seen_at < INTERVAL '3 minutes' AS online
                           FROM render_helpers WHERE seen_at > NOW() - INTERVAL '7 days' ORDER BY seen_at DESC""") or []:
         st = dict(r.get("status") or {})
-        helpers.append({"worker": r["worker"], "online": bool(r["online"]), "seen_at": when(r["seen_at"]),
+        helpers.append({"worker": r["worker"], "name": names.get(str(r["worker"]), ""), "online": bool(r["online"]), "seen_at": when(r["seen_at"]),
                         "resting": st.get("resting") or "", "today": st.get("today") or {}, "jobs": st.get("jobs") or [],
                         "slots": st.get("slots"), "manim": bool(st.get("manim")), "machine": st.get("machine") or {}})
     return {"posters": posters, "helpers": helpers}
+
+
+@router.get("/devices/{device}/history")
+def device_history(device: str, kind: Literal["poster", "render"] = Query("poster"), days: int = Query(14, ge=1, le=90),
+                   auth: AuthContext = Depends(STAFF)) -> dict[str, Any]:
+    """One Mac's activity, a row a day."""
+    from ..services import social_export
+
+    return {"device": device, "kind": kind, "days": social_export.device_history(device, kind, days)}
+
+
+class DeviceName(BaseModel):
+    name: str = Field("", max_length=60)
+
+
+@router.post("/devices/{device}/name")
+def name_device(device: str, payload: DeviceName, auth: AuthContext = Depends(require_roles("admin"))) -> dict[str, Any]:
+    """Call a Mac what you like on the devices page (empty: its own name)."""
+    import json
+
+    from ..services import platform_settings, social_export
+
+    names = social_export.device_names()
+    if payload.name.strip():
+        names[device[:80]] = payload.name.strip()
+    else:
+        names.pop(device[:80], None)
+    platform_settings.set_many({"device_names": json.dumps(names)}, updated_by=str(getattr(auth, "subject", "") or ""))
+    return {"ok": True, "names": names}
+
+
+@router.delete("/devices/{device}")
+def forget_device(device: str, kind: Literal["poster", "render"] = Query("poster"),
+                  auth: AuthContext = Depends(require_roles("admin"))) -> dict[str, Any]:
+    """Take a Mac off the list (it comes back if it checks in again — uninstall it to stop that)."""
+    from ..services import social_export
+
+    social_export.forget_device(device, kind)
+    return {"ok": True}
 
 
 @router.get("/render/schedule")

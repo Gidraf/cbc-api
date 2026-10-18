@@ -200,6 +200,8 @@ SETTINGS: tuple[Setting, ...] = (
             "Which jobs each poster Mac does: posting (and each post's own comments), the comment campaign, liking "
             "back. Set in Play → Auto-post → Macs. A Mac not listed does them all; each job goes to the newest Mac "
             "that has it.", "", "Social"),
+    Setting("device_names", "", "string", "Names of the Macs",
+            "What each Mac is called on the devices page ({id: name}). Set there.", "", "Social"),
     Setting("render_schedule", "", "string", "When the Macs render",
             "When a render helper on a Mac takes videos, per day: always, between two times, only while the Mac is "
             "idle, or never. Set it in Play → Auto-post → Render videos on a Mac. Empty: always.", "", "Videos"),

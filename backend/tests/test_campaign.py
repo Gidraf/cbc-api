@@ -143,3 +143,24 @@ def test_a_command_for_one_mac_goes_to_that_mac_only(db) -> None:
     assert got["command_id"] == mine and got["action"] == "login", "its own command, though it is not the posting Mac"
     assert se.take_command("office-mini", active=False) is None, "the general ones are for the posting Mac"
     assert se.take_command("main-mac", active=True)["command_id"] == general
+
+
+@needs_db
+def test_each_mac_keeps_its_days_and_can_be_named_or_forgotten(db, monkeypatch) -> None:
+    from app.routes import play
+    from app.services import platform_settings
+
+    monkeypatch.setattr(platform_settings, "set_many", lambda values, **_: db.update(
+        {k: v for k, v in values.items()}) or values)
+
+    se.heartbeat("mac-a", {"today": {"day": "2026-10-18", "posts": 2, "comments": 30}})
+    se.heartbeat("mac-a", {"today": {"day": "2026-10-19", "posts": 1}})
+    se.heartbeat("mac-a", {"today": {"day": "2026-10-19", "posts": 4, "comments": 12}})     # the day's last count wins
+    days = se.device_history("mac-a", "poster", days=3650)
+    assert [d["day"] for d in days] == ["2026-10-18", "2026-10-19"] and days[1] == {"day": "2026-10-19", "posts": 4, "comments": 12}
+    play.name_device("mac-a", play.DeviceName(name="Studio Mac"), auth=None)
+    assert se.device_names() == {"mac-a": "Studio Mac"}
+    assert next(p for p in play.devices(auth=None)["posters"] if p["poster_id"] == "mac-a")["name"] == "Studio Mac"
+    play.forget_device("mac-a", kind="poster", auth=None)
+    assert not [p for p in play.devices(auth=None)["posters"] if p["poster_id"] == "mac-a"]
+    assert se.device_history("mac-a", "poster", days=3650) == [] and se.device_names() == {}
