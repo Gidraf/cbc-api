@@ -4,6 +4,10 @@
 #
 #   bash poster/mac/install-render.sh      install, or update after git pull
 #
+# On a new Mac, one line gets the code and runs this:
+#
+#   cd ~ && { [ -d cbc-api ] || git clone https://github.com/Gidraf/cbc-api.git; } && cd cbc-api && git checkout main && git pull && bash poster/mac/install-render.sh
+#
 # Installs what it needs: Homebrew's ffmpeg, Cairo, Pango and pkg-config, and
 # LaTeX (BasicTeX, if no LaTeX is here) with the packages Manim uses to set
 # the maths — that asks for your Mac password once. It reads the server's
@@ -129,4 +133,5 @@ Keep the Mac on and plugged in while it works.
 Logs:    tail -f ~/.cbc/render/render.log
 Faster:  RENDER_SLOTS=3 in ~/.cbc/render/.env, then run this again
 Stop:    launchctl bootout gui/\$(id -u)/$LABEL
+Update:  cd ~/cbc-api && git pull && bash poster/mac/install-render.sh
 EOF

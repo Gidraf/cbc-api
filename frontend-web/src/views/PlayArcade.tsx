@@ -1360,6 +1360,42 @@ function AnotherMac() {
   );
 }
 
+// One line to paste in a Mac's Terminal: the code, then everything the
+// render helper needs (Homebrew, ffmpeg, Cairo, Pango, LaTeX for Manim).
+const RENDER_SETUP = "cd ~ && { [ -d cbc-api ] || git clone https://github.com/Gidraf/cbc-api.git; } && cd cbc-api && git checkout main && git pull && bash poster/mac/install-render.sh";
+
+/** Instructions for a Mac that renders videos for the server. */
+function RenderMac() {
+  const toast = useToast();
+  async function copy(text: string) {
+    try { await navigator.clipboard.writeText(text); toast("Copied — paste it in the Mac's Terminal.", "ok"); }
+    catch { toast("Select the command and copy it.", "info"); }
+  }
+  const box: React.CSSProperties = { display: "block", padding: "var(--s2)", background: "var(--surface-2, #f4f4f2)",
+                                     borderRadius: "var(--radius)", wordBreak: "break-all", fontSize: "var(--text-xs)" };
+  return (
+    <details>
+      <summary style={{ cursor: "pointer", fontSize: "var(--text-sm)" }}>🎬 Render videos on a Mac</summary>
+      <div style={{ display: "grid", gap: "var(--s2)", marginTop: "var(--s2)", fontSize: "var(--text-sm)" }}>
+        <p style={{ margin: 0, color: "var(--ink-3)" }}>
+          A Mac draws videos in about two minutes, against ten or more on the server. Any number of Macs can help; each takes
+          its own videos, so none is made twice. The Mac needs Google Chrome. Paste this in its Terminal — it gets the code and
+          installs everything else (Homebrew, ffmpeg, Cairo, Pango, and LaTeX so Manim can animate the working). It asks for the
+          Mac's password once, and for the server's address and API key on a Mac without the poster. Run it again to update.
+        </p>
+        <Stack direction="row" gap="var(--s2)" wrap align="center">
+          <Button size="sm" onClick={() => copy(RENDER_SETUP)}>Copy the install command</Button>
+        </Stack>
+        <code style={box}>{RENDER_SETUP}</code>
+        <p style={{ margin: 0, color: "var(--ink-3)", fontSize: "var(--text-xs)" }}>
+          Watch it work: <code>tail -f ~/.cbc/render/render.log</code> · Faster: <code>RENDER_SLOTS=3</code> in
+          <code> ~/.cbc/render/.env</code>, then run the command again · Stop: <code>launchctl bootout gui/$(id -u)/com.cbc.render</code>
+        </p>
+      </div>
+    </details>
+  );
+}
+
 /** Keep the next weeks booked for the browser poster. */
 const STEP_LABEL: Record<string, string> = { teaser: "🤔 card", question: "❓ question", answer: "✅ answer", walkthrough: "🎬 video" };
 
@@ -1763,6 +1799,7 @@ function AutoPost() {
           )}
           {!o.live.online && <p style={{ margin: 0, fontSize: "var(--text-sm)" }}>{o.live.error || "No poster is running. On your Mac: bash poster/mac/install.sh — or start the social-poster service on the server."}</p>}
           <AnotherMac />
+          <RenderMac />
           {o.live.note && <p style={{ margin: 0, fontSize: "var(--text-xs)", color: "var(--ink-3)" }}>{o.live.note}</p>}
 
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: "var(--s2)" }}>
