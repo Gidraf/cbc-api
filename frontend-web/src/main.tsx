@@ -35,6 +35,7 @@ import { SignIn } from "./views/SignIn";
 import { Signups } from "./views/Signups";
 import { Wallet } from "./views/Wallet";
 import { DevStudio } from "./views/DevStudio";
+import { Devices } from "./views/Devices";
 import { Developer } from "./views/Developer";
 import { Classroom } from "./views/Classroom";
 import { MyQuestions } from "./views/MyQuestions";
@@ -150,6 +151,7 @@ function Router() {
         <Route path="settings" element={<Screen name="Settings"><PlatformSettings /></Screen>} />
         <Route path="wallet" element={<Screen name="Wallet"><Wallet /></Screen>} />
         <Route path="dev-studio" element={<Screen name="Developer studio"><DevStudio /></Screen>} />
+        <Route path="devices" element={<Screen name="Devices"><Devices /></Screen>} />
         <Route path="developer" element={<Screen name="Developer"><Developer /></Screen>} />
         <Route path="classroom" element={<Screen name="Online tests"><Classroom /></Screen>} />
         <Route path="my-questions" element={<Screen name="My questions"><MyQuestions /></Screen>} />

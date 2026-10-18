@@ -1429,6 +1429,7 @@ function Devices() {
     <details open>
       <summary style={{ cursor: "pointer", fontSize: "var(--text-sm)" }}>
         🖥️ Devices — {d.posters.filter((p) => p.online).length} poster(s) and {d.helpers.filter((h) => h.online).length} render helper(s) online
+        {" · "}<a href="/devices" onClick={(e) => e.stopPropagation()}>Manage each Mac →</a>
       </summary>
       <div style={{ display: "grid", gap: "var(--s2)", marginTop: "var(--s2)", fontSize: "var(--text-sm)" }}>
         {d.posters.length === 0 && d.helpers.length === 0 && <span style={{ color: "var(--ink-3)" }}>No Mac has checked in this week.</span>}
@@ -1657,7 +1658,7 @@ const DAY_NAMES: [string, string][] = [["mon", "Monday"], ["tue", "Tuesday"], ["
                                        ["fri", "Friday"], ["sat", "Saturday"], ["sun", "Sunday"]];
 
 /** When the Macs may render: per day, always, between two times, only while idle, or never. */
-function WorkingHours() {
+export function WorkingHours() {
   const sched = useRenderSchedule();
   const save = useSaveRenderSchedule();
   const toast = useToast();
@@ -1736,7 +1737,7 @@ function Coverage() {
 }
 
 /** One line to paste in a Mac's Terminal: installs on a new Mac, updates one that has it. */
-function SetupCommands() {
+export function SetupCommands() {
   const toast = useToast();
   async function copy(text: string) {
     try { await navigator.clipboard.writeText(text); toast("Copied — paste it in the Mac's Terminal.", "ok"); }

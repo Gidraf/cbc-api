@@ -514,6 +514,44 @@ async def _plain_chrome_login(url: str, platform: str) -> None:
         log.info("Login check failed: %s", _why(exc))
 
 
+# The cookies that keep each platform logged in, by the domains they belong to.
+_DOMAINS = {"facebook": r"(^|\.)facebook\.com$", "instagram": r"(^|\.)instagram\.com$",
+            "linkedin": r"(^|\.)linkedin\.com$", "tiktok": r"(^|\.)tiktok\.com$",
+            "youtube": r"(^|\.)(youtube\.com|google\.com|accounts\.google\.com)$"}
+
+
+async def do_logout(platform: str) -> dict[str, Any]:
+    """Log this Mac out of one platform: its cookies cleared from the poster's profile."""
+    import re
+
+    if platform not in _DOMAINS:
+        return {"ok": False, "error": "Unknown platform."}
+    async with browser.lock:
+        ctx = await browser.context()
+        await ctx.clear_cookies(domain=re.compile(_DOMAINS[platform]))
+    await _set_login(platform, False, "Logged out from the console.")
+    state["logins"].get(platform, {}).pop("account", None)
+    return {"ok": True, "message": f"This Mac is logged out of {platform}."}
+
+
+def do_uninstall() -> dict[str, Any]:
+    """Remove the poster from this Mac (its logins are kept) — asked for from the devices page."""
+    import subprocess
+
+    script = os.path.expanduser("~/.cbc/poster/uninstall.sh")
+    if config.POSTER_MODE != "local" or not os.path.exists(script):
+        return {"ok": False, "error": "Only a poster installed on a Mac can uninstall itself."}
+
+    async def later() -> None:
+        await asyncio.sleep(3)                          # the answer reaches the console first
+        subprocess.Popen(["bash", script], start_new_session=True,
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+    asyncio.get_event_loop().create_task(later())
+    return {"ok": True, "message": "The poster is removing itself from this Mac (its logins are kept). "
+                                   "Install it again with the one-line command."}
+
+
 async def do_check(platform: str = "") -> dict[str, Any]:
     platforms = [platform] if platform else list(FLOWS)
     out = {}
@@ -673,6 +711,10 @@ async def run(action: str, platform: str = "", post_id: str = "",
         return await do_login(platform)
     if action == "check":
         return await do_check(platform)
+    if action == "logout":
+        return await do_logout(platform)
+    if action == "uninstall":
+        return do_uninstall()
     if action == "dry_run":
         return await do_dry_run(platform, post_id)
     if action == "comments_check":

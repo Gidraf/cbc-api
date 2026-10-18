@@ -70,6 +70,7 @@ const NAV: { group: string; items: NavItem[] }[] = [
       // "configure" is admin only: approving a switch changes the model behind
       // every guide and question on the platform.
       { to: "/scout", label: "Model scout", icon: "◎", right: "configure", hint: "Weekly prices and trials of cheaper models — approve or roll back a switch" },
+      { to: "/devices", label: "Devices", icon: "🖥", right: "configure", hint: "The Macs that post, comment and render: accounts, jobs, activity, controls" },
       { to: "/dev-studio", label: "Developer studio", icon: "⌘", right: "configure", hint: "An idea in: a tested app on the CBC API, its videos, its book, a test link and LinkedIn posts" },
       { to: "/agents", label: "Agent tasks", icon: "⟳", right: "generate", hint: "What Antigravity, Claude Code, Codex or Ollama are doing here right now, and what they did" },
       { to: "/keys", label: "API keys", icon: "🔑", right: "generate", hint: "Add or rotate a provider key without rebuilding anything" },

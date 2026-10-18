@@ -1092,6 +1092,66 @@ def heartbeat(poster_id: str, status: dict[str, Any]) -> None:
     execute("""INSERT INTO poster_heartbeat (poster_id, status, seen_at) VALUES (:id, CAST(:s AS jsonb), NOW())
                ON CONFLICT (poster_id) DO UPDATE SET status = EXCLUDED.status, seen_at = NOW()""",
             {"id": poster_id[:80], "s": to_json(status)})
+    record_activity(poster_id, "poster", status.get("today") or {})
+
+
+def record_activity(device: str, kind: str, today: dict[str, Any]) -> None:
+    """A Mac's counts for its day (the day it says), kept a row a day for its history."""
+    from datetime import date
+
+    from ..infra.db import execute, to_json
+
+    day = str(today.get("day") or "")
+    try:
+        d = date.fromisoformat(day)
+    except ValueError:
+        return
+    counts = {k: int(v) for k, v in today.items() if k != "day" and str(v).lstrip("-").isdigit()}
+    execute("""INSERT INTO device_activity (device, kind, day, counts) VALUES (:dev, :k, :d, CAST(:c AS jsonb))
+               ON CONFLICT (device, kind, day) DO UPDATE SET counts = EXCLUDED.counts""",
+            {"dev": device[:80], "k": kind, "d": d, "c": to_json(counts)})
+
+
+def device_names() -> dict[str, str]:
+    import json
+
+    from . import platform_settings
+
+    try:
+        raw = platform_settings.get("device_names", "") or ""
+        got = json.loads(raw) if isinstance(raw, str) and raw.strip() else {}
+    except (ValueError, TypeError):
+        got = {}
+    return {str(k)[:80]: str(v)[:60] for k, v in got.items() if isinstance(got, dict)}
+
+
+def device_history(device: str, kind: str, days: int = 14) -> list[dict[str, Any]]:
+    from ..infra.db import fetch_all
+
+    rows = fetch_all("""SELECT day, counts FROM device_activity WHERE device = :dev AND kind = :k
+                        AND day >= CURRENT_DATE - (:n * INTERVAL '1 day') ORDER BY day""",
+                     {"dev": device[:80], "k": kind, "n": days}) or []
+    return [{"day": r["day"].isoformat(), **(r.get("counts") or {})} for r in rows]
+
+
+def forget_device(device: str, kind: str) -> None:
+    """Off the list: its check-ins, its jobs and its name (it reappears if it checks in again)."""
+    import json
+
+    from ..infra.db import execute
+    from . import platform_settings
+
+    if kind == "render":
+        execute("DELETE FROM render_helpers WHERE worker = :d", {"d": device[:80]})
+    else:
+        execute("DELETE FROM poster_heartbeat WHERE poster_id = :d", {"d": device[:80]})
+        roles = poster_roles()
+        if roles.pop(device[:80], None) is not None:
+            platform_settings.set_many({"poster_roles": json.dumps(roles)}, updated_by="devices")
+    execute("DELETE FROM device_activity WHERE device = :d AND kind = :k", {"d": device[:80], "k": kind})
+    names = device_names()
+    if names.pop(device[:80], None) is not None:
+        platform_settings.set_many({"device_names": json.dumps(names)}, updated_by="devices")
 
 
 def pull_poster() -> dict[str, Any] | None:
@@ -1811,9 +1871,11 @@ def fresh_video(now: datetime, platform: str = "facebook", *, created_by: str) -
     from . import social
     from .whiteboard import load
 
+    # Every unused video is looked at, newest first: the newest are often the
+    # ones being made again (not ready yet), and a ready one may sit behind them.
     made = fetch_all("""SELECT question_id FROM question_videos v WHERE kind = 'social'
                         AND NOT EXISTS (SELECT 1 FROM social_posts s WHERE s.question_id = v.question_id)
-                        ORDER BY made_at DESC LIMIT 25""") or []
+                        ORDER BY made_at DESC LIMIT 2000""") or []
     for row in made:
         qid = str(row["question_id"])
         try:

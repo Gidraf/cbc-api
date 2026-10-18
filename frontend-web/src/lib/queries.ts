@@ -4252,13 +4252,13 @@ export function usePerformance(sort: string, days = 14) {
 }
 
 export type DevicePoster = {
-  poster_id: string; online: boolean; seen_at: string; busy: string; paused: boolean; note: string; mode: string; browser: string;
+  poster_id: string; name?: string; online: boolean; seen_at: string; busy: string; paused: boolean; note: string; mode: string; browser: string;
   machine: { host?: string; os?: string; code?: string };
   logins: Record<string, { logged_in: boolean; note: string; at: number; account?: string }>;
   today: Record<string, number | string>; last: Record<string, any> | null; jobs: string[]; doing: string[];
 };
 export type DeviceHelper = {
-  worker: string; online: boolean; seen_at: string; resting: string; today: Record<string, number | string>;
+  worker: string; name?: string; online: boolean; seen_at: string; resting: string; today: Record<string, number | string>;
   jobs: { job_id: string; question_id: string; stage: string; pct: number; since: number }[]; slots: number; manim: boolean;
   machine: { os?: string };
 };
@@ -4268,6 +4268,34 @@ export function useDevices() {
   const api = useApi();
   return useQuery({ queryKey: ["devices"], refetchInterval: 30_000,
                     queryFn: () => api<{ posters: DevicePoster[]; helpers: DeviceHelper[] }>("/api/v1/play/devices") });
+}
+
+/** One Mac's activity, a row a day. */
+export function useDeviceHistory(device: string, kind: "poster" | "render") {
+  const api = useApi();
+  return useQuery({ queryKey: ["device-history", device, kind], enabled: Boolean(device), refetchInterval: 120_000,
+    queryFn: () => api<{ days: ({ day: string } & Record<string, number | string>)[] }>(
+      `/api/v1/play/devices/${encodeURIComponent(device)}/history?kind=${kind}&days=14`) });
+}
+
+export function useNameDevice() {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { device: string; name: string }) => api(`/api/v1/play/devices/${encodeURIComponent(v.device)}/name`,
+      { method: "POST", body: JSON.stringify({ name: v.name }) }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["devices"] }),
+  });
+}
+
+export function useForgetDevice() {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { device: string; kind: "poster" | "render" }) =>
+      api(`/api/v1/play/devices/${encodeURIComponent(v.device)}?kind=${v.kind}`, { method: "DELETE" }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["devices"] }),
+  });
 }
 
 export type CampaignStatus = {
@@ -4804,7 +4832,7 @@ export function usePosterCommand() {
   const api = useApi();
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (v: { action: "login" | "check" | "dry_run" | "run_now" | "schedule_now" | "comments_check" | "engage_check" | "pause" | "resume" | "groups"; platform?: string; post_id?: string;
+    mutationFn: (v: { action: "login" | "logout" | "uninstall" | "check" | "dry_run" | "run_now" | "schedule_now" | "comments_check" | "engage_check" | "pause" | "resume" | "groups"; platform?: string; post_id?: string;
                       /** run_now: the feed only, or the feed and groups — the next in turn, or the ones picked (5 at most).
                        *  schedule_now: how many bookings to hand to Facebook's scheduler. */
                       options?: { share?: "feed" | "groups"; groups?: string[]; count?: number };
