@@ -1830,6 +1830,38 @@ def boost_post(post_id: str, payload: BoostRequest, auth: AuthContext = Depends(
     return {}
 
 
+@router.get("/render/schedule")
+def render_schedule(auth: AuthContext = Depends(ANY)) -> dict[str, Any]:
+    """When the render helpers on Macs may take videos (they decide idleness themselves)."""
+    from ..services import render_hours
+
+    return render_hours.current()
+
+
+@router.get("/videos/coverage")
+def video_coverage(auth: AuthContext = Depends(STAFF)) -> dict[str, Any]:
+    """How many questions have their social and lesson videos, and today's progress."""
+    from ..services import video_factory
+
+    return video_factory.coverage()
+
+
+@router.get("/render/teachers/{model}.glb")
+def render_teacher_model(model: str, auth: AuthContext = Depends(ANY)):
+    """A teacher's 3D model, for a render helper that does not have it yet
+    (a teacher added on the server since the helper was installed)."""
+    import re
+
+    from fastapi.responses import FileResponse
+
+    from ..services.whiteboard import STATIC
+
+    path = STATIC / "teachers" / f"{model}.glb"
+    if not re.fullmatch(r"[a-z0-9_]{1,40}", model) or not path.exists():
+        raise_api_error("NOT_FOUND", f"No teacher model {model!r}.")
+    return FileResponse(path, media_type="model/gltf-binary")
+
+
 @router.post("/poster/commands/next")
 def poster_take_command(poster_id: str = Query(""), auth: AuthContext = Depends(ANY)) -> dict[str, Any]:
     from ..services import social_export

@@ -4207,6 +4207,34 @@ export function useSaveBrand() {
 }
 
 /** The vertical cut, live and voiced, for the console's preview. */
+export type DaySchedule = { mode: "always" | "hours" | "idle" | "off"; from: string; to: string };
+export type RenderSchedule = { days: Record<string, DaySchedule>; idle_minutes: number };
+export type VideoCoverage = { questions: number; social: number; lesson: number; social_target: number;
+                              social_made_today: number; social_waiting: number };
+
+/** When the Macs render (read by the render helpers every minute). */
+export function useRenderSchedule() {
+  const api = useApi();
+  return useQuery({ queryKey: ["render-schedule"], queryFn: () => api<RenderSchedule>("/api/v1/play/render/schedule") });
+}
+
+export function useSaveRenderSchedule() {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (s: RenderSchedule) => api("/api/v1/admin/settings", { method: "PUT",
+      body: JSON.stringify({ values: { render_schedule: JSON.stringify(s) } }) }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["render-schedule"] }),
+  });
+}
+
+/** How many questions have their videos. */
+export function useVideoCoverage() {
+  const api = useApi();
+  return useQuery({ queryKey: ["video-coverage"], queryFn: () => api<VideoCoverage>("/api/v1/play/videos/coverage"),
+                    refetchInterval: 60_000 });
+}
+
 export type TeacherInfo = { id: string; name: string; gender: "female" | "male"; older: boolean };
 
 /** The teachers a video can have, by name. */

@@ -174,6 +174,13 @@ SETTINGS: tuple[Setting, ...] = (
     Setting("video_daily_target", "VIDEO_DAILY_TARGET", "int", "Videos made a day",
             "The daily job keeps making lesson videos for questions that have none until this many are made "
             "that day. 0 stops it.", 200, "Videos"),
+    Setting("social_daily_target", "", "int", "Social videos made a day",
+            "Every half hour a job queues the vertical social video for questions that have none (focus subjects, "
+            "figures and lower grades first), until this many are made that day and never more than 30 waiting. "
+            "Auto-book then books the ready ones for posting. 0 stops it.", 150, "Videos"),
+    Setting("render_schedule", "", "string", "When the Macs render",
+            "When a render helper on a Mac takes videos, per day: always, between two times, only while the Mac is "
+            "idle, or never. Set it in Play → Auto-post → Render videos on a Mac. Empty: always.", "", "Videos"),
     Setting("billing_min_topup_ksh", "BILLING_MIN_TOPUP_KSH", "int", "Smallest top-up (KSh)", "", 10, "Billing"),
     Setting("billing_max_topup_ksh", "BILLING_MAX_TOPUP_KSH", "int", "Largest top-up (KSh)",
             "M-Pesa's own limit per transaction is higher; this caps one top-up.", 70000, "Billing"),

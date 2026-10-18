@@ -469,3 +469,35 @@ def classroom_script(scenes: list[dict[str, Any]], cast: dict[str, Any]) -> list
             sc["caption"] = f"Did {s1['name']} get it right? Comment ✅ or ❌"
         out.append(sc)
     return out
+
+
+# The models every render helper had before teachers were added on the server:
+# a Mac installed earlier rendered any other teacher as nobody at all.
+FIRST_MODELS = {"female", "male", "teacher_older_f", "teacher_older_m"}
+
+
+def missing_teacher_videos(*, since: Any, models_had: set[str] | None = None) -> list[dict[str, Any]]:
+    """Social videos a render helper made since `since` whose teacher it had
+    no model for — made without the teacher. The soonest booked first."""
+    from ..infra.db import fetch_all
+    from . import social, whiteboard
+
+    had = models_had or FIRST_MODELS
+    rows = fetch_all("""SELECT DISTINCT ON (payload->>'question_id') payload->>'question_id' AS question_id,
+                               result->>'rendered_on' AS worker, finished_at
+                        FROM jobs WHERE kind = 'social' AND status = 'done' AND finished_at >= :since
+                          AND COALESCE(result->>'rendered_on', '') LIKE 'mac-%'
+                        ORDER BY payload->>'question_id', finished_at DESC""", {"since": since}) or []
+    out = []
+    for r in rows:
+        try:
+            q = whiteboard.load(r["question_id"])
+            _, _, _, _, b, _ = social._prepare(q)
+        except Exception:  # noqa: BLE001
+            continue
+        model = ((b.get("cast") or {}).get("teacher") or {}).get("model")
+        if model and model not in had:
+            out.append({"question_id": r["question_id"], "model": model, "worker": r["worker"],
+                        "made": r["finished_at"]})
+    return out
+

@@ -55,6 +55,11 @@ import {
   useSocialBrand,
   useSocialHtml,
   useTeachers,
+  useRenderSchedule,
+  useSaveRenderSchedule,
+  useVideoCoverage,
+  type DaySchedule,
+  type RenderSchedule,
   useSocialLibrary,
   useSocialStatus,
   useSetHandPhoto,
@@ -1364,6 +1369,88 @@ function AnotherMac() {
 // render helper needs (Homebrew, ffmpeg, Cairo, Pango, LaTeX for Manim).
 const RENDER_SETUP = "cd ~ && { [ -d cbc-api ] || git clone https://github.com/Gidraf/cbc-api.git; } && cd cbc-api && git checkout main && git pull && bash poster/mac/install-render.sh";
 
+const DAY_NAMES: [string, string][] = [["mon", "Monday"], ["tue", "Tuesday"], ["wed", "Wednesday"], ["thu", "Thursday"],
+                                       ["fri", "Friday"], ["sat", "Saturday"], ["sun", "Sunday"]];
+
+/** When the Macs may render: per day, always, between two times, only while idle, or never. */
+function WorkingHours() {
+  const sched = useRenderSchedule();
+  const save = useSaveRenderSchedule();
+  const toast = useToast();
+  const [draft, setDraft] = React.useState<RenderSchedule | null>(null);
+  React.useEffect(() => { if (sched.data && !draft) setDraft(sched.data); }, [sched.data, draft]);
+  if (!draft) return null;
+  const setDay = (d: string, patch: Partial<DaySchedule>) => setDraft({ ...draft, days: { ...draft.days, [d]: { ...draft.days[d], ...patch } } });
+  const preset = (fn: (d: string) => DaySchedule) => setDraft({ ...draft, days: Object.fromEntries(DAY_NAMES.map(([d]) => [d, fn(d)])) });
+  const weekend = (d: string) => d === "sat" || d === "sun";
+  return (
+    <div style={{ border: "1px solid var(--line-2)", borderRadius: "var(--radius)", padding: "var(--s2)", display: "grid", gap: 6 }}>
+      <strong style={{ fontSize: "var(--text-sm)" }}>🕒 Working hours for the Macs</strong>
+      <span style={{ color: "var(--ink-3)", fontSize: "var(--text-xs)" }}>
+        Every Mac rendering follows this, by its own clock. A video it has started is always finished.
+      </span>
+      <Stack direction="row" gap="var(--s2)" wrap>
+        <Button size="sm" variant="ghost" onClick={() => preset(() => ({ mode: "always", from: "18:00", to: "23:59" }))}>Always</Button>
+        <Button size="sm" variant="ghost" onClick={() => preset((d) => weekend(d) ? { mode: "always", from: "00:00", to: "23:59" } : { mode: "hours", from: "18:00", to: "23:59" })}>Evenings, weekends all day</Button>
+        <Button size="sm" variant="ghost" onClick={() => preset(() => ({ mode: "idle", from: "18:00", to: "23:59" }))}>Only when idle</Button>
+      </Stack>
+      {DAY_NAMES.map(([d, name]) => {
+        const day = draft.days[d];
+        return (
+          <Stack key={d} direction="row" gap="var(--s2)" align="center" wrap>
+            <span style={{ width: "6.5rem", fontSize: "var(--text-sm)" }}>{name}</span>
+            <Select value={day.mode} onChange={(e) => setDay(d, { mode: e.target.value as DaySchedule["mode"] })} style={{ width: "auto" }}>
+              <option value="always">All day</option>
+              <option value="hours">Between…</option>
+              <option value="idle">When the Mac is idle</option>
+              <option value="off">Not at all</option>
+            </Select>
+            {day.mode === "hours" && (
+              <>
+                <Input type="time" value={day.from} onChange={(e) => setDay(d, { from: e.target.value })} style={{ width: "7.5rem" }} />
+                <span>to</span>
+                <Input type="time" value={day.to} onChange={(e) => setDay(d, { to: e.target.value })} style={{ width: "7.5rem" }} />
+              </>
+            )}
+          </Stack>
+        );
+      })}
+      <Stack direction="row" gap="var(--s2)" align="center" wrap>
+        <span style={{ fontSize: "var(--text-sm)" }}>Idle means nobody has used the Mac for</span>
+        <Input type="number" min={1} max={240} value={draft.idle_minutes}
+               onChange={(e) => setDraft({ ...draft, idle_minutes: Math.max(1, Number(e.target.value) || 10) })} style={{ width: "5rem" }} />
+        <span style={{ fontSize: "var(--text-sm)" }}>minutes</span>
+        <span style={{ flex: 1 }} />
+        <Button size="sm" variant="primary" loading={save.isPending}
+                onClick={async () => { try { await save.mutateAsync(draft); toast("Saved — the Macs follow it within a minute.", "ok"); }
+                                       catch (err) { toast(err instanceof Error ? err.message : "Could not save.", "danger"); } }}>
+          Save hours</Button>
+      </Stack>
+    </div>
+  );
+}
+
+/** How many questions have their videos; the job fills the rest. */
+function Coverage() {
+  const cov = useVideoCoverage();
+  const c = cov.data;
+  if (!c) return null;
+  const pct = c.questions ? Math.round((100 * c.social) / c.questions) : 0;
+  return (
+    <div style={{ fontSize: "var(--text-sm)", display: "grid", gap: 4 }}>
+      <span><strong>{c.social.toLocaleString()}</strong> of {c.questions.toLocaleString()} questions have their social video ({pct}%)
+        {" · "}{c.lesson.toLocaleString()} a lesson video</span>
+      <div style={{ height: 6, background: "var(--line)", borderRadius: 3 }}>
+        <div style={{ width: `${pct}%`, height: 6, background: "var(--accent)", borderRadius: 3 }} />
+      </div>
+      <span style={{ color: "var(--ink-3)", fontSize: "var(--text-xs)" }}>
+        Today: {c.social_made_today} made of {c.social_target} · {c.social_waiting} waiting. Every half hour the job queues more
+        for questions with none (Settings → Social videos made a day); Auto-book books them for posting.
+      </span>
+    </div>
+  );
+}
+
 /** Instructions for a Mac that renders videos for the server. */
 function RenderMac() {
   const toast = useToast();
@@ -1387,6 +1474,8 @@ function RenderMac() {
           <Button size="sm" onClick={() => copy(RENDER_SETUP)}>Copy the install command</Button>
         </Stack>
         <code style={box}>{RENDER_SETUP}</code>
+        <WorkingHours />
+        <Coverage />
         <p style={{ margin: 0, color: "var(--ink-3)", fontSize: "var(--text-xs)" }}>
           Watch it work: <code>tail -f ~/.cbc/render/render.log</code> · Faster: <code>RENDER_SLOTS=3</code> in
           <code> ~/.cbc/render/.env</code>, then run the command again · Stop: <code>launchctl bootout gui/$(id -u)/com.cbc.render</code>
