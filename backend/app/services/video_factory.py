@@ -187,6 +187,35 @@ def social_candidates(limit: int) -> list[str]:
     return [r["question_id"] for r in rows]
 
 
+def stale_social(limit: int, scan: int = 80) -> list[str]:
+    """Questions whose social video was made before the current cut (the pitch
+    added, the teacher changed): the oldest first, a few dozen looked at a run."""
+    from ..infra.db import fetch_all
+    from . import social
+
+    rows = fetch_all("""SELECT v.question_id FROM question_videos v
+                        WHERE v.kind = 'social'
+                          AND NOT EXISTS (SELECT 1 FROM jobs j WHERE j.kind = 'social' AND j.status IN ('queued', 'running')
+                                          AND j.payload->>'question_id' = v.question_id)
+                        ORDER BY v.made_at ASC LIMIT :n""", {"n": scan}) or []
+    out = []
+    for r in rows:
+        try:
+            if social.status(r["question_id"], legacy=False).get("status") == "none":
+                out.append(r["question_id"])
+        except Exception:  # noqa: BLE001
+            continue
+        if len(out) >= limit:
+            break
+    return out
+
+
+def next_for_post_now() -> str:
+    """One question to make a video for on the spot, when Post now has nothing ready."""
+    picks = social_candidates(1) or stale_social(1)
+    return picks[0] if picks else ""
+
+
 def top_up_social(now: datetime | None = None) -> dict[str, Any]:
     """Queue social videos for questions that have none, towards the day's target."""
     from . import social
@@ -194,7 +223,10 @@ def top_up_social(now: datetime | None = None) -> dict[str, Any]:
     goal, done, waiting = social_target(), social_made_today(now), social_pending()
     want = max(0, min(BATCH, goal - done, SOCIAL_QUEUE - waiting))
     queued = []
-    for qid in social_candidates(want) if want else []:
+    picks = social_candidates(want) if want else []
+    if want and len(picks) < want:
+        picks += stale_social(want - len(picks))       # then the videos made before the current cut
+    for qid in picks:
         try:
             got = social.enqueue(qid, queued_by="daily-social")
             if got.get("status") in ("queued", "running"):

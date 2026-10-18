@@ -1326,18 +1326,20 @@ def poster_comments_next(poster_id: str = Query(""), check: bool = Query(False),
     from ..services import social_export
 
     _may_make_videos(auth)
-    if social_export.standing_by(poster_id):
+    roles = {r for r in ("post", "comments") if not social_export.standing_by(poster_id, r)}
+    if not roles:
         return {"job": None, "reason": "standing by"}
-    return social_export.comments_next(check=check)
+    return social_export.comments_next(check=check, roles=roles)
 
 
 class CommentResult(BaseModel):
     post_id: str
-    stage: Literal["first", "later", "boost", "measure"]
+    stage: Literal["first", "later", "boost", "measure", "campaign", "share"]
     ok: bool
     error: str = ""
     url: str = ""
     metrics: dict[str, int] | None = None     # views, reactions, comments, shares as read on the post
+    groups: list[str] = []                    # a campaign share: the groups it went to
 
 
 @router.post("/poster/comments/result")
@@ -1346,6 +1348,7 @@ def poster_comments_result(payload: CommentResult, auth: AuthContext = Depends(A
 
     _may_make_videos(auth)
     return social_export.comments_result(payload.post_id, stage=payload.stage, ok=payload.ok, error=payload.error,
+                                         groups=payload.groups,
                                          url=payload.url, metrics=payload.metrics)
 
 
@@ -1441,7 +1444,7 @@ def poster_engage_next(poster_id: str = Query(""), auth: AuthContext = Depends(A
     from ..services import engage, social_export
 
     _may_make_videos(auth)
-    if social_export.standing_by(poster_id):
+    if social_export.standing_by(poster_id, "likes"):
         return {"action": None, "reason": "standing by"}
     return engage.next_action()
 
@@ -1805,6 +1808,36 @@ class BoostRequest(BaseModel):
     daily_ksh: int = Field(200, ge=50, le=5000)
     days: int = Field(5, ge=1, le=30)
     again: bool = False
+
+
+@router.get("/poster/performance")
+def post_performance(days: int = Query(14, ge=1, le=90),
+                     sort: Literal["views_per_day", "engagement_per_day", "views_today", "comments", "newest"] = Query("views_per_day"),
+                     auth: AuthContext = Depends(STAFF)) -> dict[str, Any]:
+    """Posts ranked by what they earn a day, each with its daily growth, and the account's days added up."""
+    from ..services import social_export
+
+    return social_export.performance(days=days, sort=sort)
+
+
+@router.get("/poster/macs")
+def poster_macs(auth: AuthContext = Depends(STAFF)) -> dict[str, Any]:
+    """The posters that checked in lately and the jobs each does."""
+    from ..services import social_export
+
+    roles = social_export.poster_roles()
+    return {"macs": [{"poster_id": p["poster_id"], "seen_at": p["seen_at"].isoformat() if hasattr(p["seen_at"], "isoformat") else p["seen_at"],
+                      "roles": roles.get(str(p["poster_id"]), list(social_export.ROLES))}
+                     for p in social_export.fresh_posters()],
+            "jobs": list(social_export.ROLES)}
+
+
+@router.get("/poster/campaign")
+def campaign(auth: AuthContext = Depends(STAFF)) -> dict[str, Any]:
+    """The comment campaign: its rules, today's comments and shares, and how far the posts are."""
+    from ..services import social_export
+
+    return social_export.campaign_status()
 
 
 @router.get("/poster/boosts")

@@ -117,10 +117,10 @@ async def comments_next(*, check: bool = False) -> dict[str, Any] | None:
 
 
 async def comments_done(post_id: str, stage: str, *, ok: bool, error: str = "", url: str = "",
-                        metrics: dict[str, int] | None = None) -> None:
+                        metrics: dict[str, int] | None = None, groups: list[str] | None = None) -> None:
     await _call("POST", "/api/v1/play/poster/comments/result",
                 json={"post_id": post_id, "stage": stage, "ok": ok, "error": error[:900], "url": url,
-                      **({"metrics": metrics} if metrics else {})})
+                      **({"metrics": metrics} if metrics else {}), **({"groups": groups} if groups else {})})
 
 
 async def linkedin_next() -> dict[str, Any] | None:

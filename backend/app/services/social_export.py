@@ -463,9 +463,25 @@ def next_for_poster(now: datetime | None = None, *, platform: str = "", post_id:
                                               AND status IN ('queued', 'running')""") or {}).get("n") or 0)
             except Exception:  # noqa: BLE001
                 rendering = 0
+        making = ""
+        if not chosen and not rows and not rendering and share:
+            # Nothing ready and nothing being made: one made now, on the standby worker.
+            try:
+                from . import video_factory
+
+                # Queued, not dispatched: a Mac helper takes the most urgent video
+                # within half a minute, and the sweep hands it to a worker if not.
+                qid = video_factory.next_for_post_now()
+                if qid and social.enqueue(qid, queued_by="post-now", on_demand=True,
+                                          dispatch=False).get("status") in ("queued", "running"):
+                    making = qid
+            except Exception as exc:  # noqa: BLE001
+                logger.info("Could not make a video for Post now: %s", exc)
         why = ("" if chosen else
                (f"Every finished video has been posted — {rendering} more are being made; Post now works again as each is ready."
-                if rendering else "Every finished video has been posted and none are being made — book or make more videos.")
+                if rendering else
+                "No finished video to post, so one is being made now — press Post now again in about 5 minutes."
+                if making else "Every finished video has been posted and none are being made — book or make more videos.")
                if not rows else "The booked posts' videos are still being made — try again shortly.")
     else:
         day_start = now.astimezone(EAT).replace(hour=0, minute=0, second=0, microsecond=0)
@@ -709,7 +725,8 @@ def record_attempt(post_id: str, *, ok: bool, url: str = "", error: str = "", dr
                  "g": to_json(groups), "d": to_json(places)})
         if comment_rules()["enabled"]:
             # The comments follow once the post is out: now, or at its scheduled time.
-            execute("""UPDATE social_posts SET comments_state = 'pending', comments_next_at = posted_at,
+            # A few minutes after it is out: a reel takes a while to show on the profile.
+            execute("""UPDATE social_posts SET comments_state = 'pending', comments_next_at = posted_at + INTERVAL '3 minutes',
                        comments_attempts = 0, comments_error = ''
                        WHERE post_id = :id AND COALESCE(format, 'video') = 'video' AND comments_state = ''""",
                     {"id": post_id})
@@ -781,7 +798,8 @@ def _extras(question_id: str) -> list[str]:
     return social.comment_library(q, data, b)[len(t["first"]) + len(t["later"]):]
 
 
-def comments_next(now: datetime | None = None, *, check: bool = False) -> dict[str, Any]:
+def comments_next(now: datetime | None = None, *, check: bool = False,
+                  roles: set[str] | None = None) -> dict[str, Any]:
     """The next comment step that is due, with its text, or why none: the
     thread's two steps, then — with Keep posts engaged on — a post's next
     extra comment, or a reading of a post's insights (the weakest first).
@@ -806,7 +824,11 @@ def comments_next(now: datetime | None = None, *, check: bool = False) -> dict[s
         return {"job": None, "reason": "Outside posting hours."}
     else:
         row = None
-    row = row or fetch_one(
+    roles = roles if roles is not None else {"post", "comments"}
+    if not check and "post" not in roles:
+        # A comments-only Mac: no post's own thread, straight to the readings and the campaign.
+        row = {"skip": True}
+    row = None if row and row.get("skip") else row or fetch_one(
         """SELECT post_id, question_id, platform, url, comments_state, boost_index FROM social_posts
            WHERE comments_state IN ('pending', 'part', 'boost') AND comments_attempts < :tries
              AND comments_next_at <= :now AND posted_at <= :now
@@ -827,7 +849,8 @@ def comments_next(now: datetime | None = None, *, check: bool = False) -> dict[s
                         "comments": [extras[k]], "image_url": "", "measure": True}, "reason": ""}
     if not row:
         br = boost_rules()
-        if br["enabled"] and not check:
+        camp = campaign_rules()["enabled"] and not check and "comments" in roles
+        if (br["enabled"] or camp) and not check and "comments" in roles:
             # Read a post's insights: the weakest (or never read) first.
             row = fetch_one("""SELECT post_id, question_id, platform, url FROM social_posts
                                WHERE platform = 'facebook' AND COALESCE(format, 'video') = 'video'
@@ -842,6 +865,8 @@ def comments_next(now: datetime | None = None, *, check: bool = False) -> dict[s
                 return {"job": {"post_id": row["post_id"], "platform": row["platform"], "url": row.get("url") or "",
                                 "find": t.get("find") or "", "find_also": t.get("find_also") or [], "stage": "measure",
                                 "comments": [], "image_url": "", "measure": True}, "reason": ""}
+        if camp:
+            return campaign_next(now)
         return {"job": None, "reason": "No comments due."}
     st = social.status(row["question_id"])
     t = st.get("thread") or {}
@@ -891,7 +916,7 @@ def _maybe_boost(post_id: str, score: float, now: datetime) -> bool:
     from ..infra.db import execute, fetch_one
 
     br = boost_rules()
-    if not br["enabled"]:
+    if not br["enabled"] or campaign_rules()["enabled"]:       # the campaign does this job when it is on
         return False
     row = fetch_one("SELECT comments_state, boost_last_at, boost_base FROM social_posts WHERE post_id = :id",
                     {"id": post_id}) or {}
@@ -915,11 +940,15 @@ def _maybe_boost(post_id: str, score: float, now: datetime) -> bool:
 
 
 def comments_result(post_id: str, *, stage: str, ok: bool, error: str = "", url: str = "",
-                    metrics: dict[str, Any] | None = None, now: datetime | None = None) -> dict[str, Any]:
+                    metrics: dict[str, Any] | None = None, now: datetime | None = None,
+                    groups: list[str] | None = None) -> dict[str, Any]:
     from ..infra.db import execute
 
     now = now or datetime.now(timezone.utc)
     score = _save_metrics(post_id, metrics, now) if metrics else None
+    if stage in ("campaign", "share"):
+        campaign_result(post_id, stage=stage, ok=ok, error=error, now=now, groups=groups)
+        return {"post_id": post_id, "ok": ok, "score": score}
     if stage == "measure":
         if not ok:
             execute("UPDATE social_posts SET metrics_at = :t, comments_error = :e WHERE post_id = :id",
@@ -1085,14 +1114,50 @@ def pull_poster() -> dict[str, Any] | None:
             "seen_at": row["seen_at"].isoformat() if hasattr(row["seen_at"], "isoformat") else row["seen_at"]}
 
 
-def standing_by(poster_id: str) -> str:
-    """Why this poster must not take work now — another one is active — or ""."""
+ROLES = ("post", "comments", "likes")
+
+
+def poster_roles() -> dict[str, list[str]]:
+    """Which jobs each Mac does ({poster_id: ["post", "comments", "likes"]}); a Mac not listed does them all."""
+    import json
+
+    from . import platform_settings
+
+    try:
+        raw = platform_settings.get("poster_roles", "") or ""
+        got = json.loads(raw) if isinstance(raw, str) and raw.strip() else (raw if isinstance(raw, dict) else {})
+    except (ValueError, TypeError):
+        got = {}
+    return {str(k)[:80]: [r for r in v if r in ROLES] for k, v in got.items() if isinstance(v, list)}
+
+
+def fresh_posters() -> list[dict[str, Any]]:
+    """The posters that checked in lately, the one started most recently first."""
+    from ..infra.db import fetch_all
+
+    rows = fetch_all("""SELECT poster_id, status, seen_at FROM poster_heartbeat
+                        WHERE seen_at > NOW() - make_interval(secs => :age)
+                        ORDER BY CASE WHEN status->>'started' ~ '^[0-9.]+$' THEN (status->>'started')::float ELSE 0 END DESC,
+                                 seen_at DESC""", {"age": PULL_FRESH_SECONDS}) or []
+    return [dict(r) for r in rows]
+
+
+def standing_by(poster_id: str, role: str = "post") -> str:
+    """Why this poster must not take this kind of work now, or "". Each job
+    (posting, the comment campaign, liking back) goes to the newest Mac that
+    has it; a Mac with no jobs set does them all."""
     if not poster_id:
         return ""                     # a poster too old to say who it is
-    active = pull_poster()
-    other = str((active or {}).get("poster_id") or "")
-    if active and other and other != poster_id[:80]:
-        return f"Standing by: {other} is the active poster. Restart this one to make it active."
+    roles = poster_roles()
+    has = lambda pid: role in roles.get(pid, list(ROLES))  # noqa: E731
+    if not has(poster_id[:80]):
+        return f"Not this Mac's job ({role})."
+    for p in fresh_posters():
+        if has(str(p["poster_id"])):
+            other = str(p["poster_id"])
+            if other != poster_id[:80]:
+                return f"Standing by: {other} does the {role} job. Restart this one to make it take over."
+            return ""
     return ""
 
 
@@ -1963,9 +2028,20 @@ def relaunch(*, render_limit: int = 200, by: str = "") -> dict[str, Any]:
     from . import platform_settings, teacher
 
     platform_settings.set_many({"social_marketing": True}, updated_by=by or "relaunch")
-    moved = fetch_one("""WITH out AS (
-                             INSERT INTO social_posts_history
-                             SELECT p.*, NOW() AS archived_at, 'relaunch with the platform pitch' AS archived_why
+    # The columns both tables have: social_posts grows (a migration adds one)
+    # after the history table was cut from it.
+    from ..infra.db import fetch_all
+
+    cols = [r["column_name"] for r in fetch_all("""
+        SELECT h.column_name FROM information_schema.columns h
+        JOIN information_schema.columns p ON p.table_name = 'social_posts' AND p.column_name = h.column_name
+             AND p.table_schema = h.table_schema
+        WHERE h.table_name = 'social_posts_history' AND h.table_schema = current_schema()
+        ORDER BY h.ordinal_position""") or []]
+    names = ", ".join(f'"{c}"' for c in cols)
+    moved = fetch_one(f"""WITH out AS (
+                             INSERT INTO social_posts_history ({names}, archived_at, archived_why)
+                             SELECT {", ".join(f'p."{c}"' for c in cols)}, NOW(), 'relaunch with the platform pitch'
                              FROM social_posts p
                              WHERE p.handed_at IS NOT NULL AND COALESCE(p.format, 'video') = 'video'
                                AND COALESCE(p.posted_at, NOW()) <= NOW()     -- out, not waiting in Facebook's scheduler
@@ -1977,3 +2053,204 @@ def relaunch(*, render_limit: int = 200, by: str = "") -> dict[str, Any]:
     queued = teacher.render_now(teacher.mode() if teacher.mode() != "off" else "classroom", limit=render_limit,
                                 pause_lessons=True, by=by or "relaunch")
     return {"archived_posts": int(moved.get("n") or 0), **queued}
+
+
+# ── performance: which posts do best, and how each grows day by day ──────────
+
+def performance(*, days: int = 14, sort: str = "views_per_day", now: datetime | None = None) -> dict[str, Any]:
+    """Posts that are out, ranked by what they earn a day since they went out,
+    each with its daily growth (views, reactions, comments, shares) from the
+    poster's readings of its insights — the last reading each day, less the
+    day before's."""
+    from ..infra.db import fetch_all
+
+    now = now or datetime.now(timezone.utc)
+    since = now - timedelta(days=max(1, min(days, 90)))
+    posts = fetch_all("""SELECT p.post_id, p.question_id, p.posted_at, p.url, p.marketing, p.boost_state, p.teacher,
+                                p.views, p.likes AS reactions, p.comments, p.shares, p.score,
+                                LEFT(COALESCE(q.content->>'question_text', ''), 140) AS question_text,
+                                q.curriculum_link->>'subject' AS subject, q.curriculum_link->>'sub_strand' AS sub_strand
+                         FROM social_posts p LEFT JOIN question_dna q ON q.question_id = p.question_id
+                         WHERE p.platform = 'facebook' AND p.handed_at IS NOT NULL AND p.posted_at <= :now
+                           AND COALESCE(p.format, 'video') = 'video'""", {"now": now}) or []
+    readings = fetch_all("""SELECT DISTINCT ON (post_id, (at AT TIME ZONE 'Africa/Nairobi')::date)
+                                   post_id, (at AT TIME ZONE 'Africa/Nairobi')::date AS day, views, reactions, comments, shares
+                            FROM post_insights WHERE at >= :since - INTERVAL '1 day'
+                            ORDER BY post_id, (at AT TIME ZONE 'Africa/Nairobi')::date, at DESC""", {"since": since}) or []
+    by_post: dict[str, list[dict[str, Any]]] = {}
+    for r in readings:
+        by_post.setdefault(r["post_id"], []).append(r)
+    keys = ("views", "reactions", "comments", "shares")
+    out = []
+    for p in posts:
+        age = max(1.0, (now - p["posted_at"]).total_seconds() / 86400) if p.get("posted_at") else 1.0
+        totals = {k: int(p.get(k) or 0) for k in keys}
+        daily, prev = [], None
+        for r in sorted(by_post.get(p["post_id"], []), key=lambda x: x["day"]):
+            vals = {k: int(r.get(k) or 0) for k in keys}
+            if prev is not None:
+                daily.append({"day": r["day"].isoformat(), **{k: max(0, vals[k] - prev[k]) for k in keys}})
+            prev = vals
+        daily = [d for d in daily if d["day"] >= since.astimezone(EAT).date().isoformat()]
+        engagement = totals["reactions"] + totals["comments"] + totals["shares"]
+        last = daily[-1] if daily else {k: 0 for k in keys}
+        before = daily[-2] if len(daily) > 1 else None
+        row = {**{k: (v.isoformat() if hasattr(v, "isoformat") else v) for k, v in p.items()},
+               "age_days": round(age, 1), "views_per_day": round(totals["views"] / age, 1),
+               "engagement_per_day": round(engagement / age, 1),
+               "today": {k: last.get(k, 0) for k in keys},
+               "growing": (before is not None and (last.get("views", 0) + 0.0) > before.get("views", 0)),
+               "daily": daily[-days:]}
+        out.append(row)
+    order = {"views_per_day": lambda r: r["views_per_day"], "engagement_per_day": lambda r: r["engagement_per_day"],
+             "views_today": lambda r: r["today"]["views"], "comments": lambda r: int(r.get("comments") or 0),
+             "newest": lambda r: r.get("posted_at") or ""}.get(sort, lambda r: r["views_per_day"])
+    out.sort(key=order, reverse=True)
+    # The account's own day by day: every post's growth added up.
+    totals_by_day: dict[str, dict[str, int]] = {}
+    for r in out:
+        for d in r["daily"]:
+            t = totals_by_day.setdefault(d["day"], {k: 0 for k in keys})
+            for k in keys:
+                t[k] += d[k]
+    return {"posts": out, "days": [{"day": d, **v} for d, v in sorted(totals_by_day.items())], "sort": sort}
+
+
+# ── the comment campaign ─────────────────────────────────────────────────────
+#
+# After a post's thread (choices, then the answer) every post that is out gets
+# comments up to the floor (20) — the oldest first — and then the best
+# performing posts (views a day, a few at a time) get more, up to the target
+# (150), and a share to the groups once a day, until each reaches the views
+# goal (1,000); then the next best takes its place. All of it within posting
+# hours, a comment every one to four minutes, never more than the day's limit.
+
+def campaign_rules() -> dict[str, Any]:
+    from . import platform_settings as ps
+
+    def num(key: str, default: int, lo: int, hi: int) -> int:
+        try:
+            return max(lo, min(int(ps.get(key, default) or default), hi))
+        except (TypeError, ValueError):
+            return default
+
+    return {"enabled": bool(ps.get("campaign_enabled", False)), "floor": num("campaign_floor", 20, 0, 150),
+            "target": num("campaign_target", 150, 1, 150), "views_goal": num("campaign_views_goal", 1000, 1, 10_000_000),
+            "focus": num("campaign_focus_posts", 3, 1, 30), "per_post_day": num("campaign_per_post_day", 25, 1, 150),
+            "daily": num("campaign_daily_limit", 300, 1, 5000), "share": bool(ps.get("campaign_share", True))}
+
+
+def _campaign_gap(last: datetime) -> timedelta:
+    n = int(hashlib.sha256(last.isoformat().encode()).hexdigest(), 16)
+    return timedelta(seconds=60 + n % 180)
+
+
+def _campaign_items(question_id: str) -> list[dict[str, str]]:
+    from . import social
+    from .whiteboard import load
+
+    q = load(question_id)
+    data, _, _, _, b, _ = social._prepare(q)
+    return social.campaign_comments(q, data, b)
+
+
+def campaign_next(now: datetime | None = None) -> dict[str, Any]:
+    """The campaign's next comment (or share), or why none."""
+    from ..infra.db import execute, fetch_all, fetch_one
+    from . import social
+
+    now = now or datetime.now(timezone.utc)
+    r = campaign_rules()
+    if not r["enabled"]:
+        return {"job": None, "reason": "The comment campaign is off."}
+    day = now.astimezone(EAT).replace(hour=0, minute=0, second=0, microsecond=0)
+    today = fetch_one("""SELECT COUNT(*) FILTER (WHERE kind = 'comment' AND ok) AS n, MAX(at) AS last
+                         FROM campaign_log WHERE at >= :d""", {"d": day}) or {}
+    if int(today.get("n") or 0) >= r["daily"]:
+        return {"job": None, "reason": f"Today's {r['daily']} campaign comments are up."}
+    last = today.get("last")
+    if last and now - last < _campaign_gap(last):
+        return {"job": None, "reason": "Pacing: the next comment in a minute or two."}
+    base = """SELECT p.post_id, p.question_id, p.platform, p.url, p.campaign_index, p.views,
+                     COALESCE(p.views, 0) / GREATEST(EXTRACT(EPOCH FROM (:now - p.posted_at)) / 86400.0, 1) AS per_day,
+                     (SELECT COUNT(*) FROM campaign_log c WHERE c.post_id = p.post_id AND c.at >= :d
+                        AND c.kind = 'comment' AND c.ok) AS today,
+                     (SELECT MAX(at) FROM campaign_log c WHERE c.post_id = p.post_id AND c.kind = 'share' AND c.ok) AS shared_at
+              FROM social_posts p
+              WHERE p.platform = 'facebook' AND COALESCE(p.format, 'video') = 'video' AND p.handed_at IS NOT NULL
+                AND p.posted_at <= :ripe AND p.comments_state IN ('done', 'complete', 'boost') AND NOT p.campaign_done"""
+    params = {"now": now, "d": day, "ripe": now - timedelta(minutes=30)}
+    # Every post to the floor first, the oldest first (4 comments are its thread).
+    row = fetch_one(base + """ AND p.campaign_index + 4 < :floor
+                     AND (SELECT COUNT(*) FROM campaign_log c WHERE c.post_id = p.post_id AND c.at >= :d
+                          AND c.kind = 'comment' AND c.ok) < :per
+                     ORDER BY p.posted_at ASC LIMIT 1""", {**params, "floor": r["floor"], "per": r["per_post_day"]})
+    phase = "floor"
+    if not row:
+        # Then the best performing posts, a few at a time, until the views goal.
+        focus = fetch_all(base + """ AND p.campaign_index + 4 < :target AND COALESCE(p.views, 0) < :goal
+                           ORDER BY per_day DESC NULLS LAST, p.posted_at DESC LIMIT :n""",
+                          {**params, "target": r["target"], "goal": r["views_goal"], "n": r["focus"]}) or []
+        if r["share"]:
+            due = next((f for f in focus if not f.get("shared_at") or now - f["shared_at"] > timedelta(hours=24)), None)
+            if due:
+                groups = groups_for("facebook", now, poster_rules())
+                if groups:
+                    t = social.status(due["question_id"]).get("thread") or {}
+                    return {"job": {"post_id": due["post_id"], "platform": "facebook", "stage": "share",
+                                    "find": t.get("find") or "", "find_also": t.get("find_also") or [],
+                                    "groups": groups, "comments": [], "image_url": ""}, "reason": ""}
+        row = next((f for f in focus if int(f.get("today") or 0) < r["per_post_day"]), None)
+        phase = "focus"
+    if not row:
+        return {"job": None, "reason": "Every post has its comments for today."}
+    try:
+        items = _campaign_items(row["question_id"])
+    except Exception as exc:  # noqa: BLE001
+        return {"job": None, "reason": f"Could not prepare the comments: {exc}"}
+    k = int(row.get("campaign_index") or 0) + 4          # the thread's four come first in the list
+    if k >= len(items):
+        execute("UPDATE social_posts SET campaign_done = TRUE WHERE post_id = :id", {"id": row["post_id"]})
+        return {"job": None, "reason": "That post has every comment it can carry."}
+    item = items[k]
+    t = social.status(row["question_id"]).get("thread") or {}
+    return {"job": {"post_id": row["post_id"], "platform": row["platform"], "url": row.get("url") or "",
+                    "find": t.get("find") or "", "find_also": t.get("find_also") or [], "stage": "campaign",
+                    "phase": phase, "comments": [item["text"]], "image_url": item.get("image_url") or "",
+                    "measure": False}, "reason": ""}
+
+
+def campaign_result(post_id: str, *, stage: str, ok: bool, error: str = "", now: datetime | None = None,
+                    groups: list[str] | None = None) -> None:
+    from ..infra.db import execute
+
+    now = now or datetime.now(timezone.utc)
+    for g in (groups or [])[:20] if ok and stage == "share" else []:
+        execute("""INSERT INTO poster_groups (platform, name, enabled, last_shared_for) VALUES ('facebook', :n, TRUE, :t)
+                   ON CONFLICT (platform, name) DO UPDATE SET last_shared_for = :t""", {"n": str(g)[:200], "t": now})
+    execute("INSERT INTO campaign_log (post_id, at, kind, ok) VALUES (:id, :t, :k, :ok)",
+            {"id": post_id, "t": now, "k": "share" if stage == "share" else "comment", "ok": ok})
+    if ok and stage == "campaign":
+        execute("UPDATE social_posts SET campaign_index = campaign_index + 1, comments_error = '' WHERE post_id = :id",
+                {"id": post_id})
+    elif not ok:
+        execute("UPDATE social_posts SET comments_error = :e WHERE post_id = :id", {"id": post_id, "e": error[:900]})
+
+
+def campaign_status(now: datetime | None = None) -> dict[str, Any]:
+    from ..infra.db import fetch_one
+
+    now = now or datetime.now(timezone.utc)
+    r = campaign_rules()
+    day = now.astimezone(EAT).replace(hour=0, minute=0, second=0, microsecond=0)
+    t = fetch_one("""SELECT COUNT(*) FILTER (WHERE kind = 'comment' AND ok) AS comments,
+                            COUNT(*) FILTER (WHERE kind = 'share' AND ok) AS shares,
+                            COUNT(*) FILTER (WHERE NOT ok) AS failed FROM campaign_log WHERE at >= :d""", {"d": day}) or {}
+    p = fetch_one("""SELECT COUNT(*) FILTER (WHERE campaign_index + 4 < :floor) AS below_floor,
+                            COUNT(*) FILTER (WHERE campaign_index + 4 >= :floor) AS at_floor,
+                            COUNT(*) FILTER (WHERE COALESCE(views, 0) >= :goal) AS reached_goal
+                     FROM social_posts WHERE platform = 'facebook' AND handed_at IS NOT NULL
+                       AND COALESCE(format, 'video') = 'video'""", {"floor": r["floor"], "goal": r["views_goal"]}) or {}
+    return {**r, "today": {k: int(t.get(k) or 0) for k in ("comments", "shares", "failed")},
+            "posts": {k: int(p.get(k) or 0) for k in ("below_floor", "at_floor", "reached_goal")}}
+

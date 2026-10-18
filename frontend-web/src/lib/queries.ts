@@ -4235,6 +4235,39 @@ export function useVideoCoverage() {
                     refetchInterval: 60_000 });
 }
 
+export type PostGrowth = {
+  post_id: string; question_id: string; posted_at: string; url: string; marketing: boolean; boost_state: string;
+  question_text: string; subject: string; sub_strand: string; views: number; reactions: number; comments: number; shares: number;
+  age_days: number; views_per_day: number; engagement_per_day: number; growing: boolean;
+  today: { views: number; reactions: number; comments: number; shares: number };
+  daily: { day: string; views: number; reactions: number; comments: number; shares: number }[];
+};
+
+/** Posts ranked by what they earn a day, with their daily growth. */
+export function usePerformance(sort: string, days = 14) {
+  const api = useApi();
+  return useQuery({ queryKey: ["performance", sort, days], refetchInterval: 120_000,
+    queryFn: () => api<{ posts: PostGrowth[]; days: { day: string; views: number; reactions: number; comments: number; shares: number }[] }>(
+      `/api/v1/play/poster/performance?sort=${sort}&days=${days}`) });
+}
+
+export type CampaignStatus = {
+  enabled: boolean; floor: number; target: number; views_goal: number; focus: number; per_post_day: number; daily: number; share: boolean;
+  today: { comments: number; shares: number; failed: number };
+  posts: { below_floor: number; at_floor: number; reached_goal: number };
+};
+
+export function useCampaign() {
+  const api = useApi();
+  return useQuery({ queryKey: ["campaign"], queryFn: () => api<CampaignStatus>("/api/v1/play/poster/campaign"), refetchInterval: 60_000 });
+}
+
+export function usePosterMacs() {
+  const api = useApi();
+  return useQuery({ queryKey: ["poster-macs"], refetchInterval: 60_000,
+    queryFn: () => api<{ macs: { poster_id: string; seen_at: string; roles: string[] }[]; jobs: string[] }>("/api/v1/play/poster/macs") });
+}
+
 export type TeacherInfo = { id: string; name: string; gender: "female" | "male"; older: boolean };
 
 /** The teachers a video can have, by name. */

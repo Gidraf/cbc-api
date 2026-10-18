@@ -11,13 +11,18 @@ ARG PIP_INDEX_URL=
 ARG PIP_EXTRA_INDEX_URL=
 
 # Manim animates the working (app/manim_board.py): Cairo and Pango to draw,
-# LaTeX and dvisvgm to set the maths. Without them the board draws it.
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# LaTeX and dvisvgm to set the maths — the basic LaTeX packages only (its
+# template is a plain article), not texlive-latex-extra, which is most of the
+# size. Without them the board draws the working.
+# Downloads retried: a package cut short mid-download ("unexpected end of
+# file") is fetched again instead of failing the build.
+RUN echo 'Acquire::Retries "5";' > /etc/apt/apt.conf.d/80-retries \
+    && apt-get update && apt-get install -y --no-install-recommends \
         curl \
         ffmpeg \
         ca-certificates \
         build-essential pkg-config libcairo2-dev libpango1.0-dev \
-        texlive-latex-base texlive-latex-extra texlive-fonts-recommended dvisvgm \
+        texlive-latex-base texlive-latex-recommended texlive-fonts-recommended dvisvgm \
         && update-ca-certificates \
         && if [ -n "$CUSTOM_CA_CERT_B64" ]; then \
                  echo "$CUSTOM_CA_CERT_B64" | base64 -d > /usr/local/share/ca-certificates/custom-root-ca.crt && \

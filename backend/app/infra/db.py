@@ -1706,6 +1706,25 @@ MIGRATIONS: list[tuple[str, str]] = [
         ALTER TABLE social_posts_history ADD COLUMN IF NOT EXISTS archived_why TEXT NOT NULL DEFAULT '';
         """,
     ),
+    (
+        "063_comment_campaign",
+        """
+        -- The comment campaign: each comment it put under a post (for the day's
+        -- and the post's counts), how far it is through a post's comments, and
+        -- each share of a post to groups.
+        CREATE TABLE IF NOT EXISTS campaign_log (
+            id BIGSERIAL PRIMARY KEY,
+            post_id TEXT NOT NULL,
+            at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            kind TEXT NOT NULL DEFAULT 'comment',
+            ok BOOLEAN NOT NULL DEFAULT TRUE
+        );
+        CREATE INDEX IF NOT EXISTS idx_campaign_log_at ON campaign_log(at);
+        CREATE INDEX IF NOT EXISTS idx_campaign_log_post ON campaign_log(post_id, at);
+        ALTER TABLE social_posts ADD COLUMN IF NOT EXISTS campaign_index INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE social_posts ADD COLUMN IF NOT EXISTS campaign_done BOOLEAN NOT NULL DEFAULT FALSE;
+        """,
+    ),
 ]
 
 
