@@ -34,6 +34,20 @@ class NotLoggedIn(Exception):
     """The saved session no longer works on this platform."""
 
 
+# Commands from the console (Post now, Log in, Check…) come first: while one is
+# waiting, background work (comments, likes) stops at its next safe point.
+URGENT = {"n": 0}
+
+
+class Yielded(Exception):
+    """A background step stepped aside for a command; it runs again later, not counted as a failure."""
+
+
+def yield_point() -> None:
+    if URGENT["n"] > 0:
+        raise Yielded("A command from the console came first.")
+
+
 class StepFailed(Exception):
     """A control the steps expect was not found — the site has changed."""
 

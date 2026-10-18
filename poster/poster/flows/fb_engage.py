@@ -15,7 +15,7 @@ import re
 
 from playwright.async_api import Locator, Page
 
-from .base import NotLoggedIn, check_for_human, shot
+from .base import NotLoggedIn, check_for_human, shot, yield_point
 from .fb_comments import find_post
 
 LIKE = re.compile(r"^Like$", re.I)
@@ -87,6 +87,7 @@ async def like_person(page: Page, *, url: str, count: int) -> dict:
     await check_for_human(page)
     liked, scrolls = 0, 0
     while liked < count and scrolls < 6:
+        yield_point()
         posts = page.locator("[role=article]")
         for n in range(await posts.count()):
             if liked >= count:

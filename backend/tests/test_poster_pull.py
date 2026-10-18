@@ -22,7 +22,7 @@ def client(monkeypatch):
     monkeypatch.setattr(social_export, "pull_poster", lambda: fresh["value"])
     monkeypatch.setattr(social_export, "poster_overview", lambda: {"rules": {"daily_cap": 30}, "queue": []})
 
-    def queue(action, platform="", post_id="", by="", options=None):
+    def queue(action, platform="", post_id="", by="", options=None, target=""):
         calls["queued"].append((action, platform, post_id, by))
         calls.setdefault("options", []).append(options)
         results[len(calls["queued"])] = {"ok": True, "paused": action == "pause"}
@@ -31,7 +31,7 @@ def client(monkeypatch):
     monkeypatch.setattr(social_export, "queue_command", queue)
     monkeypatch.setattr(social_export, "command_result", lambda cid: results.get(cid))
     monkeypatch.setattr(social_export, "heartbeat", lambda pid, status: calls["beats"].append((pid, status)))
-    monkeypatch.setattr(social_export, "take_command", lambda: {"command_id": 7, "action": "check", "platform": "tiktok", "post_id": ""})
+    monkeypatch.setattr(social_export, "take_command", lambda *a, **k: {"command_id": 7, "action": "check", "platform": "tiktok", "post_id": ""})
     monkeypatch.setattr(social_export, "finish_command", lambda cid, result: calls["done"].append((cid, result)))
     monkeypatch.setattr(play, "_poster_call", lambda method, path, body=None, timeout=8.0: calls["proxied"].append((method, path)) or {"online": True, "via": "server"})
     monkeypatch.setattr("time.sleep", lambda s: None)   # the route waits for the Mac's answer

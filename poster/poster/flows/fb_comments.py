@@ -19,7 +19,7 @@ import unicodedata
 
 from playwright.async_api import Locator, Page
 
-from .base import NotLoggedIn, StepFailed, check_for_human, shot
+from .base import NotLoggedIn, StepFailed, check_for_human, shot, yield_point
 
 PROFILE = "https://www.facebook.com/me"
 
@@ -103,6 +103,7 @@ async def find_post(page: Page, find: str, url: str = "", scrolls: int = 40, als
     if not want:
         raise StepFailed("The question is too short to find its post by.")
     for _ in range(scrolls):
+        yield_point()                                  # a command from the console comes first
         await page.evaluate(_EXPAND)
         await asyncio.sleep(0.8)
         if await page.evaluate(_MARK, want):

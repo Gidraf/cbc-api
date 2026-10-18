@@ -1162,16 +1162,16 @@ def standing_by(poster_id: str, role: str = "post") -> str:
 
 
 def queue_command(action: str, platform: str = "", post_id: str = "", by: str = "",
-                  options: dict[str, Any] | None = None) -> int:
+                  options: dict[str, Any] | None = None, target: str = "") -> int:
     from ..infra.db import fetch_one, to_json
 
-    row = fetch_one("""INSERT INTO poster_commands (action, platform, post_id, created_by, options)
-                       VALUES (:a, :p, :id, :by, CAST(:o AS jsonb)) RETURNING command_id""",
-                    {"a": action, "p": platform, "id": post_id, "by": by, "o": to_json(options or {})})
+    row = fetch_one("""INSERT INTO poster_commands (action, platform, post_id, created_by, options, target)
+                       VALUES (:a, :p, :id, :by, CAST(:o AS jsonb), :t) RETURNING command_id""",
+                    {"a": action, "p": platform, "id": post_id, "by": by, "o": to_json(options or {}), "t": target[:80]})
     return int((row or {}).get("command_id") or 0)
 
 
-def take_command() -> dict[str, Any] | None:
+def take_command(poster_id: str = "", *, active: bool = True) -> dict[str, Any] | None:
     """The oldest command nobody has taken; commands older than ten minutes
     are dropped — a "log in" pressed an hour ago is not what anyone wants now."""
     from ..infra.db import execute, fetch_one
@@ -1180,9 +1180,13 @@ def take_command() -> dict[str, Any] | None:
                WHERE taken_at IS NULL AND created_at < NOW() - INTERVAL '10 minutes'""")
     row = fetch_one(
         """UPDATE poster_commands SET taken_at = NOW() WHERE command_id = (
-               SELECT command_id FROM poster_commands WHERE taken_at IS NULL ORDER BY created_at
+               SELECT command_id FROM poster_commands WHERE taken_at IS NULL
+                 -- Its own commands first (sent to this Mac by name), then the posting
+                 -- Mac's (sent to nobody in particular) if this is the one.
+                 AND (target = :me OR (target = '' AND :active))
+               ORDER BY (target = :me) DESC, created_at
                LIMIT 1 FOR UPDATE SKIP LOCKED)
-           RETURNING command_id, action, platform, post_id, options""")
+           RETURNING command_id, action, platform, post_id, options""", {"me": poster_id[:80], "active": active})
     # A boost nobody took: say so on the post, so it can be pressed again.
     execute("""UPDATE social_posts SET boost_state = 'failed', boost_error = 'The poster was not running — press Boost again.'
                WHERE boost_state = 'queued' AND post_id IN (SELECT post_id FROM poster_commands
@@ -2069,7 +2073,16 @@ def performance(*, days: int = 14, sort: str = "views_per_day", now: datetime | 
     posts = fetch_all("""SELECT p.post_id, p.question_id, p.posted_at, p.url, p.marketing, p.boost_state, p.teacher,
                                 p.views, p.likes AS reactions, p.comments, p.shares, p.score,
                                 LEFT(COALESCE(q.content->>'question_text', ''), 140) AS question_text,
-                                q.curriculum_link->>'subject' AS subject, q.curriculum_link->>'sub_strand' AS sub_strand
+                                q.curriculum_link->>'subject' AS subject, q.curriculum_link->>'sub_strand' AS sub_strand,
+                                -- How often the owner's own Macs opened the post: its thread, each reading
+                                -- of its insights, each campaign comment or share, each like-back scan.
+                                (CASE WHEN p.comments_state IN ('done', 'boost', 'complete') THEN 2
+                                      WHEN p.comments_state = 'part' THEN 1 ELSE 0 END
+                                 + COALESCE(p.boost_index, 0)
+                                 + (SELECT COUNT(*) FROM post_insights i WHERE i.post_id = p.post_id)
+                                 + (SELECT COUNT(*) FROM campaign_log c WHERE c.post_id = p.post_id)
+                                 + (SELECT COUNT(*) FROM engage_log e WHERE e.target = p.post_id AND e.kind LIKE 'scan%')
+                                ) AS own_visits
                          FROM social_posts p LEFT JOIN question_dna q ON q.question_id = p.question_id
                          WHERE p.platform = 'facebook' AND p.handed_at IS NOT NULL AND p.posted_at <= :now
                            AND COALESCE(p.format, 'video') = 'video'""", {"now": now}) or []

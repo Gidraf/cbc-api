@@ -8,6 +8,24 @@ rarer than on the server poster.
 It never solves a CAPTCHA or hides that it is automated. When a platform asks for a
 check, it stops, leaves the page open, and waits for you to finish it.
 
+## Install or update, with one line
+
+Paste in the Mac's Terminal. The same line installs on a new Mac and updates one that has it
+(the key already saved is reused); run it again after each update. The console shows these under
+Play → Auto-post → Set up the poster on another Mac.
+
+The poster:
+
+```bash
+cd ~ && { [ -d cbc-api ] || git clone https://github.com/Gidraf/cbc-api.git; } && cd cbc-api && git checkout main && git pull && bash poster/mac/install.sh
+```
+
+The poster and the render helper together:
+
+```bash
+cd ~ && { [ -d cbc-api ] || git clone https://github.com/Gidraf/cbc-api.git; } && cd cbc-api && git checkout main && git pull && bash poster/mac/install.sh && bash poster/mac/install-render.sh
+```
+
 ## Install
 
 You need Google Chrome in `/Applications`, Python 3.10 or newer (`brew install python@3.12`),

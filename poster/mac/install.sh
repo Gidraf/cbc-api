@@ -3,6 +3,10 @@
 # on your own internet connection, with the accounts you log into yourself.
 #
 #   bash poster/mac/install.sh              install, or update after git pull
+#
+# On any Mac, one line gets the code and runs this (installs, or updates):
+#
+#   cd ~ && { [ -d cbc-api ] || git clone https://github.com/Gidraf/cbc-api.git; } && cd cbc-api && git checkout main && git pull && bash poster/mac/install.sh
 #   bash poster/mac/install.sh --reconfigure   ask for the address and key again
 #
 # The key: it reuses one already saved on this Mac when the API accepts it
@@ -179,4 +183,5 @@ Stop:    launchctl bootout gui/\$(id -u)/$LABEL
 Start:   launchctl bootstrap gui/\$(id -u) $PLIST
 Log in:  bash ~/.cbc/poster/login.sh
 Remove:  bash ~/.cbc/poster/uninstall.sh
+Update:  cd ~ && { [ -d cbc-api ] || git clone https://github.com/Gidraf/cbc-api.git; } && cd cbc-api && git checkout main && git pull && bash poster/mac/install.sh
 EOF
