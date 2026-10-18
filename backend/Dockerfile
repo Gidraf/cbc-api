@@ -17,13 +17,15 @@ ARG PIP_EXTRA_INDEX_URL=
 # size. Without them the board draws the working.
 # Downloads retried: a package cut short mid-download ("unexpected end of
 # file") is fetched again instead of failing the build.
-RUN echo 'Acquire::Retries "5";' > /etc/apt/apt.conf.d/80-retries \
-    && apt-get update && apt-get install -y --no-install-recommends \
-        curl \
-        ffmpeg \
-        ca-certificates \
-        build-essential pkg-config libcairo2-dev libpango1.0-dev \
-        texlive-latex-base texlive-latex-recommended texlive-fonts-recommended dvisvgm \
+# A package that fails to unpack is fetched afresh and tried once more.
+RUN PKGS="curl ffmpeg ca-certificates build-essential pkg-config libcairo2-dev libpango1.0-dev \
+          texlive-latex-base texlive-latex-recommended texlive-fonts-recommended dvisvgm" \
+    && echo 'Acquire::Retries "5";' > /etc/apt/apt.conf.d/80-retries \
+    && apt-get update \
+    && (apt-get install -y --no-install-recommends $PKGS \
+        || (echo "apt failed once; fetching the packages again" && apt-get clean \
+            && (dpkg --configure -a || true) && apt-get update \
+            && apt-get install -y --no-install-recommends -f $PKGS)) \
         && update-ca-certificates \
         && if [ -n "$CUSTOM_CA_CERT_B64" ]; then \
                  echo "$CUSTOM_CA_CERT_B64" | base64 -d > /usr/local/share/ca-certificates/custom-root-ca.crt && \
