@@ -717,6 +717,18 @@ def _capture(cdp: str, doc: str, out: Path, ffmpeg: str, fps: int, tick: Any, *,
                     pg = context.new_page()
                     pg.set_content(doc, wait_until="domcontentloaded", timeout=60000)  # fonts: __ready waits up to 2.5 s
                     total = min(float(pg.evaluate("() => window.__ready")), MAX_SECONDS)
+                    if webgl:
+                        # A video with a teacher has the teacher, or is not made: a big
+                        # model on a slow machine gets another minute; a missing one
+                        # (or no WebGL) fails the render, so it is tried again —
+                        # never posted without the person in it.
+                        for _ in range(60):
+                            if pg.evaluate("() => window.__teacher") == "real":
+                                break
+                            pg.wait_for_timeout(1000)
+                        else:
+                            raise RuntimeError("The 3D teacher did not load (its model is missing here, or WebGL "
+                                               "failed) — not made without the teacher.")
                     frames = int(total * fps) + 1
                     box = pg.locator(selector).bounding_box() or {"x": 0, "y": 0, "width": size[0], "height": size[1]}
                     clip = {"x": box["x"], "y": box["y"], "width": box["width"], "height": box["height"]}

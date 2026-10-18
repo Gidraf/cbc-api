@@ -99,10 +99,35 @@ def _real_chrome() -> None:
 
 # ── one job ──────────────────────────────────────────────────────────────────
 
+def _teacher_models(spec: dict[str, Any]) -> None:
+    """Any teacher's model the job names and this Mac lacks, fetched from the
+    server: teachers added there since this helper was installed still appear."""
+    from app.services import whiteboard
+
+    teacher = (spec.get("social") or {}).get("teacher") or {}
+    models = [c.get("model") for c in teacher.get("cast") or []] or ([teacher.get("gender")] if teacher.get("gender") else [])
+    folder = whiteboard.STATIC / "teachers"
+    base, headers = _api()
+    for model in [m for m in models if m]:
+        path = folder / f"{model}.glb"
+        if path.exists():
+            continue
+        log.info("Fetching the teacher model %s from the server", model)
+        r = httpx.get(f"{base}/api/v1/play/render/teachers/{model}.glb", headers=headers, timeout=120)
+        r.raise_for_status()
+        if r.content[:4] != b"glTF":
+            raise RuntimeError(f"The server's model {model} is not a glTF file")
+        tmp = path.with_suffix(".part")
+        tmp.write_bytes(r.content)
+        tmp.replace(path)
+
+
 def _render(spec: dict[str, Any], progress: Any) -> dict[str, Any]:
     import base64
 
     from app.services import whiteboard
+
+    _teacher_models(spec)
 
     os.environ["TTS_RATE"] = spec.get("rate") or "+0%"
     whiteboard.hand = lambda: spec.get("hand")

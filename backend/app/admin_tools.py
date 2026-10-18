@@ -13,6 +13,9 @@
         Teacher videos first: turns the 3D teacher on, pauses the lesson videos
         (queued ones cancelled, daily batch 0) and queues the booked posts'
         videos again with the teacher, the soonest post first.
+    docker compose exec api python -m app.admin_tools teacher-fix [--days 3] [--yes]
+        Finds the social videos a Mac rendered without their teacher (it had no
+        model for the one picked) and makes them again.
     docker compose exec api python -m app.admin_tools relaunch --yes
         Every video made again with the platform pitch; the questions that went
         out are posted afresh (their old posts kept in social_posts_history).
@@ -167,6 +170,30 @@ def teacher_now(how: str, limit: int, keep_lessons: bool) -> int:
     return 0
 
 
+def teacher_fix(days: int, yes: bool) -> int:
+    from datetime import datetime, timedelta, timezone
+
+    from .services import job_queue, social, teacher
+
+    from .routes import curriculum  # noqa: F401   (registers the job kinds)
+    job_queue.start_worker = lambda: False
+    found = teacher.missing_teacher_videos(since=datetime.now(timezone.utc) - timedelta(days=days))
+    print(f"Videos a Mac made without their teacher in the last {days} day(s): {len(found)}")
+    for f in found[:10]:
+        print(f"  {f['question_id']}  (teacher {f['model']}, made on {f['worker']})")
+    if not found:
+        return 0
+    if not yes:
+        print("Run again with --yes to make them again (with a new teacher take), the soonest booked first.")
+        return 1
+    queued = 0
+    for f in found:
+        out = social.enqueue(f["question_id"], queued_by="teacher-fix", fresh=True, priority=8)
+        queued += out.get("status") == "queued"
+    print(f"Queued again: {queued}. Watch them in Videos → batches; any helper missing a model now fetches it.")
+    return 0
+
+
 def relaunch(yes: bool, limit: int) -> int:
     from .services import job_queue, social_export
 
@@ -214,6 +241,9 @@ def main(argv: list[str] | None = None) -> int:
                     help="classroom (any teacher), female, male, alternate, or one teacher by id (female_01, male_adult_15, …)")
     tn.add_argument("--limit", type=int, default=60, help="how many booked videos to queue (soonest first)")
     tn.add_argument("--keep-lessons", action="store_true", help="do not pause the daily lesson videos")
+    tf = sub.add_parser("teacher-fix", help="make again the videos a Mac rendered without their teacher")
+    tf.add_argument("--days", type=int, default=3)
+    tf.add_argument("--yes", action="store_true")
     rl = sub.add_parser("relaunch", help="every video again with the platform pitch; every question posted afresh")
     rl.add_argument("--yes", action="store_true")
     rl.add_argument("--limit", type=int, default=200, help="booked videos to queue at once (soonest first)")
@@ -227,6 +257,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.cmd == "teacher-now":
         return teacher_now(args.mode, args.limit, args.keep_lessons)
+    if args.cmd == "teacher-fix":
+        return teacher_fix(args.days, args.yes)
     if args.cmd == "relaunch":
         return relaunch(args.yes, args.limit)
     if args.cmd == "promo-video":

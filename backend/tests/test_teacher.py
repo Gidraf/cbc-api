@@ -265,3 +265,19 @@ def test_every_video_ends_with_what_the_platform_does() -> None:
     assert {"start", "student_result"} <= pitches, "to teachers and to students, by turns"
     assert "screen" not in [s["scene"] for s in social.script(DATA, {}, {**_brand(), "marketing": False})["scenes"]]
 
+
+
+def test_videos_a_mac_made_without_its_teacher_are_found(monkeypatch) -> None:
+    from datetime import datetime, timezone
+
+    from app.infra import db
+    from app.services import whiteboard
+
+    rows = [{"question_id": "q1", "worker": "mac-a", "finished_at": datetime.now(timezone.utc)},
+            {"question_id": "q2", "worker": "mac-a", "finished_at": datetime.now(timezone.utc)}]
+    monkeypatch.setattr(db, "fetch_all", lambda sql, params=None: rows)
+    monkeypatch.setattr(whiteboard, "load", lambda qid: {"question_id": qid})
+    casts = {"q1": "business_male_03", "q2": "female"}
+    monkeypatch.setattr(social, "_prepare", lambda q, *a, **k: (None, None, "", "", {"cast": {"teacher": {"model": casts[q["question_id"]]}}}, "k"))
+    found = teacher.missing_teacher_videos(since=datetime.now(timezone.utc))
+    assert [f["question_id"] for f in found] == ["q1"], "only the teacher the Mac had no model for"
