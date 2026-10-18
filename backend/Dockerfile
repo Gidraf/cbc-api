@@ -14,7 +14,10 @@ ARG PIP_EXTRA_INDEX_URL=
 # LaTeX and dvisvgm to set the maths — the basic LaTeX packages only (its
 # template is a plain article), not texlive-latex-extra, which is most of the
 # size. Without them the board draws the working.
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# Downloads retried: a package cut short mid-download ("unexpected end of
+# file") is fetched again instead of failing the build.
+RUN echo 'Acquire::Retries "5";' > /etc/apt/apt.conf.d/80-retries \
+    && apt-get update && apt-get install -y --no-install-recommends \
         curl \
         ffmpeg \
         ca-certificates \
