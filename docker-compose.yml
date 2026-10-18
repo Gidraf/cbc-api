@@ -137,6 +137,10 @@ services:
     restart: unless-stopped
 
   api:
+    # The one backend image: built here once, and every backend service below
+    # runs it — six builds at once unpacked the same packages side by side
+    # and failed (dpkg error 1).
+    image: cbc-api-backend:latest
     build: *backend-build
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000
     environment: *backend-env
@@ -154,7 +158,8 @@ services:
     restart: unless-stopped
 
   worker:
-    build: *backend-build
+    image: cbc-api-backend:latest       # built by the api service
+    pull_policy: never
     command: python -m app.worker
     environment: *backend-env
     depends_on: *backend-depends
@@ -179,7 +184,8 @@ services:
   # this one service on another machine with the same DATABASE_URL and
   # CELERY_BROKER_URL. The beat lives in `scheduler`, once.
   generation-worker:
-    build: *backend-build
+    image: cbc-api-backend:latest       # built by the api service
+    pull_policy: never
     command: >
       celery -A app.celery_app worker
       --loglevel=info
@@ -205,7 +211,8 @@ services:
   # (RENDER_WORKERS overrides), at a lower priority (nice) so the API and
   # the poster's calls always get the CPU first.
   render-worker:
-    build: *backend-build
+    image: cbc-api-backend:latest       # built by the api service
+    pull_policy: never
     command: >
       sh -c 'exec nice -n 10 celery -A app.celery_app worker --loglevel=info
       --queues=$${CELERY_RENDER_QUEUE:-cbc_render}
@@ -224,7 +231,8 @@ services:
   # worker that waits for nothing else, so it starts at once even while the
   # batch renders.
   render-now:
-    build: *backend-build
+    image: cbc-api-backend:latest       # built by the api service
+    pull_policy: never
     command: >
       sh -c 'exec celery -A app.celery_app worker --loglevel=info
       --queues=$${CELERY_RENDER_NOW_QUEUE:-cbc_render_now}
@@ -242,7 +250,8 @@ services:
   # One of these, however many workers — a beat in every worker replica
   # would run every schedule N times.
   scheduler:
-    build: *backend-build
+    image: cbc-api-backend:latest       # built by the api service
+    pull_policy: never
     command: celery -A app.celery_app beat --loglevel=info
     environment:
       <<: *backend-env
