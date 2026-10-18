@@ -37,6 +37,13 @@ fi
 echo "Installing ffmpeg, Cairo, Pango and pkg-config (skipped if already there)…"
 brew install ffmpeg cairo pango pkg-config >/dev/null
 export PKG_CONFIG_PATH="$(brew --prefix)/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
+# A Homebrew upgrade of one of ffmpeg's libraries can leave ffmpeg unable to
+# start ("Library not loaded"): test it, and rebuild it against the new ones.
+if ! ffmpeg -version >/dev/null 2>&1; then
+  echo "ffmpeg does not start (a library it uses was upgraded) — reinstalling it…"
+  brew reinstall ffmpeg >/dev/null
+fi
+ffmpeg -version >/dev/null 2>&1 || { echo "ffmpeg still does not start: run  brew doctor  and  brew reinstall ffmpeg" >&2; exit 1; }
 FFMPEG="$(command -v ffmpeg)"
 
 # ── LaTeX, for Manim's maths ──
