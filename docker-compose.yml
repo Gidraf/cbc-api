@@ -5,6 +5,8 @@ x-backend-build: &backend-build
     CUSTOM_CA_CERT_B64: ${CUSTOM_CA_CERT_B64:-}
     PIP_INDEX_URL: ${PIP_INDEX_URL:-}
     PIP_EXTRA_INDEX_URL: ${PIP_EXTRA_INDEX_URL:-}
+    # The version deploy/update.sh is deploying (git describe): on /health.
+    APP_VERSION: ${APP_VERSION:-dev}
 
 x-backend-env: &backend-env
   DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
@@ -123,6 +125,8 @@ services:
         # — /api/admin/pipeline-bindings. Set it only to point at a different
         # host, e.g. https://api.example.com.
         VITE_API_BASE_URL: ${VITE_API_BASE_URL:-}
+        # Shown at the foot of the console's menu (set by deploy/update.sh).
+        APP_VERSION: ${APP_VERSION:-dev}
     environment:
       # Read by vite.config.ts when the preview server starts, so the API can be
       # repointed without rebuilding the image.

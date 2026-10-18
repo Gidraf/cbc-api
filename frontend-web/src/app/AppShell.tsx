@@ -220,6 +220,9 @@ export function AppShell() {
               </div>
             );
           })}
+          <div title="The version running (deploy/update.sh)" style={{ padding: "var(--s3)", fontSize: "var(--text-xs)", color: "var(--ink-3)" }}>
+            {import.meta.env.VITE_APP_VERSION || "dev"}
+          </div>
         </nav>
 
         <main
