@@ -15,6 +15,7 @@ Two ways to run it:
 from __future__ import annotations
 
 import asyncio
+import sys
 import json
 import logging
 import os
@@ -44,7 +45,28 @@ log = logging.getLogger("poster")
 logging.getLogger("httpx").setLevel(logging.WARNING)   # one line per poll is noise
 
 STATE_FILE = os.path.join(os.path.dirname(config.PROFILE_DIR.rstrip("/")) or "/data", "poster-state.json")
-state: dict[str, Any] = {"paused": False, "busy": "", "last": None, "logins": {}, "started": time.time(), "note": ""}
+state: dict[str, Any] = {"paused": False, "busy": "", "last": None, "logins": {}, "started": time.time(), "note": "",
+                         "today": {}}
+
+
+def count(kind: str, n: int = 1) -> None:
+    """Today's activity on this Mac (posts, comments, shares, likes, boosts, failures), shown in the console."""
+    day = time.strftime("%Y-%m-%d")
+    today = state["today"]
+    if today.get("day") != day:
+        today.clear()
+        today["day"] = day
+    today[kind] = int(today.get(kind) or 0) + max(0, int(n))
+
+
+def _machine() -> dict[str, Any]:
+    import platform
+    import socket
+
+    here = os.path.dirname(os.path.abspath(__file__))
+    return {"host": socket.gethostname().split(".")[0], "os": (f"macOS {platform.mac_ver()[0]}" if sys.platform == "darwin"
+                                                               else platform.platform(terse=True)),
+            "code": time.strftime("%Y-%m-%d %H:%M", time.localtime(os.path.getmtime(os.path.join(here, "__main__.py"))))}
 
 
 def _why(exc: BaseException) -> str:
@@ -69,7 +91,8 @@ def _save() -> None:
 
 
 async def _set_login(platform: str, ok: bool, note: str = "") -> None:
-    state["logins"][platform] = {"logged_in": ok, "note": note, "at": time.time()}
+    account = (state["logins"].get(platform) or {}).get("account", "")    # whose account: kept from the last check
+    state["logins"][platform] = {"logged_in": ok, "note": note, "at": time.time(), **({"account": account} if account else {})}
     try:
         await cbc.login_state(platform, ok, note)
     except Exception as exc:  # noqa: BLE001
@@ -168,6 +191,8 @@ async def publish(post: dict[str, Any], *, dry_run: bool) -> dict[str, Any]:
                        "scheduled": bool(schedule_at), "groups": shared, "destinations": places}
             await _set_login(post["platform"], True)
             await _report_or_keep(outcome)
+            if not dry_run:
+                count("posts")
         except NotLoggedIn as exc:
             result.update(ok=False, error=str(exc), needs="login")
             await _set_login(post["platform"], False, "Log in on the screen.")
@@ -244,6 +269,7 @@ async def boost_step(post_id: str, options: dict[str, Any]) -> dict[str, Any]:
             if out.get("unsure"):
                 return {"ok": False, "unsure": True, "error": "Pressed Boost, but Facebook did not confirm — check Ads Manager.",
                         "shot": out.get("shot")}
+            count("boosts")
             return {"ok": True, "message": f"Boosted: KSh {out['total_ksh']:,} in all.", "shot": out.get("shot")}
         except NotLoggedIn as exc:
             await _set_login("facebook", False, "Log in on the screen.")
@@ -282,6 +308,7 @@ async def linkedin_step() -> bool:
             await cbc.linkedin_done(post["post_id"], ok=True, url=url or "")
             await _set_login("linkedin", True)
             log.info("LinkedIn %s posted: %s", post["kind"], post["post_id"])
+            count("linkedin")
         except NotLoggedIn as exc:
             await _set_login("linkedin", False, "Log in on the screen.")
             await cbc.linkedin_done(post["post_id"], ok=False, error=str(exc))
@@ -330,6 +357,7 @@ async def engage_step(*, check: bool = False) -> dict[str, Any]:
                 out = await fb_engage.like_person(page, url=act["url"], count=int(act.get("count") or 1))
             if not check:
                 await cbc.engage_done(act["kind"], str(target), likes=out.get("likes", 0), people=out.get("people"))
+                count("likes", out.get("likes", 0))
             log.info("Like-back %s %s: %s likes, %s people", act["kind"], "(check)" if check else "", out.get("likes", 0),
                      len(out.get("people") or []))
             return {"ok": True, "message": (f"Found {len(out.get('people') or [])} commenters under your newest post (nothing liked)."
@@ -380,6 +408,7 @@ async def comment_step(*, check: bool = False) -> dict[str, Any]:
                                                 groups=job.get("groups") or [])
                 await cbc.comments_done(job["post_id"], "share", ok=True, groups=out.get("groups") or [])
                 log.info("Shared %s to %s", job["post_id"], out.get("groups"))
+                count("shares")
                 return {"ok": True, "message": f"Shared to {', '.join(out.get('groups') or [])}.", "shot": out.get("shot")}
             out = await fb_comments.comment(page, find=job.get("find") or "", url=job.get("url") or "",
                                             comments=job.get("comments") or [], image=image, check=check,
@@ -388,6 +417,10 @@ async def comment_step(*, check: bool = False) -> dict[str, Any]:
                 await cbc.comments_done(job["post_id"], job["stage"], ok=True, url=out.get("url") or "",
                                         metrics=out.get("metrics") or None)
             log.info("Comments %s on %s: %s", "checked" if check else job["stage"], job["post_id"], out)
+            if not check:
+                count("comments", len(job.get("comments") or []))
+                if job.get("stage") == "measure":
+                    count("readings")
             return {"ok": True, "message": ("Found the newest post and its comment box — see the screenshot."
                                             if check else f"Commented ({job['stage']})."), "shot": out.get("shot")}
         except NotLoggedIn as exc:
@@ -398,6 +431,7 @@ async def comment_step(*, check: bool = False) -> dict[str, Any]:
             if not check:
                 await cbc.comments_done(job["post_id"], job["stage"], ok=False, error=why)
             log.info("Comments %s on %s failed: %s", job["stage"], job["post_id"], why)
+            count("failures")
             return {"ok": False, "error": why, "shot": await shot(page, "facebook-comments-failed")}
         finally:
             state["busy"] = ""
@@ -422,7 +456,7 @@ def status_now() -> dict[str, Any]:
     return {"online": True, "mode": config.POSTER_MODE, "paused": state["paused"], "busy": state["busy"],
             "note": state["note"], "browser": browser.channel or "not started", "logins": state["logins"],
             "last": state["last"], "platforms": list(FLOWS),
-            "started": state["started"]}   # the newest poster is the active one (two Macs never both post)
+            "started": state["started"], "today": dict(state["today"]), "machine": _machine()}   # the newest poster is the active one (two Macs never both post)
 
 
 async def do_login(platform: str) -> dict[str, Any]:
@@ -430,9 +464,40 @@ async def do_login(platform: str) -> dict[str, Any]:
     flow = FLOWS.get(platform)
     if flow is None:
         return {"ok": False, "error": "Unknown platform."}
+    if config.POSTER_MODE == "local" and sys.platform == "darwin" and browser.channel != "chromium":
+        # On a Mac, the login is done in ordinary Chrome, the way mac/login.sh
+        # does it: the poster's own window says "controlled by automated test
+        # software", and Facebook asks for more checks there or refuses. The
+        # poster's Chrome closes, the same profile opens in plain Chrome, and
+        # the poster carries on when that Chrome is quit (Cmd+Q).
+        asyncio.create_task(_plain_chrome_login(flow.login_url, flow.platform))
+        return {"ok": True, "message": (f"Chrome is open on the Mac at the {flow.platform} login. Log in there (answer any "
+                                        "code or check), then quit Chrome with Cmd+Q — the poster carries on by itself.")}
     await browser.page(flow.login_url)
     where = "in Chrome on your Mac" if config.POSTER_MODE == "local" else "on the screen"
     return {"ok": True, "message": f"{flow.platform} login is open {where} — log in there, then press Check."}
+
+
+async def _plain_chrome_login(url: str, platform: str) -> None:
+    """Hold the poster while the owner logs in in ordinary Chrome; then check the login."""
+    async with browser.lock:
+        state["busy"] = f"Waiting for you to log in to {platform} — quit that Chrome (Cmd+Q) when done"
+        await browser.close()
+        await asyncio.sleep(2)                       # let Chrome release the profile
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "open", "-n", "-W", "-a", "Google Chrome", "--args", f"--user-data-dir={config.PROFILE_DIR}",
+                "--no-first-run", "--no-default-browser-check", url)
+            await proc.wait()                        # back when that Chrome is quit
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Could not open Chrome for the login: %s", _why(exc))
+        finally:
+            state["busy"] = ""
+    try:
+        out = await do_check(platform)
+        log.info("Login check for %s after the plain-Chrome login: %s", platform, out.get("message") or out.get("error"))
+    except Exception as exc:  # noqa: BLE001
+        log.info("Login check failed: %s", _why(exc))
 
 
 async def do_check(platform: str = "") -> dict[str, Any]:
@@ -443,16 +508,41 @@ async def do_check(platform: str = "") -> dict[str, Any]:
             if p not in FLOWS:
                 continue
             page = await browser.page()
+            account = ""
             try:
                 ok = await FLOWS[p].logged_in(page)
+                if ok:
+                    account = await _account_name(page, p)
             except Exception as exc:  # noqa: BLE001
                 ok = False
                 log.info("Check %s: %s", p, exc)
             finally:
                 await page.close()
             await _set_login(p, ok, "" if ok else "Log in on the screen.")
+            if account:
+                state["logins"][p]["account"] = account
             out[p] = ok
     return {"ok": True, "logins": out}
+
+
+async def _account_name(page: Any, platform: str) -> str:
+    """Whose account this Mac is logged into: the name on its own profile page."""
+    import re
+
+    own = {"facebook": "https://www.facebook.com/me", "linkedin": "https://www.linkedin.com/in/me/",
+           "instagram": "https://www.instagram.com/accounts/edit/", "youtube": "https://studio.youtube.com/",
+           "tiktok": "https://www.tiktok.com/profile"}.get(platform)
+    if not own:
+        return ""
+    try:
+        await page.goto(own, wait_until="domcontentloaded", timeout=45_000)
+        await asyncio.sleep(3)
+        title = (await page.title()) or ""
+        name = re.sub(r"\s*[|–-]\s*(Facebook|LinkedIn|Instagram|YouTube Studio|YouTube|TikTok).*$", "", title).strip()
+        name = re.sub(r"^\(\d+\)\s*", "", name)                  # "(3) Jane Doe" — unread notifications
+        return "" if name.lower() in ("", "facebook", "linkedin", "log in", "channel content") else name[:80]
+    except Exception:  # noqa: BLE001
+        return ""
 
 
 async def do_dry_run(platform: str = "", post_id: str = "") -> dict[str, Any]:

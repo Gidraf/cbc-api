@@ -1725,6 +1725,18 @@ MIGRATIONS: list[tuple[str, str]] = [
         ALTER TABLE social_posts ADD COLUMN IF NOT EXISTS campaign_done BOOLEAN NOT NULL DEFAULT FALSE;
         """,
     ),
+    (
+        "064_render_helpers",
+        """
+        -- Each render helper's last word (every minute): working or resting,
+        -- its videos today, what it is drawing — for the devices screen.
+        CREATE TABLE IF NOT EXISTS render_helpers (
+            worker TEXT PRIMARY KEY,
+            status JSONB NOT NULL DEFAULT '{}'::jsonb,
+            seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        """,
+    ),
 ]
 
 
