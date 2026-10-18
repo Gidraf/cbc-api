@@ -1621,6 +1621,7 @@ class PosterCommand(BaseModel):
     action: str          # login | check | dry_run | run_now | pause | resume | groups
     platform: str = ""
     post_id: str = ""
+    target: str = Field("", max_length=80, description="one Mac by its poster id (Devices); empty: the posting Mac")
     # run_now: {"share": "feed" | "groups", "groups": [names picked, at most 5]}
     options: dict[str, Any] = {}
 
@@ -1649,9 +1650,10 @@ def poster_command(payload: PosterCommand, auth: AuthContext = Depends(ANY)) -> 
         if len(picked) > social_export.MAX_GROUPS_PER_POST:
             raise_api_error("VALIDATION_FAILED", f"Pick at most {social_export.MAX_GROUPS_PER_POST} groups for one post.")
         options = {"share": share, "groups": picked}
-    if social_export.pull_poster():
+    if payload.target or social_export.pull_poster():
         command_id = social_export.queue_command(payload.action, payload.platform, payload.post_id,
-                                                 by=str(getattr(auth, "subject", "") or ""), options=options)
+                                                 by=str(getattr(auth, "subject", "") or ""), options=options,
+                                                 target=payload.target)
         if payload.action in ("login", "pause", "resume", "check", "groups"):
             for _ in range(40 if payload.action == "groups" else 24 if payload.action == "check" else 8):
                 time.sleep(1.0)
@@ -1952,9 +1954,10 @@ def poster_take_command(poster_id: str = Query(""), auth: AuthContext = Depends(
     from ..services import social_export
 
     _may_make_videos(auth)
-    if social_export.standing_by(poster_id):
-        return {"command": None, "standby": True}   # the console's buttons are for the active poster
-    return {"command": social_export.take_command()}
+    # Commands sent to this Mac by name always; the general ones only to the posting Mac.
+    active = not social_export.standing_by(poster_id)
+    got = social_export.take_command(poster_id, active=active)
+    return {"command": got, **({} if got or active else {"standby": True})}
 
 
 class CommandDone(BaseModel):

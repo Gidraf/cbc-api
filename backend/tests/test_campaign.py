@@ -133,3 +133,13 @@ def test_the_devices_screen_shows_each_mac_its_accounts_and_its_day(db) -> None:
     assert not next(p for p in d["posters"] if p["poster_id"] == "mac-b")["online"], "seen two days ago: offline"
     h = d["helpers"][0]
     assert h["worker"] == "mac-c" and h["online"] and h["resting"].startswith("outside") and h["today"]["made"] == 7
+
+
+@needs_db
+def test_a_command_for_one_mac_goes_to_that_mac_only(db) -> None:
+    general = se.queue_command("check")
+    mine = se.queue_command("login", "facebook", target="office-mini")
+    got = se.take_command("office-mini", active=False)
+    assert got["command_id"] == mine and got["action"] == "login", "its own command, though it is not the posting Mac"
+    assert se.take_command("office-mini", active=False) is None, "the general ones are for the posting Mac"
+    assert se.take_command("main-mac", active=True)["command_id"] == general

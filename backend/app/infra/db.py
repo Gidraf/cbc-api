@@ -1737,6 +1737,14 @@ MIGRATIONS: list[tuple[str, str]] = [
         );
         """,
     ),
+    (
+        "065_command_target",
+        """
+        -- A command for one Mac in particular (Devices → Log in on this Mac);
+        -- empty: for whichever Mac does the posting.
+        ALTER TABLE poster_commands ADD COLUMN IF NOT EXISTS target TEXT NOT NULL DEFAULT '';
+        """,
+    ),
 ]
 
 

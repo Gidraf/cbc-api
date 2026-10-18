@@ -63,6 +63,7 @@ import {
   useCampaign,
   usePosterMacs,
   useDevices,
+  type DevicePoster,
   useSavePlatformSettings,
   type DaySchedule,
   type RenderSchedule,
@@ -1383,6 +1384,33 @@ const ACTIVITY: [string, string][] = [["posts", "📤 posts"], ["comments", "�
                                       ["boosts", "🚀 boosts"], ["linkedin", "in LinkedIn"], ["readings", "📊 readings"], ["failures", "⚠️ failed"]];
 const JOB_NAMES: Record<string, string> = { post: "posting", comments: "comment campaign", likes: "liking back" };
 
+/** One Mac's own buttons: log it in to a platform, check its logins, pause or resume it. */
+function MacButtons({ p }: { p: DevicePoster }) {
+  const command = usePosterCommand();
+  const toast = useToast();
+  const qc = useQueryClient();
+  async function send(action: "login" | "check" | "pause" | "resume", platform = "") {
+    try {
+      const out = await command.mutateAsync({ action, platform, target: p.poster_id });
+      toast(out?.message || out?.error || (action === "check" ? "Checked." : "Sent to the Mac."), out?.ok === false ? "danger" : "ok");
+      qc.invalidateQueries({ queryKey: ["devices"] });
+    } catch (err) { toast(err instanceof Error ? err.message : "Could not reach that Mac.", "danger"); }
+  }
+  return (
+    <Stack direction="row" gap="var(--s2)" wrap>
+      {["facebook", "linkedin"].map((pl) => (
+        <Button key={pl} size="sm" variant={p.logins?.[pl]?.logged_in ? "ghost" : "secondary"} disabled={command.isPending}
+                title={`Opens ordinary Chrome on ${p.machine?.host || p.poster_id} at the ${pl} login — log in there, then quit Chrome (Cmd+Q)`}
+                onClick={() => send("login", pl)}>
+          🔑 {p.logins?.[pl]?.logged_in ? `Log in again to ${pl}` : `Log in to ${pl}`}</Button>
+      ))}
+      <Button size="sm" variant="ghost" disabled={command.isPending} onClick={() => send("check")}>Check logins</Button>
+      <Button size="sm" variant="ghost" disabled={command.isPending} onClick={() => send(p.paused ? "resume" : "pause")}>
+        {p.paused ? "▶ Resume" : "⏸ Pause"}</Button>
+    </Stack>
+  );
+}
+
 /** Every connected Mac: posters with their accounts and today's work, render helpers with theirs. */
 function Devices() {
   const dev = useDevices();
@@ -1423,6 +1451,7 @@ function Devices() {
                 ))}
                 {Object.keys(p.logins || {}).length === 0 && <span style={{ fontSize: "var(--text-xs)", color: "var(--ink-3)" }}>No login checked yet — press Check.</span>}
               </Stack>
+              {p.online && <MacButtons p={p} />}
               <span style={{ fontSize: "var(--text-xs)" }}>
                 Today: {ACTIVITY.filter(([k]) => Number(t[k] || 0) > 0).map(([k, label]) => `${t[k]} ${label}`).join(" · ") || "nothing yet"}
                 {p.last?.at ? ` · last: ${p.last.ok ? "✓" : "✗"} ${p.last.platform || ""} ${ago(new Date(p.last.at * 1000).toISOString())}` : ""}
@@ -1561,6 +1590,7 @@ function Growth() {
                 </span>
                 <span style={{ fontSize: "var(--text-xs)", color: "var(--ink-3)" }}>
                   {p.sub_strand} · {p.age_days} days · today +{p.today.views} views, +{p.today.comments} comments {p.growing ? "↗" : ""}
+                  {" · "}<span title="Times your own Macs opened this post (its comments, readings, shares). They pause the video, so these visits do not count as views.">👣 {p.own_visits || 0} by your Macs</span>
                   {p.marketing ? " · 📣" : ""}{p.boost_state ? ` · 🚀 ${p.boost_state}` : ""}
                 </span>
               </span>

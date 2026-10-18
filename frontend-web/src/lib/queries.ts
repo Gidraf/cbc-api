@@ -4238,7 +4238,7 @@ export function useVideoCoverage() {
 export type PostGrowth = {
   post_id: string; question_id: string; posted_at: string; url: string; marketing: boolean; boost_state: string;
   question_text: string; subject: string; sub_strand: string; views: number; reactions: number; comments: number; shares: number;
-  age_days: number; views_per_day: number; engagement_per_day: number; growing: boolean;
+  own_visits: number; age_days: number; views_per_day: number; engagement_per_day: number; growing: boolean;
   today: { views: number; reactions: number; comments: number; shares: number };
   daily: { day: string; views: number; reactions: number; comments: number; shares: number }[];
 };
@@ -4807,7 +4807,9 @@ export function usePosterCommand() {
     mutationFn: (v: { action: "login" | "check" | "dry_run" | "run_now" | "schedule_now" | "comments_check" | "engage_check" | "pause" | "resume" | "groups"; platform?: string; post_id?: string;
                       /** run_now: the feed only, or the feed and groups — the next in turn, or the ones picked (5 at most).
                        *  schedule_now: how many bookings to hand to Facebook's scheduler. */
-                      options?: { share?: "feed" | "groups"; groups?: string[]; count?: number } }) =>
+                      options?: { share?: "feed" | "groups"; groups?: string[]; count?: number };
+                      /** One Mac by its poster id (Devices); empty: whichever Mac does the posting. */
+                      target?: string }) =>
       api<Record<string, any>>("/api/v1/play/poster/command", { method: "POST", body: JSON.stringify(v) }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["poster"] }),
   });
