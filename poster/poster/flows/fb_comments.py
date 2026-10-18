@@ -85,35 +85,16 @@ def needles(find: str, also: list[str] | None = None) -> list[str]:
     return list(dict.fromkeys(out))
 
 
-# The poster's own visits must not count as views: every video on the page is
-# paused (and kept paused as the feed scrolls), so Facebook's view counts are
-# the people's, not this Mac's.
-_NO_PLAY = """() => {
-  if (window.__cbcNoPlay) return;
-  window.__cbcNoPlay = setInterval(() => document.querySelectorAll('video').forEach((v) => {
-    if (!v.paused) v.pause(); v.autoplay = false; v.muted = true; }), 250);
-}"""
-
-
-async def no_play(page: Page) -> None:
-    try:
-        await page.evaluate(_NO_PLAY)
-    except Exception:  # noqa: BLE001
-        pass
-
-
 async def find_post(page: Page, find: str, url: str = "", scrolls: int = 40, also: list[str] | None = None) -> Locator:
     """The post (on the profile, or the post page), by its words."""
     if url:
         await page.goto(url, wait_until="domcontentloaded", timeout=60_000)
-        await no_play(page)
         await asyncio.sleep(5)
         dialog = page.get_by_role("dialog")
         if await dialog.count():
             return dialog.last
         return page.locator("[role=main]").first
     await page.goto(PROFILE, wait_until="domcontentloaded", timeout=60_000)
-    await no_play(page)
     await asyncio.sleep(6)
     if re.search(r"/login|checkpoint", page.url) or await page.locator('input[name="pass"]').count():
         raise NotLoggedIn("Facebook is logged out.")

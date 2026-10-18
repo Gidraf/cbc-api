@@ -16,7 +16,7 @@ import re
 from playwright.async_api import Locator, Page
 
 from .base import NotLoggedIn, check_for_human, shot
-from .fb_comments import find_post, no_play
+from .fb_comments import find_post
 
 LIKE = re.compile(r"^Like$", re.I)
 
@@ -81,7 +81,6 @@ async def scan(page: Page, *, find: str, url: str, count: int, also: list[str] |
 async def like_person(page: Page, *, url: str, count: int) -> dict:
     """Like a person's newest posts on their profile."""
     await page.goto(url, wait_until="domcontentloaded", timeout=60_000)
-    await no_play(page)
     await asyncio.sleep(6)
     if re.search(r"/login|checkpoint", page.url) or await page.locator('input[name="pass"]').count():
         raise NotLoggedIn("Facebook is logged out.")

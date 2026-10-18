@@ -1590,7 +1590,7 @@ function Growth() {
                 </span>
                 <span style={{ fontSize: "var(--text-xs)", color: "var(--ink-3)" }}>
                   {p.sub_strand} · {p.age_days} days · today +{p.today.views} views, +{p.today.comments} comments {p.growing ? "↗" : ""}
-                  {" · "}<span title="Times your own Macs opened this post (its comments, readings, shares). They pause the video, so these visits do not count as views.">👣 {p.own_visits || 0} by your Macs</span>
+                  {" · "}<span title="Times your own Macs opened this post (its comments, readings, shares) — compare with its views to see how much of the reach is real people.">👣 {p.own_visits || 0} by your Macs</span>
                   {p.marketing ? " · 📣" : ""}{p.boost_state ? ` · 🚀 ${p.boost_state}` : ""}
                 </span>
               </span>
