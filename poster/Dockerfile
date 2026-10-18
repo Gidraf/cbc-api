@@ -3,7 +3,12 @@
 # from the sessions the owner logs into by hand.
 FROM mcr.microsoft.com/playwright/python:v1.55.0-noble
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# Non-interactive (tzdata would stop to ask for a time zone), and downloads
+# retried: a package cut short mid-download is fetched again instead of
+# failing the build.
+ENV DEBIAN_FRONTEND=noninteractive TZ=Africa/Nairobi
+RUN echo 'Acquire::Retries "5";' > /etc/apt/apt.conf.d/80-retries \
+    && apt-get update && apt-get install -y --no-install-recommends \
         xvfb x11vnc fluxbox novnc websockify fonts-noto-color-emoji tzdata \
     && rm -rf /var/lib/apt/lists/*
 
