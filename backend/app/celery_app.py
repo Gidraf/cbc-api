@@ -108,6 +108,12 @@ celery_app.conf.update(
             "task": "app.tasks.make_daily_videos",
             "schedule": 1800.0,
         },
+        # Every question its social video: a batch every half hour towards
+        # social_daily_target, never more than 30 waiting.
+        "make-social-videos": {
+            "task": "app.tasks.make_social_videos",
+            "schedule": 1800.0,
+        },
         # The registry of made videos, from storage and Drive: 00:30 Nairobi.
         "backfill-video-registry": {
             "task": "app.tasks.backfill_video_registry",

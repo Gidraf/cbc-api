@@ -217,10 +217,54 @@ def run_one(client: httpx.Client) -> bool:
         state["stop"] = True
 
 
+def idle_seconds() -> float | None:
+    """How long since anyone touched this Mac's keyboard or mouse."""
+    import re
+    import subprocess
+
+    try:
+        out = subprocess.run(["ioreg", "-c", "IOHIDSystem"], capture_output=True, text=True, timeout=10).stdout
+        m = re.search(r'"HIDIdleTime" = (\d+)', out)
+        return int(m.group(1)) / 1e9 if m else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
+_hours = {"at": 0.0, "schedule": None, "said": ""}
+_hours_lock = threading.Lock()
+
+
+def may_work(client: httpx.Client) -> tuple[bool, str]:
+    """The owner's working hours for the Macs (Play → Auto-post), read every minute."""
+    from datetime import datetime
+
+    from app.services import render_hours
+
+    with _hours_lock:
+        if _hours["schedule"] is None or time.time() - _hours["at"] > 60:
+            try:
+                base, headers = _api()
+                r = client.get(f"{base}/api/v1/play/render/schedule", headers=headers, timeout=30)
+                r.raise_for_status()
+                _hours["schedule"] = render_hours.clean(r.json())
+            except Exception:  # noqa: BLE001
+                _hours["schedule"] = _hours["schedule"] or render_hours.clean("")   # an older server: always
+            _hours["at"] = time.time()
+        ok, why = render_hours.allowed(_hours["schedule"], datetime.now(), idle_seconds())
+        said = "" if ok else why
+        if said != _hours["said"]:
+            log.info("Working hours: %s", "rendering" if ok else f"resting — {why}")
+            _hours["said"] = said
+    return ok, why
+
+
 def slot(n: int) -> None:
     with httpx.Client() as client:
         while True:
             try:
+                if not may_work(client)[0]:
+                    time.sleep(60)                   # outside the working hours: look again in a minute
+                    continue
                 if not run_one(client):
                     time.sleep(30)                   # nothing queued: look again in half a minute
             except Exception as exc:  # noqa: BLE001

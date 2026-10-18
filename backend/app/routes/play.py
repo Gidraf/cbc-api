@@ -1830,6 +1830,22 @@ def boost_post(post_id: str, payload: BoostRequest, auth: AuthContext = Depends(
     return {}
 
 
+@router.get("/render/schedule")
+def render_schedule(auth: AuthContext = Depends(ANY)) -> dict[str, Any]:
+    """When the render helpers on Macs may take videos (they decide idleness themselves)."""
+    from ..services import render_hours
+
+    return render_hours.current()
+
+
+@router.get("/videos/coverage")
+def video_coverage(auth: AuthContext = Depends(STAFF)) -> dict[str, Any]:
+    """How many questions have their social and lesson videos, and today's progress."""
+    from ..services import video_factory
+
+    return video_factory.coverage()
+
+
 @router.get("/render/teachers/{model}.glb")
 def render_teacher_model(model: str, auth: AuthContext = Depends(ANY)):
     """A teacher's 3D model, for a render helper that does not have it yet

@@ -131,3 +131,93 @@ def summary() -> dict[str, Any]:
     total = fetch_one("SELECT COUNT(*) AS n FROM question_videos WHERE kind = 'lesson'") or {}
     return {"target": target(), "made_today": made_today(), "waiting": pending(),
             "with_video": int(total.get("n") or 0)}
+
+
+# ── social videos: every question gets its vertical video, without asking ────
+#
+# Every half hour the job queues social videos for questions that have none
+# (the focus subjects, figures and lower grades first), up to
+# `social_daily_target` a day and never more than SOCIAL_QUEUE waiting at once —
+# so it fills the render helpers' idle time and never floods them. Auto-book
+# then books the ready ones for posting.
+
+SOCIAL_QUEUE = 30
+
+
+def social_target() -> int:
+    from . import platform_settings as ps
+
+    try:
+        return max(0, int(ps.get("social_daily_target", 150)))
+    except (TypeError, ValueError):
+        return 150
+
+
+def social_made_today(now: datetime | None = None) -> int:
+    from ..infra.db import fetch_one
+
+    start = (now or datetime.now(timezone.utc)).astimezone(EAT).replace(hour=0, minute=0, second=0, microsecond=0)
+    row = fetch_one("SELECT COUNT(*) AS n FROM question_videos WHERE kind = 'social' AND made_at >= :d", {"d": start})
+    return int((row or {}).get("n") or 0)
+
+
+def social_pending() -> int:
+    from ..infra.db import fetch_one
+
+    row = fetch_one("SELECT COUNT(*) AS n FROM jobs WHERE kind = 'social' AND status IN ('queued', 'running')")
+    return int((row or {}).get("n") or 0)
+
+
+def social_candidates(limit: int) -> list[str]:
+    """Questions with no social video and none being made."""
+    from ..infra.db import fetch_all
+
+    focus = " OR ".join(f"LOWER(d.curriculum_link->>'subject') LIKE '%{w}%'" for w in FOCUS)
+    rows = fetch_all(f"""
+        SELECT d.question_id FROM question_dna d
+        WHERE d.status <> ALL(:hidden) AND d.superseded_by IS NULL
+          AND NOT EXISTS (SELECT 1 FROM question_videos v WHERE v.question_id = d.question_id AND v.kind = 'social')
+          AND NOT EXISTS (SELECT 1 FROM jobs j WHERE j.kind = 'social' AND j.status IN ('queued', 'running', 'failed')
+                          AND j.payload->>'question_id' = d.question_id
+                          AND (j.status <> 'failed' OR j.created_at > NOW() - INTERVAL '3 days'))
+        ORDER BY CASE WHEN ({focus}) THEN 0 ELSE 1 END,
+                 CASE WHEN COALESCE(d.content->'diagram'->>'diagram_id', '') <> '' THEN 0 ELSE 1 END,
+                 d.grade_ordinal NULLS LAST, d.question_id
+        LIMIT :n""", {"hidden": list(_HIDDEN), "n": limit}) or []
+    return [r["question_id"] for r in rows]
+
+
+def top_up_social(now: datetime | None = None) -> dict[str, Any]:
+    """Queue social videos for questions that have none, towards the day's target."""
+    from . import social
+
+    goal, done, waiting = social_target(), social_made_today(now), social_pending()
+    want = max(0, min(BATCH, goal - done, SOCIAL_QUEUE - waiting))
+    queued = []
+    for qid in social_candidates(want) if want else []:
+        try:
+            got = social.enqueue(qid, queued_by="daily-social")
+            if got.get("status") in ("queued", "running"):
+                queued.append(qid)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Could not queue the social video of %s: %s", qid, exc)
+    out = {"target": goal, "made_today": done, "waiting": waiting, "queued_now": len(queued)}
+    if queued:
+        logger.info("Daily social videos: %s", out)
+    return out
+
+
+def coverage() -> dict[str, Any]:
+    """How many questions have their videos — for the console."""
+    from ..infra.db import fetch_one
+
+    row = fetch_one("""SELECT COUNT(*) AS questions,
+                              COUNT(*) FILTER (WHERE EXISTS (SELECT 1 FROM question_videos v WHERE v.question_id = d.question_id
+                                                             AND v.kind = 'social')) AS social,
+                              COUNT(*) FILTER (WHERE EXISTS (SELECT 1 FROM question_videos v WHERE v.question_id = d.question_id
+                                                             AND v.kind = 'lesson')) AS lesson
+                       FROM question_dna d WHERE d.status <> ALL(:hidden) AND d.superseded_by IS NULL""",
+                    {"hidden": list(_HIDDEN)}) or {}
+    return {k: int(row.get(k) or 0) for k in ("questions", "social", "lesson")} | {
+        "social_target": social_target(), "social_made_today": social_made_today(), "social_waiting": social_pending()}
+

@@ -153,6 +153,16 @@ def make_daily_videos() -> dict:
     return video_factory.top_up()
 
 
+@celery_app.task(name="app.tasks.make_social_videos")
+def make_social_videos() -> dict:
+    """Social videos for questions without one, every half hour, towards
+    the day's target (social_daily_target); auto-book books them for posting."""
+    from .routes import curriculum  # noqa: F401  (registers the job handlers)
+    from .services import video_factory
+
+    return video_factory.top_up_social()
+
+
 @celery_app.task(name="app.tasks.backfill_video_registry")
 def backfill_video_registry() -> dict:
     """Record videos storage already holds, once a day."""
