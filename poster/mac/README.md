@@ -26,6 +26,20 @@ runners' `~/.cbc/*/.env`. It only asks you to paste a key when none of those wor
 The key isn't shown while you paste it, and it's saved in `~/.cbc/poster/.env` (mode 600).
 It also checks that the key works, then starts the poster as a login item.
 
+## Render videos on a Mac
+
+A Mac draws videos for the server in about two minutes each. On any Mac with Google Chrome,
+paste this in Terminal — it gets the code and installs everything else (Homebrew, ffmpeg,
+Cairo, Pango, and LaTeX for Manim), asking for the Mac's password once:
+
+```bash
+cd ~ && { [ -d cbc-api ] || git clone https://github.com/Gidraf/cbc-api.git; } && cd cbc-api && git checkout main && git pull && bash poster/mac/install-render.sh
+```
+
+On a Mac without the poster it asks for the server's address and an API key. Run the same line
+again to update. Logs: `tail -f ~/.cbc/render/render.log`. The console shows this under
+Play → Auto-post → 🎬 Render videos on a Mac.
+
 ## Use
 
 1. Open the console at **Play → Auto-post**. It shows *On &lt;your Mac&gt;* once the poster has checked in.

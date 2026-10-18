@@ -206,9 +206,13 @@ SETTINGS: tuple[Setting, ...] = (
             "voice and the teacher asks \"Did Juma get it right?\". Names and voices change every video; a question "
             "made again gets a new cast. Videos already made keep serving until they are made again.",
             "classroom", "Social"),
+    Setting("social_marketing", "", "bool", "Platform pitch in every video",
+            "A few seconds before the end, every social video shows the console — setting an exam, an online test, "
+            "a student's marks — and says what the platform does, to teachers or to students by turns, with the "
+            "website. On: videos made before it stop serving and are made again with it.", True, "Social"),
     Setting("social_students", "", "string", "Students in social videos",
-            "How many students sit in with the teacher: 0, 1 or 2 — or random, a different number every video.",
-            "random", "Social"),
+            "Kept for later: the videos have the teacher alone (0).",
+            "0", "Social"),
     Setting("social_countdown_seconds", "", "int", "Countdown (seconds)",
             "How long a social video counts down after the question, for the viewer to pause and try. 3–10.",
             3, "Social"),
@@ -220,6 +224,12 @@ SETTINGS: tuple[Setting, ...] = (
     Setting("social_music_url", "", "string", "Background music",
             "An MP3 played quietly under the voice. Use a track you own or that is royalty-free for social "
             "media. Upload it from Play → Social posts. Empty: no music.", "", "Social"),
+    Setting("whiteboard_manim", "", "bool", "Animate the working with Manim",
+            "The steps of a calculation, a number line, an equation balanced and fraction bars are animated with "
+            "Manim — the part done next ringed, its sum worked beside it, then turned into its result in place — "
+            "from the maths engine's own steps (no model, no tokens). The question, figure and countdown stay on "
+            "the whiteboard. Needs Manim and LaTeX on the renderer; without them the board draws everything.",
+            True, "Videos"),
     Setting("whiteboard_hand_style", "", "string", "Whiteboard hand",
             "Which hand writes on the whiteboard: emoji-dark (✍🏿, the default), emoji-medium-dark (✍🏾) or "
             "drawn. An uploaded hand photo, below, takes the place of all three.", "emoji-dark", "Whiteboard"),

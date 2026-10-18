@@ -125,7 +125,7 @@ async def comments_done(post_id: str, stage: str, *, ok: bool, error: str = "", 
 
 async def linkedin_next() -> dict[str, Any] | None:
     """The next developer-studio post for LinkedIn: a document (PDF) or a video."""
-    r = await _call("GET", "/api/v1/dev/linkedin/next", timeout=60)
+    r = await _call("GET", "/api/v1/dev/linkedin/next", timeout=60, params={"poster_id": config.POSTER_ID})
     return r.json().get("post")
 
 

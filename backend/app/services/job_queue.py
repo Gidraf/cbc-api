@@ -182,7 +182,10 @@ def dispatch(job_id: str) -> str:
             from ..tasks import run_job
 
             queue = render_queue()
-            if queue and _kind_of(job_id) in RENDER_KINDS:
+            if queue and _kind_of(job_id) in RENDER_KINDS and _on_demand(job_id):
+                # Asked for on the spot: the standby worker that does nothing else.
+                run_job.apply_async((job_id,), queue=render_now_queue())
+            elif queue and _kind_of(job_id) in RENDER_KINDS:
                 # Videos go to the render worker: as many at once as it has cores
                 # for, and never in line behind content generation.
                 run_job.apply_async((job_id,), queue=queue)
@@ -195,6 +198,23 @@ def dispatch(job_id: str) -> str:
     # No broker, or Celery is not installed. The work still has to run.
     start_worker()
     return "in_process"
+
+
+def render_now_queue() -> str:
+    """The standby worker's queue: videos asked for on the spot, nothing else."""
+    import os
+
+    return os.getenv("CELERY_RENDER_NOW_QUEUE", "cbc_render_now").strip() or "cbc_render_now"
+
+
+def _on_demand(job_id: str) -> bool:
+    from ..infra.db import fetch_one
+
+    try:
+        row = fetch_one("SELECT payload->>'on_demand' AS d FROM jobs WHERE job_id = :id", {"id": job_id}) or {}
+    except Exception:  # noqa: BLE001
+        return False
+    return row.get("d") == "true"
 
 
 def _kind_of(job_id: str) -> str:
@@ -397,8 +417,12 @@ _FREE_SCOPE = f"""
     )
     AND (
         jobs.kind NOT IN {_RENDERS}
+        -- A video asked for on the spot runs on its own standby worker: never
+        -- capped, and never counted against the batch's slots.
+        OR jobs.payload->>'on_demand' = 'true'
         OR (SELECT COUNT(*) FROM jobs rendering WHERE rendering.status = 'running'
             AND rendering.kind IN {_RENDERS} AND rendering.job_id <> jobs.job_id
+            AND COALESCE(rendering.payload->>'on_demand', '') <> 'true'
             AND COALESCE(rendering.live->>'where', '') <> 'mac') < {_render_limit()}
     )
     AND (

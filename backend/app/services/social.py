@@ -77,6 +77,7 @@ def brand() -> dict[str, Any]:
         "music_url": str(get("social_music_url", "") or "").strip(),
         "teacher": _teacher_mode(),
         "cover": bool(get("social_cover", True)),
+        "marketing": bool(get("social_marketing", True)),
     }
 
 
@@ -173,6 +174,8 @@ def script(data: dict[str, Any], q: dict[str, Any], b: dict[str, Any] | None = N
         if scenes[k].get("scene") == "countdown" and scenes[k + 1].get("scene") == "figure":
             scenes[k], scenes[k + 1] = scenes[k + 1], scenes[k]
             break
+    if b.get("marketing"):
+        scenes.append(marketing_scene(q, b))
     who = b["handle"] or b["name"]
     scenes.append({"scene": "outro", "name": b["name"], "handle": b["handle"], "website": b["website"],
                    "cta": b["cta"], "say": f"{b['cta']}. Follow {spoken_handle(who)}.",
@@ -184,6 +187,34 @@ def script(data: dict[str, Any], q: dict[str, Any], b: dict[str, Any] | None = N
         scenes = teacher.classroom_script(scenes, cast)
     out["scenes"] = scenes
     return out
+
+
+# What every video says about the platform, a few seconds before the end: to
+# teachers and parents (set a paper, test the class online) or to students
+# (practise, marked at once, with the video answers) — by question, so the
+# feed sees both. The screen is the console's own (static/promo).
+MARKETING = [
+    ("start", "Teachers! Set a full CBC exam like this, with its marking scheme, in two minutes. Free to start at {site}.",
+     "Teachers: set this exam free at {site}"),
+    ("test", "Teachers, turn any paper into an online test your class takes on their phones, marked for you. Try it at {site}.",
+     "Online tests, marked for you: {site}"),
+    ("student_result", "Students! Practise questions like this one, get your marks at once, and watch how to solve each one. Go to {site}.",
+     "Practise free: {site}"),
+    ("print", "Parents and teachers: print CBC papers with marking schemes for any grade. Start free at {site}.",
+     "Print CBC papers free: {site}"),
+]
+
+
+def marketing_scene(q: dict[str, Any], b: dict[str, Any]) -> dict[str, Any]:
+    from . import promo
+
+    qid = str(q.get("question_id") or "")
+    shot, say, caption = MARKETING[int(hashlib.sha256(f"mk:{qid}".encode()).hexdigest(), 16) % len(MARKETING)]
+    site = (b.get("website") or "cbc.gidraf.dev").replace("https://", "").replace("http://", "").rstrip("/")
+    spoken = site.replace(".", " dot ")
+    return {"scene": "screen", "marketing": True, "shot": shot, "img": promo._image(shot),
+            "box": (promo._shots().get(shot) or {}).get("box") or [0, 0, 0, 0],
+            "say": say.format(site=spoken), "caption": caption.format(site=site)}
 
 
 def _answer_line(scene: dict[str, Any], opt: str) -> str:
@@ -583,7 +614,10 @@ def status(question_id: str, q: dict[str, Any] | None = None, voice: str = "", *
     if object_storage.object_exists(name):
         return {**out, "status": "ready", "url": whiteboard.public_url(name),
                 "thumbnail_url": whiteboard.public_url(f"{PREFIX}/{question_id}/{key}.jpg")}
-    if legacy and b.get("teacher", "off") != "off" and not asked_voice:
+    out["marketing"] = bool(b.get("marketing"))
+    # With the marketing on, the videos made before it are being replaced: they
+    # no longer serve, so every post from now carries it.
+    if legacy and b.get("teacher", "off") != "off" and not asked_voice and not b.get("marketing"):
         # Turning the teacher on does not unmake what was made: a video cut
         # before it still serves until it is made again with the teacher.
         # A video with one teacher, made before the classroom, serves too.
@@ -605,7 +639,7 @@ def status(question_id: str, q: dict[str, Any] | None = None, voice: str = "", *
 
 def enqueue(question_id: str, *, queued_by: str = "", batch_id: str = "", voice: str = "",
             fresh: bool = False, priority: int = 0, teacher: str | None = None,
-            students: int | None = None) -> dict[str, Any]:
+            students: int | None = None, on_demand: bool = False) -> dict[str, Any]:
     """Queue the cut. `fresh`: make it as the settings say now (with the
     teacher) even when a video cut before the teacher still serves — with a
     new cast. `teacher` / `students`: kept for this question (from Play)."""
@@ -619,6 +653,14 @@ def enqueue(question_id: str, *, queued_by: str = "", batch_id: str = "", voice:
             teacher, students = was["teacher"], was["students"]
         teachers.choose(question_id, teacher=teacher or "", students=students, new_take=True)
     now = status(question_id, q, voice, legacy=not fresh)
+    if on_demand and now["status"] == "queued" and now.get("job_id"):
+        # Already waiting in the batch: moved to the standby worker, first.
+        from ..infra.db import execute
+
+        execute("""UPDATE jobs SET payload = payload || '{"on_demand": true, "priority": 50}'::jsonb
+                   WHERE job_id = :id AND status = 'queued'""", {"id": now["job_id"]})
+        job_queue.dispatch(now["job_id"])
+        return {**now, "on_demand": True}
     if now["status"] in ("ready", "queued", "running"):
         return now
     if not now["scenes"]:
@@ -629,7 +671,8 @@ def enqueue(question_id: str, *, queued_by: str = "", batch_id: str = "", voice:
         {"artifact_id": f"social:{question_id}", "question_id": question_id, "voice": voice,
          # What the batch screen shows while it renders.
          "title": " ".join(str(q.get("question_text") or "").split())[:90],
-         **({"priority": priority} if priority else {})},
+         **({"priority": max(priority, 50) if on_demand else priority} if priority or on_demand else {}),
+         **({"on_demand": True} if on_demand else {})},
         strand=str(link.get("strand") or ""), sub_strand=str(link.get("sub_strand") or ""),
         batch_id=batch_id, queued_by=queued_by or "social")
     job_queue.dispatch(job.job_id)          # the render runs in the worker, not in the API

@@ -29,7 +29,7 @@
   // ── what each scene asks of the teacher ──
   const TEACHER_SCENES = { title: 1, countdown: 1, check: 1, outro: 1 };
   const MOOD = { title: "tense", countdown: "tense", answer: "lively", check: "lively", outro: "lively" };
-  const POSE = { title: "present", countdown: "think", answer: "celebrate", check: "point", outro: "wave" };
+  const POSE = { title: "present", countdown: "think", answer: "present", check: "point", outro: "wave" };
 
   // ── the stage ──
   const panel = document.createElement("div");
@@ -252,6 +252,22 @@
     out.c = seq[k];
     return out;
   }
+  // Where each phrase starts: the voice coming back after a pause. A speaker
+  // gestures and nods on these, not on every syllable.
+  const ONSETS = (cfg.mouth || []).map((env) => {
+    const out = [];
+    let quiet = 99;
+    (env || []).forEach((v, k) => {
+      if (v < 0.08) quiet++;
+      else { if (quiet >= FPS * 0.22) out.push(k / FPS); quiet = 0; }
+    });
+    return out;
+  });
+  function beatAt(i, into) {
+    let since = 99, n = 0;
+    for (const s of ONSETS[i] || []) if (s <= into) { since = into - s; n++; }
+    return { since, n };
+  }
   function energy(i, into) {
     const env = ((cfg.mouth || [])[i]) || [];
     if (!env.length || into < 0) return 0;
@@ -354,7 +370,7 @@
       REAL.draw({ t, i, into, sc, m, e, shape: shapeAt(i, into), k,
                   from: i > 0 ? poseName(i - 1, 99) : "rest", to: poseName(i, into),
                   talk: e * (TEACHER_SCENES[sc.scene] || i < 0 ? 1 : 0.4),
-                  dance: sc.scene === "outro" ? ease((into - 1.2) / 0.5) : 0,
+                  dance: 0, beat: beatAt(i, into),
                   think: sc.scene === "countdown" ? ease(into / 0.6) : 0, blink: blink(t) });
       effects(t, i, into, sc, m);
       return;
@@ -556,9 +572,11 @@
     const sa = armA.side, sb = armB.side;
 
     // Where each hand goes (and which way its elbow points) for each pose.
+    // At rest a presenter's hands meet loosely in front, at the waist — not
+    // hanging at the sides.
     const T = {
-      rest: { a: [V(SA.x + sa * 0.05, SA.y - 0.58, SA.z + 0.07), V(sa * 0.3, -0.3, -0.35)],
-              b: [V(SB.x + sb * 0.05, SB.y - 0.58, SB.z + 0.07), V(sb * 0.3, -0.3, -0.35)] },
+      rest: { a: [V(sa * 0.035, SA.y - 0.5, SA.z + 0.24), V(sa * 0.5, -0.6, -0.2)],
+              b: [V(sb * 0.035, SB.y - 0.52, SB.z + 0.23), V(sb * 0.5, -0.6, -0.2)] },
       present: { a: [V(SA.x + sa * 0.26, SA.y - 0.27, SA.z + 0.3), V(sa * 0.4, -0.7, -0.1)] },
       think: { a: [V(J0.x + sa * 0.04, J0.y - 0.14, J0.z + 0.11), V(sa * 0.05, -1, 0.35)],
                b: [V(SB.x * 0.05, SB.y - 0.42, SB.z + 0.24), V(sb * 0.2, -0.45, 0.05)] },
@@ -631,30 +649,37 @@
       }
     }
 
+    // Smooth, never-repeating motion: three slow waves, a different mix per seed.
+    const drift = (x, seed) => (Math.sin(x + seed * 1.7) + 0.5 * Math.sin(2.13 * x + seed * 2.9) + 0.25 * Math.sin(3.71 * x + seed * 0.6)) / 1.75;
+    const rnd = (n) => { const v = Math.sin(n * 91.7 + (place.x || 0) * 13.1) * 43758.5453; return v - Math.floor(v); };
+    function glance(t) {
+      let at = 0, n = 0, x = 0, y = 0;
+      while (at <= t) { x = (rnd(++n) - 0.5) * 0.36; y = rnd(n + 50) < 0.25 ? -0.2 : 0; at += 1.1 + rnd(n + 99) * 1.6; }
+      return { x: rnd(n + 7) < 0.45 ? 0 : x, y };
+    }
+
     function draw(st, speakerHead) {
       const { t, into, m, e } = st;
       // Back to rest, then the frame's pose on top.
       rest.forEach((q, b) => b.quaternion.copy(q));
       model.position.copy(base); model.rotation.set(0, baseRy, 0);
-      if (st.dance > 0) {
-        const d = into - 1.2;
-        model.position.x = base.x + Math.sin(d * Math.PI * 2) * 0.07 * st.dance;
-        model.position.y = Math.abs(Math.sin(d * Math.PI * 4)) * 0.035 * st.dance;
-        model.rotation.y = baseRy + Math.sin(d * Math.PI) * 0.25 * st.dance;
-      }
-      if (st.sc.scene === "answer" && into < 1.6) model.position.y += Math.abs(Math.sin(into * 7)) * 0.03 * (1 - into / 1.6);
+      // A slow shift of weight, as a person standing to speak does.
+      model.position.x = base.x + drift(t * 0.13, 3) * 0.012;
+      model.rotation.y = baseRy + drift(t * 0.17, 4) * 0.03;
       model.updateMatrixWorld(true);
-      turn(B("Spine1"), X, Math.sin(t * 1.6) * 0.012);                      // breath
-      turn(B("Spine"), Z, st.dance ? Math.sin((into - 1.2) * Math.PI * 2) * 0.06 * st.dance : 0);
-      const nod = Math.sin(t * 7.3) * 0.05 * e + Math.sin(t * 0.9) * 0.02 + 0.1 * st.think;
+      turn(B("Spine1"), X, Math.sin(t * 1.5) * 0.01);                       // breath
+      turn(B("Spine"), Z, drift(t * 0.2, 5) * 0.012);
+      // A nod as each phrase lands; between, the head drifts a little.
+      const bt = st.beat || { since: 99, n: 0 };
+      const landing = bt.since < 0.45 ? Math.sin(Math.PI * bt.since / 0.45) : 0;
+      const nod = 0.05 * landing * Math.min(1, st.talk * 1.5) + drift(t * 0.33, 1) * 0.018 + 0.1 * st.think;
       turn(B("Neck"), X, nod * 0.4);
       turn(B("Head"), X, nod * 0.6);
       // A listener turns toward whoever is speaking.
       const toward = speakerHead && speakerHead.distanceTo(H0) > 0.05
         ? Math.max(-0.5, Math.min(0.5, Math.atan2(speakerHead.x - H0.x, 1.6))) : 0;
-      turn(B("Head"), Y, Math.sin(t * 0.6) * 0.08 * (1 - st.think) + toward);
-      turn(B("Head"), Z, -sa * 0.12 * st.think + Math.sin(t * 0.45) * 0.03
-                        + Math.sin((into - 1.2) * Math.PI * 4) * 0.1 * st.dance);
+      turn(B("Head"), Y, drift(t * 0.27, 2) * 0.06 * (1 - st.think) + toward);
+      turn(B("Head"), Z, -sa * 0.12 * st.think + drift(t * 0.21, 6) * 0.025);
       model.updateMatrixWorld(true);
       const Jn = B("MJaw").getWorldPosition(V());
       const shift = model.position.clone().sub(base);
@@ -665,14 +690,13 @@
       const pa = pick(st.from, "a")[1].clone().lerp(pick(st.to, "a")[1], st.k);
       const tb = pick(st.from, "b")[0].clone().lerp(pick(st.to, "b")[0], st.k);
       const pb = pick(st.from, "b")[1].clone().lerp(pick(st.to, "b")[1], st.k);
-      ta.x += Math.sin(t * 5.1) * 0.03 * st.talk * sa; ta.y += Math.sin(t * 6.3) * 0.035 * st.talk;
-      if (st.to === "wave") ta.x += Math.sin(t * 9) * 0.07 * st.k * sa;
-      if (st.dance > 0) {
-        const beat = Math.sin((into - 1.2) * Math.PI * 4);
-        ta.lerp(V(SA.x + sa * 0.08, SA.y - 0.08 + 0.16 * beat, SA.z + 0.32), st.dance);
-        tb.lerp(V(SB.x + sb * 0.08, SB.y - 0.08 - 0.16 * beat, SB.z + 0.32), st.dance);
-        pa.lerp(V(sa * 0.25, -1, 0.1), st.dance); pb.lerp(V(sb * 0.25, -1, 0.1), st.dance);
-      }
+      // A gesture as each phrase begins — the palm opens up and out, then
+      // settles — one hand then the other; still between phrases.
+      const g = bt.since < 0.8 ? Math.sin(Math.PI * bt.since / 0.8) * Math.min(1, st.talk * 1.4) : 0;
+      const gh = bt.n % 3 === 2 ? tb : ta, gs = gh === ta ? sa : sb;
+      gh.x += gs * 0.06 * g; gh.y += 0.07 * g; gh.z += 0.07 * g;
+      ta.y += drift(t * 0.5, 7) * 0.006; tb.y += drift(t * 0.5, 8) * 0.006;
+      if (st.to === "wave") ta.x += Math.sin(t * 6) * 0.045 * st.k * sa;
       reach(armA, ta.add(shift), pa);
       reach(armB, tb.add(shift), pb);
       // To think, the wrist bends the knuckles in under the chin.
@@ -691,12 +715,19 @@
         if (SEC[sh.c]) face(SEC[sh.c], 0.35 * open);
       } else if (e > 0.08) face("AA_VI_10_aa", e * 0.6);
       face("AK_09_EyeBlinkLeft", st.blink); face("AK_10_EyeBlinkRight", st.blink);
-      face("AK_01_BrowDownLeft", 0.6 * m.tense); face("AK_02_BrowDownRight", 0.6 * m.tense);
-      face("AK_03_BrowInnerUp", 0.45 * m.lively + 0.25 * st.think);
-      face("AK_04_BrowOuterUpLeft", 0.3 * m.lively); face("AK_05_BrowOuterUpRight", 0.3 * m.lively);
-      const smile = 0.12 + 0.55 * m.lively - 0.12 * m.tense;
+      // Measured, warm: brows lift a little as a phrase lands, a resting smile
+      // that grows when the answer is right.
+      face("AK_01_BrowDownLeft", 0.3 * m.tense); face("AK_02_BrowDownRight", 0.3 * m.tense);
+      face("AK_03_BrowInnerUp", 0.2 * m.lively + 0.25 * st.think + 0.12 * landing);
+      face("AK_04_BrowOuterUpLeft", 0.15 * m.lively + 0.18 * landing); face("AK_05_BrowOuterUpRight", 0.15 * m.lively + 0.18 * landing);
+      const smile = 0.2 + 0.3 * m.lively - 0.08 * m.tense;
       face("AK_44_MouthSmileLeft", smile); face("AK_45_MouthSmileRight", smile);
-      face("AK_07_CheekSquintLeft", 0.3 * m.lively); face("AK_08_CheekSquintRight", 0.3 * m.lively);
+      face("AK_07_CheekSquintLeft", 0.15 * m.lively); face("AK_08_CheekSquintRight", 0.15 * m.lively);
+      // The eyes: mostly on the viewer, with a small glance every second or two.
+      const gaze = glance(t);
+      face(gaze.x > 0 ? "AK_15_EyeLookOutLeft" : "AK_13_EyeLookInLeft", Math.abs(gaze.x));
+      face(gaze.x > 0 ? "AK_14_EyeLookInRight" : "AK_16_EyeLookOutRight", Math.abs(gaze.x));
+      if (gaze.y < 0) { face("AK_11_EyeLookDownLeft", -gaze.y); face("AK_12_EyeLookDownRight", -gaze.y); }
       face("AK_17_EyeLookUpLeft", 0.45 * st.think); face("AK_18_EyeLookUpRight", 0.45 * st.think);
       face("AK_19_EyeSquintLeft", 0.25 * m.tense); face("AK_20_EyeSquintRight", 0.25 * m.tense);
       if (st.surprise) {      // the cover: wide eyes, brows up, an "oh!"

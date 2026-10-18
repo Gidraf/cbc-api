@@ -13,6 +13,9 @@
         Teacher videos first: turns the 3D teacher on, pauses the lesson videos
         (queued ones cancelled, daily batch 0) and queues the booked posts'
         videos again with the teacher, the soonest post first.
+    docker compose exec api python -m app.admin_tools relaunch --yes
+        Every video made again with the platform pitch; the questions that went
+        out are posted afresh (their old posts kept in social_posts_history).
     docker compose exec api python -m app.admin_tools promo-video [--audience teachers] [--mode classroom]
         A marketing video: the 3D teacher walks teachers, parents or students
         through the console (sign up, set a paper, take it online, share the
@@ -164,6 +167,23 @@ def teacher_now(how: str, limit: int, keep_lessons: bool) -> int:
     return 0
 
 
+def relaunch(yes: bool, limit: int) -> int:
+    from .services import job_queue, social_export
+
+    from .routes import curriculum  # noqa: F401   (registers the job kinds)
+    job_queue.start_worker = lambda: False
+    if not yes:
+        print("This makes every video again with the platform pitch and posts every question afresh: the posts\n"
+              "that went out are moved to social_posts_history and taken off, so booking sends them again.\n"
+              "Run it again with --yes to go ahead.")
+        return 1
+    out = social_export.relaunch(render_limit=limit, by="admin_tools")
+    print(f"Posts set aside to go out again: {out['archived_posts']} (kept in social_posts_history).")
+    print(f"Booked videos queued with the pitch: {out.get('queued', 0)}; lesson videos paused "
+          f"(bring them back: python -m app.admin_tools lessons-resume).")
+    return 0
+
+
 def promo_video(audience: str, how: str) -> int:
     from .services import promo
 
@@ -190,10 +210,13 @@ def main(argv: list[str] | None = None) -> int:
     k = sub.add_parser("rotate-master-key", help="move saved provider keys to NEW_MASTER_KEY")
     k.add_argument("--dry-run", action="store_true")
     tn = sub.add_parser("teacher-now", help="turn the teacher on and render the booked posts' videos with it first")
-    tn.add_argument("--mode", default="classroom", choices=["classroom", "female", "male", "alternate", "female_young",
-                                                            "male_young", "teacher_older_f", "teacher_older_m"])
+    tn.add_argument("--mode", default="classroom",
+                    help="classroom (any teacher), female, male, alternate, or one teacher by id (female_01, male_adult_15, …)")
     tn.add_argument("--limit", type=int, default=60, help="how many booked videos to queue (soonest first)")
     tn.add_argument("--keep-lessons", action="store_true", help="do not pause the daily lesson videos")
+    rl = sub.add_parser("relaunch", help="every video again with the platform pitch; every question posted afresh")
+    rl.add_argument("--yes", action="store_true")
+    rl.add_argument("--limit", type=int, default=200, help="booked videos to queue at once (soonest first)")
     pv = sub.add_parser("promo-video", help="a marketing video: the teacher shows how to sign up, set a paper and test online")
     pv.add_argument("--audience", default="teachers", choices=["teachers", "parents", "students"])
     pv.add_argument("--mode", default="classroom", choices=["female", "male", "classroom"])
@@ -204,6 +227,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.cmd == "teacher-now":
         return teacher_now(args.mode, args.limit, args.keep_lessons)
+    if args.cmd == "relaunch":
+        return relaunch(args.yes, args.limit)
     if args.cmd == "promo-video":
         return promo_video(args.audience, args.mode)
     if args.cmd == "lessons-resume":

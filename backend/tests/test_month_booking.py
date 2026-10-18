@@ -373,3 +373,46 @@ def test_posts_already_out_get_the_same_comments(db) -> None:
     execute("UPDATE social_posts SET posted_at = scheduled_for, handed_at = scheduled_for")
     assert se.comments_backfill(7, now=NOW) == 2, "the last 7 days only"
     assert se.comments_backfill(7, now=NOW) == 0, "once"
+
+
+@needs_db
+def test_a_post_is_boosted_only_when_asked_and_its_outcome_lands_on_the_post(db, monkeypatch) -> None:
+    from app.infra.db import execute, fetch_one
+    from app.services import social
+
+    monkeypatch.setattr(social, "status", lambda qid, q=None, **k: {"thread": {"find": "What is"}})
+    se._plan_post({"question_id": "q1", "curriculum": {}}, "facebook", NOW - timedelta(minutes=5), "me")
+    pid = se._post_id("q1", "facebook")
+    with pytest.raises(ValueError):
+        se.boost(pid)                                      # not out yet
+    se.record_attempt(pid, ok=True)
+    out = se.boost(pid, daily_ksh=200, days=5)
+    assert out["total_ksh"] == 1000
+    cmd = se.take_command()
+    assert cmd["action"] == "boost" and cmd["options"]["daily_ksh"] == 200 and cmd["options"]["find"] == "What is"
+    with pytest.raises(ValueError):
+        se.boost(pid)                                      # already on its way
+    se.finish_command(cmd["command_id"], {"ok": False, "unsure": True, "error": "check Ads Manager"})
+    assert fetch_one("SELECT boost_state FROM social_posts WHERE post_id = :id", {"id": pid})["boost_state"] == "check"
+    with pytest.raises(ValueError):
+        se.boost(pid)                                      # may have gone through: never a silent second charge
+    se.boost(pid, again=True)
+    se.finish_command(se.take_command()["command_id"], {"ok": True})
+    row = fetch_one("SELECT boost_state, boosted_at FROM social_posts WHERE post_id = :id", {"id": pid})
+    assert row["boost_state"] == "boosted" and row["boosted_at"]
+
+
+@needs_db
+def test_relaunch_sets_the_posts_that_went_out_aside_and_keeps_the_booked(db, monkeypatch) -> None:
+    from app.infra.db import fetch_one
+    from app.services import teacher
+
+    monkeypatch.setattr(teacher, "render_now", lambda *a, **k: {"queued": 3})
+    for q, when in (("q1", NOW - timedelta(days=1)), ("q2", NOW + timedelta(days=2))):
+        se._plan_post({"question_id": q, "curriculum": {}}, "facebook", when, "me")
+    se.record_attempt(se._post_id("q1", "facebook"), ok=True)
+    out = se.relaunch()
+    assert out["archived_posts"] == 1 and out["queued"] == 3
+    assert fetch_one("SELECT COUNT(*) AS n FROM social_posts WHERE question_id = 'q1'")["n"] == 0
+    assert fetch_one("SELECT COUNT(*) AS n FROM social_posts WHERE question_id = 'q2'")["n"] == 1
+    assert fetch_one("SELECT COUNT(*) AS n FROM social_posts_history WHERE question_id = 'q1'")["n"] == 1

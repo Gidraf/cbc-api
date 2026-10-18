@@ -4,9 +4,16 @@
 #
 #   bash poster/mac/install-render.sh      install, or update after git pull
 #
-# Needs the poster installed first (it reads its key from ~/.cbc/poster/.env),
-# Google Chrome, and ffmpeg (brew install ffmpeg). RENDER_SLOTS in
-# ~/.cbc/render/.env says how many videos draw at once (2).
+# On a new Mac, one line gets the code and runs this:
+#
+#   cd ~ && { [ -d cbc-api ] || git clone https://github.com/Gidraf/cbc-api.git; } && cd cbc-api && git checkout main && git pull && bash poster/mac/install-render.sh
+#
+# Installs what it needs: Homebrew's ffmpeg, Cairo, Pango and pkg-config, and
+# LaTeX (BasicTeX, if no LaTeX is here) with the packages Manim uses to set
+# the maths — that asks for your Mac password once. It reads the server's
+# address and key from ~/.cbc/poster/.env, and asks for them on a Mac without
+# the poster. Needs Google Chrome. RENDER_SLOTS in ~/.cbc/render/.env says
+# how many videos draw at once (2).
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")/../.." && pwd)"          # the repository
@@ -16,10 +23,49 @@ VENV="$HOME_DIR/venv"
 LABEL="com.cbc.render"
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
 
-[ -f "$HOME/.cbc/poster/.env" ] || { echo "Install the poster first: bash poster/mac/install.sh" >&2; exit 1; }
-FFMPEG="$(command -v ffmpeg || ls /opt/homebrew/bin/ffmpeg /usr/local/bin/ffmpeg 2>/dev/null | head -1 || true)"
-[ -n "$FFMPEG" ] || { echo "ffmpeg is needed: brew install ffmpeg" >&2; exit 1; }
-[ -d "/Applications/Google Chrome.app" ] || { echo "Google Chrome is needed." >&2; exit 1; }
+[ -d "/Applications/Google Chrome.app" ] || { echo "Google Chrome is needed: https://www.google.com/chrome/" >&2; exit 1; }
+
+# ── Homebrew and the drawing libraries ──
+if ! command -v brew >/dev/null 2>&1; then
+  for b in /opt/homebrew/bin/brew /usr/local/bin/brew; do if [ -x "$b" ]; then eval "$("$b" shellenv)"; fi; done
+fi
+if ! command -v brew >/dev/null 2>&1; then
+  echo "Installing Homebrew (asks for your password)…"
+  /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+  for b in /opt/homebrew/bin/brew /usr/local/bin/brew; do if [ -x "$b" ]; then eval "$("$b" shellenv)"; fi; done
+fi
+echo "Installing ffmpeg, Cairo, Pango and pkg-config (skipped if already there)…"
+brew install ffmpeg cairo pango pkg-config >/dev/null
+export PKG_CONFIG_PATH="$(brew --prefix)/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
+FFMPEG="$(command -v ffmpeg)"
+
+# ── LaTeX, for Manim's maths ──
+export PATH="/Library/TeX/texbin:$PATH"
+for d in /usr/local/texlive/*/bin/universal-darwin; do if [ -d "$d" ]; then export PATH="$d:$PATH"; fi; done
+if ! command -v latex >/dev/null 2>&1; then
+  echo "Installing BasicTeX for the maths (asks for your password)…"
+  brew install --cask basictex
+  export PATH="/Library/TeX/texbin:$PATH"
+fi
+if command -v tlmgr >/dev/null 2>&1; then
+  echo "Adding the LaTeX packages Manim uses (asks for your password once)…"
+  TL="tlmgr"; [ -w "$(dirname "$(command -v tlmgr)")" ] || TL="sudo tlmgr"
+  $TL update --self >/dev/null 2>&1 || true
+  $TL install standalone preview doublestroke relsize fundus-calligra wasysym physics dvisvgm rsfs wasy \
+      cm-super babel-english amsfonts amsmath ragged2e everysel setspace microtype >/dev/null 2>&1 || \
+      echo "  (some LaTeX packages did not install — the board draws any step Manim cannot)"
+fi
+
+# ── the server's address and key ──
+if [ ! -f "$HOME/.cbc/poster/.env" ]; then
+  echo "This Mac has no poster settings: the render helper needs the server's address and an API key."
+  read -r -p "CBC address [https://cbc.gidraf.dev]: " URL
+  URL="${URL:-https://cbc.gidraf.dev}"
+  read -r -s -p "API key (hidden as you type): " KEY; echo
+  mkdir -p "$HOME/.cbc/poster"
+  printf 'CBC_API_URL=%s\nCBC_API_KEY=%s\n' "$URL" "$KEY" > "$HOME/.cbc/poster/.env"
+  chmod 600 "$HOME/.cbc/poster/.env"
+fi
 PY="$(command -v python3.12 || command -v python3.11 || command -v python3 || true)"
 [ -n "$PY" ] || { echo "Python 3.11+ is needed: https://www.python.org/downloads/macos/" >&2; exit 1; }
 
@@ -35,7 +81,9 @@ if [ ! -x "$VENV/bin/python" ]; then
   "$PY" -m venv "$VENV"
 fi
 "$VENV/bin/python" -m pip install --quiet --upgrade pip
+echo "Installing the renderer's Python packages (Manim included)…"
 "$VENV/bin/python" -m pip install --quiet -r "$HERE/backend/requirements.txt"
+"$VENV/bin/python" -c "import manim" 2>/dev/null && echo "  Manim: ready" || echo "  Manim: not installed — videos render without it"
 
 [ -f "$HOME_DIR/.env" ] || echo "RENDER_SLOTS=2" > "$HOME_DIR/.env"
 
@@ -44,7 +92,8 @@ cat > "$HOME_DIR/run.sh" <<'EOF'
 set -euo pipefail
 cd "$HOME/.cbc/render"
 set -a; . ./.env; set +a
-export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
+export PATH="/Library/TeX/texbin:/opt/homebrew/bin:/usr/local/bin:$PATH"
+for d in /usr/local/texlive/*/bin/universal-darwin; do if [ -d "$d" ]; then export PATH="$d:$PATH"; fi; done
 echo "$(date '+%Y-%m-%d %H:%M:%S') starting the render helper"
 cd app
 exec ../venv/bin/python -m app.render_helper
@@ -84,4 +133,5 @@ Keep the Mac on and plugged in while it works.
 Logs:    tail -f ~/.cbc/render/render.log
 Faster:  RENDER_SLOTS=3 in ~/.cbc/render/.env, then run this again
 Stop:    launchctl bootout gui/\$(id -u)/$LABEL
+Update:  cd ~/cbc-api && git pull && bash poster/mac/install-render.sh
 EOF
