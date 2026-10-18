@@ -1367,6 +1367,7 @@ function AnotherMac() {
                          wordBreak: "break-all", fontSize: "var(--text-xs)" }}>{got.command}</code>
         )}
         {got && <p style={{ margin: 0, color: "var(--ink-3)", fontSize: "var(--text-xs)" }}>{got.note} Then, on that Mac: bash ~/.cbc/poster/login.sh to log in to each site.</p>}
+        <SetupCommands />
       </div>
     </details>
   );
@@ -1374,7 +1375,12 @@ function AnotherMac() {
 
 // One line to paste in a Mac's Terminal: the code, then everything the
 // render helper needs (Homebrew, ffmpeg, Cairo, Pango, LaTeX for Manim).
-const RENDER_SETUP = "cd ~ && { [ -d cbc-api ] || git clone https://github.com/Gidraf/cbc-api.git; } && cd cbc-api && git checkout main && git pull && bash poster/mac/install-render.sh";
+const GET_CODE = "cd ~ && { [ -d cbc-api ] || git clone https://github.com/Gidraf/cbc-api.git; } && cd cbc-api && git checkout main && git pull";
+const RENDER_SETUP = `${GET_CODE} && bash poster/mac/install-render.sh`;
+// The poster: installs it on a new Mac, or updates it on one that has it (its key is reused).
+const POSTER_SETUP = `${GET_CODE} && bash poster/mac/install.sh`;
+// Both at once: a Mac that posts and renders.
+const BOTH_SETUP = `${GET_CODE} && bash poster/mac/install.sh && bash poster/mac/install-render.sh`;
 
 const ago = (iso: string) => {
   const s = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
@@ -1725,6 +1731,40 @@ function Coverage() {
         Today: {c.social_made_today} made of {c.social_target} · {c.social_waiting} waiting. Every half hour the job queues more
         for questions with none (Settings → Social videos made a day); Auto-book books them for posting.
       </span>
+    </div>
+  );
+}
+
+/** One line to paste in a Mac's Terminal: installs on a new Mac, updates one that has it. */
+function SetupCommands() {
+  const toast = useToast();
+  async function copy(text: string) {
+    try { await navigator.clipboard.writeText(text); toast("Copied — paste it in the Mac's Terminal.", "ok"); }
+    catch { toast("Select the command and copy it.", "info"); }
+  }
+  const box: React.CSSProperties = { display: "block", padding: "var(--s2)", background: "var(--surface-2, #f4f4f2)",
+                                     borderRadius: "var(--radius)", wordBreak: "break-all", fontSize: "var(--text-xs)" };
+  const rows: [string, string, string][] = [
+    ["The poster", "Installs it on a new Mac, or updates one that has it (its key is kept).", POSTER_SETUP],
+    ["The poster and the render helper", "For a Mac that posts and makes videos.", BOTH_SETUP],
+  ];
+  return (
+    <div style={{ display: "grid", gap: 6, borderTop: "1px dashed var(--line)", paddingTop: "var(--s2)" }}>
+      <strong style={{ fontSize: "var(--text-sm)" }}>Install or update with one line</strong>
+      <span style={{ color: "var(--ink-3)", fontSize: "var(--text-xs)" }}>
+        Paste in the Mac's Terminal — the same line installs on a new Mac and updates one that has it. Run it again after each
+        update here. A new Mac asks for the server's address and an API key once.
+      </span>
+      {rows.map(([title, note, cmd]) => (
+        <div key={title} style={{ display: "grid", gap: 4 }}>
+          <Stack direction="row" gap="var(--s2)" align="center" wrap>
+            <b style={{ fontSize: "var(--text-sm)" }}>{title}</b>
+            <span style={{ color: "var(--ink-3)", fontSize: "var(--text-xs)" }}>{note}</span>
+            <Button size="sm" onClick={() => copy(cmd)}>Copy</Button>
+          </Stack>
+          <code style={box}>{cmd}</code>
+        </div>
+      ))}
     </div>
   );
 }
