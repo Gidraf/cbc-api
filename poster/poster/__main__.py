@@ -15,6 +15,7 @@ Two ways to run it:
 from __future__ import annotations
 
 import asyncio
+import sys
 import json
 import logging
 import os
@@ -430,9 +431,40 @@ async def do_login(platform: str) -> dict[str, Any]:
     flow = FLOWS.get(platform)
     if flow is None:
         return {"ok": False, "error": "Unknown platform."}
+    if config.POSTER_MODE == "local" and sys.platform == "darwin" and browser.channel != "chromium":
+        # On a Mac, the login is done in ordinary Chrome, the way mac/login.sh
+        # does it: the poster's own window says "controlled by automated test
+        # software", and Facebook asks for more checks there or refuses. The
+        # poster's Chrome closes, the same profile opens in plain Chrome, and
+        # the poster carries on when that Chrome is quit (Cmd+Q).
+        asyncio.create_task(_plain_chrome_login(flow.login_url, flow.platform))
+        return {"ok": True, "message": (f"Chrome is open on the Mac at the {flow.platform} login. Log in there (answer any "
+                                        "code or check), then quit Chrome with Cmd+Q — the poster carries on by itself.")}
     await browser.page(flow.login_url)
     where = "in Chrome on your Mac" if config.POSTER_MODE == "local" else "on the screen"
     return {"ok": True, "message": f"{flow.platform} login is open {where} — log in there, then press Check."}
+
+
+async def _plain_chrome_login(url: str, platform: str) -> None:
+    """Hold the poster while the owner logs in in ordinary Chrome; then check the login."""
+    async with browser.lock:
+        state["busy"] = f"Waiting for you to log in to {platform} — quit that Chrome (Cmd+Q) when done"
+        await browser.close()
+        await asyncio.sleep(2)                       # let Chrome release the profile
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "open", "-n", "-W", "-a", "Google Chrome", "--args", f"--user-data-dir={config.PROFILE_DIR}",
+                "--no-first-run", "--no-default-browser-check", url)
+            await proc.wait()                        # back when that Chrome is quit
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Could not open Chrome for the login: %s", _why(exc))
+        finally:
+            state["busy"] = ""
+    try:
+        out = await do_check(platform)
+        log.info("Login check for %s after the plain-Chrome login: %s", platform, out.get("message") or out.get("error"))
+    except Exception as exc:  # noqa: BLE001
+        log.info("Login check failed: %s", _why(exc))
 
 
 async def do_check(platform: str = "") -> dict[str, Any]:

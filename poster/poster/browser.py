@@ -50,6 +50,15 @@ class Browser:
         self._ctx.on("close", lambda *_: setattr(self, "_ctx", None))
         return self._ctx
 
+    async def close(self) -> None:
+        """Close the poster's Chrome, so the profile can be opened in ordinary Chrome."""
+        ctx, self._ctx = self._ctx, None
+        if ctx is not None:
+            try:
+                await ctx.close()
+            except Exception:  # noqa: BLE001
+                pass
+
     async def page(self, url: str | None = None) -> Page:
         ctx = await self.context()
         page = await ctx.new_page()
