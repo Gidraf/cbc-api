@@ -3,13 +3,16 @@
 # from the sessions the owner logs into by hand.
 FROM mcr.microsoft.com/playwright/python:v1.55.0-noble
 
-# Non-interactive (tzdata would stop to ask for a time zone), and downloads
-# retried: a package cut short mid-download is fetched again instead of
-# failing the build.
+# Non-interactive, and downloads retried: a package cut short mid-download is
+# fetched again instead of failing the build. tzdata is NOT installed or
+# upgraded: the Playwright image already has it, and its 2026e upgrade fails
+# to unpack in this image (dpkg error 1). The browser's time zone is set by
+# the poster itself (Africa/Nairobi), so nothing here needs a newer one.
 ENV DEBIAN_FRONTEND=noninteractive TZ=Africa/Nairobi
 RUN echo 'Acquire::Retries "5";' > /etc/apt/apt.conf.d/80-retries \
+    && (apt-mark hold tzdata tzdata-legacy >/dev/null 2>&1 || true) \
     && apt-get update && apt-get install -y --no-install-recommends \
-        xvfb x11vnc fluxbox novnc websockify fonts-noto-color-emoji tzdata \
+        xvfb x11vnc fluxbox novnc websockify fonts-noto-color-emoji \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
