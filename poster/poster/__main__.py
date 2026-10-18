@@ -38,6 +38,7 @@ except ImportError:
 from . import cbc, config
 from .browser import browser
 from .flows import FLOWS, NeedsHuman, NotLoggedIn, StepFailed
+from .flows.base import URGENT, Yielded
 from .flows.base import shot
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
@@ -286,6 +287,8 @@ async def boost_step(post_id: str, options: dict[str, Any]) -> dict[str, Any]:
 
 async def linkedin_step() -> bool:
     """A developer-studio post on LinkedIn, if one is queued: True when one was tried."""
+    if URGENT["n"]:
+        return False
     try:
         post = await cbc.linkedin_next()
     except Exception:  # noqa: BLE001
@@ -336,6 +339,8 @@ async def engage_step(*, check: bool = False) -> dict[str, Any]:
     `check`: read the newest post's commenters, liking nothing."""
     from .flows import fb_engage
 
+    if URGENT["n"] and not check:
+        return {"ok": False, "error": "A command from the console comes first."}
     if check:
         job = await cbc.comments_next(check=True)
         if not job:
@@ -363,6 +368,9 @@ async def engage_step(*, check: bool = False) -> dict[str, Any]:
             return {"ok": True, "message": (f"Found {len(out.get('people') or [])} commenters under your newest post (nothing liked)."
                                             if check else f"{out.get('likes', 0)} like(s)."), "shot": out.get("shot"),
                     "people": [p.get("name") for p in (out.get("people") or [])][:20]}
+        except Yielded:
+            log.info("Like-back stepped aside for a command; it runs again later.")
+            return {"ok": False, "error": "A command from the console came first."}
         except NotLoggedIn as exc:
             await _set_login("facebook", False, "Log in on the screen.")
             return {"ok": False, "error": str(exc)}
@@ -384,6 +392,8 @@ async def comment_step(*, check: bool = False) -> dict[str, Any]:
     it?", or — a minute later — the answer and its working with the card."""
     from .flows import fb_comments
 
+    if URGENT["n"] and not check:
+        return {"ok": False, "error": "A command from the console comes first."}
     job = await cbc.comments_next(check=check)
     if not job:
         return {"ok": False, "error": "No post to comment on."}
@@ -423,6 +433,10 @@ async def comment_step(*, check: bool = False) -> dict[str, Any]:
                     count("readings")
             return {"ok": True, "message": ("Found the newest post and its comment box — see the screenshot."
                                             if check else f"Commented ({job['stage']})."), "shot": out.get("shot")}
+        except Yielded:
+            # Not reported: the post keeps its turn and is tried again shortly.
+            log.info("Comments on %s stepped aside for a command; tried again shortly.", job["post_id"])
+            return {"ok": False, "error": "A command from the console came first."}
         except NotLoggedIn as exc:
             await _set_login("facebook", False, "Log in on the screen.")
             return {"ok": False, "error": str(exc)}
@@ -741,12 +755,15 @@ async def command_loop() -> None:
         if cmd:
             log.info("Command %s: %s %s %s", cmd["command_id"], cmd["action"], cmd.get("platform") or "",
                      cmd.get("options") or "")
+            URGENT["n"] += 1                 # background work steps aside at its next safe point
             try:
                 opts = cmd.get("options")
                 result = await run(cmd["action"], cmd.get("platform") or "", cmd.get("post_id") or "",
                                    opts if isinstance(opts, dict) else None)
             except Exception as exc:  # noqa: BLE001
                 result = {"ok": False, "error": _why(exc)[:400]}
+            finally:
+                URGENT["n"] = max(0, URGENT["n"] - 1)
             # Every command's outcome in the log — not only the ones that posted.
             log.info("Command %s done: %s", cmd["command_id"],
                      "ok" + (f" — {result.get('message')}" if result.get("message") else "") if result.get("ok")
