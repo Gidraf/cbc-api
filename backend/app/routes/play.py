@@ -1863,6 +1863,58 @@ def boost_post(post_id: str, payload: BoostRequest, auth: AuthContext = Depends(
     return {}
 
 
+class HelperStatus(BaseModel):
+    worker: str = Field(..., max_length=80)
+    model_config = {"extra": "allow"}
+
+
+@router.post("/render/helper-status")
+def render_helper_status(payload: HelperStatus, auth: AuthContext = Depends(ANY)) -> dict[str, Any]:
+    """A render helper's minute report: working or resting, its videos today, what it is drawing."""
+    from ..infra.db import execute, to_json
+
+    execute("""INSERT INTO render_helpers (worker, status, seen_at) VALUES (:w, CAST(:s AS jsonb), NOW())
+               ON CONFLICT (worker) DO UPDATE SET status = EXCLUDED.status, seen_at = NOW()""",
+            {"w": payload.worker[:80], "s": to_json(payload.model_dump())})
+    return {"ok": True}
+
+
+@router.get("/devices")
+def devices(auth: AuthContext = Depends(STAFF)) -> dict[str, Any]:
+    """Every Mac that has checked in this week: the posters (their jobs, the accounts they are logged into,
+    today's activity) and the render helpers (working or resting, today's videos, what they are drawing)."""
+    from ..infra.db import fetch_all
+    from ..services import social_export
+
+    roles = social_export.poster_roles()
+    active = {r: next((str(p["poster_id"]) for p in social_export.fresh_posters()
+                       if r in roles.get(str(p["poster_id"]), list(social_export.ROLES))), "")
+              for r in social_export.ROLES}
+
+    def when(v: Any) -> Any:
+        return v.isoformat() if hasattr(v, "isoformat") else v
+
+    posters = []
+    for r in fetch_all("""SELECT poster_id, status, seen_at, NOW() - seen_at < make_interval(secs => :age) AS online
+                          FROM poster_heartbeat WHERE seen_at > NOW() - INTERVAL '7 days' ORDER BY seen_at DESC""",
+                       {"age": social_export.PULL_FRESH_SECONDS}) or []:
+        st, pid = dict(r.get("status") or {}), str(r["poster_id"])
+        posters.append({"poster_id": pid, "online": bool(r["online"]), "seen_at": when(r["seen_at"]),
+                        "busy": st.get("busy") or "", "paused": bool(st.get("paused")), "note": st.get("note") or "",
+                        "mode": st.get("mode") or "", "browser": st.get("browser") or "", "machine": st.get("machine") or {},
+                        "logins": st.get("logins") or {}, "today": st.get("today") or {}, "last": st.get("last") or None,
+                        "jobs": roles.get(pid, list(social_export.ROLES)),
+                        "doing": [r2 for r2, who in active.items() if who == pid]})
+    helpers = []
+    for r in fetch_all("""SELECT worker, status, seen_at, NOW() - seen_at < INTERVAL '3 minutes' AS online
+                          FROM render_helpers WHERE seen_at > NOW() - INTERVAL '7 days' ORDER BY seen_at DESC""") or []:
+        st = dict(r.get("status") or {})
+        helpers.append({"worker": r["worker"], "online": bool(r["online"]), "seen_at": when(r["seen_at"]),
+                        "resting": st.get("resting") or "", "today": st.get("today") or {}, "jobs": st.get("jobs") or [],
+                        "slots": st.get("slots"), "manim": bool(st.get("manim")), "machine": st.get("machine") or {}})
+    return {"posters": posters, "helpers": helpers}
+
+
 @router.get("/render/schedule")
 def render_schedule(auth: AuthContext = Depends(ANY)) -> dict[str, Any]:
     """When the render helpers on Macs may take videos (they decide idleness themselves)."""

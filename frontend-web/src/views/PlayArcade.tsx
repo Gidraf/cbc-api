@@ -62,6 +62,7 @@ import {
   usePerformance,
   useCampaign,
   usePosterMacs,
+  useDevices,
   useSavePlatformSettings,
   type DaySchedule,
   type RenderSchedule,
@@ -1374,6 +1375,87 @@ function AnotherMac() {
 // render helper needs (Homebrew, ffmpeg, Cairo, Pango, LaTeX for Manim).
 const RENDER_SETUP = "cd ~ && { [ -d cbc-api ] || git clone https://github.com/Gidraf/cbc-api.git; } && cd cbc-api && git checkout main && git pull && bash poster/mac/install-render.sh";
 
+const ago = (iso: string) => {
+  const s = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
+  return s < 90 ? "just now" : s < 3600 ? `${Math.round(s / 60)} min ago` : s < 86400 ? `${Math.round(s / 3600)} h ago` : `${Math.round(s / 86400)} d ago`;
+};
+const ACTIVITY: [string, string][] = [["posts", "📤 posts"], ["comments", "💬 comments"], ["shares", "↗ shares"], ["likes", "❤ likes"],
+                                      ["boosts", "🚀 boosts"], ["linkedin", "in LinkedIn"], ["readings", "📊 readings"], ["failures", "⚠️ failed"]];
+const JOB_NAMES: Record<string, string> = { post: "posting", comments: "comment campaign", likes: "liking back" };
+
+/** Every connected Mac: posters with their accounts and today's work, render helpers with theirs. */
+function Devices() {
+  const dev = useDevices();
+  const d = dev.data;
+  if (!d) return null;
+  const today = new Date().toISOString().slice(0, 10);
+  const counts = (t: Record<string, any>) => t.day && String(t.day) !== today ? {} : t;
+  const dot = (on: boolean) => <span style={{ display: "inline-block", width: 9, height: 9, borderRadius: 5, background: on ? "#16a34a" : "#9ca3af" }} />;
+  return (
+    <details open>
+      <summary style={{ cursor: "pointer", fontSize: "var(--text-sm)" }}>
+        🖥️ Devices — {d.posters.filter((p) => p.online).length} poster(s) and {d.helpers.filter((h) => h.online).length} render helper(s) online
+      </summary>
+      <div style={{ display: "grid", gap: "var(--s2)", marginTop: "var(--s2)", fontSize: "var(--text-sm)" }}>
+        {d.posters.length === 0 && d.helpers.length === 0 && <span style={{ color: "var(--ink-3)" }}>No Mac has checked in this week.</span>}
+        {d.posters.map((p) => {
+          const t = counts(p.today || {});
+          return (
+            <div key={p.poster_id} style={{ border: "1px solid var(--line-2)", borderRadius: "var(--radius)", padding: "var(--s2)", display: "grid", gap: 4 }}>
+              <Stack direction="row" gap="var(--s2)" align="center" wrap>
+                {dot(p.online)}<b>{p.machine?.host || p.poster_id}</b>
+                <Badge tone="neutral">poster</Badge>
+                <span style={{ color: "var(--ink-3)", fontSize: "var(--text-xs)" }}>
+                  {p.online ? "online" : `offline · last seen ${ago(p.seen_at)}`}{p.machine?.os ? ` · ${p.machine.os}` : ""}
+                  {p.machine?.code ? ` · code of ${p.machine.code}` : ""}{p.paused ? " · ⏸ paused" : ""}
+                </span>
+              </Stack>
+              <span style={{ fontSize: "var(--text-xs)" }}>
+                Jobs: {p.jobs.map((j) => JOB_NAMES[j] || j).join(", ") || "none"}
+                {p.doing.length ? <> · <b>doing now: {p.doing.map((j) => JOB_NAMES[j] || j).join(", ")}</b></> : p.online ? " · standing by" : ""}
+              </span>
+              {p.busy && <span style={{ fontSize: "var(--text-xs)" }}>⏳ {p.busy}</span>}
+              <Stack direction="row" gap="var(--s2)" wrap>
+                {Object.entries(p.logins || {}).map(([platform, l]) => (
+                  <Badge key={platform} tone={l.logged_in ? "ok" : "danger"}>
+                    {platform}: {l.logged_in ? `logged in${l.account ? ` as ${l.account}` : ""}` : "logged out"}
+                  </Badge>
+                ))}
+                {Object.keys(p.logins || {}).length === 0 && <span style={{ fontSize: "var(--text-xs)", color: "var(--ink-3)" }}>No login checked yet — press Check.</span>}
+              </Stack>
+              <span style={{ fontSize: "var(--text-xs)" }}>
+                Today: {ACTIVITY.filter(([k]) => Number(t[k] || 0) > 0).map(([k, label]) => `${t[k]} ${label}`).join(" · ") || "nothing yet"}
+                {p.last?.at ? ` · last: ${p.last.ok ? "✓" : "✗"} ${p.last.platform || ""} ${ago(new Date(p.last.at * 1000).toISOString())}` : ""}
+              </span>
+            </div>
+          );
+        })}
+        {d.helpers.map((h) => {
+          const t = counts(h.today || {});
+          return (
+            <div key={h.worker} style={{ border: "1px solid var(--line-2)", borderRadius: "var(--radius)", padding: "var(--s2)", display: "grid", gap: 4 }}>
+              <Stack direction="row" gap="var(--s2)" align="center" wrap>
+                {dot(h.online)}<b>{h.worker.replace(/^mac-/, "")}</b>
+                <Badge tone="neutral">render helper</Badge>
+                <span style={{ color: "var(--ink-3)", fontSize: "var(--text-xs)" }}>
+                  {h.online ? (h.resting ? `resting — ${h.resting}` : "working") : `offline · last seen ${ago(h.seen_at)}`}
+                  {h.machine?.os ? ` · ${h.machine.os}` : ""} · {h.slots} at once · Manim {h.manim ? "ready" : "not installed"}
+                </span>
+              </Stack>
+              <span style={{ fontSize: "var(--text-xs)" }}>
+                Today: {Number(t.made || 0)} video(s) made{Number(t.failed || 0) ? ` · ${t.failed} failed` : ""}
+              </span>
+              {h.jobs.map((j) => (
+                <span key={j.job_id} style={{ fontSize: "var(--text-xs)" }}>🎬 {j.question_id} — {j.stage} {Math.round(j.pct)}%</span>
+              ))}
+            </div>
+          );
+        })}
+      </div>
+    </details>
+  );
+}
+
 /** The comment campaign: switch, limits, and today's progress. */
 function Campaign() {
   const c = useCampaign();
@@ -2046,6 +2128,7 @@ function AutoPost() {
           )}
           {o.comments && <CommentThread c={o.comments} online={o.live.online} busy={command.isPending}
                                         onCheck={() => run("comments_check", "facebook")} />}
+          <Devices />
           <KeepEngaged />
           <Campaign />
           <Growth />

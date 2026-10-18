@@ -111,3 +111,25 @@ def test_the_day_has_a_limit_and_a_pace(db) -> None:
     assert "Pacing" in se.campaign_next(NOW + timedelta(seconds=20))["reason"]
     db["campaign_enabled"] = False
     assert "off" in se.campaign_next(NOW)["reason"]
+
+
+@needs_db
+def test_the_devices_screen_shows_each_mac_its_accounts_and_its_day(db) -> None:
+    from app.infra.db import execute, to_json
+    from app.routes import play
+
+    execute("""INSERT INTO poster_heartbeat (poster_id, status, seen_at) VALUES ('mac-a', CAST(:s AS jsonb), NOW())""",
+            {"s": to_json({"started": 2.0, "busy": "Commenting", "machine": {"host": "studio-mac"},
+                           "logins": {"facebook": {"logged_in": True, "account": "CBC Maths", "note": ""},
+                                      "linkedin": {"logged_in": False, "note": "Log in on the screen."}},
+                           "today": {"day": "2026-10-19", "posts": 3, "comments": 40}})})
+    execute("""INSERT INTO poster_heartbeat (poster_id, status, seen_at) VALUES ('mac-b', '{}'::jsonb, NOW() - INTERVAL '2 days')""")
+    play.render_helper_status(play.HelperStatus(worker="mac-c", resting="outside 18:00–23:59", today={"made": 7},
+                                                jobs=[], slots=2, manim=True), auth=None)
+    d = play.devices(auth=None)
+    a = next(p for p in d["posters"] if p["poster_id"] == "mac-a")
+    assert a["online"] and a["logins"]["facebook"]["account"] == "CBC Maths" and not a["logins"]["linkedin"]["logged_in"]
+    assert a["today"]["comments"] == 40 and set(a["doing"]) == {"post", "comments", "likes"}
+    assert not next(p for p in d["posters"] if p["poster_id"] == "mac-b")["online"], "seen two days ago: offline"
+    h = d["helpers"][0]
+    assert h["worker"] == "mac-c" and h["online"] and h["resting"].startswith("outside") and h["today"]["made"] == 7

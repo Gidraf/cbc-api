@@ -171,10 +171,15 @@ def run_one(client: httpx.Client) -> bool:
                 time.sleep(1)
 
     weights = {"voice": (0, 10), "draw": (10, 85), "mux": (85, 95), "save": (95, 100)}
+    with _now_lock:
+        _now["jobs"][job_id] = {"question_id": spec["question_id"], "stage": "voice", "pct": 0.0, "since": time.time()}
 
     def progress(stage: str, n: int = 0, total: int = 0) -> None:
         lo, hi = weights.get(stage, (state["pct"], state["pct"]))
         state["stage"], state["pct"] = stage, round(lo + (hi - lo) * (n / total if total else 0), 1)
+        with _now_lock:
+            if job_id in _now["jobs"]:
+                _now["jobs"][job_id].update(stage=state["stage"], pct=state["pct"])
 
     hb = threading.Thread(target=beat, daemon=True)
     hb.start()
@@ -201,12 +206,14 @@ def run_one(client: httpx.Client) -> bool:
                     raise
                 time.sleep(5 * (attempt + 1))
         log.info("Job %s done in %.0f s (%s s of video)", job_id, time.time() - started, made.get("seconds"))
+        _count("made")
         for p in (video, thumb):
             if p and p.exists():
                 p.unlink()
         return True
     except Exception as exc:  # noqa: BLE001
         log.warning("Job %s failed: %s", job_id, exc)
+        _count("failed")
         try:
             client.post(f"{base}/api/v1/play/render/{job_id}/failed", headers=headers, timeout=60,
                         json={"error": f"{type(exc).__name__}: {exc}"[:900], "worker": WORKER})
@@ -215,6 +222,8 @@ def run_one(client: httpx.Client) -> bool:
         return True
     finally:
         state["stop"] = True
+        with _now_lock:
+            _now["jobs"].pop(job_id, None)
 
 
 def idle_seconds() -> float | None:
@@ -231,6 +240,43 @@ def idle_seconds() -> float | None:
 
 
 _hours = {"at": 0.0, "schedule": None, "said": ""}
+# What this Mac is doing, sent to the server every minute (Play → Auto-post → Devices).
+_now: dict[str, Any] = {"jobs": {}, "today": {}, "resting": ""}
+_now_lock = threading.Lock()
+
+
+def _count(kind: str) -> None:
+    day = time.strftime("%Y-%m-%d")
+    with _now_lock:
+        if _now["today"].get("day") != day:
+            _now["today"] = {"day": day}
+        _now["today"][kind] = int(_now["today"].get(kind) or 0) + 1
+
+
+def _status() -> dict[str, Any]:
+    import platform
+
+    try:
+        import manim  # noqa: F401
+        has_manim = True
+    except Exception:  # noqa: BLE001
+        has_manim = False
+    with _now_lock:
+        return {"worker": WORKER, "slots": max(1, min(int(os.getenv("RENDER_SLOTS", "2") or 2), 6)),
+                "resting": _now["resting"], "today": dict(_now["today"]),
+                "jobs": [{"job_id": k, **v} for k, v in _now["jobs"].items()], "manim": has_manim,
+                "machine": {"os": f"macOS {platform.mac_ver()[0]}" if platform.mac_ver()[0] else platform.platform(terse=True)}}
+
+
+def report_loop() -> None:
+    with httpx.Client() as client:
+        while True:
+            try:
+                base, headers = _api()
+                client.post(f"{base}/api/v1/play/render/helper-status", headers=headers, json=_status(), timeout=30)
+            except Exception:  # noqa: BLE001
+                pass                                  # an older server: no devices screen
+            time.sleep(60)
 _hours_lock = threading.Lock()
 
 
@@ -252,6 +298,8 @@ def may_work(client: httpx.Client) -> tuple[bool, str]:
             _hours["at"] = time.time()
         ok, why = render_hours.allowed(_hours["schedule"], datetime.now(), idle_seconds())
         said = "" if ok else why
+        with _now_lock:
+            _now["resting"] = said
         if said != _hours["said"]:
             log.info("Working hours: %s", "rendering" if ok else f"resting — {why}")
             _hours["said"] = said
@@ -280,6 +328,7 @@ def main() -> None:
     _real_chrome()
     slots = max(1, min(int(os.getenv("RENDER_SLOTS", "2") or 2), 6))
     log.info("Render helper %s → %s, %d at once", WORKER, os.environ["CBC_API_URL"], slots)
+    threading.Thread(target=report_loop, daemon=True).start()
     threads = [threading.Thread(target=slot, args=(k + 1,), daemon=True) for k in range(slots)]
     for t in threads:
         t.start()

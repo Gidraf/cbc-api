@@ -4251,6 +4251,25 @@ export function usePerformance(sort: string, days = 14) {
       `/api/v1/play/poster/performance?sort=${sort}&days=${days}`) });
 }
 
+export type DevicePoster = {
+  poster_id: string; online: boolean; seen_at: string; busy: string; paused: boolean; note: string; mode: string; browser: string;
+  machine: { host?: string; os?: string; code?: string };
+  logins: Record<string, { logged_in: boolean; note: string; at: number; account?: string }>;
+  today: Record<string, number | string>; last: Record<string, any> | null; jobs: string[]; doing: string[];
+};
+export type DeviceHelper = {
+  worker: string; online: boolean; seen_at: string; resting: string; today: Record<string, number | string>;
+  jobs: { job_id: string; question_id: string; stage: string; pct: number; since: number }[]; slots: number; manim: boolean;
+  machine: { os?: string };
+};
+
+/** Every Mac: posters (jobs, accounts, today's activity) and render helpers. */
+export function useDevices() {
+  const api = useApi();
+  return useQuery({ queryKey: ["devices"], refetchInterval: 30_000,
+                    queryFn: () => api<{ posters: DevicePoster[]; helpers: DeviceHelper[] }>("/api/v1/play/devices") });
+}
+
 export type CampaignStatus = {
   enabled: boolean; floor: number; target: number; views_goal: number; focus: number; per_post_day: number; daily: number; share: boolean;
   today: { comments: number; shares: number; failed: number };
