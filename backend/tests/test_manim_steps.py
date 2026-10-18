@@ -65,3 +65,20 @@ def test_a_clip_lands_inside_the_boards_box_only_while_it_plays(tmp_path: Path) 
     assert pixel(1.5, 41, 471)[0] < 80, "the board's rounded corner stays the frame's"
     assert pixel(1.5, 520, 300)[0] < 80, "above the board: the frame"
     assert pixel(3.0, 520, 740)[0] < 80, "after the clip: the board again"
+
+
+def test_the_live_board_animates_the_same_steps_with_katex_and_a_render_does_not() -> None:
+    import json
+    import re
+
+    from app.services import whiteboard
+
+    data = {"question_id": "q1", "scenes": _scenes()}
+    live = whiteboard.page(data, durations=[2.0] * 9)
+    assert "KaTeX_Main" in live and "<script src=" not in live, "KaTeX inlined: the board works offline"
+    payload = json.loads(re.search(r"window\.WB_DATA = (\{.*?\});</script>", live, re.S).group(1).replace("<\\/", "</"))
+    first = next(s for s in payload["scenes"] if s["scene"] == "rewrite")
+    assert first["tex"]["parts"] == ["", r"18 \div (-3)", r" \times 2 + (-24) - (-5)"]
+    assert first["tex"]["res"] == "-6" and first["tex"]["side"] == r"18 \div (-3) = -6"
+    rendered = whiteboard.page(data, durations=[2.0] * 9, render=True)
+    assert "KaTeX_Main" not in rendered and '"tex"' not in rendered, "a video takes Manim's clips instead"

@@ -149,6 +149,14 @@ def page(data: dict[str, Any], *, title: str = "", voice: str = "en-KE", duratio
                "voice": voice, "durations": durations or [], "audio": audio or [],
                "lead": LEAD + (COVER if (social or {}).get("cover") else 0.0),
                "no_hand": bool(data.get("no_hand"))}
+    if not render:
+        # Live, the working is animated in the browser with KaTeX — the same
+        # steps the Manim clips animate in a rendered video.
+        from .step_tex import scene_tex
+
+        for sc, tex in zip(payload["scenes"], scene_tex(data.get("scenes") or [])):
+            if tex:
+                sc["tex"] = tex
     if social:
         payload["social"] = {k: v for k, v in social.items() if k not in ("logo", "music_url")}
         if (social.get("teacher") or {}).get("cast"):
@@ -172,6 +180,7 @@ def page(data: dict[str, Any], *, title: str = "", voice: str = "en-KE", duratio
             .replace("__BODY_CLASS__", ("social " if social else "") + ("render" if render else "live"))
             .replace("__CONTROLS__", chrome)
             .replace("__GSAP__", _script(_asset("gsap.min.js")))
+            .replace("<script>__ENGINE__</script>", ("" if render else _katex()) + "<script>__ENGINE__</script>")
             .replace("__DATA__", json.dumps(payload).replace("</", "<\\/"))
             .replace("__ENGINE__", _script(_asset("whiteboard.js")))
             .replace("__TEACHER__", _teacher_scripts((social or {}).get("teacher"))))
@@ -786,6 +795,11 @@ def _mux(ffmpeg: str, video: Path, spoken: list[tuple[Path | None, float]], star
     if done.returncode:
         raise RuntimeError(f"ffmpeg could not add the voice: {done.stderr.decode(errors='ignore')[-400:]}")
 
+
+# KaTeX for the live board's step animation (rendered videos use Manim) —
+# inlined, fonts and all, so the board still works offline (static/LICENSE-katex.txt).
+def _katex() -> str:
+    return f"<style>{_asset('katex.inline.css')}</style><script>{_script(_asset('katex.min.js'))}</script>"
 
 _CONTROLS = """<div class="bar">
  <button id="wb-prev" onclick="__wb.prev()">⟨</button>

@@ -34,58 +34,11 @@ OP_COLOUR = {"\\times": BLUE, "\\div": BLUE, "+": GREEN, "-": RED}
 config.background_color = "#fdfdfb"
 
 
-def tex_of(text: str) -> str:
-    """A learner's line as LaTeX: ÷ ×, a/b as a fraction, * as ×."""
-    t = str(text).replace("÷", r"\div ").replace("×", r"\times ").replace("*", r"\times ").replace("−", "-")
-    t = re.sub(r"(?<![\\\w])(\d+)\s*/\s*(\d+)", r"\\frac{\1}{\2}", t)
-    return t
+import sys
+from pathlib import Path
 
-
-def mixed_tex(text: str) -> str:
-    """Words and maths, as the item writes them ("Division: $18 \\div (-3)$"):
-    the words as text, the maths between the dollars as maths."""
-    out = []
-    for k, part in enumerate(str(text).split("$")):
-        if not part:
-            continue
-        if k % 2:
-            out.append(tex_of(part))
-        else:
-            safe = re.sub(r"([#%&_{}])", r"\\\1", part).replace("~", " ").replace("^", " ")
-            safe = safe.replace("÷", r"$\div$").replace("×", r"$\times$").replace("−", "-")
-            out.append(r"\text{" + safe + "}")
-    return " ".join(out) or r"\text{}"
-
-
-def num_tex(v) -> str:
-    """A number as the board writes it: -6, 3/4 as a fraction."""
-    try:
-        f = Fraction(str(v))
-    except (ValueError, ZeroDivisionError):
-        return tex_of(str(v))
-    if f.denominator == 1:
-        return str(f.numerator)
-    sign = "-" if f < 0 else ""
-    return f"{sign}\\frac{{{abs(f.numerator)}}}{{{f.denominator}}}"
-
-
-def op_tex(op: str) -> str:
-    return {"÷": r"\div", "×": r"\times", "*": r"\times", "/": r"\div"}.get(op, op)
-
-
-def split_on(before: str, left, op: str, right) -> tuple[str, str, str] | None:
-    """`before` as (what comes first, the part done now, what follows) — the
-    part found however the engine spaced or bracketed its numbers."""
-    def term(v) -> str:
-        s = re.escape(str(v)).replace("\\-", "-")
-        if str(v).startswith("-"):
-            return rf"(?:\(\s*{s}\s*\)|{s})"
-        return rf"(?:\(\s*{s}\s*\)|{s})"
-    pat = rf"{term(left)}\s*{re.escape(op_tex(op))}\s*{term(right)}"
-    m = re.search(pat, before)
-    if not m:
-        return None
-    return before[:m.start()], before[m.start():m.end()], before[m.end():]
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))     # backend/, run as a script by manim
+from app.services.step_tex import mixed_tex, num_tex, op_tex, split_on, tex_of  # noqa: E402
 
 
 class Board(Scene):

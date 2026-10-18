@@ -833,13 +833,109 @@
     return Math.max(2.4, words / 2.6) + GAP;
   });
 
+  // ── the working, live: the engine's steps animated with KaTeX ──
+  // What a rendered video shows with Manim, in the browser: the part done next
+  // ringed, its sum worked under it, then turned into its result in place.
+  // Every change is a timeline tween, so play, pause and seeking all work.
+  const STEPS = (() => {
+    if (!document.body.classList.contains("live") || !window.katex) return null;
+    const css = document.createElement("style");
+    css.textContent = `
+      #wb-steps{position:absolute;inset:0;pointer-events:none;container-type:inline-size;opacity:0;visibility:hidden;
+        display:flex;align-items:center;justify-content:center;background:#fdfdfb;font-family:serif;color:#1b1f2a}
+      #wb-steps .stage{position:relative;width:100%;height:100%}
+      #wb-steps .ln{position:absolute;left:0;right:0;top:30%;text-align:center;font-size:5.4cqw;white-space:nowrap;opacity:0}
+      #wb-steps .side{position:absolute;left:0;right:0;top:58%;text-align:center;font-size:3.6cqw;opacity:0}
+      #wb-steps .pt{display:inline-block;border-radius:.18em;padding:0 .08em;border:.08em solid transparent}
+      #wb-steps .ans{border:.07em solid #15803d;color:#15803d;border-radius:.2em;padding:.05em .35em}
+      #wb-steps .blue{color:#1d4ed8}#wb-steps .green{color:#15803d}#wb-steps .red{color:#c2410c}#wb-steps .amber{color:#d97706}`;
+    document.head.appendChild(css);
+    if (getComputedStyle(root).position === "static") root.style.position = "relative";
+    const layer = document.createElement("div");
+    layer.id = "wb-steps";
+    layer.innerHTML = '<div class="stage"></div>';
+    root.appendChild(layer);
+    const stage = layer.firstChild;
+    const RING = { blue: "#1d4ed8", green: "#15803d", red: "#c2410c", amber: "#d97706" };
+    const tex = (t) => { try { return katex.renderToString(String(t || ""), { throwOnError: false }); } catch (e) { return ""; } };
+    const make = (cls, html) => { const d = document.createElement("div"); d.className = cls; d.innerHTML = html; stage.appendChild(d); return d; };
+    // A piece that starts or ends on an operator keeps its spacing: KaTeX
+    // sets "\\times 2" on its own as a sign, "{}\\times 2" as an operation.
+    const OPS = /^\s*(\\times|\\div|[-+=])/, OPS_END = /(\\times|\\div|[-+=])\s*$/;
+    const spaced = (t) => (OPS.test(t) ? "{}" : "") + t + (OPS_END.test(t) ? "{}" : "");
+    const part = (t, cls) => `<span class="pt ${cls || ""}">${tex(spaced(String(t || "")))}</span>`;
+    let current = null;            // the line on the board now
+    function show(line, at) {
+      if (current && current !== line) tl.to(current, { opacity: 0, duration: 0.25 }, at);
+      tl.fromTo(line, { opacity: 0, y: 12 }, { opacity: 1, y: 0, duration: 0.35 }, at);
+      current = line;
+    }
+    return {
+      can(s) { return Boolean(s.tex) && !(s.tex.done && !current); },
+      enter(at) { tl.set(layer, { autoAlpha: 1 }, at); },
+      leave(at) { tl.to(layer, { autoAlpha: 0, duration: 0.3 }, at); current = null; },
+      play(s, at, dur) {
+        const t = s.tex;
+        if (t.line !== undefined) {                       // a setup, an equation, the answer
+          const ans = s.scene === "answer";
+          const ln = make("ln", ans ? `<span class="pt ans">${tex(t.line)}</span>` : tex(t.line));
+          ln.dataset.tex = t.line;
+          show(ln, at);
+          return;
+        }
+        if (t.done) {                                     // the unknown alone: boxed
+          const box = current && current.querySelector(".katex");
+          if (box) tl.to(box.parentElement || box, { boxShadow: "0 0 0 .08em #15803d", borderRadius: ".2em", duration: 0.4 }, at + 0.2);
+          return;
+        }
+        if (t.both) {                                     // the same thing done to both sides
+          const c = t.colour;
+          const both = make("ln", part(t.both[0]) + part(t.both[1], c) + part("=") + part(t.both[2]) + part(t.both[3], c));
+          show(both, at);
+          show(make("ln", tex(t.next)), at + Math.min(dur * 0.6, 2.4));
+          return;
+        }
+        // A rewrite: ring the part, work it beside, turn it into its result.
+        const c = t.colour, ring = RING[c] || RING.amber;
+        if (!t.parts) { show(make("ln", tex(t.before)), at); show(make("ln", tex(t.after)), at + Math.min(dur * 0.6, 2.4)); return; }
+        const [pre, mid, post] = t.parts;
+        const line = make("ln", (pre.trim() ? part(pre) : "") + `<span class="pt mid">${tex(mid)}</span>`
+                                + `<span class="pt res ${c}" style="display:none">${tex(t.res)}</span>` + (post.trim() ? part(post) : ""));
+        const midEl = line.querySelector(".mid"), resEl = line.querySelector(".res");
+        if (!current || current.dataset.tex !== t.before) show(line, at);
+        else { tl.set(current, { opacity: 0 }, at); tl.set(line, { opacity: 1, y: 0 }, at); current = line; }
+        line.dataset.tex = t.after;
+        const side = make("side", `<span class="${c}">${tex(t.side)}</span>`);
+        tl.to(midEl, { borderColor: ring, color: ring, duration: 0.35 }, at + 0.15);
+        tl.fromTo(side, { opacity: 0, y: -10 }, { opacity: 1, y: 0, duration: 0.4 }, at + 0.6);
+        const turn = at + Math.max(1.2, Math.min(dur * 0.6, dur - 0.8));
+        tl.to(midEl, { opacity: 0, scale: 0.6, duration: 0.25 }, turn);
+        tl.set(midEl, { display: "none" }, turn + 0.25);
+        tl.set(resEl, { display: "inline-block", opacity: 0, scale: 1.3 }, turn + 0.25);
+        tl.to(resEl, { opacity: 1, scale: 1, duration: 0.35 }, turn + 0.25);
+        tl.to(side, { opacity: 0, y: 10, duration: 0.3 }, turn + 0.3);
+      },
+    };
+  })();
+  const STEP_KINDS = { setup: 1, rewrite: 1, balance_start: 1, balance_move: 1, balance_done: 1, answer: 1 };
+
   function build() {
     let at = data.lead || 0.3;      // a social cut opens on its cover first
+    let live = false;               // the KaTeX layer is up
     const starts = [];
     scenes.forEach((s, i) => {
       starts.push(at);
       tl.addLabel(`s${i}`, at);
       // A scene Manim animates is laid over the board afterwards: nothing drawn here.
+      // Live, the working is animated with KaTeX on a layer over the board.
+      const stepped = STEPS && STEP_KINDS[s.scene] && STEPS.can(s) && (s.scene !== "answer" || live);
+      if (stepped && !live) { STEPS.enter(at); live = true; }
+      if (!stepped && live) { STEPS.leave(at); live = false; }
+      if (stepped) {
+        try { STEPS.play(s, at, durations[i] - GAP); } catch (e) { console.warn("step", i, s.scene, e); }
+        at += durations[i];
+        return;
+      }
       const fn = s.manim ? null : builders[s.scene];
       if (fn) {
         try { fn(s, at, durations[i] - GAP); } catch (e) { console.warn("scene", i, s.scene, e); }
