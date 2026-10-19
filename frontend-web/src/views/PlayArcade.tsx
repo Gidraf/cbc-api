@@ -46,6 +46,8 @@ import {
   useHandPhoto,
   useMakeSocial,
   usePosterCommand,
+  usePostQuestion,
+  useQuestionSearch,
   usePosterMacLink,
   usePosterOverview,
   usePosterShot,
@@ -1304,6 +1306,51 @@ function Groups({ groups, sharesPerDay, restDays, perPost, busy, online, onRead 
 const MAX_GROUPS_PER_POST = 5;
 
 /** Up to five of the owner's groups, picked by hand, for the next video now. */
+/** Post now — a question you pick: search its words, and it goes out live on
+ *  Facebook straight away (its video is made first if it has none yet). */
+function PostQuestionNow({ left }: { left: number }) {
+  const [words, setWords] = React.useState("");
+  const found = useQuestionSearch(words);
+  const post = usePostQuestion();
+  const toast = useToast();
+  async function go(id: string) {
+    try {
+      const out = await post.mutateAsync({ question_id: id, share: "feed" });
+      if (out?.error) toast(String(out.error), out?.making ? "info" : "danger");
+      else toast(String(out?.message || "Sent to the poster — it goes out in a minute or two."), "ok");
+    } catch (err) { toast(err instanceof Error ? err.message : "Could not post it.", "danger"); }
+  }
+  return (
+    <div style={{ display: "grid", gap: "var(--s2)", fontSize: "var(--text-sm)" }}>
+      <Stack direction="row" gap="var(--s2)" wrap align="center">
+        <span style={{ color: "var(--ink-3)" }}>Post a question now:</span>
+        <Input value={words} placeholder="Words from the question…" style={{ minWidth: 240, flex: 1 }}
+               onChange={(e) => setWords(e.target.value)} />
+      </Stack>
+      {words.trim().length >= 3 && found.isLoading && <span style={{ color: "var(--ink-3)" }}>Looking…</span>}
+      {found.data && found.data.items.length === 0 && <span style={{ color: "var(--ink-3)" }}>No question has those words.</span>}
+      {(found.data?.items || []).map((q) => {
+        const out = q.post?.handed_at;
+        return (
+          <Stack key={q.question_id} direction="row" gap="var(--s2)" align="center"
+                 style={{ borderTop: "1px solid var(--line-2)", paddingTop: 6 }}>
+            <span style={{ flex: 1, minWidth: 0 }}>
+              <span style={{ display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{q.question_text}</span>
+              <span style={{ color: "var(--ink-3)", fontSize: "var(--text-xs)" }}>
+                {[q.subject, q.sub_strand].filter(Boolean).join(" · ")} · {q.video ? "video ready" : "no video yet — made first"}
+                {out ? " · already out or scheduled" : ""}
+              </span>
+            </span>
+            <Button size="sm" variant="primary" disabled={post.isPending || !left || !!out}
+                    title={out ? "Already posted or scheduled — it would go out twice" : !left ? "Today's limit is used" : "Live on Facebook now"}
+                    onClick={() => go(q.question_id)}>Post now</Button>
+          </Stack>
+        );
+      })}
+    </div>
+  );
+}
+
 function PickGroups({ groups, busy, onPost }: { groups: PosterGroup[]; busy: boolean; onPost: (names: string[]) => void }) {
   const [picked, setPicked] = React.useState<string[]>([]);
   const full = picked.length >= MAX_GROUPS_PER_POST;
@@ -2196,6 +2243,14 @@ function AutoPost() {
               <Button size="sm" variant={picking ? "primary" : "ghost"} disabled={!(o.groups || []).length}
                       onClick={() => setPicking((x) => !x)}>Pick groups…</Button>
             </Stack>
+          )}
+          {o.live.online && <PostQuestionNow left={left} />}
+          {o.scheduler && (!o.scheduler.trusted || o.scheduler.unconfirmed > 0) && (
+            <p style={{ margin: 0, fontSize: "var(--text-sm)", color: o.scheduler.trusted ? "var(--ink-3)" : "var(--warn, var(--ink-2))" }}>
+              {o.scheduler.trusted
+                ? `📅 ${o.scheduler.unconfirmed} scheduled reel(s) past their time are being looked for on the profile — any not there two hours on goes out live.`
+                : `⚠️ ${o.scheduler.note}`}
+            </p>
           )}
           {o.comments && <CommentThread c={o.comments} online={o.live.online} busy={command.isPending}
                                         onCheck={() => run("comments_check", "facebook")} />}

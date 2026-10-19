@@ -1626,6 +1626,26 @@ class PosterCommand(BaseModel):
     options: dict[str, Any] = {}
 
 
+class PostQuestion(BaseModel):
+    question_id: str = Field(..., min_length=3, max_length=200)
+    share: Literal["feed", "groups"] = "feed"
+    groups: list[str] = []
+
+
+@router.post("/poster/post-question")
+def poster_post_question(payload: PostQuestion, auth: AuthContext = Depends(ANY)) -> dict[str, Any]:
+    """Post now — this question, live on Facebook: booked for now and handed
+    to the poster at once (its video made first if need be)."""
+    from ..services import social_export
+
+    _may_make_videos(auth)
+    got = social_export.post_question(payload.question_id)        # an unknown question is a 404
+    if not got.get("ok"):
+        return got
+    return poster_command(PosterCommand(action="run_now", platform="facebook", post_id=got["post_id"],
+                                        options={"share": payload.share, "groups": payload.groups}), auth=auth)
+
+
 @router.post("/poster/command")
 def poster_command(payload: PosterCommand, auth: AuthContext = Depends(ANY)) -> dict[str, Any]:
     """To the Mac poster's queue when it is checking in; straight to the

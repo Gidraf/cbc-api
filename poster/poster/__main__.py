@@ -633,10 +633,11 @@ async def post_now(platform: str = "", options: dict[str, Any] | None = None) ->
         if done.get("post_id"):
             return done
         why = done.get("skipped") or ""
+    reasons: dict[str, str] = {}
     if share == "groups":
         platforms = ["facebook"]        # the only platform with groups
     else:
-        platforms = [platform] if platform else list(FLOWS)
+        platforms = [platform] if platform else sorted(FLOWS, key=lambda x: x != "facebook")   # Facebook first
     for p in platforms:
         if not platform and share != "groups" and state["logins"].get(p, {}).get("logged_in") is False:
             continue
@@ -646,7 +647,11 @@ async def post_now(platform: str = "", options: dict[str, Any] | None = None) ->
             if share == "feed":
                 post["groups"] = []
             return await publish(post, dry_run=False)
-        why = nxt.get("reason") or why
+        if nxt.get("reason"):
+            reasons[p] = nxt["reason"]
+    # Facebook's reason first: it is where the videos go; another platform's
+    # "nothing booked" said last used to hide it.
+    why = reasons.get("facebook") or next(iter(reasons.values()), "") or why
     return {"ok": False, "error": why or "Nothing queued to post."}
 
 
