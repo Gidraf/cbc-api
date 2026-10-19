@@ -1016,6 +1016,7 @@ def _unlinked(now: datetime) -> list[dict[str, Any]]:
     return fetch_all("""SELECT post_id, question_id, status, platform_scheduled, notes, comments_state FROM social_posts
                         WHERE platform = 'facebook' AND COALESCE(format, 'video') = 'video' AND url = ''
                           AND handed_at IS NOT NULL AND posted_at <= :ripe AND posted_at >= :since
+                          AND audience = 'learners'
                         ORDER BY posted_at DESC LIMIT 400""",
                      {"ripe": now - timedelta(minutes=10), "since": now - timedelta(days=90)}) or []
 
