@@ -381,7 +381,7 @@ def schedule_next(now: datetime | None = None, *, book_if_empty: bool = True) ->
         """SELECT * FROM social_posts WHERE platform = 'facebook' AND COALESCE(format, 'video') = 'video'
            AND posted_at IS NULL AND handed_at IS NULL AND status IN ('planned', 'failed') AND attempts < :tries
            AND groups = '[]'::jsonb AND scheduled_for > :soon AND scheduled_for <= :until
-           ORDER BY scheduled_for LIMIT 40""",
+           ORDER BY scheduled_for LIMIT 600""",
         {"tries": MAX_ATTEMPTS, "soon": now + AHEAD_LEAD, "until": now + timedelta(days=rules["ahead_days"])}) or []
     if not rows and book_if_empty:
         # A manual "Schedule now" with nothing booked inside the window: book
@@ -391,13 +391,17 @@ def schedule_next(now: datetime | None = None, *, book_if_empty: bool = True) ->
         except Exception as exc:  # noqa: BLE001
             logger.warning("Booking for Schedule now failed: %s", exc)
         return schedule_next(now, book_if_empty=False)
-    waiting = 0
+    # Every booking in the window is looked at, soonest first: the soonest are
+    # often waiting for their videos to be made again, and a ready one may
+    # sit behind them. Those not made are queued, the soonest 20 a press.
+    waiting = queued = 0
     for row in rows:
         st = _media(row)
         if st.get("status") != "ready":
-            if st.get("status") == "none":
+            if st.get("status") == "none" and queued < 20:
                 try:
                     social.enqueue(row["question_id"], queued_by="schedule-now")
+                    queued += 1
                 except Exception:  # noqa: BLE001
                     pass
             waiting += 1
@@ -419,7 +423,8 @@ def schedule_next(now: datetime | None = None, *, book_if_empty: bool = True) ->
                          "title": title, "attempts": row.get("attempts") or 0,
                          "schedule_at": row["scheduled_for"].astimezone(EAT).isoformat(), "groups": []},
                 "reason": "", "left_today": rules["daily_cap"] - done}
-    why = (f"{waiting} booked video(s) in Facebook's window are still being made — they go as each is ready." if waiting
+    why = (f"None of the {waiting} booked reel(s) in Facebook's window has its current video yet (videos made before "
+           f"the marketing are made again) — {queued} more queued now; they go as each is ready." if waiting
            else "Nothing to schedule: no unposted questions left in the Auto-book subjects — add a subject or more questions.")
     return {"post": None, "reason": why}
 
@@ -792,6 +797,34 @@ UNCONFIRMED_SCHEDULE = re.compile(r"did not confirm the scheduled", re.I)
 CONFIRM_WITHIN = timedelta(hours=2)
 SCHEDULER_MISSED = "scheduler-missed"
 SCHEDULER_CONFIRMED = "scheduler-confirmed"
+SCHEDULER_UNVERIFIED = "scheduler-unverified"
+LIVE_IF_LOST_WITHIN = timedelta(hours=12)     # older than this, a reel not found is not sent out again
+FINDABLE_FOR = timedelta(days=2)              # a post without its link is searched for on the profile this long
+SEARCH_COOLDOWN = timedelta(minutes=8)
+
+
+def _searched_in_vain(now: datetime) -> bool:
+    """A profile search failed a moment ago: the next turn goes to posts with links (the campaign)."""
+    from ..infra.db import fetch_one
+
+    row = fetch_one("""SELECT MAX(updated_at) AS t FROM social_posts WHERE url = ''
+                       AND comments_error ILIKE 'Could not find the post%'""") or {}
+    t = row.get("t")
+    return isinstance(t, datetime) and now - t < SEARCH_COOLDOWN
+
+
+def _give_up_unfindable(now: datetime) -> int:
+    """Posts without their link, out longer than FINDABLE_FOR, whose thread
+    never started: too far down the profile to find by scrolling."""
+    from ..infra.db import fetch_one
+
+    row = fetch_one("""WITH up AS (
+                         UPDATE social_posts SET comments_state = 'failed',
+                                comments_error = 'Too far down the profile to find without its link.'
+                         WHERE comments_state = 'pending' AND url = '' AND posted_at < :old
+                         RETURNING 1)
+                       SELECT COUNT(*) AS n FROM up""", {"old": now - FINDABLE_FOR}) or {}
+    return int(row.get("n") or 0)
 
 
 def _not_on_profile(error: str) -> bool:
@@ -812,6 +845,14 @@ def _scheduled_not_found(post_id: str, error: str, now: datetime) -> None:
 
     row = fetch_one("SELECT posted_at FROM social_posts WHERE post_id = :id", {"id": post_id}) or {}
     due = row.get("posted_at")
+    if isinstance(due, datetime) and now - due > LIVE_IF_LOST_WITHIN:
+        # Its time was long ago: too far down the profile to be sure it is not
+        # there. Never sent out again (it could go out twice): marked unverified.
+        execute("""UPDATE social_posts SET comments_state = 'failed', comments_error = :e, notes = :n, updated_at = NOW()
+                   WHERE post_id = :id""",
+                {"id": post_id, "n": SCHEDULER_UNVERIFIED,
+                 "e": "Not found on the profile, and its time was too long ago to be sure; check Meta Business Suite."})
+        return
     if isinstance(due, datetime) and now - due < CONFIRM_WITHIN:
         # Not counted as a failed try: it is looked for until the two hours are up.
         execute("""UPDATE social_posts SET comments_error = :e, comments_next_at = :next, updated_at = NOW()
@@ -835,10 +876,12 @@ def recheck_scheduled(now: datetime | None = None) -> int:
     row = fetch_one("""WITH up AS (
                          UPDATE social_posts SET comments_state = 'pending', comments_attempts = 0, comments_next_at = :now
                          WHERE platform_scheduled AND status = 'scheduled' AND url = '' AND posted_at <= :ripe
+                           AND posted_at >= :recent
                            AND COALESCE(format, 'video') = 'video' AND platform = 'facebook'
                            AND comments_state IN ('', 'failed')
                          RETURNING 1)
-                       SELECT COUNT(*) AS n FROM up""", {"now": now, "ripe": now - timedelta(minutes=5)}) or {}
+                       SELECT COUNT(*) AS n FROM up""", {"now": now, "ripe": now - timedelta(minutes=5),
+                                                 "recent": now - LIVE_IF_LOST_WITHIN}) or {}
     return int(row.get("n") or 0)
 
 
@@ -985,15 +1028,24 @@ def comments_next(now: datetime | None = None, *, check: bool = False,
     if not check and "post" not in roles:
         # A comments-only Mac: no post's own thread, straight to the readings and the campaign.
         row = {"skip": True}
+    if not check and not (row and row.get("skip")):
+        try:
+            _give_up_unfindable(now)
+        except Exception as exc:  # noqa: BLE001
+            logger.info("Could not tidy the comment queue: %s", exc)
     row = None if row and row.get("skip") else row or fetch_one(
         """SELECT post_id, question_id, platform, url, comments_state, boost_index FROM social_posts
            WHERE comments_state IN ('pending', 'part', 'boost') AND comments_attempts < :tries
              AND comments_next_at <= :now AND posted_at <= :now
+             -- Found by searching the profile (no link yet): only a recent post,
+             -- and not straight after a search that failed (the campaign's turn).
+             AND (url <> '' OR (posted_at >= :fresh AND NOT :cool))
            -- An answer that is due goes before other posts' first comments (it
            -- follows its choices by a minute, not after a whole backlog), and
            -- the loop's extra comments come last.
            ORDER BY CASE comments_state WHEN 'part' THEN 0 WHEN 'pending' THEN 1 ELSE 2 END, comments_next_at
-           LIMIT 1""", {"tries": COMMENT_TRIES, "now": now - timedelta(seconds=30)})
+           LIMIT 1""", {"tries": COMMENT_TRIES, "now": now - timedelta(seconds=30),
+                         "fresh": now - FINDABLE_FOR, "cool": _searched_in_vain(now)})
     if row and row["comments_state"] == "boost":
         extras = _extras(row["question_id"])
         k = int(row.get("boost_index") or 0)
@@ -2417,7 +2469,8 @@ def campaign_next(now: datetime | None = None) -> dict[str, Any]:
                      (SELECT MAX(at) FROM campaign_log c WHERE c.post_id = p.post_id AND c.kind = 'share' AND c.ok) AS shared_at
               FROM social_posts p
               WHERE p.platform = 'facebook' AND COALESCE(p.format, 'video') = 'video' AND p.handed_at IS NOT NULL
-                AND p.posted_at <= :ripe AND p.comments_state IN ('done', 'complete', 'boost') AND NOT p.campaign_done"""
+                AND p.posted_at <= :ripe AND NOT p.campaign_done
+                AND (p.comments_state IN ('done', 'complete', 'boost') OR (p.comments_state = 'failed' AND p.url <> ''))"""
     params = {"now": now, "d": day, "ripe": now - timedelta(minutes=30)}
     # Every post to the floor first, the oldest first (4 comments are its thread).
     row = fetch_one(base + """ AND p.campaign_index + 4 < :floor

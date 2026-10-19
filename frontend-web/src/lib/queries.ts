@@ -4861,6 +4861,86 @@ export function useQuestionSearch(search: string) {
   });
 }
 
+export type LibraryItem = {
+  question_id: string; question_text: string; type: string; grade?: string; subject?: string; strand?: string; sub_strand?: string;
+  has_figure: boolean; status?: string;
+  video: { kind: string; url: string; thumbnail_url: string | null; made_at: string } | null;
+  post: { post_id: string; status: string; posted_at: string | null; handed_at: string | null; scheduled_for: string | null;
+          url: string; views: number | null; reactions: number | null; comments: number | null; shares: number | null;
+          boost_state: string; marketing: boolean; platform_scheduled?: boolean; notes?: string } | null;
+};
+export type LibraryFilters = { grade: string; subject: string; sub_strand: string; search: string;
+                               show: "all" | "video" | "no_video" | "posted" | "not_posted" | "boosted"; offset: number };
+
+/** The question bank with each question's video and post — the Library's list. */
+export function useLibrary(f: LibraryFilters) {
+  const api = useApi();
+  return useQuery({
+    queryKey: ["library", f],
+    queryFn: () => {
+      const qs = new URLSearchParams({ show: f.show, limit: "40", offset: String(f.offset) });
+      for (const k of ["grade", "subject", "sub_strand", "search"] as const) if (f[k].trim()) qs.set(k, f[k].trim());
+      return api<{ items: LibraryItem[]; total: number; in_scope: number; with_video: number; posted: number; staff: boolean }>(
+        `/api/v1/play/library?${qs}`);
+    },
+    placeholderData: (prev) => prev,
+  });
+}
+
+/** Grades, subjects and sub-strands with their question counts, for the Library's filters. */
+export function useLibraryTree() {
+  const api = useApi();
+  return useQuery({
+    queryKey: ["library-tree"],
+    queryFn: () => api<{ rows: Array<{ grade: string; subject: string; strand: string; sub_strand: string; questions: number }> }>(
+      "/api/v1/play/library/tree"),
+    staleTime: 10 * 60_000,
+  });
+}
+
+export type LibraryPost = {
+  post_id: string; platform: string; format: string; status: string; scheduled_for: string | null; posted_at: string | null;
+  handed_at: string | null; platform_scheduled: boolean; url: string; notes: string; attempts: number; last_error: string;
+  last_attempt_at: string | null; created_by: string; groups: string[]; destinations: string[]; teacher: string; marketing: boolean;
+  comments_state: string; comments_error: string; comments_next_at: string | null; campaign_index: number; campaign_done: boolean;
+  score: number | null; boost_state: string; boost_daily_ksh: number | null; boost_days: number | null; boost_error: string;
+  boosted_at: string | null; views: number; likes: number; comments: number; shares: number;
+  daily: Array<{ day: string; views: number; reactions: number; comments: number; shares: number }>;
+  campaign: Record<string, { kind: string; ok: number; failed: number; last: string }>;
+};
+export type LibraryQuestion = {
+  question_id: string; question_text: string; type: string; options: Array<{ id: string; text: string; is_correct?: boolean }>;
+  answer: unknown; explanation: string; status: string; grade?: string; subject?: string; strand?: string; sub_strand?: string;
+  has_figure: boolean; videos: Array<{ kind: string; url: string; thumbnail_url: string | null; made_at: string }>;
+  current_video: { status: string; url?: string; thumbnail_url?: string; teacher?: string; marketing?: boolean; error?: string };
+  staff: boolean; posts: LibraryPost[];
+  earlier_posts: Array<{ post_id: string; platform: string; status: string; posted_at: string | null; url: string; views: number;
+                         comments: number; archived_at: string | null }>;
+};
+
+/** Everything about one question: item, videos, posts, comments, campaign, boost, numbers. */
+export function useLibraryQuestion(questionId: string) {
+  const api = useApi();
+  return useQuery({
+    queryKey: ["library-question", questionId],
+    enabled: Boolean(questionId),
+    queryFn: () => api<LibraryQuestion>(`/api/v1/play/library/${encodeURIComponent(questionId)}`),
+    refetchInterval: (q) => (["queued", "running"].includes(q.state.data?.current_video?.status || "") ? 8000 : false),
+  });
+}
+
+/** Boost one post on Facebook — only on the owner's press, with the budget chosen. */
+export function useBoostPost() {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { post_id: string; daily_ksh: number; days: number; again?: boolean }) =>
+      api<Record<string, any>>(`/api/v1/play/poster/posts/${encodeURIComponent(v.post_id)}/boost`,
+        { method: "POST", body: JSON.stringify({ daily_ksh: v.daily_ksh, days: v.days, again: Boolean(v.again) }) }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["library-question"] }); qc.invalidateQueries({ queryKey: ["library"] }); },
+  });
+}
+
 /** Post this question now, live on Facebook (its video is made first if need be). */
 export function usePostQuestion() {
   const api = useApi();
@@ -4868,7 +4948,8 @@ export function usePostQuestion() {
   return useMutation({
     mutationFn: (v: { question_id: string; share?: "feed" | "groups"; groups?: string[] }) =>
       api<Record<string, any>>("/api/v1/play/poster/post-question", { method: "POST", body: JSON.stringify(v) }),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["poster"] }); qc.invalidateQueries({ queryKey: ["question-search"] }); },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["poster"] }); qc.invalidateQueries({ queryKey: ["question-search"] });
+                       qc.invalidateQueries({ queryKey: ["library-question"] }); qc.invalidateQueries({ queryKey: ["library"] }); },
   });
 }
 

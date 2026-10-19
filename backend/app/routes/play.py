@@ -133,6 +133,7 @@ def library(grade: str = Query(""), subject: str = Query(""), strand: str = Quer
     if staff:
         for r in fetch_all("""SELECT DISTINCT ON (p.question_id) p.question_id, p.post_id, p.status, p.posted_at,
                                      p.handed_at, p.scheduled_for, p.url, p.score, p.marketing, p.boost_state,
+                                     p.platform_scheduled, p.notes,
                                      p.boost_daily_ksh, p.boost_days, p.teacher,
                                      i.views, i.reactions, i.comments, i.shares
                               FROM social_posts p
@@ -167,6 +168,64 @@ def library(grade: str = Query(""), subject: str = Query(""), strand: str = Quer
     return {"items": items, "total": len(chosen), "in_scope": len(pool),
             "with_video": sum(1 for q in pool if str(q.get("question_id")) in videos),
             "posted": sum(1 for p in posts.values() if p.get("handed_at")), "staff": staff}
+
+
+@router.get("/library/{question_id}")
+def library_question(question_id: str, auth: AuthContext = Depends(CONTENT)) -> dict[str, Any]:
+    """Everything about one question in one place: the item and its answer,
+    its videos (and whether the current one is made), and — for the team —
+    each post of it: where it is, when, its link, its comments and campaign,
+    its boost, its numbers day by day, and what went wrong last."""
+    from ..infra.db import fetch_all
+    from ..services import social, whiteboard
+
+    staff = auth.role in ("admin", "operator", "reviewer")
+    q = whiteboard.load(question_id)                 # an unknown question is a 404
+    link = q.get("curriculum") or {}
+
+    def plain(row: dict[str, Any]) -> dict[str, Any]:
+        return {k: (v.isoformat() if hasattr(v, "isoformat") else v) for k, v in row.items()}
+
+    videos = [{**plain(r), "url": whiteboard.public_url(r["object_name"]),
+               "thumbnail_url": whiteboard.public_url(r["object_name"][:-4] + ".jpg") if r["kind"] == "social" else None}
+              for r in fetch_all("""SELECT kind, object_name, made_at FROM question_videos WHERE question_id = :id
+                                    ORDER BY made_at DESC""", {"id": question_id}) or []]
+    try:
+        now_video = social.status(question_id, q)
+        current = {k: now_video.get(k) for k in ("status", "url", "thumbnail_url", "teacher", "marketing", "error", "job_id")}
+    except Exception as exc:  # noqa: BLE001
+        current = {"status": "unknown", "error": str(exc)[:300]}
+    out: dict[str, Any] = {
+        "question_id": question_id, "question_text": q.get("question_text") or "", "type": q.get("question_type") or "",
+        "options": q.get("options") or [], "answer": q.get("answer") or q.get("correct_answer") or "",
+        "explanation": q.get("explanation") or "", "status": q.get("status") or "",
+        "grade": link.get("grade"), "subject": link.get("subject"), "strand": link.get("strand"),
+        "sub_strand": link.get("sub_strand"), "has_figure": _has_figure(q),
+        "videos": videos, "current_video": current, "staff": staff, "posts": [], "earlier_posts": []}
+    if not staff:
+        return out
+    cols = """post_id, platform, format, status, scheduled_for, posted_at, handed_at, platform_scheduled, url, notes,
+              attempts, last_error, last_attempt_at, created_by, groups, destinations, teacher, marketing,
+              comments_state, comments_error, comments_next_at, campaign_index, campaign_done, score,
+              boost_state, boost_daily_ksh, boost_days, boost_error, boosted_at, views, likes, comments, shares"""
+    for r in fetch_all(f"SELECT {cols} FROM social_posts WHERE question_id = :id ORDER BY created_at",
+                       {"id": question_id}) or []:
+        post = plain(r)
+        post["daily"] = [plain(d) for d in fetch_all(
+            """SELECT DISTINCT ON (at::date) at::date AS day, views, reactions, comments, shares FROM post_insights
+               WHERE post_id = :p ORDER BY at::date, at DESC""", {"p": r["post_id"]}) or []]
+        camp = fetch_all("""SELECT kind, COUNT(*) FILTER (WHERE ok) AS ok, COUNT(*) FILTER (WHERE NOT ok) AS failed,
+                                   MAX(at) AS last FROM campaign_log WHERE post_id = :p GROUP BY kind""",
+                         {"p": r["post_id"]}) or []
+        post["campaign"] = {c["kind"]: plain(c) for c in camp}
+        out["posts"].append(post)
+    try:
+        out["earlier_posts"] = [plain(r) for r in fetch_all(
+            """SELECT post_id, platform, status, posted_at, url, views, comments, archived_at FROM social_posts_history
+               WHERE question_id = :id ORDER BY archived_at DESC NULLS LAST LIMIT 10""", {"id": question_id}) or []]
+    except Exception:  # noqa: BLE001
+        out["earlier_posts"] = []
+    return out
 
 
 @router.get("/items")
