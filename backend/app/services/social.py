@@ -697,7 +697,17 @@ def _single_teacher_keys(q: dict[str, Any]) -> list[tuple[str, str]]:
     return out
 
 
-def status(question_id: str, q: dict[str, Any] | None = None, voice: str = "", *, legacy: bool = True) -> dict[str, Any]:
+def _serve_older() -> bool:
+    from . import platform_settings
+
+    try:
+        return bool(platform_settings.get("social_serve_older", True))
+    except Exception:  # noqa: BLE001
+        return True
+
+
+def status(question_id: str, q: dict[str, Any] | None = None, voice: str = "", *, legacy: bool = True,
+           older: bool = True) -> dict[str, Any]:
     from ..infra.db import fetch_one
     from ..infra.storage import object_storage
     from . import whiteboard
@@ -727,6 +737,17 @@ def status(question_id: str, q: dict[str, Any] | None = None, voice: str = "", *
                 return {**out, "status": "ready", "key": old, "url": whiteboard.public_url(f"{PREFIX}/{question_id}/{old}.mp4"),
                         "thumbnail_url": whiteboard.public_url(f"{PREFIX}/{question_id}/{old}.jpg"), "teacher": gender,
                         "teacher_pending": not gender}
+    if legacy and older and not asked_voice and _serve_older():
+        # Settings → Post older videos while new ones are made: the newest
+        # video this question already has goes out, while the new one is made
+        # (the factory, which asks with legacy=False, still makes it).
+        made = fetch_one("""SELECT object_name FROM question_videos WHERE question_id = :q AND kind = 'social'
+                            ORDER BY made_at DESC LIMIT 1""", {"q": question_id})
+        obj = str((made or {}).get("object_name") or "")
+        if obj and object_storage.object_exists(obj):
+            return {**out, "status": "ready", "older": True, "key": obj.rsplit("/", 1)[-1][:-4],
+                    "url": whiteboard.public_url(obj), "thumbnail_url": whiteboard.public_url(obj[:-4] + ".jpg"),
+                    "marketing": False}
     job = fetch_one(
         "SELECT job_id, status, error FROM jobs WHERE kind = :kind "
         "AND payload->>'question_id' = :qid ORDER BY created_at DESC LIMIT 1",
@@ -753,7 +774,7 @@ def enqueue(question_id: str, *, queued_by: str = "", batch_id: str = "", voice:
             was = teachers.choice(question_id)
             teacher, students = was["teacher"], was["students"]
         teachers.choose(question_id, teacher=teacher or "", students=students, new_take=True)
-    now = status(question_id, q, voice, legacy=not fresh)
+    now = status(question_id, q, voice, legacy=not fresh, older=False)     # an older video is no reason not to make the new one
     if on_demand and now["status"] == "queued" and now.get("job_id"):
         # Already waiting in the batch: moved to the standby worker, first.
         from ..infra.db import execute

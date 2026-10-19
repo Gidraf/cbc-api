@@ -4912,7 +4912,8 @@ export type LibraryQuestion = {
   question_id: string; question_text: string; type: string; options: Array<{ id: string; text: string; is_correct?: boolean }>;
   answer: unknown; explanation: string; status: string; grade?: string; subject?: string; strand?: string; sub_strand?: string;
   has_figure: boolean; videos: Array<{ kind: string; url: string; thumbnail_url: string | null; made_at: string }>;
-  current_video: { status: string; url?: string; thumbnail_url?: string; teacher?: string; marketing?: boolean; error?: string };
+  current_video: { status: string; url?: string; thumbnail_url?: string; teacher?: string; marketing?: boolean; error?: string;
+                   /** The older video it posts with while the new one is made. */ older?: boolean };
   staff: boolean; posts: LibraryPost[];
   earlier_posts: Array<{ post_id: string; platform: string; status: string; posted_at: string | null; url: string; views: number;
                          comments: number; archived_at: string | null }>;

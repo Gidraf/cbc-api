@@ -330,3 +330,23 @@ def test_one_question_shows_its_videos_posts_comments_and_numbers(db, monkeypatc
     assert post["url"] == "https://facebook.com/reel/7" and post["campaign"]["comment"]["ok"] == 2
     assert post["daily"][0]["views"] == 120
     assert play.library_question("lib-q", auth=SimpleNamespace(role="student"))["posts"] == [], "the team's numbers only"
+
+
+@needs_db
+def test_an_older_video_is_posted_while_the_new_one_is_made(db, monkeypatch) -> None:
+    from app.infra.db import execute
+    from app.infra.storage import object_storage
+    from app.services import whiteboard
+
+    q = {"question_id": "old-vid", "question_text": "What is 9 − 4?", "options": [{"id": "A", "text": "5", "is_correct": True}],
+         "curriculum": {"grade": "grade-9", "subject": "Mathematics"}}
+    monkeypatch.setattr(whiteboard, "load", lambda qid: q)
+    monkeypatch.setattr(object_storage, "object_exists", lambda name: name == "social/old-vid/oldkey.mp4")
+    execute("""INSERT INTO question_videos (question_id, kind, video_key, object_name, made_at)
+               VALUES ('old-vid', 'social', 'oldkey', 'social/old-vid/oldkey.mp4', NOW())""")
+    st = social.status("old-vid", q)
+    assert st["status"] == "ready" and st["older"] and st["url"].endswith("social/old-vid/oldkey.mp4") and not st["marketing"]
+    assert social.status("old-vid", q, older=False)["status"] != "ready", "the factory still makes the new one"
+    assert social.status("old-vid", q, legacy=False)["status"] != "ready"
+    db["social_serve_older"] = False
+    assert social.status("old-vid", q)["status"] != "ready", "off: only current videos are posted"

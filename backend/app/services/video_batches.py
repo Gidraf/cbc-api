@@ -42,7 +42,7 @@ def queue(grade: str, subject: str, sub_strands: list[str] | None = None, *, cou
             break
         qid = str(q.get("question_id") or "")
         try:
-            st = social.status(qid, q)
+            st = social.status(qid, q, older=False)          # what needs making: an older video does not count
         except Exception as exc:  # noqa: BLE001
             logger.info("Skipping %s: %s", qid, exc)
             continue

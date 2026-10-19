@@ -22,7 +22,7 @@ def world(monkeypatch):
 
     monkeypatch.setattr(question_dna.question_dna_service, "list_questions", list_questions)
     monkeypatch.setattr(question_rows, "flatten_all", lambda rows: rows)
-    monkeypatch.setattr(social, "status", lambda qid, q=None, voice="": {"status": states[qid], "scenes": 0 if qid == "q6" else 3})
+    monkeypatch.setattr(social, "status", lambda qid, q=None, voice="", **kw: {"status": states[qid], "scenes": 0 if qid == "q6" else 3})
     monkeypatch.setattr(social, "enqueue", lambda qid, **kw: w["enqueued"].append((qid, kw["batch_id"])) or {"status": "queued"})
     monkeypatch.setattr(db, "execute", lambda sql, p=None: w["sql"].append((sql, p)))
     return w
@@ -47,7 +47,7 @@ def test_a_batch_stops_at_its_count_and_can_cover_chosen_topics(world):
 def test_nothing_new_queues_no_batch(world, monkeypatch):
     from app.services import social
 
-    monkeypatch.setattr(social, "status", lambda qid, q=None, voice="": {"status": "ready", "scenes": 3})
+    monkeypatch.setattr(social, "status", lambda qid, q=None, voice="", **kw: {"status": "ready", "scenes": 3})
     out = B.queue("grade-9", "Mathematics", count=5)
     assert out["queued"] == 0 and out["batch_id"] == "" and world["sql"] == []
 
@@ -88,7 +88,7 @@ def test_booking_can_take_only_finished_videos(monkeypatch):
     monkeypatch.setattr(db, "fetch_all", lambda sql, p=None: [{"platform": "facebook"}] if "poster_state" in sql else [])
     monkeypatch.setattr(question_dna.question_dna_service, "list_questions", lambda **kw: bank)
     monkeypatch.setattr(question_rows, "flatten_all", lambda rows: rows)
-    monkeypatch.setattr(social, "status", lambda qid, q=None, voice="": {"status": "ready" if int(qid[1:]) < 12 else "none", "scenes": 3})
+    monkeypatch.setattr(social, "status", lambda qid, q=None, voice="", **kw: {"status": "ready" if int(qid[1:]) < 12 else "none", "scenes": 3})
     monkeypatch.setattr(social, "enqueue", lambda qid, **kw: None)
     monkeypatch.setattr(X, "_plan_post", lambda q, platform, at, by: planned.append(q["question_id"]))
     out = X.book_ahead("grade-9", "Mathematics", today=date(2026, 10, 13), seed=1, days=7, low=5, high=8, ready_only=True)

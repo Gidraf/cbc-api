@@ -241,6 +241,10 @@ SETTINGS: tuple[Setting, ...] = (
             "A few seconds before the end, every social video shows the console — setting an exam, an online test, "
             "a student's marks — and says what the platform does, to teachers or to students by turns, with the "
             "website. On: videos made before it stop serving and are made again with it.", True, "Social"),
+    Setting("social_serve_older", "", "bool", "Post older videos while new ones are made",
+            "On: a question whose video is being made again (with the marketing, a new teacher or board) is posted "
+            "with the video it already has, instead of waiting for the new one — nothing waits on the render queue. "
+            "Off: only videos made with the current settings are posted.", True, "Social"),
     Setting("social_students", "", "string", "Students in social videos",
             "Kept for later: the videos have the teacher alone (0).",
             "0", "Social"),
