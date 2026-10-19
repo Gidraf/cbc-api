@@ -364,6 +364,18 @@ def decide(now: datetime, rules: dict[str, Any], *, posted_today: list[dict[str,
     return None, ("Nothing due" + (f" ({'; '.join(sorted(skipped))})" if skipped else "") + ".")
 
 
+def _failed_long_ago(st: dict[str, Any]) -> bool:
+    """A video that failed over an hour ago (a Mac that went away, a worker cut
+    off): made again, rather than holding its booking up for ever."""
+    from ..infra.db import fetch_one
+
+    if st.get("status") != "failed" or not st.get("job_id"):
+        return False
+    row = fetch_one("SELECT COALESCE(finished_at, created_at) AS t FROM jobs WHERE job_id = :id", {"id": st["job_id"]}) or {}
+    t = row.get("t")
+    return isinstance(t, datetime) and datetime.now(timezone.utc) - t > timedelta(hours=1)
+
+
 def schedule_next(now: datetime | None = None, *, book_if_empty: bool = True) -> dict[str, Any]:
     """"Schedule now": the next booked video to hand to Facebook's own
     scheduler at once — the soonest inside its window, its video made — with
@@ -398,7 +410,7 @@ def schedule_next(now: datetime | None = None, *, book_if_empty: bool = True) ->
     for row in rows:
         st = _media(row)
         if st.get("status") != "ready":
-            if st.get("status") == "none" and queued < 20:
+            if (st.get("status") == "none" or _failed_long_ago(st)) and queued < 20:
                 try:
                     social.enqueue(row["question_id"], queued_by="schedule-now")
                     queued += 1

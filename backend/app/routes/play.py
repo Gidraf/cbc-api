@@ -192,7 +192,7 @@ def library_question(question_id: str, auth: AuthContext = Depends(CONTENT)) -> 
                                     ORDER BY made_at DESC""", {"id": question_id}) or []]
     try:
         now_video = social.status(question_id, q)
-        current = {k: now_video.get(k) for k in ("status", "url", "thumbnail_url", "teacher", "marketing", "error", "job_id")}
+        current = {k: now_video.get(k) for k in ("status", "url", "thumbnail_url", "teacher", "marketing", "error", "job_id", "older")}
     except Exception as exc:  # noqa: BLE001
         current = {"status": "unknown", "error": str(exc)[:300]}
     out: dict[str, Any] = {

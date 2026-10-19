@@ -205,6 +205,7 @@ function Detail({ id }: { id: string }) {
               <Badge tone={VIDEO_TONE[cv.status] || "neutral"}>{VIDEO_WORD[cv.status] || cv.status}</Badge>
               {cv.teacher ? <Badge tone="neutral">{cv.teacher} teacher</Badge> : null}
               {cv.marketing ? <Badge tone="info">with marketing</Badge> : null}
+              {cv.older ? <Badge tone="warn" title="Settings → Post older videos while new ones are made">older video — posts with it while the new one is made</Badge> : null}
             </Stack>
             {cv.status === "none" && q.videos.length > 0 && (
               <span style={{ color: "var(--ink-3)" }}>An older video exists (shown), made before the current settings — it is made again before it is posted.</span>
