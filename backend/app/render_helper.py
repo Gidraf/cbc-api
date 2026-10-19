@@ -26,6 +26,17 @@ from typing import Any
 
 import httpx
 
+try:
+    # A Mac on a network that inspects HTTPS (Cisco Umbrella, a company proxy)
+    # trusts that network's certificate in its keychain; Python's own bundle
+    # does not, and every call fails "certificate verify failed". The
+    # keychain's trust is used when it is there — as the poster does.
+    import truststore
+
+    truststore.inject_into_ssl()
+except ImportError:
+    pass
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s render %(message)s")
 log = logging.getLogger("render")
 

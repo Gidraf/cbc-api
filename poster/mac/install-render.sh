@@ -90,6 +90,8 @@ fi
 "$VENV/bin/python" -m pip install --quiet --upgrade pip
 echo "Installing the renderer's Python packages (Manim included)…"
 "$VENV/bin/python" -m pip install --quiet -r "$HERE/backend/requirements.txt"
+# The Mac keychain's certificates, for networks that inspect HTTPS (see app/render_helper.py).
+"$VENV/bin/python" -m pip install --quiet "truststore==0.10.1"
 "$VENV/bin/python" -c "import manim" 2>/dev/null && echo "  Manim: ready" || echo "  Manim: not installed — videos render without it"
 
 [ -f "$HOME_DIR/.env" ] || echo "RENDER_SLOTS=2" > "$HOME_DIR/.env"
