@@ -393,3 +393,94 @@ def test_a_question_is_also_found_by_its_middle_and_end() -> None:
     q = "A farmer in Nakuru plants 120 seedlings in 8 equal rows. How many seedlings are in each row of the farm?"
     assert social.snippets(q) == ["seedlings in 8 equal rows. How many seedlings", "seedlings are in each row of the farm?"]
     assert social.snippets("Too short to cut") == []
+
+
+@needs_db
+def test_the_devices_page_says_which_mac_needs_the_update(db, monkeypatch) -> None:
+    from app.routes import play
+    from app.services import poster_installer
+
+    monkeypatch.setattr(poster_installer, "code_hash", lambda: "new")
+    se.heartbeat("mac-new", {"machine": {"hash": "new"}})
+    se.heartbeat("mac-old", {"machine": {"hash": "old"}})
+    se.heartbeat("mac-older", {"machine": {}})            # from before Macs said their code
+    got = {p["poster_id"]: p["update"] for p in play.devices(auth=None)["posters"]}
+    assert got["mac-new"] == "current" and got["mac-old"] == "behind" and got["mac-older"] == "behind"
+
+
+@needs_db
+def test_the_photo_series_is_booked_before_the_days_reels(db, monkeypatch) -> None:
+    from app.infra.db import fetch_all
+    from app.services import social_cards, whiteboard
+
+    monkeypatch.setattr(whiteboard, "load", lambda qid: {"question_id": qid, "curriculum": {"grade": "grade-9"}})
+    monkeypatch.setattr(social_cards, "enqueue", lambda qid, **k: {"status": "queued"})
+    rules = {**se.poster_rules(), "photos_per_day": 8, "min_gap_minutes": 100, "platforms": ["facebook"],
+             "hours": {"start": "06:00", "end": "22:00"}}
+    monkeypatch.setattr(se, "poster_rules", lambda: rules)
+    tomorrow = (datetime.now(se.EAT) + timedelta(days=1)).date()
+    at = lambda h, m=0: datetime.combine(tomorrow, se.time(h, m), tzinfo=se.EAT)       # noqa: E731
+    for qid, t in (("early", at(7)), ("mid", at(14)), ("late", at(18)), ("night", at(20))):
+        _booked(qid, t)
+    got = se.attach_series(datetime.now(timezone.utc), days=3)
+    assert got["series"] == 2, "8 photos a day: two series"
+    steps = {(r["question_id"], r["step"]): r["scheduled_for"] for r in fetch_all(
+        "SELECT question_id, step, scheduled_for FROM social_posts WHERE format = 'photo'") or []}
+    # 07:00 has no room before it (the teaser would be before 06:00): the next two reels get theirs.
+    assert ("early", "question") not in steps
+    assert [s for (q, s) in sorted(steps, key=lambda k: steps[k]) if q == "mid"] == ["teaser", "question", "kicd", "answer"]
+    assert steps[("mid", "answer")] == at(12, 20) and steps[("mid", "teaser")] == at(7, 20)
+    assert ("late", "kicd") in steps and ("night", "teaser") not in steps
+    assert se.attach_series(datetime.now(timezone.utc), days=3)["series"] == 0, "booked once"
+
+
+@needs_db
+def test_the_first_comments_carry_the_question_card_and_the_kicd_page(db, monkeypatch) -> None:
+    from app.infra.db import execute
+    from app.services import social_cards, whiteboard
+
+    db["poster_comment_thread"] = True
+    now = datetime.now(timezone.utc).replace(hour=9)
+    monkeypatch.setattr(se, "reconcile_due", lambda now: False)
+    monkeypatch.setattr(whiteboard, "load", lambda qid: {"question_id": qid, "curriculum": {"grade": "grade-9", "subject": "Mathematics",
+                                                                                            "sub_strand": "Integers"}})
+    monkeypatch.setattr(social, "status", lambda qid, q=None, **k: {"status": "ready", "thread": {
+        "find": "x", "first": ["Choices:\nA) 5", "🤔 Can you solve it?"], "later": ["✅ Answer: A) 5", "💡 How…"]}})
+    monkeypatch.setattr(social_cards, "status", lambda qid, step, q=None: {"status": "ready", "url": f"https://x/{step}.jpg"})
+    monkeypatch.setattr(social_cards, "enqueue", lambda qid, **k: {"status": "ready"})
+    monkeypatch.setattr(social_cards, "design_row", lambda q: {"sub_strand_name": "Integers", "source_pages": [12, 13]})
+    pid = _post("cards-q", now - timedelta(minutes=30), 0)
+    execute("""UPDATE social_posts SET comments_state = 'pending', comments_next_at = :t, url = 'https://facebook.com/reel/5'
+               WHERE post_id = :id""", {"t": now - timedelta(minutes=5), "id": pid})
+    job = se.comments_next(now)["job"]
+    assert job["stage"] == "first" and len(job["comments"]) == 3
+    assert job["images"] == ["https://x/question.jpg", "", "https://x/kicd.jpg"]
+    assert "KICD curriculum design" in job["comments"][2] and "pages 12–13" in job["comments"][2]
+    se.comments_result(pid, stage="first", ok=True, now=now)
+    later = se.comments_next(now + timedelta(minutes=5))["job"]
+    assert later["stage"] == "later" and later["images"] == ["", "https://x/answer.jpg"]
+
+
+@needs_db
+def test_a_card_or_a_whole_series_can_go_out_now(db, monkeypatch) -> None:
+    from app.infra.db import fetch_all
+    from app.services import social_cards, whiteboard
+
+    now = datetime.now(timezone.utc)
+    monkeypatch.setattr(whiteboard, "load", lambda qid: {"question_id": qid, "curriculum": {"grade": "grade-9"}})
+    monkeypatch.setattr(social_cards, "status", lambda qid, step, q=None: {"status": "ready", "url": f"https://x/{step}.jpg"})
+    monkeypatch.setattr(social_cards, "enqueue", lambda qid, **k: {"status": "ready"})
+    rules = {**se.poster_rules(), "min_gap_minutes": 100}
+    monkeypatch.setattr(se, "poster_rules", lambda: rules)
+    got = se.post_card("pc-q", "kicd", now=now)
+    assert got["ok"]
+    rows = fetch_all("SELECT step, format, scheduled_for FROM social_posts WHERE question_id = 'pc-q'")
+    assert rows == [{"step": "kicd", "format": "photo", "scheduled_for": now}]
+    se.record_attempt(got["post_id"], ok=True)
+    assert not se.post_card("pc-q", "kicd", now=now)["ok"], "a card already out is not posted twice"
+
+    out = se.post_series_today("pc-q", now=now)
+    assert out["ok"] and [b.split(" ")[1] for b in out["booked"]] == ["teaser", "question", "answer", "walkthrough"]
+    times = {r["step"]: r["scheduled_for"] for r in fetch_all(
+        "SELECT step, scheduled_for FROM social_posts WHERE question_id = 'pc-q' AND handed_at IS NULL")}
+    assert times["question"] - times["teaser"] == timedelta(minutes=100) and times["walkthrough"] > times["answer"]

@@ -20,6 +20,22 @@ FILENAME = "cbc-poster-installer.command"
 PARTS = ("poster", "requirements.txt", "mac")
 
 
+def code_hash() -> str:
+    """The fingerprint of the poster code this server hands out — the same as
+    each Mac's poster reports (poster/__main__.py: code_hash). '' without it."""
+    import hashlib
+
+    root = source_dir() / "poster"
+    if not root.is_dir():
+        return ""
+    h = hashlib.sha256()
+    files = sorted((f for f in root.rglob("*.py") if "__pycache__" not in f.parts), key=lambda f: f.relative_to(root).as_posix())
+    for f in files:
+        h.update(f.relative_to(root).as_posix().encode() + b"\n")
+        h.update(f.read_bytes())
+    return h.hexdigest()[:16]
+
+
 def source_dir() -> Path:
     return Path(os.getenv("POSTER_SRC", "/app/poster_src"))
 

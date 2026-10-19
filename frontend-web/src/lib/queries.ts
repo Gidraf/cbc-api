@@ -4253,9 +4253,11 @@ export function usePerformance(sort: string, days = 14) {
 
 export type DevicePoster = {
   poster_id: string; name?: string; online: boolean; seen_at: string; busy: string; paused: boolean; note: string; mode: string; browser: string;
-  machine: { host?: string; os?: string; code?: string };
+  machine: { host?: string; os?: string; code?: string; hash?: string };
   logins: Record<string, { logged_in: boolean; note: string; at: number; account?: string }>;
   today: Record<string, number | string>; last: Record<string, any> | null; jobs: string[]; doing: string[];
+  /** "current": runs the code the server hands out; "behind": run the update line on it; "": cannot tell. */
+  update?: "current" | "behind" | "";
 };
 export type DeviceHelper = {
   worker: string; name?: string; online: boolean; seen_at: string; resting: string; today: Record<string, number | string>;
@@ -4899,7 +4901,7 @@ export function useLibraryTree() {
 }
 
 export type LibraryPost = {
-  post_id: string; platform: string; format: string; status: string; scheduled_for: string | null; posted_at: string | null;
+  post_id: string; platform: string; format: string; step?: string; status: string; scheduled_for: string | null; posted_at: string | null;
   handed_at: string | null; platform_scheduled: boolean; url: string; notes: string; attempts: number; last_error: string;
   last_attempt_at: string | null; created_by: string; groups: string[]; destinations: string[]; teacher: string; marketing: boolean;
   comments_state: string; comments_error: string; comments_next_at: string | null; campaign_index: number; campaign_done: boolean;
@@ -4915,6 +4917,8 @@ export type LibraryQuestion = {
   current_video: { status: string; url?: string; thumbnail_url?: string; teacher?: string; marketing?: boolean; error?: string;
                    /** The older video it posts with while the new one is made. */ older?: boolean };
   staff: boolean; posts: LibraryPost[];
+  /** Its photo cards (teaser, question, answer, kicd): made ("ready", with its picture) or not yet. */
+  cards?: Record<string, { status: string; url?: string }>;
   earlier_posts: Array<{ post_id: string; platform: string; status: string; posted_at: string | null; url: string; views: number;
                          comments: number; archived_at: string | null }>;
 };
@@ -4947,7 +4951,9 @@ export function usePostQuestion() {
   const api = useApi();
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (v: { question_id: string; share?: "feed" | "groups"; groups?: string[] }) =>
+    mutationFn: (v: { question_id: string; share?: "feed" | "groups"; groups?: string[];
+                      /** Its video, one card, or its whole series from now (in order, a posting gap apart). */
+                      what?: "video" | "teaser" | "question" | "kicd" | "answer" | "series" }) =>
       api<Record<string, any>>("/api/v1/play/poster/post-question", { method: "POST", body: JSON.stringify(v) }),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["poster"] }); qc.invalidateQueries({ queryKey: ["question-search"] });
                        qc.invalidateQueries({ queryKey: ["library-question"] }); qc.invalidateQueries({ queryKey: ["library"] }); },

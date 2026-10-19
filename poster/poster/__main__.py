@@ -67,7 +67,27 @@ def _machine() -> dict[str, Any]:
     here = os.path.dirname(os.path.abspath(__file__))
     return {"host": socket.gethostname().split(".")[0], "os": (f"macOS {platform.mac_ver()[0]}" if sys.platform == "darwin"
                                                                else platform.platform(terse=True)),
-            "code": time.strftime("%Y-%m-%d %H:%M", time.localtime(os.path.getmtime(os.path.join(here, "__main__.py"))))}
+            "code": time.strftime("%Y-%m-%d %H:%M", time.localtime(os.path.getmtime(os.path.join(here, "__main__.py")))),
+            "hash": code_hash(here)}
+
+
+def code_hash(folder: str) -> str:
+    """A fingerprint of the poster's code (every .py file, by its path in the
+    package) — the server works out the same for the code it serves, and the
+    Devices page says when a Mac is behind."""
+    import hashlib
+
+    h = hashlib.sha256()
+    root = os.path.abspath(folder)
+    files = []
+    for d, dirs, names in os.walk(root):
+        dirs[:] = sorted(x for x in dirs if x != "__pycache__")
+        files += [os.path.join(d, n) for n in names if n.endswith(".py")]
+    for f in sorted(files, key=lambda x: os.path.relpath(x, root).replace(os.sep, "/")):
+        h.update(os.path.relpath(f, root).replace(os.sep, "/").encode() + b"\n")
+        with open(f, "rb") as fh:
+            h.update(fh.read())
+    return h.hexdigest()[:16]
 
 
 def _why(exc: BaseException) -> str:
@@ -149,6 +169,22 @@ async def flush_reports() -> bool:
     return not left
 
 
+async def _share_photo(page: Any, post: dict[str, Any], groups: list[str]) -> list[str]:
+    """A photo post just out, shared to its groups. Never fails the post (it is out):
+    the groups it reached, or none."""
+    from .flows import fb_share
+
+    words = " ".join(str(post.get("caption") or "").split())
+    try:
+        await asyncio.sleep(20)                       # a moment for the post to show on the profile
+        out = await fb_share.share_post(page, find=words[:60], also=[words[60:120]] if len(words) > 80 else [],
+                                        groups=groups)
+        return list(out.get("groups") or [])
+    except Exception as exc:  # noqa: BLE001
+        log.info("The photo %s is out; sharing it to its groups failed: %s", post.get("post_id"), _why(exc))
+        return []
+
+
 async def publish(post: dict[str, Any], *, dry_run: bool) -> dict[str, Any]:
     """One post on one platform, in the browser."""
     flow = FLOWS.get(post["platform"])
@@ -176,6 +212,10 @@ async def publish(post: dict[str, Any], *, dry_run: bool) -> dict[str, Any]:
                 image = await cbc.download(post["image_url"], f"{post['post_id']}.jpg")
                 page = await browser.page()
                 url = await flow.post_photo(page, image=image, caption=post["caption"], dry_run=dry_run)
+                if groups and not dry_run and post["platform"] == "facebook":
+                    # Out on the feed: then shared to its groups, as a reel is —
+                    # found on the profile by its words and shared from there.
+                    flow.shared_groups = await _share_photo(page, post, groups)
             else:
                 video = await cbc.download(post["video_url"], f"{post['post_id']}.mp4")
                 page = await browser.page()
@@ -401,7 +441,17 @@ async def comment_step(*, check: bool = False) -> dict[str, Any]:
         await cbc.comments_done(job["post_id"], job["stage"], ok=False, error="Comments are set up for Facebook only.")
         return {"ok": False, "error": "Comments are set up for Facebook only."}
     image = ""
-    if job.get("image_url") and not check:
+    images: list[str] = []
+    if job.get("images") and not check:
+        for k, link in enumerate(job["images"]):           # one picture per comment ("" for none)
+            path = ""
+            if link:
+                try:
+                    path = await cbc.download(link, f"card-{job['post_id']}-{k}.jpg")
+                except Exception as exc:  # noqa: BLE001
+                    log.info("No card %d for %s: %s", k, job["post_id"], _why(exc))
+            images.append(path)
+    elif job.get("image_url") and not check:
         try:
             image = await cbc.download(job["image_url"], f"answer-{job['post_id']}.jpg")
         except Exception as exc:  # noqa: BLE001
@@ -433,7 +483,8 @@ async def comment_step(*, check: bool = False) -> dict[str, Any]:
                 return {"ok": True, "message": f"Shared to {', '.join(out.get('groups') or [])}.", "shot": out.get("shot")}
             out = await fb_comments.comment(page, find=job.get("find") or "", url=job.get("url") or "",
                                             comments=job.get("comments") or [], image=image, check=check,
-                                            also=job.get("find_also") or [], measure=bool(job.get("measure")))
+                                            also=job.get("find_also") or [], measure=bool(job.get("measure")),
+                                            images=images or None)
             if not check:
                 await cbc.comments_done(job["post_id"], job["stage"], ok=True, url=out.get("url") or "",
                                         metrics=out.get("metrics") or None)
@@ -631,10 +682,14 @@ async def post_now(platform: str = "", options: dict[str, Any] | None = None) ->
         # One booked post, now — a photo card or a video picked in the console.
         if state["paused"]:
             return {"ok": False, "error": "The poster is paused — resume it first."}
-        nxt = await cbc.next_post(platform=platform, post_id=wanted, dry=True)
+        nxt = await cbc.next_post(platform=platform, post_id=wanted, dry=True, share=share,
+                                  groups=[str(g) for g in (options.get("groups") or [])][:5])
         if not nxt.get("post"):
             return {"ok": False, "error": nxt.get("reason") or "That post is not ready (its card or video is still being made)."}
-        return await publish({**nxt["post"], "schedule_at": ""}, dry_run=False)
+        one = {**nxt["post"], "schedule_at": ""}
+        if share == "feed":
+            one["groups"] = []
+        return await publish(one, dry_run=False)
     picked = [str(g) for g in (options.get("groups") or [])][:5]
     if state["paused"]:
         return {"ok": False, "error": "The poster is paused — resume it first."}
