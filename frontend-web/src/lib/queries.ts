@@ -4253,9 +4253,11 @@ export function usePerformance(sort: string, days = 14) {
 
 export type DevicePoster = {
   poster_id: string; name?: string; online: boolean; seen_at: string; busy: string; paused: boolean; note: string; mode: string; browser: string;
-  machine: { host?: string; os?: string; code?: string };
+  machine: { host?: string; os?: string; code?: string; hash?: string };
   logins: Record<string, { logged_in: boolean; note: string; at: number; account?: string }>;
   today: Record<string, number | string>; last: Record<string, any> | null; jobs: string[]; doing: string[];
+  /** "current": runs the code the server hands out; "behind": run the update line on it; "": cannot tell. */
+  update?: "current" | "behind" | "";
 };
 export type DeviceHelper = {
   worker: string; name?: string; online: boolean; seen_at: string; resting: string; today: Record<string, number | string>;

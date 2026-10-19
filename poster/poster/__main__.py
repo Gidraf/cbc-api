@@ -67,7 +67,27 @@ def _machine() -> dict[str, Any]:
     here = os.path.dirname(os.path.abspath(__file__))
     return {"host": socket.gethostname().split(".")[0], "os": (f"macOS {platform.mac_ver()[0]}" if sys.platform == "darwin"
                                                                else platform.platform(terse=True)),
-            "code": time.strftime("%Y-%m-%d %H:%M", time.localtime(os.path.getmtime(os.path.join(here, "__main__.py"))))}
+            "code": time.strftime("%Y-%m-%d %H:%M", time.localtime(os.path.getmtime(os.path.join(here, "__main__.py")))),
+            "hash": code_hash(here)}
+
+
+def code_hash(folder: str) -> str:
+    """A fingerprint of the poster's code (every .py file, by its path in the
+    package) — the server works out the same for the code it serves, and the
+    Devices page says when a Mac is behind."""
+    import hashlib
+
+    h = hashlib.sha256()
+    root = os.path.abspath(folder)
+    files = []
+    for d, dirs, names in os.walk(root):
+        dirs[:] = sorted(x for x in dirs if x != "__pycache__")
+        files += [os.path.join(d, n) for n in names if n.endswith(".py")]
+    for f in sorted(files, key=lambda x: os.path.relpath(x, root).replace(os.sep, "/")):
+        h.update(os.path.relpath(f, root).replace(os.sep, "/").encode() + b"\n")
+        with open(f, "rb") as fh:
+            h.update(fh.read())
+    return h.hexdigest()[:16]
 
 
 def _why(exc: BaseException) -> str:

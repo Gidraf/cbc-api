@@ -1423,11 +1423,11 @@ function AnotherMac() {
 // One line to paste in a Mac's Terminal: the code, then everything the
 // render helper needs (Homebrew, ffmpeg, Cairo, Pango, LaTeX for Manim).
 const GET_CODE = "cd ~ && { [ -d cbc-api ] || git clone https://github.com/Gidraf/cbc-api.git; } && cd cbc-api && git checkout main && git pull";
-const RENDER_SETUP = `${GET_CODE} && bash poster/mac/install-render.sh`;
+export const RENDER_SETUP = `${GET_CODE} && bash poster/mac/install-render.sh`;
 // The poster: installs it on a new Mac, or updates it on one that has it (its key is reused).
-const POSTER_SETUP = `${GET_CODE} && bash poster/mac/install.sh`;
+export const POSTER_SETUP = `${GET_CODE} && bash poster/mac/install.sh`;
 // Both at once: a Mac that posts and renders.
-const BOTH_SETUP = `${GET_CODE} && bash poster/mac/install.sh && bash poster/mac/install-render.sh`;
+export const BOTH_SETUP = `${GET_CODE} && bash poster/mac/install.sh && bash poster/mac/install-render.sh`;
 
 const ago = (iso: string) => {
   const s = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);

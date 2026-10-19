@@ -5,7 +5,7 @@ import {
   useDeviceHistory, useDevices, useForgetDevice, useNameDevice, usePosterCommand, useSavePlatformSettings,
   type DeviceHelper, type DevicePoster,
 } from "../lib/queries";
-import { SetupCommands, WorkingHours } from "./PlayArcade";
+import { BOTH_SETUP, POSTER_SETUP, RENDER_SETUP, SetupCommands, WorkingHours } from "./PlayArcade";
 
 const PLATFORMS: [string, string][] = [["facebook", "Facebook"], ["instagram", "Instagram"], ["linkedin", "LinkedIn"],
                                        ["tiktok", "TikTok"], ["youtube", "YouTube"]];
@@ -57,6 +57,7 @@ export function Devices() {
                     <span style={{ fontSize: "var(--text-xs)", color: "var(--ink-3)" }}>
                       {s.kind === "poster" ? "poster" : "render helper"} · {s.d.online ? "online" : `seen ${ago(s.d.seen_at)}`}
                       {s.kind === "poster" && Object.values(s.d.logins || {}).some((l) => !l.logged_in) ? " · ⚠ logged out" : ""}
+                      {s.kind === "poster" && s.d.update === "behind" ? " · ⬆ update available" : ""}
                     </span>
                   </button>
                 );
@@ -143,6 +144,8 @@ function PosterDetail({ p, label }: { p: DevicePoster; label: string }) {
         {off && <span style={{ fontSize: "var(--text-xs)", color: "var(--ink-3)" }}>Offline: the buttons work once the Mac is on and the poster is running.</span>}
       </Header>
 
+      <UpdateBox label={label} state={p.update || ""} code={p.machine?.code} />
+
       <Card title="Accounts" description="Log in opens ordinary Chrome on this Mac at the platform's login: log in there (answer any code), then quit Chrome with Cmd+Q. Log out clears that platform from this Mac's poster.">
         <div style={{ display: "grid", gap: 6 }}>
           {PLATFORMS.map(([pl, title]) => {
@@ -182,6 +185,43 @@ function PosterDetail({ p, label }: { p: DevicePoster; label: string }) {
   );
 }
 
+/** The one line that updates this Mac (or installs on a new one), and whether it is needed. */
+function UpdateBox({ label, state, code, render = false }: { label: string; state: "current" | "behind" | ""; code?: string; render?: boolean }) {
+  const toast = useToast();
+  const lines: [string, string][] = render
+    ? [["The render helper", RENDER_SETUP]]
+    : [["The poster", POSTER_SETUP], ["The poster and the render helper (a Mac that also makes videos)", BOTH_SETUP]];
+  async function copy(text: string) {
+    try { await navigator.clipboard.writeText(text); toast("Copied — paste it in this Mac's Terminal.", "ok"); }
+    catch { toast("Select the command and copy it.", "info"); }
+  }
+  const tone = state === "behind" ? "warn" : state === "current" ? "ok" : "neutral";
+  return (
+    <Card title="Update this Mac"
+          actions={state ? <Badge tone={tone}>{state === "behind" ? "Update available" : "Up to date"}</Badge> : undefined}>
+      <div style={{ display: "grid", gap: "var(--s2)", fontSize: "var(--text-sm)" }}>
+        <span style={{ color: "var(--ink-3)" }}>
+          {state === "behind"
+            ? `${label} runs older code than the server${code ? ` (installed ${code})` : ""}. `
+            : state === "current" ? `${label} runs the latest code. ` : ""}
+          Open Terminal on {label}, paste this line and press Return — it updates the Mac (its key and logins are kept), or
+          installs everything on a new one. Run it after each update to the platform.
+        </span>
+        {lines.map(([title, cmd]) => (
+          <div key={title} style={{ display: "grid", gap: 4 }}>
+            <Stack direction="row" gap="var(--s2)" align="center" wrap>
+              <b>{title}</b>
+              <Button size="sm" variant={state === "behind" ? "primary" : "ghost"} onClick={() => copy(cmd)}>Copy</Button>
+            </Stack>
+            <code style={{ display: "block", padding: "var(--s2)", background: "var(--surface-2, #f4f4f2)", borderRadius: "var(--radius)",
+                           wordBreak: "break-all", fontSize: "var(--text-xs)" }}>{cmd}</code>
+          </div>
+        ))}
+      </div>
+    </Card>
+  );
+}
+
 function HelperDetail({ h, label }: { h: DeviceHelper; label: string }) {
   return (
     <div style={{ display: "grid", gap: "var(--s3)" }}>
@@ -190,6 +230,7 @@ function HelperDetail({ h, label }: { h: DeviceHelper; label: string }) {
         <span style={{ fontSize: "var(--text-sm)" }}>{h.online ? (h.resting ? `😴 Resting — ${h.resting}` : "🎬 Working") : "Offline"}</span>
         {h.jobs.map((j) => <span key={j.job_id} style={{ fontSize: "var(--text-sm)" }}>🎬 {j.question_id} — {j.stage} {Math.round(j.pct)}%</span>)}
       </Header>
+      <UpdateBox label={label} state="" render />
       <Card title="Working hours" description="Every Mac that renders follows these (by its own clock); a video it has started is always finished.">
         <WorkingHours />
       </Card>

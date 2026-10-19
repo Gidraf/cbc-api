@@ -393,3 +393,16 @@ def test_a_question_is_also_found_by_its_middle_and_end() -> None:
     q = "A farmer in Nakuru plants 120 seedlings in 8 equal rows. How many seedlings are in each row of the farm?"
     assert social.snippets(q) == ["seedlings in 8 equal rows. How many seedlings", "seedlings are in each row of the farm?"]
     assert social.snippets("Too short to cut") == []
+
+
+@needs_db
+def test_the_devices_page_says_which_mac_needs_the_update(db, monkeypatch) -> None:
+    from app.routes import play
+    from app.services import poster_installer
+
+    monkeypatch.setattr(poster_installer, "code_hash", lambda: "new")
+    se.heartbeat("mac-new", {"machine": {"hash": "new"}})
+    se.heartbeat("mac-old", {"machine": {"hash": "old"}})
+    se.heartbeat("mac-older", {"machine": {}})            # from before Macs said their code
+    got = {p["poster_id"]: p["update"] for p in play.devices(auth=None)["posters"]}
+    assert got["mac-new"] == "current" and got["mac-old"] == "behind" and got["mac-older"] == "behind"

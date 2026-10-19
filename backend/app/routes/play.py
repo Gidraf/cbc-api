@@ -2013,7 +2013,16 @@ def devices(auth: AuthContext = Depends(STAFF)) -> dict[str, Any]:
         helpers.append({"worker": r["worker"], "name": names.get(str(r["worker"]), ""), "online": bool(r["online"]), "seen_at": when(r["seen_at"]),
                         "resting": st.get("resting") or "", "today": st.get("today") or {}, "jobs": st.get("jobs") or [],
                         "slots": st.get("slots"), "manim": bool(st.get("manim")), "machine": st.get("machine") or {}})
-    return {"posters": posters, "helpers": helpers}
+    from ..services import poster_installer
+
+    try:
+        latest = poster_installer.code_hash()
+    except Exception:  # noqa: BLE001
+        latest = ""
+    for p in posters:          # behind: its code differs from what the server hands out (or it is too old to say)
+        mine = str((p["machine"] or {}).get("hash") or "")
+        p["update"] = "" if not latest else ("current" if mine == latest else "behind")
+    return {"posters": posters, "helpers": helpers, "poster_code": latest}
 
 
 @router.get("/devices/{device}/history")
