@@ -592,7 +592,7 @@ def next_for_poster(now: datetime | None = None, *, platform: str = "", post_id:
         to_groups = [] if ahead else (reserved or groups_for(chosen["platform"], now, rules, audience))
     photo = str(chosen.get("format") or "video") == "photo"
     if photo:
-        ahead, to_groups = False, []            # a card goes out live, to the feed
+        ahead = False                           # a card goes out live (to its groups too, shared once it is out)
     if not photo:
         try:                                    # remember which teacher this video has
             execute("UPDATE social_posts SET teacher = :t, marketing = :m WHERE post_id = :id",
@@ -2425,6 +2425,70 @@ def attach_series(now: datetime | None = None, *, days: int = 7, dry: bool = Fal
     return {"series": made if not dry else len(plan),
             "plan": [{"question_id": qid, "steps": [f"{at.astimezone(EAT):%a %H:%M} {s}" for s, at in steps]}
                      for qid, steps in plan]}
+
+
+CARD_STEPS = ("teaser", "question", "kicd", "answer")
+
+
+def post_card(question_id: str, step: str, *, now: datetime | None = None) -> dict[str, Any]:
+    """One card of a question, picked in the console, booked for now so Post
+    now can take it — its card made first if need be. Refused when that card
+    is already out."""
+    from ..infra.db import execute, fetch_one
+    from . import social_cards
+    from .whiteboard import load
+
+    if step not in CARD_STEPS:
+        raise ValueError("A card is one of " + ", ".join(CARD_STEPS))
+    now = now or datetime.now(timezone.utc)
+    q = load(question_id)
+    pid = "sp_" + hashlib.sha256(f"{question_id}:facebook:{step}".encode()).hexdigest()[:16]
+    post = fetch_one("SELECT handed_at, posted_at, url FROM social_posts WHERE post_id = :id", {"id": pid})
+    if post and post.get("handed_at") is not None:
+        at = post["posted_at"].astimezone(EAT).strftime("%d %b %H:%M") if isinstance(post.get("posted_at"), datetime) else ""
+        return {"ok": False, "post_id": pid, "error": f"That card was posted already ({at})."}
+    _plan_step(q, "facebook", step, now, POST_NOW)
+    execute("UPDATE social_posts SET status = 'planned', attempts = 0 WHERE post_id = :id", {"id": pid})
+    card = social_cards.status(question_id, step, q)
+    if card.get("status") != "ready":
+        try:
+            card = social_cards.render(question_id, step, q)
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "post_id": pid, "error": f"Its card could not be made: {exc}"[:300]}
+    return {"ok": card.get("status") == "ready", "post_id": pid}
+
+
+def post_series_today(question_id: str, *, now: datetime | None = None) -> dict[str, Any]:
+    """A question's whole series from now, in order — "a question is coming",
+    the question, its KICD page, the answer, then its walkthrough — one
+    posting gap apart (Settings), live, by the poster. Cards already out are
+    skipped; the video only if it is not out or waiting in Facebook's scheduler."""
+    from ..infra.db import fetch_one
+    from . import social_cards
+    from .whiteboard import load
+
+    now = now or datetime.now(timezone.utc)
+    rules = poster_rules()
+    gap = timedelta(minutes=max(30, int(rules.get("min_gap_minutes") or 60)))
+    q = load(question_id)
+    booked, at = [], now + timedelta(minutes=2)
+    for step in (*CARD_STEPS, "walkthrough"):
+        pid = (_post_id(question_id, "facebook") if step == "walkthrough" else
+               "sp_" + hashlib.sha256(f"{question_id}:facebook:{step}".encode()).hexdigest()[:16])
+        row = fetch_one("SELECT handed_at FROM social_posts WHERE post_id = :id", {"id": pid})
+        if row and row.get("handed_at") is not None:
+            continue                                   # out already (or in Facebook's scheduler)
+        _plan_step(q, "facebook", step, at, POST_NOW)
+        booked.append(f"{at.astimezone(EAT):%H:%M} {step}")
+        at += gap
+    if not booked:
+        return {"ok": False, "error": "Every part of its series is out already."}
+    try:
+        social_cards.enqueue(question_id, queued_by=POST_NOW)
+    except Exception as exc:  # noqa: BLE001
+        logger.info("Cards for %s not queued: %s", question_id, exc)
+    return {"ok": True, "booked": booked,
+            "message": "Booked from now, in order: " + ", ".join(booked) + " — the poster puts each out at its time."}
 
 
 def book_series(grade: str, subject: str, sub_strand: str = "", *, days: int = 7, photos: int | None = None,

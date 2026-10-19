@@ -4,7 +4,7 @@ import { Badge, Button, Card, ErrorNotice, Input, LoadingBlock, PageHeader, Sele
 import { MathText } from "../ui/MathBlock";
 import {
   useBoostPost, useLibrary, useLibraryQuestion, useLibraryTree, useMakeSocial, usePostQuestion,
-  type LibraryFilters, type LibraryItem, type LibraryPost,
+  type LibraryFilters, type LibraryItem, type LibraryPost, type LibraryQuestion,
 } from "../lib/queries";
 
 type Tone = "ok" | "info" | "warn" | "danger" | "neutral";
@@ -225,6 +225,8 @@ function Detail({ id }: { id: string }) {
         </div>
       </Card>
 
+      {q.staff && <Cards q={q} />}
+
       {q.staff && (
         <Card title={`Posts (${q.posts.length})`}>
           {q.posts.length === 0 ? (
@@ -244,6 +246,57 @@ function Detail({ id }: { id: string }) {
         </Card>
       )}
     </div>
+  );
+}
+
+const CARD_STEPS: [string, string][] = [["teaser", "A question is coming"], ["question", "The question"],
+                                        ["kicd", "KICD design page"], ["answer", "The answer"]];
+
+/** Its photo cards in series order — each can go out now (to the feed or to groups),
+ *  or the whole series from now, in order, a posting gap apart. */
+function Cards({ q }: { q: LibraryQuestion }) {
+  const post = usePostQuestion();
+  const toast = useToast();
+  const [share, setShare] = React.useState<"feed" | "groups">("feed");
+  const out = new Set(q.posts.filter((p) => p.format === "photo" && p.handed_at).map((p) => p.step || ""));
+  async function go(what: "teaser" | "question" | "kicd" | "answer" | "series") {
+    try {
+      const r = await post.mutateAsync({ question_id: q.question_id, what, share });
+      toast(String(r?.error || r?.message || "Sent to the poster — it goes out in a minute or two."), r?.error ? "danger" : "ok");
+    } catch (err) { toast(err instanceof Error ? err.message : "Could not post it.", "danger"); }
+  }
+  return (
+    <Card title="Cards (photo posts)"
+          actions={<Stack direction="row" gap="var(--s2)" align="center">
+            <Select value={share} style={{ width: "auto" }} onChange={(e) => setShare(e.target.value as "feed" | "groups")}>
+              <option value="feed">To the feed</option>
+              <option value="groups">Feed + next groups</option>
+            </Select>
+            <Button size="sm" variant="primary" disabled={post.isPending} onClick={() => go("series")}
+                    title="Each card, then the video — from now, in order, one posting gap apart">Post the series today</Button>
+          </Stack>}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(8.5rem, 1fr))", gap: "var(--s2)" }}>
+        {CARD_STEPS.map(([step, title]) => {
+          const c = q.cards?.[step];
+          return (
+            <div key={step} style={{ display: "grid", gap: 6, fontSize: "var(--text-xs)" }}>
+              <div style={{ aspectRatio: "4 / 5", borderRadius: 8, overflow: "hidden", background: "var(--line-2)", display: "grid", placeItems: "center" }}>
+                {c?.url ? <a href={c.url} target="_blank" rel="noreferrer"><img src={c.url} alt={title} style={{ width: "100%", height: "100%", objectFit: "cover" }} /></a>
+                  : <span style={{ color: "var(--ink-3)", padding: 8, textAlign: "center" }}>Made when it is posted</span>}
+              </div>
+              <b>{title}</b>
+              <Button size="sm" variant="ghost" disabled={post.isPending || out.has(step)}
+                      title={out.has(step) ? "Posted already" : "This card, live on Facebook now"}
+                      onClick={() => go(step as "teaser" | "question" | "kicd" | "answer")}>{out.has(step) ? "Posted" : "Post now"}</Button>
+            </div>
+          );
+        })}
+      </div>
+      <p style={{ margin: "var(--s2) 0 0", fontSize: "var(--text-xs)", color: "var(--ink-3)" }}>
+        Auto-book also books a series like this before each day's first reels (Settings → Auto-post: photos a day, 4 per series).
+        The question card and the KICD page also go in each reel's first comments.
+      </p>
+    </Card>
   );
 }
 
@@ -267,6 +320,7 @@ function PostBox({ p }: { p: LibraryPost }) {
                   fontSize: "var(--text-sm)" }}>
       <Stack direction="row" gap="var(--s2)" wrap align="center">
         <b style={{ textTransform: "capitalize" }}>{p.platform}</b>
+        {p.format === "photo" && <Badge tone="neutral">card: {p.step || "photo"}</Badge>}
         <Badge tone={tone}>{word}</Badge>
         {p.marketing && <Badge tone="info">marketing</Badge>}
         {p.boost_state && <Badge tone={p.boost_state === "failed" ? "danger" : "warn"}>boost: {p.boost_state}</Badge>}

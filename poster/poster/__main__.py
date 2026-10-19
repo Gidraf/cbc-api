@@ -169,6 +169,22 @@ async def flush_reports() -> bool:
     return not left
 
 
+async def _share_photo(page: Any, post: dict[str, Any], groups: list[str]) -> list[str]:
+    """A photo post just out, shared to its groups. Never fails the post (it is out):
+    the groups it reached, or none."""
+    from .flows import fb_share
+
+    words = " ".join(str(post.get("caption") or "").split())
+    try:
+        await asyncio.sleep(20)                       # a moment for the post to show on the profile
+        out = await fb_share.share_post(page, find=words[:60], also=[words[60:120]] if len(words) > 80 else [],
+                                        groups=groups)
+        return list(out.get("groups") or [])
+    except Exception as exc:  # noqa: BLE001
+        log.info("The photo %s is out; sharing it to its groups failed: %s", post.get("post_id"), _why(exc))
+        return []
+
+
 async def publish(post: dict[str, Any], *, dry_run: bool) -> dict[str, Any]:
     """One post on one platform, in the browser."""
     flow = FLOWS.get(post["platform"])
@@ -196,6 +212,10 @@ async def publish(post: dict[str, Any], *, dry_run: bool) -> dict[str, Any]:
                 image = await cbc.download(post["image_url"], f"{post['post_id']}.jpg")
                 page = await browser.page()
                 url = await flow.post_photo(page, image=image, caption=post["caption"], dry_run=dry_run)
+                if groups and not dry_run and post["platform"] == "facebook":
+                    # Out on the feed: then shared to its groups, as a reel is —
+                    # found on the profile by its words and shared from there.
+                    flow.shared_groups = await _share_photo(page, post, groups)
             else:
                 video = await cbc.download(post["video_url"], f"{post['post_id']}.mp4")
                 page = await browser.page()
@@ -662,10 +682,14 @@ async def post_now(platform: str = "", options: dict[str, Any] | None = None) ->
         # One booked post, now — a photo card or a video picked in the console.
         if state["paused"]:
             return {"ok": False, "error": "The poster is paused — resume it first."}
-        nxt = await cbc.next_post(platform=platform, post_id=wanted, dry=True)
+        nxt = await cbc.next_post(platform=platform, post_id=wanted, dry=True, share=share,
+                                  groups=[str(g) for g in (options.get("groups") or [])][:5])
         if not nxt.get("post"):
             return {"ok": False, "error": nxt.get("reason") or "That post is not ready (its card or video is still being made)."}
-        return await publish({**nxt["post"], "schedule_at": ""}, dry_run=False)
+        one = {**nxt["post"], "schedule_at": ""}
+        if share == "feed":
+            one["groups"] = []
+        return await publish(one, dry_run=False)
     picked = [str(g) for g in (options.get("groups") or [])][:5]
     if state["paused"]:
         return {"ok": False, "error": "The poster is paused — resume it first."}

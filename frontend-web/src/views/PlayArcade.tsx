@@ -1310,12 +1310,14 @@ const MAX_GROUPS_PER_POST = 5;
  *  Facebook straight away (its video is made first if it has none yet). */
 function PostQuestionNow({ left }: { left: number }) {
   const [words, setWords] = React.useState("");
+  const [what, setWhat] = React.useState<"video" | "series" | "teaser" | "question" | "kicd" | "answer">("video");
+  const [share, setShare] = React.useState<"feed" | "groups">("feed");
   const found = useQuestionSearch(words);
   const post = usePostQuestion();
   const toast = useToast();
   async function go(id: string) {
     try {
-      const out = await post.mutateAsync({ question_id: id, share: "feed" });
+      const out = await post.mutateAsync({ question_id: id, share, what });
       if (out?.error) toast(String(out.error), out?.making ? "info" : "danger");
       else toast(String(out?.message || "Sent to the poster — it goes out in a minute or two."), "ok");
     } catch (err) { toast(err instanceof Error ? err.message : "Could not post it.", "danger"); }
@@ -1326,6 +1328,18 @@ function PostQuestionNow({ left }: { left: number }) {
         <span style={{ color: "var(--ink-3)" }}>Post a question now:</span>
         <Input value={words} placeholder="Words from the question…" style={{ minWidth: 240, flex: 1 }}
                onChange={(e) => setWords(e.target.value)} />
+        <Select value={what} style={{ width: "auto" }} onChange={(e) => setWhat(e.target.value as typeof what)}>
+          <option value="video">Its video</option>
+          <option value="series">Its series today (cards, then the video)</option>
+          <option value="teaser">Card: a question is coming</option>
+          <option value="question">Card: the question</option>
+          <option value="kicd">Card: KICD design page</option>
+          <option value="answer">Card: the answer</option>
+        </Select>
+        <Select value={share} style={{ width: "auto" }} onChange={(e) => setShare(e.target.value as "feed" | "groups")}>
+          <option value="feed">To the feed</option>
+          <option value="groups">Feed + next groups</option>
+        </Select>
       </Stack>
       {words.trim().length >= 3 && found.isLoading && <span style={{ color: "var(--ink-3)" }}>Looking…</span>}
       {found.data && found.data.items.length === 0 && <span style={{ color: "var(--ink-3)" }}>No question has those words.</span>}
@@ -1341,8 +1355,8 @@ function PostQuestionNow({ left }: { left: number }) {
                 {out ? " · already out or scheduled" : ""}
               </span>
             </span>
-            <Button size="sm" variant="primary" disabled={post.isPending || !left || !!out}
-                    title={out ? "Already posted or scheduled — it would go out twice" : !left ? "Today's limit is used" : "Live on Facebook now"}
+            <Button size="sm" variant="primary" disabled={post.isPending || !left || (!!out && what === "video")}
+                    title={out && what === "video" ? "Already posted or scheduled — it would go out twice" : !left ? "Today's limit is used" : "Live on Facebook now"}
                     onClick={() => go(q.question_id)}>Post now</Button>
           </Stack>
         );

@@ -459,3 +459,28 @@ def test_the_first_comments_carry_the_question_card_and_the_kicd_page(db, monkey
     se.comments_result(pid, stage="first", ok=True, now=now)
     later = se.comments_next(now + timedelta(minutes=5))["job"]
     assert later["stage"] == "later" and later["images"] == ["", "https://x/answer.jpg"]
+
+
+@needs_db
+def test_a_card_or_a_whole_series_can_go_out_now(db, monkeypatch) -> None:
+    from app.infra.db import fetch_all
+    from app.services import social_cards, whiteboard
+
+    now = datetime.now(timezone.utc)
+    monkeypatch.setattr(whiteboard, "load", lambda qid: {"question_id": qid, "curriculum": {"grade": "grade-9"}})
+    monkeypatch.setattr(social_cards, "status", lambda qid, step, q=None: {"status": "ready", "url": f"https://x/{step}.jpg"})
+    monkeypatch.setattr(social_cards, "enqueue", lambda qid, **k: {"status": "ready"})
+    rules = {**se.poster_rules(), "min_gap_minutes": 100}
+    monkeypatch.setattr(se, "poster_rules", lambda: rules)
+    got = se.post_card("pc-q", "kicd", now=now)
+    assert got["ok"]
+    rows = fetch_all("SELECT step, format, scheduled_for FROM social_posts WHERE question_id = 'pc-q'")
+    assert rows == [{"step": "kicd", "format": "photo", "scheduled_for": now}]
+    se.record_attempt(got["post_id"], ok=True)
+    assert not se.post_card("pc-q", "kicd", now=now)["ok"], "a card already out is not posted twice"
+
+    out = se.post_series_today("pc-q", now=now)
+    assert out["ok"] and [b.split(" ")[1] for b in out["booked"]] == ["teaser", "question", "answer", "walkthrough"]
+    times = {r["step"]: r["scheduled_for"] for r in fetch_all(
+        "SELECT step, scheduled_for FROM social_posts WHERE question_id = 'pc-q' AND handed_at IS NULL")}
+    assert times["question"] - times["teaser"] == timedelta(minutes=100) and times["walkthrough"] > times["answer"]

@@ -201,10 +201,17 @@ def library_question(question_id: str, auth: AuthContext = Depends(CONTENT)) -> 
         "explanation": q.get("explanation") or "", "status": q.get("status") or "",
         "grade": link.get("grade"), "subject": link.get("subject"), "strand": link.get("strand"),
         "sub_strand": link.get("sub_strand"), "has_figure": _has_figure(q),
-        "videos": videos, "current_video": current, "staff": staff, "posts": [], "earlier_posts": []}
+        "videos": videos, "current_video": current, "staff": staff, "posts": [], "earlier_posts": [], "cards": {}}
+    try:                        # its photo cards: the series' and the KICD page (made or not yet)
+        from ..services import social_cards
+
+        out["cards"] = {step: {k: v for k, v in social_cards.status(question_id, step, q).items() if k in ("status", "url")}
+                        for step in social_cards.CARDS}
+    except Exception:  # noqa: BLE001
+        out["cards"] = {}
     if not staff:
         return out
-    cols = """post_id, platform, format, status, scheduled_for, posted_at, handed_at, platform_scheduled, url, notes,
+    cols = """post_id, platform, format, step, status, scheduled_for, posted_at, handed_at, platform_scheduled, url, notes,
               attempts, last_error, last_attempt_at, created_by, groups, destinations, teacher, marketing,
               comments_state, comments_error, comments_next_at, campaign_index, campaign_done, score,
               boost_state, boost_daily_ksh, boost_days, boost_error, boosted_at, views, likes, comments, shares"""
@@ -1703,6 +1710,8 @@ class PostQuestion(BaseModel):
     question_id: str = Field(..., min_length=3, max_length=200)
     share: Literal["feed", "groups"] = "feed"
     groups: list[str] = []
+    # What goes out: its video, one of its cards, or its whole series from now (in order, a gap apart).
+    what: Literal["video", "teaser", "question", "kicd", "answer", "series"] = "video"
 
 
 @router.post("/poster/post-question")
@@ -1712,7 +1721,12 @@ def poster_post_question(payload: PostQuestion, auth: AuthContext = Depends(ANY)
     from ..services import social_export
 
     _may_make_videos(auth)
-    got = social_export.post_question(payload.question_id)        # an unknown question is a 404
+    if payload.what == "series":
+        return social_export.post_series_today(payload.question_id)
+    if payload.what == "video":
+        got = social_export.post_question(payload.question_id)    # an unknown question is a 404
+    else:
+        got = social_export.post_card(payload.question_id, payload.what)
     if not got.get("ok"):
         return got
     return poster_command(PosterCommand(action="run_now", platform="facebook", post_id=got["post_id"],
