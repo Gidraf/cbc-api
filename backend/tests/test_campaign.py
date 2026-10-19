@@ -350,3 +350,46 @@ def test_an_older_video_is_posted_while_the_new_one_is_made(db, monkeypatch) -> 
     assert social.status("old-vid", q, legacy=False)["status"] != "ready"
     db["social_serve_older"] = False
     assert social.status("old-vid", q)["status"] != "ready", "off: only current videos are posted"
+
+
+@needs_db
+def test_posts_seen_on_the_profile_get_their_links_and_their_comments(db, monkeypatch) -> None:
+    from app.infra.db import execute, fetch_one
+    from app.services import whiteboard
+
+    now = datetime.now(timezone.utc)
+    texts = {"rq1": "A farmer in Nakuru plants 120 seedlings in 8 equal rows. How many seedlings are in each row of the farm?",
+             "rq2": "Calculate the time taken in hours to fill the storage tank if all three pipes are opened together.",
+             "rq3": "Name the gas plants take in during photosynthesis when the sun is out over the shamba today."}
+    monkeypatch.setattr(whiteboard, "load", lambda qid: {"question_id": qid, "question_text": texts[qid]})
+    ids = {}
+    for k, qid in enumerate(texts):
+        ids[qid] = _booked(qid, now + timedelta(hours=1))
+        se.record_attempt(ids[qid], ok=True, scheduled=True)
+        execute("UPDATE social_posts SET posted_at = :t, comments_state = 'failed' WHERE post_id = :id",
+                {"t": now - timedelta(days=3 + k), "id": ids[qid]})
+    assert se.reconcile_due(now)
+    job = se.reconcile_job(now)
+    assert job["stage"] == "reconcile" and not se.reconcile_due(now), "one deep scroll every few hours"
+    seen = [
+        # the opening folded behind "See more": found by its end
+        {"url": "https://www.facebook.com/reel/111/", "text": "CBC Grade 9 … How many seedlings are in each row of the farm? 👇 The choices are in the comments"},
+        # its middle
+        {"url": "https://www.facebook.com/reel/222/", "text": "Pipes! … the time taken in hours to fill the storage tank if all three … See more"},
+        {"url": "https://www.facebook.com/reel/333/", "text": "Someone else's post about football results this weekend in Nairobi"},
+    ]
+    got = se.reconcile_result(seen, now)
+    assert got["matched"] == 2 and got["left"] == 1
+    r = fetch_one("SELECT url, status, notes, comments_state, comments_attempts FROM social_posts WHERE post_id = :id",
+                  {"id": ids["rq1"]})
+    assert r == {"url": "https://www.facebook.com/reel/111/", "status": "posted", "notes": se.SCHEDULER_CONFIRMED,
+                 "comments_state": "pending", "comments_attempts": 0}
+    assert fetch_one("SELECT url FROM social_posts WHERE post_id = :id", {"id": ids["rq2"]})["url"].endswith("/222/")
+    assert fetch_one("SELECT url FROM social_posts WHERE post_id = :id", {"id": ids["rq3"]})["url"] == ""
+    assert se.reconcile_result(seen, now)["matched"] == 0, "a link already taken is not given twice"
+
+
+def test_a_question_is_also_found_by_its_middle_and_end() -> None:
+    q = "A farmer in Nakuru plants 120 seedlings in 8 equal rows. How many seedlings are in each row of the farm?"
+    assert social.snippets(q) == ["seedlings in 8 equal rows. How many seedlings", "seedlings are in each row of the farm?"]
+    assert social.snippets("Too short to cut") == []

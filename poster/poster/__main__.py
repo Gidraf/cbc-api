@@ -410,6 +410,17 @@ async def comment_step(*, check: bool = False) -> dict[str, Any]:
         state["busy"] = "Checking the comment box" if check else f"Commenting ({job['stage']}) on facebook"
         page = await browser.page()
         try:
+            if job.get("stage") == "reconcile":
+                # Every post on the profile, with its link: the server matches them
+                # to the posts it has no link for, and their comments start.
+                from .flows import fb_reconcile
+
+                state["busy"] = "Reading the profile (matching posts to their links)"
+                out = await fb_reconcile.harvest(page, scrolls=int(job.get("scrolls") or 160))
+                got = await cbc.reconcile_done(out["items"])
+                log.info("Reconciled: %s of %s post(s) seen matched; %s still without a link.",
+                         got.get("matched"), got.get("seen"), got.get("left"))
+                return {"ok": True, "message": f"Matched {got.get('matched')} post(s) to their links.", "shot": out.get("shot")}
             if job.get("stage") == "share":
                 # The campaign's daily share of a post doing well, to the ticked groups.
                 from .flows import fb_share
@@ -442,7 +453,7 @@ async def comment_step(*, check: bool = False) -> dict[str, Any]:
             return {"ok": False, "error": str(exc)}
         except Exception as exc:  # noqa: BLE001
             why = _why(exc)
-            if not check:
+            if not check and job.get("stage") != "reconcile":      # a deep scroll that failed is tried again later
                 await cbc.comments_done(job["post_id"], job["stage"], ok=False, error=why)
             log.info("Comments %s on %s failed: %s", job["stage"], job["post_id"], why)
             count("failures")

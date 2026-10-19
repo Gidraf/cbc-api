@@ -963,6 +963,113 @@ def post_question(question_id: str, *, platform: str = "facebook", now: datetime
     return {"ok": True, "post_id": pid}
 
 
+# ── reconciling: every post found on the profile, matched to its booking ─────
+#
+# Posts without their link (a reel handed to Facebook's scheduler, one whose
+# first comment never found it) cannot be commented on, measured or
+# campaigned. Every few hours the poster scrolls the profile once, deep, and
+# sends each post it sees — its link and its words; each is matched to a post
+# here by its question's opening, middle or end. A match gets its link, a
+# scheduled reel found is confirmed, and its comments start (or start again).
+
+RECONCILE_EVERY = timedelta(hours=6)
+RECONCILE_MIN = 3                     # unlinked posts it takes to be worth a deep scroll
+
+
+def _norm_text(text: str) -> str:
+    """As the poster's search reads a caption: letters and digits, lower case."""
+    import unicodedata
+
+    t = unicodedata.normalize("NFKD", str(text or "")).lower()
+    return " ".join(re.sub(r"[^a-z0-9]+", " ", t).split())
+
+
+def _needles(question: str, context: str = "") -> list[str]:
+    """The opening, the middle and the end of a question (and its context's opening), 40 characters each."""
+    out: list[str] = []
+    for text in (question, context):
+        n = _norm_text(text)
+        if len(n) < 24:
+            continue
+        mid = len(n) // 2
+        out += [n[:40], n[max(0, mid - 20):mid + 20], n[-40:]] if text is question else [n[:40]]
+    return [x for x in dict.fromkeys(out) if len(x) >= 20]
+
+
+def _unlinked(now: datetime) -> list[dict[str, Any]]:
+    from ..infra.db import fetch_all
+
+    return fetch_all("""SELECT post_id, question_id, status, platform_scheduled, notes, comments_state FROM social_posts
+                        WHERE platform = 'facebook' AND COALESCE(format, 'video') = 'video' AND url = ''
+                          AND handed_at IS NOT NULL AND posted_at <= :ripe AND posted_at >= :since
+                        ORDER BY posted_at DESC LIMIT 400""",
+                     {"ripe": now - timedelta(minutes=10), "since": now - timedelta(days=90)}) or []
+
+
+def reconcile_due(now: datetime) -> bool:
+    """Enough posts without their link, and no deep scroll in the last few hours."""
+    from ..infra.db import fetch_one
+
+    last = (fetch_one("SELECT MAX(at) AS t FROM campaign_log WHERE kind = 'reconcile'") or {}).get("t")
+    if isinstance(last, datetime) and now - last < RECONCILE_EVERY:
+        return False
+    return len(_unlinked(now)) >= RECONCILE_MIN
+
+
+def reconcile_job(now: datetime) -> dict[str, Any]:
+    """The deep scroll, handed to the poster (and noted, so it is not handed twice)."""
+    from ..infra.db import execute
+
+    execute("INSERT INTO campaign_log (post_id, at, kind, ok) VALUES ('', :t, 'reconcile', TRUE)", {"t": now})
+    return {"post_id": "reconcile", "stage": "reconcile", "platform": "facebook", "scrolls": 160, "comments": []}
+
+
+def reconcile_result(items: list[dict[str, Any]], now: datetime | None = None) -> dict[str, Any]:
+    """Match what the poster saw on the profile to the posts without their link."""
+    from ..infra.db import execute
+    from .whiteboard import load
+
+    now = now or datetime.now(timezone.utc)
+    seen = []
+    for it in items or []:
+        url = str(it.get("url") or "").strip()
+        text = _norm_text(it.get("text") or "")
+        if url.startswith("https://") and "facebook.com" in url and len(text) >= 20:
+            seen.append((url, text))
+    taken = {u for u, _ in seen}
+    from ..infra.db import fetch_all
+
+    have = {r["url"] for r in (fetch_all("SELECT url FROM social_posts WHERE url = ANY(:u)", {"u": list(taken)}) or [])}
+    seen = [(u, t) for u, t in seen if u not in have]            # a link another post has is not this one
+    matched, used = [], set()
+    for post in _unlinked(now):
+        try:
+            q = load(post["question_id"])
+        except Exception:  # noqa: BLE001
+            continue
+        from . import social
+
+        needles = _needles(social.display(q.get("question_text") or ""), social.display(q.get("context") or ""))
+        if not needles:
+            continue
+        hit = next(((u, t) for u, t in seen if u not in used and any(n in t for n in needles)), None)
+        if not hit:
+            continue
+        used.add(hit[0])
+        execute("""UPDATE social_posts SET url = :u, updated_at = NOW(),
+                   status = CASE WHEN status = 'scheduled' THEN 'posted' ELSE status END,
+                   notes = CASE WHEN platform_scheduled THEN :c ELSE notes END,
+                   comments_state = CASE WHEN comments_state IN ('', 'failed', 'pending') THEN 'pending' ELSE comments_state END,
+                   comments_attempts = CASE WHEN comments_state IN ('', 'failed', 'pending') THEN 0 ELSE comments_attempts END,
+                   comments_next_at = CASE WHEN comments_state IN ('', 'failed', 'pending') THEN :now ELSE comments_next_at END,
+                   comments_error = CASE WHEN comments_state IN ('', 'failed', 'pending') THEN '' ELSE comments_error END
+                   WHERE post_id = :id AND url = ''""",
+                {"u": hit[0], "id": post["post_id"], "c": SCHEDULER_CONFIRMED, "now": now})
+        matched.append(post["post_id"])
+    logger.info("Reconciled %d post(s) from %d seen on the profile.", len(matched), len(seen))
+    return {"seen": len(seen), "matched": len(matched), "posts": matched, "left": len(_unlinked(now))}
+
+
 # ── the comment thread ───────────────────────────────────────────────────────
 #
 # Once a post is out the poster comments under it: first the choices and
@@ -1040,6 +1147,8 @@ def comments_next(now: datetime | None = None, *, check: bool = False,
     if not check and "post" not in roles:
         # A comments-only Mac: no post's own thread, straight to the readings and the campaign.
         row = {"skip": True}
+    if not check and "post" in roles and reconcile_due(now):
+        return {"job": reconcile_job(now), "reason": ""}
     if not check and not (row and row.get("skip")):
         try:
             _give_up_unfindable(now)

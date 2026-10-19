@@ -106,8 +106,10 @@ def test_quiet_posts_get_their_next_comment_and_improving_ones_are_left(db) -> N
 
 
 @needs_db
-def test_the_day_has_a_cap_and_a_post_stops_when_its_comments_run_out(db) -> None:
+def test_the_day_has_a_cap_and_a_post_stops_when_its_comments_run_out(db, monkeypatch) -> None:
     from app.infra.db import execute, fetch_one
+
+    monkeypatch.setattr(se, "reconcile_due", lambda now: False)      # these posts have no links: no deep scroll here
 
     a, b, c = _post("a"), _post("b"), _post("c")
     execute("UPDATE social_posts SET boost_last_at = :t", {"t": NOW - timedelta(hours=1)})       # two given today

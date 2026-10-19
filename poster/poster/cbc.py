@@ -123,6 +123,12 @@ async def comments_done(post_id: str, stage: str, *, ok: bool, error: str = "", 
                       **({"metrics": metrics} if metrics else {}), **({"groups": groups} if groups else {})})
 
 
+async def reconcile_done(items: list[dict[str, str]]) -> dict[str, Any]:
+    """Every post seen on the profile, for the server to match to the posts it has no link for."""
+    r = await _call("POST", "/api/v1/play/poster/reconcile", json={"items": items[:2000]}, timeout=120)
+    return r.json()
+
+
 async def linkedin_next() -> dict[str, Any] | None:
     """The next developer-studio post for LinkedIn: a document (PDF) or a video."""
     r = await _call("GET", "/api/v1/dev/linkedin/next", timeout=60, params={"poster_id": config.POSTER_ID})

@@ -1377,6 +1377,20 @@ def poster_next(platform: str = Query(""), post_id: str = Query(""), dry: bool =
     return social_export.next_for_poster(platform=platform, post_id=post_id, dry=dry, share=share, groups=groups)
 
 
+class ReconcileItems(BaseModel):
+    items: list[dict[str, Any]] = Field(default_factory=list, max_length=2000)
+
+
+@router.post("/poster/reconcile")
+def poster_reconcile(payload: ReconcileItems, auth: AuthContext = Depends(ANY)) -> dict[str, Any]:
+    """What the poster saw scrolling the profile — each post's link and words —
+    matched to the posts here without their link."""
+    from ..services import social_export
+
+    _may_make_videos(auth)
+    return social_export.reconcile_result(payload.items)
+
+
 @router.get("/poster/comments/next")
 def poster_comments_next(poster_id: str = Query(""), check: bool = Query(False),
                          auth: AuthContext = Depends(ANY)) -> dict[str, Any]:
