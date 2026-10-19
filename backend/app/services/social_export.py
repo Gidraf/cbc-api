@@ -381,7 +381,7 @@ def schedule_next(now: datetime | None = None, *, book_if_empty: bool = True) ->
         """SELECT * FROM social_posts WHERE platform = 'facebook' AND COALESCE(format, 'video') = 'video'
            AND posted_at IS NULL AND handed_at IS NULL AND status IN ('planned', 'failed') AND attempts < :tries
            AND groups = '[]'::jsonb AND scheduled_for > :soon AND scheduled_for <= :until
-           ORDER BY scheduled_for LIMIT 40""",
+           ORDER BY scheduled_for LIMIT 600""",
         {"tries": MAX_ATTEMPTS, "soon": now + AHEAD_LEAD, "until": now + timedelta(days=rules["ahead_days"])}) or []
     if not rows and book_if_empty:
         # A manual "Schedule now" with nothing booked inside the window: book
@@ -391,13 +391,17 @@ def schedule_next(now: datetime | None = None, *, book_if_empty: bool = True) ->
         except Exception as exc:  # noqa: BLE001
             logger.warning("Booking for Schedule now failed: %s", exc)
         return schedule_next(now, book_if_empty=False)
-    waiting = 0
+    # Every booking in the window is looked at, soonest first: the soonest are
+    # often waiting for their videos to be made again, and a ready one may
+    # sit behind them. Those not made are queued, the soonest 20 a press.
+    waiting = queued = 0
     for row in rows:
         st = _media(row)
         if st.get("status") != "ready":
-            if st.get("status") == "none":
+            if st.get("status") == "none" and queued < 20:
                 try:
                     social.enqueue(row["question_id"], queued_by="schedule-now")
+                    queued += 1
                 except Exception:  # noqa: BLE001
                     pass
             waiting += 1
@@ -419,7 +423,8 @@ def schedule_next(now: datetime | None = None, *, book_if_empty: bool = True) ->
                          "title": title, "attempts": row.get("attempts") or 0,
                          "schedule_at": row["scheduled_for"].astimezone(EAT).isoformat(), "groups": []},
                 "reason": "", "left_today": rules["daily_cap"] - done}
-    why = (f"{waiting} booked video(s) in Facebook's window are still being made — they go as each is ready." if waiting
+    why = (f"None of the {waiting} booked reel(s) in Facebook's window has its current video yet (videos made before "
+           f"the marketing are made again) — {queued} more queued now; they go as each is ready." if waiting
            else "Nothing to schedule: no unposted questions left in the Auto-book subjects — add a subject or more questions.")
     return {"post": None, "reason": why}
 
