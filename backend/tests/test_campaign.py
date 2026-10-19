@@ -301,3 +301,32 @@ def test_post_now_takes_a_picked_question_but_never_one_already_out(db, monkeypa
     made["sched-q"] = "ready"
     refused = se.post_question("sched-q", now=now)
     assert not refused["ok"] and "already scheduled on Facebook" in refused["error"]
+
+
+@needs_db
+def test_one_question_shows_its_videos_posts_comments_and_numbers(db, monkeypatch) -> None:
+    from types import SimpleNamespace
+
+    from app.infra.db import execute
+    from app.routes import play
+    from app.services import whiteboard
+
+    q = {"question_id": "lib-q", "question_text": "What is 7 × 8?", "options": [{"id": "A", "text": "56", "is_correct": True}],
+         "curriculum": {"grade": "grade-9", "subject": "Mathematics", "sub_strand": "Integers"}}
+    monkeypatch.setattr(whiteboard, "load", lambda qid: q)
+    monkeypatch.setattr(social, "status", lambda qid, q=None, **k: {"status": "ready", "url": "https://x/v.mp4", "teacher": "female"})
+    pid = _post("lib-q", NOW - timedelta(days=1), 120)
+    execute("UPDATE social_posts SET url = 'https://facebook.com/reel/7' WHERE post_id = :id", {"id": pid})
+    execute("INSERT INTO post_insights (post_id, at, views, reactions, comments, shares) VALUES (:p, :t, 120, 4, 9, 1)",
+            {"p": pid, "t": NOW})
+    execute("INSERT INTO campaign_log (post_id, at, kind, ok) VALUES (:p, :t, 'comment', TRUE), (:p, :t, 'comment', TRUE)",
+            {"p": pid, "t": NOW})
+    execute("""INSERT INTO question_videos (question_id, kind, video_key, object_name, made_at)
+               VALUES ('lib-q', 'social', 'abc', 'social/lib-q/abc.mp4', :t)""", {"t": NOW})
+    out = play.library_question("lib-q", auth=SimpleNamespace(role="admin"))
+    assert out["question_text"] == "What is 7 × 8?" and out["sub_strand"] == "Integers"
+    assert out["current_video"]["status"] == "ready" and out["videos"][0]["kind"] == "social"
+    post = out["posts"][0]
+    assert post["url"] == "https://facebook.com/reel/7" and post["campaign"]["comment"]["ok"] == 2
+    assert post["daily"][0]["views"] == 120
+    assert play.library_question("lib-q", auth=SimpleNamespace(role="student"))["posts"] == [], "the team's numbers only"
