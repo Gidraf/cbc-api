@@ -227,11 +227,55 @@ def test_reels_already_given_up_on_are_looked_for_again(db) -> None:
     pid = _booked("old", now + timedelta(hours=1))
     se.record_attempt(pid, ok=True, scheduled=True)
     execute("UPDATE social_posts SET posted_at = :t, comments_state = 'failed', comments_attempts = 4 WHERE post_id = :id",
-            {"t": now - timedelta(days=1), "id": pid})
+            {"t": now - timedelta(hours=3), "id": pid})
     assert se.recheck_scheduled(now) == 1
     r = fetch_one("SELECT comments_state, comments_attempts FROM social_posts WHERE post_id = :id", {"id": pid})
     assert r == {"comments_state": "pending", "comments_attempts": 0}
     assert se.recheck_scheduled(now) == 0
+    # A reel due a day ago is far down the profile: not looked for again.
+    execute("UPDATE social_posts SET posted_at = :t, comments_state = 'failed' WHERE post_id = :id",
+            {"t": now - timedelta(days=1), "id": pid})
+    assert se.recheck_scheduled(now) == 0
+
+
+@needs_db
+def test_a_reel_lost_long_ago_is_never_sent_out_again(db) -> None:
+    from app.infra.db import execute, fetch_one
+
+    now = datetime.now(timezone.utc)
+    pid = _booked("long-ago", now + timedelta(hours=1))
+    se.record_attempt(pid, ok=True, scheduled=True)
+    execute("UPDATE social_posts SET posted_at = :t WHERE post_id = :id", {"t": now - timedelta(days=2), "id": pid})
+    se.comments_result(pid, stage="first", ok=False, error="Could not find the post on the profile.", now=now)
+    r = fetch_one("SELECT status, handed_at, notes, comments_state FROM social_posts WHERE post_id = :id", {"id": pid})
+    assert r["status"] == "scheduled" and r["handed_at"] and r["notes"] == se.SCHEDULER_UNVERIFIED
+    assert r["comments_state"] == "failed"
+
+
+@needs_db
+def test_old_posts_without_a_link_do_not_hold_up_the_comments(db, monkeypatch) -> None:
+    from app.infra.db import execute, fetch_one
+
+    now = datetime.now(timezone.utc).replace(hour=9)          # noon in Nairobi, inside posting hours
+    db["poster_comment_thread"] = True
+    monkeypatch.setattr(social, "status", lambda qid, q=None, **k: {"thread": {"find": qid, "first": ["a"], "later": ["b"]},
+                                                                    "status": "ready"})
+    old = _post("old-nolink", now - timedelta(days=4), 10)
+    fresh = _post("fresh-nolink", now - timedelta(hours=2), 10)
+    linked = _post("linked", now - timedelta(days=4), 10)
+    execute("UPDATE social_posts SET comments_state = 'pending', comments_next_at = posted_at, url = '' WHERE post_id IN (:a, :b)",
+            {"a": old, "b": fresh})
+    execute("""UPDATE social_posts SET comments_state = 'pending', comments_next_at = posted_at,
+               url = 'https://facebook.com/reel/9' WHERE post_id = :c""", {"c": linked})
+    assert se._give_up_unfindable(now) == 1
+    assert fetch_one("SELECT comments_state FROM social_posts WHERE post_id = :id", {"id": old})["comments_state"] == "failed"
+    # Straight after a profile search that failed, the next turn is a post with its link.
+    execute("UPDATE social_posts SET comments_error = 'Could not find the post on the profile.', updated_at = :t WHERE post_id = :id",
+            {"t": now - timedelta(minutes=2), "id": old})
+    assert se._searched_in_vain(now)
+    job = se.comments_next(now).get("job") or {}
+    assert job.get("post_id") == linked
+    assert not se._searched_in_vain(now + timedelta(minutes=10))
 
 
 @needs_db
