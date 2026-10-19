@@ -1810,15 +1810,17 @@ def poster_groups(platform: str = Query("facebook"), auth: AuthContext = Depends
 class PickGroups(BaseModel):
     platform: str = "facebook"
     enabled: list[str] = []
+    developers: list[str] | None = None     # groups for the developer series; None leaves them as they are
 
 
 @router.put("/poster/groups")
 def poster_pick_groups(payload: PickGroups, auth: AuthContext = Depends(ANY)) -> dict[str, Any]:
-    """Which groups may get a share — the owner ticks the ones that welcome it."""
+    """Which groups may get a share — the owner ticks the ones that welcome it,
+    and marks which welcome the developer series rather than the learners'."""
     from ..services import social_export
 
     _may_make_videos(auth)
-    return {"groups": social_export.set_groups(payload.platform, payload.enabled)}
+    return {"groups": social_export.set_groups(payload.platform, payload.enabled, payload.developers)}
 
 
 # ── the Mac poster's side: it asks, the server answers ───────────────────────
