@@ -2458,6 +2458,31 @@ def post_card(question_id: str, step: str, *, now: datetime | None = None) -> di
     return {"ok": card.get("status") == "ready", "post_id": pid}
 
 
+def post_series_now(question_id: str, *, now: datetime | None = None) -> dict[str, Any]:
+    """A question's whole series, booked for now in its order — "a question is
+    coming", the question, its KICD page, the answer, then its walkthrough —
+    for the poster to put out one after the other at once (it makes any card
+    not made yet itself). Parts already out are left out."""
+    from ..infra.db import fetch_one
+    from .whiteboard import load
+
+    now = now or datetime.now(timezone.utc)
+    q = load(question_id)
+    ids, steps = [], []
+    for n, step in enumerate((*CARD_STEPS, "walkthrough")):
+        pid = (_post_id(question_id, "facebook") if step == "walkthrough" else
+               "sp_" + hashlib.sha256(f"{question_id}:facebook:{step}".encode()).hexdigest()[:16])
+        row = fetch_one("SELECT handed_at FROM social_posts WHERE post_id = :id", {"id": pid})
+        if row and row.get("handed_at") is not None:
+            continue
+        _plan_step(q, "facebook", step, now + timedelta(seconds=n), POST_NOW)
+        ids.append(pid)
+        steps.append(step)
+    if not ids:
+        return {"ok": False, "error": "Every part of its series is out already."}
+    return {"ok": True, "post_ids": ids, "steps": steps}
+
+
 def post_series_today(question_id: str, *, now: datetime | None = None) -> dict[str, Any]:
     """A question's whole series from now, in order — "a question is coming",
     the question, its KICD page, the answer, then its walkthrough — one

@@ -484,3 +484,35 @@ def test_a_card_or_a_whole_series_can_go_out_now(db, monkeypatch) -> None:
     times = {r["step"]: r["scheduled_for"] for r in fetch_all(
         "SELECT step, scheduled_for FROM social_posts WHERE question_id = 'pc-q' AND handed_at IS NULL")}
     assert times["question"] - times["teaser"] == timedelta(minutes=100) and times["walkthrough"] > times["answer"]
+
+
+@needs_db
+def test_the_series_goes_now_and_the_mac_can_make_its_cards(db, monkeypatch) -> None:
+    import asyncio
+    import io
+
+    from starlette.datastructures import UploadFile
+
+    from app.infra.storage import object_storage
+    from app.routes import play
+    from app.services import social_cards, whiteboard
+
+    now = datetime.now(timezone.utc)
+    monkeypatch.setattr(whiteboard, "load", lambda qid: {"question_id": qid, "curriculum": {"grade": "grade-9"}})
+    got = se.post_series_now("sn-q", now=now)
+    assert got["steps"] == ["teaser", "question", "kicd", "answer", "walkthrough"] and len(got["post_ids"]) == 5
+    se.record_attempt(got["post_ids"][0], ok=True)
+    assert se.post_series_now("sn-q", now=now)["steps"][0] == "question", "a card already out is left out"
+
+    saved = {}
+    monkeypatch.setattr(social_cards, "status", lambda qid, step, q=None: {"status": "ready", "url": "u"} if saved
+                        else {"status": "none", "object_name": f"social_cards/{qid}/{step}-k.jpg"})
+    monkeypatch.setattr(social_cards, "page", lambda q, step, b: f"<html>{step}</html>")
+    monkeypatch.setattr(play, "_may_make_videos", lambda auth: None)
+    monkeypatch.setattr(object_storage, "save_bytes", lambda name, data, ctype: saved.update({name: data}) or name)
+    out = play.poster_card(question_id="sn-q", step="kicd", auth=None)
+    assert out["status"] == "none" and out["html"] == "<html>kicd</html>" and out["width"] == 1080
+    jpeg = b"\xff\xd8\xff\xe0" + b"x" * 100
+    up = asyncio.run(play.poster_card_upload(question_id="sn-q", step="kicd", file=UploadFile(io.BytesIO(jpeg), filename="k.jpg"),
+                                             auth=None))
+    assert saved == {"social_cards/sn-q/kicd-k.jpg": jpeg} and up["status"] == "ready"

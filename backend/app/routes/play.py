@@ -1722,7 +1722,16 @@ def poster_post_question(payload: PostQuestion, auth: AuthContext = Depends(ANY)
 
     _may_make_videos(auth)
     if payload.what == "series":
-        return social_export.post_series_today(payload.question_id)
+        # The whole series now, one after the other: the Mac makes any card
+        # not made yet with its own browser, uploads it and posts it.
+        got = social_export.post_series_now(payload.question_id)
+        if not got.get("ok"):
+            return got
+        out = poster_command(PosterCommand(action="series_now", platform="facebook", post_id=got["post_ids"][0],
+                                           options={"question_id": payload.question_id, "post_ids": got["post_ids"],
+                                                    "steps": got["steps"], "share": payload.share,
+                                                    "groups": payload.groups[:5]}), auth=auth)
+        return {**out, "message": "Sent to the poster: " + ", ".join(got["steps"]) + " — one after the other, now."}
     if payload.what == "video":
         got = social_export.post_question(payload.question_id)    # an unknown question is a 404
     else:
@@ -1731,6 +1740,45 @@ def poster_post_question(payload: PostQuestion, auth: AuthContext = Depends(ANY)
         return got
     return poster_command(PosterCommand(action="run_now", platform="facebook", post_id=got["post_id"],
                                         options={"share": payload.share, "groups": payload.groups}), auth=auth)
+
+
+@router.get("/poster/card")
+def poster_card(question_id: str = Query(..., max_length=200), step: str = Query(..., max_length=20),
+                auth: AuthContext = Depends(ANY)) -> dict[str, Any]:
+    """A card for the Mac: its picture if it is made, else its page (HTML) for
+    the Mac's own browser to photograph and send back (POST /poster/card)."""
+    from ..services import social, social_cards
+    from ..services.whiteboard import load
+
+    _may_make_videos(auth)
+    if step not in social_cards.CARDS:
+        raise_api_error("VALIDATION_FAILED", "A card is one of " + ", ".join(social_cards.CARDS))
+    q = load(question_id)
+    st = social_cards.status(question_id, step, q)
+    if st.get("status") == "ready":
+        return {"status": "ready", "url": st["url"]}
+    return {"status": "none", "html": social_cards.page(q, step, social.brand()),
+            "width": social_cards.WIDTH, "height": social_cards.HEIGHT}
+
+
+@router.post("/poster/card")
+async def poster_card_upload(question_id: str = Form(..., max_length=200), step: str = Form(..., max_length=20),
+                             file: UploadFile = File(...), auth: AuthContext = Depends(ANY)) -> dict[str, Any]:
+    """A card the Mac photographed: stored where the server keeps that card."""
+    from ..infra.storage import object_storage
+    from ..services import social_cards
+    from ..services.whiteboard import load
+
+    _may_make_videos(auth)
+    if step not in social_cards.CARDS:
+        raise_api_error("VALIDATION_FAILED", "A card is one of " + ", ".join(social_cards.CARDS))
+    data = await file.read()
+    if not data.startswith(b"\xff\xd8") or len(data) > 4_000_000:
+        raise_api_error("VALIDATION_FAILED", "A card is a JPEG under 4 MB.")
+    q = load(question_id)
+    name = social_cards.status(question_id, step, q)["object_name"]
+    object_storage.save_bytes(name, data, "image/jpeg")
+    return social_cards.status(question_id, step, q)
 
 
 @router.post("/poster/command")
@@ -1744,11 +1792,16 @@ def poster_command(payload: PosterCommand, auth: AuthContext = Depends(ANY)) -> 
 
     _may_make_videos(auth)
     if payload.action not in ("login", "logout", "check", "dry_run", "run_now", "schedule_now", "comments_check",
-                              "engage_check", "pause", "resume", "groups", "uninstall"):
+                              "engage_check", "pause", "resume", "groups", "uninstall", "series_now"):
         raise_api_error("VALIDATION_FAILED", "Unknown poster action.")
     options: dict[str, Any] = {}
     if payload.action == "schedule_now":
         options = {"count": max(1, min(int((payload.options or {}).get("count") or 5), 30))}
+    if payload.action == "series_now":
+        o = payload.options or {}
+        options = {"question_id": str(o.get("question_id") or "")[:200], "post_ids": [str(x)[:40] for x in (o.get("post_ids") or [])][:6],
+                   "steps": [str(x)[:20] for x in (o.get("steps") or [])][:6], "share": str(o.get("share") or "feed"),
+                   "groups": [str(g)[:200] for g in (o.get("groups") or [])][:5]}
     share = str((payload.options or {}).get("share") or "")
     if payload.action == "run_now" and share:
         if share not in ("feed", "groups"):

@@ -1330,7 +1330,7 @@ function PostQuestionNow({ left }: { left: number }) {
                onChange={(e) => setWords(e.target.value)} />
         <Select value={what} style={{ width: "auto" }} onChange={(e) => setWhat(e.target.value as typeof what)}>
           <option value="video">Its video</option>
-          <option value="series">Its series today (cards, then the video)</option>
+          <option value="series">Its series now (cards, then the video)</option>
           <option value="teaser">Card: a question is coming</option>
           <option value="question">Card: the question</option>
           <option value="kicd">Card: KICD design page</option>

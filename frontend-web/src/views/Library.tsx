@@ -273,7 +273,7 @@ function Cards({ q }: { q: LibraryQuestion }) {
               <option value="groups">Feed + next groups</option>
             </Select>
             <Button size="sm" variant="primary" disabled={post.isPending} onClick={() => go("series")}
-                    title="Each card, then the video — from now, in order, one posting gap apart">Post the series today</Button>
+                    title="Each card, then the video — now, one after the other (the Mac makes any card not made yet)">Post the series now</Button>
           </Stack>}>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(8.5rem, 1fr))", gap: "var(--s2)" }}>
         {CARD_STEPS.map(([step, title]) => {
