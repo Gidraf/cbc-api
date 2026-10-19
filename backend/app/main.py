@@ -27,6 +27,7 @@ from .routes.admin_logs import router as admin_logs_router
 from .routes.admin_settings import router as admin_settings_router
 from .routes.exam_builder import router as exam_builder_router
 from .routes.play import router as play_router
+from .routes.devcast import router as devcast_router
 from .routes.agent import router as agent_router
 from .routes.auth import router as auth_router
 from .routes.artifacts import router as artifacts_router
@@ -121,6 +122,7 @@ app.include_router(questions_router)
 app.include_router(exams_router)
 app.include_router(exam_builder_router)
 app.include_router(play_router)
+app.include_router(devcast_router)
 app.include_router(assets_router)
 app.include_router(targets_router)
 app.include_router(model_scout_router)

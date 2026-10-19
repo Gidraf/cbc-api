@@ -1759,6 +1759,17 @@ MIGRATIONS: list[tuple[str, str]] = [
         );
         """,
     ),
+    (
+        "067_social_audience",
+        """
+        -- Who a post is for: the learners' question videos, or the developer
+        -- series (question_id then holds 'devcast:<episode>'). A group welcomes
+        -- one audience, so a code video is never shared to a parents' group.
+        ALTER TABLE social_posts ADD COLUMN IF NOT EXISTS audience TEXT NOT NULL DEFAULT 'learners';
+        ALTER TABLE poster_groups ADD COLUMN IF NOT EXISTS audience TEXT NOT NULL DEFAULT 'learners';
+        CREATE INDEX IF NOT EXISTS idx_social_posts_audience ON social_posts(audience, scheduled_for);
+        """,
+    ),
 ]
 
 

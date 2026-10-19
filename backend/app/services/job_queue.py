@@ -373,7 +373,7 @@ def cancel(job_id: str = "", batch_id: str = "") -> int:
 # render. What does bind renders is this machine — each one drives a browser
 # and ffmpeg — so at most RENDER_WORKERS (default 1) run at once, whatever
 # JOB_WORKERS says.
-RENDER_KINDS = ("social", "video")
+RENDER_KINDS = ("social", "video", "devcast")
 
 
 def _render_limit() -> int:
@@ -395,7 +395,7 @@ def render_queue() -> str:
     return os.getenv("CELERY_RENDER_QUEUE", "").strip()
 
 
-_RENDERS = "('social', 'video')"
+_RENDERS = "('social', 'video', 'devcast')"
 def _priority(table: str) -> str:
     """A job's priority (payload.priority, a whole number; 0 when absent)."""
     return (f"(CASE WHEN {table}.payload->>'priority' ~ '^[0-9]{{1,4}}$' "

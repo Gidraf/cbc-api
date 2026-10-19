@@ -28,6 +28,7 @@ logger = logging.getLogger("cbc-social-export")
 
 PLATFORMS = ("tiktok", "instagram", "youtube", "facebook", "linkedin", "whatsapp", "x")
 STATS = ("views", "likes", "comments", "shares", "saves", "follows")
+AUDIENCES = ("learners", "developers")
 
 
 def _slug(text: str, n: int = 40) -> str:
@@ -565,10 +566,14 @@ def next_for_poster(now: datetime | None = None, *, platform: str = "", post_id:
         chosen, st = live_extra(now, rules)
     if not chosen:
         return {"post": None, "reason": why, "rules": rules}
-    from .whiteboard import load
+    audience = chosen.get("audience") or "learners"
+    if audience == "developers":
+        title = str(st.get("title") or "")[:90]
+    else:
+        from .whiteboard import load
 
-    q_text = social.display(load(chosen["question_id"]).get("question_text") or "")
-    title = (f"{social.brand().get('hook') or 'Can you solve this?'} {q_text}")[:90].rstrip() + " #Shorts"
+        q_text = social.display(load(chosen["question_id"]).get("question_text") or "")
+        title = (f"{social.brand().get('hook') or 'Can you solve this?'} {q_text}")[:90].rstrip() + " #Shorts"
     when = chosen.get("scheduled_for")
     reserved = [str(g) for g in (chosen.get("groups") or [])]
     ahead = (not share and not reserved and chosen["platform"] in rules["ahead_platforms"] and isinstance(when, datetime)
@@ -577,14 +582,14 @@ def next_for_poster(now: datetime | None = None, *, platform: str = "", post_id:
         to_groups: list[str] = []
     elif share == "groups":
         to_groups = (picked_groups(chosen["platform"], groups) if groups
-                     else group_rotation(chosen["platform"], now, rules))
+                     else group_rotation(chosen["platform"], now, rules, audience=audience))
         if not to_groups:
             return {"post": None, "rules": rules, "reason": (
                 "None of the picked groups is one the poster found — press \"Read my groups from Facebook\"."
                 if groups else "No group is free for a share: tick more groups, or wait for one to rest "
                 f"({rules['group_rest_days']} days between shares to a group).")}
     else:
-        to_groups = [] if ahead else (reserved or groups_for(chosen["platform"], now, rules))
+        to_groups = [] if ahead else (reserved or groups_for(chosen["platform"], now, rules, audience))
     photo = str(chosen.get("format") or "video") == "photo"
     if photo:
         ahead, to_groups = False, []            # a card goes out live, to the feed
@@ -595,6 +600,7 @@ def next_for_poster(now: datetime | None = None, *, platform: str = "", post_id:
         except Exception:  # noqa: BLE001
             pass
     return {"post": {"post_id": chosen["post_id"], "platform": chosen["platform"], "question_id": chosen["question_id"],
+                     "audience": audience,
                      "format": "photo" if photo else "video", "step": chosen.get("step") or "walkthrough",
                      "video_url": "" if photo else st["url"], "image_url": st.get("url") if photo else "",
                      "thumbnail_url": None if photo else st.get("thumbnail_url"),
@@ -623,7 +629,12 @@ def _caption(st: dict[str, Any]) -> str:
 
 def _media(row: dict[str, Any]) -> dict[str, Any]:
     """What a booked post shows, if it is made: the walkthrough video (with
-    its post text), or the step's photo card (with its caption)."""
+    its post text), the step's photo card (with its caption), or — for the
+    developer series — the episode's devcast with its platform's caption."""
+    if row.get("audience") == "developers":
+        from .devcast_series import media
+
+        return media(row["question_id"], row["platform"])
     from . import social
 
     if str(row.get("format") or "video") != "photo":
@@ -647,7 +658,7 @@ def reserve_group(post: dict[str, Any], rules: dict[str, Any]) -> list[str]:
     when = post.get("scheduled_for")
     if not isinstance(when, datetime):
         return []
-    groups = groups_for(post["platform"], when, rules)
+    groups = groups_for(post["platform"], when, rules, post.get("audience") or "learners")
     if groups:
         execute("UPDATE social_posts SET groups = CAST(:g AS jsonb), updated_at = NOW() WHERE post_id = :id",
                 {"id": post["post_id"], "g": to_json(groups)})
@@ -674,11 +685,12 @@ def work_order(now: datetime, rules: dict[str, Any], rows: list[dict[str, Any]])
     return due + ahead
 
 
-def groups_for(platform: str, at: datetime, rules: dict[str, Any]) -> list[str]:
-    """The groups (if any) this post is also shared to: `group_shares_per_day`
-    posts a day carry a share — with two, one before 13:00 and one after —
-    each to the next `groups_per_post` groups in turn (see `group_rotation`)."""
-    from ..infra.db import fetch_all
+def groups_for(platform: str, at: datetime, rules: dict[str, Any], audience: str = "learners") -> list[str]:
+    """The group (if any) this post is also shared to: `group_shares_per_day`
+    a day — with two, one before 13:00 and one after — each to the ticked
+    group rested longest, and never the same group within `group_rest_days`.
+    Each audience has its own groups and its own shares a day."""
+    from ..infra.db import fetch_all, fetch_one
 
     per_day = rules.get("group_shares_per_day", 0)
     if platform not in GROUP_PLATFORMS or per_day <= 0:
@@ -686,18 +698,19 @@ def groups_for(platform: str, at: datetime, rules: dict[str, Any]) -> list[str]:
     local = at.astimezone(EAT)
     d0 = local.replace(hour=0, minute=0, second=0, microsecond=0)
     shared = fetch_all(           # shared already, or kept back for a share
-        """SELECT COALESCE(posted_at, scheduled_for) AS t FROM social_posts WHERE platform = :p
+        """SELECT COALESCE(posted_at, scheduled_for) AS t FROM social_posts WHERE platform = :p AND audience = :a
            AND groups <> '[]'::jsonb AND status <> 'gave_up' AND COALESCE(posted_at, scheduled_for) >= :d0
            AND COALESCE(posted_at, scheduled_for) < :d1""",
-        {"p": platform, "d0": d0, "d1": d0 + timedelta(days=1)}) or []
+        {"p": platform, "a": audience, "d0": d0, "d1": d0 + timedelta(days=1)}) or []
     if len(shared) >= per_day:
         return []
     if per_day == 2 and any((r["t"].astimezone(EAT).hour < 13) == (local.hour < 13) for r in shared if r.get("t")):
         return []                       # this half of the day has its share
-    return group_rotation(platform, at, rules)
+    return group_rotation(platform, at, rules, audience=audience)
 
 
-def group_rotation(platform: str, at: datetime, rules: dict[str, Any], *, limit: int = 0) -> list[str]:
+def group_rotation(platform: str, at: datetime, rules: dict[str, Any], *, limit: int = 0,
+                   audience: str = "learners") -> list[str]:
     """The next groups in turn: the ticked groups rested longest (never
     shared first), `groups_per_post` of them, none shared within
     `group_rest_days`. Shares walk through every ticked group before any
@@ -709,10 +722,10 @@ def group_rotation(platform: str, at: datetime, rules: dict[str, Any], *, limit:
     n = max(1, min(limit or rules.get("groups_per_post", MAX_GROUPS_PER_POST), MAX_GROUPS_PER_POST))
     rest = timedelta(days=rules.get("group_rest_days", 7))
     rows = fetch_all(
-        """SELECT name FROM poster_groups WHERE platform = :p AND enabled
+        """SELECT name FROM poster_groups WHERE platform = :p AND enabled AND audience = :a
            AND (last_shared_for IS NULL OR last_shared_for <= :cut OR last_shared_for >= :after)
            ORDER BY last_shared_for NULLS FIRST, name LIMIT :n""",
-        {"p": platform, "cut": at - rest, "after": at + rest, "n": n}) or []
+        {"p": platform, "a": audience, "cut": at - rest, "after": at + rest, "n": n}) or []
     return [r["name"] for r in rows]
 
 
@@ -756,7 +769,8 @@ def record_attempt(post_id: str, *, ok: bool, url: str = "", error: str = "", dr
             # A few minutes after it is out: a reel takes a while to show on the profile.
             execute("""UPDATE social_posts SET comments_state = 'pending', comments_next_at = posted_at + INTERVAL '3 minutes',
                        comments_attempts = 0, comments_error = ''
-                       WHERE post_id = :id AND COALESCE(format, 'video') = 'video' AND comments_state = ''""",
+                       WHERE post_id = :id AND COALESCE(format, 'video') = 'video' AND comments_state = ''
+                         AND audience = 'learners'""",
                     {"id": post_id})
         if groups:
             row = fetch_one("SELECT platform, posted_at FROM social_posts WHERE post_id = :id", {"id": post_id}) or {}
@@ -963,6 +977,114 @@ def post_question(question_id: str, *, platform: str = "facebook", now: datetime
     return {"ok": True, "post_id": pid}
 
 
+# ── reconciling: every post found on the profile, matched to its booking ─────
+#
+# Posts without their link (a reel handed to Facebook's scheduler, one whose
+# first comment never found it) cannot be commented on, measured or
+# campaigned. Every few hours the poster scrolls the profile once, deep, and
+# sends each post it sees — its link and its words; each is matched to a post
+# here by its question's opening, middle or end. A match gets its link, a
+# scheduled reel found is confirmed, and its comments start (or start again).
+
+RECONCILE_EVERY = timedelta(hours=6)
+RECONCILE_MIN = 3                     # unlinked posts it takes to be worth a deep scroll
+
+
+def _norm_text(text: str) -> str:
+    """As the poster's search reads a caption: letters and digits, lower case."""
+    import unicodedata
+
+    t = unicodedata.normalize("NFKD", str(text or "")).lower()
+    return " ".join(re.sub(r"[^a-z0-9]+", " ", t).split())
+
+
+def _needles(question: str, context: str = "") -> list[str]:
+    """The opening, the middle and the end of a question (and its context's opening), 40 characters each."""
+    out: list[str] = []
+    for text in (question, context):
+        n = _norm_text(text)
+        if len(n) < 24:
+            continue
+        mid = len(n) // 2
+        out += [n[:40], n[max(0, mid - 20):mid + 20], n[-40:]] if text is question else [n[:40]]
+    return [x for x in dict.fromkeys(out) if len(x) >= 20]
+
+
+def _unlinked(now: datetime) -> list[dict[str, Any]]:
+    from ..infra.db import fetch_all
+
+    return fetch_all("""SELECT post_id, question_id, status, platform_scheduled, notes, comments_state FROM social_posts
+                        WHERE platform = 'facebook' AND COALESCE(format, 'video') = 'video' AND url = ''
+                          AND handed_at IS NOT NULL AND posted_at <= :ripe AND posted_at >= :since
+                          AND audience = 'learners'
+                        ORDER BY posted_at DESC LIMIT 400""",
+                     {"ripe": now - timedelta(minutes=10), "since": now - timedelta(days=90)}) or []
+
+
+def reconcile_due(now: datetime) -> bool:
+    """Enough posts without their link, and no deep scroll in the last few hours."""
+    from ..infra.db import fetch_one
+
+    last = (fetch_one("SELECT MAX(at) AS t FROM campaign_log WHERE kind = 'reconcile'") or {}).get("t")
+    if isinstance(last, datetime) and now - last < RECONCILE_EVERY:
+        return False
+    return len(_unlinked(now)) >= RECONCILE_MIN
+
+
+def reconcile_job(now: datetime) -> dict[str, Any]:
+    """The deep scroll, handed to the poster (and noted, so it is not handed twice)."""
+    from ..infra.db import execute
+
+    execute("INSERT INTO campaign_log (post_id, at, kind, ok) VALUES ('', :t, 'reconcile', TRUE)", {"t": now})
+    return {"post_id": "reconcile", "stage": "reconcile", "platform": "facebook", "scrolls": 160, "comments": []}
+
+
+def reconcile_result(items: list[dict[str, Any]], now: datetime | None = None) -> dict[str, Any]:
+    """Match what the poster saw on the profile to the posts without their link."""
+    from ..infra.db import execute
+    from .whiteboard import load
+
+    now = now or datetime.now(timezone.utc)
+    seen = []
+    for it in items or []:
+        url = str(it.get("url") or "").strip()
+        text = _norm_text(it.get("text") or "")
+        if url.startswith("https://") and "facebook.com" in url and len(text) >= 20:
+            seen.append((url, text))
+    taken = {u for u, _ in seen}
+    from ..infra.db import fetch_all
+
+    have = {r["url"] for r in (fetch_all("SELECT url FROM social_posts WHERE url = ANY(:u)", {"u": list(taken)}) or [])}
+    seen = [(u, t) for u, t in seen if u not in have]            # a link another post has is not this one
+    matched, used = [], set()
+    for post in _unlinked(now):
+        try:
+            q = load(post["question_id"])
+        except Exception:  # noqa: BLE001
+            continue
+        from . import social
+
+        needles = _needles(social.display(q.get("question_text") or ""), social.display(q.get("context") or ""))
+        if not needles:
+            continue
+        hit = next(((u, t) for u, t in seen if u not in used and any(n in t for n in needles)), None)
+        if not hit:
+            continue
+        used.add(hit[0])
+        execute("""UPDATE social_posts SET url = :u, updated_at = NOW(),
+                   status = CASE WHEN status = 'scheduled' THEN 'posted' ELSE status END,
+                   notes = CASE WHEN platform_scheduled THEN :c ELSE notes END,
+                   comments_state = CASE WHEN comments_state IN ('', 'failed', 'pending') THEN 'pending' ELSE comments_state END,
+                   comments_attempts = CASE WHEN comments_state IN ('', 'failed', 'pending') THEN 0 ELSE comments_attempts END,
+                   comments_next_at = CASE WHEN comments_state IN ('', 'failed', 'pending') THEN :now ELSE comments_next_at END,
+                   comments_error = CASE WHEN comments_state IN ('', 'failed', 'pending') THEN '' ELSE comments_error END
+                   WHERE post_id = :id AND url = ''""",
+                {"u": hit[0], "id": post["post_id"], "c": SCHEDULER_CONFIRMED, "now": now})
+        matched.append(post["post_id"])
+    logger.info("Reconciled %d post(s) from %d seen on the profile.", len(matched), len(seen))
+    return {"seen": len(seen), "matched": len(matched), "posts": matched, "left": len(_unlinked(now))}
+
+
 # ── the comment thread ───────────────────────────────────────────────────────
 #
 # Once a post is out the poster comments under it: first the choices and
@@ -1040,6 +1162,8 @@ def comments_next(now: datetime | None = None, *, check: bool = False,
     if not check and "post" not in roles:
         # A comments-only Mac: no post's own thread, straight to the readings and the campaign.
         row = {"skip": True}
+    if not check and "post" in roles and reconcile_due(now):
+        return {"job": reconcile_job(now), "reason": ""}
     if not check and not (row and row.get("skip")):
         try:
             _give_up_unfindable(now)
@@ -1237,7 +1361,7 @@ def save_found_groups(platform: str, names: list[str]) -> list[dict[str, Any]]:
 def list_groups(platform: str = "facebook") -> list[dict[str, Any]]:
     from ..infra.db import fetch_all
 
-    rows = fetch_all("""SELECT name, enabled, last_shared_for, seen_at FROM poster_groups WHERE platform = :p
+    rows = fetch_all("""SELECT name, enabled, audience, last_shared_for, seen_at FROM poster_groups WHERE platform = :p
                         ORDER BY enabled DESC, name""", {"p": platform}) or []
     for r in rows:
         for k in ("last_shared_for", "seen_at"):
@@ -1246,11 +1370,16 @@ def list_groups(platform: str = "facebook") -> list[dict[str, Any]]:
     return rows
 
 
-def set_groups(platform: str, enabled: list[str]) -> list[dict[str, Any]]:
+def set_groups(platform: str, enabled: list[str], developers: list[str] | None = None) -> list[dict[str, Any]]:
+    """Which groups may get a share; with `developers`, which of them are for
+    the developer series (the rest are the learners')."""
     from ..infra.db import execute
 
     execute("UPDATE poster_groups SET enabled = (name = ANY(:names)) WHERE platform = :p",
             {"p": platform, "names": [str(n) for n in enabled]})
+    if developers is not None:
+        execute("""UPDATE poster_groups SET audience = CASE WHEN name = ANY(:dev) THEN 'developers' ELSE 'learners' END
+                   WHERE platform = :p""", {"p": platform, "dev": [str(n) for n in developers]})
     return list_groups(platform)
 
 
@@ -1271,7 +1400,7 @@ def poster_overview() -> dict[str, Any]:
     today = fetch_all("""SELECT platform, COUNT(*) AS n FROM social_posts WHERE posted_at >= :d AND posted_at <= :now
                          GROUP BY platform""", {"d": day_start, "now": now}) or []
     queue = fetch_all(
-        """SELECT post_id, platform, question_id, scheduled_for, status, attempts, last_error FROM social_posts
+        """SELECT post_id, platform, question_id, audience, scheduled_for, status, attempts, last_error FROM social_posts
            WHERE posted_at IS NULL AND handed_at IS NULL AND status IN ('planned', 'failed')
            ORDER BY scheduled_for NULLS LAST LIMIT 30""") or []
     ahead = fetch_one("""SELECT COUNT(*) AS n, MAX(posted_at) AS until FROM social_posts
@@ -1677,7 +1806,7 @@ def book_ahead(grade: str, subject: str, sub_strand: str = "", *, days: int = 25
 
     today = today or datetime.now(EAT).date()
     last = fetch_one("""SELECT MAX(scheduled_for) AS t FROM social_posts
-                        WHERE scheduled_for IS NOT NULL AND status <> 'gave_up'""") or {}
+                        WHERE scheduled_for IS NOT NULL AND status <> 'gave_up' AND audience = 'learners'""") or {}
     last_day = last["t"].astimezone(EAT).date() if last.get("t") else None
     first = max(today + timedelta(days=1), (last_day + timedelta(days=1)) if last_day else today)
     end = today + timedelta(days=max(1, days))
@@ -2481,7 +2610,7 @@ def campaign_next(now: datetime | None = None) -> dict[str, Any]:
                      (SELECT MAX(at) FROM campaign_log c WHERE c.post_id = p.post_id AND c.kind = 'share' AND c.ok) AS shared_at
               FROM social_posts p
               WHERE p.platform = 'facebook' AND COALESCE(p.format, 'video') = 'video' AND p.handed_at IS NOT NULL
-                AND p.posted_at <= :ripe AND NOT p.campaign_done
+                AND p.audience = 'learners' AND p.posted_at <= :ripe AND NOT p.campaign_done
                 AND (p.comments_state IN ('done', 'complete', 'boost') OR (p.comments_state = 'failed' AND p.url <> ''))"""
     params = {"now": now, "d": day, "ripe": now - timedelta(minutes=30)}
     # Every post to the floor first, the oldest first (4 comments are its thread).

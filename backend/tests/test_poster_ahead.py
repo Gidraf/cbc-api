@@ -115,7 +115,7 @@ def _poster_world(monkeypatch, rows, groups_answers):
     seen = []
     answers = list(groups_answers)
     monkeypatch.setattr(X, "poster_rules", lambda: RULES)
-    monkeypatch.setattr(X, "groups_for", lambda platform, at, rules: answers.pop(0) if answers else [])
+    monkeypatch.setattr(X, "groups_for", lambda platform, at, rules, audience="learners": answers.pop(0) if answers else [])
     monkeypatch.setattr(db, "fetch_all", lambda sql, p=None: rows if "status IN" in sql else [])
     monkeypatch.setattr(db, "fetch_one", lambda sql, p=None: {"t": None})
     monkeypatch.setattr(db, "execute", lambda sql, p=None: seen.append((sql, p)))

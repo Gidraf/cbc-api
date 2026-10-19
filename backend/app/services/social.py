@@ -287,6 +287,16 @@ def cache_key(sdata: dict[str, Any], voice: str, b: dict[str, Any], gender: str 
 
 # ── the post ─────────────────────────────────────────────────────────────────
 
+def snippets(text: str) -> list[str]:
+    """The middle and the end of a question — 8 words each — to find its post
+    by when Facebook folds or cuts the opening."""
+    words = str(text or "").split()
+    if len(words) < 14:
+        return []
+    mid = len(words) // 2
+    return [" ".join(words[mid - 4:mid + 4]), " ".join(words[-8:])]
+
+
 def display(text: Any) -> str:
     """LaTeX as a phone shows it: 3/4, x², ∛216, ≤, 45°."""
     from .latex_text import to_unicode
@@ -437,6 +447,7 @@ def thread(q: dict[str, Any], data: dict[str, Any], b: dict[str, Any] | None = N
     # Older captions open with the context, or the hook and the topic: the
     # poster looks for any of these when the question's words are folded away.
     also = [" ".join(context.split())[:60]] if context else []
+    also += snippets(question)          # its middle and its end: a caption folded at the start still shows them
     return {"caption": "\n".join(caption_lines).strip() + "\n", "first": first, "later": later, "find": find,
             "find_also": also}
 

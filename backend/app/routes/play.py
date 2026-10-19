@@ -1377,6 +1377,20 @@ def poster_next(platform: str = Query(""), post_id: str = Query(""), dry: bool =
     return social_export.next_for_poster(platform=platform, post_id=post_id, dry=dry, share=share, groups=groups)
 
 
+class ReconcileItems(BaseModel):
+    items: list[dict[str, Any]] = Field(default_factory=list, max_length=2000)
+
+
+@router.post("/poster/reconcile")
+def poster_reconcile(payload: ReconcileItems, auth: AuthContext = Depends(ANY)) -> dict[str, Any]:
+    """What the poster saw scrolling the profile — each post's link and words —
+    matched to the posts here without their link."""
+    from ..services import social_export
+
+    _may_make_videos(auth)
+    return social_export.reconcile_result(payload.items)
+
+
 @router.get("/poster/comments/next")
 def poster_comments_next(poster_id: str = Query(""), check: bool = Query(False),
                          auth: AuthContext = Depends(ANY)) -> dict[str, Any]:
@@ -1796,15 +1810,17 @@ def poster_groups(platform: str = Query("facebook"), auth: AuthContext = Depends
 class PickGroups(BaseModel):
     platform: str = "facebook"
     enabled: list[str] = []
+    developers: list[str] | None = None     # groups for the developer series; None leaves them as they are
 
 
 @router.put("/poster/groups")
 def poster_pick_groups(payload: PickGroups, auth: AuthContext = Depends(ANY)) -> dict[str, Any]:
-    """Which groups may get a share — the owner ticks the ones that welcome it."""
+    """Which groups may get a share — the owner ticks the ones that welcome it,
+    and marks which welcome the developer series rather than the learners'."""
     from ..services import social_export
 
     _may_make_videos(auth)
-    return {"groups": social_export.set_groups(payload.platform, payload.enabled)}
+    return {"groups": social_export.set_groups(payload.platform, payload.enabled, payload.developers)}
 
 
 # ── the Mac poster's side: it asks, the server answers ───────────────────────
