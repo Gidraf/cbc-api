@@ -129,6 +129,22 @@ async def reconcile_done(items: list[dict[str, str]]) -> dict[str, Any]:
     return r.json()
 
 
+async def card(question_id: str, step: str) -> dict[str, Any]:
+    """A card: its picture's link if made, else its page (HTML) to photograph here."""
+    r = await _call("GET", "/api/v1/play/poster/card", timeout=60, params={"question_id": question_id, "step": step})
+    return r.json()
+
+
+async def card_upload(question_id: str, step: str, jpeg: bytes) -> dict[str, Any]:
+    """A card this Mac photographed, sent to the server to keep."""
+    async with httpx.AsyncClient(timeout=120) as client:
+        r = await client.post(f"{config.CBC_API_URL}/api/v1/play/poster/card", headers=_headers(),
+                              data={"question_id": question_id, "step": step},
+                              files={"file": (f"{step}.jpg", jpeg, "image/jpeg")})
+        r.raise_for_status()
+        return r.json()
+
+
 async def linkedin_next() -> dict[str, Any] | None:
     """The next developer-studio post for LinkedIn: a document (PDF) or a video."""
     r = await _call("GET", "/api/v1/dev/linkedin/next", timeout=60, params={"poster_id": config.POSTER_ID})

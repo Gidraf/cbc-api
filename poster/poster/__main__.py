@@ -19,6 +19,7 @@ import sys
 import json
 import logging
 import os
+import random
 import time
 from typing import Any
 
@@ -667,6 +668,64 @@ async def do_dry_run(platform: str = "", post_id: str = "") -> dict[str, Any]:
     return await publish(nxt["post"], dry_run=True)
 
 
+async def make_card(question_id: str, step: str) -> None:
+    """A card not made yet: this Mac's browser draws it from the server's page
+    and sends it back — the server's queue is not waited on."""
+    got = await cbc.card(question_id, step)
+    if got.get("status") == "ready" or not got.get("html"):
+        return
+    async with browser.lock:
+        page = await browser.page()
+        try:
+            await page.set_viewport_size({"width": int(got.get("width") or 1080), "height": int(got.get("height") or 1350)})
+            await page.set_content(got["html"], wait_until="networkidle", timeout=45_000)
+            try:
+                await page.wait_for_function("window.__ready === true", timeout=8_000)
+            except Exception:  # noqa: BLE001
+                pass
+            jpeg = await page.screenshot(type="jpeg", quality=90, full_page=False)
+        finally:
+            try:
+                await page.close()
+            except Exception:  # noqa: BLE001
+                pass
+    await cbc.card_upload(question_id, step, jpeg)
+    log.info("Made the %s card of %s here and sent it to the server.", step, question_id)
+
+
+async def series_now(options: dict[str, Any]) -> dict[str, Any]:
+    """A question's whole series, now, one after the other: each card (made
+    here if the server has not made it), then its walkthrough — a short pause
+    between, like a person posting a thread of pictures."""
+    if state["paused"]:
+        return {"ok": False, "error": "The poster is paused — resume it first."}
+    qid = str(options.get("question_id") or "")
+    share = str(options.get("share") or "feed")
+    picked = [str(g) for g in (options.get("groups") or [])][:5]
+    said, posted = [], 0
+    for k, (pid, step) in enumerate(zip(options.get("post_ids") or [], options.get("steps") or [])):
+        if k:
+            await asyncio.sleep(random.uniform(25, 50))
+        try:
+            if step != "walkthrough":
+                await make_card(qid, step)
+            nxt = await cbc.next_post(platform="facebook", post_id=pid, dry=True, share=share, groups=picked)
+        except Exception as exc:  # noqa: BLE001
+            said.append(f"{step}: {_why(exc)}")
+            continue
+        if not nxt.get("post"):
+            said.append(f"{step}: {nxt.get('reason') or 'not ready'}")
+            continue
+        one = {**nxt["post"], "schedule_at": ""}
+        if share == "feed":
+            one["groups"] = []
+        out = await publish(one, dry_run=False)
+        posted += bool(out.get("ok"))
+        said.append(f"{step}: {'posted' if out.get('ok') else out.get('error')}")
+    return {"ok": posted > 0, "message": f"Series of {qid}: " + "; ".join(said),
+            **({} if posted else {"error": "Nothing of the series went out — " + "; ".join(said)})}
+
+
 async def post_now(platform: str = "", options: dict[str, Any] | None = None) -> dict[str, Any]:
     """The post-now buttons: the next queued post goes out live at once —
     not at its booked time, and without waiting out the gap.
@@ -794,6 +853,8 @@ async def run(action: str, platform: str = "", post_id: str = "",
         return await engage_step(check=True)
     if action == "schedule_now":
         return await schedule_now(int((options or {}).get("count") or 5))
+    if action == "series_now":
+        return await series_now(options or {})
     if action == "run_now":
         opts = dict(options or {})
         if post_id:
