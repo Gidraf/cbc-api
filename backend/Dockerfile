@@ -53,6 +53,11 @@ RUN python -m playwright install --with-deps chromium \
 
 COPY app /app/app
 
+# Which version this image is (deploy/update.sh passes `git describe`); last,
+# so a new version does not rebuild the layers above.
+ARG APP_VERSION=dev
+ENV APP_VERSION=$APP_VERSION
+
 RUN addgroup --system appgroup && adduser --system --ingroup appgroup appuser && \
     chown -R appuser:appgroup /app
 

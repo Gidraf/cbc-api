@@ -4800,6 +4800,8 @@ export type PosterOverview = {
   view_url: string;
   /** Handed to Facebook's own scheduler: how many, and the last one's time. */
   scheduled_ahead?: { count: number; until: string | null };
+  /** Facebook's scheduler, checked: reels it lost or published (found on the profile) in four days. */
+  scheduler?: { trusted: boolean; missed: number; confirmed: number; unconfirmed: number; note: string };
   handed_today?: number;
   waiting?: number;
   groups?: PosterGroup[];
@@ -4840,6 +4842,33 @@ export function usePosterCommand() {
                       target?: string }) =>
       api<Record<string, any>>("/api/v1/play/poster/command", { method: "POST", body: JSON.stringify(v) }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["poster"] }),
+  });
+}
+
+/** Questions matching the words, with their video and post — to pick one for Post now. */
+export function useQuestionSearch(search: string) {
+  const api = useApi();
+  const words = search.trim();
+  return useQuery({
+    queryKey: ["question-search", words],
+    enabled: words.length >= 3,
+    queryFn: () => api<{ items: Array<{ question_id: string; question_text: string; grade?: string; subject?: string;
+                                        sub_strand?: string; video: { url: string } | null;
+                                        post: { status?: string; handed_at?: string | null; posted_at?: string | null; url?: string } | null }>;
+                         total: number }>(
+      `/api/v1/play/library?search=${encodeURIComponent(words)}&limit=8`),
+    staleTime: 30_000,
+  });
+}
+
+/** Post this question now, live on Facebook (its video is made first if need be). */
+export function usePostQuestion() {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { question_id: string; share?: "feed" | "groups"; groups?: string[] }) =>
+      api<Record<string, any>>("/api/v1/play/poster/post-question", { method: "POST", body: JSON.stringify(v) }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["poster"] }); qc.invalidateQueries({ queryKey: ["question-search"] }); },
   });
 }
 

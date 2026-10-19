@@ -65,3 +65,6 @@ redis_data/
 
 # ---- Tooling caches ----
 .cache/
+
+# deploy/update.sh: the last deploy, its lock and history (per server)
+.deploy/

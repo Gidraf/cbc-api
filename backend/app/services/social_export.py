@@ -449,13 +449,21 @@ def next_for_poster(now: datetime | None = None, *, platform: str = "", post_id:
         rows = fetch_all(
             """SELECT * FROM social_posts WHERE posted_at IS NULL AND handed_at IS NULL
                AND (:id = '' OR post_id = :id) AND (:p = '' OR platform = :p)
-               ORDER BY scheduled_for NULLS LAST LIMIT 20""", {"id": post_id, "p": platform}) or []
+               ORDER BY scheduled_for NULLS LAST LIMIT 400""", {"id": post_id, "p": platform}) or []
         chosen, st = None, {}
-        for row in rows:                  # the first whose video (or card) is made
+        remade = 0
+        for row in rows:                  # the first whose video (or card) is made, the soonest booked first
             st = _media(row)
             if st.get("status") == "ready":
                 chosen = row
                 break
+            if st.get("status") == "none" and remade < 3 and str(row.get("format") or "video") == "video":
+                # Out of date (made before the marketing, say): made again, so a later press finds it.
+                try:
+                    social.enqueue(row["question_id"], queued_by="post-now")
+                    remade += 1
+                except Exception:  # noqa: BLE001
+                    pass
         rendering = 0
         if not chosen and not rows:
             try:
@@ -484,6 +492,9 @@ def next_for_poster(now: datetime | None = None, *, platform: str = "", post_id:
                 if making else "Every finished video has been posted and none are being made — book or make more videos.")
                if not rows else "The booked posts' videos are still being made — try again shortly.")
     else:
+        if rules["ahead_platforms"] and not scheduler_trust(now)["trusted"]:
+            # Facebook's scheduler has been losing reels: they go out live at their times instead.
+            rules = {**rules, "ahead_platforms": []}
         day_start = now.astimezone(EAT).replace(hour=0, minute=0, second=0, microsecond=0)
         # The day's actions — a post going out live, or a video handed to a
         # platform's scheduler — are what the caps and the gap count.
@@ -738,6 +749,19 @@ def record_attempt(post_id: str, *, ok: bool, url: str = "", error: str = "", dr
                                COALESCE(poster_groups.last_shared_for, EXCLUDED.last_shared_for), EXCLUDED.last_shared_for)""",
                         {"p": row.get("platform") or "facebook", "n": g, "t": row.get("posted_at")})
         _free_space_after_post()
+    elif UNCONFIRMED_SCHEDULE.search(error or "") and fetch_one(
+            "SELECT 1 AS x FROM social_posts WHERE post_id = :id AND scheduled_for > NOW()", {"id": post_id}):
+        # Facebook may have scheduled it though it never said so: handing it
+        # over again could put it out twice. It is taken as scheduled, and at
+        # its time the profile is looked at (the first comment finds it): found,
+        # it is confirmed; not there two hours on, it goes out live.
+        execute("""UPDATE social_posts SET status = 'scheduled', posted_at = scheduled_for, handed_at = NOW(),
+                   platform_scheduled = TRUE, attempts = attempts + 1, last_attempt_at = NOW(), updated_at = NOW(),
+                   last_error = :e, comments_state = 'pending', comments_next_at = scheduled_for + INTERVAL '3 minutes',
+                   comments_attempts = 0, comments_error = '' WHERE post_id = :id""",
+                {"id": post_id, "e": "Facebook did not confirm the schedule — the profile is checked at its time; "
+                                     "if the reel is not there, it goes out live."})
+        return {"post_id": post_id, "ok": False, "scheduled": True, "unconfirmed": True}
     else:
         execute("""UPDATE social_posts SET status = CASE WHEN attempts + 1 >= :tries THEN 'gave_up' ELSE 'failed' END,
                    attempts = attempts + 1, last_error = :e, last_attempt_at = NOW(), updated_at = NOW() WHERE post_id = :id""",
@@ -754,6 +778,134 @@ def _free_space_after_post() -> None:
         drive_store.enqueue(queued_by="posted")
     except Exception:  # noqa: BLE001
         pass
+
+
+# ── Facebook's scheduler, checked ────────────────────────────────────────────
+#
+# A reel handed to Facebook's scheduler is only taken to be out once the
+# poster finds it on the profile (its first comment does). Not there two
+# hours after its time, it was lost: it goes out live. When the scheduler
+# loses reels and confirms none, posts stop being handed to it and go out
+# live at their booked times, until it confirms one again.
+
+UNCONFIRMED_SCHEDULE = re.compile(r"did not confirm the scheduled", re.I)
+CONFIRM_WITHIN = timedelta(hours=2)
+SCHEDULER_MISSED = "scheduler-missed"
+SCHEDULER_CONFIRMED = "scheduler-confirmed"
+
+
+def _not_on_profile(error: str) -> bool:
+    return bool(re.search(r"could not find the post|not out yet|not on the profile", error or "", re.I))
+
+
+def _awaiting_schedule(post_id: str) -> bool:
+    from ..infra.db import fetch_one
+
+    return bool(fetch_one("""SELECT 1 AS x FROM social_posts WHERE post_id = :id AND platform_scheduled
+                             AND status = 'scheduled' AND url = ''""", {"id": post_id}))
+
+
+def _scheduled_not_found(post_id: str, error: str, now: datetime) -> None:
+    """A scheduled reel not on the profile: looked for again every half hour,
+    and two hours after its time sent out live (booked for now)."""
+    from ..infra.db import execute, fetch_one
+
+    row = fetch_one("SELECT posted_at FROM social_posts WHERE post_id = :id", {"id": post_id}) or {}
+    due = row.get("posted_at")
+    if isinstance(due, datetime) and now - due < CONFIRM_WITHIN:
+        # Not counted as a failed try: it is looked for until the two hours are up.
+        execute("""UPDATE social_posts SET comments_error = :e, comments_next_at = :next, updated_at = NOW()
+                   WHERE post_id = :id""", {"id": post_id, "e": error[:900], "next": now + timedelta(minutes=30)})
+        return
+    execute("""UPDATE social_posts SET status = 'planned', posted_at = NULL, handed_at = NULL, platform_scheduled = FALSE,
+               scheduled_for = :now, attempts = 0, notes = :n, comments_state = '', comments_attempts = 0,
+               comments_next_at = NULL, comments_error = '', updated_at = NOW(), last_error = :e
+               WHERE post_id = :id""",
+            {"id": post_id, "now": now, "n": SCHEDULER_MISSED,
+             "e": "Facebook's scheduler did not publish it (not on the profile two hours after its time) — it goes out live."})
+    logger.warning("Scheduled reel %s was not on the profile two hours after its time; it goes out live.", post_id)
+
+
+def recheck_scheduled(now: datetime | None = None) -> int:
+    """Scheduled reels whose time has come and that nobody found yet — their
+    comments given up on before this check existed — are looked for again."""
+    from ..infra.db import fetch_one
+
+    now = now or datetime.now(timezone.utc)
+    row = fetch_one("""WITH up AS (
+                         UPDATE social_posts SET comments_state = 'pending', comments_attempts = 0, comments_next_at = :now
+                         WHERE platform_scheduled AND status = 'scheduled' AND url = '' AND posted_at <= :ripe
+                           AND COALESCE(format, 'video') = 'video' AND platform = 'facebook'
+                           AND comments_state IN ('', 'failed')
+                         RETURNING 1)
+                       SELECT COUNT(*) AS n FROM up""", {"now": now, "ripe": now - timedelta(minutes=5)}) or {}
+    return int(row.get("n") or 0)
+
+
+def _scheduler_overview(now: datetime) -> dict[str, Any]:
+    """For the console: the trust, and the scheduled reels past their time not found yet."""
+    from ..infra.db import fetch_one
+
+    try:
+        out = scheduler_trust(now)
+        row = fetch_one("""SELECT COUNT(*) AS n FROM social_posts WHERE platform_scheduled AND status = 'scheduled'
+                           AND url = '' AND posted_at <= :now""", {"now": now}) or {}
+        return {**out, "unconfirmed": int(row.get("n") or 0)}
+    except Exception:  # noqa: BLE001
+        return {"trusted": True, "missed": 0, "confirmed": 0, "unconfirmed": 0, "note": ""}
+
+
+def scheduler_trust(now: datetime | None = None) -> dict[str, Any]:
+    """Is Facebook's scheduler publishing what it is handed? The last four
+    days: lost reels against confirmed ones."""
+    from ..infra.db import fetch_one
+
+    now = now or datetime.now(timezone.utc)
+    row = fetch_one("""SELECT COUNT(*) FILTER (WHERE notes = :m) AS missed,
+                             COUNT(*) FILTER (WHERE notes = :c) AS confirmed
+                      FROM social_posts WHERE updated_at >= :since""",
+                    {"m": SCHEDULER_MISSED, "c": SCHEDULER_CONFIRMED, "since": now - timedelta(days=4)}) or {}
+    missed, confirmed = int(row.get("missed") or 0), int(row.get("confirmed") or 0)
+    trusted = not (missed >= 2 and confirmed == 0)
+    return {"trusted": trusted, "missed": missed, "confirmed": confirmed,
+            "note": "" if trusted else (f"Facebook's scheduler lost {missed} reel(s) in four days and published none the "
+                                        "poster could find — posts go out live at their booked times instead.")}
+
+
+def post_question(question_id: str, *, platform: str = "facebook", now: datetime | None = None) -> dict[str, Any]:
+    """One question, picked in the console, booked for now so Post now can
+    take it. Refused when it is already out or waiting in Facebook's
+    scheduler (it would go out twice); its video is made first if need be."""
+    from ..infra.db import execute, fetch_one
+    from . import social
+    from .whiteboard import load
+
+    now = now or datetime.now(timezone.utc)
+    q = load(question_id)
+    pid = _post_id(question_id, platform)
+    post = fetch_one("SELECT * FROM social_posts WHERE post_id = :id", {"id": pid})
+    if post and post.get("handed_at") is not None:
+        when = post.get("posted_at")
+        at = when.astimezone(EAT).strftime("%d %b %H:%M") if isinstance(when, datetime) else ""
+        if post.get("platform_scheduled") and isinstance(when, datetime) and when > now:
+            return {"ok": False, "post_id": pid, "error": f"It is already scheduled on Facebook for {at}."}
+        if post.get("platform_scheduled") and not post.get("url"):
+            return {"ok": False, "post_id": pid, "error": f"It was handed to Facebook's scheduler for {at}; the poster is "
+                                                          "checking the profile for it, and posts it live if it is not there."}
+        link = f" — {post['url']}" if post.get("url") else ""
+        return {"ok": False, "post_id": pid, "error": f"It was posted already ({at}){link}."}
+    if post:
+        execute("""UPDATE social_posts SET scheduled_for = :now, status = 'planned', attempts = 0, updated_at = NOW()
+                   WHERE post_id = :id""", {"id": pid, "now": now})
+    else:
+        _plan_post(q, platform, now, POST_NOW)
+    st = social.status(question_id)
+    if st.get("status") != "ready":
+        if st.get("status") not in ("queued", "running"):
+            social.enqueue(question_id, queued_by=POST_NOW, on_demand=True, dispatch=False)
+        return {"ok": False, "post_id": pid, "making": True,
+                "error": "Its video is being made now — press Post again in about five minutes."}
+    return {"ok": True, "post_id": pid}
 
 
 # ── the comment thread ───────────────────────────────────────────────────────
@@ -825,6 +977,11 @@ def comments_next(now: datetime | None = None, *, check: bool = False,
     else:
         row = None
     roles = roles if roles is not None else {"post", "comments"}
+    if not check and "post" in roles:
+        try:
+            recheck_scheduled(now)
+        except Exception as exc:  # noqa: BLE001
+            logger.info("Could not recheck the scheduled reels: %s", exc)
     if not check and "post" not in roles:
         # A comments-only Mac: no post's own thread, straight to the readings and the campaign.
         row = {"skip": True}
@@ -969,6 +1126,12 @@ def comments_result(post_id: str, *, stage: str, ok: bool, error: str = "", url:
                  "next": now + timedelta(seconds=delay) if stage == "first" else None, "u": url})
         if stage == "later" and score is not None:
             _maybe_boost(post_id, score, now)        # the first extra comment follows the thread
+        # Found on the profile: a reel handed to Facebook's scheduler is out.
+        execute("""UPDATE social_posts SET status = 'posted', notes = :c
+                   WHERE post_id = :id AND status = 'scheduled' AND platform_scheduled""",
+                {"id": post_id, "c": SCHEDULER_CONFIRMED})
+    elif stage == "first" and _not_on_profile(error) and _awaiting_schedule(post_id):
+        _scheduled_not_found(post_id, error, now)
     else:
         execute("""UPDATE social_posts SET comments_attempts = comments_attempts + 1, comments_error = :e,
                    comments_state = CASE WHEN comments_attempts + 1 >= :tries
@@ -1064,6 +1227,7 @@ def poster_overview() -> dict[str, Any]:
     return {"rules": poster_rules(), "posted_today": {r["platform"]: int(r["n"]) for r in today},
             "states": states, "queue": queue, "recent": recent,
             "scheduled_ahead": {"count": int(ahead.get("n") or 0), "until": until.isoformat() if hasattr(until, "isoformat") else until},
+            "scheduler": _scheduler_overview(now),
             "handed_today": int(handed.get("n") or 0), "waiting": int(waiting.get("n") or 0),
             "comments": {**comment_rules(), **{r["comments_state"]: int(r["n"]) for r in (fetch_all(
                 """SELECT comments_state, COUNT(*) AS n FROM social_posts WHERE comments_state <> ''

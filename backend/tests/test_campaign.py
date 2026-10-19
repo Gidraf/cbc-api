@@ -164,3 +164,96 @@ def test_each_mac_keeps_its_days_and_can_be_named_or_forgotten(db, monkeypatch) 
     play.forget_device("mac-a", kind="poster", auth=None)
     assert not [p for p in play.devices(auth=None)["posters"] if p["poster_id"] == "mac-a"]
     assert se.device_history("mac-a", "poster", days=3650) == [] and se.device_names() == {}
+
+
+def _booked(qid: str, at: datetime) -> str:
+    se._plan_post({"question_id": qid, "curriculum": {}}, "facebook", at, "me")
+    return se._post_id(qid, "facebook")
+
+
+@needs_db
+def test_a_scheduled_reel_is_confirmed_on_the_profile_or_goes_out_live(db) -> None:
+    from app.infra.db import fetch_one
+
+    db["poster_comment_thread"] = True
+    now = datetime.now(timezone.utc)
+    row = lambda pid: fetch_one("SELECT * FROM social_posts WHERE post_id = :id", {"id": pid})   # noqa: E731
+
+    # "Facebook did not confirm the scheduled reel": taken as scheduled, never handed over again.
+    lost = _booked("lost", now + timedelta(days=2))
+    out = se.record_attempt(lost, ok=False, error="Facebook did not confirm the scheduled reel.")
+    r = row(lost)
+    assert out["unconfirmed"] and r["status"] == "scheduled" and r["platform_scheduled"] and r["handed_at"]
+    assert r["comments_state"] == "pending" and r["comments_next_at"] == r["scheduled_for"] + timedelta(minutes=3)
+
+    # Found by its first comment: confirmed.
+    found = _booked("found", now + timedelta(hours=1))
+    se.record_attempt(found, ok=True, scheduled=True)
+    se.comments_result(found, stage="first", ok=True, url="https://facebook.com/reel/1", now=now + timedelta(hours=1, minutes=4))
+    assert row(found)["status"] == "posted" and row(found)["notes"] == se.SCHEDULER_CONFIRMED
+
+    # Not on the profile: looked for every half hour (not a spent try) until two hours on, then out live.
+    gone = _booked("gone", now + timedelta(hours=1))
+    se.record_attempt(gone, ok=True, scheduled=True)
+    due = row(gone)["posted_at"]
+    for k in range(4):                 # 3, 33, 63 and 93 minutes after its time
+        se.comments_result(gone, stage="first", ok=False, error="Could not find the post on the profile — it may not be out yet.",
+                           now=due + timedelta(minutes=3 + 30 * k))
+    r = row(gone)
+    assert r["status"] == "scheduled" and r["comments_attempts"] == 0 and r["comments_state"] == "pending"
+    later = due + timedelta(hours=2, minutes=5)
+    se.comments_result(gone, stage="first", ok=False, error="Could not find the post on the profile.", now=later)
+    r = row(gone)
+    assert r["status"] == "planned" and r["handed_at"] is None and not r["platform_scheduled"]
+    assert r["scheduled_for"] == later and r["notes"] == se.SCHEDULER_MISSED and "goes out live" in r["last_error"]
+
+    # One lost and one found: still trusted. A second lost, none found: posts go out live.
+    assert se.scheduler_trust(later)["trusted"]
+    from app.infra.db import execute
+
+    execute("UPDATE social_posts SET notes = '' WHERE post_id = :id", {"id": found})
+    other = _booked("gone2", now + timedelta(hours=1))
+    se.record_attempt(other, ok=True, scheduled=True)
+    se.comments_result(other, stage="first", ok=False, error="Could not find the post on the profile.", now=later)
+    trust = se.scheduler_trust(later)
+    assert not trust["trusted"] and trust["missed"] == 2 and "live" in trust["note"]
+
+
+@needs_db
+def test_reels_already_given_up_on_are_looked_for_again(db) -> None:
+    from app.infra.db import execute, fetch_one
+
+    now = datetime.now(timezone.utc)
+    pid = _booked("old", now + timedelta(hours=1))
+    se.record_attempt(pid, ok=True, scheduled=True)
+    execute("UPDATE social_posts SET posted_at = :t, comments_state = 'failed', comments_attempts = 4 WHERE post_id = :id",
+            {"t": now - timedelta(days=1), "id": pid})
+    assert se.recheck_scheduled(now) == 1
+    r = fetch_one("SELECT comments_state, comments_attempts FROM social_posts WHERE post_id = :id", {"id": pid})
+    assert r == {"comments_state": "pending", "comments_attempts": 0}
+    assert se.recheck_scheduled(now) == 0
+
+
+@needs_db
+def test_post_now_takes_a_picked_question_but_never_one_already_out(db, monkeypatch) -> None:
+    from app.infra.db import fetch_one
+    from app.services import whiteboard
+
+    now = datetime.now(timezone.utc)
+    monkeypatch.setattr(whiteboard, "load", lambda qid: {"question_id": qid, "curriculum": {}})
+    made = {"ready-q": "ready"}
+    queued: list[str] = []
+    monkeypatch.setattr(social, "status", lambda qid, q=None, **k: {"status": made.get(qid, "none")})
+    monkeypatch.setattr(social, "enqueue", lambda qid, **k: queued.append(qid) or {"status": "queued"})
+
+    got = se.post_question("ready-q", now=now)
+    assert got["ok"] and fetch_one("SELECT scheduled_for FROM social_posts WHERE post_id = :id",
+                                   {"id": got["post_id"]})["scheduled_for"] == now
+    fresh = se.post_question("new-q", now=now)
+    assert not fresh["ok"] and fresh["making"] and queued == ["new-q"], "no video yet: made first"
+
+    sched = _booked("sched-q", now + timedelta(days=3))
+    se.record_attempt(sched, ok=True, scheduled=True)
+    made["sched-q"] = "ready"
+    refused = se.post_question("sched-q", now=now)
+    assert not refused["ok"] and "already scheduled on Facebook" in refused["error"]

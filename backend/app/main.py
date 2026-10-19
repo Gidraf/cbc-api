@@ -507,6 +507,7 @@ def health() -> dict:
             "redis": redis_ok,
             "minio": minio_ok,
         },
+        "version": __import__("os").getenv("APP_VERSION", "dev"),
         "generator": GENERATOR_VERSION,
         "started_at": _STARTED_AT,
         "worker": {
