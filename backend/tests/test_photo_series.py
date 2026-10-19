@@ -14,11 +14,12 @@ needs_db = pytest.mark.skipif(not DB, reason="set CBC_TEST_PHASE2_DATABASE_URL t
 EAT = timezone(timedelta(hours=3))
 
 
-def test_eight_photos_and_eight_videos_make_two_full_series_a_short_one_and_five_videos():
+def test_eight_photos_and_eight_videos_make_two_full_series_and_six_videos():
     shape = X.series_shape(8, 8)
-    assert shape.count(X.SERIES_FULL) == 2 and shape.count(X.SERIES_SHORT) == 1
-    assert shape.count(("walkthrough",)) == 5
+    assert shape.count(X.SERIES_FULL) == 2 and shape.count(X.SERIES_SHORT) == 0      # 4 cards each: 8 = two series
+    assert shape.count(("walkthrough",)) == 6
     assert sum(len(r) for r in shape) == 16
+    assert X.series_shape(6, 2).count(X.SERIES_SHORT) == 1, "the 2 cards left make a short series"
     photos = sum(1 for r in shape for s in r if s != "walkthrough")
     assert photos == 8
     assert X.series_shape(0, 4) == [("walkthrough",)] * 4
@@ -30,7 +31,7 @@ def test_a_series_keeps_its_order_through_the_day():
     runs = [[("a", s) for s in X.SERIES_FULL], [("b", s) for s in X.SERIES_SHORT]] + [[(f"v{i}", "walkthrough")] for i in range(5)]
     for seed in range(20):
         day = X.interleave(random.Random(seed), runs)
-        assert len(day) == 12
+        assert len(day) == len(X.SERIES_FULL) + len(X.SERIES_SHORT) + 5
         for q, steps in (("a", X.SERIES_FULL), ("b", X.SERIES_SHORT)):
             assert [s for qq, s in day if qq == q] == list(steps)
     orders = {tuple(X.interleave(random.Random(s), runs)) for s in range(10)}

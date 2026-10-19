@@ -24,6 +24,10 @@ logger = logging.getLogger("cbc-social-cards")
 JOB_KIND = "social_card"
 PREFIX = "social_cards"
 STEPS = ("teaser", "question", "answer")
+# Every card a question has: the series' three, and the KICD card — the page
+# of the curriculum design the question comes from (in the series and the
+# first comments).
+CARDS = STEPS + ("kicd",)
 VERSION = "c2"
 WIDTH, HEIGHT = 1080, 1350
 
@@ -54,6 +58,10 @@ def _working(q: dict[str, Any], limit: int = 3) -> list[str]:
 
 
 def _key(q: dict[str, Any], step: str, b: dict[str, Any]) -> str:
+    if step == "kicd":            # the design's words, not the question's: a re-ingested design is a new card
+        basis = "|".join([VERSION, step, repr(sorted((k, str(v)) for k, v in design_row(q).items())),
+                          repr(sorted(b.items())), repr(q.get("curriculum") or {})])
+        return hashlib.sha256(basis.encode()).hexdigest()[:16]
     letter, text = _answer(q)
     basis = "|".join([VERSION, step, str(q.get("question_text") or ""), str(q.get("stimulus_context") or ""),
                       repr(q.get("options") or []), letter, text, repr(sorted(b.items()))])
@@ -79,6 +87,8 @@ def status(question_id: str, step: str, q: dict[str, Any] | None = None) -> dict
 
 def page(q: dict[str, Any], step: str, b: dict[str, Any]) -> str:
     """The card as one HTML page (KaTeX from its CDN draws the maths)."""
+    if step == "kicd":
+        return kicd_page(q, b)
     from .grade_order import grade_label
     from .question_paper import figure_markup, figures_for
     from .social import display
@@ -175,8 +185,8 @@ def render(question_id: str, step: str, q: dict[str, Any] | None = None) -> dict
     from ..infra.storage import object_storage
     from .social import brand
 
-    if step not in STEPS:
-        raise ValueError(f"A card is one of {', '.join(STEPS)}.")
+    if step not in CARDS:
+        raise ValueError(f"A card is one of {', '.join(CARDS)}.")
     q = q or _q(question_id)
     st = status(question_id, step, q)
     if st["status"] == "ready":
@@ -191,7 +201,7 @@ def enqueue(question_id: str, *, queued_by: str = "cards") -> dict[str, Any]:
     from . import job_queue
 
     q = _q(question_id)
-    if all(status(question_id, s, q)["status"] == "ready" for s in STEPS):
+    if all(status(question_id, s, q)["status"] == "ready" for s in CARDS):
         return {"status": "ready"}
     link = q.get("curriculum") or {}
     job = job_queue.enqueue(JOB_KIND, str(link.get("grade") or ""), str(link.get("subject") or ""),
@@ -207,7 +217,7 @@ def run_job(job: dict[str, Any]) -> dict[str, Any]:
     if not qid:
         return {"status": "skipped"}
     q = _q(qid)
-    made = {step: render(qid, step, q)["status"] for step in STEPS}
+    made = {step: render(qid, step, q)["status"] for step in CARDS}
     return {"status": "done", "question_id": qid, "cards": made}
 
 
@@ -218,6 +228,8 @@ def caption(q: dict[str, Any], step: str, b: dict[str, Any] | None = None) -> st
     from .social import brand, display, hashtags
 
     b = b or brand()
+    if step == "kicd":
+        return kicd_caption(q, b)
     link = q.get("curriculum") or {}
     topic = " · ".join(x for x in (grade_label(str(link.get("grade") or "")), str(link.get("subject") or ""),
                                    str(link.get("sub_strand") or "")) if x)
@@ -244,3 +256,138 @@ def caption(q: dict[str, Any], step: str, b: dict[str, Any] | None = None) -> st
         lines.append("Did you get it right? 🎬 The full walkthrough video is coming next!")
     lines += ["", follow] + ([f"🌐 {b['website']}"] if b.get("website") else []) + ["", tags]
     return "\n".join(x for x in lines if x is not None).strip() + "\n"
+
+
+# ── the KICD card: where the question comes from ─────────────────────────────
+
+def design_row(q: dict[str, Any]) -> dict[str, Any]:
+    """The sub-strand as the KICD curriculum design states it (the ingested design)."""
+    from ..infra.db import fetch_one
+
+    link = q.get("curriculum") or {}
+    try:
+        return fetch_one("""SELECT s.strand_name, s.sub_strand_name, s.allocated_hours, s.slos, s.learning_experiences,
+                                   s.key_inquiry_questions, s.core_competencies, s.values, s.pertinent_contemporary_issues,
+                                   s.link_to_other_learning_areas, s.source_pages
+                            FROM curriculum_substrands s
+                            WHERE LOWER(s.grade) = LOWER(:g) AND LOWER(s.subject) = LOWER(:s)
+                              AND LOWER(s.sub_strand_name) = LOWER(:ss) LIMIT 1""",
+                         {"g": str(link.get("grade") or ""), "s": str(link.get("subject") or ""),
+                          "ss": str(link.get("sub_strand") or "")}) or {}
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def kicd_page(q: dict[str, Any], b: dict[str, Any]) -> str:
+    """A page in the manner of the KICD design itself: the learning area and
+    grade at the head, then the design's own table for this sub-strand —
+    strand, sub-strand, specific learning outcomes, suggested learning
+    experiences, key inquiry questions — with its competencies and values,
+    the pages it comes from, and KICD's credit."""
+    from .grade_order import grade_label
+    from .social import KICD_DESIGNS, _pages, _texts
+
+    esc = lambda t: html.escape(str(t or ""))  # noqa: E731
+    link = q.get("curriculum") or {}
+    row = design_row(q)
+    grade = grade_label(str(link.get("grade") or ""))
+    subject = str(link.get("subject") or "")
+    strand = str(row.get("strand_name") or link.get("strand") or "")
+    sub = str(row.get("sub_strand_name") or link.get("sub_strand") or "")
+    slos = _texts(row.get("slos"))[:5]
+    exps = _texts(row.get("learning_experiences"))[:4]
+    kiqs = _texts(row.get("key_inquiry_questions"))[:3]
+    comps = _texts(row.get("core_competencies"))[:3]
+    vals = _texts(row.get("values"))[:3]
+    pages = _pages(row.get("source_pages") or [])
+    hours = str(row.get("allocated_hours") or "")
+    letters = "abcdefgh"
+    ol = lambda items: "".join(f"<li><b>{letters[k]})</b> {esc(t)}</li>" for k, t in enumerate(items))  # noqa: E731
+    extra = "".join(
+        f"<div class='box'><h3>{title}</h3><p>{esc('; '.join(items))}</p></div>"
+        for title, items in (("Core competencies to be developed", comps), ("Values", vals)) if items)
+    source = (f"Source: KICD {grade} {subject} Curriculum Design" + (f", {pages}" if pages else "")
+              + ". © Kenya Institute of Curriculum Development.")
+    foot = " · ".join(x for x in (b.get("name"), b.get("website")) if x)
+    return f"""<!doctype html><html><head><meta charset="utf-8"><style>
+ *{{box-sizing:border-box}} html{{font-size:10px}} html,body{{margin:0;width:{WIDTH}px;height:{HEIGHT}px}}
+ body{{background:#e9e6df;font-family:'Times New Roman',Georgia,serif;color:#111;padding:44px}}
+ .paper{{background:#fff;height:100%;box-shadow:0 10px 40px rgba(0,0,0,.25);padding:52px 56px 34px;display:flex;flex-direction:column}}
+ .head{{text-align:center;border-bottom:3px double #111;padding-bottom:1.6rem}}
+ .kicd{{font-family:'Inter','Segoe UI',sans-serif;font-size:2.2rem;letter-spacing:.3em;font-weight:700;color:#7a1f1f}}
+ h1{{font-size:4.4rem;margin:.8rem 0 .2rem;text-transform:uppercase}}
+ h2{{font-size:2.8rem;margin:0;font-weight:400;font-style:italic}}
+ .body{{flex:1;min-height:0;overflow:hidden;display:flex;flex-direction:column;gap:1.6rem;margin-top:2rem}}
+ table{{border-collapse:collapse;width:100%;font-size:2.35rem;line-height:1.3}}
+ th{{background:#efe9dc;font-family:'Inter','Segoe UI',sans-serif;font-size:1.9rem;text-transform:uppercase;letter-spacing:.06em}}
+ th,td{{border:2px solid #222;padding:1rem 1.1rem;vertical-align:top;text-align:left}}
+ td.lbl{{width:24%;font-weight:700}}
+ ol{{list-style:none;margin:0;padding:0;display:grid;gap:.5rem}}
+ .box{{border:2px solid #222;padding:1rem 1.2rem}} .box h3{{margin:0 0 .4rem;font-size:2.2rem;font-family:'Inter','Segoe UI',sans-serif}}
+ .box p{{margin:0;font-size:2.3rem}}
+ .src{{font-size:1.9rem;font-style:italic;border-top:1px solid #999;padding-top:1rem;margin-top:1.2rem}}
+ .foot{{font-family:'Inter','Segoe UI',sans-serif;font-size:1.8rem;color:#555;text-align:center;margin-top:.6rem}}
+</style></head><body><div class="paper">
+ <div class="head"><div class="kicd">FROM THE KICD CURRICULUM DESIGN</div>
+   <h1>{esc(grade)} {esc(subject)}</h1><h2>Where today's question comes from — quoted from the design</h2></div>
+ <div class="body">
+  <table>
+   <tr><th>Strand</th><th>Sub-strand</th></tr>
+   <tr><td><b>{esc(strand)}</b></td><td><b>{esc(sub)}</b>{f" ({esc(hours)})" if hours and len(hours) < 30 else ""}</td></tr>
+  </table>
+  <table>
+   {f"<tr><td class='lbl'>Specific learning outcomes</td><td><i>By the end of the sub-strand, the learner should be able to:</i><ol>{ol(slos)}</ol></td></tr>" if slos else ""}
+   {f"<tr><td class='lbl'>Suggested learning experiences</td><td><ol>{ol(exps)}</ol></td></tr>" if exps else ""}
+   {f"<tr><td class='lbl'>Key inquiry question(s)</td><td><ol>{''.join(f'<li>{esc(t)}</li>' for t in kiqs)}</ol></td></tr>" if kiqs else ""}
+  </table>
+  {extra}
+ </div>
+ <div class="src">{esc(source)} All designs: {esc(KICD_DESIGNS)}</div>
+ <div class="foot">{esc(foot)}</div>
+</div>
+<script>
+ (function fit(){{
+   var body = document.querySelector('.body'), size = 10;
+   while (body.scrollHeight > body.clientHeight + 2 && size > 5.6) {{
+     size -= 0.25; document.documentElement.style.fontSize = size + 'px';
+   }}
+ }})();
+ window.__ready = true;
+</script></body></html>"""
+
+
+def kicd_caption(q: dict[str, Any], b: dict[str, Any] | None = None) -> str:
+    """The words with the KICD card: the sub-strand, its outcomes, and the source."""
+    from .grade_order import grade_label
+    from .social import KICD_DESIGNS, _pages, _texts, brand, hashtags
+
+    b = b or brand()
+    link = q.get("curriculum") or {}
+    row = design_row(q)
+    grade, subject = grade_label(str(link.get("grade") or "")), str(link.get("subject") or "")
+    sub = str(row.get("sub_strand_name") or link.get("sub_strand") or "")
+    slos = _texts(row.get("slos"))[:3]
+    pages = _pages(row.get("source_pages") or [])
+    lines = [f"📘 Straight from the KICD curriculum design — {grade} {subject}, {sub}", ""]
+    if slos:
+        lines += ["By the end of this sub-strand, the learner should be able to:"] + [f"• {s}" for s in slos] + [""]
+    lines += [f"Source: KICD {grade} {subject} Curriculum Design" + (f", {pages}" if pages else "")
+              + ". © Kenya Institute of Curriculum Development.", f"All designs: {KICD_DESIGNS}"]
+    if b.get("website"):
+        lines += ["", f"🌐 {b['website']}"]
+    lines += ["", " ".join(hashtags(q, b))]
+    return "\n".join(lines).strip() + "\n"
+
+
+def kicd_comment(q: dict[str, Any]) -> str:
+    """The comment that carries the KICD card: short, with the source."""
+    from .grade_order import grade_label
+    from .social import KICD_DESIGNS, _pages
+
+    link = q.get("curriculum") or {}
+    row = design_row(q)
+    grade, subject = grade_label(str(link.get("grade") or "")), str(link.get("subject") or "")
+    sub = str(row.get("sub_strand_name") or link.get("sub_strand") or "")
+    pages = _pages(row.get("source_pages") or [])
+    return (f"📘 Straight from the KICD curriculum design: {grade} {subject} — {sub}"
+            + (f" ({pages})" if pages else "") + f". © Kenya Institute of Curriculum Development. All designs: {KICD_DESIGNS}")

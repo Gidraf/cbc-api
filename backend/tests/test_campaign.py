@@ -406,3 +406,56 @@ def test_the_devices_page_says_which_mac_needs_the_update(db, monkeypatch) -> No
     se.heartbeat("mac-older", {"machine": {}})            # from before Macs said their code
     got = {p["poster_id"]: p["update"] for p in play.devices(auth=None)["posters"]}
     assert got["mac-new"] == "current" and got["mac-old"] == "behind" and got["mac-older"] == "behind"
+
+
+@needs_db
+def test_the_photo_series_is_booked_before_the_days_reels(db, monkeypatch) -> None:
+    from app.infra.db import fetch_all
+    from app.services import social_cards, whiteboard
+
+    monkeypatch.setattr(whiteboard, "load", lambda qid: {"question_id": qid, "curriculum": {"grade": "grade-9"}})
+    monkeypatch.setattr(social_cards, "enqueue", lambda qid, **k: {"status": "queued"})
+    rules = {**se.poster_rules(), "photos_per_day": 8, "min_gap_minutes": 100, "platforms": ["facebook"],
+             "hours": {"start": "06:00", "end": "22:00"}}
+    monkeypatch.setattr(se, "poster_rules", lambda: rules)
+    tomorrow = (datetime.now(se.EAT) + timedelta(days=1)).date()
+    at = lambda h, m=0: datetime.combine(tomorrow, se.time(h, m), tzinfo=se.EAT)       # noqa: E731
+    for qid, t in (("early", at(7)), ("mid", at(14)), ("late", at(18)), ("night", at(20))):
+        _booked(qid, t)
+    got = se.attach_series(datetime.now(timezone.utc), days=3)
+    assert got["series"] == 2, "8 photos a day: two series"
+    steps = {(r["question_id"], r["step"]): r["scheduled_for"] for r in fetch_all(
+        "SELECT question_id, step, scheduled_for FROM social_posts WHERE format = 'photo'") or []}
+    # 07:00 has no room before it (the teaser would be before 06:00): the next two reels get theirs.
+    assert ("early", "question") not in steps
+    assert [s for (q, s) in sorted(steps, key=lambda k: steps[k]) if q == "mid"] == ["teaser", "question", "kicd", "answer"]
+    assert steps[("mid", "answer")] == at(12, 20) and steps[("mid", "teaser")] == at(7, 20)
+    assert ("late", "kicd") in steps and ("night", "teaser") not in steps
+    assert se.attach_series(datetime.now(timezone.utc), days=3)["series"] == 0, "booked once"
+
+
+@needs_db
+def test_the_first_comments_carry_the_question_card_and_the_kicd_page(db, monkeypatch) -> None:
+    from app.infra.db import execute
+    from app.services import social_cards, whiteboard
+
+    db["poster_comment_thread"] = True
+    now = datetime.now(timezone.utc).replace(hour=9)
+    monkeypatch.setattr(se, "reconcile_due", lambda now: False)
+    monkeypatch.setattr(whiteboard, "load", lambda qid: {"question_id": qid, "curriculum": {"grade": "grade-9", "subject": "Mathematics",
+                                                                                            "sub_strand": "Integers"}})
+    monkeypatch.setattr(social, "status", lambda qid, q=None, **k: {"status": "ready", "thread": {
+        "find": "x", "first": ["Choices:\nA) 5", "🤔 Can you solve it?"], "later": ["✅ Answer: A) 5", "💡 How…"]}})
+    monkeypatch.setattr(social_cards, "status", lambda qid, step, q=None: {"status": "ready", "url": f"https://x/{step}.jpg"})
+    monkeypatch.setattr(social_cards, "enqueue", lambda qid, **k: {"status": "ready"})
+    monkeypatch.setattr(social_cards, "design_row", lambda q: {"sub_strand_name": "Integers", "source_pages": [12, 13]})
+    pid = _post("cards-q", now - timedelta(minutes=30), 0)
+    execute("""UPDATE social_posts SET comments_state = 'pending', comments_next_at = :t, url = 'https://facebook.com/reel/5'
+               WHERE post_id = :id""", {"t": now - timedelta(minutes=5), "id": pid})
+    job = se.comments_next(now)["job"]
+    assert job["stage"] == "first" and len(job["comments"]) == 3
+    assert job["images"] == ["https://x/question.jpg", "", "https://x/kicd.jpg"]
+    assert "KICD curriculum design" in job["comments"][2] and "pages 12–13" in job["comments"][2]
+    se.comments_result(pid, stage="first", ok=True, now=now)
+    later = se.comments_next(now + timedelta(minutes=5))["job"]
+    assert later["stage"] == "later" and later["images"] == ["", "https://x/answer.jpg"]

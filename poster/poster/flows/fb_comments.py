@@ -325,7 +325,8 @@ async def read_metrics(page: Page, post: Locator) -> dict[str, int]:
 
 
 async def comment(page: Page, *, find: str, url: str, comments: list[str], image: str = "",
-                  check: bool = False, also: list[str] | None = None, measure: bool = False) -> dict:
+                  check: bool = False, also: list[str] | None = None, measure: bool = False,
+                  images: list[str] | None = None) -> dict:
     """Find the post and comment under it, one comment after the other (and
     read its numbers first, when asked). The post is always found on the
     profile by its words: a reel's own page hides its comment box."""
@@ -341,8 +342,11 @@ async def comment(page: Page, *, find: str, url: str, comments: list[str], image
     for k, text in enumerate(comments):
         box = await comment_box(page, post)
         await _type(page, box, text)
-        if image and k == len(comments) - 1:
-            attached = await _attach(page, box, image)    # no photo input: the text still goes
+        # Its own picture (the question card, the KICD page, the answer card),
+        # or — from a server that sends one — the one picture, on the last.
+        pic = (images[k] if images and k < len(images) else "") or (image if not images and k == len(comments) - 1 else "")
+        if pic:
+            attached = await _attach(page, box, pic)      # no photo input: the text still goes
             await box.focus()
         await page.keyboard.press("Enter")
         if not await _landed(page, post, text):

@@ -342,12 +342,14 @@ def test_the_answer_comment_carries_its_card_made_in_time(db, monkeypatch) -> No
     se.record_attempt(pid, ok=True)
     execute("UPDATE social_posts SET posted_at = :t, comments_next_at = :t WHERE post_id = :id",
             {"t": NOW - timedelta(minutes=2), "id": pid})
+    monkeypatch.setattr(social_cards, "design_row", lambda q: {})
     job = se.comments_next(NOW)["job"]
-    assert job["image_url"] == "" and made["queued"] == 1, "the choices go now; the card is queued for the answer"
+    # The choices go now with the question card (made then, if the queue has not), and
+    # the rest — the answer card — is queued for the answer.
+    assert job["images"][0] == "https://x/card.jpg" and made["rendered"] == 1 and made["queued"] == 1
     se.comments_result(pid, stage="first", ok=True, now=NOW)
     job = se.comments_next(NOW + timedelta(seconds=95))["job"]
-    assert job["stage"] == "later" and job["image_url"] == "https://x/card.jpg"
-    assert made["rendered"] == 1, "not made by the queue in time: made then, so the answer never goes without it"
+    assert job["stage"] == "later" and job["image_url"] == "https://x/card.jpg" and job["images"] == ["https://x/card.jpg"]
 
 
 @needs_db

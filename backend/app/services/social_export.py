@@ -1216,23 +1216,40 @@ def comments_next(now: datetime | None = None, *, check: bool = False,
     st = social.status(row["question_id"])
     t = st.get("thread") or {}
     first = row["comments_state"] == "pending"
+    comments = list(t.get("first" if first else "later") or [])
+    images = [""] * len(comments)
     image = ""
+
+    def card_url(step: str, q: dict[str, Any]) -> str:
+        card = social_cards.status(row["question_id"], step, q)
+        if card.get("status") != "ready":
+            card = social_cards.render(row["question_id"], step, q)     # not made yet: made now
+        return card.get("url") if card.get("status") == "ready" else ""
+
     try:
         q = load(row["question_id"])
-        card = social_cards.status(row["question_id"], "answer", q)
-        if first and card.get("status") != "ready":
-            social_cards.enqueue(row["question_id"], queued_by="comments")   # made by the time the answer is due
-        elif not first:
-            if card.get("status") != "ready":
-                card = social_cards.render(row["question_id"], "answer", q)  # not made yet: one card, made now
-            image = card.get("url") if card.get("status") == "ready" else ""
+        if first:
+            # The question as a card with the choices, and — a comment of its
+            # own — the page of the KICD design it comes from: the content's
+            # source, there for anyone to check.
+            if comments:
+                images[0] = card_url("question", q)
+            kicd = card_url("kicd", q)
+            if kicd:
+                comments.append(social_cards.kicd_comment(q))
+                images.append(kicd)
+                image = kicd               # a poster that predates per-comment pictures puts it on the last
+            social_cards.enqueue(row["question_id"], queued_by="comments")   # the answer card, by the time it is due
+        else:
+            image = card_url("answer", q)
+            if comments:
+                images[-1] = image
     except Exception as exc:  # noqa: BLE001
-        logger.info("No answer card for %s: %s", row["question_id"], exc)
-        image = ""
+        logger.info("No cards for %s: %s", row["question_id"], exc)
     return {"job": {"post_id": row["post_id"], "platform": row["platform"], "url": row.get("url") or "",
                     "find": t.get("find") or "", "find_also": t.get("find_also") or [],
                     "stage": "first" if first else "later",
-                    "comments": t.get("first" if first else "later") or [], "image_url": image,
+                    "comments": comments, "images": images, "image_url": image,
                     "measure": not first}, "reason": ""}
 
 
@@ -2218,6 +2235,11 @@ def auto_book(*, now: datetime | None = None, force: bool = False, dry: bool = F
     out = _fill(days, scopes, per_day=rules["per_day"], gap_min=30, gap_max=60, platforms=rules["platforms"],
                 ready_only=False, dry=dry, created_by=AUTO_BOOK, rng=random.Random(seed),
                 full_note=f"The next {rules['days']} days are full at {rules['per_day']} a day.")
+    if not dry:
+        try:                       # the photo series before the week's reels (Settings: photos a day)
+            out["series"] = attach_series(now, days=7).get("series", 0)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Could not book the photo series: %s", exc)
     return {**out, "scopes": [list(sc) for sc in scopes], "days_ahead": rules["days"], "per_day": rules["per_day"]}
 
 
@@ -2288,18 +2310,21 @@ def live_extra(now: datetime, rules: dict[str, Any]) -> tuple[dict[str, Any] | N
 
 # ── photo + video series ─────────────────────────────────────────────────────
 
-SERIES_FULL = ("teaser", "question", "answer", "walkthrough")
+# A question told in order through the day: "a question is coming", the
+# question, the page of the KICD design it comes from, the answer, then its
+# walkthrough video.
+SERIES_FULL = ("teaser", "question", "kicd", "answer", "walkthrough")
 SERIES_SHORT = ("question", "answer", "walkthrough")
 
 
 def series_shape(photos: int, videos: int) -> list[tuple[str, ...]]:
-    """A day's runs: full series (3 cards and the video) while the budget
+    """A day's runs: full series (4 cards and the video) while the budget
     holds, a short one (question, answer, video) with what is left, and the
     remaining videos on their own. Pure."""
     runs: list[tuple[str, ...]] = []
-    while photos >= 3 and videos >= 1:
+    while photos >= 4 and videos >= 1:
         runs.append(SERIES_FULL)
-        photos, videos = photos - 3, videos - 1
+        photos, videos = photos - 4, videos - 1
     while photos >= 2 and videos >= 1:
         runs.append(SERIES_SHORT)
         photos, videos = photos - 2, videos - 1
@@ -2339,6 +2364,67 @@ def _plan_step(q: dict[str, Any], platform: str, step: str, at: datetime, create
          "subject": str(link.get("subject") or ""), "ss": str(link.get("sub_strand") or ""), "at": at,
          "by": created_by, "fmt": fmt, "step": step})
     return post_id
+
+
+def attach_series(now: datetime | None = None, *, days: int = 7, dry: bool = False) -> dict[str, Any]:
+    """The photo series, before the reels already booked: each day's first
+    reels (as many as `photos_per_day` allows, 4 cards a series) get "a
+    question is coming", the question, its KICD page and the answer, each a
+    gap (Settings: minutes between posts) before the next and the reel last —
+    whether the reel waits here or in Facebook's scheduler. A step that would
+    fall before posting hours, or in the past, is left out; a series needs at
+    least the question and the answer."""
+    from ..infra.db import fetch_all
+    from . import social_cards
+    from .whiteboard import load
+
+    now = now or datetime.now(timezone.utc)
+    rules = poster_rules()
+    per_day = rules.get("photos_per_day", 0) // 4
+    if per_day <= 0 or "facebook" not in rules["platforms"]:
+        return {"series": 0, "reason": "Photos a day is under 4 (Settings → Auto-post): no series."}
+    gap = timedelta(minutes=max(30, int(rules.get("min_gap_minutes") or 60)))
+    start_h, start_m = (int(x) for x in rules["hours"]["start"].split(":"))
+    made, plan = 0, []
+    for k in range(max(1, days)):
+        day = (now.astimezone(EAT) + timedelta(days=k)).date()
+        d0 = datetime.combine(day, time(0, 0), tzinfo=EAT)
+        opens = datetime.combine(day, time(start_h, start_m), tzinfo=EAT)
+        rows = fetch_all(
+            """SELECT post_id, question_id,
+                      CASE WHEN platform_scheduled AND posted_at IS NOT NULL THEN posted_at ELSE scheduled_for END AS t,
+                      EXISTS (SELECT 1 FROM social_posts c WHERE c.question_id = p.question_id AND c.format = 'photo') AS has
+               FROM social_posts p
+               WHERE platform = 'facebook' AND COALESCE(format, 'video') = 'video' AND status <> 'gave_up'
+                 AND audience = 'learners'
+                 AND (CASE WHEN platform_scheduled AND posted_at IS NOT NULL THEN posted_at ELSE scheduled_for END)
+                     BETWEEN :d0 AND :d1
+               ORDER BY 3""", {"d0": d0, "d1": d0 + timedelta(days=1)}) or []
+        room = per_day - sum(1 for r in rows if r["has"])
+        for r in rows:
+            if room <= 0:
+                break
+            if r["has"] or not isinstance(r["t"], datetime):
+                continue
+            steps = [(s, r["t"] - gap * (4 - n)) for n, s in enumerate(("teaser", "question", "kicd", "answer"))]
+            steps = [(s, at) for s, at in steps if at >= opens and at > now + timedelta(minutes=20)]
+            if not {"question", "answer"} <= {s for s, _ in steps}:
+                continue
+            plan.append((r["question_id"], steps))
+            room -= 1
+    if not dry:
+        for qid, steps in plan:
+            try:
+                q = load(qid)
+                for step, at in steps:
+                    _plan_step(q, "facebook", step, at, "series")
+                social_cards.enqueue(qid, queued_by="series")
+                made += 1
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Could not book the series of %s: %s", qid, exc)
+    return {"series": made if not dry else len(plan),
+            "plan": [{"question_id": qid, "steps": [f"{at.astimezone(EAT):%a %H:%M} {s}" for s, at in steps]}
+                     for qid, steps in plan]}
 
 
 def book_series(grade: str, subject: str, sub_strand: str = "", *, days: int = 7, photos: int | None = None,

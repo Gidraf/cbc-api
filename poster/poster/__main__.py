@@ -421,7 +421,17 @@ async def comment_step(*, check: bool = False) -> dict[str, Any]:
         await cbc.comments_done(job["post_id"], job["stage"], ok=False, error="Comments are set up for Facebook only.")
         return {"ok": False, "error": "Comments are set up for Facebook only."}
     image = ""
-    if job.get("image_url") and not check:
+    images: list[str] = []
+    if job.get("images") and not check:
+        for k, link in enumerate(job["images"]):           # one picture per comment ("" for none)
+            path = ""
+            if link:
+                try:
+                    path = await cbc.download(link, f"card-{job['post_id']}-{k}.jpg")
+                except Exception as exc:  # noqa: BLE001
+                    log.info("No card %d for %s: %s", k, job["post_id"], _why(exc))
+            images.append(path)
+    elif job.get("image_url") and not check:
         try:
             image = await cbc.download(job["image_url"], f"answer-{job['post_id']}.jpg")
         except Exception as exc:  # noqa: BLE001
@@ -453,7 +463,8 @@ async def comment_step(*, check: bool = False) -> dict[str, Any]:
                 return {"ok": True, "message": f"Shared to {', '.join(out.get('groups') or [])}.", "shot": out.get("shot")}
             out = await fb_comments.comment(page, find=job.get("find") or "", url=job.get("url") or "",
                                             comments=job.get("comments") or [], image=image, check=check,
-                                            also=job.get("find_also") or [], measure=bool(job.get("measure")))
+                                            also=job.get("find_also") or [], measure=bool(job.get("measure")),
+                                            images=images or None)
             if not check:
                 await cbc.comments_done(job["post_id"], job["stage"], ok=True, url=out.get("url") or "",
                                         metrics=out.get("metrics") or None)
