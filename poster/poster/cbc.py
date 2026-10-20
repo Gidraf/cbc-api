@@ -162,9 +162,12 @@ async def engage_next() -> dict[str, Any]:
 
 
 async def engage_done(kind: str, target: str, *, likes: int = 0, people: list[dict[str, str]] | None = None,
-                      error: str = "") -> None:
+                      error: str = "", groups: list[dict[str, Any]] | None = None, result: str = "",
+                      replied: list[str] | None = None) -> None:
     await _call("POST", "/api/v1/play/poster/engage/result",
-                json={"kind": kind, "target": target, "likes": likes, "people": people or [], "error": error[:500]})
+                json={"kind": kind, "target": target, "likes": likes, "people": people or [], "error": error[:500],
+                      **({"groups": groups[:100]} if groups else {}), **({"result": result} if result else {}),
+                      **({"replied": replied[:20]} if replied else {})})
 
 
 async def groups_found(platform: str, names: list[str]) -> list[dict[str, Any]]:

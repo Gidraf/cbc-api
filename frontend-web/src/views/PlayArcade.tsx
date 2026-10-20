@@ -47,6 +47,7 @@ import {
   useMakeSocial,
   usePosterCommand,
   usePostQuestion,
+  useGroupsAll,
   useQuestionSearch,
   usePosterMacLink,
   usePosterOverview,
@@ -1306,6 +1307,51 @@ function Groups({ groups, sharesPerDay, restDays, perPost, busy, online, onRead 
 const MAX_GROUPS_PER_POST = 5;
 
 /** Up to five of the owner's groups, picked by hand, for the next video now. */
+/** The groups the poster finds and joins: joined (ticked for the shares),
+ *  waiting for an admin, needing the owner's answers, or found and not joined yet. */
+function GroupsFound() {
+  const groups = useGroupsAll();
+  const [show, setShow] = React.useState<"needs_answers" | "member" | "requested" | "found">("needs_answers");
+  const d = groups.data;
+  if (!d) return null;
+  const label: Record<string, string> = { member: "Joined", requested: "Waiting for an admin", needs_answers: "Needs your answers", found: "Found, not joined" };
+  const rows = d.groups.filter((g) => g.status === show);
+  return (
+    <div style={{ display: "grid", gap: 6, borderTop: "1px dashed var(--line)", paddingTop: "var(--s2)", fontSize: "var(--text-sm)" }}>
+      <Stack direction="row" gap="var(--s2)" wrap align="center">
+        <strong>👥 Groups</strong>
+        <span style={{ color: "var(--ink-3)", fontSize: "var(--text-xs)" }}>
+          {d.rules.enabled ? `The poster searches twice a day (${d.rules.keywords.length} keywords) and joins up to ${d.rules.per_day} a day, biggest first (${d.rules.min_members.toLocaleString()}+ members).`
+                           : "Finding and joining groups is off (Settings → Auto-post → Find and join groups)."}
+        </span>
+      </Stack>
+      <Stack direction="row" gap="var(--s2)" wrap>
+        {(["needs_answers", "member", "requested", "found"] as const).map((k) => (
+          <Button key={k} size="sm" variant={show === k ? "primary" : "ghost"} onClick={() => setShow(k)}>
+            {label[k]} ({d.counts[k] ?? 0})
+          </Button>
+        ))}
+      </Stack>
+      {show === "needs_answers" && rows.length > 0 && (
+        <span style={{ color: "var(--ink-3)", fontSize: "var(--text-xs)" }}>
+          These groups ask membership questions: open each, answer, and the poster takes it from there once you are in.
+        </span>
+      )}
+      <div style={{ display: "grid", gap: 2, maxHeight: 260, overflow: "auto" }}>
+        {rows.length === 0 && <span style={{ color: "var(--ink-3)", fontSize: "var(--text-xs)" }}>None.</span>}
+        {rows.map((g) => (
+          <div key={g.name} style={{ display: "flex", gap: 8, alignItems: "baseline", fontSize: "var(--text-xs)" }}>
+            {g.url ? <a href={g.url} target="_blank" rel="noreferrer" style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{g.name}</a>
+                   : <span style={{ flex: 1 }}>{g.name}</span>}
+            <span style={{ color: "var(--ink-3)" }}>{g.members ? `${g.members.toLocaleString()} members` : ""}{g.privacy ? ` · ${g.privacy}` : ""}</span>
+            {g.status === "member" && <Badge tone={g.enabled ? "ok" : "neutral"}>{g.enabled ? "shared to" : "not ticked"}</Badge>}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 /** Post now — a question you pick: search its words, and it goes out live on
  *  Facebook straight away (its video is made first if it has none yet). */
 function PostQuestionNow({ left }: { left: number }) {
@@ -2274,6 +2320,7 @@ function AutoPost() {
           <Growth />
           <MacJobs />
           <LikeBack online={o.live.online} busy={command.isPending} onCheck={() => run("engage_check", "facebook")} />
+          <GroupsFound />
           {o.live.online && picking && (
             <PickGroups groups={o.groups || []} busy={command.isPending}
                         onPost={async (names) => { await run("run_now", "facebook", { share: "groups", groups: names }); setPicking(false); }} />

@@ -21,7 +21,7 @@ from .fb_comments import find_post
 
 async def share_post(page: Page, *, find: str, also: list[str] | None, groups: list[str], url: str = "") -> dict:
     shared: list[str] = []
-    for name in groups[:3]:
+    for name in groups[:9]:
         post = None
         if url:                   # its own page first: an older post is far down the profile
             try:
@@ -60,8 +60,19 @@ async def share_post(page: Page, *, find: str, also: list[str] | None, groups: l
                                           page.get_by_role("button", name=re.compile(r"^share$", re.I))],
                                    timeout=20, what='"Post"')
             await post_btn.click()
-            await asyncio.sleep(4)
-            shared.append(name)
+            # Landed: the share sheet closes, or Facebook says it is shared. A
+            # share that did not land is not counted (the group is not rested).
+            landed = False
+            for _ in range(10):
+                await asyncio.sleep(1.5)
+                if not await post_btn.is_visible() or await page.get_by_text(
+                        re.compile(r"shared to|posted to|your post is (now )?(live|pending)|submitted for approval", re.I)).count():
+                    landed = True
+                    break
+            if landed:
+                shared.append(name)
+            else:
+                await page.keyboard.press("Escape")
         except StepFailed:
             await page.keyboard.press("Escape")
             raise

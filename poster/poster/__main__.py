@@ -271,6 +271,9 @@ async def publish(post: dict[str, Any], *, dry_run: bool) -> dict[str, Any]:
         return result
 
 
+ENGAGE_EVERY = 20 * 60          # seconds: the longest the like-back, replies and groups wait for a turn
+
+
 async def tick() -> dict[str, Any]:
     if state["paused"]:
         return {"skipped": "paused"}
@@ -289,8 +292,15 @@ async def tick() -> dict[str, Any]:
         try:
             if await linkedin_step():
                 return {"skipped": state["note"]}
+            # Liking back, replies and groups get a turn every 20 minutes or so
+            # even while the comments are busy — a profile active all day.
+            if time.time() - state.get("engage_at", 0) > ENGAGE_EVERY:
+                state["engage_at"] = time.time()
+                await engage_step()
+                return {"skipped": state["note"]}
             done = await comment_step()
             if not done.get("ok") and done.get("error") == "No post to comment on.":
+                state["engage_at"] = time.time()
                 await engage_step()
         except Exception as exc:  # noqa: BLE001
             log.warning("Comment or like-back step failed: %s", _why(exc))
@@ -374,6 +384,45 @@ async def linkedin_step() -> bool:
     return True
 
 
+async def group_step(act: dict[str, Any]) -> dict[str, Any]:
+    """Find groups for a keyword, or join one group."""
+    from .flows import fb_groups
+
+    async with browser.lock:
+        state["busy"] = (f"Looking for groups: {act.get('keyword')}" if act["kind"] == "find_groups"
+                         else f"Joining the group {act.get('name') or ''}")
+        page = await browser.page()
+        try:
+            if act["kind"] == "find_groups":
+                out = await fb_groups.search(page, keyword=str(act.get("keyword") or ""), limit=int(act.get("limit") or 30))
+                await cbc.engage_done("find_groups", str(act.get("keyword") or ""), groups=out["groups"])
+                log.info("Groups for %r: %d found.", act.get("keyword"), len(out["groups"]))
+                return {"ok": True, "message": f"{len(out['groups'])} group(s) found.", "shot": out.get("shot")}
+            out = await fb_groups.join(page, url=str(act["url"]))
+            await cbc.engage_done("join_group", str(act["url"]), result=out["result"])
+            count("groups_joined" if out["result"] == "member" else "group_requests")
+            log.info("Group %s: %s", act.get("name"), out["result"])
+            return {"ok": True, "message": f"{act.get('name')}: {out['result']}", "shot": out.get("shot")}
+        except Yielded:
+            return {"ok": False, "error": "A command from the console came first."}
+        except NotLoggedIn as exc:
+            await _set_login("facebook", False, "Log in on the screen.")
+            return {"ok": False, "error": str(exc)}
+        except Exception as exc:  # noqa: BLE001
+            why = _why(exc)
+            try:
+                await cbc.engage_done(act["kind"], str(act.get("keyword") or act.get("url") or ""), error=why)
+            except Exception:  # noqa: BLE001
+                pass
+            return {"ok": False, "error": why, "shot": await shot(page, "facebook-groups-failed")}
+        finally:
+            state["busy"] = ""
+            try:
+                await page.close()
+            except Exception:  # noqa: BLE001
+                pass
+
+
 async def engage_step(*, check: bool = False) -> dict[str, Any]:
     """One like-back step: like the comments under one of your posts and note
     who wrote them, or like a few posts of one person who commented.
@@ -392,17 +441,23 @@ async def engage_step(*, check: bool = False) -> dict[str, Any]:
         act = nxt.get("action")
         if not act:
             return {"ok": False, "error": nxt.get("reason") or "Nothing to like now."}
-    target = act.get("post_id") if act["kind"] == "scan" else act.get("url")
+    target = act.get("post_id") if act["kind"] == "scan" else act.get("keyword") if act["kind"] == "find_groups" else act.get("url")
+    if act["kind"] in ("find_groups", "join_group"):
+        return await group_step(act)
     async with browser.lock:
         state["busy"] = "Reading the comments" if act["kind"] == "scan" else f"Liking {act.get('name') or 'a commenter'}'s posts"
         page = await browser.page()
         try:
             if act["kind"] == "scan":
-                out = await fb_engage.scan(page, find=act.get("find") or "", url=act.get("url") or "", count=int(act.get("count") or 0))
+                out = await fb_engage.scan(page, find=act.get("find") or "", url=act.get("url") or "", count=int(act.get("count") or 0),
+                                           reply=None if check else act.get("reply"))
+                if out.get("replied"):
+                    count("replies", len(out["replied"]))
             else:
                 out = await fb_engage.like_person(page, url=act["url"], count=int(act.get("count") or 1))
             if not check:
-                await cbc.engage_done(act["kind"], str(target), likes=out.get("likes", 0), people=out.get("people"))
+                await cbc.engage_done(act["kind"], str(target), likes=out.get("likes", 0), people=out.get("people"),
+                                      replied=out.get("replied") or [])
                 count("likes", out.get("likes", 0))
             log.info("Like-back %s %s: %s likes, %s people", act["kind"], "(check)" if check else "", out.get("likes", 0),
                      len(out.get("people") or []))
@@ -701,7 +756,7 @@ async def series_now(options: dict[str, Any]) -> dict[str, Any]:
         return {"ok": False, "error": "The poster is paused — resume it first."}
     qid = str(options.get("question_id") or "")
     share = str(options.get("share") or "feed")
-    picked = [str(g) for g in (options.get("groups") or [])][:5]
+    picked = [str(g) for g in (options.get("groups") or [])][:9]
     said, posted = [], 0
     for k, (pid, step) in enumerate(zip(options.get("post_ids") or [], options.get("steps") or [])):
         if k:
@@ -742,14 +797,14 @@ async def post_now(platform: str = "", options: dict[str, Any] | None = None) ->
         if state["paused"]:
             return {"ok": False, "error": "The poster is paused — resume it first."}
         nxt = await cbc.next_post(platform=platform, post_id=wanted, dry=True, share=share,
-                                  groups=[str(g) for g in (options.get("groups") or [])][:5])
+                                  groups=[str(g) for g in (options.get("groups") or [])][:9])
         if not nxt.get("post"):
             return {"ok": False, "error": nxt.get("reason") or "That post is not ready (its card or video is still being made)."}
         one = {**nxt["post"], "schedule_at": ""}
         if share == "feed":
             one["groups"] = []
         return await publish(one, dry_run=False)
-    picked = [str(g) for g in (options.get("groups") or [])][:5]
+    picked = [str(g) for g in (options.get("groups") or [])][:9]
     if state["paused"]:
         return {"ok": False, "error": "The poster is paused — resume it first."}
     why = ""

@@ -143,13 +143,28 @@ SETTINGS: tuple[Setting, ...] = (
             "that no booking uses, live. 0 turns it off.", 0, "Auto-post"),
     Setting("poster_group_shares_per_day", "POSTER_GROUP_SHARES_PER_DAY", "int", "Group shares a day",
             "How many of a day's videos are also shared to your ticked groups (one in the morning, one later). "
-            "0 turns group sharing off.", 2, "Auto-post"),
-    Setting("poster_groups_per_post", "POSTER_GROUPS_PER_POST", "int", "Groups per post (1-5)",
+            "0 turns group sharing off.", 4, "Auto-post"),
+    Setting("poster_groups_per_post", "POSTER_GROUPS_PER_POST", "int", "Groups per post (1-9)",
             "How many groups one shared video goes to. Each share takes the next groups in turn, the ones "
-            "rested longest, until every ticked group has had one; then it goes round again.", 5, "Auto-post"),
+            "rested longest, until every ticked group has had one; then it goes round again.", 9, "Auto-post"),
     Setting("poster_group_rest_days", "POSTER_GROUP_REST_DAYS", "int", "Days between shares to a group",
-            "A group gets at most one share in this many days — more reads as spam to members and admins.", 7,
+            "A group gets at most one share in this many days — more reads as spam to members and admins.", 2,
             "Auto-post"),
+    Setting("groups_auto_find", "GROUPS_AUTO_FIND", "bool", "Find and join groups",
+            "The poster searches Facebook for groups that fit your audience (the keywords below), lists them on "
+            "the Groups card, and joins the biggest — a few a day. A group that asks membership questions is left "
+            "for you to answer; a group joined is ticked for sharing.", True, "Auto-post"),
+    Setting("groups_keywords", "GROUPS_KEYWORDS", "string", "Group search keywords",
+            "Comma-separated: what the poster searches for, one keyword each time.",
+            "CBC Grade 9, CBE Kenya, Grade 9 Mathematics, Junior school Kenya, KJSEA, CBC teachers Kenya, "
+            "Integrated Science Grade 9, Kenya parents education, Grade 9 revision", "Auto-post"),
+    Setting("groups_join_per_day", "GROUPS_JOIN_PER_DAY", "int", "Groups joined a day",
+            "At most this many join requests a day (10 at most), at least 40 minutes apart.", 5, "Auto-post"),
+    Setting("groups_min_members", "GROUPS_MIN_MEMBERS", "int", "Smallest group to join (members)",
+            "Groups with fewer members than this are listed but not joined.", 500, "Auto-post"),
+    Setting("engage_replies_per_day", "ENGAGE_REPLIES_PER_DAY", "int", "Replies a day (to comments on your posts)",
+            "With liking back on, the poster also replies to people who comment on your posts: correct, close, or "
+            "thanks for joining in. 0 turns replies off.", 30, "Auto-post"),
     Setting("billing_free_questions", "BILLING_FREE_QUESTIONS", "int", "Free questions per account",
             "Questions a parent's or teacher's account may put on downloaded papers before paying.", 10, "Billing"),
     Setting("billing_paper_text_ksh", "BILLING_PAPER_TEXT_KSH", "string", "Paper: text question (KSh)",

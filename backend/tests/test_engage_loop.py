@@ -157,3 +157,49 @@ def test_the_post_insights_page_is_read_as_facebook_shows_it() -> None:
             "6 Engagement\ufeff\n2\nReactions\n0\nClicks\n4\nComments\n0\nShares\nReaction by type\n0")
     got = fb_comments.parse_insights(page)
     assert got == {"views": 22, "viewers": 7, "reactions": 2, "comments": 4, "shares": 0, "engagement": 6}
+
+
+@needs_db
+def test_groups_are_found_then_joined_biggest_first_a_few_a_day(db) -> None:
+    from app.infra.db import fetch_one
+    from app.services import engage
+
+    db.update({"groups_auto_find": True, "groups_keywords": "CBC Grade 9, KJSEA", "groups_join_per_day": 2,
+               "groups_min_members": 1000, "engage_enabled": False})
+    act = engage.next_action(NOW)["action"]
+    assert act == {"kind": "find_groups", "keyword": "CBC Grade 9", "limit": 30}
+    engage.record("find_groups", target="CBC Grade 9", now=NOW, groups=[
+        {"name": "Grade 9 Maths Kenya", "url": "https://www.facebook.com/groups/g9maths/?ref=x", "members": 54000, "privacy": "public"},
+        {"name": "CBC Parents", "url": "https://www.facebook.com/groups/cbcparents/", "members": 120000, "privacy": "private"},
+        {"name": "Tiny group", "url": "https://www.facebook.com/groups/tiny/", "members": 40},
+        {"name": "Already in", "url": "https://www.facebook.com/groups/mine/", "members": 9000, "joined": True},
+    ])
+    mine = fetch_one("SELECT status, enabled FROM poster_groups WHERE name = 'Already in'")
+    assert mine == {"status": "member", "enabled": True}, "a group the owner is in is ticked for the shares"
+    act = engage.next_action(NOW + timedelta(minutes=1))["action"]
+    assert act["kind"] == "join_group" and act["name"] == "CBC Parents", "the biggest first"
+    engage.record("join_group", target=act["url"], result="needs_answers", now=NOW + timedelta(minutes=1))
+    assert engage.next_action(NOW + timedelta(minutes=10))["action"] is None, "40 minutes between joins"
+    act = engage.next_action(NOW + timedelta(minutes=45))["action"]
+    assert act["name"] == "Grade 9 Maths Kenya"
+    engage.record("join_group", target=act["url"], result="member", now=NOW + timedelta(minutes=45))
+    assert fetch_one("SELECT status, enabled FROM poster_groups WHERE name = 'Grade 9 Maths Kenya'") == {"status": "member", "enabled": True}
+    assert engage.next_action(NOW + timedelta(hours=3))["action"] is None, "2 a day, and the tiny group is never joined"
+    assert engage.next_action(NOW + timedelta(days=1))["action"]["keyword"] == "KJSEA", "the next keyword, the next search"
+    over = engage.groups_overview()
+    assert over["counts"] == {"member": 2, "requested": 0, "needs_answers": 1, "found": 1}
+
+
+@needs_db
+def test_the_scan_carries_what_it_needs_to_reply_and_remembers_the_replies(db, monkeypatch) -> None:
+    from app.services import engage, whiteboard
+
+    db.update({"engage_enabled": True, "engage_replies_per_day": 30, "groups_auto_find": False})
+    monkeypatch.setattr(whiteboard, "load", lambda qid: {"question_id": qid, "options": [{"id": "B", "text": "$12$", "is_correct": True}]})
+    pid = _post("rq")
+    act = engage.next_action(NOW)["action"]
+    assert act["kind"] == "scan" and act["reply"]["letter"] == "B" and act["reply"]["answer"] == "12"
+    assert "{name}" in act["reply"]["say"]["correct"] and act["reply"]["skip"] == []
+    engage.record("scan", target=pid, now=NOW, replied=["k1", "k2"])
+    assert sorted(engage.reply_plan({"post_id": pid, "question_id": "rq"}, NOW)["skip"]) == ["k1", "k2"]
+
