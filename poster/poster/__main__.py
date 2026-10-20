@@ -477,7 +477,7 @@ async def comment_step(*, check: bool = False) -> dict[str, Any]:
                 from .flows import fb_share
 
                 out = await fb_share.share_post(page, find=job.get("find") or "", also=job.get("find_also") or [],
-                                                groups=job.get("groups") or [])
+                                                groups=job.get("groups") or [], url=job.get("url") or "")
                 await cbc.comments_done(job["post_id"], "share", ok=True, groups=out.get("groups") or [])
                 log.info("Shared %s to %s", job["post_id"], out.get("groups"))
                 count("shares")

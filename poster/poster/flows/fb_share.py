@@ -19,10 +19,18 @@ from .base import StepFailed, check_for_human, first, shot
 from .fb_comments import find_post
 
 
-async def share_post(page: Page, *, find: str, also: list[str] | None, groups: list[str]) -> dict:
+async def share_post(page: Page, *, find: str, also: list[str] | None, groups: list[str], url: str = "") -> dict:
     shared: list[str] = []
     for name in groups[:3]:
-        post = await find_post(page, find, "", also=also)
+        post = None
+        if url:                   # its own page first: an older post is far down the profile
+            try:
+                post = await find_post(page, find, url)
+                if not await post.locator('[aria-label*="Share" i][role="button"], [aria-label*="Send this" i]').count():
+                    post = None
+            except Exception:  # noqa: BLE001
+                post = None
+        post = post or await find_post(page, find, "", also=also)
         button = post.get_by_role("button", name=re.compile(r"^(Send this to friends or post it on your profile\.|Share)$", re.I))
         if not await button.count():
             button = post.locator('[aria-label*="Share" i][role="button"]')

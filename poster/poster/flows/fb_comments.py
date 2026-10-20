@@ -134,6 +134,26 @@ async def _dump(page: Page, want: list[str]) -> None:
         pass
 
 
+async def open_post(page: Page, find: str, url: str = "", *, also: list[str] | None = None,
+                    need_box: bool = True) -> tuple[Locator, Locator | None]:
+    """The post, and (when needed) its comment box: by its link first — any
+    post, however old — else, or if its page will not give a comment box, by
+    its words on the profile."""
+    if url:
+        try:
+            post = await find_post(page, find, url)
+            if re.search(r"/login|checkpoint", page.url):
+                raise NotLoggedIn("Facebook is logged out.")
+            return post, (await comment_box(page, post) if need_box else None)
+        except NotLoggedIn:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            import logging
+
+            logging.getLogger("poster").info("Its link gave no comment box (%s); looking on the profile.", exc)
+    return await find_post(page, find, "", also=also), None
+
+
 async def comment_box(page: Page, post: Locator) -> Locator:
     """The post's comment box: in the post, or in the window "Comment" opens."""
     box_sel = '[contenteditable="true"][role="textbox"]'
@@ -328,13 +348,14 @@ async def comment(page: Page, *, find: str, url: str, comments: list[str], image
                   check: bool = False, also: list[str] | None = None, measure: bool = False,
                   images: list[str] | None = None) -> dict:
     """Find the post and comment under it, one comment after the other (and
-    read its numbers first, when asked). The post is always found on the
-    profile by its words: a reel's own page hides its comment box."""
-    post = await find_post(page, find, "", also=also)
+    read its numbers first, when asked). With its link, the post's own page
+    (a reel's opens its comments beside it); without one — or when that page
+    shows no comment box — found on the profile by its words."""
+    post, box = await open_post(page, find, url, also=also, need_box=bool(comments) or check)
     if not comments and not check:
         metrics = await read_metrics(page, post) if measure else {}
         return {"found": True, "metrics": metrics, "shot": await shot(page, "facebook-insights")}
-    box = await comment_box(page, post)
+    box = box or await comment_box(page, post)
     if check:
         await box.click()
         return {"found": True, "shot": await shot(page, "facebook-comments-check")}

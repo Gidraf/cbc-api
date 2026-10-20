@@ -37,7 +37,7 @@ def test_a_question_carries_up_to_twenty_comments_in_order(monkeypatch) -> None:
     assert any("Tag a friend" in c for c in lib) and len(lib) <= 20
 
 
-def test_the_answer_step_finds_the_post_by_its_words_not_the_reel_link() -> None:
+def test_the_answer_step_tries_the_link_then_finds_the_post_by_its_words() -> None:
     import inspect
     import sys
     from pathlib import Path
@@ -45,8 +45,10 @@ def test_the_answer_step_finds_the_post_by_its_words_not_the_reel_link() -> None
     sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "poster"))
     from poster.flows import fb_comments
 
-    src = inspect.getsource(fb_comments.comment)
-    assert 'find_post(page, find, "", also=also)' in src, "a reel's own page hides its comment box"
+    src = inspect.getsource(fb_comments.open_post)
+    # A reel's own page may hide its comment box: then, by its words on the profile.
+    assert 'find_post(page, find, url)' in src and 'find_post(page, find, "", also=also)' in src
+    assert "open_post(" in inspect.getsource(fb_comments.comment)
     assert fb_comments.parse_insights("Plays\n1.2K\nReactions\n3")["views"] == 1200
 
 

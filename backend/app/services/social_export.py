@@ -2806,6 +2806,7 @@ def campaign_next(now: datetime | None = None) -> dict[str, Any]:
                 if groups:
                     t = social.status(due["question_id"]).get("thread") or {}
                     return {"job": {"post_id": due["post_id"], "platform": "facebook", "stage": "share",
+                                    "url": due.get("url") or "",
                                     "find": t.get("find") or "", "find_also": t.get("find_also") or [],
                                     "groups": groups, "comments": [], "image_url": ""}, "reason": ""}
         row = next((f for f in focus if int(f.get("today") or 0) < r["per_post_day"]), None)
