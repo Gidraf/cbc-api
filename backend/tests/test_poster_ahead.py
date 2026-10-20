@@ -170,13 +170,13 @@ def test_summary_counts_only_what_has_gone_out():
     assert s["overall"]["posts"] == 1 and s["overall"]["planned"] == 1
 
 
-def test_a_share_goes_to_the_next_groups_in_turn_five_at_most(monkeypatch):
+def test_a_share_goes_to_the_next_groups_in_turn_nine_at_most(monkeypatch):
     groups = [f"G{i}" for i in range(1, 13)]
     calls = _db(monkeypatch, [], groups)
     at = datetime(2026, 10, 21, 8, 0, tzinfo=EAT)
     assert X.group_rotation("facebook", at, {**RULES, "groups_per_post": 5}) == groups[:5]
     assert calls[-1]["n"] == 5
-    assert X.group_rotation("facebook", at, {**RULES, "groups_per_post": 9}) == groups[:5]   # the ceiling is 5
+    assert X.group_rotation("facebook", at, {**RULES, "groups_per_post": 12}) == groups[:9]   # the ceiling is 9, Facebook's
     assert X.group_rotation("facebook", at, {**RULES, "groups_per_post": 2}) == groups[:2]
     assert X.groups_for("facebook", at, {**RULES, "groups_per_post": 3}) == groups[:3]
     assert X.group_rotation("tiktok", at, RULES) == []
@@ -186,7 +186,7 @@ def test_groups_picked_by_hand_are_only_ones_the_poster_found(monkeypatch):
     from app.infra import db
 
     monkeypatch.setattr(db, "fetch_all", lambda sql, p=None: [{"name": n} for n in p["n"] if n != "Unknown"])
-    picked = ["A", "Unknown", "B", "A", "C", "D", "E", "F"]
-    assert X.picked_groups("facebook", picked) == ["A", "B", "C", "D", "E"]
+    picked = ["A", "Unknown", "B", "A", "C", "D", "E", "F", "G", "H", "I", "J"]
+    assert X.picked_groups("facebook", picked) == ["A", "B", "C", "D", "E", "F", "G", "H", "I"]
     assert X.picked_groups("facebook", []) == []
     assert X.picked_groups("tiktok", ["A"]) == []

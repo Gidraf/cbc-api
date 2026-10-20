@@ -1530,11 +1530,14 @@ def poster_engage_next(poster_id: str = Query(""), auth: AuthContext = Depends(A
 
 
 class EngageResult(BaseModel):
-    kind: Literal["scan", "like_person"]
+    kind: Literal["scan", "like_person", "find_groups", "join_group"]
     target: str
     likes: int = Field(0, ge=0, le=100)
     people: list[dict[str, str]] = []
     error: str = ""
+    groups: list[dict[str, Any]] = Field(default_factory=list, max_length=100)    # find_groups: what the search saw
+    result: str = ""                                                              # join_group: member | requested | needs_answers
+    replied: list[str] = Field(default_factory=list, max_length=20)               # scan: the comments replied to
 
 
 @router.post("/poster/engage/result")
@@ -1542,7 +1545,17 @@ def poster_engage_result(payload: EngageResult, auth: AuthContext = Depends(ANY)
     from ..services import engage
 
     _may_make_videos(auth)
-    return engage.record(payload.kind, target=payload.target, likes=payload.likes, people=payload.people, error=payload.error)
+    return engage.record(payload.kind, target=payload.target, likes=payload.likes, people=payload.people, error=payload.error,
+                         groups=payload.groups, result=payload.result, replied=payload.replied)
+
+
+@router.get("/poster/groups/all")
+def poster_groups_all(auth: AuthContext = Depends(ANY)) -> dict[str, Any]:
+    """Every group: the ones found by searching, joined, waiting, or needing the owner's answers."""
+    from ..services import engage
+
+    _may_make_videos(auth)
+    return engage.groups_overview()
 
 
 @router.get("/social/engage")
@@ -1702,7 +1715,7 @@ class PosterCommand(BaseModel):
     platform: str = ""
     post_id: str = ""
     target: str = Field("", max_length=80, description="one Mac by its poster id (Devices); empty: the posting Mac")
-    # run_now: {"share": "feed" | "groups", "groups": [names picked, at most 5]}
+    # run_now: {"share": "feed" | "groups", "groups": [names picked, at most 9]}
     options: dict[str, Any] = {}
 
 
@@ -1730,7 +1743,7 @@ def poster_post_question(payload: PostQuestion, auth: AuthContext = Depends(ANY)
         out = poster_command(PosterCommand(action="series_now", platform="facebook", post_id=got["post_ids"][0],
                                            options={"question_id": payload.question_id, "post_ids": got["post_ids"],
                                                     "steps": got["steps"], "share": payload.share,
-                                                    "groups": payload.groups[:5]}), auth=auth)
+                                                    "groups": payload.groups[:9]}), auth=auth)
         return {**out, "message": "Sent to the poster: " + ", ".join(got["steps"]) + " — one after the other, now."}
     if payload.what == "video":
         got = social_export.post_question(payload.question_id)    # an unknown question is a 404
@@ -1801,7 +1814,7 @@ def poster_command(payload: PosterCommand, auth: AuthContext = Depends(ANY)) -> 
         o = payload.options or {}
         options = {"question_id": str(o.get("question_id") or "")[:200], "post_ids": [str(x)[:40] for x in (o.get("post_ids") or [])][:6],
                    "steps": [str(x)[:20] for x in (o.get("steps") or [])][:6], "share": str(o.get("share") or "feed"),
-                   "groups": [str(g)[:200] for g in (o.get("groups") or [])][:5]}
+                   "groups": [str(g)[:200] for g in (o.get("groups") or [])][:9]}
     share = str((payload.options or {}).get("share") or "")
     if payload.action == "run_now" and share:
         if share not in ("feed", "groups"):

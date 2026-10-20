@@ -268,7 +268,7 @@ platforms and topics.
 HARD_DAILY_CAP = 30
 MAX_ATTEMPTS = 3
 AHEAD_CAPABLE = ("facebook",)          # platforms whose scheduler the poster can fill in
-MAX_GROUPS_PER_POST = 5               # the owner's ceiling; Facebook itself allows 9
+MAX_GROUPS_PER_POST = 9               # Facebook's own ceiling for one share
 AHEAD_LEAD = timedelta(minutes=30)     # closer than this, a post just goes out live
 GROUP_PLATFORMS = ("facebook",)
 EAT = timezone(timedelta(hours=3))
@@ -301,9 +301,9 @@ def poster_rules() -> dict[str, Any]:
     return {"enabled": bool(ps.get("poster_enabled", False)),
             "ahead_platforms": [p for p in ahead if p in AHEAD_CAPABLE],
             "ahead_days": max(1, min(num("poster_ahead_days", 28, 29), 29)),
-            "group_shares_per_day": zero_ok("poster_group_shares_per_day", 2, 6),
-            "group_rest_days": max(1, num("poster_group_rest_days", 7, 60)),
-            "groups_per_post": max(1, num("poster_groups_per_post", 5, MAX_GROUPS_PER_POST)),
+            "group_shares_per_day": zero_ok("poster_group_shares_per_day", 4, 12),
+            "group_rest_days": max(1, num("poster_group_rest_days", 2, 60)),
+            "groups_per_post": max(1, num("poster_groups_per_post", 9, MAX_GROUPS_PER_POST)),
             "daily_cap": num("poster_daily_cap", 30, HARD_DAILY_CAP),
             "platform_cap": num("poster_platform_cap", 16, HARD_DAILY_CAP),
             "videos_per_day": num("poster_videos_per_day", 8, HARD_DAILY_CAP),
@@ -2806,6 +2806,7 @@ def campaign_next(now: datetime | None = None) -> dict[str, Any]:
                 if groups:
                     t = social.status(due["question_id"]).get("thread") or {}
                     return {"job": {"post_id": due["post_id"], "platform": "facebook", "stage": "share",
+                                    "url": due.get("url") or "",
                                     "find": t.get("find") or "", "find_also": t.get("find_also") or [],
                                     "groups": groups, "comments": [], "image_url": ""}, "reason": ""}
         row = next((f for f in focus if int(f.get("today") or 0) < r["per_post_day"]), None)

@@ -1,6 +1,7 @@
 """Liking back on Facebook: the comments under the owner's posts, then a few
-of each commenter's own recent posts. Likes only — it never comments on
-anyone else's post.
+of each commenter's own recent posts — and, under the owner's own posts, a
+reply to the people who commented (correct, close, or thanks for joining in).
+It never comments on anyone else's post.
 
 `scan` opens one of the owner's posts (found by its words, as the comment
 thread finds it), opens more of its comments, likes each one not yet liked
@@ -45,14 +46,58 @@ _COMMENTS = """post => {
   post.querySelectorAll('[role=article]').forEach((c, k) => {
     const link = [...c.querySelectorAll('a[href]')].find(a => a.innerText.trim() && /facebook\\.com\\//.test(a.href));
     if (!link) return;
-    out.push({ k, name: link.innerText.trim().slice(0, 120), url: link.href, own: !!own && link.href.split('?')[0] === own.split('?')[0] });
+    out.push({ k, name: link.innerText.trim().slice(0, 120), url: link.href, own: !!own && link.href.split('?')[0] === own.split('?')[0],
+               text: (c.innerText || '').slice(0, 400), reply: !!c.parentElement.closest('[role=article]') });
   });
   return out;
 }"""
 
 
-async def scan(page: Page, *, find: str, url: str, count: int, also: list[str] | None = None) -> dict:
-    """Like the comments under one of the owner's posts; return who wrote them."""
+def _said(text: str, name: str) -> str:
+    """A comment's own words: its writer's name and Facebook's "Like · Reply · 2h" taken off."""
+    t = (text or "").replace(name, "", 1)
+    t = re.sub(r"\b(Like|Reply|Share|Edited|Author|Top fan|See translation)\b|\b\d+\s*[smhdwy]\b", " ", t)
+    return " ".join(t.split())
+
+
+def kind_of(words: str, letter: str, answer: str) -> str:
+    """correct · close · other: a reply that fits what they wrote."""
+    low = words.lower()
+    norm = lambda x: " ".join(re.sub(r"[^a-z0-9.]+", " ", x.lower()).split())  # noqa: E731
+    picked = re.search(r"(?:^|answer\s*(?:is)?\s*[:\-]?\s*|\()\s*([a-d])\s*(?:\)|\.|$|\s)", low)
+    if letter and picked and picked.group(1).upper() == letter.upper():
+        return "correct"
+    if answer and len(norm(answer)) >= 1 and re.search(rf"(?<![0-9a-z]){re.escape(norm(answer))}(?![0-9a-z])", norm(words)):
+        return "correct"
+    if picked or re.search(r"\d", low):
+        return "close"
+    return "other"
+
+
+async def _reply(page: Page, article: Locator, text: str) -> bool:
+    button = article.get_by_role("button", name=re.compile(r"^Reply$", re.I))
+    if not await button.count():
+        button = article.get_by_text(re.compile(r"^Reply$", re.I))
+    if not await button.count():
+        return False
+    await button.first.click()
+    await asyncio.sleep(2)
+    box = page.locator('[contenteditable="true"][role="textbox"]:focus')
+    if not await box.count():
+        return False
+    await page.keyboard.insert_text(text)
+    await asyncio.sleep(0.8)
+    await page.keyboard.press("Enter")
+    await asyncio.sleep(3)
+    return True
+
+
+async def scan(page: Page, *, find: str, url: str, count: int, also: list[str] | None = None,
+               reply: dict | None = None) -> dict:
+    """Like the comments under one of the owner's posts (and reply to a few);
+    return who wrote them and which comments were replied to."""
+    import hashlib
+
     post = await find_post(page, find, url, also=also)
     await _more_comments(page, post)
     comments = await post.evaluate(_COMMENTS)
@@ -72,10 +117,34 @@ async def scan(page: Page, *, find: str, url: str, count: int, also: list[str] |
                 await _pause(3, 7)
         except Exception:  # noqa: BLE001
             continue
+    replied: list[str] = []
+    if reply and int(reply.get("max") or 0) > 0:
+        skip = set(reply.get("skip") or [])
+        say = reply.get("say") or {}
+        for c in comments:
+            if len(replied) >= int(reply["max"]):
+                break
+            if c["own"] or c.get("reply"):
+                continue                               # the owner's comments, and replies inside a thread
+            words = _said(c.get("text") or "", c["name"])
+            key = hashlib.sha1(f"{c['name']}|{words[:80]}".encode()).hexdigest()[:16]
+            if key in skip or not words:
+                continue
+            first = (c["name"].split() or ["there"])[0]
+            text = str(say.get(kind_of(words, str(reply.get("letter") or ""), str(reply.get("answer") or ""))) or "")
+            if not text:
+                continue
+            try:
+                if await _reply(page, articles.nth(c["k"]), text.replace("{name}", first)):
+                    replied.append(key)
+                    skip.add(key)
+                    await _pause(6, 14)
+            except Exception:  # noqa: BLE001
+                continue
     seen = {}
     for p in people:                                    # one entry per person
         seen.setdefault(p["url"].split("&")[0], p)
-    return {"likes": liked, "people": list(seen.values()), "shot": await shot(page, "facebook-engage-scan")}
+    return {"likes": liked, "people": list(seen.values()), "replied": replied, "shot": await shot(page, "facebook-engage-scan")}
 
 
 async def like_person(page: Page, *, url: str, count: int) -> dict:

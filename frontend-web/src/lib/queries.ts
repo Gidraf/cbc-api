@@ -4946,6 +4946,23 @@ export function useBoostPost() {
   });
 }
 
+export type FoundGroup = { name: string; url: string; members: number; privacy: string;
+                           status: "member" | "requested" | "needs_answers" | "found"; enabled: boolean; found_by: string;
+                           joined_at: string | null; last_shared_for: string | null };
+
+/** Every group: found by the poster's searches, joined, waiting for an admin, or needing the owner's answers. */
+export function useGroupsAll(enabled = true) {
+  const api = useApi();
+  return useQuery({
+    queryKey: ["poster", "groups-all"],
+    enabled,
+    queryFn: () => api<{ groups: FoundGroup[]; counts: Record<string, number>;
+                         rules: { enabled: boolean; keywords: string[]; per_day: number; min_members: number } }>(
+      "/api/v1/play/poster/groups/all"),
+    refetchInterval: 60_000,
+  });
+}
+
 /** Post this question now, live on Facebook (its video is made first if need be). */
 export function usePostQuestion() {
   const api = useApi();

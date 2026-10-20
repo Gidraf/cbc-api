@@ -1770,6 +1770,22 @@ MIGRATIONS: list[tuple[str, str]] = [
         CREATE INDEX IF NOT EXISTS idx_social_posts_audience ON social_posts(audience, scheduled_for);
         """,
     ),
+    (
+        "068_group_finder",
+        """
+        -- Groups the poster found by searching, with their link and size, and
+        -- how joining went: found · requested (waiting for an admin) ·
+        -- needs_answers (membership questions, for the owner) · member.
+        -- The groups read from the share picker are members already.
+        ALTER TABLE poster_groups ADD COLUMN IF NOT EXISTS url TEXT NOT NULL DEFAULT '';
+        ALTER TABLE poster_groups ADD COLUMN IF NOT EXISTS members INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE poster_groups ADD COLUMN IF NOT EXISTS privacy TEXT NOT NULL DEFAULT '';
+        ALTER TABLE poster_groups ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'member';
+        ALTER TABLE poster_groups ADD COLUMN IF NOT EXISTS found_by TEXT NOT NULL DEFAULT '';
+        ALTER TABLE poster_groups ADD COLUMN IF NOT EXISTS joined_at TIMESTAMPTZ NULL;
+        CREATE INDEX IF NOT EXISTS idx_poster_groups_status ON poster_groups(status, members DESC);
+        """,
+    ),
 ]
 
 
