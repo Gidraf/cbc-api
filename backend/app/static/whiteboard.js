@@ -954,29 +954,75 @@
       return { at };
     },
     chem_equation(s, at, dur) {
-      // Symbols, unbalanced; the atoms counted on each side (red where they
-      // differ); then the numbers in front, and the counts again, all green.
+      // The equation written unbalanced; the atoms counted on each side (red
+      // where they differ); then the same formulas slide apart, the numbers
+      // drop in front of them in green, the counts turn green, and the line
+      // is boxed — one line that becomes balanced, not a second one.
       at = room(330, at);
       const before = s.atoms.before, after = s.atoms.after;
       const els = [...new Set([...Object.keys(before.left), ...Object.keys(before.right)])];
-      at = write(text(LEFT, cursorY, s.unbalanced, { size: 40 }), at, dur * 0.16);
-      cursorY += 52;
+      const cr = s.coefficients.reactants, cp = s.coefficients.products;
+      const parts = [];                       // {str, coef, op}
+      s.reactants.forEach((f, k) => { if (k) parts.push({ str: "+", op: true }); parts.push({ str: f, coef: cr[k] }); });
+      parts.push({ str: "→", op: true });
+      s.products.forEach((f, k) => { if (k) parts.push({ str: "+", op: true }); parts.push({ str: f, coef: cp[k] }); });
+      const measure = (str, size) => {
+        const t = text(0, -400, str, { size });
+        // A trailing subscript's way back to the line is a zero-width space,
+        // which the handwriting font draws wide: not part of the formula.
+        if (t.lastChild && t.lastChild.textContent === "\u200b") t.lastChild.remove();
+        const w = t.getBBox().width; t.remove(); return w;
+      };
+      // As big as fits once the numbers are in.
+      let size = 44;
+      const widths = (sz) => parts.map((q) => ({ w: measure(q.str, sz), c: q.coef > 1 ? measure(String(q.coef), sz) + 4 : 0 }));
+      const gap = () => 16 * ZOOM * size / 44;
+      let ws = widths(size);
+      const total = (sz, ws) => ws.reduce((t, m) => t + m.w + m.c + gap(), 0) - gap();
+      const room_ = W - LEFT - 60;
+      if (total(size, ws) > room_) { size = Math.max(24, Math.floor(size * room_ / total(size, ws))); ws = widths(size); }
+      const y = cursorY + 6;
+      const xsBefore = [], xsAfter = [], cx = [];
+      let x0 = LEFT, x1 = LEFT;
+      parts.forEach((q, k) => {
+        xsBefore.push(x0); x0 += ws[k].w + gap();
+        cx.push(x1); x1 += ws[k].c; xsAfter.push(x1); x1 += ws[k].w + gap();
+      });
+      const nodes = parts.map((q, k) => text(xsBefore[k], y, q.str, { size, color: q.op ? INK.grey : INK.black }));
+      const per = (dur * 0.16) / parts.length;
+      nodes.forEach((n) => { at = write(n, at, Math.max(0.12, per)); });
+      cursorY += 58;
       const tableTop = cursorY, colL = LEFT + 30, colR = LEFT + 230, rowH = Math.min(34, 160 / Math.max(1, els.length));
       write(text(colL - 30, tableTop, "atom", { size: 22, color: INK.grey }), at, 0.2);
       write(text(colL + 70, tableTop, "left", { size: 22, color: INK.grey }), at + 0.1, 0.2);
       write(text(colR - 30, tableTop, "right", { size: 22, color: INK.grey }), at + 0.2, 0.2);
       const nums = [];
       els.forEach((e, k) => {
-        const y = tableTop + 30 + k * rowH, bad = (before.left[e] || 0) !== (before.right[e] || 0);
-        const t = text(colL - 30, y, `${e}`, { size: 24 });
-        const l = text(colL + 80, y, `${before.left[e] || 0}`, { size: 24, color: bad ? INK.red : INK.black });
-        const r = text(colR - 20, y, `${before.right[e] || 0}`, { size: 24, color: bad ? INK.red : INK.black });
+        const ty = tableTop + 30 + k * rowH, bad = (before.left[e] || 0) !== (before.right[e] || 0);
+        const t = text(colL - 30, ty, `${e}`, { size: 24 });
+        const l = text(colL + 80, ty, `${before.left[e] || 0}`, { size: 24, color: bad ? INK.red : INK.black });
+        const r = text(colR - 20, ty, `${before.right[e] || 0}`, { size: 24, color: bad ? INK.red : INK.black });
         at = write(t, at, 0.12); at = write(l, at, 0.12); at = write(r, at, 0.12);
-        nums.push({ e, l, r, y });
+        nums.push({ e, l, r, y: ty });
       });
       cursorY = tableTop + 40 + els.length * rowH;
-      const eq = text(LEFT, cursorY + 20, s.equation, { size: 44, color: INK.green });
-      at = write(eq, at, dur * 0.22);
+      // The morph: the formulas make room (their clips travel with them), the
+      // numbers are written into the gaps.
+      const slide = 0.7;
+      nodes.forEach((n, k) => {
+        const dx = xsAfter[k] - xsBefore[k];
+        if (!dx) return;
+        tl.to(n, { attr: { x: xsAfter[k] }, duration: slide, ease: "power2.inOut" }, at);
+        tl.to(n._clip, { attr: { x: xsAfter[k] - 4 }, duration: slide, ease: "power2.inOut" }, at);
+      });
+      at += slide;
+      const coefTime = (dur * 0.18) / Math.max(1, parts.filter((q) => q.coef > 1).length);
+      parts.forEach((q, k) => {
+        if (!(q.coef > 1)) return;
+        const c = text(cx[k], y, String(q.coef), { size, color: INK.green });
+        tl.fromTo(c, { y: -18 }, { y: 0, duration: 0.3, ease: "bounce.out" }, at);
+        at = write(c, at, Math.min(0.5, Math.max(0.2, coefTime)));
+      });
       // The counts become the balanced ones: the old fade out, the new (green)
       // fade in — tweens, so a rendered frame shows them as live does.
       for (const n of nums) {
@@ -987,9 +1033,9 @@
         const tick = text(colR + 40, n.y, "✓", { size: 24, color: INK.green });
         at = write(tick, at, 0.12);
       }
-      const bb = eq.getBBox();
-      at = draw(sketchBox(bb.x - 14, bb.y - 8, bb.width + 28, bb.height + 18, INK.green), at, 0.5);
-      cursorY += 90;
+      const bb = nodes[0].getBBox(), right = x1 - gap();
+      at = draw(sketchBox(LEFT - 14, bb.y - 8, right - LEFT + 28, bb.height + 18, INK.green), at, 0.5);
+      cursorY += 40;
       return { at };
     },
     chem_list(s, at, dur) {
@@ -1625,7 +1671,10 @@
   // ── render: seek frame by frame ──
   window.__seek = (t) => { tl.pause(); tl.seek(t, false); return true; };
 
-  const fonts = document.fonts && document.fonts.ready ? document.fonts.ready : Promise.resolve();
+  // Asked for by name: `fonts.ready` alone resolves before a font nothing has
+  // drawn with yet is fetched, and the board would be measured in a fallback.
+  const fonts = document.fonts && document.fonts.ready
+    ? Promise.all([document.fonts.load(`34px ${FONT.split(",")[0]}`).catch(() => null), document.fonts.ready]) : Promise.resolve();
   // The teacher's model, if there is one, loads before the first frame is taken.
   window.__ready = Promise.race([fonts, new Promise((r) => setTimeout(r, 2500))])
     .then(() => Promise.race([window.__teacherReady || null, new Promise((r) => setTimeout(r, 20000))]))
