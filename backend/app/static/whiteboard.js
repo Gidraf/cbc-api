@@ -795,7 +795,7 @@
       at = newPage(at); cursorY = H;
       const lab = s.lab || {}, vessel = lab.vessel || "beaker";
       const names = (s.reactants || []).map((r) => r.formula).join("  +  ");
-      at = write(centered(74, names + (s.condition ? `   (${s.condition})` : ""), { size: 36, color: INK.blue }), at, Math.min(1.2, dur * 0.15));
+      at = write(centered(74, names + (s.condition ? `   (${s.condition})` : ""), { size: data.social ? 30 : 36, color: INK.blue }), at, Math.min(1.2, dur * 0.15));
       const cx = data.social ? W / 2 : 470, base = 600;
       const tube = /tube/.test(vessel), jar = /jar|spoon/.test(vessel), wide = /trough/.test(vessel);
       const vw = tube ? 90 : wide ? 360 : jar ? 170 : 230, vh = tube ? 330 : wide ? 150 : 300;
@@ -1039,8 +1039,9 @@
         }
       }
       at += 1.2;
-      const lines = wrap(s.question || "", 40);
-      lines.forEach((l, k) => { at = write(centered(470 + k * 56, l, { size: 44, color: INK.blue }), at, Math.min(1.4, (dur * 0.5) / lines.length)); });
+      // The writing is a fifth bigger in the social cut: fewer words a line there.
+      const lines = wrap(s.question || "", Math.round(40 / ZOOM)).slice(0, 3);
+      lines.forEach((l, k) => { at = write(centered(450 + k * 56 * ZOOM, l, { size: 44, color: INK.blue }), at, Math.min(1.4, (dur * 0.5) / lines.length)); });
       return { at: Math.max(at, s0 + dur * 0.9) };
     },
     chem_atom(s, at, dur) {

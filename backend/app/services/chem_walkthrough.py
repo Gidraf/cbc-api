@@ -89,7 +89,8 @@ def _tile(f: str) -> dict[str, Any]:
     if sym and sym in C.ELEMENTS:
         return {"symbol": sym, "name": C.ELEMENTS[sym].capitalize(), "Z": C.ATOMIC_NUMBER.get(sym, ""),
                 "colour": CPK.get(sym, "#999999"), "formula": C.pretty(C.DIATOMIC.get(sym, sym))}
-    return {"symbol": C.pretty(f), "name": C.name_of(f).capitalize(), "Z": "", "colour": "#5b8db8", "formula": C.pretty(f)}
+    n = C.name_of(f)
+    return {"symbol": C.pretty(f), "name": n[:1].upper() + n[1:], "Z": "", "colour": "#5b8db8", "formula": C.pretty(f)}
 
 
 def _hook(reactants: list[str], spec: dict[str, Any]) -> dict[str, Any]:
