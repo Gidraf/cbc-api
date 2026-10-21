@@ -4059,6 +4059,51 @@ export function useWalkthroughHtml(questionId: string) {
   });
 }
 
+export type ChemReaction = {
+  reacts: boolean; covered: boolean; why?: string; type?: string; reactants?: string[]; products?: string[];
+  equation?: string; equation_states?: string; unbalanced?: string; word?: string; observations?: string[];
+  gas_tests?: Record<string, string>; applications?: string[]; steps?: string[]; note?: string;
+};
+
+/** The chemistry lab's shelf: substances in groups, with their formulas and names. */
+export function useChemSubstances() {
+  const api = useApi();
+  return useQuery({
+    queryKey: ["chem-substances"],
+    queryFn: () => api<{ groups: Array<{ group: string; items: Array<{ formula: string; pretty: string; name: string }> }> }>(
+      "/api/v1/play/chem/substances"),
+    staleTime: 3_600_000,
+  });
+}
+
+/** What happens when two substances meet (or one is heated): the chemistry engine's answer. */
+export function useChemReact(mix: { a: string; b: string; condition: string } | null) {
+  const api = useApi();
+  return useQuery({
+    queryKey: ["chem-react", mix],
+    enabled: Boolean(mix?.a),
+    queryFn: () => {
+      const qs = new URLSearchParams({ a: mix!.a, b: mix!.b, condition: mix!.condition });
+      return api<{ reaction: ChemReaction; scenes: number }>(`/api/v1/play/chem/react?${qs}`);
+    },
+  });
+}
+
+/** The mix on the whiteboard, voiced in the science voice. */
+export function useChemLabHtml(mix: { a: string; b: string; condition: string } | null) {
+  const { token } = useAuth();
+  return useQuery({
+    queryKey: ["chem-lab-html", mix],
+    enabled: Boolean(mix?.a),
+    queryFn: async () => {
+      const qs = new URLSearchParams({ a: mix!.a, b: mix!.b, condition: mix!.condition, autoplay: "true" });
+      const { blob } = await fetchBlob(`/api/v1/play/chem/lab.html?${qs}`, { bearerToken: token });
+      return await blob.text();
+    },
+    staleTime: 300_000,
+  });
+}
+
 /** The item on a whiteboard: a marker draws the working, timed to the voice. */
 export function useWhiteboardHtml(questionId: string, voice = "") {
   const { token } = useAuth();

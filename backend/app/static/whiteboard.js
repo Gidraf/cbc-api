@@ -786,6 +786,234 @@
       cursorY = y + 30;
       return { at };
     },
+    // ── chemistry (services/chem_walkthrough.py) ──
+    chem_lab(s, at, dur) {
+      // The lab bench: the vessel, what goes in, and what you see — the
+      // colour changing, bubbles rising, a precipitate falling, a coating
+      // growing, a flame — each tween on the one timeline, so it renders.
+      const s0 = at;
+      at = newPage(at); cursorY = H;
+      const lab = s.lab || {}, vessel = lab.vessel || "beaker";
+      const names = (s.reactants || []).map((r) => r.formula).join("  +  ");
+      at = write(centered(74, names + (s.condition ? `   (${s.condition})` : ""), { size: 36, color: INK.blue }), at, Math.min(1.2, dur * 0.15));
+      const cx = data.social ? W / 2 : 470, base = 600;
+      const tube = /tube/.test(vessel), jar = /jar|spoon/.test(vessel), wide = /trough/.test(vessel);
+      const vw = tube ? 90 : wide ? 360 : jar ? 170 : 230, vh = tube ? 330 : wide ? 150 : 300;
+      const left = cx - vw / 2, top = base - vh;
+      const outline = tube
+        ? `M${left},${top} L${left},${base - vw / 2} A${vw / 2},${vw / 2} 0 0 0 ${left + vw},${base - vw / 2} L${left + vw},${top}`
+        : `M${left - 8},${top} L${left},${top + 12} L${left},${base} L${left + vw},${base} L${left + vw},${top + 12} L${left + vw + 8},${top}`;
+      const liquidTop = top + vh * (jar ? 0.95 : 0.38);
+      let liquid = null;
+      if (lab.liquid && !jar && vessel !== "spoon") {
+        liquid = el("path", { d: tube
+          ? `M${left + 3},${liquidTop} L${left + 3},${base - vw / 2} A${vw / 2 - 3},${vw / 2 - 3} 0 0 0 ${left + vw - 3},${base - vw / 2} L${left + vw - 3},${liquidTop} Z`
+          : `M${left + 3},${liquidTop} L${left + 3},${base - 3} L${left + vw - 3},${base - 3} L${left + vw - 3},${liquidTop} Z`,
+          fill: lab.liquid, opacity: 0.85 }, page);
+        at = show(liquid, at, 0.4);
+      }
+      if (lab.gas) {
+        const g = el("rect", { x: left + 4, y: top + 6, width: vw - 8, height: vh - 10, fill: lab.gas, opacity: 0.55 }, page);
+        at = show(g, at, 0.3);
+        if (lab.gas_fades) tl.to(g, { opacity: 0.08, duration: dur * 0.5 }, at + dur * 0.25);
+      }
+      at = draw(path(outline, INK.black, 5), at, Math.min(1, dur * 0.12));
+      const t0 = at, span = Math.max(1.5, s0 + dur - at - 0.3);   // what is left of the scene, for the reaction
+      // The solid: a strip of metal or a lump, lowered in.
+      let solid = null;
+      if (lab.solid) {
+        const sw = tube ? 26 : 46, sh = tube ? 90 : 110;
+        const sx = cx - sw / 2, sy = (lab.solid_moves ? liquidTop - 26 : base - sh - (tube ? vw / 2 : 8));
+        solid = el("rect", { x: sx, y: sy, width: sw, height: lab.solid_moves ? 26 : sh, rx: lab.solid_moves ? 13 : 4,
+          fill: lab.solid, stroke: "#333", "stroke-width": 2 }, page);
+        tl.fromTo(solid, { attr: { y: top - 140 }, opacity: 0 }, { attr: { y: sy }, opacity: 1, duration: 0.8, ease: "power2.in" }, t0);
+        if (lab.solid_moves) tl.to(solid, { attr: { x: sx + 70 }, duration: 0.6, yoyo: true, repeat: Math.max(1, Math.floor(span / 0.6)), ease: "sine.inOut" }, t0 + 0.8);
+        if (lab.solid_shrinks) tl.to(solid, { attr: { height: 6, y: sy + (lab.solid_moves ? 10 : sh - 6), width: sw * 0.4, x: sx + sw * 0.3 }, duration: span * 0.85, ease: "none" }, t0 + 1);
+        if (lab.solid_to) tl.to(solid, { attr: { fill: lab.solid_to }, duration: span * 0.6 }, t0 + 1);
+        if (lab.coating) {
+          const coat = el("rect", { x: sx - 3, y: sy - 3, width: sw + 6, height: sh + 6, rx: 6, fill: lab.coating, opacity: 0 }, page);
+          tl.to(coat, { opacity: 0.85, duration: span * 0.7 }, t0 + 1.2);
+        }
+      }
+      if (liquid && lab.liquid_to) tl.to(liquid, { attr: { fill: lab.liquid_to }, duration: span * 0.75 }, t0 + 1);
+      // Drops from a dropper above.
+      if (lab.drops) {
+        const dropper = path(`M${cx - 10},${top - 120} L${cx - 10},${top - 40} L${cx},${top - 22} L${cx + 10},${top - 40} L${cx + 10},${top - 120}`, INK.grey, 4);
+        at = draw(dropper, t0, 0.4);
+        for (let k = 0; k < 6; k++) {
+          const d = el("circle", { cx, cy: top - 20, r: 7, fill: lab.drop_colour || "#9ad1ff", opacity: 0 }, page);
+          const when = t0 + 0.5 + k * (span * 0.45 / 6);
+          tl.fromTo(d, { attr: { cy: top - 20 }, opacity: 1 }, { attr: { cy: liquidTop }, opacity: 0, duration: 0.5, ease: "power2.in" }, when);
+        }
+      }
+      // A precipitate: particles that appear as the drops land, then settle.
+      if (lab.precipitate) {
+        for (let k = 0; k < 40; k++) {
+          const px = left + 10 + rnd() * (vw - 20), py = liquidTop + 10 + rnd() * ((base - liquidTop) * 0.6);
+          const settle = base - 10 - rnd() * 22 - (tube ? vw / 3 : 0);
+          const p = el("circle", { cx: px, cy: py, r: 3 + rnd() * 3, fill: lab.precipitate, stroke: "#999", "stroke-width": 0.6, opacity: 0 }, page);
+          const when = t0 + 0.9 + rnd() * span * 0.35;
+          tl.to(p, { opacity: 1, duration: 0.3 }, when);
+          tl.to(p, { attr: { cy: settle }, duration: span * 0.4, ease: "power1.in" }, when + 0.4);
+        }
+      }
+      // Bubbles of gas, rising again and again while it is said.
+      if (lab.bubbles) {
+        const n = lab.slow ? 6 : 22;
+        for (let k = 0; k < n; k++) {
+          const bx = cx - vw / 3 + rnd() * (vw * 2 / 3), r = 3 + rnd() * 5;
+          const b = el("circle", { cx: bx, cy: base - 30, r, fill: "none", stroke: "#5b8db8", "stroke-width": 2, opacity: 0 }, page);
+          const rise = 0.9 + rnd() * 0.9, start = t0 + 1 + rnd() * 1.2;
+          const times = Math.max(1, Math.floor((span - 1.2) / rise));
+          tl.fromTo(b, { attr: { cy: base - 30 }, opacity: 0.9 }, { attr: { cy: liquidTop - 6 }, opacity: 0.2, duration: rise, ease: "none", repeat: times - 1 }, start);
+        }
+        const gas = text(left + vw + 30, liquidTop - 30, `${lab.bubbles === "H2" ? "H₂" : lab.bubbles === "CO2" ? "CO₂" : lab.bubbles} gas`, { size: 26, color: INK.blue });
+        write(gas, t0 + 1.4, 0.6);
+      }
+      // A flame under the vessel (or on the spoon), flickering.
+      if (lab.flame || lab.burner) {
+        const fy = jar || vessel === "spoon" ? top + vh * 0.55 : base + 70;
+        const white = /^#f{6}$|^#fff$/i.test(lab.flame || "");
+        const colour = white ? "#fff7c2" : (lab.flame || "#4ea8ff");
+        if (white) {
+          // A brilliant white flame on a white board: a glow around it, so it is seen.
+          const glow = el("circle", { cx, cy: fy - 40, r: 70, fill: "#ffe680", opacity: 0 }, page);
+          tl.to(glow, { opacity: 0.55, duration: 0.3 }, t0 + 0.6);
+          tl.to(glow, { attr: { r: 90 }, opacity: 0.35, duration: 0.3, yoyo: true, repeat: Math.max(1, Math.floor(span / 0.3)) }, t0 + 0.9);
+        }
+        const flame = el("path", { d: `M${cx - 22},${fy} Q${cx},${fy - 90} ${cx + 22},${fy} Q${cx},${fy - 20} ${cx - 22},${fy} Z`,
+          fill: colour, opacity: 0, stroke: "#e07b00", "stroke-width": 1.5 }, page);
+        tl.to(flame, { opacity: 0.9, duration: 0.3 }, t0 + 0.6);
+        tl.to(flame, { attr: { d: `M${cx - 18},${fy} Q${cx + 6},${fy - 110} ${cx + 18},${fy} Q${cx},${fy - 24} ${cx - 18},${fy} Z` },
+          duration: 0.25, yoyo: true, repeat: Math.max(1, Math.floor(span / 0.25)), ease: "sine.inOut" }, t0 + 0.9);
+      }
+      if (lab.heat) {
+        for (let k = 0; k < 3; k++) {
+          const hx = cx - 60 + k * 60, wav = path(`M${hx},${top - 20} q10,-15 0,-30 q-10,-15 0,-30`, INK.red, 3);
+          tl.set(wav, { opacity: 0 }, 0);
+          tl.to(wav, { opacity: 0.8, duration: 0.4, yoyo: true, repeat: Math.max(1, Math.floor(span / 0.8)) }, t0 + 1.5 + k * 0.2);
+        }
+      }
+      if (lab.limewater) {
+        const lx = left + vw + 120, ly = base - 170;
+        draw(path(`M${lx},${ly} L${lx},${ly + 120} A22,22 0 0 0 ${lx + 44},${ly + 120} L${lx + 44},${ly}`, INK.black, 4), t0 + 0.8, 0.5);
+        const lw = el("rect", { x: lx + 3, y: ly + 50, width: 38, height: 85, fill: "#e8f6ff", opacity: 0.9 }, page);
+        tl.set(lw, { opacity: 0 }, 0); tl.to(lw, { opacity: 0.9, duration: 0.3 }, t0 + 1.2);
+        tl.to(lw, { attr: { fill: "#f4f4f4" }, duration: span * 0.5 }, t0 + 2);
+        write(text(lx - 20, ly - 14, "limewater", { size: 22, color: INK.grey }), t0 + 1.2, 0.5);
+      }
+      // What is in it, labelled, and what you see written beside it as it happens.
+      const rs = s.reactants || [];
+      const solidName = rs.find((r) => /^[A-Z][a-z]?$/.test(r.formula));
+      const liquidName = rs.find((r) => r !== solidName);
+      if (liquidName && liquid) write(text(Math.max(30, left - 250), liquidTop + 40, liquidName.name, { size: 24, color: INK.grey }), t0 + 0.3, 0.6);
+      if (solidName && solid) write(text(Math.max(30, left - 250), base - 30, solidName.name, { size: 24, color: INK.grey }), t0 + 0.6, 0.5);
+      if (!data.social) {
+        const notes = (s.observations || []).slice(0, 3);
+        let ny = 220;
+        notes.forEach((o, k) => {
+          const lines = wrap(o, 30).slice(0, 2);
+          lines.forEach((l, j) => { write(text(760, ny, (j ? "   " : "• ") + l, { size: 26, color: INK.blue }), t0 + 1.2 + k * (span * 0.25) + j * 0.3, 0.6); ny += 34; });
+          ny += 12;
+        });
+      }
+      if (!s.reacts) write(text(cx - 110, base + 60, "no change", { size: 30, color: INK.grey }), t0 + span * 0.4, 0.6);
+      return { at: t0 + Math.max(span, 1.5) };
+    },
+    chem_series(s, at, dur) {
+      // The reactivity series as a ladder, most reactive at the top; the
+      // metals of this question circled, an arrow from the higher one.
+      at = newPage(at); cursorY = H;
+      const list = s.series || [], hi = s.highlight || [];
+      at = write(centered(64, "The reactivity series", { size: 36, color: INK.blue }), at, Math.min(0.9, dur * 0.12));
+      const cols = data.social ? 1 : 2, per = Math.ceil(list.length / cols), rowH = Math.min(38, (H - 140) / per);
+      const colX = (c) => (cols === 1 ? W / 2 - 140 : 330 + c * 360);
+      const marks = [];
+      const each = (dur * 0.45) / Math.max(1, list.length);
+      list.forEach((m, k) => {
+        const c = Math.floor(k / per), r = k % per, x = colX(c), y = 120 + r * rowH;
+        const on = hi.includes(m.symbol);
+        const t = text(x, y + rowH * 0.7, `${m.symbol}  ${m.name}`, { size: on ? 30 : 24, color: on ? INK.red : m.symbol === "H" ? INK.green : INK.black });
+        at = write(t, at, each);
+        if (on) marks.push(t);
+      });
+      write(text(cols === 1 ? W / 2 + 160 : 80, 150, "more", { size: 24, color: INK.grey }), at, 0.3);
+      write(text(cols === 1 ? W / 2 + 160 : 80, 178, "reactive ↑", { size: 24, color: INK.grey }), at, 0.3);
+      for (const t of marks) {
+        const bb = t.getBBox();
+        at = draw(sketchEllipse(bb.x + bb.width / 2, bb.y + bb.height / 2, bb.width / 2 + 18, bb.height / 2 + 6), at, 0.4);
+      }
+      return { at };
+    },
+    chem_word(s, at, dur) {
+      at = newPage(at); cursorY = 110;
+      at = write(text(LEFT, cursorY, "In words:", { size: 28, color: INK.blue }), at, dur * 0.2);
+      cursorY += 56;
+      for (const l of wrap(s.text, Math.round(48 / ZOOM)).slice(0, 3)) { at = write(text(LEFT, cursorY, l, { size: 36 }), at, (dur * 0.6) / 2); cursorY += 50 * ZOOM; }
+      cursorY += 20;
+      return { at };
+    },
+    chem_equation(s, at, dur) {
+      // Symbols, unbalanced; the atoms counted on each side (red where they
+      // differ); then the numbers in front, and the counts again, all green.
+      at = room(330, at);
+      const before = s.atoms.before, after = s.atoms.after;
+      const els = [...new Set([...Object.keys(before.left), ...Object.keys(before.right)])];
+      at = write(text(LEFT, cursorY, s.unbalanced, { size: 40 }), at, dur * 0.16);
+      cursorY += 52;
+      const tableTop = cursorY, colL = LEFT + 30, colR = LEFT + 230, rowH = Math.min(34, 160 / Math.max(1, els.length));
+      write(text(colL - 30, tableTop, "atom", { size: 22, color: INK.grey }), at, 0.2);
+      write(text(colL + 70, tableTop, "left", { size: 22, color: INK.grey }), at + 0.1, 0.2);
+      write(text(colR - 30, tableTop, "right", { size: 22, color: INK.grey }), at + 0.2, 0.2);
+      const nums = [];
+      els.forEach((e, k) => {
+        const y = tableTop + 30 + k * rowH, bad = (before.left[e] || 0) !== (before.right[e] || 0);
+        const t = text(colL - 30, y, `${e}`, { size: 24 });
+        const l = text(colL + 80, y, `${before.left[e] || 0}`, { size: 24, color: bad ? INK.red : INK.black });
+        const r = text(colR - 20, y, `${before.right[e] || 0}`, { size: 24, color: bad ? INK.red : INK.black });
+        at = write(t, at, 0.12); at = write(l, at, 0.12); at = write(r, at, 0.12);
+        nums.push({ e, l, r, y });
+      });
+      cursorY = tableTop + 40 + els.length * rowH;
+      const eq = text(LEFT, cursorY + 20, s.equation, { size: 44, color: INK.green });
+      at = write(eq, at, dur * 0.22);
+      // The counts become the balanced ones: the old fade out, the new (green)
+      // fade in — tweens, so a rendered frame shows them as live does.
+      for (const n of nums) {
+        tl.to([n.l, n.r], { opacity: 0, duration: 0.25 }, at);
+        const l2 = text(colL + 80, n.y, `${after.left[n.e] || 0}`, { size: 24, color: INK.green });
+        const r2 = text(colR - 20, n.y, `${after.right[n.e] || 0}`, { size: 24, color: INK.green });
+        at = write(l2, at, 0.1); at = write(r2, at, 0.1);
+        const tick = text(colR + 40, n.y, "✓", { size: 24, color: INK.green });
+        at = write(tick, at, 0.12);
+      }
+      const bb = eq.getBBox();
+      at = draw(sketchBox(bb.x - 14, bb.y - 8, bb.width + 28, bb.height + 18, INK.green), at, 0.5);
+      cursorY += 90;
+      return { at };
+    },
+    chem_list(s, at, dur) {
+      at = newPage(at); cursorY = 110;
+      at = write(text(LEFT, cursorY, `${s.icon || "•"}  ${s.title}`, { size: 36, color: INK.blue }), at, Math.min(0.8, dur * 0.15));
+      cursorY += 60;
+      const items = (s.items || []).slice(0, 5);
+      const per = (dur * 0.7) / Math.max(1, items.length);
+      for (const it of items) {
+        const lines = wrap(it, Math.round(52 / ZOOM)).slice(0, 2);
+        lines.forEach((l, k) => { at = write(text(LEFT + (k ? 30 : 0), cursorY, (k ? "" : "• ") + l, { size: 30 }), at, per / lines.length); cursorY += 42 * ZOOM; });
+        cursorY += 8;
+        if (cursorY > H - 60) break;
+      }
+      return { at };
+    },
+    chem_result(s, at, dur) {
+      at = room(200, at);
+      at = write(text(LEFT, cursorY, s.title || "", { size: 38, color: s.title === "No reaction" ? INK.red : INK.green }), at, dur * 0.2);
+      cursorY += 52;
+      for (const l of wrap(s.text, Math.round(52 / ZOOM)).slice(0, 4)) { at = write(text(LEFT, cursorY, l, { size: 30 }), at, (dur * 0.6) / 3); cursorY += 42 * ZOOM; }
+      cursorY += 20;
+      return { at };
+    },
   };
   const wb = {};
 

@@ -139,6 +139,39 @@ def available_voices() -> list[dict[str, str]]:
     return voices
 
 
+# The sciences are explained in a British or American voice (the owner's
+# choice): the clearest for scientific words. Microsoft's "Multilingual"
+# voices are its most natural; Sonia, Libby, Ryan and Thomas are British.
+SCIENCE_VOICES = {
+    "british": {"female": ["en-GB-SoniaNeural", "en-GB-LibbyNeural"], "male": ["en-GB-RyanNeural", "en-GB-ThomasNeural"]},
+    "american": {"female": ["en-US-AvaMultilingualNeural", "en-US-EmmaMultilingualNeural"],
+                 "male": ["en-US-AndrewMultilingualNeural", "en-US-BrianMultilingualNeural"]},
+}
+_SCIENCE = ("science", "chemistry", "physics", "biology")
+
+
+def is_science(subject: str = "") -> bool:
+    low = (subject or "").lower()
+    return any(w in low for w in _SCIENCE)
+
+
+def science_voice(gender: str = "female", key: str = "") -> str:
+    """A British or American voice for a science video (Settings → Science accent), the same each time for one item."""
+    import hashlib
+
+    try:
+        from ..platform_settings import get
+
+        accent = str(get("science_accent", "both") or "both").lower()
+    except Exception:  # noqa: BLE001
+        accent = "both"
+    g = "male" if str(gender).lower().startswith("m") else "female"
+    pool = (SCIENCE_VOICES["british"][g] + SCIENCE_VOICES["american"][g]) if accent not in SCIENCE_VOICES \
+        else SCIENCE_VOICES[accent][g]
+    n = int(hashlib.sha256(f"sci:{key}".encode()).hexdigest(), 16)
+    return pool[n % len(pool)]
+
+
 def voice_for(subject: str = "") -> str:
     try:
         from ..platform_settings import get
@@ -150,6 +183,8 @@ def voice_for(subject: str = "") -> str:
     # lesson keeps a voice that speaks its language.
     if chosen and re.match(r"^[a-z]{2}-[A-Z]{2}-", chosen) and language_for(subject) == chosen[:2]:
         return chosen
+    if is_science(subject):
+        return science_voice("female", subject)
     configured = (getattr(settings, "tts_voice", "") or "").strip()
     # A configured voice that names a locale is a deliberate choice; the
     # OpenAI-style names ("alloy") are not edge voices and must not be passed on.
