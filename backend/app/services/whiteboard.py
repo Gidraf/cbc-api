@@ -171,6 +171,7 @@ def page(data: dict[str, Any], *, title: str = "", voice: str = "en-KE", duratio
     if photo:
         payload["hand"] = {k: v for k, v in photo.items() if k != "url"}
     chrome = "" if render else _CONTROLS.replace("__AUTOPLAY__", "true" if autoplay else "false")
+    chem3d = _chem3d_scripts(payload["scenes"])
     template = _PAGE
     if social:
         from .social import frame
@@ -180,13 +181,26 @@ def page(data: dict[str, Any], *, title: str = "", voice: str = "en-KE", duratio
             .replace("__BODY_CLASS__", ("social " if social else "") + ("render" if render else "live"))
             .replace("__CONTROLS__", chrome)
             .replace("__GSAP__", _script(_asset("gsap.min.js")))
-            .replace("<script>__ENGINE__</script>", ("" if render else _katex()) + "<script>__ENGINE__</script>")
+            # The 3D chemistry layer loads before the board, so the board knows
+            # to leave the atoms to it when it lays out its scenes.
+            .replace("<script>__ENGINE__</script>", ("" if render else _katex()) + chem3d + "<script>__ENGINE__</script>")
             .replace("__DATA__", json.dumps(payload).replace("</", "<\\/"))
             .replace("__ENGINE__", _script(_asset("whiteboard.js")))
-            .replace("__TEACHER__", _teacher_scripts((social or {}).get("teacher"))))
+            .replace("__TEACHER__", _teacher_scripts((social or {}).get("teacher"), three_loaded=bool(chem3d))))
 
 
-def _teacher_scripts(teacher: dict[str, Any] | None) -> str:
+CHEM3D_SCENES = {"chem_atom", "chem_ionic", "chem_covalent"}
+
+
+def _chem3d_scripts(scenes: list[dict[str, Any]]) -> str:
+    """three.js and the 3D chemistry layer (atoms, electrons moving, lattices,
+    molecules) when the walkthrough has those scenes."""
+    if not any(sc.get("scene") in CHEM3D_SCENES for sc in scenes):
+        return ""
+    return f"<script>{_script(_asset('three.min.js'))}</script><script>{_script(_asset('chem3d.js'))}</script>"
+
+
+def _teacher_scripts(teacher: dict[str, Any] | None, *, three_loaded: bool = False) -> str:
     """three.js, the realistic avatar for the teacher's gender (if it is
     there; otherwise the drawn figure), and the teacher's code."""
     if not teacher:
@@ -208,8 +222,8 @@ def _teacher_scripts(teacher: dict[str, Any] | None) -> str:
         if model.exists():
             real = (f"<script>{_script(_asset('GLTFLoader.js'))}</script>"
                     f"<script>window.TEACHER_GLB = \"{base64.b64encode(model.read_bytes()).decode()}\";</script>")
-    return (f"<script>{_script(_asset('three.min.js'))}</script>{real}"
-            f"<script>{_script(_asset('teacher.js'))}</script>")
+    three = "" if three_loaded else f"<script>{_script(_asset('three.min.js'))}</script>"
+    return f"{three}{real}<script>{_script(_asset('teacher.js'))}</script>"
 
 
 def cache_key(data: dict[str, Any], voice: str, fps: int = FPS) -> str:
@@ -840,5 +854,6 @@ _PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8">
 <script>__GSAP__</script>
 <script>window.WB_DATA = __DATA__;</script>
 <script>__ENGINE__</script>
+__TEACHER__
 __CONTROLS__
 </body></html>"""

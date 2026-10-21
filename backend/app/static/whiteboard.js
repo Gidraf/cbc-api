@@ -1050,6 +1050,20 @@
       // A pair of atoms (before they bond) share one page, side by side.
       const slot = s.short ? (s.slot || 0) : 0;
       if (!s.short || slot === 0) { at = newPage(at); cursorY = H; }
+      if (window.__chem3d) {
+        // The atom itself is drawn in 3D over the board (chem3d.js): the board writes its facts.
+        if (s.short) {
+          at = write(text(slot ? W * 0.68 : W * 0.15, 650, `${s.name}  ${s.arrangement}`, { size: 32, color: INK.blue }), at + dur * 0.5, 0.8);
+          return { at };
+        }
+        at += dur * 0.15;
+        at = write(text(W * 0.62, 260, `${s.name}`, { size: 42, color: INK.blue }), at, 0.6);
+        at = write(text(W * 0.62, 320, `${s.protons} protons (red)`, { size: 28 }), at, 0.5);
+        at = write(text(W * 0.62, 365, `${s.neutrons} neutrons (grey)`, { size: 28 }), at, 0.5);
+        at = write(text(W * 0.62, 410, `${s.electrons} electrons (blue)`, { size: 28 }), at, 0.5);
+        at = write(text(W * 0.62, 490, `Arrangement: ${s.arrangement}`, { size: 34, color: INK.green }), at + dur * 0.2, 0.7);
+        return { at };
+      }
       const cx = s.short ? (slot ? W * 0.72 : W * 0.28) : W * 0.36, cy = 380;
       const ringGap = s.short ? 42 : 58, nucR = s.short ? 30 : 40;
       const nuc = el("circle", { cx, cy, r: nucR, fill: s.colour || "#999", opacity: 0.85, stroke: INK.black, "stroke-width": 3 }, page);
@@ -1081,6 +1095,15 @@
       // Ionic bonding: the metal's outer electrons travel to the non-metal
       // atoms; then the ions, their charges in brackets, and the formula.
       at = newPage(at); cursorY = H;
+      if (window.__chem3d) {
+        // In 3D (chem3d.js): the electrons fly, the ions form, the lattice builds. The board names it.
+        write(text(50, 70, `${s.metal.name} gives, ${s.nonmetal.name} takes`, { size: 30, color: INK.blue }), at + 0.2, 0.8);
+        const f = centered(690, `${s.formula}`, { size: 52, color: INK.green });
+        at = write(f, at + dur * 0.62, 0.8);
+        const bb = f.getBBox();
+        at = draw(sketchBox(bb.x - 18, bb.y - 8, bb.width + 36, bb.height + 18, INK.green), at, 0.5);
+        return { at };
+      }
       const nm = Math.min(3, s.counts[s.metal.symbol] || 1), nn = Math.min(3, s.counts[s.nonmetal.symbol] || 1);
       const scale = Math.max(nm, nn) > 1 ? 0.62 : 0.85;
       const atomsAt = (n, x) => Array.from({ length: n }, (_, k) => ({ x, y: 330 + (k - (n - 1) / 2) * (n > 2 ? 190 : 230) * scale }));
@@ -1135,6 +1158,12 @@
       // Covalent bonding: the atoms' outer shells overlap and the shared
       // pairs sit where they overlap; the formula follows.
       at = newPage(at); cursorY = H;
+      if (window.__chem3d) {
+        // In 3D (chem3d.js): the molecule in its real shape, the shared pairs in green.
+        write(text(50, 70, `${s.shared_pairs} shared pair${s.shared_pairs > 1 ? "s" : ""} of electrons (green)`, { size: 30, color: INK.blue }), at + dur * 0.3, 0.8);
+        at = write(centered(690, `${s.formula}`, { size: 52, color: INK.green }), at + dur * 0.7, 0.8);
+        return { at };
+      }
       const [A, B] = s.atoms, centre = A.symbol === s.centre ? A : B, outerA = centre === A ? B : A;
       const same = A.symbol === B.symbol;
       const k = same ? 1 : Math.min(4, s.counts[outerA.symbol] || 1);
@@ -1537,7 +1566,7 @@
     tl.to({}, { duration: 0.6 }, at);   // a beat on the finished board
     const end = tl.duration(), clock = { t: 0 };
     track.sort((a, b) => a.t0 - b.t0);
-    tl.fromTo(clock, { t: 0 }, { t: end, duration: end, ease: "none", onUpdate() { const p = handAt(clock.t); pose(p.x, p.y, p.tilt); overlay(clock.t); if (window.__onCover) window.__onCover(clock.t); if (window.__onFigure) window.__onFigure(clock.t); if (window.__onTime) window.__onTime(clock.t); } }, 0);
+    tl.fromTo(clock, { t: 0 }, { t: end, duration: end, ease: "none", onUpdate() { const p = handAt(clock.t); pose(p.x, p.y, p.tilt); overlay(clock.t); if (window.__onCover) window.__onCover(clock.t); if (window.__onFigure) window.__onFigure(clock.t); if (window.__onTime) window.__onTime(clock.t); if (window.__onChem3d) window.__onChem3d(clock.t); } }, 0);
     pose(OFF.x, OFF.y, 0);
     window.__starts = starts;
     window.__total = tl.duration();

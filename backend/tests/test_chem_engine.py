@@ -275,3 +275,15 @@ def test_atom_bond_and_separation_items_are_checked_too() -> None:
     _chemistry_disagrees(items, found)
     kinds = {f.items[0]: f.kind for f in found}
     assert kinds == {"b2": "chemistry_disagrees", "s2": "chemistry_not_covered", "a2": "chemistry_unreadable"}
+
+
+def test_the_3d_layer_comes_only_with_atoms_bonds_and_lattices() -> None:
+    from app.services import play_engine, whiteboard
+
+    def page(chem: dict) -> str:
+        w = play_engine.walkthrough({"question_id": "x", "question_text": "?", "chemistry": chem, "curriculum": {"subject": "Chemistry"}})
+        return whiteboard.page(w, title="t", voice="en-GB", durations=[4.0] * len(w["scenes"]))
+
+    bond = page({"bond": ["Na", "Cl"]})
+    assert "__onChem3d" in bond and bond.index("__onChem3d = frame") < bond.index("window.__onChem3d(clock.t)")
+    assert "__onChem3d = frame" not in page({"separate": ["sand", "water"]})
