@@ -75,6 +75,14 @@ _DOM = r"""() => ({
 })"""
 
 
+def post_page(url: str) -> str:
+    """The page to open a post on: a reel as a video page — the reel's own
+    player does not open its comments (or its numbers) for the poster; the
+    video page has them beside it, with the comment box."""
+    m = re.search(r"facebook\.com/(?:[^/?#]+/)?reel/(\d+)", url)
+    return f"https://www.facebook.com/watch/?v={m.group(1)}" if m else url
+
+
 def needles(find: str, also: list[str] | None = None) -> list[str]:
     """What to look for: the question's opening words (and the context's), long enough to be its own."""
     out = []
@@ -88,7 +96,7 @@ def needles(find: str, also: list[str] | None = None) -> list[str]:
 async def find_post(page: Page, find: str, url: str = "", scrolls: int = 40, also: list[str] | None = None) -> Locator:
     """The post (on the profile, or the post page), by its words."""
     if url:
-        await page.goto(url, wait_until="domcontentloaded", timeout=60_000)
+        await page.goto(post_page(url), wait_until="domcontentloaded", timeout=60_000)
         await asyncio.sleep(5)
         dialog = page.get_by_role("dialog")
         if await dialog.count():
@@ -134,6 +142,15 @@ async def _dump(page: Page, want: list[str]) -> None:
         pass
 
 
+_LINK_DOM = r"""() => ({
+  url: location.href,
+  dialogs: document.querySelectorAll('[role=dialog]').length,
+  buttons: [...document.querySelectorAll('[role=button][aria-label], button[aria-label]')].map(b => b.getAttribute('aria-label')).filter(Boolean).slice(0, 80),
+  boxes: [...document.querySelectorAll('[contenteditable="true"]')].map(b => [b.getAttribute('role'), b.getAttribute('aria-label'), b.getAttribute('aria-placeholder'), b.offsetParent !== null]),
+  texts: [...document.querySelectorAll('span, div')].map(e => (e.childElementCount === 0 ? (e.innerText || '').trim() : '')).filter(t => /comment/i.test(t)).slice(0, 30),
+})"""
+
+
 async def open_post(page: Page, find: str, url: str = "", *, also: list[str] | None = None,
                     need_box: bool = True) -> tuple[Locator, Locator | None]:
     """The post, and (when needed) its comment box: by its link first — any
@@ -148,8 +165,19 @@ async def open_post(page: Page, find: str, url: str = "", *, also: list[str] | N
         except NotLoggedIn:
             raise
         except Exception as exc:  # noqa: BLE001
+            import json
             import logging
+            import os
 
+            from .. import config
+
+            try:                      # what the post's page showed: for fixing the steps
+                info = await page.evaluate(_LINK_DOM)
+                name = await shot(page, "facebook-link-nobox")
+                with open(os.path.join(config.SHOTS_DIR, name.replace(".png", ".json")), "w") as fh:
+                    json.dump(info, fh, indent=1)
+            except Exception:  # noqa: BLE001
+                pass
             logging.getLogger("poster").info("Its link gave no comment box (%s); looking on the profile.", exc)
     return await find_post(page, find, "", also=also), None
 

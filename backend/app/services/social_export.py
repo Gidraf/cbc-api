@@ -438,8 +438,28 @@ def schedule_next(now: datetime | None = None, *, book_if_empty: bool = True) ->
                 "reason": "", "left_today": rules["daily_cap"] - done}
     why = (f"None of the {waiting} booked reel(s) in Facebook's window has its current video yet (videos made before "
            f"the marketing are made again) — {queued} more queued now; they go as each is ready." if waiting
-           else "Nothing to schedule: no unposted questions left in the Auto-book subjects — add a subject or more questions.")
+           else _nothing_to_schedule(now, rules))
     return {"post": None, "reason": why}
+
+
+def _nothing_to_schedule(now: datetime, rules: dict[str, Any]) -> str:
+    """Why Schedule now had nothing: usually Facebook has everything in its window already."""
+    from ..infra.db import fetch_one
+
+    until = now + timedelta(days=rules["ahead_days"])
+    row = fetch_one("""SELECT COUNT(*) FILTER (WHERE platform_scheduled AND posted_at > :now) AS handed,
+                              MAX(posted_at) FILTER (WHERE platform_scheduled) AS last,
+                              COUNT(*) FILTER (WHERE handed_at IS NULL AND groups <> '[]'::jsonb
+                                               AND scheduled_for BETWEEN :now AND :until) AS for_groups
+                       FROM social_posts WHERE platform = 'facebook'""", {"now": now, "until": until}) or {}
+    handed, kept = int(row.get("handed") or 0), int(row.get("for_groups") or 0)
+    if handed:
+        last = row["last"].astimezone(EAT).strftime("%d %b") if isinstance(row.get("last"), datetime) else ""
+        return (f"Nothing more to hand over: Facebook's scheduler already has the next {rules['ahead_days']} days "
+                f"({handed} reel(s), up to {last})" + (f"; {kept} booked post(s) that also go to groups go out live "
+                "at their times (Facebook will not schedule a group share)" if kept else "")
+                + ". More can be scheduled as the window moves on, a day at a time.")
+    return "Nothing to schedule: no unposted questions left in the Auto-book subjects — add a subject or more questions."
 
 
 def next_for_poster(now: datetime | None = None, *, platform: str = "", post_id: str = "",

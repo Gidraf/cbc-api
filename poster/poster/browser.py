@@ -18,6 +18,55 @@ from . import config
 log = logging.getLogger("poster.browser")
 
 
+class ProfileBusy(RuntimeError):
+    """The profile is in use by another Chrome the owner may still be using."""
+
+
+LEFT_OPEN = 10 * 60           # seconds: a Chrome on the profile this long is a login window left open
+
+
+async def free_profile(profile: str) -> bool:
+    """Free the profile for the poster: a lock left by a Chrome that is gone is
+    cleared; a Chrome on it for more than LEFT_OPEN is asked to quit (as Cmd+Q
+    does: it saves its cookies, so a login done there is kept). False while a
+    Chrome opened on it only lately is still there — the owner may be logging in."""
+    import os
+    import signal
+    import time
+
+    lock = os.path.join(profile, "SingletonLock")
+    try:
+        target = os.readlink(lock)                      # "<host>-<pid>"
+    except OSError:
+        return True
+    try:
+        pid = int(target.rsplit("-", 1)[1])
+        os.kill(pid, 0)
+        alive = True
+    except (ValueError, IndexError, ProcessLookupError, PermissionError):
+        alive = False
+    if not alive:
+        for name in ("SingletonLock", "SingletonCookie", "SingletonSocket"):
+            try:
+                os.unlink(os.path.join(profile, name))
+            except OSError:
+                pass
+        log.info("Cleared the lock a closed Chrome left on the profile.")
+        return True
+    if time.time() - os.lstat(lock).st_mtime < LEFT_OPEN:
+        return False
+    log.info("A Chrome has had the profile open for over %d minutes (a Log in window left open): asking it to quit.",
+             LEFT_OPEN // 60)
+    os.kill(pid, signal.SIGTERM)
+    for _ in range(30):
+        await asyncio.sleep(1)
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return True
+    return False
+
+
 class Browser:
     def __init__(self) -> None:
         self._pw: Any = None
@@ -43,9 +92,20 @@ class Browser:
                                                                           **chrome_options)
             self.channel = config.BROWSER_CHANNEL
         except Exception as exc:  # noqa: BLE001
-            log.info("No %s here (%s); using Chromium.", config.BROWSER_CHANNEL, str(exc).splitlines()[0][:120])
-            self._ctx = await self._pw.chromium.launch_persistent_context(**options)
-            self.channel = "chromium"
+            if "ProcessSingleton" in str(exc) or "profile directory" in str(exc):
+                # The profile is open in another Chrome — the window "Log in"
+                # opens, left open — not a missing Chrome: Chromium would not
+                # have the logins either. Free it, or wait for the owner.
+                if not await free_profile(config.PROFILE_DIR):
+                    raise ProfileBusy("The poster's Chrome profile is open in another Chrome window (Log in?). "
+                                      "Finish logging in there, then quit that Chrome with Cmd+Q.") from None
+                self._ctx = await self._pw.chromium.launch_persistent_context(channel=config.BROWSER_CHANNEL,
+                                                                              **chrome_options)
+                self.channel = config.BROWSER_CHANNEL
+            else:
+                log.info("No %s here (%s); using Chromium.", config.BROWSER_CHANNEL, str(exc).splitlines()[0][:120])
+                self._ctx = await self._pw.chromium.launch_persistent_context(**options)
+                self.channel = "chromium"
         # Closing the window (on a Mac) ends the browser; the next action opens it again.
         self._ctx.on("close", lambda *_: setattr(self, "_ctx", None))
         return self._ctx

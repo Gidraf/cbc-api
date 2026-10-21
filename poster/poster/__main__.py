@@ -1006,6 +1006,21 @@ async def command_loop() -> None:
         await asyncio.sleep(4)
 
 
+async def _open_browser() -> None:
+    """The poster's Chrome — waiting, not crashing, while the profile is open
+    in another Chrome the owner is still using (a Log in window)."""
+    from .browser import ProfileBusy
+
+    while True:
+        try:
+            await browser.context()
+            return
+        except ProfileBusy as exc:
+            state["note"] = str(exc)
+            log.info("%s Trying again in 30 s.", exc)
+            await asyncio.sleep(30)
+
+
 async def main() -> None:
     _load()
     if config.POSTER_MODE == "local":
@@ -1014,7 +1029,7 @@ async def main() -> None:
         for d in (config.PROFILE_DIR, config.SHOTS_DIR, config.TMP_DIR):
             os.makedirs(d, exist_ok=True)
         log.info("Local poster %s → %s", config.POSTER_ID, config.CBC_API_URL)
-        await browser.context()
+        await _open_browser()
         await asyncio.gather(checkin_loop(), command_loop(), loop())
         return
     await browser.context()          # the browser is on the screen from the start
