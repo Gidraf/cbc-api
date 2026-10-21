@@ -60,6 +60,34 @@ reaction happening.
 "chemistry": {"equation": "Fe + Cl2 -> FeCl3", "focus": "balancing"}
 ```
 
+### Other kinds of item (each comes with its own animation)
+
+- Electron arrangement of an element (the first twenty): the Bohr diagram is built shell by shell.
+
+```json
+"chemistry": {"atom": "Mg"}
+```
+
+- How two elements bond, and the formula it gives: the electrons move (ionic) or are shared
+  (covalent) on screen, and the formula follows from them.
+
+```json
+"chemistry": {"bond": ["Mg", "Cl"]}
+```
+
+- Separating a mixture: the apparatus works on screen (filtration, evaporation, crystallisation,
+  distillation, fractional distillation, separating funnel, magnet, chromatography, sublimation).
+  Parts the engine knows: sand, chalk, salt, sugar, copper(II) sulphate, water, ethanol, oil,
+  kerosene, iron filings, sulphur, iodine, ammonium chloride, ink, food colouring. Add
+  `"keep": "water"` when the question wants the water (distillation, not evaporation).
+
+```json
+"chemistry": {"separate": ["sand", "salt"]}
+```
+
+Mix all the kinds across a batch: reactions, balancing, electron arrangements, bonding and
+formulae, and separation. Every one becomes its own animated video.
+
 ## Reactions the engine knows (stay inside these)
 
 | Kind | Example | Rule |
@@ -162,6 +190,31 @@ Return only a JSON array, no preamble and no code fences. Each item:
     "marking_scheme": "Calcium carbonate (1)\nBalanced equation (1)",
     "chemistry": {"reactants": ["Ca(HCO3)2"], "condition": "boil", "focus": "application"},
     "pedagogy": {"bloom_level": "Apply", "max_marks": 2}
+  },
+  {
+    "question_type": "short_answer",
+    "question_text": "Magnesium has atomic number 12. Write its electron arrangement and the charge on its ion.",
+    "correct_answer": "2.8.2; Mg2+ (it loses its two outer electrons)",
+    "marking_scheme": "2.8.2 (1)\nMg2+ (1)",
+    "chemistry": {"atom": "Mg"},
+    "pedagogy": {"bloom_level": "Understand", "max_marks": 2}
+  },
+  {
+    "question_type": "structured",
+    "question_text": "Using electron arrangements, explain why the formula of magnesium chloride is MgCl2.",
+    "correct_answer": "Magnesium (2.8.2) loses two electrons; each chlorine atom (2.8.7) gains one. Two chlorine atoms take the two electrons, so the ions Mg2+ and Cl- combine as MgCl2.",
+    "marking_scheme": "Mg loses 2 electrons (1)\nEach Cl gains 1 (1)\nSo two Cl per Mg: MgCl2 (1)",
+    "chemistry": {"bond": ["Mg", "Cl"]},
+    "pedagogy": {"bloom_level": "Analyse", "max_marks": 3}
+  },
+  {
+    "question_type": "short_answer",
+    "stimulus_context": "A learner in Kisumu has a mixture of sand and common salt.",
+    "question_text": "Describe how she can obtain dry salt from the mixture.",
+    "correct_answer": "Add water and stir to dissolve the salt; filter to remove the sand; evaporate the filtrate to leave the salt.",
+    "marking_scheme": "Dissolve in water (1)\nFilter (1)\nEvaporate the filtrate (1)",
+    "chemistry": {"separate": ["sand", "salt"]},
+    "pedagogy": {"bloom_level": "Apply", "max_marks": 3}
   },
   {
     "question_type": "structured",

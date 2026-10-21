@@ -1006,6 +1006,369 @@
       }
       return { at };
     },
+    chem_hook(s, at, dur) {
+      // Two tiles from the periodic table slide in from the sides and meet.
+      const s0 = at;
+      at = newPage(at); cursorY = H;
+      const tiles = (s.tiles || []).slice(0, 2), size = 190, y = 170;
+      const drawTile = (t, x) => {
+        const holder = el("g", { transform: `translate(${x},${y})` }, page);
+        const g = el("g", {}, holder);
+        el("rect", { x: 0, y: 0, width: size, height: size, rx: 18, fill: t.colour || "#5b8db8", opacity: 0.18, stroke: t.colour || "#5b8db8", "stroke-width": 5 }, g);
+        const z = el("text", { x: 16, y: 38, "font-size": 28, "font-family": FONT, fill: INK.grey }, g); z.textContent = t.Z || "";
+        const sy = el("text", { x: size / 2, y: 122, "font-size": (t.symbol || "").length > 3 ? 46 : 84, "font-family": FONT, "text-anchor": "middle", fill: INK.black }, g);
+        setRich(sy, t.symbol || "");
+        const nm = el("text", { x: size / 2, y: 168, "font-size": 24, "font-family": FONT, "text-anchor": "middle", fill: INK.black }, g); nm.textContent = t.name || "";
+        return g;
+      };
+      const meet = W / 2;
+      if (tiles.length === 1) {
+        const g = drawTile(tiles[0], meet - size / 2);
+        tl.fromTo(g, { opacity: 0 }, { opacity: 1, duration: 0.6 }, at);
+      } else if (tiles.length === 2) {
+        const a = drawTile(tiles[0], meet - size - 30), b = drawTile(tiles[1], meet + 30);
+        tl.fromTo(a, { x: -500, opacity: 0 }, { x: 0, opacity: 1, duration: 0.9, ease: "power2.out" }, at);
+        tl.fromTo(b, { x: 500, opacity: 0 }, { x: 0, opacity: 1, duration: 0.9, ease: "power2.out" }, at);
+        // The meeting: a spark of lines between them.
+        for (let k = 0; k < 10; k++) {
+          const ang = (k / 10) * Math.PI * 2, r1 = 18, r2 = 60;
+          const line = path(`M${meet + Math.cos(ang) * r1},${y + size / 2 + Math.sin(ang) * r1} L${meet + Math.cos(ang) * r2},${y + size / 2 + Math.sin(ang) * r2}`, "#f59e0b", 5);
+          tl.set(line, { opacity: 0 }, 0);
+          tl.to(line, { opacity: 1, duration: 0.15 }, at + 0.9);
+          tl.to(line, { opacity: 0, duration: 0.5 }, at + 1.3);
+        }
+      }
+      at += 1.2;
+      const lines = wrap(s.question || "", 40);
+      lines.forEach((l, k) => { at = write(centered(470 + k * 56, l, { size: 44, color: INK.blue }), at, Math.min(1.4, (dur * 0.5) / lines.length)); });
+      return { at: Math.max(at, s0 + dur * 0.9) };
+    },
+    chem_atom(s, at, dur) {
+      // The Bohr model: the nucleus, then each shell drawn and filled with its
+      // electrons, one at a time, as the voice counts them.
+      // A pair of atoms (before they bond) share one page, side by side.
+      const slot = s.short ? (s.slot || 0) : 0;
+      if (!s.short || slot === 0) { at = newPage(at); cursorY = H; }
+      const cx = s.short ? (slot ? W * 0.72 : W * 0.28) : W * 0.36, cy = 380;
+      const ringGap = s.short ? 42 : 58, nucR = s.short ? 30 : 40;
+      const nuc = el("circle", { cx, cy, r: nucR, fill: s.colour || "#999", opacity: 0.85, stroke: INK.black, "stroke-width": 3 }, page);
+      at = show(nuc, at, 0.4);
+      write(text(cx - nucR * 0.75, cy + 8, `${s.protons}p`, { size: s.short ? 20 : 26, color: "#fff" }), at, 0.3);
+      if (!s.short) write(text(cx - 26, cy + 34, `${s.neutrons}n`, { size: 18, color: "#fff" }), at, 0.3);
+      const total = (s.shells || []).reduce((a, b) => a + b, 0);
+      const per = Math.max(0.12, Math.min(0.5, (dur * 0.55) / Math.max(1, total)));
+      (s.shells || []).forEach((n, k) => {
+        const r = nucR + ringGap * (k + 1);
+        at = draw(path(`M${cx - r},${cy} a${r},${r} 0 1,0 ${2 * r},0 a${r},${r} 0 1,0 ${-2 * r},0`, INK.grey, 2.5), at, 0.35);
+        for (let e = 0; e < n; e++) {
+          const ang = -Math.PI / 2 + (e / n) * Math.PI * 2;
+          const dot = el("circle", { cx: cx + Math.cos(ang) * r, cy: cy + Math.sin(ang) * r, r: s.short ? 7 : 9, fill: INK.blue }, page);
+          tl.fromTo(dot, { opacity: 0, attr: { r: 0 } }, { opacity: 1, attr: { r: s.short ? 7 : 9 }, duration: per * 0.8 }, at);
+          at += per;
+        }
+      });
+      const label = `${s.symbol}  ${s.arrangement}`;
+      at = write(text(s.short ? cx - 70 : W * 0.66, s.short ? 640 : 300, s.short ? label : `${s.name}`, { size: s.short ? 30 : 40, color: INK.blue }), at, 0.6);
+      if (!s.short) {
+        at = write(text(W * 0.66, 360, `${s.protons} protons, ${s.electrons} electrons`, { size: 28 }), at, 0.6);
+        at = write(text(W * 0.66, 410, `${s.neutrons} neutrons`, { size: 28 }), at, 0.4);
+        at = write(text(W * 0.66, 480, `Arrangement: ${s.arrangement}`, { size: 34, color: INK.green }), at, 0.7);
+      }
+      return { at };
+    },
+    chem_ionic(s, at, dur) {
+      // Ionic bonding: the metal's outer electrons travel to the non-metal
+      // atoms; then the ions, their charges in brackets, and the formula.
+      at = newPage(at); cursorY = H;
+      const nm = Math.min(3, s.counts[s.metal.symbol] || 1), nn = Math.min(3, s.counts[s.nonmetal.symbol] || 1);
+      const scale = Math.max(nm, nn) > 1 ? 0.62 : 0.85;
+      const atomsAt = (n, x) => Array.from({ length: n }, (_, k) => ({ x, y: 330 + (k - (n - 1) / 2) * (n > 2 ? 190 : 230) * scale }));
+      const mPos = atomsAt(nm, W * 0.3), nPos = atomsAt(nn, W * 0.68);
+      const drawOne = (a, p, outerFill) => {
+        const nucR = 26 * scale, gap = 34 * scale, out = { slots: [], dots: [] };
+        el("circle", { cx: p.x, cy: p.y, r: nucR, fill: a.colour, opacity: 0.85, stroke: INK.black, "stroke-width": 2 }, page);
+        const lab = el("text", { x: p.x, y: p.y + 8, "font-size": 22 * scale + 4, "font-family": FONT, "text-anchor": "middle", fill: "#fff" }, page); lab.textContent = a.symbol;
+        a.shells.forEach((n, k) => {
+          const r = nucR + gap * (k + 1), outer = k === a.shells.length - 1;
+          el("circle", { cx: p.x, cy: p.y, r, fill: "none", stroke: INK.grey, "stroke-width": 2 }, page);
+          const places = outer ? 8 : n;
+          for (let e = 0; e < places; e++) {
+            const ang = -Math.PI / 2 + (e / places) * Math.PI * 2;
+            const pt = { x: p.x + Math.cos(ang) * r, y: p.y + Math.sin(ang) * r };
+            if (e < n) {
+              const d = el("circle", { cx: pt.x, cy: pt.y, r: 6 * scale + 2, fill: outer ? outerFill : INK.blue }, page);
+              if (outer) out.dots.push(d);
+            } else if (outer) out.slots.push(pt);
+          }
+          out.r = r;
+        });
+        return out;
+      };
+      const ms = mPos.map((p) => drawOne(s.metal, p, INK.red)), ns = nPos.map((p) => drawOne(s.nonmetal, p, INK.blue));
+      tl.fromTo(pages[pages.length - 1], { opacity: 0 }, { opacity: 1, duration: 0.6 }, at);
+      at += 0.7;
+      // Each electron: from metal atom i's outer shell to a free place on non-metal atom j.
+      const used = ns.map(() => 0), taken = ms.map(() => 0);
+      const per = Math.max(0.5, Math.min(1.3, (dur * 0.5) / Math.max(1, s.moves.length)));
+      for (const mv of s.moves) {
+        const i = Math.min(mv.from, ms.length - 1), j = Math.min(mv.to, ns.length - 1);
+        const dot = ms[i].dots[taken[i]++], slot = ns[j].slots[used[j]++];
+        if (!dot || !slot) continue;
+        tl.to(dot, { attr: { cx: slot.x, cy: slot.y }, duration: per * 0.8, ease: "power2.inOut" }, at);
+        at += per;
+      }
+      // The ions: charges in brackets.
+      const SUP = { 1: "", 2: "²", 3: "³" };
+      const charge = (n, sign) => `${n in SUP ? SUP[n] : n}${sign === "+" ? "⁺" : "⁻"}`;
+      const qm = Math.abs(s.metal.ion_charge), qn = Math.abs(s.nonmetal.ion_charge);
+      mPos.forEach((p) => { write(text(p.x + 70 * scale + 30, p.y - 80 * scale - 10, `[${s.metal.symbol}]${charge(qm, "+")}`, { size: 30, color: INK.red }), at, 0.5); });
+      nPos.forEach((p) => { write(text(p.x + 95 * scale + 30, p.y - 95 * scale - 10, `[${s.nonmetal.symbol}]${charge(qn, "−")}`, { size: 30, color: INK.blue }), at, 0.5); });
+      at += 0.8;
+      const f = centered(680, `${s.formula}`, { size: 52, color: INK.green });
+      at = write(f, at, 0.8);
+      const bb = f.getBBox();
+      at = draw(sketchBox(bb.x - 18, bb.y - 8, bb.width + 36, bb.height + 18, INK.green), at, 0.5);
+      return { at };
+    },
+    chem_covalent(s, at, dur) {
+      // Covalent bonding: the atoms' outer shells overlap and the shared
+      // pairs sit where they overlap; the formula follows.
+      at = newPage(at); cursorY = H;
+      const [A, B] = s.atoms, centre = A.symbol === s.centre ? A : B, outerA = centre === A ? B : A;
+      const same = A.symbol === B.symbol;
+      const k = same ? 1 : Math.min(4, s.counts[outerA.symbol] || 1);
+      const cx = W / 2, cy = 340, rC = 30 + 36 * centre.shells.length, rO = 30 + 36 * outerA.shells.length;
+      const drawShells = (a, x, y) => {
+        el("circle", { cx: x, cy: y, r: 24, fill: a.colour, opacity: 0.85, stroke: INK.black, "stroke-width": 2 }, page);
+        const t = el("text", { x, y: y + 8, "font-size": 22, "font-family": FONT, "text-anchor": "middle", fill: a.symbol === "H" ? INK.black : "#fff" }, page); t.textContent = a.symbol;
+        a.shells.forEach((n, i) => el("circle", { cx: x, cy: y, r: 30 + 36 * (i + 1), fill: "none", stroke: INK.grey, "stroke-width": 2 }, page));
+      };
+      const order = same ? (centre.valency || 1) : (outerA.valency || 1);
+      const d = rC + rO - 26;
+      const angles = same ? [0] : k === 1 ? [0] : k === 2 ? [0, Math.PI] : k === 3 ? [-Math.PI / 2, Math.PI / 6, Math.PI * 5 / 6] : [-Math.PI / 4, Math.PI / 4, Math.PI * 3 / 4, -Math.PI * 3 / 4];
+      const ccx = same ? cx - d / 2 : cx;
+      drawShells(centre, ccx, cy);
+      const outs = angles.map((a) => ({ a, x: ccx + Math.cos(a) * d, y: cy + Math.sin(a) * d }));
+      outs.forEach((o) => drawShells(outerA, o.x, o.y));
+      tl.fromTo(pages[pages.length - 1], { opacity: 0 }, { opacity: 1, duration: 0.6 }, at);
+      at += 0.8;
+      // Shared pairs in each overlap: one electron of each colour per pair.
+      const per = Math.max(0.35, Math.min(0.9, (dur * 0.45) / Math.max(1, outs.length * order)));
+      outs.forEach((o) => {
+        const mx = ccx + Math.cos(o.a) * (rC - 13), my = cy + Math.sin(o.a) * (rC - 13);
+        for (let p = 0; p < order; p++) {
+          const off = (p - (order - 1) / 2) * 22, nx = -Math.sin(o.a) * off, ny = Math.cos(o.a) * off;
+          const e1 = el("circle", { cx: mx + nx - Math.cos(o.a) * 7, cy: my + ny - Math.sin(o.a) * 7, r: 7, fill: INK.red }, page);
+          const e2 = el("circle", { cx: mx + nx + Math.cos(o.a) * 7, cy: my + ny + Math.sin(o.a) * 7, r: 7, fill: INK.blue }, page);
+          tl.fromTo([e1, e2], { opacity: 0 }, { opacity: 1, duration: per * 0.6 }, at);
+          at += per;
+        }
+      });
+      const f = centered(680, `${s.formula}`, { size: 52, color: INK.green });
+      at = write(f, at, 0.8);
+      write(text(60, 120, `${s.shared_pairs} shared pair${s.shared_pairs > 1 ? "s" : ""} of electrons`, { size: 28, color: INK.blue }), at - 0.6, 0.6);
+      return { at };
+    },
+    chem_particles(s, at, dur) {
+      // Balancing as particles: each molecule as its atoms; one of each
+      // first (the counts below do not match), then copies appear for the
+      // numbers in front until every atom is the same on both sides.
+      at = newPage(at); cursorY = H;
+      const R = 24;
+      const drawMolecule = (m, x, y) => {
+        const g = el("g", {}, page);
+        let k = 0;
+        const atoms = [];
+        m.atoms.forEach(([e, n]) => { for (let i = 0; i < n; i++) atoms.push(e); });
+        atoms.forEach((e, i) => {
+          const ang = i === 0 ? 0 : ((i - 1) / Math.max(1, atoms.length - 1)) * Math.PI * 2;
+          const px = i === 0 ? x : x + Math.cos(ang) * R * 1.7, py = i === 0 ? y : y + Math.sin(ang) * R * 1.7;
+          el("circle", { cx: px, cy: py, r: R, fill: (s.colours || {})[e] || "#999", stroke: INK.black, "stroke-width": 1.5 }, g);
+          const t = el("text", { x: px, y: py + 7, "font-size": 19, "font-family": "sans-serif", "text-anchor": "middle", fill: e === "H" ? INK.black : "#fff" }, g); t.textContent = e;
+          k++;
+        });
+        return g;
+      };
+      const sides = [{ list: s.left, x0: 80, x1: W / 2 - 70 }, { list: s.right, x0: W / 2 + 70, x1: W - 80 }];
+      write(text(W / 2 - 22, 300, "→", { size: 60 }), at, 0.3);
+      const copies = [];
+      sides.forEach((side) => {
+        const colW = (side.x1 - side.x0) / Math.max(1, side.list.length);
+        side.list.forEach((m, k) => {
+          const x = side.x0 + colW * (k + 0.5);
+          write(text(x - 30, 140, m.formula, { size: 30, color: INK.blue }), at, 0.3);
+          for (let c = 0; c < m.count; c++) {
+            const g = drawMolecule(m, x, 230 + c * Math.min(110, 300 / Math.max(1, m.count)));
+            copies.push({ g, first: c === 0 });
+          }
+          side.label = side.label || [];
+          side.label.push({ x: x - 62, count: m.count });
+        });
+      });
+      // Stage 1: one particle of each.
+      copies.filter((c) => c.first).forEach((c) => tl.fromTo(c.g, { opacity: 0 }, { opacity: 1, duration: 0.4 }, at));
+      copies.filter((c) => !c.first).forEach((c) => tl.set(c.g, { opacity: 0 }, 0));
+      at += 0.6;
+      const els = [...new Set([...Object.keys(s.atoms.before.left), ...Object.keys(s.atoms.before.right)])];
+      const tallyY = 600;
+      const tallies = [];
+      els.forEach((e, k) => {
+        const x = 90 + k * Math.min(200, (W - 180) / Math.max(1, els.length));
+        const bad = (s.atoms.before.left[e] || 0) !== (s.atoms.before.right[e] || 0);
+        const t1 = text(x, tallyY, `${e}: ${s.atoms.before.left[e] || 0} | ${s.atoms.before.right[e] || 0}`, { size: 26, color: bad ? INK.red : INK.black });
+        at = write(t1, at, 0.25);
+        tallies.push({ e, x, t1 });
+      });
+      at += 0.4;
+      // Stage 2: the copies, and the numbers in front.
+      const extra = copies.filter((c) => !c.first);
+      const per = Math.max(0.3, Math.min(0.9, (dur * 0.4) / Math.max(1, extra.length)));
+      extra.forEach((c) => { tl.fromTo(c.g, { opacity: 0, scale: 0.4, transformOrigin: "50% 50%" }, { opacity: 1, scale: 1, duration: per * 0.7 }, at); at += per; });
+      // The numbers in front, written as the copies appear.
+      sides.forEach((side) => (side.label || []).forEach((n) => { if (n.count > 1) write(text(n.x, 140, `${n.count}`, { size: 34, color: INK.green }), at, 0.3); }));
+      tallies.forEach((t) => {
+        tl.to(t.t1, { opacity: 0, duration: 0.25 }, at);
+        write(text(t.x, tallyY, `${t.e}: ${s.atoms.after.left[t.e] || 0} | ${s.atoms.after.right[t.e] || 0} ✓`, { size: 26, color: INK.green }), at + 0.2, 0.3);
+      });
+      return { at: at + 0.6 };
+    },
+    chem_separation(s, at, dur) {
+      // The apparatus of the method, working: filtering, evaporating,
+      // distilling, a magnet, a separating funnel, chromatography, sublimation.
+      at = newPage(at); cursorY = H;
+      const s0 = at, m = s.method, cx = data.social ? W / 2 : 380;
+      at = write(text(60, 70, s.name, { size: 38, color: INK.blue }), at, 0.6);
+      const t0 = at, span = Math.max(2, s0 + dur - at - 0.3);
+      const beaker = (x, y, w, h, fill) => {
+        const liquid = fill ? el("rect", { x: x + 3, y: y + h * 0.45, width: w - 6, height: h * 0.55 - 3, fill, opacity: 0.85 }, page) : null;
+        draw(path(`M${x - 6},${y} L${x},${y + 10} L${x},${y + h} L${x + w},${y + h} L${x + w},${y + 10} L${x + w + 6},${y}`, INK.black, 4), t0, 0.5);
+        if (liquid) tl.fromTo(liquid, { opacity: 0 }, { opacity: 0.85, duration: 0.4 }, t0);
+        return liquid;
+      };
+      const flame = (x, y) => {
+        const f = el("path", { d: `M${x - 16},${y} Q${x},${y - 70} ${x + 16},${y} Z`, fill: "#4ea8ff", opacity: 0, stroke: "#1d4ed8", "stroke-width": 1.5 }, page);
+        tl.to(f, { opacity: 0.9, duration: 0.3 }, t0 + 0.4);
+        tl.to(f, { attr: { d: `M${x - 13},${y} Q${x + 5},${y - 84} ${x + 13},${y} Z` }, duration: 0.25, yoyo: true, repeat: Math.max(1, Math.floor(span / 0.25)) }, t0 + 0.7);
+      };
+      const drops = (x, y1, y2, colour, n) => {
+        for (let k = 0; k < n; k++) {
+          const d = el("circle", { cx: x, cy: y1, r: 6, fill: colour, opacity: 0 }, page);
+          tl.fromTo(d, { attr: { cy: y1 }, opacity: 0.9 }, { attr: { cy: y2 }, opacity: 0, duration: 0.6, ease: "power2.in", repeat: Math.max(0, Math.floor(span / (n * 0.3)) - 1), repeatDelay: n * 0.3 - 0.6 }, t0 + 0.8 + k * 0.3);
+        }
+      };
+      const rising = (x, y, colour, n) => {
+        for (let k = 0; k < n; k++) {
+          const w = path(`M${x - 30 + k * 30},${y} q10,-15 0,-30 q-10,-15 0,-30`, colour, 3);
+          tl.set(w, { opacity: 0 }, 0);
+          tl.to(w, { opacity: 0.8, duration: 0.4, yoyo: true, repeat: Math.max(1, Math.floor(span / 0.8)) }, t0 + 1 + k * 0.25);
+        }
+      };
+      if (m === "filtration" || m === "dissolve") {
+        if (m === "filtration") {
+          draw(path(`M${cx - 90},${250} L${cx},${370} L${cx + 90},${250} Z M${cx - 8},370 L${cx - 8},420 M${cx + 8},370 L${cx + 8},420`, INK.black, 4), t0, 0.6);
+          for (let k = 0; k < 16; k++) {
+            const r = el("circle", { cx: cx - 40 + rnd() * 80, cy: 270 + rnd() * 50, r: 5, fill: "#b08a5a", opacity: 0 }, page);
+            tl.to(r, { opacity: 1, duration: 0.3 }, t0 + 0.8 + rnd() * span * 0.4);
+          }
+          write(text(cx + 110, 300, "residue", { size: 24, color: INK.grey }), t0 + 1, 0.4);
+          beaker(cx - 80, 430, 160, 170, "#dff3ff");
+          drops(cx, 420, 520, "#7fbfff", 4);
+          write(text(cx + 110, 560, "filtrate", { size: 24, color: INK.grey }), t0 + 1.5, 0.4);
+        } else {
+          const liq = beaker(cx - 120, 300, 240, 260, "#dff3ff");
+          for (let k = 0; k < 24; k++) {
+            const dissolves = k % 2 === 0;
+            const p = el("circle", { cx: cx - 100 + rnd() * 200, cy: 420 + rnd() * 120, r: 5, fill: dissolves ? "#f5f5f5" : "#b08a5a", stroke: "#999", "stroke-width": 0.6 }, page);
+            tl.fromTo(p, { opacity: 0 }, { opacity: 1, duration: 0.3 }, t0 + 0.4);
+            if (dissolves) tl.to(p, { opacity: 0, duration: span * 0.5 }, t0 + 1);
+            else tl.to(p, { attr: { cy: 545 - rnd() * 10 }, duration: span * 0.5 }, t0 + 1);
+          }
+          if (liq) tl.to(liq, { attr: { fill: "#eef7ff" }, duration: span * 0.5 }, t0 + 1);
+        }
+      } else if (m === "evaporation" || m === "crystallisation") {
+        const dish = path(`M${cx - 110},380 Q${cx},470 ${cx + 110},380`, INK.black, 4);
+        draw(dish, t0, 0.5);
+        const liq = el("path", { d: `M${cx - 100},388 Q${cx},460 ${cx + 100},388 Z`, fill: "#bfe3ff", opacity: 0.9 }, page);
+        tl.fromTo(liq, { opacity: 0 }, { opacity: 0.9, duration: 0.3 }, t0);
+        tl.to(liq, { attr: { d: `M${cx - 50},430 Q${cx},450 ${cx + 50},430 Z` }, duration: span * 0.7 }, t0 + 1);
+        draw(path(`M${cx - 120},480 L${cx + 120},480 M${cx - 100},480 L${cx - 130},600 M${cx + 100},480 L${cx + 130},600`, INK.grey, 4), t0 + 0.2, 0.5);
+        flame(cx, 590);
+        rising(cx, 370, INK.grey, 3);
+        for (let k = 0; k < 10; k++) {
+          const c = el("rect", { x: cx - 60 + rnd() * 120, y: 425 + rnd() * 20, width: 10, height: 10, fill: "#ffffff", stroke: "#888", "stroke-width": 1, opacity: 0 }, page);
+          tl.to(c, { opacity: 1, duration: 0.4 }, t0 + span * 0.5 + rnd() * span * 0.4);
+        }
+      } else if (m === "distillation" || m === "fractional_distillation") {
+        const fx = cx - 120;
+        draw(path(`M${fx - 70},420 A70,70 0 1 0 ${fx + 70},420 A70,70 0 1 0 ${fx - 70},420 M${fx - 18},352 L${fx - 18},${m === "fractional_distillation" ? 200 : 290} M${fx + 18},352 L${fx + 18},${m === "fractional_distillation" ? 200 : 290}`, INK.black, 4), t0, 0.6);
+        const top = m === "fractional_distillation" ? 200 : 290;
+        show(el("rect", { x: fx - 60, y: 430, width: 120, height: 50, rx: 25, fill: "#bfe3ff", opacity: 0.9 }, page), t0, 0.3);
+        draw(path(`M${fx + 18},${top + 20} L${fx + 330},${top + 150}`, INK.black, 10), t0 + 0.4, 0.6);
+        draw(path(`M${fx + 40},${top + 10} L${fx + 340},${top + 135}`, "#5b8db8", 4), t0 + 0.6, 0.5);
+        write(text(fx + 180, top + 40, "condenser", { size: 22, color: INK.grey }), t0 + 0.8, 0.4);
+        flame(fx, 560);
+        beaker(fx + 300, top + 170, 120, 140, "#dff3ff");
+        drops(fx + 335, top + 160, top + 260, "#7fbfff", 3);
+        rising(fx, 345, INK.grey, 2);
+      } else if (m === "separating_funnel") {
+        draw(path(`M${cx - 90},200 Q${cx - 100},380 ${cx - 10},470 L${cx - 10},530 M${cx + 90},200 Q${cx + 100},380 ${cx + 10},470 L${cx + 10},530 M${cx - 90},200 L${cx + 90},200`, INK.black, 4), t0, 0.6);
+        const top = el("path", { d: `M${cx - 86},230 L${cx + 86},230 Q${cx + 92},300 ${cx + 70},330 L${cx - 70},330 Q${cx - 92},300 ${cx - 86},230 Z`, fill: "#f6d365", opacity: 0.9 }, page);
+        const low = el("path", { d: `M${cx - 70},330 L${cx + 70},330 Q${cx + 60},420 ${cx},468 Q${cx - 60},420 ${cx - 70},330 Z`, fill: "#7fbfff", opacity: 0.9 }, page);
+        tl.fromTo([top, low], { opacity: 0 }, { opacity: 0.9, duration: 0.4 }, t0);
+        tl.to(low, { attr: { d: `M${cx - 30},440 L${cx + 30},440 Q${cx + 20},460 ${cx},468 Q${cx - 20},460 ${cx - 30},440 Z` }, duration: span * 0.6 }, t0 + 1);
+        tl.to(top, { attr: { d: `M${cx - 70},300 L${cx + 70},300 Q${cx + 60},400 ${cx},440 Q${cx - 60},400 ${cx - 70},300 Z` }, duration: span * 0.6 }, t0 + 1);
+        beaker(cx - 70, 560, 140, 110, "#7fbfff");
+        drops(cx, 530, 610, "#7fbfff", 3);
+        write(text(cx + 120, 270, "oil (less dense)", { size: 22, color: INK.grey }), t0 + 0.8, 0.4);
+        write(text(cx + 120, 390, "water", { size: 22, color: INK.grey }), t0 + 1, 0.4);
+      } else if (m === "magnet") {
+        draw(path(`M${cx - 200},520 L${cx + 200},520`, INK.grey, 3), t0, 0.4);
+        const iron = [];
+        for (let k = 0; k < 30; k++) {
+          const isIron = k % 2 === 0;
+          const p = el("circle", { cx: cx - 160 + rnd() * 320, cy: 500 + rnd() * 14, r: 6, fill: isIron ? "#555" : "#e6c200" }, page);
+          tl.fromTo(p, { opacity: 0 }, { opacity: 1, duration: 0.3 }, t0 + 0.2);
+          if (isIron) iron.push(p);
+        }
+        const mag = el("path", { d: `M${cx - 50},220 L${cx - 50},320 A50,50 0 0 0 ${cx + 50},320 L${cx + 50},220`, fill: "none", stroke: "#c2410c", "stroke-width": 22 }, page);
+        tl.fromTo(mag, { x: -280, opacity: 0 }, { x: 0, opacity: 1, duration: 1 }, t0 + 0.6);
+        iron.forEach((p, k) => tl.to(p, { attr: { cx: cx - 40 + (k % 8) * 11, cy: 380 + Math.floor(k / 8) * 10 }, duration: 0.8, ease: "power2.in" }, t0 + 1.8 + k * 0.05));
+      } else if (m === "chromatography") {
+        beaker(cx - 100, 250, 200, 360, null);
+        const solvent = el("rect", { x: cx - 96, y: 560, width: 192, height: 46, fill: "#dff3ff", opacity: 0.9 }, page);
+        tl.fromTo(solvent, { opacity: 0 }, { opacity: 0.9, duration: 0.3 }, t0);
+        show(el("rect", { x: cx - 40, y: 230, width: 80, height: 360, fill: "#ffffff", stroke: "#bbb", "stroke-width": 2 }, page), t0, 0.3);
+        draw(path(`M${cx - 36},540 L${cx + 36},540`, INK.grey, 2), t0 + 0.3, 0.3);
+        const wet = el("rect", { x: cx - 38, y: 588, width: 76, height: 0, fill: "#dff3ff", opacity: 0.8 }, page);
+        tl.to(wet, { attr: { y: 260, height: 328 }, duration: span * 0.8, ease: "none" }, t0 + 0.6);
+        [["#e8261b", 0.35], ["#1d4ed8", 0.6], ["#e6c200", 0.85]].forEach(([c, f]) => {
+          const sp = el("circle", { cx, cy: 540, r: 9, fill: c, opacity: 0.9 }, page);
+          tl.to(sp, { attr: { cy: 540 - 280 * f }, duration: span * 0.8, ease: "none" }, t0 + 0.6);
+        });
+      } else if (m === "sublimation") {
+        draw(path(`M${cx - 110},450 Q${cx},520 ${cx + 110},450`, INK.black, 4), t0, 0.5);
+        draw(path(`M${cx - 100},430 L${cx},270 L${cx + 100},430 M${cx - 8},270 L${cx - 8},200 M${cx + 8},270 L${cx + 8},200`, INK.black, 4), t0 + 0.2, 0.5);
+        for (let k = 0; k < 14; k++) {
+          const p = el("circle", { cx: cx - 60 + rnd() * 120, cy: 470 + rnd() * 10, r: 5, fill: k % 2 ? "#6d28d9" : "#b08a5a" }, page);
+          tl.fromTo(p, { opacity: 0 }, { opacity: 1, duration: 0.3 }, t0 + 0.3);
+          if (k % 2) {
+            tl.to(p, { attr: { cy: 330 + rnd() * 60, cx: cx - 50 + rnd() * 100 }, duration: span * 0.5 }, t0 + 1 + rnd());
+          }
+        }
+        flame(cx, 600);
+        rising(cx, 440, "#6d28d9", 3);
+      }
+      // The steps, written beside the apparatus as it works.
+      if (!data.social) {
+        let y = 200;
+        const per = (span * 0.8) / Math.max(1, (s.steps || []).length);
+        (s.steps || []).slice(0, 4).forEach((st, k) => {
+          wrap(st, 32).slice(0, 3).forEach((l, j) => { write(text(760, y, (j ? "    " : `${k + 1}. `) + l, { size: 24, color: INK.blue }), t0 + 0.5 + k * per + j * 0.2, 0.5); y += 32; });
+          y += 14;
+        });
+      }
+      return { at: t0 + span };
+    },
     chem_result(s, at, dur) {
       at = room(200, at);
       at = write(text(LEFT, cursorY, s.title || "", { size: 38, color: s.title === "No reaction" ? INK.red : INK.green }), at, dur * 0.2);

@@ -2431,6 +2431,12 @@ carries a `chemistry` block the engine reads. Give the SUBSTANCES; the engine gi
   - focus: "observations" | "equation" | "balancing" | "explain" | "application" | "test" | "separation".
   - an item that only asks to BALANCE an equation gives it instead:
     "chemistry": {"equation": "Fe + Cl2 -> FeCl3", "focus": "balancing"}
+  - electron arrangement of one element (first twenty): "chemistry": {"atom": "Mg"}
+  - how two elements bond and the formula it gives: "chemistry": {"bond": ["Mg", "Cl"]}
+    (ionic: a metal and a non-metal; covalent: two non-metals — the engine animates the electrons)
+  - separating a mixture: "chemistry": {"separate": ["sand", "salt"]} (parts: sand, chalk, salt,
+    sugar, copper(II) sulphate, water, ethanol, oil, kerosene, iron filings, sulphur, iodine,
+    ammonium chloride, ink, food colouring; "keep": "water" when the water is wanted)
 Reactions the engine knows (stay inside these): metals with acids (above hydrogen only), metals
 with cold water (K, Na, Ca) or steam (Mg, Zn, Fe), burning in oxygen (metals, C, S, H2, fuels),
 burning in chlorine, displacement by the reactivity series, neutralisation (acid + alkali/oxide),

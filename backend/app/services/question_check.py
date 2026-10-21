@@ -687,6 +687,29 @@ def _chemistry_disagrees(questions: list[dict[str, Any]], findings: list[Finding
         label = _label(question, index)
         key = next((str(o.get("text") or "") for o in (question.get("options") or [])
                     if isinstance(o, dict) and o.get("is_correct")), "") or str(question.get("correct_answer") or "")
+        if not spec.get("reactants") and any(spec.get(k) for k in ("atom", "bond", "separate")):
+            try:
+                if spec.get("atom"):
+                    C.atom(str(spec["atom"]))
+                elif spec.get("bond"):
+                    pair = [str(x) for x in spec["bond"]][:2]
+                    b = C.bond(pair[0], pair[1])
+                    flat = lambda t: _re.sub(r"\s+", "", t.translate(str.maketrans("₀₁₂₃₄₅₆₇₈₉", "0123456789")))  # noqa: E731
+                    formulas = set(_re.findall(r"\b(?:[A-Z][a-z]?\d*){2,}\b", flat(key)))
+                    if b.get("formula") and formulas and b["formula"] not in formulas:
+                        findings.append(Finding("chemistry_disagrees", f"{label}: the electrons give {b['formula']}, "
+                                                f"but the key gives {', '.join(sorted(formulas))}.",
+                                                "Use the formula the electron arrangements give.", [_id(question)]))
+                else:
+                    r = C.separate([str(x) for x in spec["separate"]], str(spec.get("keep") or ""))
+                    if not r["covered"]:
+                        findings.append(Finding("chemistry_not_covered", f"{label}: {r['why']}",
+                                                "Use mixtures the separation rules know (see the prompt).", [_id(question)]))
+            except (ValueError, IndexError, KeyError) as exc:
+                findings.append(Finding("chemistry_unreadable", f"{label}: the chemistry engine cannot read it ({exc}).",
+                                        "Give an element of the first twenty, two elements, or known mixture parts.",
+                                        [_id(question)]))
+            continue
         try:
             if spec.get("equation") and not spec.get("reactants"):
                 engine = C.balance_given(str(spec["equation"]))["equation"]

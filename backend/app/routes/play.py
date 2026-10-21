@@ -362,26 +362,29 @@ def chem_substances(auth: AuthContext = Depends(CONTENT)) -> dict[str, Any]:
     """The lab game's shelf: metals, gases, acids, bases, carbonates, salts, fuels."""
     from ..services import chem_walkthrough
 
-    return {"groups": chem_walkthrough.substances()}
+    return {"groups": chem_walkthrough.substances(), "periodic": chem_walkthrough.periodic(),
+            "mixtures": chem_walkthrough.mixtures()}
 
 
 @router.get("/chem/react")
-def chem_react(a: str = Query(..., max_length=40), b: str = Query("", max_length=40),
-               condition: str = Query("", max_length=20), auth: AuthContext = Depends(CONTENT)) -> dict[str, Any]:
+def chem_react(a: str = Query(..., max_length=120), b: str = Query("", max_length=40),
+               condition: str = Query("", max_length=20), mode: Literal["react", "atom", "bond", "separate"] = Query("react"),
+               auth: AuthContext = Depends(CONTENT)) -> dict[str, Any]:
     """What happens when a meets b (or a is heated): the chemistry engine's
     reaction — balanced, with observations, gas tests, applications — and its walkthrough."""
     from ..services import chem_walkthrough
 
     try:
-        out = chem_walkthrough.lab(a, b, condition)
+        out = chem_walkthrough.lab(a, b, condition, mode)
     except ValueError as exc:
         raise_api_error("VALIDATION_FAILED", str(exc))
     return {"reaction": out["reaction"], "scenes": len(out["walkthrough"]["scenes"])}
 
 
 @router.get("/chem/lab.html")
-def chem_lab_page(a: str = Query(..., max_length=40), b: str = Query("", max_length=40),
+def chem_lab_page(a: str = Query(..., max_length=120), b: str = Query("", max_length=40),
                   condition: str = Query("", max_length=20), autoplay: bool = Query(False),
+                  mode: Literal["react", "atom", "bond", "separate"] = Query("react"),
                   auth: AuthContext = Depends(CONTENT)) -> HTMLResponse:
     """The mix on the whiteboard, voiced in the science voice: the lab bench,
     the reactivity series, the equation balanced, what you see, where it is used."""
@@ -389,7 +392,7 @@ def chem_lab_page(a: str = Query(..., max_length=40), b: str = Query("", max_len
     from ..services.math_engine.tts_service import science_voice
 
     try:
-        out = chem_walkthrough.lab(a, b, condition)
+        out = chem_walkthrough.lab(a, b, condition, mode)
     except ValueError as exc:
         raise_api_error("VALIDATION_FAILED", str(exc))
     q = out["question"]

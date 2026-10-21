@@ -97,12 +97,12 @@ def test_the_walkthrough_shows_the_lab_the_series_and_the_balanced_equation() ->
          "chemistry": {"reactants": ["Zn", "CuSO4"]}, "curriculum": {"subject": "Integrated Science"}}
     w = play_engine.walkthrough(q)
     kinds = [s["scene"] for s in w["scenes"]]
-    assert kinds[:5] == ["title", "chem_lab", "chem_series", "chem_word", "chem_equation"]
+    assert kinds[:6] == ["title", "chem_hook", "chem_lab", "chem_series", "chem_word", "chem_equation"]
     assert "chem_list" in kinds and w["kind"] == "chemistry"
     assert "copper two sulphate" in w["scenes"][0]["say"], "a formula in the question is said as its name"
-    series = w["scenes"][2]
+    series = w["scenes"][3]
     assert series["highlight"] == ["Zn", "Cu"]
-    eq = w["scenes"][4]
+    eq = w["scenes"][5]
     assert eq["equation"] == "Zn + CuSO₄ → ZnSO₄ + Cu" and "rewrite" not in kinds
 
 
@@ -147,7 +147,7 @@ def test_the_sciences_get_a_british_or_american_voice() -> None:
 def test_the_lab_game_mixes_two_substances() -> None:
     out = W.lab("Mg", "HCl")
     assert out["reaction"]["equation"] == "Mg + 2HCl → MgCl₂ + H₂"
-    assert out["walkthrough"]["scenes"][1]["scene"] == "chem_lab"
+    assert out["walkthrough"]["scenes"][2]["scene"] == "chem_lab"
     groups = {g["group"] for g in W.substances()}
     assert {"Metals", "Acids", "Salts in solution"} <= groups
     for g in W.substances():
@@ -169,3 +169,109 @@ def test_the_prompts_own_examples_agree_with_the_engine() -> None:
     found: list[Finding] = []
     _chemistry_disagrees(items, found)
     assert found == []
+
+
+@pytest.mark.parametrize("sym,arr,ion,ion_arr", [
+    ("Na", "2.8.1", "Na⁺", "2.8"), ("Cl", "2.8.7", "Cl⁻", "2.8.8"), ("Mg", "2.8.2", "Mg²⁺", "2.8"),
+    ("O", "2.6", "O²⁻", "2.8"), ("Al", "2.8.3", "Al³⁺", "2.8"), ("Ca", "2.8.8.2", "Ca²⁺", "2.8.8"),
+    ("N", "2.5", "N³⁻", "2.8"), ("Ar", "2.8.8", "Ar", "2.8.8"),
+])
+def test_electron_arrangements_and_ions(sym, arr, ion, ion_arr) -> None:
+    a = C.atom(sym)
+    assert (a["arrangement"], a["ion"], a["ion_arrangement"]) == (arr, ion, ion_arr)
+    assert a["protons"] == a["electrons"] == C.ATOMIC_NUMBER[sym]
+
+
+@pytest.mark.parametrize("a,b,kind,formula", [
+    ("Na", "Cl", "ionic", "NaCl"), ("Mg", "Cl", "ionic", "MgCl2"), ("Al", "O", "ionic", "Al2O3"), ("K", "S", "ionic", "K2S"),
+    ("Li", "N", "ionic", "Li3N"), ("Cl", "Mg", "ionic", "MgCl2"),
+    ("H", "Cl", "covalent", "HCl"), ("H", "O", "covalent", "H2O"), ("N", "H", "covalent", "NH3"), ("C", "H", "covalent", "CH4"),
+    ("C", "O", "covalent", "CO2"), ("Cl", "Cl", "covalent", "Cl2"), ("O", "O", "covalent", "O2"),
+])
+def test_the_formula_comes_from_the_electrons(a, b, kind, formula) -> None:
+    r = C.bond(a, b)
+    assert r["kind"] == kind and r["formula"] == formula
+    if kind == "ionic":
+        q = abs(C.atom(r["metal"])["ion_charge"])
+        assert len(r["moves"]) == r["counts"][r["metal"]] * q, "every electron given is shown moving"
+
+
+def test_noble_gases_and_two_metals_do_not_bond() -> None:
+    assert C.bond("Na", "Ne")["kind"] == "none" and C.bond("Na", "Mg")["kind"] == "metallic"
+
+
+@pytest.mark.parametrize("parts,keep,names", [
+    (["sand", "water"], "", ["Filtration"]), (["salt", "water"], "", ["Evaporation"]),
+    (["salt", "water"], "water", ["Simple distillation"]), (["sand", "salt"], "", ["Dissolving", "Filtration", "Evaporation"]),
+    (["iron filings", "sulphur"], "", ["Magnetic separation"]), (["ethanol", "water"], "", ["Fractional distillation"]),
+    (["oil", "water"], "", ["Separating funnel"]), (["ink"], "", ["Paper chromatography"]), (["iodine", "sand"], "", ["Sublimation"]),
+])
+def test_separating_mixtures(parts, keep, names) -> None:
+    assert C.separate(parts, keep)["names"] == names
+
+
+def test_every_kind_of_item_makes_its_scenes() -> None:
+    kinds = lambda chem: [s["scene"] for s in W.scenes_for({"chemistry": chem})]  # noqa: E731
+    assert kinds({"atom": "Mg"}) == ["chem_atom", "chem_result"]
+    assert kinds({"bond": ["Al", "O"]}) == ["chem_hook", "chem_atom", "chem_atom", "chem_ionic", "chem_result"]
+    assert "chem_covalent" in kinds({"bond": ["C", "H"]})
+    assert kinds({"separate": ["sand", "salt"]}).count("chem_separation") == 3
+    react = kinds({"reactants": ["Mg", "Cl2"]})
+    assert react[0] == "chem_hook" and "chem_particles" in react and "chem_ionic" in react, "why it is MgCl2"
+    pair = W.scenes_for({"chemistry": {"bond": ["Na", "Cl"]}})
+    atoms = [s for s in pair if s["scene"] == "chem_atom"]
+    assert [a["slot"] for a in atoms] == [0, 1], "the two atoms share a page, side by side"
+
+
+def test_the_lab_picks_atoms_bonds_and_mixtures() -> None:
+    assert W.lab("Na", mode="atom")["reaction"]["arrangement"] == "2.8.1"
+    assert W.lab("Mg", "Cl", mode="bond")["reaction"]["formula"] == "MgCl2"
+    assert W.lab("sand,salt", mode="separate")["reaction"]["names"][0] == "Dissolving"
+    assert len(W.periodic()) == 20
+
+
+def test_the_chemistry_api_answers_and_meters(monkeypatch) -> None:
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+    from app.routes import chem_api, content
+    from app.services.auth import AuthContext
+
+    charged: list[list[dict]] = []
+    monkeypatch.setattr(chem_api, "_charge", lambda auth, items, ref: charged.append(items) or {"charged_ksh": 0})
+    monkeypatch.setattr(chem_api, "_usage_headers", lambda owner: {})
+    app.dependency_overrides[content.DEVELOPER] = lambda: AuthContext(subject="dev1", role="developer", auth_type="api_key")
+    try:
+        c = TestClient(app)
+        r = c.get("/api/v1/chemistry/react", params={"a": "Zn", "b": "CuSO4"})
+        assert r.status_code == 200 and r.json()["equation"] == "Zn + CuSO₄ → ZnSO₄ + Cu"
+        assert c.post("/api/v1/chemistry/balance", json={"equation": "Fe + Cl2 -> FeCl3"}).json()["equation"] == "2Fe + 3Cl₂ → 2FeCl₃"
+        assert c.get("/api/v1/chemistry/atom/Mg").json()["arrangement"] == "2.8.2"
+        assert c.get("/api/v1/chemistry/bond", params={"a": "Al", "b": "O"}).json()["formula"] == "Al2O3"
+        assert c.get("/api/v1/chemistry/separate", params={"parts": "oil,water"}).json()["names"] == ["Separating funnel"]
+        w = c.post("/api/v1/chemistry/walkthrough", json={"chemistry": {"reactants": ["HCl", "NaOH"]}})
+        assert w.status_code == 200 and w.json()["scenes"][1]["scene"] == "chem_hook"
+        page = c.post("/api/v1/chemistry/animation.html", json={"chemistry": {"atom": "Na"}})
+        assert page.status_code == 200 and "WB_DATA" in page.text
+        assert c.get("/api/v1/chemistry/react", params={"a": "Xq"}).status_code == 400
+        assert charged.count([{"has_figure": True}]) == 2, "an animation is charged as a figure question"
+        assert charged.count([{"has_figure": False}]) == 5
+    finally:
+        app.dependency_overrides.pop(content.DEVELOPER, None)
+
+
+def test_atom_bond_and_separation_items_are_checked_too() -> None:
+    from app.services.question_check import Finding, _chemistry_disagrees
+
+    items = [
+        {"question_id": "a1", "question_text": "?", "chemistry": {"atom": "Mg"}, "correct_answer": "2.8.2"},
+        {"question_id": "b1", "question_text": "?", "chemistry": {"bond": ["Mg", "Cl"]}, "correct_answer": "MgCl2"},
+        {"question_id": "b2", "question_text": "?", "chemistry": {"bond": ["Mg", "Cl"]}, "correct_answer": "MgCl"},
+        {"question_id": "s1", "question_text": "?", "chemistry": {"separate": ["sand", "water"]}, "correct_answer": "Filtration"},
+        {"question_id": "s2", "question_text": "?", "chemistry": {"separate": ["marbles"]}, "correct_answer": "?"},
+        {"question_id": "a2", "question_text": "?", "chemistry": {"atom": "Fe"}, "correct_answer": "2.8.14.2"},
+    ]
+    found: list[Finding] = []
+    _chemistry_disagrees(items, found)
+    kinds = {f.items[0]: f.kind for f in found}
+    assert kinds == {"b2": "chemistry_disagrees", "s2": "chemistry_not_covered", "a2": "chemistry_unreadable"}

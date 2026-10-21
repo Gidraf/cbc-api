@@ -606,3 +606,227 @@ def molar_mass(formula: str) -> Fraction:
 RAM = {"H": 1, "He": 4, "C": 12, "N": 14, "O": 16, "Na": 23, "Mg": 24, "Al": 27, "Si": 28, "P": 31, "S": 32, "Cl": 35.5,
        "K": 39, "Ca": 40, "Mn": 55, "Fe": 56, "Cu": 63.5, "Zn": 65, "Br": 80, "Ag": 108, "Sn": 119, "I": 127, "Ba": 137,
        "Au": 197, "Hg": 201, "Pb": 207, "Li": 7, "Be": 9, "B": 11, "F": 19, "Ne": 20, "Ar": 40, "Cr": 52, "Ni": 59, "Co": 59, "Pt": 195}
+
+
+# ── atoms: electron arrangement, ions and bonds ─────────────────────────────
+#
+# The first twenty elements, as school chemistry draws them: shells of 2, 8,
+# 8 and 2. From the outer shell come the ion an atom forms (a metal loses its
+# outer electrons, a non-metal gains enough to make eight) and so the formula
+# of the compound — the electrons decide it, and the animation shows them move.
+
+ATOMIC_NUMBER = {"H": 1, "He": 2, "Li": 3, "Be": 4, "B": 5, "C": 6, "N": 7, "O": 8, "F": 9, "Ne": 10, "Na": 11,
+                 "Mg": 12, "Al": 13, "Si": 14, "P": 15, "S": 16, "Cl": 17, "Ar": 18, "K": 19, "Ca": 20}
+MASS_NUMBER = {"H": 1, "He": 4, "Li": 7, "Be": 9, "B": 11, "C": 12, "N": 14, "O": 16, "F": 19, "Ne": 20, "Na": 23,
+               "Mg": 24, "Al": 27, "Si": 28, "P": 31, "S": 32, "Cl": 35, "Ar": 40, "K": 39, "Ca": 40}
+METALS = {"Li", "Be", "Na", "Mg", "Al", "K", "Ca"}
+NOBLE = {"He", "Ne", "Ar"}
+
+
+def shells(symbol: str) -> list[int]:
+    """'Na' → [2, 8, 1] (the school model: 2, 8, 8, 2)."""
+    z = ATOMIC_NUMBER[symbol]
+    out, caps = [], [2, 8, 8, 2]
+    for cap in caps:
+        if z <= 0:
+            break
+        take = min(cap, z)
+        out.append(take)
+        z -= take
+    return out
+
+
+def atom(symbol: str) -> dict[str, Any]:
+    """An atom as the board draws it: protons, neutrons, shells, its ion and why."""
+    sym = _symbol_of(symbol) or symbol
+    if sym not in ATOMIC_NUMBER:
+        raise ValueError(f"The electron model here covers the first twenty elements, not {symbol!r}.")
+    sh = shells(sym)
+    outer = sh[-1]
+    z = ATOMIC_NUMBER[sym]
+    if sym in NOBLE:
+        charge, why = 0, f"Its outer shell is full ({outer}), so it is stable: it does not form ions."
+    elif sym in METALS:
+        charge, why = outer, f"It has {outer} electron{'s' if outer > 1 else ''} in its outer shell, which it loses to be stable."
+    elif sym == "H":
+        charge, why = 1, "It has one electron; it can lose it (H⁺) or share it."
+    elif outer >= 4 and sym in ("C", "Si"):
+        charge, why = 0, f"It has {outer} outer electrons: it shares them (covalent bonds) rather than forming ions."
+    else:
+        charge, why = -(8 - outer), f"It has {outer} electrons in its outer shell and gains {8 - outer} to make eight."
+    ion_shells = list(sh)
+    if charge > 0:
+        ion_shells = sh[:-1] if sh[-1] == charge else sh[:-1] + [sh[-1] - charge]
+    elif charge < 0:
+        ion_shells = sh[:-1] + [sh[-1] - charge]
+    return {"symbol": sym, "name": ELEMENTS[sym], "Z": z, "protons": z, "electrons": z,
+            "neutrons": MASS_NUMBER[sym] - z, "mass_number": MASS_NUMBER[sym], "shells": sh,
+            "arrangement": ".".join(str(n) for n in sh), "group": (8 if sym in NOBLE and sym != "He" else outer) if sym != "He" else 8,
+            "period": len(sh), "metal": sym in METALS, "valency": abs(charge) if charge else (outer if sym in ("C", "Si") else 0),
+            "ion_charge": charge, "ion_shells": ion_shells, "ion_arrangement": ".".join(str(n) for n in ion_shells),
+            "ion": _ion_name(sym, charge), "why": why}
+
+
+def _ion_name(sym: str, charge: int) -> str:
+    sup = {1: "⁺", 2: "²⁺", 3: "³⁺", -1: "⁻", -2: "²⁻", -3: "³⁻"}.get(charge, "")
+    return f"{sym}{sup}" if sup else sym
+
+
+def bond(a: str, b: str) -> dict[str, Any]:
+    """How two elements bond, and so the formula of their compound: ionic
+    (a metal gives its outer electrons to a non-metal) or covalent (two
+    non-metals share pairs). The counts come from the electrons."""
+    from math import gcd
+
+    x, y = atom(a), atom(b)
+    if x["symbol"] in NOBLE or y["symbol"] in NOBLE:
+        return {"kind": "none", "why": "A noble gas has a full outer shell: it does not bond."}
+    if x["metal"] == y["metal"]:
+        if x["metal"]:
+            return {"kind": "metallic", "why": "Two metals do not form a compound this way; they can mix as an alloy."}
+        # covalent: each shares as many electrons as it needs
+        va, vb = (x["valency"] or 1), (y["valency"] or 1)
+        g = gcd(va, vb)
+        na, nb = vb // g, va // g
+        if x["symbol"] == y["symbol"]:
+            na, nb = 1, 1
+        if x["symbol"] in ("C", "Si") or (y["symbol"] == "H" and x["symbol"] != "H"):
+            centre, outer, nc, no = x, y, na, nb
+        else:
+            centre, outer, nc, no = y, x, nb, na
+        if x["symbol"] == y["symbol"]:
+            formula = f"{x['symbol']}2"
+        elif "H" in (centre["symbol"], outer["symbol"]) and ({centre["symbol"], outer["symbol"]} - {"H"}) <= {"F", "Cl", "Br", "I", "O", "S"}:
+            other = centre if outer["symbol"] == "H" else outer
+            formula = _formula_of({"H": no if outer["symbol"] == "H" else nc, other["symbol"]: nc if outer["symbol"] == "H" else no})
+        else:
+            formula = _formula_of({centre["symbol"]: nc, outer["symbol"]: no})     # NH3, CH4, CO2: the centre first
+        shared = (centre["valency"] or 1) * nc if x["symbol"] != y["symbol"] else (x["valency"] or 1)
+        return {"kind": "covalent", "atoms": [x, y], "centre": centre["symbol"], "counts": {centre["symbol"]: nc, outer["symbol"]: no}
+                if x["symbol"] != y["symbol"] else {x["symbol"]: 2},
+                "formula": formula, "shared_pairs": shared,
+                "why": (f"Both are non-metals: they share electrons. {centre['name'].capitalize()} needs {centre['valency']} more and "
+                        f"{outer['name']} needs {outer['valency']}, so they share pairs until every atom has a full outer shell: "
+                        f"{pretty(formula)}." if x["symbol"] != y["symbol"] else
+                        f"Two {x['name']} atoms each need {x['valency']} more electron{'s' if x['valency'] > 1 else ''}: they share "
+                        f"{x['valency']} pair{'s' if x['valency'] > 1 else ''}, making {pretty(formula)}.")}
+    metal, non = (x, y) if x["metal"] else (y, x)
+    qm, qn = metal["ion_charge"], -non["ion_charge"]
+    g = gcd(qm, qn)
+    nm, nn = qn // g, qm // g
+    formula = _formula_of({metal["symbol"]: nm, non["symbol"]: nn})
+    moves = []                                       # each electron: from metal atom i to non-metal atom j
+    for i in range(nm):
+        for e in range(qm):
+            k = i * qm + e
+            moves.append({"from": i, "to": k // qn})
+    return {"kind": "ionic", "atoms": [metal, non], "metal": metal["symbol"], "nonmetal": non["symbol"],
+            "counts": {metal["symbol"]: nm, non["symbol"]: nn}, "formula": formula, "moves": moves,
+            "ions": [metal["ion"], non["ion"]],
+            "why": (f"{metal['name'].capitalize()} ({metal['arrangement']}) gives away {qm} electron{'s' if qm > 1 else ''}; "
+                    f"{non['name']} ({non['arrangement']}) takes {qn}. "
+                    + (f"So {nm} {metal['name']} atom{'s' if nm > 1 else ''} give{'s' if nm == 1 else ''} electrons to "
+                       f"{nn} {non['name']} atom{'s' if nn > 1 else ''}: " if (nm, nn) != (1, 1) else "One for one: ")
+                    + f"the ions {metal['ion']} and {non['ion']} attract, and the formula is {pretty(formula)}.")}
+
+
+def _formula_of(counts: dict[str, int]) -> str:
+    return "".join(f"{el}{n if n > 1 else ''}" for el, n in counts.items())
+
+
+# ── separating mixtures ──────────────────────────────────────────────────────
+
+SEPARATIONS: dict[str, dict[str, Any]] = {
+    "filtration": {"name": "Filtration", "when": "an insoluble solid from a liquid",
+                   "steps": ["Fold a filter paper into a cone and fit it in a filter funnel over a beaker",
+                             "Pour the mixture in slowly", "The liquid (filtrate) runs through; the solid (residue) stays on the paper"],
+                   "uses": ["Clearing muddy water at a water works", "Making tea or coffee with a filter", "Separating sand from water"]},
+    "evaporation": {"name": "Evaporation", "when": "a dissolved solid from its solution (the solvent is not kept)",
+                    "steps": ["Pour the solution into an evaporating dish", "Heat it gently over a water bath or Bunsen burner",
+                              "The water evaporates; the solid is left behind"],
+                    "uses": ["Salt pans at the coast (Malindi, Ngomeni)", "Getting sugar from sugarcane juice"]},
+    "crystallisation": {"name": "Crystallisation", "when": "pure crystals of a dissolved solid",
+                        "steps": ["Heat the solution until it is saturated (crystals form on a cold glass rod)",
+                                  "Leave it to cool slowly", "Crystals form; filter them off and dry them between filter papers"],
+                        "uses": ["Making pure copper(II) sulphate crystals", "Purifying table salt"]},
+    "distillation": {"name": "Simple distillation", "when": "a pure liquid (the solvent) from a solution",
+                     "steps": ["Heat the solution in a flask", "The solvent boils off as vapour and passes into a Liebig condenser",
+                               "Cold water around the condenser turns the vapour back to liquid (distillate), collected in a beaker",
+                               "The dissolved solid stays in the flask"],
+                     "uses": ["Getting drinking water from sea water", "Making distilled water for car batteries and labs"]},
+    "fractional_distillation": {"name": "Fractional distillation", "when": "liquids that mix but boil at different temperatures",
+                                "steps": ["Heat the mixture in a flask with a fractionating column",
+                                          "The liquid with the lower boiling point vaporises first and reaches the condenser",
+                                          "Collect each liquid as the thermometer shows its boiling point"],
+                                "uses": ["Separating crude oil into petrol, kerosene and diesel", "Getting oxygen and nitrogen from liquid air"]},
+    "separating_funnel": {"name": "Separating funnel", "when": "two liquids that do not mix",
+                          "steps": ["Pour the mixture into a separating funnel and let it settle into two layers",
+                                    "Open the tap to run off the lower (denser) layer", "Close the tap: the upper layer stays"],
+                          "uses": ["Separating oil from water", "Extracting oils in industry"]},
+    "magnet": {"name": "Magnetic separation", "when": "a magnetic solid (iron, nickel, cobalt) from a non-magnetic one",
+               "steps": ["Spread the mixture on paper", "Pass a magnet over it", "The iron sticks to the magnet; the rest stays behind"],
+               "uses": ["Sorting scrap iron from other waste", "Removing iron from crushed ore"]},
+    "chromatography": {"name": "Paper chromatography", "when": "dyes or colours mixed in a solution",
+                       "steps": ["Put a spot of the mixture on a pencil line near the bottom of a filter paper",
+                                 "Stand the paper in a solvent (water or ethanol) below the line",
+                                 "The solvent rises and carries each dye a different distance: the colours separate"],
+                       "uses": ["Testing food colourings and inks", "Forensic tests on ink in documents"]},
+    "sublimation": {"name": "Sublimation", "when": "a solid that sublimes (iodine, ammonium chloride) from one that does not",
+                    "steps": ["Heat the mixture in a dish covered by an inverted funnel or cold surface",
+                              "The subliming solid turns straight to vapour", "It turns back to solid on the cold surface; the rest stays"],
+                    "uses": ["Purifying iodine", "Separating ammonium chloride from salt"]},
+}
+
+# component → its properties (how it behaves in a mixture)
+COMPONENTS: dict[str, dict[str, Any]] = {
+    "sand": {"state": "solid", "soluble": False}, "chalk": {"state": "solid", "soluble": False},
+    "salt": {"state": "solid", "soluble": True, "formula": "NaCl"}, "sugar": {"state": "solid", "soluble": True},
+    "copper(II) sulphate": {"state": "solid", "soluble": True, "formula": "CuSO4"},
+    "water": {"state": "liquid", "bp": 100}, "ethanol": {"state": "liquid", "bp": 78, "mixes": True},
+    "oil": {"state": "liquid", "mixes": False}, "kerosene": {"state": "liquid", "mixes": False},
+    "iron filings": {"state": "solid", "soluble": False, "magnetic": True}, "sulphur": {"state": "solid", "soluble": False},
+    "iodine": {"state": "solid", "soluble": False, "sublimes": True}, "ammonium chloride": {"state": "solid", "soluble": True, "sublimes": True},
+    "ink": {"state": "solution", "dyes": True}, "food colouring": {"state": "solution", "dyes": True},
+}
+
+
+def separate(parts: list[str], keep: str = "") -> dict[str, Any]:
+    """How to separate a mixture: the method(s) from what the parts are like."""
+    ps = [p.strip().lower() for p in parts if p.strip()]
+    unknown = [p for p in ps if p not in COMPONENTS]
+    if unknown:
+        return {"covered": False, "why": f"The separation rules here do not know {', '.join(unknown)}."}
+    props = {p: COMPONENTS[p] for p in ps}
+    method: list[str] = []
+    if any(v.get("dyes") for v in props.values()):
+        method = ["chromatography"]
+    elif any(v.get("magnetic") for v in props.values()):
+        method = ["magnet"]
+    elif any(v.get("sublimes") for v in props.values()) and all(v["state"] == "solid" for v in props.values()):
+        method = ["sublimation"]
+    elif all(v["state"] == "liquid" for v in props.values()):
+        method = ["fractional_distillation"] if all(v.get("mixes", True) for v in props.values()) else ["separating_funnel"]
+    else:
+        solids = [p for p, v in props.items() if v["state"] == "solid"]
+        liquids = [p for p, v in props.items() if v["state"] == "liquid"]
+        insoluble = [p for p in solids if not props[p].get("soluble")]
+        soluble = [p for p in solids if props[p].get("soluble")]
+        if insoluble and soluble and not liquids:
+            method = ["dissolve", "filtration", "evaporation"]
+        elif insoluble and liquids:
+            method = ["filtration"]
+        elif soluble and liquids:
+            method = ["distillation"] if keep in liquids else (["crystallisation"] if "crystal" in keep else ["evaporation"])
+        else:
+            return {"covered": False, "why": "The separation rules here do not cover that mixture."}
+    steps: list[str] = []
+    for m in method:
+        if m == "dissolve":
+            steps.append("Add water and stir: the soluble part dissolves, the insoluble part does not")
+        else:
+            steps.extend(SEPARATIONS[m]["steps"])
+    named = [SEPARATIONS[m]["name"] if m in SEPARATIONS else "Dissolving" for m in method]
+    main = next((m for m in method if m in SEPARATIONS), method[0])
+    return {"covered": True, "parts": ps, "methods": method, "names": named, "steps": steps,
+            "why": f"{' then '.join(named)}: for {SEPARATIONS[main]['when']}.",
+            "uses": SEPARATIONS[main]["uses"]}
