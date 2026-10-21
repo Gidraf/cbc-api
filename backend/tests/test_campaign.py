@@ -342,6 +342,7 @@ def test_an_older_video_is_posted_while_the_new_one_is_made(db, monkeypatch) -> 
          "curriculum": {"grade": "grade-9", "subject": "Mathematics"}}
     monkeypatch.setattr(whiteboard, "load", lambda qid: q)
     monkeypatch.setattr(object_storage, "object_exists", lambda name: name == "social/old-vid/oldkey.mp4")
+    monkeypatch.setattr(social, "_on_server", lambda name: name == "social/old-vid/oldkey.mp4")
     execute("""INSERT INTO question_videos (question_id, kind, video_key, object_name, made_at)
                VALUES ('old-vid', 'social', 'oldkey', 'social/old-vid/oldkey.mp4', NOW())""")
     st = social.status("old-vid", q)

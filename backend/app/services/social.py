@@ -708,6 +708,18 @@ def _single_teacher_keys(q: dict[str, Any]) -> list[tuple[str, str]]:
     return out
 
 
+def _on_server(name: str) -> bool:
+    """The file is on this server's storage itself (not moved to Drive)."""
+    from ..infra.storage import object_storage
+    from ..settings import settings
+
+    try:
+        object_storage._get_client().stat_object(settings.minio_bucket, name)
+        return True
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def _serve_older() -> bool:
     from . import platform_settings
 
@@ -755,7 +767,7 @@ def status(question_id: str, q: dict[str, Any] | None = None, voice: str = "", *
         made = fetch_one("""SELECT object_name FROM question_videos WHERE question_id = :q AND kind = 'social'
                             ORDER BY made_at DESC LIMIT 1""", {"q": question_id})
         obj = str((made or {}).get("object_name") or "")
-        if obj and object_storage.object_exists(obj):
+        if obj and _on_server(obj):              # not one only on Drive: streaming it back can fail the post
             return {**out, "status": "ready", "older": True, "key": obj.rsplit("/", 1)[-1][:-4],
                     "url": whiteboard.public_url(obj), "thumbnail_url": whiteboard.public_url(obj[:-4] + ".jpg"),
                     "marketing": False}
