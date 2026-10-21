@@ -148,11 +148,13 @@ class Facebook(Flow):
         if _logged_out(page.url):
             raise NotLoggedIn("Facebook is logged out.")
         await check_for_human(page)
-        opener = await first(page, [page.get_by_role("button", name=re.compile(r"What's on your mind", re.I)),
-                                    page.get_by_text(re.compile(r"^What's on your mind", re.I))],
+        opener = await first(page, [page.get_by_role("button", name=re.compile(r"What.s on your mind", re.I)),
+                                    page.get_by_text(re.compile(r"^What.s on your mind", re.I))],
                              timeout=30, what='"What\'s on your mind"')
         await opener.click()
-        dialog = page.get_by_role("dialog").filter(has_text=re.compile(r"Create post", re.I)).last
+        # The composer: the dialog with the post's text box (its title has
+        # changed before — "Create post", "Create a post" — so not by its title).
+        dialog = page.get_by_role("dialog").filter(has=page.locator('[contenteditable="true"][role="textbox"]')).last
         await first(page, [dialog], timeout=30, what='the "Create post" box')
         box = await first(page, [dialog.locator('[contenteditable="true"][role="textbox"]')], timeout=30,
                           what="the post's text box")

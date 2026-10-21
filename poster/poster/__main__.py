@@ -272,6 +272,26 @@ async def publish(post: dict[str, Any], *, dry_run: bool) -> dict[str, Any]:
 
 
 ENGAGE_EVERY = 20 * 60          # seconds: the longest the like-back, replies and groups wait for a turn
+RECHECK_EVERY = 10 * 60         # seconds: a platform marked logged out is checked again this often
+
+
+async def _recheck_logins() -> None:
+    """A platform marked logged out is checked again every few minutes: a
+    page that did not load, or a moment's checkpoint, should not stop the
+    posting until someone presses Check — a real logout stays marked."""
+    now = time.time()
+    for platform, login in list((state.get("logins") or {}).items()):
+        if login.get("logged_in") is not False or platform not in FLOWS:
+            continue
+        if now - float(login.get("at") or 0) < RECHECK_EVERY or now - state.get(f"recheck_{platform}", 0) < RECHECK_EVERY:
+            continue
+        state[f"recheck_{platform}"] = now
+        try:
+            got = await do_check(platform)
+            if (got.get("logins") or {}).get(platform):
+                log.info("%s is logged in after all — posting carries on.", platform)
+        except Exception as exc:  # noqa: BLE001
+            log.info("Re-check of %s failed: %s", platform, _why(exc))
 
 
 async def tick() -> dict[str, Any]:
@@ -280,6 +300,7 @@ async def tick() -> dict[str, Any]:
     if not await flush_reports():
         state["note"] = "Waiting to tell the server about a post that went out."
         return {"skipped": state["note"]}
+    await _recheck_logins()
     try:
         nxt = await cbc.next_post()
     except Exception as exc:  # noqa: BLE001
