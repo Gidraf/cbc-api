@@ -189,15 +189,15 @@ def page(data: dict[str, Any], *, title: str = "", voice: str = "en-KE", duratio
             .replace("__TEACHER__", _teacher_scripts((social or {}).get("teacher"), three_loaded=bool(chem3d))))
 
 
-CHEM3D_SCENES = {"chem_atom", "chem_ionic", "chem_covalent"}
+CHEM3D_SCENES = {"chem_atom", "chem_ionic", "chem_covalent", "chem_lab", "chem_separation"}
 
 
 def _chem3d_scripts(scenes: list[dict[str, Any]]) -> str:
     """three.js and the 3D chemistry layer (atoms, electrons moving, lattices,
-    molecules) when the walkthrough has those scenes."""
+    molecules, the lab bench and its apparatus) when the walkthrough has those scenes."""
     if not any(sc.get("scene") in CHEM3D_SCENES for sc in scenes):
         return ""
-    return f"<script>{_script(_asset('three.min.js'))}</script><script>{_script(_asset('chem3d.js'))}</script>"
+    return f"<script>{_script(_asset('three.min.js'))}</script><script>{_script(_asset('chem3d.js'))}</script><script>{_script(_asset('lab3d.js'))}</script>"
 
 
 def _teacher_scripts(teacher: dict[str, Any] | None, *, three_loaded: bool = False) -> str:

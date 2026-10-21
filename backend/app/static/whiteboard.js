@@ -255,7 +255,9 @@
     return at + dur;
   }
 
+  let quietDraw = false;           // the apparatus is drawn in 3D: the marker draws no lines for it
   function draw(p, at, dur) {
+    if (quietDraw) { p.style.display = "none"; return at + dur; }
     const len = p.getTotalLength();
     p.style.strokeDasharray = `${len} ${len}`;
     p.style.strokeDashoffset = `${len}`;
@@ -819,6 +821,7 @@
       }
       at = draw(path(outline, INK.black, 5), at, Math.min(1, dur * 0.12));
       const t0 = at, span = Math.max(1.5, s0 + dur - at - 0.3);   // what is left of the scene, for the reaction
+      s._t0 = t0 - s0; s._span = span;                            // when the 3D bench starts reacting
       // The solid: a strip of metal or a lump, lowered in.
       let solid = null;
       if (lab.solid) {
@@ -1315,6 +1318,7 @@
       const s0 = at, m = s.method, cx = data.social ? W / 2 : 380;
       at = write(text(60, 70, s.name, { size: 38, color: INK.blue }), at, 0.6);
       const t0 = at, span = Math.max(2, s0 + dur - at - 0.3);
+      s._t0 = t0 - s0; s._span = span;
       const beaker = (x, y, w, h, fill) => {
         const liquid = fill ? el("rect", { x: x + 3, y: y + h * 0.45, width: w - 6, height: h * 0.55 - 3, fill, opacity: 0.85 }, page) : null;
         draw(path(`M${x - 6},${y} L${x},${y + 10} L${x},${y + h} L${x + w},${y + h} L${x + w},${y + 10} L${x + w + 6},${y}`, INK.black, 4), t0, 0.5);
@@ -1454,6 +1458,20 @@
       return { at };
     },
   };
+  // The bench and the separations in 3D (lab3d.js): the board keeps only
+  // its words — the names, the gas, the labels, the observations, the steps.
+  ["chem_lab", "chem_separation"].forEach((k) => {
+    const flat = builders[k];
+    builders[k] = function (s, at, dur) {
+      if (!(window.__chem3d && window.__lab3d)) return flat(s, at, dur);
+      quietDraw = true;
+      try {
+        const out = flat(s, at, dur);
+        for (const n of [...page.children]) if (n.tagName !== "text") n.style.display = "none";
+        return out;
+      } finally { quietDraw = false; }
+    };
+  });
   const wb = {};
 
   // ── the vertical frame: captions and the countdown ──

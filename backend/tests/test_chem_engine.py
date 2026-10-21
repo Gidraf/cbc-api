@@ -286,4 +286,12 @@ def test_the_3d_layer_comes_only_with_atoms_bonds_and_lattices() -> None:
 
     bond = page({"bond": ["Na", "Cl"]})
     assert "__onChem3d" in bond and bond.index("__onChem3d = frame") < bond.index("window.__onChem3d(clock.t)")
-    assert "__onChem3d = frame" not in page({"separate": ["sand", "water"]})
+    sep = page({"separate": ["sand", "water"]})
+    assert "__onChem3d = frame" in sep and "window.__lab3d" in sep           # the apparatus in 3D too
+    assert "window.__lab3d" in page({"reactants": ["Zn", "HCl"]})
+    assert "__onChem3d = frame" not in page({"equation": "H2 + O2 -> H2O"})
+
+
+def test_a_mixture_may_be_named_as_a_question_names_it() -> None:
+    assert C.separate(["iron", "sulfur"])["methods"] == ["magnet"]
+    assert C.separate(["sodium chloride", "sand"])["methods"][:2] == ["dissolve", "filtration"]

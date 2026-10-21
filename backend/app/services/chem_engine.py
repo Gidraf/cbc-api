@@ -790,9 +790,14 @@ COMPONENTS: dict[str, dict[str, Any]] = {
 }
 
 
+# Other names a question may use for a component.
+ALIASES = {"iron": "iron filings", "iron powder": "iron filings", "sulfur": "sulphur", "sulphur powder": "sulphur",
+           "common salt": "salt", "sodium chloride": "salt"}
+
+
 def separate(parts: list[str], keep: str = "") -> dict[str, Any]:
     """How to separate a mixture: the method(s) from what the parts are like."""
-    ps = [p.strip().lower() for p in parts if p.strip()]
+    ps = [ALIASES.get(p.strip().lower(), p.strip().lower()) for p in parts if p.strip()]
     unknown = [p for p in ps if p not in COMPONENTS]
     if unknown:
         return {"covered": False, "why": f"The separation rules here do not know {', '.join(unknown)}."}

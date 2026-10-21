@@ -17,7 +17,8 @@
   "use strict";
   const data = window.WB_DATA || {};
   const scenes = data.scenes || [];
-  const KINDS = { chem_atom: 1, chem_ionic: 1, chem_covalent: 1 };
+  // The lab bench and the separations are drawn by lab3d.js, through this canvas.
+  const KINDS = { chem_atom: 1, chem_ionic: 1, chem_covalent: 1, chem_lab: 1, chem_separation: 1 };
   if (typeof THREE === "undefined" || !scenes.some((s) => KINDS[s.scene])) return;
   const root = document.getElementById("wb");
   if (!root) return;
@@ -339,8 +340,10 @@
     while (world.children.length) world.remove(world.children[0]);
     if (s.scene === "chem_atom") atomScene(s, i, t, dur);
     else if (s.scene === "chem_ionic") ionicScene(s, i, t, dur);
-    else covalentScene(s, i, t, dur);
+    else if (s.scene === "chem_covalent") covalentScene(s, i, t, dur);
+    else if (window.__lab3d && window.__lab3d[s.scene]) window.__lab3d[s.scene](s, t, dur);
     renderer.render(scene3, camera);
   }
   window.__onChem3d = frame;
+  window.__chem3dKit = { THREE, world, camera, data, mat, ball, label, rand };
 })();
