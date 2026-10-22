@@ -40,12 +40,44 @@ VERSION = "so1"
 
 # ── the brand ────────────────────────────────────────────────────────────────
 
+_SCIENCES = re.compile(r"chem|physic|biolog|integrated science|^science|science and technology|environmental", re.I)
+# What CBC calls science at each level (KICD): the separate sciences only in Senior School.
+_LEVEL_SCIENCE = {"Pre-Primary": "Environmental Activities", "Lower Primary": "Environmental Activities",
+                  "Upper Primary": "Science and Technology", "Junior School": "Integrated Science"}
+
+
+def subject_label(q: dict[str, Any] | None) -> str:
+    """The subject as CBC names it for this question: by its grade — Integrated
+    Science in Grades 7–9, Chemistry (or Physics, Biology) only in Senior School,
+    Science and Technology in Grades 4–6 — or, with no grade (a lab mix, the
+    API), by how hard the chemistry is: separating mixtures and the structure
+    of an atom are Junior School work; bonding, balancing and reactions Senior."""
+    q = q or {}
+    link = q.get("curriculum") or {}
+    subject = str(link.get("subject") or "").strip()
+    if not subject or not _SCIENCES.search(subject):
+        return subject
+    from .grade_order import grade_level
+
+    level = grade_level(str(link.get("grade") or ""))
+    if level in _LEVEL_SCIENCE:
+        return _LEVEL_SCIENCE[level]
+    if level == "Senior School":
+        return "Chemistry" if re.search(r"integrated|^science", subject, re.I) and q.get("chemistry") else subject
+    chem = q.get("chemistry") if isinstance(q.get("chemistry"), dict) else {}
+    hard = str((q.get("pedagogy") or {}).get("difficulty") or "").lower() in ("hard", "challenging", "advanced")
+    if chem and not hard:
+        junior = bool(chem.get("separate")) or (bool(chem.get("atom")) and not chem.get("focus") == "ion")
+        return "Integrated Science" if junior else "Chemistry"
+    return "Chemistry" if chem else subject
+
+
 def brand_name(b: dict[str, Any], q: dict[str, Any] | None = None, subject: str = "") -> str:
     """The brand for a question's subject: Settings → Brand per subject
     ("Chemistry=CBC Chemistry; Biology=CBC Biology"), or else the brand with
     its subject word swapped ("CBC Maths" on a chemistry video: "CBC Chemistry")."""
     name = str(b.get("name") or "")
-    subject = (subject or str(((q or {}).get("curriculum") or {}).get("subject") or "")).strip()
+    subject = (subject or subject_label(q)).strip()
     if not subject:
         return name
     from . import platform_settings
@@ -133,7 +165,7 @@ def cover_for(q: dict[str, Any], b: dict[str, Any]) -> dict[str, Any]:
             "hook": COVER_HOOKS[(n // 7) % len(COVER_HOOKS)], "emoji": COVER_EMOJI[(n // 11) % len(COVER_EMOJI)],
             "tilt": [-4, -2, 2, 3][(n // 13) % 4],
             "tag": " · ".join(x for x in (_grade_label(str(link.get("grade") or "")).upper(),
-                                          str(link.get("subject") or "").upper()) if x),
+                                          subject_label(q).upper()) if x),
             "question": text, "choices": chips, "brand": brand_name(b, q), "figure": _cover_figure(q)}
 
 
@@ -260,7 +292,7 @@ def frame_payload(q: dict[str, Any], b: dict[str, Any]) -> dict[str, Any]:
     from .whiteboard import _hand_bytes
 
     link = q.get("curriculum") or {}
-    tag = " · ".join(x for x in (_grade_label(str(link.get("grade") or "")), str(link.get("subject") or ""),
+    tag = " · ".join(x for x in (_grade_label(str(link.get("grade") or "")), subject_label(q),
                                  str(link.get("sub_strand") or "")) if x)
     logo = None
     if b.get("logo_url"):
