@@ -4098,6 +4098,25 @@ export function useChemReact(mix: ChemMix | null) {
 }
 
 /** The mix on the whiteboard, voiced in the science voice. */
+/** The chemistry questions the engine can make, per kind. */
+export type ChemKind = "reactions" | "atoms" | "bonding" | "separations";
+export type ChemBankSummary = Record<ChemKind, { questions: number; by_focus: Record<string, number>; sample: string[] }>;
+export function useChemBankSummary(enabled = true) {
+  const api = useApi();
+  return useQuery({ queryKey: ["chem-bank"], enabled, staleTime: 10 * 60_000,
+                    queryFn: () => api<ChemBankSummary>("/api/v1/play/chem/bank") });
+}
+/** Save engine-made chemistry questions of a kind to the bank (then Play's videos, photos and posts take them). */
+export function useChemBank() {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { kind: ChemKind; grade: string; subject: string; strand: string; sub_strand: string; limit: number }) =>
+      api<{ saved: number; already: number; asked: number }>("/api/v1/play/chem/bank", { method: "POST", body: JSON.stringify(v) }),
+    onSuccess: () => { for (const k of ["social", "social-library", "video-library", "library", "play-items", "play-catalog"]) qc.invalidateQueries({ queryKey: [k] }); },
+  });
+}
+
 /** What the separation rules decide: mixtures, questions, by method and kind. */
 export type SeparationSummary = { substances: number; mixtures: number; questions: number;
   by_method: Record<string, number>; by_focus: Record<string, number>; sample: string[] };

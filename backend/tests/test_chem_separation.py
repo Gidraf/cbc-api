@@ -79,7 +79,8 @@ def test_saving_to_the_bank_keeps_ids_and_adds_only_new(monkeypatch) -> None:
     first = X.bank(point, 25)
     assert first["saved"] == 25 and all(k.startswith("q-chem-sep-") for k in saved)
     one = next(iter(saved.values()))
-    assert one["status"] == "approved" and one["content"]["chemistry"]["separate"] and one["curriculum_link"] == point
+    assert one["status"] == "approved" and one["content"]["chemistry"]["separate"]
+    assert one["curriculum_link"] == {**point, "grade": "grade-7"}          # as Play looks it up
     again = X.bank(point, 30)
     assert again == {**again, "saved": 5, "already": 25}
 

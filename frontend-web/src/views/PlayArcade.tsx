@@ -565,7 +565,7 @@ function FractionGame({ spec, onDone }: { spec: PlaySpec; onDone: (c: boolean) =
 
 // ── the walkthrough ─────────────────────────────────────────────────────────
 
-function WatchModal({ questionId, onClose, start = "whiteboard" }: { questionId: string; onClose: () => void; start?: "whiteboard" | "classic" | "social" }) {
+export function WatchModal({ questionId, onClose, start = "whiteboard" }: { questionId: string; onClose: () => void; start?: "whiteboard" | "classic" | "social" }) {
   const [view, setView] = React.useState<"whiteboard" | "classic" | "social">(start);
   const [voice, setVoice] = React.useState("");
   const [teacher, setTeacher] = React.useState("");          // "": as Settings say
@@ -689,7 +689,7 @@ function PostText({ post }: { post: string }) {
 }
 
 /** Every item in the scope as a post for TikTok, Reels, Shorts and Status. */
-function SocialLibrary({ grade, subject, subStrand, topics, onWatch }: {
+export function SocialLibrary({ grade, subject, subStrand, topics, onWatch }: {
   grade: string; subject: string; subStrand: string; topics: string[]; onWatch: (qid: string) => void;
 }) {
   const [open, setOpen] = React.useState(false);
@@ -886,7 +886,7 @@ function VideoControl({ questionId, voice = "" }: { questionId: string; voice?: 
 }
 
 /** Every item in the scope with its video — content to download and post. */
-function VideoLibrary({ grade, subject, subStrand, open, onToggle, onWatch }: {
+export function VideoLibrary({ grade, subject, subStrand, open, onToggle, onWatch }: {
   grade: string; subject: string; subStrand: string; open: boolean; onToggle: () => void; onWatch: (qid: string) => void;
 }) {
   const library = useVideoLibrary(grade, subject, subStrand, open);
@@ -1915,7 +1915,7 @@ function RenderMac() {
 const STEP_LABEL: Record<string, string> = { teaser: "🤔 card", question: "❓ question", answer: "✅ answer", walkthrough: "🎬 video" };
 
 /** Days of photo + video series on Facebook. */
-function BookSeries({ grade, subject, subStrand }: { grade: string; subject: string; subStrand: string }) {
+export function BookSeries({ grade, subject, subStrand }: { grade: string; subject: string; subStrand: string }) {
   const book = useBookSeries();
   const toast = useToast();
   const [days, setDays] = React.useState(7);
@@ -2098,7 +2098,7 @@ function ScheduleExport({ grade, subject, subStrand, ready }: { grade: string; s
 }
 
 /** How each video did, platform by platform and topic by topic. */
-function Performance({ grade, subject, subStrand, format }: { grade: string; subject: string; subStrand: string; format?: "video" | "photo" }) {
+export function Performance({ grade, subject, subStrand, format }: { grade: string; subject: string; subStrand: string; format?: "video" | "photo" }) {
   const posts = useSocialPosts(grade, subject, subStrand);
   const [platform, setPlatform] = React.useState("");
   const raw = posts.data;
@@ -2222,7 +2222,7 @@ function PostRow({ post }: { post: TrackedPost }) {
 
 /** The browser poster: its screen, its logins, its queue. It posts from the
  *  sessions logged into on its screen, within the server's rules. */
-function AutoPost() {
+export function AutoPost() {
   const [open, setOpen] = React.useState(false);
   const overview = usePosterOverview(open);
   const command = usePosterCommand();

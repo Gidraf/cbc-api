@@ -558,7 +558,10 @@ def bank(curriculum: dict[str, str], limit: int, focuses: list[str] | None = Non
     from .question_dna import question_dna_service
 
     chosen = pick(max(1, min(int(limit), 5000)), focuses)
+    from .grade_order import normalize_grade
+
     link = {k: str(curriculum.get(k) or "").strip() for k in ("grade", "subject", "strand", "sub_strand")}
+    link["grade"] = normalize_grade(link["grade"]) or link["grade"]      # as Play looks it up: grade-7
     point = "|".join(link.values()).lower()
     ids = [f"q-chem-sep-{hashlib.sha1((point + '|' + q['question_text']).encode()).hexdigest()[:14]}" for q in chosen]
     have = {r["question_id"] for r in (fetch_all("SELECT question_id FROM question_dna WHERE question_id = ANY(:i)",

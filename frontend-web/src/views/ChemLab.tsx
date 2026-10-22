@@ -1,6 +1,10 @@
 import React from "react";
-import { Badge, Button, Card, ErrorNotice, Field, Input, LoadingBlock, PageHeader, Select, Stack, useToast } from "../ui/components";
-import { useChemLabHtml, useChemReact, useChemSeparations, useChemSubstances, useSeparationBank, type ChemMix } from "../lib/queries";
+import { Badge, Button, Card, EmptyState, ErrorNotice, Field, Input, LoadingBlock, PageHeader, Select, Stack, useToast } from "../ui/components";
+import { gradeOptionLabel, subjectOptionLabel, useChemBank, useChemBankSummary, useChemLabHtml, useChemReact, useChemSubstances,
+         useGrades, useStoredStructure, useSubjects, type ChemKind, type ChemMix } from "../lib/queries";
+import { AutoPost, BookSeries, Performance, SocialLibrary, VideoLibrary, WatchModal } from "./PlayArcade";
+import { MonthPlanner } from "./MonthPlanner";
+import { PhotoStudio } from "./PhotoStudio";
 
 const CONDITIONS: [string, string][] = [["", "Mixed (room temperature)"], ["heat", "Heated"], ["steam", "With steam"],
                                          ["molten", "Molten (no water)"], ["boil", "Boiled"]];
@@ -9,6 +13,31 @@ const CONDITIONS: [string, string][] = [["", "Mixed (room temperature)"], ["heat
  *  watch what happens — the reaction worked out by the chemistry engine,
  *  balanced, with what you would see, and the walkthrough on the whiteboard. */
 export function ChemLab() {
+  type Tab = "lab" | "socials";
+  const [tab, setTabState] = React.useState<Tab>(() => {
+    try { return (localStorage.getItem("cbc_chem_tab") as Tab) || "lab"; } catch { return "lab"; }
+  });
+  const setTab = (t: Tab) => { setTabState(t); try { localStorage.setItem("cbc_chem_tab", t); } catch { /* private window */ } };
+  return (
+    <div style={{ display: "grid", gap: "var(--s4)" }}>
+      <PageHeader eyebrow="Assess" title="Chemistry lab"
+        description="Pick two substances — or one, and heat it — and mix; or pick an element for its electron arrangement, two elements to see them bond, or a mixture to separate. The chemistry engine works out what happens by the rules of school chemistry, then explains it on the whiteboard. In Socials, the engine's questions become videos, photo series and posts, as in Play." />
+      <div role="tablist" aria-label="Chemistry lab sections" style={{ display: "flex", gap: 4, borderBottom: "1px solid var(--line)", overflowX: "auto" }}>
+        {([["lab", "🧪 Lab"], ["socials", "📣 Socials"]] as const).map(([id, label]) => (
+          <button key={id} role="tab" aria-selected={tab === id} onClick={() => setTab(id)}
+                  style={{ background: "transparent", border: "none", padding: "8px 14px", cursor: "pointer", whiteSpace: "nowrap",
+                           borderBottom: `2px solid ${tab === id ? "var(--accent)" : "transparent"}`, fontWeight: tab === id ? 650 : 500, color: "var(--ink)" }}>
+            {label}
+          </button>
+        ))}
+      </div>
+      {tab === "lab" ? <LabBench /> : <ChemSocials />}
+    </div>
+  );
+}
+
+/** The bench: mix, see the result, watch it on the whiteboard or as the social cut. */
+function LabBench() {
   const shelf = useChemSubstances();
   const [mode, setMode] = React.useState<"react" | "atom" | "bond" | "separate">("react");
   const [a, setA] = React.useState("Zn");
@@ -38,8 +67,6 @@ export function ChemLab() {
   );
   return (
     <div style={{ display: "grid", gap: "var(--s4)" }}>
-      <PageHeader eyebrow="Play" title="Chemistry lab"
-        description="Pick two substances — or one, and heat it — and mix; or pick an element for its electron arrangement, two elements to see them bond, or a mixture to separate. The chemistry engine works out what happens by the rules of school chemistry (the reactivity series, acids, bases, carbonates, solubility, burning, heating): the balanced equation, what you would see, how to test the gas, and where it is used — then explains it on the whiteboard." />
       <Card>
         <Stack direction="row" gap="var(--s2)" wrap style={{ marginBottom: "var(--s3)" }}>
           {([["react", "⚗️ Reaction"], ["atom", "⚛️ Electron arrangement"], ["bond", "🔗 Bonding and formula"], ["separate", "🧪 Separating mixtures"]] as const).map(([m, l]) => (
@@ -143,73 +170,137 @@ export function ChemLab() {
           </Card>
         </div>
       )}
-      {mode === "separate" && <SeparationBank />}
       <style>{`@media (max-width: 900px) { .chem-grid { grid-template-columns: 1fr !important; } }`}</style>
     </div>
   );
 }
 
-const FOCUS_LABELS: Record<string, string> = { method: "Which method", order: "Order of steps", residue: "Residue / filtrate",
-  layer: "Which layer", first: "What distils first", why: "Why it works", apparatus: "Which apparatus" };
+const KINDS: [ChemKind, string, string][] = [
+  ["reactions", "⚗️ Reactions", "What is seen, the balanced equation, the gas and its test, the type of reaction, why some do not react"],
+  ["atoms", "⚛️ Electron arrangements", "The first twenty elements: arrangement, protons and neutrons, group and period, the ion"],
+  ["bonding", "🔗 Bonding and formulae", "Every pair that bonds: the formula, ionic or covalent"],
+  ["separations", "🧪 Separating mixtures", "Two or three parts: the method, the order, residue and filtrate, layers, why it works"],
+];
 
-/** Every mixture the separation rules decide, as questions in the bank — so
- *  Social batches can make a video of each. */
-function SeparationBank() {
-  const sum = useChemSeparations();
-  const save = useSeparationBank();
+/** The lab's socials: the engine's questions saved to the bank at a point of
+ *  the curriculum, then Play's own tools on them — the videos and their
+ *  social cuts, photo series, the posting calendar and auto-post. */
+function ChemSocials() {
+  const sum = useChemBankSummary();
+  const save = useChemBank();
   const toast = useToast();
-  const [grade, setGrade] = React.useState("Grade 7");
-  const [subject, setSubject] = React.useState("Integrated Science");
-  const [strand, setStrand] = React.useState("Mixtures, Elements and Compounds");
-  const [subStrand, setSubStrand] = React.useState("Mixtures");
-  const [limit, setLimit] = React.useState(500);
-  const [focuses, setFocuses] = React.useState<string[]>([]);
+  const grades = useGrades();
+  const [grade, setGrade] = React.useState("");
+  const subjects = useSubjects(grade);
+  const [subject, setSubject] = React.useState("");
+  const structure = useStoredStructure(grade, subject);
+  const [subStrand, setSubStrand] = React.useState("");
+  const [kind, setKind] = React.useState<ChemKind>("separations");
+  const [limit, setLimit] = React.useState(200);
+  const [tool, setTool] = React.useState<"videos" | "photos" | "autopost">("videos");
+  const [showLibrary, setShowLibrary] = React.useState(false);
+  const [watching, setWatching] = React.useState<string | null>(null);
+  const [socialWatch, setSocialWatch] = React.useState<string | null>(null);
+  // The science subject of the grade: Integrated Science in Junior School, Chemistry in Senior School.
+  React.useEffect(() => {
+    const list = (subjects.data || []) as any[];
+    if (!list.length || list.some((x) => x.name === subject)) return;
+    const sci = list.find((x) => /chemistry/i.test(x.name)) || list.find((x) => /integrated science/i.test(x.name)) || list.find((x) => /science/i.test(x.name));
+    setSubject(sci ? sci.name : list[0].name);
+  }, [subjects.data, subject]);
+  const topics = ((structure.data?.strands || []) as any[]).flatMap((st) =>
+    (st.sub_strands || []).map((x: any) => ({ strand: String(st.strand_name || st.name || ""), name: String(x.sub_strand_name || x.name || "") })));
+  const strand = topics.find((t) => t.name === subStrand)?.strand || "";
   const d = sum.data;
-  const run = () => save.mutate({ grade, subject, strand, sub_strand: subStrand, limit, focuses }, {
-    onSuccess: (r) => toast(`${r.saved} new questions saved${r.already ? ` (${r.already} were already there)` : ""}. Make their videos in Play → Social batches.`, "ok"),
+  const run = () => save.mutate({ kind, grade, subject, strand, sub_strand: subStrand, limit }, {
+    onSuccess: (r) => toast(`${r.saved} new questions saved${r.already ? ` (${r.already} were already there)` : ""}. Make their videos and photos below.`, "ok"),
     onError: (e) => toast(String((e as Error).message || e), "danger"),
   });
   return (
-    <Card title="Separation questions for videos">
-      {sum.isLoading && <LoadingBlock rows={2} label="Counting the mixtures" />}
-      {d && (
+    <>
+      <Card title="1. Make the questions">
         <div style={{ display: "grid", gap: "var(--s3)" }}>
-          <div>
-            The rules know <b>{d.substances}</b> substances and decide <b>{d.mixtures.toLocaleString()}</b> mixtures of two or three
-            parts — <b>{d.questions.toLocaleString()}</b> questions, each with its own animated walkthrough.
+          <div style={{ color: "var(--ink-3)", fontSize: "var(--text-sm)" }}>
+            The chemistry engine writes and marks every question (multiple choice); each has the lab's animated walkthrough as its
+            video. Choose what, and where in the curriculum it belongs.
           </div>
+          {sum.isLoading && <LoadingBlock rows={2} label="Counting what the engine can make" />}
+          {sum.error && <ErrorNotice error={sum.error} />}
           <Stack direction="row" gap="var(--s2)" wrap>
-            {Object.entries(d.by_method).map(([m, n]) => <Badge key={m}>{m.replace(/_/g, " ")}: {n.toLocaleString()}</Badge>)}
-          </Stack>
-          <details><summary style={{ cursor: "pointer" }}>Some of the questions</summary>
-            <ul style={{ margin: 0, paddingLeft: "1.2rem" }}>{d.sample.map((q) => <li key={q}>{q}</li>)}</ul>
-          </details>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(12rem, 1fr))", gap: "var(--s2)" }}>
-            <Field label="Grade">{(p) => <Input {...p} value={grade} onChange={(e) => setGrade(e.target.value)} />}</Field>
-            <Field label="Subject">{(p) => <Input {...p} value={subject} onChange={(e) => setSubject(e.target.value)} />}</Field>
-            <Field label="Strand">{(p) => <Input {...p} value={strand} onChange={(e) => setStrand(e.target.value)} />}</Field>
-            <Field label="Sub-strand">{(p) => <Input {...p} value={subStrand} onChange={(e) => setSubStrand(e.target.value)} />}</Field>
-            <Field label="How many">{(p) => <Input {...p} type="number" min={1} max={5000} value={limit} onChange={(e) => setLimit(Math.max(1, Math.min(5000, Number(e.target.value) || 1)))} />}</Field>
-          </div>
-          <Stack direction="row" gap="var(--s2)" wrap align="center">
-            <span style={{ fontSize: "var(--text-sm)", color: "var(--ink-3)" }}>Kinds (none picked: all):</span>
-            {Object.entries(FOCUS_LABELS).map(([f, l]) => (
-              <Button key={f} size="sm" variant={focuses.includes(f) ? "primary" : "ghost"}
-                      onClick={() => setFocuses((cur) => cur.includes(f) ? cur.filter((x) => x !== f) : [...cur, f])}>{l}</Button>
+            {KINDS.map(([k, label, hint]) => (
+              <Button key={k} size="sm" variant={kind === k ? "primary" : "ghost"} title={hint} onClick={() => setKind(k)}>
+                {label}{d ? ` · ${d[k].questions.toLocaleString()}` : ""}
+              </Button>
             ))}
           </Stack>
+          {d && (
+            <details><summary style={{ cursor: "pointer" }}>{KINDS.find(([k]) => k === kind)![2]} — examples</summary>
+              <ul style={{ margin: 0, paddingLeft: "1.2rem" }}>{d[kind].sample.map((q) => <li key={q}>{q}</li>)}</ul>
+            </details>
+          )}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(12rem, 1fr))", gap: "var(--s2)" }}>
+            <Field label="Grade">{(p) => (
+              <Select {...p} value={grade} onChange={(e) => { setGrade(e.target.value); setSubStrand(""); }}>
+                <option value="">Choose…</option>
+                {(grades.data || []).map((g) => <option key={g.slug || g.name} value={g.slug || g.name}>{gradeOptionLabel(g)}</option>)}
+              </Select>)}</Field>
+            <Field label="Subject">{(p) => (
+              <Select {...p} value={subject} onChange={(e) => { setSubject(e.target.value); setSubStrand(""); }} disabled={!grade}>
+                {((subjects.data || []) as any[]).map((x) => <option key={x.name} value={x.name}>{subjectOptionLabel(x)}</option>)}
+              </Select>)}</Field>
+            <Field label="Topic (sub-strand)">{(p) => (
+              <Select {...p} value={subStrand} onChange={(e) => setSubStrand(e.target.value)} disabled={!grade || !subject}>
+                <option value="">Choose…</option>
+                {topics.map((t) => <option key={t.strand + t.name} value={t.name}>{t.name} — {t.strand}</option>)}
+              </Select>)}</Field>
+            <Field label="How many">{(p) => (
+              <Input {...p} type="number" min={1} max={5000} value={limit} onChange={(e) => setLimit(Math.max(1, Math.min(5000, Number(e.target.value) || 1)))} />)}</Field>
+          </div>
           <div>
             <Button variant="primary" onClick={run} disabled={save.isPending || !grade || !subject || !subStrand}>
-              {save.isPending ? "Saving…" : `💾 Save ${limit.toLocaleString()} questions to the bank`}
+              {save.isPending ? "Saving…" : `💾 Save ${limit.toLocaleString()} ${KINDS.find(([k]) => k === kind)![1].replace(/^\S+ /, "").toLowerCase()} questions to this topic`}
             </Button>
             <div style={{ fontSize: "var(--text-sm)", color: "var(--ink-3)", marginTop: 6 }}>
-              Spread across every method and kind; saving again adds only new ones. Check the grade, subject and sub-strand
-              match your curriculum, then make their videos in Play → Social batches.
+              Spread across every sort of question; saving again adds only new ones. They go in the bank as approved items, so Play,
+              the Library, papers and tests see them too.
             </div>
           </div>
         </div>
-      )}
-      {sum.error && <ErrorNotice error={sum.error} />}
-    </Card>
+      </Card>
+
+      <Card title="2. Videos, photos and posts">
+        {!grade || !subject ? (
+          <EmptyState title="Choose a grade and subject above" description="The videos, photo series and posting plan are per subject or topic, as in Play." />
+        ) : (
+          <>
+            <div role="tablist" aria-label="Social tools" style={{ display: "flex", gap: 4, borderBottom: "1px solid var(--line)", marginBottom: "var(--s3)", overflowX: "auto" }}>
+              {([["videos", "🎬 Videos"], ["photos", "📸 Photos"], ["autopost", "📤 Auto-post"]] as const).map(([id, label]) => (
+                <button key={id} role="tab" aria-selected={tool === id} onClick={() => setTool(id)}
+                        style={{ background: "transparent", border: "none", padding: "8px 14px", cursor: "pointer", whiteSpace: "nowrap",
+                                 borderBottom: `2px solid ${tool === id ? "var(--accent)" : "transparent"}`, fontWeight: tool === id ? 650 : 500, color: "var(--ink)" }}>
+                  {label}
+                </button>
+              ))}
+            </div>
+            {tool === "videos" && <>
+              <VideoLibrary grade={grade} subject={subject} subStrand={subStrand} open={showLibrary}
+                            onToggle={() => setShowLibrary((v) => !v)} onWatch={(qid) => setWatching(qid)} />
+              <SocialLibrary grade={grade} subject={subject} subStrand={subStrand} topics={topics.map((t) => t.name)} onWatch={(qid) => setSocialWatch(qid)} />
+              <Performance grade={grade} subject={subject} subStrand={subStrand} format="video" />
+            </>}
+            {tool === "photos" && (
+              <PhotoStudio grade={grade} subject={subject} subStrand={subStrand}
+                           bookSeries={<BookSeries grade={grade} subject={subject} subStrand={subStrand} />} />
+            )}
+            {tool === "autopost" && <>
+              <MonthPlanner grade={grade} subject={subject} subStrand={subStrand} />
+              <AutoPost />
+            </>}
+          </>
+        )}
+      </Card>
+      {watching && <WatchModal questionId={watching} onClose={() => setWatching(null)} />}
+      {socialWatch && <WatchModal questionId={socialWatch} start="social" onClose={() => setSocialWatch(null)} />}
+    </>
   );
 }
