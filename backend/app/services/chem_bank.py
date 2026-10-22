@@ -26,6 +26,8 @@ TYPE_NAMES = {
     "displacement": "Displacement by a more reactive metal", "neutralisation": "Neutralisation",
     "acid_carbonate": "An acid with a carbonate", "precipitation": "Precipitation (double decomposition)",
     "combustion": "Combustion of a fuel", "decomposition": "Thermal decomposition",
+    "reduction": "Reduction (oxygen taken from a metal oxide)", "metal_sulphur": "A metal combining with sulphur",
+    "hydration": "Slaking (an oxide combining with water)", "synthesis": "Synthesis (elements combining)",
 }
 
 
@@ -83,7 +85,9 @@ def _reactions() -> list[dict[str, Any]]:
                     return False
                 if y in acids | salts | {"H2O", "O2", "Cl2"}:
                     return True
-            if x in acids and y in bases | carbonates:
+            if x in acids and y in bases | carbonates | salts:
+                return True
+            if x == "CaO" and y == "H2O":
                 return True
             if x in salts and y in salts | alkalis:
                 return True
@@ -94,7 +98,8 @@ def _reactions() -> list[dict[str, Any]]:
     # Mixed as they are; heated alone; steam over a metal; a metal heated with a metal oxide.
     pairs = [(a, b, "") for a, b in itertools.combinations(shelf, 2) if meets(a, b)]
     pairs += [(a, "", "heat") for a in shelf] + [(m, "H2O", "steam") for m in metals] + \
-             [(m, o, "molten") for m in metals for o in oxides]
+             [(m, o, "molten") for m in metals for o in oxides] + \
+             [(r, o, "heat") for r in ("C", "H2") for o in oxides] + [(m, "S", "heat") for m in metals] + [("H2", "Cl2", "")]
     for a, b, cond in pairs:
         key = (a, b, cond)
         if key in tried:
@@ -122,7 +127,7 @@ def _names(r: dict[str, Any]) -> str:
         return f"{a} is heated strongly"
     if r["_cond"] == "steam":
         return f"steam is passed over heated {a}"
-    if r["_cond"] == "molten":
+    if r["_cond"] in ("molten", "heat") and b:
         return f"{a} is heated with {b}"
     return f"{a} is added to {b}"
 

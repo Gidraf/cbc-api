@@ -1507,6 +1507,13 @@
       return { at };
     },
   };
+  // A reaction atom by atom: in 3D (chem3d.js); without it, the board's particle drawing.
+  builders.chem_atoms = function (s, at, dur) {
+    if (window.__chem3d) { newPage(at); return { at: at + dur }; }
+    if (s.flat && s.left) return builders.chem_particles(s, at, dur);
+    at = newPage(at);
+    return { at: write(centered(360, s.equation || "", { size: 44, color: INK.green }), at, Math.min(1.5, dur * 0.3)) };
+  };
   // The bench and the separations in 3D (lab3d.js): the board keeps only
   // its words — the names, the gas, the labels, the observations, the steps.
   ["chem_lab", "chem_separation"].forEach((k) => {

@@ -20,8 +20,8 @@
   const data = window.WB_DATA || {};
   const scenes = data.scenes || [];
   // The lab bench and the separations are drawn by lab3d.js, through this canvas.
-  const KINDS = { chem_atom: 1, chem_ionic: 1, chem_covalent: 1, chem_lab: 1, chem_separation: 1 };
-  const CINE = { chem_atom: 1, chem_ionic: 1, chem_covalent: 1 };
+  const KINDS = { chem_atom: 1, chem_ionic: 1, chem_covalent: 1, chem_atoms: 1, chem_lab: 1, chem_separation: 1 };
+  const CINE = { chem_atom: 1, chem_ionic: 1, chem_covalent: 1, chem_atoms: 1 };
   if (typeof THREE === "undefined" || !scenes.some((s) => KINDS[s.scene])) return;
   const root = document.getElementById("wb");
   if (!root) return;
@@ -641,6 +641,115 @@
     hud(name, 640, 664, { size: 26, align: "center", alpha: span(t, T.model + 1.1, T.model + 1.7), colour: "#cbd5e1", weight: 500 });
   }
 
+  // ── a reaction, atom by atom ──
+  // The balanced equation's particles: each species built by the engine
+  // (molecules round a centre, a salt's ions side by side), copied as many
+  // times as its number in the equation. Their bonds break; every atom —
+  // keeping its colour — flies to its place in a product particle; the new
+  // bonds form. The count of each kind of atom is the same before and after.
+  const stickGeo = new THREE.CylinderGeometry(1, 1, 1, 8);
+  const stickMat = new THREE.MeshPhongMaterial({ color: 0xe2e8f0, emissive: 0x334155, shininess: 80 });
+  function stick(a, b, r) {
+    const m = new THREE.Mesh(stickGeo, stickMat);
+    m.scale.set(r, a.distanceTo(b), r);
+    m.position.copy(a).add(b).multiplyScalar(0.5);
+    m.quaternion.setFromUnitVectors(V3(0, 1, 0), b.clone().sub(a).normalize());
+    return m;
+  }
+  function atomsLayout(s) {
+    // Where every particle sits (reactants left, products right) and every atom in it.
+    const place = (side, x0, x1) => {
+      const inst = [];
+      side.forEach((sp, si) => { for (let c = 0; c < sp.count; c++) inst.push({ sp, si, c }); });
+      const n = inst.length, ext = Math.max(0.6, ...side.map((sp) => Math.max(...sp.atoms.map((a) => Math.hypot(a.pos[0], a.pos[1], a.pos[2]))) + 0.5));
+      const cols = Math.max(1, Math.ceil(Math.sqrt(n * 1.3))), rows = Math.ceil(n / cols);
+      const cell = Math.min((x1 - x0) / cols, 5.6 / rows), k = Math.min(1.5, (cell * 0.55) / ext);
+      inst.forEach((it, j) => {
+        const r = Math.floor(j / cols), c = j % cols, inRow = Math.min(cols, n - r * cols);
+        it.centre = V3(x0 + (x1 - x0) / 2 + (c - (inRow - 1) / 2) * cell, 0.4 + ((rows - 1) / 2 - r) * cell, ((j * 37) % 5 - 2) * 0.25);
+        it.k = k;
+        it.atoms = it.sp.atoms.map((a) => ({ el: a.el, to: a.to, ion: a.ion, at: it.centre.clone().add(V3(a.pos[0], a.pos[1], a.pos[2]).multiplyScalar(k)) }));
+      });
+      return inst;
+    };
+    const L = place(s.left2, -7.2, -0.9), R = place(s.right2, 0.9, 7.2);
+    // Each product atom takes the next reactant atom of its element: the equation balances, so there is always one.
+    const pool = {};
+    L.forEach((it) => it.atoms.forEach((a) => { (pool[a.el] = pool[a.el] || []).push(a); }));
+    const used = {};
+    R.forEach((it) => it.atoms.forEach((a) => { const q = pool[a.el] || []; const n = (used[a.el] = (used[a.el] || 0) + 1) - 1; a.from = q[n] || null; }));
+    return { L, R };
+  }
+  const layouts = new WeakMap();
+  function timesAtoms(dur) { return { show: dur * 0.02, brk: dur * 0.3, go: dur * 0.38, land: dur * 0.74, tally: dur * 0.82 }; }
+  function atomsScene(s, i, t, dur) {
+    let lay = layouts.get(s);
+    if (!lay) { lay = atomsLayout(s); layouts.set(s, lay); }
+    const T = timesAtoms(dur);
+    const breakF = span(t, T.brk, T.go);                       // the old bonds go
+    const ball2 = (el, p, size) => {
+      const b = ball((s.radii[el] || 0.5) * size, mat(s.colours[el] || "#999999", { emissive: 0x111111, shininess: 110 }));
+      b.position.copy(p); world.add(b);
+      const gl = glow(s.colours[el] === "#3a3a3a" ? "#9ca3af" : s.colours[el] || "#ffffff", (s.radii[el] || 0.5) * size * 2.6, 0.22);
+      if (gl) { gl.position.copy(p); world.add(gl); }
+    };
+    if (t < T.go) {
+      // The reactant particles, whole; then shaking loose.
+      lay.L.forEach((it, j) => {
+        const pop = ease(span(t, T.show + j * 0.06, T.show + j * 0.06 + 0.5));
+        if (pop <= 0) return;
+        it.atoms.forEach((a, q) => {
+          const jit = breakF > 0 ? V3(Math.sin(t * 40 + q), Math.cos(t * 37 + q * 2), Math.sin(t * 31 + q)).multiplyScalar(0.06 * breakF) : V3(0, 0, 0);
+          const out = a.at.clone().sub(it.centre).multiplyScalar(1 + 0.35 * breakF).add(it.centre).add(jit);
+          ball2(a.el, out, it.k * pop);
+          if (a.to >= 0 && breakF < 0.9) world.add(stick(out, it.atoms[a.to].at.clone().sub(it.centre).multiplyScalar(1 + 0.35 * breakF).add(it.centre), 0.11 * it.k * (1 - breakF)));
+          if (breakF > 0.05 && breakF < 0.9 && a.to >= 0) { const f = glow("#fde68a", 0.8 * it.k, 0.7 * Math.sin(Math.PI * breakF)); if (f) { f.position.copy(out); world.add(f); } }
+        });
+      });
+    } else {
+      // Every atom on its way to its new partners, then the new bonds.
+      const formed = span(t, T.land, T.land + 0.8);
+      let idx = 0;
+      lay.R.forEach((it) => {
+        it.atoms.forEach((a) => {
+          const from = a.from ? a.from.at.clone() : a.at.clone().add(V3(-8, 0, 0));
+          const startAt = from.clone();
+          const f = ease(span(t, T.go + (idx % 12) * 0.05, T.land - 0.15 + (idx % 12) * 0.03));
+          idx++;
+          const mid = startAt.clone().add(a.at).multiplyScalar(0.5).add(V3(0, 1.6 + (idx % 3) * 0.5, 1.2));
+          const curve = new THREE.QuadraticBezierCurve3(startAt, mid, a.at);
+          const p = curve.getPoint(f);
+          const kk = lerp(a.from ? lay.L.find((x) => x.atoms.includes(a.from)).k : it.k, it.k, f);
+          ball2(a.el, p, kk);
+          if (f > 0 && f < 1) for (let tr = 1; tr <= 5; tr++) {
+            const g = glow(s.colours[a.el] || "#fff", 0.35 * (1 - tr / 6), 0.5 * (1 - tr / 6));
+            if (g) { g.position.copy(curve.getPoint(Math.max(0, f - tr * 0.03))); world.add(g); }
+          }
+          if (a.to >= 0 && formed > 0) world.add(stick(a.at, it.atoms[a.to].at, 0.11 * it.k * formed));
+        });
+        if (formed > 0 && formed < 1) { const g = glow("#bbf7d0", 2.2 * it.k, 0.6 * (1 - formed)); if (g) { g.position.copy(it.centre); world.add(g); } }
+      });
+    }
+    const orbit = Math.sin(t * 0.25) * 0.25;
+    look(V3(Math.sin(orbit) * 16, 1.6 + Math.sin(t * 0.2) * 0.4, Math.cos(orbit) * 16 - span(t, T.go, T.land) * 1.5), V3(0, 0.3, 0));
+    // The words: what goes in, what comes out, the count.
+    const sideText = (xs) => xs.map((sp) => (sp.count > 1 ? sp.count + " " : "") + sp.pretty).join(" + ");
+    hud("Inside the reaction — atom by atom", 48, 52, { size: 30, reveal: span(t, 0.2, 1.4), colour: "#e2e8f0" });
+    hud(sideText(s.left2), 320, 610, { size: 30, align: "center", alpha: span(t, 0.4, 1.0), colour: "#fde68a" });
+    hud("→", 640, 610, { size: 34, align: "center", alpha: span(t, T.go, T.go + 0.5), colour: "#ffffff" });
+    hud(sideText(s.right2), 960, 610, { size: 30, align: "center", alpha: span(t, T.land, T.land + 0.6), colour: "#a7f3d0" });
+    caption("The bonds break…", t, T.brk, T.go + 0.4, "#fde68a");
+    caption("…every atom finds new partners", t, T.go + 0.4, T.land + 0.3, "#e2e8f0");
+    const keys = Object.keys(s.tally || {}).sort((a, b) => (s.tally[b] - s.tally[a]));
+    const count = keys.map((e) => `${s.tally[e]} ${e}`).join(" · ");
+    const ft = span(t, T.tally, T.tally + 0.6);
+    hud(`Atoms in: ${count}   =   Atoms out: ${count}`, 640, 668, { size: 23, align: "center", alpha: ft, colour: "#4ade80", weight: 600 });
+    hud(s.equation, 640, 120, { size: 40, align: "center", alpha: span(t, T.tally + 0.4, T.tally + 1.0), colour: "#ffffff" });
+    // A key to the colours.
+    let kx = 1230;
+    keys.slice().reverse().forEach((e) => { hud(`● ${e}`, kx, 52, { size: 24, align: "right", colour: s.colours[e] === "#3a3a3a" ? "#9ca3af" : s.colours[e], alpha: span(t, 0.3, 1.0) }); kx -= 26 + e.length * 15; });
+  }
+
   // ── the sounds: the same beats, placed on the board's clock (sfx.js) ──
   function sounds(starts, total) {
     if (!window.sfxAt) return;
@@ -662,6 +771,14 @@
         S(T.ions - 0.1, "zap", 0.6); S(T.attract + 0.55, "snap", 0.8); S(T.lattice, "riser", 0.45);
         for (let j = 0; j < 8; j++) S(T.lattice + 0.4 + j * ((dur * 0.97 - T.lattice) / 10), "pop", 0.3, 0.8 + j * 0.06);
         S(T.lattice + 0.7, "chime", 0.6);
+      } else if (s.scene === "chem_atoms") {
+        const T = timesAtoms(dur);
+        S(0.05, "whoosh", 0.5, 0.8);
+        S(T.brk, "zap", 0.55); S(T.brk + 0.25, "snap", 0.5);
+        S(T.go, "whoosh", 0.8, 1.15); S(T.go + 0.6, "whoosh", 0.5, 1.35);
+        const n = (s.right2 || []).reduce((a, sp) => a + sp.count, 0);
+        for (let j = 0; j < Math.min(8, n); j++) S(T.land + j * 0.09, "pop", 0.45, 0.9 + j * 0.07);
+        S(T.tally, "chime", 0.6);
       } else {
         const T = timesCovalent(s, dur);
         S(0.05, "whoosh", 0.6, 0.85);
@@ -695,6 +812,7 @@
     if (s.scene === "chem_atom") atomScene(s, i, t, dur);
     else if (s.scene === "chem_ionic") ionicScene(s, i, t, dur);
     else if (s.scene === "chem_covalent") covalentScene(s, i, t, dur);
+    else if (s.scene === "chem_atoms") atomsScene(s, i, t, dur);
     else if (window.__lab3d && window.__lab3d[s.scene]) window.__lab3d[s.scene](s, t, dur);
     renderer.clear();
     renderer.render(scene3, camera);
