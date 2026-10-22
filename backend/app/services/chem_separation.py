@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import hashlib
 import itertools
+from functools import lru_cache
 from typing import Any
 
 # ── the parts ────────────────────────────────────────────────────────────────
@@ -26,7 +27,7 @@ SUBSTANCES: dict[str, dict[str, Any]] = {
     "chalk": {"kind": S, "colour": "#f2f0ea", "looks": "white powder", "formula": "CaCO3"},
     "charcoal powder": {"kind": S, "colour": "#2b2b2b", "looks": "black powder", "formula": "C"},
     "copper(II) oxide": {"kind": S, "colour": "#1f1f1f", "looks": "black powder", "formula": "CuO"},
-    "sawdust": {"kind": S, "colour": "#c99a5b", "looks": "light brown flakes"},
+    "sawdust": {"kind": S, "colour": "#c99a5b", "looks": "light brown flakes", "floats": True},
     "iron(III) oxide": {"kind": S, "colour": "#9c3d1f", "looks": "reddish-brown powder", "formula": "Fe2O3"},
     "lead(II) iodide": {"kind": S, "colour": "#f2d10b", "looks": "yellow powder", "formula": "PbI2"},
     "barium sulphate": {"kind": S, "colour": "#f7f7f5", "looks": "white powder", "formula": "BaSO4"},
@@ -56,11 +57,11 @@ SUBSTANCES: dict[str, dict[str, Any]] = {
                           "hydrated": True, "formula": "FeSO4", "solution": "#bfe3b0"},
     "nickel(II) sulphate": {"kind": S, "colour": "#3f9b5a", "looks": "green crystals", "dissolves": ["water"],
                             "hydrated": True, "formula": "NiSO4", "solution": "#7ccf8f"},
-    "potassium nitrate": {"kind": S, "colour": "#fafafa", "looks": "white crystals", "dissolves": ["water"],
+    "potassium nitrate": {"kind": S, "colour": "#fafafa", "looks": "white crystals", "dissolves": ["water"], "steep": True,
                           "formula": "KNO3", "solution": "#e6f3ff"},
     "potassium permanganate": {"kind": S, "colour": "#581c87", "looks": "purple crystals", "dissolves": ["water"],
                                "formula": "KMnO4", "solution": "#9d4edd"},
-    "potassium dichromate": {"kind": S, "colour": "#ea580c", "looks": "orange crystals", "dissolves": ["water"],
+    "potassium dichromate": {"kind": S, "colour": "#ea580c", "looks": "orange crystals", "dissolves": ["water"], "steep": True,
                              "formula": "K2Cr2O7", "solution": "#fb923c"},
     "sodium carbonate": {"kind": S, "colour": "#fafafa", "looks": "white powder", "dissolves": ["water"],
                          "formula": "Na2CO3", "solution": "#e6f3ff"},
@@ -110,6 +111,11 @@ METHODS: dict[str, dict[str, Any]] = {
                    "uses": ["Clearing muddy water at a water works", "Making tea with a strainer"]},
     "evaporation": {"name": "Evaporation", "apparatus": "an evaporating dish over a Bunsen burner",
                     "uses": ["Salt pans at the coast (Malindi, Ngomeni)", "Getting salt from Lake Magadi brine"]},
+    "flotation": {"name": "Flotation", "apparatus": "a beaker of water and a spoon or sieve",
+                  "uses": ["Removing chaff and husks when washing grain", "Froth flotation of copper ore at a mine"]},
+    "fractional_crystallisation": {"name": "Fractional crystallisation",
+                                   "apparatus": "a beaker, a Bunsen burner and a filter funnel",
+                                   "uses": ["Getting potassium nitrate from mixed salts", "Purifying salts in industry"]},
     "crystallisation": {"name": "Crystallisation", "apparatus": "an evaporating dish, then a cool place to crystallise",
                         "uses": ["Making pure copper(II) sulphate crystals", "Refining sugar at Mumias and Kibos"]},
     "distillation": {"name": "Simple distillation", "apparatus": "a flask, a thermometer and a Liebig condenser",
@@ -145,6 +151,12 @@ def _dissolves(name: str, solvent: str) -> bool:
 class _Plan:
     def __init__(self) -> None:
         self.steps: list[dict[str, Any]] = []
+        self.why = ""
+
+    def fail(self, why: str) -> bool:
+        """The rules cannot part these: say why, plainly (the first reason wins)."""
+        self.why = self.why or why
+        return False
 
     def add(self, method: str, text: str, why: str, look: dict[str, Any], gives: dict[str, Any]) -> None:
         self.steps.append({"method": method, "name": METHODS[method]["name"], "text": text, "why": why,
@@ -164,59 +176,115 @@ def _list(names: list[str]) -> str:
     return names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]
 
 
-def _solids(plan: _Plan, solids: list[str], keep: str) -> bool:
-    """A dry mixture of solids: take out what a magnet or heat takes, then
-    dissolve what dissolves, filter, and get the dissolved one back."""
-    left = list(solids)
-    mags = [s for s in left if SUBSTANCES[s].get("magnetic")]
-    if mags and len(mags) < len(left):
-        rest = [s for s in left if s not in mags]
+SOLVENTS = ("water", "ethanol", "methylbenzene", "propanone", "kerosene")
+
+
+def _dry(plan: _Plan, solids: list[str], keep: str) -> bool:
+    """A dry mixture of solids, worked through: a magnet takes what is
+    magnetic, heat takes the one that sublimes, a solvent takes what dissolves
+    in it (filtered off and got back); what one solvent dissolves together is
+    dried and tried again with another. Each part ends on its own, or the
+    rules say why they cannot part them."""
+    if len(solids) < 2:
+        return True
+    mags = [s for s in solids if SUBSTANCES[s].get("magnetic")]
+    if mags and len(mags) < len(solids):
+        if len(mags) > 1:
+            return plan.fail(f"{_list(mags).capitalize()} are all magnetic: a magnet cannot part them.")
+        rest = [s for s in solids if s not in mags]
         plan.add("magnet", f"Pass a magnet over the mixture: the {_list(mags)} stick{'s' if _one(mags) else ''} to it; "
                  f"the {_list(rest)} stay{'s' if _one(rest) else ''} behind.",
                  f"{_list(mags).capitalize()} {'is' if _one(mags) else 'are'} magnetic; {_list(rest)} "
                  f"{'is' if _one(rest) else 'are'} not.",
                  {"magnetic": [_look(m) for m in mags], "others": [_look(r) for r in rest]},
                  {"taken": mags, "left": rest})
-        left = rest
-    if len(left) < 2:
-        return True
-    subs = [s for s in left if SUBSTANCES[s].get("sublimes")]
+        return _dry(plan, rest, keep)
+    if len(mags) == len(solids):
+        return plan.fail(f"{_list(mags).capitalize()} are all magnetic: a magnet cannot part them.")
+    subs = [s for s in solids if SUBSTANCES[s].get("sublimes")]
     if len(subs) == 1:
-        rest = [s for s in left if s not in subs]
+        rest = [s for s in solids if s not in subs]
         sub = subs[0]
         plan.add("sublimation", f"Heat the mixture under a cold inverted funnel: the {sub} turns straight to vapour and "
                  f"collects as a solid on the cold funnel; the {_list(rest)} stay{'s' if _one(rest) else ''} in the dish.",
                  f"{sub.capitalize()} sublimes (solid to gas without melting); {_list(rest)} "
                  f"{'does' if _one(rest) else 'do'} not.",
                  {"sublimer": _look(sub), "others": [_look(r) for r in rest]}, {"taken": [sub], "left": rest})
-        left = rest
-        if len(left) < 2:
+        return _dry(plan, rest, keep)
+    floaters = [s for s in solids if SUBSTANCES[s].get("floats")]
+    if floaters and len(floaters) < len(solids):
+        rest = [s for s in solids if s not in floaters]
+        plan.add("flotation", f"Stir the mixture into water: the {_list(floaters)} float{'s' if _one(floaters) else ''} and "
+                 f"{'is' if _one(floaters) else 'are'} skimmed off; the {_list(rest)} sink{'s' if _one(rest) else ''}.",
+                 f"{_list(floaters).capitalize()} {'is' if _one(floaters) else 'are'} less dense than water; "
+                 f"{_list(rest)} {'is' if _one(rest) else 'are'} denser.",
+                 {"solvent": _look("water"), "floats": [_look(x) for x in floaters], "stays": [_look(x) for x in rest],
+                  "dissolves": []},
+                 {"taken": floaters, "left": rest})
+        # What sank is wet with water: anything soluble in it is now dissolved — handled as a wet mixture.
+        sol = [(x, "water") for x in rest if _dissolves(x, "water")]
+        ins = [x for x in rest if not _dissolves(x, "water")]
+        return _dry(plan, floaters, keep) and (len(rest) < 2 or _wet(plan, ins, ["water"], sol, [], keep))
+    # A solvent that takes out just one part first; then one that takes out several.
+    for single in (True, False):
+        for solvent in SOLVENTS:
+            sol = [s for s in solids if _dissolves(s, solvent)]
+            if not sol or len(sol) == len(solids) or (len(sol) == 1) != single:
+                continue
+            ins = [s for s in solids if s not in sol]
+            what = _list(sol)
+            plan.add("dissolve", f"Add {solvent} and stir: the {what} dissolve{'s' if _one(sol) else ''}; the {_list(ins)} "
+                     f"{'does' if _one(ins) else 'do'} not.",
+                     f"{what.capitalize()} {'is' if _one(sol) else 'are'} soluble in {solvent}; {_list(ins)} "
+                     f"{'is' if _one(ins) else 'are'} not.",
+                     {"solvent": _look(solvent), "dissolves": [_look(x, solution=True, solvent=solvent) for x in sol],
+                      "stays": [_look(x) for x in ins]},
+                     {"solution": f"{what} solution", "left": ins})
+            plan.add("filtration", f"Filter: the {_list(ins)} stay{'s' if _one(ins) else ''} on the filter paper (residue); "
+                     f"the {what} solution runs through (filtrate).",
+                     f"The {_list(ins)} {'does' if _one(ins) else 'do'} not dissolve, so {'it is' if _one(ins) else 'they are'} "
+                     f"left on the paper while the solution passes through.",
+                     {"residue": [_look(x) for x in ins], "filtrate": _look(sol[0], solution=True, solvent=solvent)},
+                     {"residue": ins, "filtrate": f"{what} solution"})
+            if single:
+                _recover(plan, sol[0], solvent, keep)
+                return _dry(plan, ins, keep)
+            return _dry(plan, ins, keep) and _several(plan, sol, solvent, keep)
+    if all(_dissolves(x, "water") for x in solids) and sum(1 for x in solids if SUBSTANCES[x].get("steep")) == 1:
+        plan.add("dissolve", f"Dissolve the mixture in a little hot water: the {_list(solids)} all dissolve.",
+                 "They are all soluble in water; they will part as the solution cools.",
+                 {"solvent": _look("water"), "dissolves": [_look(x, solution=True) for x in solids], "stays": []},
+                 {"solution": f"{_list(solids)} solution", "left": []})
+        return _several(plan, solids, "water", keep)
+    return plan.fail(f"Nothing here parts the {_list(solids)}: none is magnetic or sublimes, and no solvent the rules "
+                     f"know dissolves one but not the others.")
+
+
+def _several(plan: _Plan, solutes: list[str], solvent: str, keep: str) -> bool:
+    """Several solids dissolved together: one whose solubility falls steeply on
+    cooling crystallises out first (fractional crystallisation); otherwise dry
+    them and part them as solids."""
+    steep = [x for x in solutes if SUBSTANCES[x].get("steep")]
+    if solvent == "water" and len(steep) == 1:
+        first, rest = steep[0], [x for x in solutes if x != steep[0]]
+        plan.add("fractional_crystallisation", f"Heat the solution until it is saturated, then cool it: the {first} "
+                 f"crystallises out first; filter it off — the {_list(rest)} stay{'s' if _one(rest) else ''} in solution.",
+                 f"{first.capitalize()} is far more soluble in hot water than in cold, so it comes out as the solution cools; "
+                 f"{_list(rest)} {'does' if _one(rest) else 'do'} not change much.",
+                 {"solution": _look(first, solution=True), "crystals": _look(first)}, {"crystals": first, "left": rest})
+        if len(rest) == 1:
+            _recover(plan, rest[0], solvent, keep)
             return True
-    # Dissolve one part out: water first, then another solvent.
-    for solvent in ("water", "ethanol", "methylbenzene", "propanone", "kerosene"):
-        sol = [s for s in left if _dissolves(s, solvent)]
-        if not sol or len(sol) == len(left):
-            continue
-        ins = [s for s in left if s not in sol]
-        if len(sol) > 1:
-            continue                  # two dissolved together: not separated by this solvent
-        solute = sol[0]
-        plan.add("dissolve", f"Add {solvent} and stir: the {solute} dissolves; the {_list(ins)} "
-                 f"{'does' if _one(ins) else 'do'} not.",
-                 f"{solute.capitalize()} is soluble in {solvent}; {_list(ins)} {'is' if _one(ins) else 'are'} not.",
-                 {"solvent": _look(solvent), "dissolves": [_look(solute, solution=True)], "stays": [_look(x) for x in ins]},
-                 {"solution": f"{solute} solution", "left": ins})
-        plan.add("filtration", f"Filter: the {_list(ins)} stay{'s' if _one(ins) else ''} on the filter paper (residue); "
-                 f"the {solute} solution runs through (filtrate).",
-                 f"The {_list(ins)} {'does' if _one(ins) else 'do'} not dissolve, so {'it is' if _one(ins) else 'they are'} "
-                 f"too big to pass through the paper.",
-                 {"residue": [_look(x) for x in ins], "filtrate": _look(solute, solution=True, solvent=solvent)},
-                 {"residue": ins, "filtrate": f"{solute} solution"})
-        _recover(plan, solute, solvent, keep)
-        if len(ins) > 1:
-            return _solids(plan, ins, keep)
-        return True
-    return False
+        return _several(plan, rest, solvent, keep)
+    _to_dryness(plan, solutes, solvent)
+    return _dry(plan, solutes, keep)
+
+
+def _to_dryness(plan: _Plan, solutes: list[str], solvent: str) -> None:
+    plan.add("evaporation", f"Evaporate the solution to dryness: the {solvent} boils off and the {_list(solutes)} are left "
+             f"together as a dry solid.", f"The {solvent} evaporates; the dissolved solids do not.",
+             {"solution": _look(solutes[0], solution=True, solvent=solvent), "crystals": _look(solutes[0])},
+             {"solid": _list(solutes)})
 
 
 def _recover(plan: _Plan, solute: str, solvent: str, keep: str) -> None:
@@ -245,41 +313,100 @@ def _recover(plan: _Plan, solute: str, solvent: str, keep: str) -> None:
                  {"solid": solute})
 
 
-def _liquids(plan: _Plan, liquids: list[str], solutes: list[str], keep: str) -> bool:
-    """Liquids (with anything dissolved in them): layers first, then boiling points."""
-    if len(liquids) == 1:
-        if solutes:
-            _recover(plan, solutes[0], liquids[0], keep)
-        return True
+def _wet(plan: _Plan, solids: list[str], liquids: list[str], solutes: list[tuple[str, str]], inks: list[str], keep: str) -> bool:
+    """A mixture with liquids in it, worked through: filter off what does not
+    dissolve; part liquids that do not mix in a separating funnel (each layer
+    taking what dissolves in it); part liquids that mix by fractional
+    distillation; then get back what is dissolved — and find the dyes of an
+    ink by chromatography."""
+    if solids:
+        rest_names = liquids + [x for x, _ in solutes] + inks
+        filtrate = (_look(inks[0]) if inks else _look(solutes[0][0], solution=True, solvent=solutes[0][1]) if solutes
+                    else _look(liquids[0]))
+        plan.add("filtration", f"Filter: the {_list(solids)} stay{'s' if _one(solids) else ''} on the filter paper (residue); "
+                 f"the {_list(rest_names)} run{'s' if _one(rest_names) else ''} through (filtrate).",
+                 f"The {_list(solids)} {'does' if _one(solids) else 'do'} not dissolve in the {_list(liquids)}.",
+                 {"residue": [_look(x) for x in solids], "filtrate": filtrate},
+                 {"residue": solids, "filtrate": _list(rest_names)})
+        return _dry(plan, solids, keep) and _wet(plan, [], liquids, solutes, inks, keep)
     polar = [x for x in liquids if SUBSTANCES[x]["polar"]]
     non = [x for x in liquids if not SUBSTANCES[x]["polar"]]
-    # Only water is sure not to mix with an oil: ethanol, propanone and methanol mix with too much to say.
     if polar and non:
-        if polar != ["water"]:
-            return False
-        layers = sorted(["water", *non][:2], key=lambda x: SUBSTANCES[x]["density"])
-        if len(non) > 1:
-            return False
-        top, bottom = layers[0], layers[1]
-        plan.add("separating_funnel", f"Pour the mixture into a separating funnel and let it settle: the {top} "
-                 f"({SUBSTANCES[top]['density']:.2f} g/cm³) floats on the {bottom} ({SUBSTANCES[bottom]['density']:.2f} g/cm³). "
-                 f"Open the tap to run off the {bottom}, then close it: the {top} stays.",
-                 f"{top.capitalize()} and {bottom} do not mix (they are immiscible), and the denser one, {bottom}, sinks.",
-                 {"top": _look(top), "bottom": _look(bottom)}, {"lower": bottom, "upper": top})
+        if "water" not in polar:
+            return plan.fail(f"{_list(polar).capitalize()} and {_list(non)} may partly mix: the rules cannot say how they "
+                             f"would settle.")
+        # Ethanol, methanol and propanone mix with water: they go with the water layer, away from the oil.
+        dens = lambda xs: sum(SUBSTANCES[x]["density"] for x in xs) / len(xs)  # noqa: E731
+        w_sol = [(x, v) for x, v in solutes if v in polar]
+        n_sol = [(x, v) for x, v in solutes if v not in polar]
+        water_layer, oil_layer = ["water"] + [x for x in polar if x != "water"], non
+        top, bottom = (oil_layer, water_layer) if dens(oil_layer) < 1.0 else (water_layer, oil_layer)
+        tl, bl = _list(top), _list(bottom)
+        layer = lambda xs: {"name": _list(xs), "colour": SUBSTANCES[xs[0]]["colour"]}  # noqa: E731
+        plan.add("separating_funnel", f"Pour the mixture into a separating funnel and let it settle: the {tl} "
+                 f"({dens(top):.2f} g/cm³) floats on the {bl} ({dens(bottom):.2f} g/cm³). Open the tap to run off the {bl}, "
+                 f"then close it: the {tl} stays."
+                 + (f" What is dissolved goes with its liquid: the {_list([x for x, _ in w_sol] + inks)} with the water"
+                    if w_sol or inks else "")
+                 + (f"{'; ' if w_sol or inks else ' What is dissolved goes with its liquid: '}the {_list([x for x, _ in n_sol])} "
+                    f"with the {_list(non)}" if n_sol else "") + ("." if w_sol or n_sol or inks else ""),
+                 f"{_list(water_layer).capitalize()} and {_list(non)} do not mix (they are immiscible); the denser layer sinks.",
+                 {"top": layer(top), "bottom": layer(bottom)}, {"lower": bl, "upper": tl})
+        return _wet(plan, [], water_layer, w_sol, inks, keep) and _wet(plan, [], oil_layer, n_sol, [], keep)
+    if inks and len(liquids) == 1 and not solutes and keep in (liquids[0], "solvent"):
+        # The solvent is wanted, not the dyes: distil it off.
+        solv, what = liquids[0], _list(inks)
+        plan.add("distillation", f"Distil the {what}: the {solv} boils off and condenses; the dyes stay in the flask.",
+                 f"Only the {solv} boils at {SUBSTANCES[solv]['bp']} °C.",
+                 {"solution": _look(inks[0]), "distillate": _look(solv), "temperature": SUBSTANCES[solv]["bp"]},
+                 {"distillate": solv})
         return True
-    # All mix: by boiling point, the lowest first.
-    order = sorted(liquids, key=lambda x: SUBSTANCES[x]["bp"])
-    bps = [SUBSTANCES[x]["bp"] for x in order]
-    if any(b2 - b1 < 8 for b1, b2 in zip(bps, bps[1:])):
-        return False                  # too close to separate by school methods
-    first = order[0]
-    plan.add("fractional_distillation", f"Fractional distillation: heat the mixture in a flask with a fractionating column. "
-             f"The {first} boils off first (at {bps[0]} °C) and is collected; then "
-             + _list([f"the {x} at {SUBSTANCES[x]['bp']} °C" for x in order[1:]]) + ".",
-             f"The liquids mix (they are miscible) but boil at different temperatures; the column keeps the "
-             f"higher-boiling one back.",
-             {"liquids": [_look(x) for x in order], "temperatures": bps}, {"first": first, "order": order})
-    return True
+    if inks:
+        dyes = [d for ink in inks for d in SUBSTANCES[ink]["dyes"]]
+        dyes = list(dict.fromkeys(dyes))
+        solv = SUBSTANCES[inks[0]].get("solvent", "water")
+        what = _list(inks)
+        plan.add("chromatography", f"Put a spot of the {what} on a pencil line on filter paper and stand it in {solv}: as the "
+                 f"{solv} rises it carries the dyes apart — " + _list([n for n, _ in dyes]) +
+                 f". The {what} {'is a mixture' if len(inks) == 1 else 'are mixtures'} of {len(dyes)} dyes.",
+                 "Each dye dissolves in the solvent and sticks to the paper differently, so each travels a different distance.",
+                 {"ink": _look(inks[0]), "solvent": _look(solv), "dyes": [{"name": n, "colour": c} for n, c in dyes]},
+                 {"dyes": [n for n, _ in dyes]})
+        if solutes:
+            # Take the colour out: charcoal holds the dyes back (adsorbs them); the solution runs through clear.
+            names = [x for x, _ in solutes]
+            plan.add("filtration", f"Add charcoal powder, stir and filter: the charcoal holds back the dyes on the paper; a "
+                     f"colourless {_list(names)} solution runs through.",
+                     "Charcoal adsorbs coloured substances (decolourising), as when brown sugar is made white.",
+                     {"residue": [_look("charcoal powder")], "filtrate": _look(names[0], solution=True, solvent=solutes[0][1])},
+                     {"residue": ["charcoal powder", "dyes"], "filtrate": f"{_list(names)} solution"})
+            return _wet(plan, [], liquids, solutes, [], keep)
+        if len(liquids) > 1 or keep in liquids or keep == "solvent":
+            return _wet(plan, [], liquids, [], [], keep or liquids[0])
+        return True
+    if len(liquids) > 1:
+        order = sorted(liquids, key=lambda x: SUBSTANCES[x]["bp"])
+        bps = [SUBSTANCES[x]["bp"] for x in order]
+        if any(b2 - b1 < 8 for b1, b2 in zip(bps, bps[1:])):
+            close = next((order[i], order[i + 1]) for i in range(len(bps) - 1) if bps[i + 1] - bps[i] < 8)
+            return plan.fail(f"{close[0].capitalize()} and {close[1]} boil within a few degrees of each other: "
+                             f"distillation cannot part them cleanly.")
+        left = [x for x, _ in solutes]
+        plan.add("fractional_distillation", f"Fractional distillation: heat the mixture in a flask with a fractionating column. "
+                 f"The {order[0]} boils off first (at {bps[0]} °C) and is collected; then "
+                 + _list([f"the {x} at {SUBSTANCES[x]['bp']} °C" for x in order[1:]])
+                 + (f". The {_list(left)} {'is' if _one(left) else 'are'} left in the flask." if left else "."),
+                 "The liquids mix (they are miscible) but boil at different temperatures; the column keeps the "
+                 "higher-boiling one back.",
+                 {"liquids": [_look(x) for x in order], "temperatures": bps}, {"first": order[0], "order": order})
+        return _dry(plan, left, keep)
+    liquid = liquids[0]
+    if not solutes:
+        return True
+    if len(solutes) == 1:
+        _recover(plan, solutes[0][0], liquid, keep)
+        return True
+    return _several(plan, [x for x, _ in solutes], liquid, keep)
 
 
 def _look(name: str, *, solution: bool = False, solvent: str = "water") -> dict[str, Any]:
@@ -315,59 +442,25 @@ def separate(parts: list[str], keep: str = "") -> dict[str, Any]:
     solids = [p for p in ps if SUBSTANCES[p]["kind"] == S]
     liquids = [p for p in ps if SUBSTANCES[p]["kind"] == L]
     inks = [p for p in ps if SUBSTANCES[p]["kind"] == I]
-    ok = True
-    if inks:
-        if len(inks) > 1 or liquids or any(SUBSTANCES[s].get("dissolves") for s in solids):
-            ok = False
-        else:
-            ink = inks[0]
-            if solids:
-                plan.add("filtration", f"Filter: the {_list(solids)} stay{'s' if _one(solids) else ''} on the paper; "
-                         f"the {ink} runs through.", f"The {_list(solids)} {'does' if _one(solids) else 'do'} not dissolve.",
-                         {"residue": [_look(x) for x in solids], "filtrate": _look(ink)}, {"residue": solids, "filtrate": ink})
-            dyes = SUBSTANCES[ink]["dyes"]
-            solv = SUBSTANCES[ink].get("solvent", "water")
-            if keep == "water" or keep == "solvent":
-                plan.add("distillation", f"Distil the {ink}: the {solv} boils off and condenses; the dyes stay in the flask.",
-                         f"Only the {solv} boils at {SUBSTANCES[solv]['bp']} °C.",
-                         {"solution": _look(ink), "distillate": _look(solv), "temperature": SUBSTANCES[solv]["bp"]},
-                         {"distillate": solv})
+    # An ink is dyes dissolved in its solvent: that solvent is in the mixture too.
+    for ink in inks:
+        solv = SUBSTANCES[ink].get("solvent", "water")
+        if solv not in liquids:
+            liquids.append(solv)
+    if liquids:
+        suspended, solutes = [], []
+        for x in solids:
+            where = next((v for v in liquids if _dissolves(x, v)), None)
+            if where:
+                solutes.append((x, where))
             else:
-                plan.add("chromatography", f"Put a spot of the {ink} on a pencil line on filter paper and stand it in "
-                         f"{solv}: as the {solv} rises it carries the dyes apart — "
-                         + _list([n for n, _ in dyes]) + f". The {ink} is a mixture of {len(dyes)} dyes.",
-                         "Each dye dissolves in the solvent and sticks to the paper differently, so each travels a different distance.",
-                         {"ink": _look(ink), "solvent": _look(solv), "dyes": [{"name": n, "colour": c} for n, c in dyes]},
-                         {"dyes": [n for n, _ in dyes]})
-    elif liquids:
-        liq_set = list(liquids)
-        dissolved: list[str] = []
-        suspended: list[str] = []
-        for s in solids:
-            solvents = [x for x in liq_set if _dissolves(s, x)]
-            (dissolved if solvents else suspended).append(s)
-        if len(dissolved) > 1:
-            ok = False
-        else:
-            if suspended:
-                mixture = [*liq_set, *dissolved]
-                plan.add("filtration", f"Filter: the {_list(suspended)} stay{'s' if _one(suspended) else ''} on the filter paper "
-                         f"(residue); the {_list(mixture)} run{'s' if _one(mixture) else ''} through (filtrate).",
-                         f"The {_list(suspended)} {'does' if _one(suspended) else 'do'} not dissolve in the "
-                         f"{_list(liq_set)}.",
-                         {"residue": [_look(x) for x in suspended],
-                          "filtrate": _look(dissolved[0], solution=True, solvent=liq_set[0]) if dissolved else _look(liq_set[0])},
-                         {"residue": suspended, "filtrate": _list(mixture)})
-                if len(suspended) > 1:
-                    ok = _solids(plan, suspended, keep) and ok
-            if dissolved and len(liq_set) > 1:
-                ok = False            # a solid dissolved in a mixture of liquids: not a school case
-            elif ok:
-                ok = _liquids(plan, liq_set, dissolved, keep)
+                suspended.append(x)
+        ok = _wet(plan, suspended, liquids, solutes, inks, keep)
     else:
-        ok = len(solids) >= 2 and _solids(plan, solids, keep)
+        ok = len(solids) >= 2 and _dry(plan, solids, keep)
     if not ok or not plan.steps:
-        return {"covered": False, "why": "The separation rules here do not decide that mixture.", "parts": ps}
+        return {"covered": False, "parts": ps,
+                "why": plan.why or "The separation rules here do not decide that mixture (one substance alone is not a mixture)."}
     methods = [st["method"] for st in plan.steps]
     main = next((m for m in methods if m not in ("dissolve",)), methods[0])
     return {"covered": True, "parts": ps, "keep": keep, "methods": methods, "names": [st["name"] for st in plan.steps],
@@ -378,7 +471,17 @@ def separate(parts: list[str], keep: str = "") -> dict[str, Any]:
 
 # ── every mixture, and its questions ──────────────────────────────────────────
 
+@lru_cache(maxsize=2)
+def _catalogue(max_parts: int) -> tuple[dict[str, Any], ...]:
+    return tuple(_catalogue_build(max_parts))
+
+
 def catalogue(max_parts: int = 3) -> list[dict[str, Any]]:
+    """Every mixture of two (and three) parts the rules decide (worked out once)."""
+    return list(_catalogue(max_parts))
+
+
+def _catalogue_build(max_parts: int = 3) -> list[dict[str, Any]]:
     """Every mixture of two (and three) parts the rules decide, with the
     part to keep where that changes the method."""
     names = sorted(SUBSTANCES)
@@ -498,14 +601,15 @@ def questions(mix: dict[str, Any]) -> list[dict[str, Any]]:
     return out
 
 
+@lru_cache(maxsize=1)
+def _all_questions() -> tuple[dict[str, Any], ...]:
+    return tuple(q for mix in catalogue() for q in questions(mix))
+
+
 def all_questions(limit: int = 0) -> list[dict[str, Any]]:
-    """Every question on every mixture (the first `limit`, if given)."""
-    out: list[dict[str, Any]] = []
-    for mix in catalogue():
-        out.extend(questions(mix))
-        if limit and len(out) >= limit:
-            return out[:limit]
-    return out
+    """Every question on every mixture (the first `limit`, if given), worked out once."""
+    qs = _all_questions()
+    return list(qs[:limit] if limit else qs)
 
 
 def pick(limit: int, focuses: list[str] | None = None) -> list[dict[str, Any]]:

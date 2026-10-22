@@ -87,7 +87,7 @@ function LabBench() {
           <Stack direction="row" gap="var(--s2)" wrap align="center">
             {shelf.data.mixtures.map((m) => (
               <Button key={m} size="sm" variant={parts.includes(m) ? "primary" : "ghost"}
-                      onClick={() => setParts((cur) => cur.includes(m) ? cur.filter((x) => x !== m) : [...cur, m].slice(-3))}>{m}</Button>
+                      onClick={() => setParts((cur) => cur.includes(m) ? cur.filter((x) => x !== m) : [...cur, m].slice(-4))}>{m}</Button>
             ))}
             <Button variant="primary" onClick={go} disabled={!parts.length}>🧪 Separate</Button>
           </Stack>

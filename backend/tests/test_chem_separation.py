@@ -22,6 +22,15 @@ from app.services import chem_separation as X
     (["black ink"], "", ["chromatography"]),
     (["black ink"], "water", ["distillation"]),
     (["sand", "water"], "", ["filtration"]),
+    # worked through, however many parts
+    (["iron", "sand", "salt", "iodine"], "", ["magnet", "sublimation", "dissolve", "filtration", "evaporation"]),
+    (["sawdust", "sand", "salt"], "", ["flotation", "filtration", "evaporation"]),
+    (["potassium nitrate", "salt"], "", ["dissolve", "fractional_crystallisation", "evaporation"]),
+    (["potassium nitrate", "salt", "sand"], "", ["dissolve", "filtration", "fractional_crystallisation", "evaporation"]),
+    (["black ink", "cooking oil"], "", ["separating_funnel", "chromatography"]),
+    (["black ink", "salt"], "", ["chromatography", "filtration", "evaporation"]),           # charcoal takes the dyes
+    (["cooking oil", "ethanol", "water", "salt"], "", ["separating_funnel", "fractional_distillation"]),
+    (["sand", "salt", "water", "iron"], "", ["filtration", "magnet", "evaporation"]),
 ])
 def test_textbook_separations(parts, keep, methods) -> None:
     r = X.separate(parts, keep)
@@ -38,10 +47,23 @@ def test_each_step_says_what_goes_where_and_why() -> None:
     assert X.separate(["iron", "sulphur"])["steps"][0].startswith("Pass a magnet over the mixture: the iron filings stick")
 
 
-def test_what_the_rules_do_not_decide_is_not_guessed() -> None:
+def test_what_the_rules_do_not_decide_is_not_guessed_and_says_why() -> None:
     assert not X.separate(["marbles", "sand"])["covered"]
-    assert not X.separate(["salt", "sugar"])["covered"]                # both dissolve in water
-    assert not X.separate(["ethanol", "kerosene"])["covered"]          # mixing not certain at school level
+    assert "Nothing here parts" in X.separate(["salt", "sugar"])["why"]            # both dissolve in water
+    assert "may partly mix" in X.separate(["ethanol", "kerosene"])["why"]
+    assert "Nothing here parts the sand and chalk" in X.separate(["sand", "chalk"])["why"]
+    assert "all magnetic" in X.separate(["iron", "nickel", "sand"])["why"]
+
+
+def test_most_mixtures_of_three_and_four_are_decided() -> None:
+    import itertools
+    import random
+
+    names = sorted(X.SUBSTANCES)
+    random.seed(7)
+    for n, share in ((3, 0.65), (4, 0.48)):
+        sample = random.sample(list(itertools.combinations(names, n)), 1500)
+        assert sum(X.separate(list(c))["covered"] for c in sample) / len(sample) > share
 
 
 def test_the_catalogue_gives_well_over_a_thousand_walkthroughs() -> None:
