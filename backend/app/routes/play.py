@@ -214,7 +214,8 @@ def library_question(question_id: str, auth: AuthContext = Depends(CONTENT)) -> 
     cols = """post_id, platform, format, step, status, scheduled_for, posted_at, handed_at, platform_scheduled, url, notes,
               attempts, last_error, last_attempt_at, created_by, groups, destinations, teacher, marketing,
               comments_state, comments_error, comments_next_at, campaign_index, campaign_done, score,
-              boost_state, boost_daily_ksh, boost_days, boost_error, boosted_at, views, likes, comments, shares"""
+              boost_state, boost_daily_ksh, boost_days, boost_error, boosted_at, views, likes, comments, shares,
+              share_now_at, comment_now_at, find_link_at, campaign_goal, campaign_pinned_at, campaign_ended_at"""
     for r in fetch_all(f"SELECT {cols} FROM social_posts WHERE question_id = :id ORDER BY created_at",
                        {"id": question_id}) or []:
         post = plain(r)
@@ -407,6 +408,45 @@ def chem_bank_save(body: ChemBank, auth: AuthContext = Depends(ANY)) -> dict[str
     from ..services import chem_bank
 
     return chem_bank.bank(body.kind, body.model_dump(), body.limit, by=str(getattr(auth, "subject", "") or ""))
+
+
+@router.get("/chem/questions")
+def chem_questions(kind: str = Query("", max_length=20), search: str = Query("", max_length=100),
+                   offset: int = Query(0, ge=0), limit: int = Query(20, ge=1, le=100),
+                   auth: AuthContext = Depends(ANY)) -> dict[str, Any]:
+    """The chemistry questions saved to the bank, with their video and whether they are out — to make and post now."""
+    _may_make_videos(auth)
+    from ..infra.db import fetch_all, fetch_one
+    from ..services import question_rows, social, social_export
+
+    where = """provenance->>'written_by' = 'chemistry engine' AND status = 'approved' AND superseded_by IS NULL
+               AND (:model = '' OR provenance->>'model' = :model) AND (:s = '' OR content->>'question_text' ILIKE :like)"""
+    params = {"model": f"chemistry-{kind}" if kind else "", "s": search, "like": f"%{search}%"}
+    total = int((fetch_one(f"SELECT COUNT(*) AS n FROM question_dna WHERE {where}", params) or {}).get("n") or 0)
+    rows = fetch_all(f"SELECT * FROM question_dna WHERE {where} ORDER BY updated_at DESC, question_id OFFSET :o LIMIT :n",
+                     {**params, "o": offset, "n": limit}) or []
+    ids = [r["question_id"] for r in rows]
+    posts = {p["question_id"]: p for p in (fetch_all("""SELECT question_id, status, scheduled_for, handed_at, posted_at, url
+                                                        FROM social_posts WHERE question_id = ANY(:i) AND platform = 'facebook'
+                                                          AND COALESCE(format, 'video') = 'video'""", {"i": ids}) or [])}
+    items = []
+    for r in rows:
+        q = question_rows.flatten(r)
+        try:
+            st = social.status(r["question_id"], q)
+        except Exception as exc:  # noqa: BLE001
+            st = {"status": "failed", "error": str(exc)}
+        p = posts.get(r["question_id"]) or {}
+        link = q.get("curriculum") or {}
+        items.append({"question_id": r["question_id"], "question_text": q.get("question_text") or "",
+                      "kind": str((r.get("provenance") or {}).get("model") or "").replace("chemistry-", ""),
+                      "focus": (q.get("pedagogy") or {}).get("focus") or "",
+                      "topic": " · ".join(x for x in (str(link.get("grade") or "").replace("grade-", "Grade "),
+                                                       str(link.get("subject") or ""), str(link.get("sub_strand") or "")) if x),
+                      "video": st.get("status"), "video_url": st.get("url") or "", "thumbnail_url": st.get("thumbnail_url") or "",
+                      "post": ("out" if p.get("posted_at") or p.get("handed_at") else "booked" if p.get("scheduled_for") else ""),
+                      "booked_for": str(p.get("scheduled_for") or ""), "url": p.get("url") or ""})
+    return {"total": total, "offset": offset, "items": items}
 
 
 @router.get("/chem/autopilot")
@@ -2172,6 +2212,47 @@ def boosts(auth: AuthContext = Depends(require_roles("admin"))) -> dict[str, Any
 
     return {"posts": social_export.boost_candidates(), "daily_ksh": social_export.BOOST_DAILY_KSH,
             "days": social_export.BOOST_DAYS}
+
+
+class PostAction(BaseModel):
+    action: Literal["reschedule", "cancel", "post_now", "repost", "find_link", "comment_now", "share_now",
+                    "campaign_start", "campaign_stop"]
+    at: str = ""                       # reschedule: an ISO date-time (East Africa time if it has no zone)
+    goal: int = Field(1000, ge=100, le=1_000_000)
+
+
+@router.post("/poster/posts/{post_id}/action")
+def post_action(post_id: str, payload: PostAction, auth: AuthContext = Depends(ANY)) -> dict[str, Any]:
+    """One post's control in the Library: reschedule, cancel, post now or again, find its link, comment or
+    share now, or pin a campaign to it (shared to new groups and commented until its goal in views)."""
+    from datetime import datetime as _dt
+
+    from ..services import social_export
+
+    _may_make_videos(auth)
+    at = None
+    if payload.at:
+        try:
+            at = _dt.fromisoformat(payload.at.replace("Z", "+00:00"))
+        except ValueError:
+            raise_api_error("VALIDATION_FAILED", "Give the time as 2026-10-24T09:30.")
+        if at.tzinfo is None:
+            at = at.replace(tzinfo=social_export.EAT)
+    out = social_export.post_action(post_id, payload.action, at=at, goal=payload.goal)
+    if out.pop("send", False):
+        sent = poster_command(PosterCommand(action="run_now", platform="facebook", post_id=out["post_id"],
+                                            options={"share": "feed", "groups": []}), auth=auth)
+        out = {**out, "poster": sent}
+    return out
+
+
+@router.get("/poster/campaigns")
+def poster_campaigns(auth: AuthContext = Depends(ANY)) -> dict[str, Any]:
+    """The campaigns pinned to posts (at most two at a time), with their progress."""
+    from ..services import social_export
+
+    _may_make_videos(auth)
+    return {"max": social_export.MAX_CAMPAIGNS, "running": social_export.campaigns_running()}
 
 
 @router.post("/poster/posts/{post_id}/boost")

@@ -1,6 +1,7 @@
 import React from "react";
 import { Badge, Button, Card, EmptyState, ErrorNotice, Field, Input, LoadingBlock, PageHeader, Select, Stack, useToast } from "../ui/components";
-import { gradeOptionLabel, subjectOptionLabel, useChemAutopilot, useChemAutopilotPlan, useChemBank, useChemBankSummary, useChemLabHtml, useChemReact, useChemSubstances,
+import { gradeOptionLabel, subjectOptionLabel, useChemAutopilot, useChemAutopilotPlan, useChemBank, useChemBankSummary,
+         useChemQuestions, useMakeSocial, usePostQuestion, useChemLabHtml, useChemReact, useChemSubstances,
          useGrades, useStoredStructure, useSubjects, type ChemKind, type ChemMix } from "../lib/queries";
 import { AutoPost, BookSeries, Performance, SocialLibrary, VideoLibrary, WatchModal } from "./PlayArcade";
 import { MonthPlanner } from "./MonthPlanner";
@@ -300,9 +301,100 @@ function ChemSocials() {
           </>
         )}
       </Card>
+      <PostNow onWatch={(qid) => setSocialWatch(qid)} />
       {watching && <WatchModal questionId={watching} onClose={() => setWatching(null)} />}
       {socialWatch && <WatchModal questionId={socialWatch} start="social" onClose={() => setSocialWatch(null)} />}
     </>
+  );
+}
+
+const VIDEO_WORDS: Record<string, string> = { ready: "🎬 made", queued: "⏳ in the queue", running: "⚙️ rendering", none: "not made", failed: "⚠️ failed" };
+
+/** Post now, without waiting for the calendar: the saved chemistry questions, each made on the standby
+ *  worker ahead of the queue and posted — a video posts itself the moment it is made. */
+function PostNow({ onWatch }: { onWatch: (qid: string) => void }) {
+  const [kind, setKind] = React.useState("");
+  const [search, setSearch] = React.useState("");
+  const [offset, setOffset] = React.useState(0);
+  const list = useChemQuestions(kind, search, offset);
+  const make = useMakeSocial();
+  const post = usePostQuestion();
+  const toast = useToast();
+  const [busy, setBusy] = React.useState<string>("");
+  const rows = list.data?.items || [];
+  async function render(qid: string) {
+    setBusy(qid);
+    try { await make.mutateAsync({ questionId: qid, now: true }); toast("Rendering now on the standby worker — a few minutes.", "ok"); list.refetch(); }
+    catch (e) { toast(String((e as Error).message || e), "danger"); } finally { setBusy(""); }
+  }
+  async function send(qid: string, what: "video" | "series") {
+    setBusy(qid);
+    try {
+      const r = await post.mutateAsync({ question_id: qid, what, share: "feed" });
+      toast(String(r?.error || r?.message || "Sent to the poster — it goes out in a minute or two."), r?.error ? (r?.making ? "info" : "danger") : "ok");
+      list.refetch();
+    } catch (e) { toast(String((e as Error).message || e), "danger"); } finally { setBusy(""); }
+  }
+  async function renderNext(n: number) {
+    const todo = rows.filter((r) => r.video !== "ready" && !["queued", "running"].includes(r.video) && r.post !== "out").slice(0, n);
+    for (const r of todo) { try { await make.mutateAsync({ questionId: r.question_id, now: true }); } catch { /* the next */ } }
+    toast(`${todo.length} rendering now on the standby worker.`, "ok");
+    list.refetch();
+  }
+  return (
+    <Card title="3. Post now — without waiting for the calendar">
+      <div style={{ display: "grid", gap: "var(--s3)" }}>
+        <div style={{ color: "var(--ink-3)", fontSize: "var(--text-sm)" }}>
+          Your saved chemistry questions. 🎬 renders a video now on the standby worker, ahead of the queue; 📤 posts it to the
+          feed now — and if its video is not made yet it is made first and posts itself the moment it is ready. 🖼️ posts the
+          photo series now (the cards with the animation's pictures, then the video).
+        </div>
+        <Stack direction="row" gap="var(--s2)" wrap align="center">
+          <Select value={kind} onChange={(e) => { setKind(e.target.value); setOffset(0); }} style={{ width: "auto" }}>
+            <option value="">All kinds</option>
+            {KINDS.map(([k, label]) => <option key={k} value={k}>{label}</option>)}
+          </Select>
+          <Input placeholder="Search the questions" value={search} onChange={(e) => { setSearch(e.target.value); setOffset(0); }} style={{ maxWidth: "18rem" }} />
+          <Button size="sm" onClick={() => renderNext(5)} disabled={!rows.length}>🎬 Render the next 5 now</Button>
+          <span style={{ fontSize: "var(--text-sm)", color: "var(--ink-3)" }}>{list.data ? `${list.data.total.toLocaleString()} questions` : ""}</span>
+        </Stack>
+        {list.isLoading && <LoadingBlock rows={4} label="Loading the chemistry questions" />}
+        {list.error && <ErrorNotice error={list.error} />}
+        {list.data && !rows.length && <EmptyState title="No chemistry questions saved yet" description="Use 🚀 Do it all for me, or 1. Make the questions, first." />}
+        {rows.map((r) => (
+          <div key={r.question_id} style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", gap: "var(--s2)", padding: "8px 0", borderBottom: "1px solid var(--line-2)", alignItems: "center" }}>
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontSize: "var(--text-sm)" }}>{r.question_text}</div>
+              <div style={{ fontSize: "var(--text-xs)", color: "var(--ink-3)", display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <span>{r.topic}</span><span>{VIDEO_WORDS[r.video] || r.video}</span>
+                {r.post === "out" && <span>✅ posted{r.url ? <> · <a href={r.url} target="_blank" rel="noreferrer">open</a></> : null}</span>}
+                {r.post === "booked" && <span>📅 booked {r.booked_for.slice(0, 16).replace("T", " ")}</span>}
+                <a href={`/library?q=${encodeURIComponent(r.question_id)}`}>Library</a>
+              </div>
+            </div>
+            <Stack direction="row" gap="var(--s1, 4px)" wrap>
+              {r.video === "ready"
+                ? <Button size="sm" variant="ghost" onClick={() => onWatch(r.question_id)} title="Watch the vertical cut">▶</Button>
+                : <Button size="sm" variant="ghost" disabled={busy === r.question_id || ["queued", "running"].includes(r.video)}
+                          onClick={() => render(r.question_id)} title="Render now on the standby worker">🎬</Button>}
+              <Button size="sm" variant="primary" disabled={busy === r.question_id || r.post === "out"}
+                      title={r.post === "out" ? "Posted already" : "Post the video now (made first if need be, then it posts itself)"}
+                      onClick={() => send(r.question_id, "video")}>📤</Button>
+              <Button size="sm" variant="ghost" disabled={busy === r.question_id}
+                      title="The photo series now: its cards (with the animation's pictures), then the video"
+                      onClick={() => send(r.question_id, "series")}>🖼️</Button>
+            </Stack>
+          </div>
+        ))}
+        {list.data && list.data.total > 20 && (
+          <Stack direction="row" gap="var(--s2)" align="center">
+            <Button size="sm" variant="ghost" disabled={offset === 0} onClick={() => setOffset(Math.max(0, offset - 20))}>← Previous</Button>
+            <span style={{ fontSize: "var(--text-sm)" }}>{offset + 1}–{Math.min(offset + 20, list.data.total)} of {list.data.total.toLocaleString()}</span>
+            <Button size="sm" variant="ghost" disabled={offset + 20 >= list.data.total} onClick={() => setOffset(offset + 20)}>Next →</Button>
+          </Stack>
+        )}
+      </div>
+    </Card>
   );
 }
 

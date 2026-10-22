@@ -75,7 +75,7 @@ def _chem_figure(q: dict[str, Any], step: str) -> str:
         return ""
     from . import chem_stills
 
-    return chem_stills.card_image(str(q.get("question_id") or ""), q, "setup" if step == "question" else "result")
+    return chem_stills.card_image(str(q.get("question_id") or ""), q, step)
 
 
 def object_name(question_id: str, step: str, key: str) -> str:
