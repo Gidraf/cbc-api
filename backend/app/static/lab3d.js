@@ -577,8 +577,8 @@
     // A colourless liquid tinted a little, so a layer or a distillate is seen.
     const vis = (hex) => (clearish(hex) ? mix(hex, "#8fb3d1", 0.35) : hex);
     if (m === "filtration") filtration();
-    else if (m === "dissolve") dissolve();
-    else if (m === "evaporation" || m === "crystallisation") evaporation(m === "crystallisation");
+    else if (m === "dissolve" || m === "flotation") dissolve();
+    else if (m === "evaporation" || m === "crystallisation" || m === "fractional_crystallisation") evaporation(m !== "evaporation");
     else if (m === "distillation" || m === "fractional_distillation") distillation(m === "fractional_distillation");
     else if (m === "separating_funnel") sepFunnel();
     else if (m === "magnet") magnetic();
@@ -618,10 +618,11 @@
       for (let k = 0; k < 30; k++) {
         const a = rnd() * 6.28, d = rnd() * v.r(1) * 0.8, y = 0.3 + rnd() * (level - 0.5), sinks = k % 2 === 1;
         const f = at(1, span * 0.5), sw = a + tt * (1.4 - 0.9 * f);
-        const r = sinks ? 0.07 : 0.07 * (1 - f);
+        const floats = !sinks && (L.floats || []).length > 0;          // flotation: the light part rises to the top
+        const r = sinks || floats ? 0.07 : 0.07 * (1 - f);
         if (r < 0.01) continue;
-        const p = K.ball(r, solidMat(seen(sinks ? nth(L.stays, k, "#b08a5a") : dissolving.solid || "#ffffff")));
-        p.position.set(Math.cos(sw) * d, sinks ? y + (v.floor(d, 0.07) - y) * f : y, Math.sin(sw) * d); v.g.add(p);
+        const p = K.ball(r, solidMat(seen(sinks ? nth(L.stays, k, "#b08a5a") : floats ? nth(L.floats, k, "#c99a5b") : dissolving.solid || "#ffffff")));
+        p.position.set(Math.cos(sw) * d, sinks ? y + (v.floor(d, 0.07) - y) * f : floats ? y + (level - 0.06 - y) * f : y, Math.sin(sw) * d); v.g.add(p);
       }
     }
 

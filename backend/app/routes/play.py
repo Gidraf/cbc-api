@@ -381,6 +381,34 @@ def chem_react(a: str = Query(..., max_length=120), b: str = Query("", max_lengt
     return {"reaction": out["reaction"], "scenes": len(out["walkthrough"]["scenes"])}
 
 
+@router.get("/chem/bank")
+def chem_bank_summary(auth: AuthContext = Depends(CONTENT)) -> dict[str, Any]:
+    """The chemistry questions the engine can make, per kind (reactions, atoms,
+    bonding, separations): how many, of what sorts, a few examples."""
+    from ..services import chem_bank
+
+    return chem_bank.summary()
+
+
+class ChemBank(BaseModel):
+    kind: Literal["reactions", "atoms", "bonding", "separations"]
+    grade: str = Field(..., max_length=40)
+    subject: str = Field(..., max_length=80)
+    strand: str = Field("", max_length=120)
+    sub_strand: str = Field(..., max_length=120)
+    limit: int = Field(200, ge=1, le=5000)
+
+
+@router.post("/chem/bank")
+def chem_bank_save(body: ChemBank, auth: AuthContext = Depends(ANY)) -> dict[str, Any]:
+    """Save engine-made chemistry questions of a kind to the bank at this point
+    of the curriculum — then Play makes their videos, photo series and posts."""
+    _may_make_videos(auth)
+    from ..services import chem_bank
+
+    return chem_bank.bank(body.kind, body.model_dump(), body.limit, by=str(getattr(auth, "subject", "") or ""))
+
+
 @router.get("/chem/separations")
 def chem_separations(auth: AuthContext = Depends(CONTENT)) -> dict[str, Any]:
     """How many mixtures the separation rules decide, and the questions they make."""

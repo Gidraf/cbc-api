@@ -1356,8 +1356,8 @@
         const end = t0 + span;
         if (m === "magnet") { sfx(t0 + 0.6, "whoosh", 0.5, 0.8); for (let k = 0; k < 5; k++) sfx(t0 + 1.8 + k * 0.24, "snap", 0.45, 1 + k * 0.05); }
         else if (m === "filtration") every("drip", t0 + 0.8, end, 0.7, 0.45);
-        else if (m === "dissolve") every("whoosh", t0 + 0.4, end, 1.4, 0.25, 1.4);
-        else if (m === "evaporation" || m === "crystallisation") { sfx(t0 + 0.3, "whoosh", 0.5, 0.55); every("fizz", t0 + 1, end, 1.2, 0.5); sfx(t0 + span * 0.55, "sparkle", 0.45); sfx(t0 + span * 0.8, "sparkle", 0.4, 1.1); }
+        else if (m === "dissolve" || m === "flotation") every("whoosh", t0 + 0.4, end, 1.4, 0.25, 1.4);
+        else if (m === "evaporation" || m === "crystallisation" || m === "fractional_crystallisation") { sfx(t0 + 0.3, "whoosh", 0.5, 0.55); every("fizz", t0 + 1, end, 1.2, 0.5); sfx(t0 + span * 0.55, "sparkle", 0.45); sfx(t0 + span * 0.8, "sparkle", 0.4, 1.1); }
         else if (m === "distillation" || m === "fractional_distillation") { sfx(t0 + 0.3, "whoosh", 0.5, 0.55); every("fizz", t0 + 0.9, end, 1.2, 0.45); every("drip", t0 + 2, end, 0.8, 0.4, 1.1); }
         else if (m === "separating_funnel") { sfx(t0 + 0.8, "click", 0.7); every("drip", t0 + 0.9, Math.min(end, t0 + 1 + span * 0.6), 0.5, 0.4); sfx(Math.min(end, t0 + 1 + span * 0.6), "click", 0.6); }
         else if (m === "chromatography") { sfx(t0 + 0.5, "riser", 0.35); sfx(t0 + span * 0.55, "sparkle", 0.45); }
@@ -1387,7 +1387,7 @@
           tl.to(w, { opacity: 0.8, duration: 0.4, yoyo: true, repeat: Math.max(1, Math.floor(span / 0.8)) }, t0 + 1 + k * 0.25);
         }
       };
-      if (m === "filtration" || m === "dissolve") {
+      if (m === "filtration" || m === "dissolve" || m === "flotation") {
         if (m === "filtration") {
           draw(path(`M${cx - 90},${250} L${cx},${370} L${cx + 90},${250} Z M${cx - 8},370 L${cx - 8},420 M${cx + 8},370 L${cx + 8},420`, INK.black, 4), t0, 0.6);
           for (let k = 0; k < 16; k++) {
@@ -1409,7 +1409,7 @@
           }
           if (liq) tl.to(liq, { attr: { fill: "#eef7ff" }, duration: span * 0.5 }, t0 + 1);
         }
-      } else if (m === "evaporation" || m === "crystallisation") {
+      } else if (m === "evaporation" || m === "crystallisation" || m === "fractional_crystallisation") {
         const dish = path(`M${cx - 110},380 Q${cx},470 ${cx + 110},380`, INK.black, 4);
         draw(dish, t0, 0.5);
         const liq = el("path", { d: `M${cx - 100},388 Q${cx},460 ${cx + 100},388 Z`, fill: "#bfe3ff", opacity: 0.9 }, page);

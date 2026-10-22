@@ -77,9 +77,11 @@ reaction happening.
 
 - Separating a mixture: the apparatus works on screen (filtration, evaporation, crystallisation,
   distillation, fractional distillation, separating funnel, magnet, chromatography, sublimation).
-  Mixtures of two or three parts; the engine works out every step in order (a magnet, sublimation,
-  dissolving in the right solvent, filtering, evaporating or crystallising, a separating funnel,
-  fractional distillation, chromatography). Parts it knows: sand, chalk, charcoal powder,
+  Mixtures of two to four parts; the engine works out every step in order (a magnet, sublimation,
+  flotation, dissolving in the right solvent, filtering, evaporating, crystallising or fractional
+  crystallisation, a separating funnel, fractional distillation, chromatography, decolourising with
+  charcoal). It refuses, with the reason, what school methods cannot part (sand and chalk; two magnetic
+  metals; liquids boiling within a few degrees) — do not write those. Parts it knows: sand, chalk, charcoal powder,
   copper(II) oxide, sawdust, iron(III) oxide, lead(II) iodide, barium sulphate, copper(II) carbonate,
   zinc oxide, magnesium oxide, iron filings, nickel powder, cobalt powder, iodine, naphthalene,
   ammonium chloride, sulphur, salt, sugar, copper(II) sulphate, iron(II) sulphate, nickel(II) sulphate,
