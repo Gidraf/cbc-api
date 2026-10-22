@@ -237,6 +237,10 @@ def test_structures_have_their_formulas_atoms() -> None:
         assert Counter(a["el"] for a in W.structure(f)) == Counter(C.parse(C.normalize(f))), f
     ethanol = W.structure("C2H5OH")
     assert sum(1 for a in ethanol if a["el"] == "H" and ethanol[a["to"]]["el"] == "O") == 1     # one H on the O
+    ethanoate = W.structure("NaCH3COO")
+    assert not any(a["el"] == "H" and ethanoate[a["to"]]["el"] == "O" for a in ethanoate)      # the ion has lost that H
+    acid = W.structure("CH3COOH")
+    assert sum(1 for a in acid if a["el"] == "H" and acid[a["to"]]["el"] == "O") == 1
     pair = W.scenes_for({"chemistry": {"bond": ["Na", "Cl"]}})
     atoms = [s for s in pair if s["scene"] == "chem_atom"]
     assert [a["slot"] for a in atoms] == [0, 1], "the two atoms share a page, side by side"
