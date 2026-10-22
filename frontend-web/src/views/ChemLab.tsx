@@ -316,9 +316,17 @@ function Autopilot() {
   const [perDay, setPerDay] = React.useState(0);
   const [photoDays, setPhotoDays] = React.useState(7);
   const [keep, setKeep] = React.useState(true);
+  const [sepCount, setSepCount] = React.useState(1000);
+  // A kind moved to another topic: its index in that kind's options (0 = the best match).
+  const [choice, setChoice] = React.useState<Record<string, number>>({});
   const out = go.data;
   const rows = (out && !out.dry ? out.placements : plan.data?.placements) || [];
-  const run = () => go.mutate({ per_day: perDay, keep_booking: keep, photo_days: photoDays }, {
+  const overrides: Record<string, { grade: string; subject: string; strand: string; sub_strand: string }> = {};
+  for (const p of plan.data?.placements || []) {
+    const o = p.options?.[choice[p.kind] || 0];
+    if (o && choice[p.kind]) overrides[p.kind] = { grade: o.grade, subject: o.subject, strand: o.strand, sub_strand: o.sub_strand };
+  }
+  const run = () => go.mutate({ per_day: perDay, keep_booking: keep, photo_days: photoDays, counts: { separations: sepCount }, overrides }, {
     onSuccess: (r) => toast(`Booked ${(r.booked || []).reduce((a, b) => a + b.videos, 0)} videos` +
       `${(r.photos || []).length ? " and the photo series" : ""}. Videos not made yet are rendering now.`, "ok"),
     onError: (e) => toast(String((e as Error).message || e), "danger"),
@@ -337,11 +345,25 @@ function Autopilot() {
         {rows.length > 0 && (
           <div style={{ display: "grid", gap: 6 }}>
             {rows.map((p) => (
-              <div key={p.kind} style={{ display: "flex", gap: "var(--s2)", flexWrap: "wrap", alignItems: "baseline", padding: "6px 0", borderBottom: "1px solid var(--line-2)" }}>
+              <div key={p.kind} style={{ display: "flex", gap: "var(--s2)", flexWrap: "wrap", alignItems: "center", padding: "6px 0", borderBottom: "1px solid var(--line-2)" }}>
                 <b style={{ minWidth: "11rem" }}>{p.label}</b>
-                <span>{p.grade_label} · {p.subject} · {p.sub_strand}</span>
-                <Badge>{(p.saved ?? p.questions).toLocaleString()} questions{p.already ? ` (+${p.already} already there)` : ""}</Badge>
-                {p.next?.[0] && <span style={{ color: "var(--ink-3)", fontSize: "var(--text-xs)" }}>next best: {p.next[0].grade} · {p.next[0].sub_strand}</span>}
+                {out && !out.dry ? <span>{p.grade_label} · {p.subject} · {p.sub_strand}</span> : (
+                  <Select value={String(choice[p.kind] || 0)} onChange={(e) => setChoice((c) => ({ ...c, [p.kind]: Number(e.target.value) }))}
+                          style={{ width: "auto", maxWidth: "100%" }}>
+                    {(p.options?.length ? p.options : [p]).map((o, i) => (
+                      <option key={i} value={i}>{o.grade_label} · {o.subject} · {o.sub_strand}{i === 0 ? " (best match)" : ""}</option>
+                    ))}
+                  </Select>)}
+                {p.kind === "separations" && !(out && !out.dry) ? (
+                  <label style={{ display: "flex", gap: 6, alignItems: "center", fontSize: "var(--text-sm)" }}>
+                    <Input type="number" min={1} max={60000} value={sepCount} style={{ width: "7rem" }}
+                           onChange={(e) => setSepCount(Math.max(1, Math.min(60000, Number(e.target.value) || 1)))} />
+                    of {(p.available ?? 0).toLocaleString()}
+                  </label>
+                ) : (
+                  <Badge>{(p.saved ?? p.questions).toLocaleString()}{p.saved == null ? ` — all ${(p.available ?? p.questions).toLocaleString()}` : " saved"}
+                    {p.already ? ` (+${p.already} already there)` : ""}</Badge>
+                )}
               </div>
             ))}
           </div>

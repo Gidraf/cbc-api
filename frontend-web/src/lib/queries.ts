@@ -4100,8 +4100,9 @@ export function useChemReact(mix: ChemMix | null) {
 /** The mix on the whiteboard, voiced in the science voice. */
 /** Chemistry on autopilot: where each kind goes in the stored curriculum, then save and book it all. */
 export type ChemPlacement = { kind: string; label: string; grade: string; grade_label: string; subject: string; strand: string;
-  sub_strand: string; score: number; questions: number; saved?: number; already?: number;
-  next: { grade: string; sub_strand: string; score: number }[] };
+  sub_strand: string; score: number; questions: number; available?: number; saved?: number; already?: number; chosen?: boolean;
+  next: { grade: string; sub_strand: string; score: number }[];
+  options?: { grade: string; grade_label: string; subject: string; strand: string; sub_strand: string; score: number }[] };
 export type ChemAutopilotResult = { dry: boolean; placements: ChemPlacement[]; per_day?: number;
   booked: { month: string; videos: number; posts: number; to_render: number; notes: string[] }[] | null;
   photos?: { kind: string; photos?: number; videos?: number; first_day?: string; last_day?: string; error?: string }[];
@@ -4115,7 +4116,8 @@ export function useChemAutopilot() {
   const api = useApi();
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (v: { per_day: number; keep_booking: boolean; photo_days: number }) =>
+    mutationFn: (v: { per_day: number; keep_booking: boolean; photo_days: number; counts?: Record<string, number>;
+                      overrides?: Record<string, { grade: string; subject: string; strand: string; sub_strand: string }> }) =>
       api<ChemAutopilotResult>("/api/v1/play/chem/autopilot", { method: "POST", body: JSON.stringify(v) }),
     onSuccess: () => { for (const k of ["social", "social-library", "video-library", "library", "social-month", "poster", "chem-autopilot"]) qc.invalidateQueries({ queryKey: [k] }); },
   });

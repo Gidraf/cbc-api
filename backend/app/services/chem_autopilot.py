@@ -73,6 +73,11 @@ def score(row: dict[str, Any], kind: str) -> int:
     level = grade_level(str(row.get("grade") or ""))
     if level == PREFER[kind]:
         s += 8
+    subject = str(row.get("subject") or "").lower()
+    if "chemistry" in subject:
+        s += 12                                        # the subject named for it, when its design is in
+    elif "integrated science" in subject:
+        s += 4
     elif level in ("Upper Primary", "Lower Primary", "Pre-Primary"):
         s -= 15                                        # too young for these
     return s
@@ -88,35 +93,50 @@ def place(rows: list[dict[str, Any]] | None = None) -> list[dict[str, Any]]:
         ranked = sorted(((score(r, kind), r) for r in rows), key=lambda x: -x[0])
         if not ranked or ranked[0][0] < 20:
             continue
+        point = lambda sc, x: {"grade": normalize_grade(str(x["grade"])) or str(x["grade"]),  # noqa: E731
+                               "grade_label": grade_label(str(x["grade"])), "subject": str(x["subject"]),
+                               "strand": str(x.get("strand_name") or ""), "sub_strand": str(x.get("sub_strand_name") or ""),
+                               "score": sc}
         s, r = ranked[0]
-        out.append({"kind": kind, "label": KIND_LABEL[kind], "grade": normalize_grade(str(r["grade"])) or str(r["grade"]),
-                    "grade_label": grade_label(str(r["grade"])), "subject": str(r["subject"]), "strand": str(r.get("strand_name") or ""),
-                    "sub_strand": str(r.get("sub_strand_name") or ""), "score": s,
-                    "next": [{"grade": grade_label(str(x["grade"])), "sub_strand": str(x.get("sub_strand_name") or ""), "score": sc}
-                             for sc, x in ranked[1:3]]})
+        options = [point(sc, x) for sc, x in ranked[:6] if sc >= 10]
+        out.append({"kind": kind, "label": KIND_LABEL[kind], **point(s, r),
+                    "next": [{"grade": o["grade_label"], "sub_strand": o["sub_strand"], "score": o["score"]} for o in options[1:3]],
+                    "options": options})
     return out
 
 
-DEFAULT_COUNTS = {"separations": 400, "reactions": 300, "bonding": 240, "atoms": 69}
+# How many of each kind to save: 0 is every one the engine makes (separations, 56,000+, would be decades of posts).
+DEFAULT_COUNTS = {"separations": 1000, "reactions": 0, "bonding": 0, "atoms": 0}
 
 
 def run(*, dry: bool = False, counts: dict[str, int] | None = None, per_day: int = 0, keep_booking: bool = False,
-        photo_days: int = 0, by: str = "", now: datetime | None = None) -> dict[str, Any]:
-    """Place, save, book. `dry` shows the plan and writes nothing."""
+        photo_days: int = 0, by: str = "", now: datetime | None = None,
+        overrides: dict[str, dict[str, str]] | None = None) -> dict[str, Any]:
+    """Place, save, book. `dry` shows the plan and writes nothing. `overrides`:
+    a kind's own choice of grade/subject/strand/sub-strand instead of the best match."""
     from . import chem_bank, platform_settings, social_export
+    from .grade_order import grade_label, normalize_grade
 
     placements = place()
+    for p in placements:
+        o = (overrides or {}).get(p["kind"])
+        if o and o.get("sub_strand") and o.get("subject") and o.get("grade"):
+            p.update({"grade": normalize_grade(o["grade"]) or o["grade"], "grade_label": grade_label(o["grade"]),
+                      "subject": o["subject"], "strand": o.get("strand", ""), "sub_strand": o["sub_strand"], "chosen": True})
     if not placements:
         raise ValueError("No science sub-strands in the stored curriculum mention mixtures, atoms, bonding or reactions — "
                          "ingest the KICD Integrated Science (or Chemistry) designs first.")
     counts = {**DEFAULT_COUNTS, **(counts or {})}
     have = {k: v["questions"] for k, v in chem_bank.summary().items()}
-    plan = [{**p, "questions": min(counts.get(p["kind"], 0), have.get(p["kind"], 0))} for p in placements]
+    plan = [{**p, "available": have.get(p["kind"], 0),
+             "questions": have.get(p["kind"], 0) if not counts.get(p["kind"]) else min(counts[p["kind"]], have.get(p["kind"], 0))}
+            for p in placements]
     if dry:
         return {"dry": True, "placements": plan, "booked": None}
     saved = []
     for p in plan:
-        r = chem_bank.bank(p["kind"], {k: p[k] for k in ("grade", "subject", "strand", "sub_strand")}, max(1, p["questions"]), by=by)
+        r = chem_bank.bank(p["kind"], {k: p[k] for k in ("grade", "subject", "strand", "sub_strand")}, max(1, p["questions"]), by=by,
+                           cap=None)
         saved.append({**p, "saved": r["saved"], "already": r["already"]})
     scopes = list(dict.fromkeys((p["grade"], p["subject"], p["sub_strand"]) for p in plan))
     rules = social_export.auto_book_rules()

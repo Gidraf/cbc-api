@@ -327,7 +327,7 @@ def summary() -> dict[str, Any]:
     return out
 
 
-def bank(kind: str, curriculum: dict[str, str], limit: int, *, by: str = "") -> dict[str, Any]:
+def bank(kind: str, curriculum: dict[str, str], limit: int, *, by: str = "", cap: int | None = 5000) -> dict[str, Any]:
     """Save `limit` engine-made questions of a kind to the bank at a point of
     the curriculum, approved (the engine marks them). The same question at the
     same point keeps its id, so saving again adds only what is new."""
@@ -336,7 +336,7 @@ def bank(kind: str, curriculum: dict[str, str], limit: int, *, by: str = "") -> 
 
     if kind not in KINDS:
         raise ValueError(f"A kind is one of: {', '.join(KINDS)}.")
-    chosen = pick(kind, max(1, min(int(limit), 5000)))
+    chosen = pick(kind, max(1, min(int(limit), cap)) if cap else max(1, int(limit)))
     from .grade_order import normalize_grade
 
     link = {k: str(curriculum.get(k) or "").strip() for k in ("grade", "subject", "strand", "sub_strand")}

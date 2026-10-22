@@ -55,7 +55,7 @@ def test_running_it_saves_books_and_keeps_booking(monkeypatch) -> None:
     monkeypatch.setattr(A, "_rows", lambda: ROWS)
     saved, filled, settings = [], [], {}
     monkeypatch.setattr(chem_bank, "summary", lambda: {k: {"questions": 1000} for k in chem_bank.KINDS})
-    monkeypatch.setattr(chem_bank, "bank", lambda kind, link, n, by="": saved.append((kind, link["sub_strand"], n)) or {"saved": n, "already": 0})
+    monkeypatch.setattr(chem_bank, "bank", lambda kind, link, n, by="", cap=None: saved.append((kind, link["sub_strand"], n)) or {"saved": n, "already": 0})
     monkeypatch.setattr(social_export, "auto_book_rules", lambda: {"enabled": False, "per_day": 10, "days": 30, "scopes": [], "platforms": ["facebook"]})
     monkeypatch.setattr(social_export, "_scopes_booked_before", lambda: [("grade-6", "Mathematics", "")])
     monkeypatch.setattr(social_export, "month_view", lambda y, m, platforms, per_day: {"days": []})
@@ -66,8 +66,33 @@ def test_running_it_saves_books_and_keeps_booking(monkeypatch) -> None:
     assert plan["dry"] and not saved and len(plan["placements"]) == 4
     out = A.run(keep_booking=True, photo_days=3, by="me")
     assert {k for k, _, _ in saved} == {"separations", "atoms", "bonding", "reactions"}
+    assert dict((k, n) for k, _, n in saved) == {"separations": 1000, "atoms": 1000, "bonding": 1000, "reactions": 1000}  # all of each
     assert len(filled) == 2 and ("grade-10", "Chemistry", "Chemical Reactions") in filled[0]      # this month and next
     assert settings["poster_auto_book"] is True
     assert "grade-6|Mathematics|" in settings["poster_auto_book_scopes"]                         # what was booked before stays
     assert "grade-7|Integrated Science|Mixtures" in settings["poster_auto_book_scopes"]
     assert out["photos"] and out["auto_book"]["enabled"]
+
+
+GENERAL = {"grade": "grade-10", "subject": "General Science", "strand_name": "Chemistry",
+           "sub_strand_name": "Acids, Bases and Salts", "slos": ["describe reactions of acids with metals, bases and carbonates",
+                                                                 "write balanced chemical equations"], "key_inquiry_questions": []}
+
+
+def test_chemistry_wins_over_general_science_when_its_design_is_in() -> None:
+    got = {p["kind"]: (p["subject"], p["sub_strand"]) for p in A.place(ROWS + [GENERAL])}
+    assert got["reactions"] == ("Chemistry", "Chemical Reactions")
+    alone = {p["kind"]: p for p in A.place([r for r in ROWS if r["subject"] != "Chemistry"] + [GENERAL])}
+    assert alone["reactions"]["subject"] == "General Science"                      # no Chemistry design: the next best
+    assert any(o["sub_strand"] == "Acids, Bases and Indicators" for o in alone["reactions"]["options"])   # to choose instead
+
+
+def test_a_kind_can_be_put_where_you_choose(monkeypatch) -> None:
+    from app.services import chem_bank
+
+    monkeypatch.setattr(A, "_rows", lambda: ROWS + [GENERAL])
+    monkeypatch.setattr(chem_bank, "summary", lambda: {k: {"questions": 1003} for k in chem_bank.KINDS})
+    plan = A.run(dry=True, overrides={"reactions": {"grade": "Grade 7", "subject": "Integrated Science",
+                                                    "strand": "Mixtures, Elements and Compounds", "sub_strand": "Acids, Bases and Indicators"}})
+    r = next(p for p in plan["placements"] if p["kind"] == "reactions")
+    assert (r["grade"], r["sub_strand"], r["questions"]) == ("grade-7", "Acids, Bases and Indicators", 1003)
