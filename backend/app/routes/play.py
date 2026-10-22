@@ -409,6 +409,42 @@ def chem_bank_save(body: ChemBank, auth: AuthContext = Depends(ANY)) -> dict[str
     return chem_bank.bank(body.kind, body.model_dump(), body.limit, by=str(getattr(auth, "subject", "") or ""))
 
 
+@router.get("/chem/autopilot")
+def chem_autopilot_plan(auth: AuthContext = Depends(ANY)) -> dict[str, Any]:
+    """Where each kind of chemistry question would go in the stored curriculum, and how many — nothing written."""
+    _may_make_videos(auth)
+    from ..services import chem_autopilot
+
+    try:
+        return chem_autopilot.run(dry=True)
+    except ValueError as exc:
+        raise_api_error("VALIDATION_FAILED", str(exc))
+        return {}
+
+
+class ChemAutopilot(BaseModel):
+    per_day: int = Field(0, ge=0, le=30)            # 0: the Auto-book setting's
+    keep_booking: bool = True                       # add the topics to Auto-book and turn it on
+    photo_days: int = Field(7, ge=0, le=31)         # photo series days per topic, after what is booked
+    counts: dict[str, int] = Field(default_factory=dict)
+
+
+@router.post("/chem/autopilot")
+def chem_autopilot_run(body: ChemAutopilot, auth: AuthContext = Depends(ANY)) -> dict[str, Any]:
+    """Place the chemistry questions in the curriculum, save them, book their videos from tomorrow (and their
+    photo series), and keep booking them."""
+    _may_make_videos(auth)
+    from ..services import chem_autopilot
+
+    try:
+        return chem_autopilot.run(per_day=body.per_day, keep_booking=body.keep_booking, photo_days=body.photo_days,
+                                  counts={k: max(0, min(int(v), 5000)) for k, v in body.counts.items()},
+                                  by=str(getattr(auth, "subject", "") or ""))
+    except ValueError as exc:
+        raise_api_error("VALIDATION_FAILED", str(exc))
+        return {}
+
+
 @router.get("/chem/separations")
 def chem_separations(auth: AuthContext = Depends(CONTENT)) -> dict[str, Any]:
     """How many mixtures the separation rules decide, and the questions they make."""

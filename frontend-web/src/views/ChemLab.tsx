@@ -1,6 +1,6 @@
 import React from "react";
 import { Badge, Button, Card, EmptyState, ErrorNotice, Field, Input, LoadingBlock, PageHeader, Select, Stack, useToast } from "../ui/components";
-import { gradeOptionLabel, subjectOptionLabel, useChemBank, useChemBankSummary, useChemLabHtml, useChemReact, useChemSubstances,
+import { gradeOptionLabel, subjectOptionLabel, useChemAutopilot, useChemAutopilotPlan, useChemBank, useChemBankSummary, useChemLabHtml, useChemReact, useChemSubstances,
          useGrades, useStoredStructure, useSubjects, type ChemKind, type ChemMix } from "../lib/queries";
 import { AutoPost, BookSeries, Performance, SocialLibrary, VideoLibrary, WatchModal } from "./PlayArcade";
 import { MonthPlanner } from "./MonthPlanner";
@@ -218,6 +218,7 @@ function ChemSocials() {
   });
   return (
     <>
+      <Autopilot />
       <Card title="1. Make the questions">
         <div style={{ display: "grid", gap: "var(--s3)" }}>
           <div style={{ color: "var(--ink-3)", fontSize: "var(--text-sm)" }}>
@@ -302,5 +303,69 @@ function ChemSocials() {
       {watching && <WatchModal questionId={watching} onClose={() => setWatching(null)} />}
       {socialWatch && <WatchModal questionId={socialWatch} start="social" onClose={() => setSocialWatch(null)} />}
     </>
+  );
+}
+
+/** One button: the engine finds where each kind belongs in your stored KICD curriculum (Integrated Science
+ *  or Chemistry, the grade and sub-strand), saves the questions there, books their videos into the open room
+ *  of each day from tomorrow, books their photo series, and keeps booking them. */
+function Autopilot() {
+  const plan = useChemAutopilotPlan();
+  const go = useChemAutopilot();
+  const toast = useToast();
+  const [perDay, setPerDay] = React.useState(0);
+  const [photoDays, setPhotoDays] = React.useState(7);
+  const [keep, setKeep] = React.useState(true);
+  const out = go.data;
+  const rows = (out && !out.dry ? out.placements : plan.data?.placements) || [];
+  const run = () => go.mutate({ per_day: perDay, keep_booking: keep, photo_days: photoDays }, {
+    onSuccess: (r) => toast(`Booked ${(r.booked || []).reduce((a, b) => a + b.videos, 0)} videos` +
+      `${(r.photos || []).length ? " and the photo series" : ""}. Videos not made yet are rendering now.`, "ok"),
+    onError: (e) => toast(String((e as Error).message || e), "danger"),
+  });
+  return (
+    <Card title="🚀 Do it all for me">
+      <div style={{ display: "grid", gap: "var(--s3)" }}>
+        <div style={{ color: "var(--ink-3)", fontSize: "var(--text-sm)" }}>
+          The engine reads your KICD curriculum and puts each kind of chemistry where it is taught — Integrated Science in
+          Junior School for mixtures and atoms, Chemistry in Senior School for bonding and reactions when that design is in —
+          then saves the questions there, books their videos from tomorrow into each day's open room, books their photo series,
+          and keeps booking them as long as there are questions.
+        </div>
+        {plan.isLoading && <LoadingBlock rows={2} label="Reading the curriculum" />}
+        {plan.error && <ErrorNotice error={plan.error} />}
+        {rows.length > 0 && (
+          <div style={{ display: "grid", gap: 6 }}>
+            {rows.map((p) => (
+              <div key={p.kind} style={{ display: "flex", gap: "var(--s2)", flexWrap: "wrap", alignItems: "baseline", padding: "6px 0", borderBottom: "1px solid var(--line-2)" }}>
+                <b style={{ minWidth: "11rem" }}>{p.label}</b>
+                <span>{p.grade_label} · {p.subject} · {p.sub_strand}</span>
+                <Badge>{(p.saved ?? p.questions).toLocaleString()} questions{p.already ? ` (+${p.already} already there)` : ""}</Badge>
+                {p.next?.[0] && <span style={{ color: "var(--ink-3)", fontSize: "var(--text-xs)" }}>next best: {p.next[0].grade} · {p.next[0].sub_strand}</span>}
+              </div>
+            ))}
+          </div>
+        )}
+        <Stack direction="row" gap="var(--s3)" wrap align="end">
+          <Field label="Videos a day (0: your Auto-book setting)">{(p) => (
+            <Input {...p} type="number" min={0} max={30} value={perDay} onChange={(e) => setPerDay(Math.max(0, Math.min(30, Number(e.target.value) || 0)))} />)}</Field>
+          <Field label="Photo-series days per topic">{(p) => (
+            <Input {...p} type="number" min={0} max={31} value={photoDays} onChange={(e) => setPhotoDays(Math.max(0, Math.min(31, Number(e.target.value) || 0)))} />)}</Field>
+          <label style={{ display: "flex", gap: 6, alignItems: "center", fontSize: "var(--text-sm)" }}>
+            <input type="checkbox" checked={keep} onChange={(e) => setKeep(e.target.checked)} /> Keep booking them (Auto-book)
+          </label>
+          <Button variant="primary" onClick={run} disabled={go.isPending || !rows.length}>
+            {go.isPending ? "Saving and booking…" : "🚀 Save and schedule everything"}
+          </Button>
+        </Stack>
+        {out && !out.dry && (
+          <div style={{ fontSize: "var(--text-sm)", display: "grid", gap: 4 }}>
+            {(out.booked || []).map((b) => <div key={b.month}>📅 {b.month}: {b.videos} videos booked, {b.to_render} rendering now{b.notes?.length ? ` — ${b.notes[0]}` : ""}</div>)}
+            {(out.photos || []).map((p) => <div key={p.kind}>📸 {p.kind}: {p.error ? p.error : `${p.photos} photos and ${p.videos} videos, ${p.first_day} → ${p.last_day}`}</div>)}
+            {out.auto_book?.enabled && <div>🔁 Auto-book is on{out.auto_book.added.length ? ` — added ${out.auto_book.added.length} chemistry topic(s)` : ""}.</div>}
+          </div>
+        )}
+      </div>
+    </Card>
   );
 }
