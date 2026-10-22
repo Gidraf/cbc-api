@@ -64,8 +64,18 @@ def _key(q: dict[str, Any], step: str, b: dict[str, Any]) -> str:
         return hashlib.sha256(basis.encode()).hexdigest()[:16]
     letter, text = _answer(q)
     basis = "|".join([VERSION, step, str(q.get("question_text") or ""), str(q.get("stimulus_context") or ""),
-                      repr(q.get("options") or []), letter, text, repr(sorted(b.items()))])
+                      repr(q.get("options") or []), letter, text, repr(sorted(b.items())), _chem_figure(q, step)])
     return hashlib.sha256(basis.encode()).hexdigest()[:16]
+
+
+def _chem_figure(q: dict[str, Any], step: str) -> str:
+    """A chemistry item's picture for its card: the set-up on the question card,
+    the result on the answer card (from its animation; "" until it is made)."""
+    if step not in ("question", "answer") or not isinstance(q.get("chemistry"), dict):
+        return ""
+    from . import chem_stills
+
+    return chem_stills.card_image(str(q.get("question_id") or ""), q, "setup" if step == "question" else "result")
 
 
 def object_name(question_id: str, step: str, key: str) -> str:
@@ -104,6 +114,9 @@ def page(q: dict[str, Any], step: str, b: dict[str, Any]) -> str:
             figure = figure_markup(q, figures_for([q]), answers=False) or ""
         except Exception:  # noqa: BLE001
             figure = ""
+        still = _chem_figure(q, step)
+        if not figure and still:
+            figure = f"<img src='{esc(still)}' alt='' style='width:100%;max-height:30rem;object-fit:contain;border-radius:18px'>"
     options = "".join(
         f"<li class='{'right' if step == 'answer' and o.get('id') == letter else ''}'><b>{esc(o.get('id'))})</b> "
         f"<span class='m'>{esc(o.get('text'))}</span></li>"
@@ -203,7 +216,12 @@ def enqueue(question_id: str, *, queued_by: str = "cards") -> dict[str, Any]:
     from . import job_queue
 
     q = _q(question_id)
-    if all(status(question_id, s, q)["status"] == "ready" for s in CARDS):
+    chem_ready = True
+    if isinstance(q.get("chemistry"), dict):
+        from . import chem_stills
+
+        chem_ready = chem_stills.status(question_id, q)["status"] == "ready"
+    if chem_ready and all(status(question_id, s, q)["status"] == "ready" for s in CARDS):
         return {"status": "ready"}
     link = q.get("curriculum") or {}
     job = job_queue.enqueue(JOB_KIND, str(link.get("grade") or ""), str(link.get("subject") or ""),
@@ -219,8 +237,17 @@ def run_job(job: dict[str, Any]) -> dict[str, Any]:
     if not qid:
         return {"status": "skipped"}
     q = _q(qid)
+    stills = None
+    if isinstance(q.get("chemistry"), dict):
+        # The animation's pictures first: the cards show them, and the comments carry them.
+        from . import chem_stills
+
+        try:
+            stills = chem_stills.render(qid, q)["status"]
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Chemistry stills for %s failed: %s", qid, exc)
     made = {step: render(qid, step, q)["status"] for step in CARDS}
-    return {"status": "done", "question_id": qid, "cards": made}
+    return {"status": "done", "question_id": qid, "cards": made, **({"stills": stills} if stills else {})}
 
 
 # ── what each post says ──────────────────────────────────────────────────────

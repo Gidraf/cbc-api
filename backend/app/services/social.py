@@ -667,6 +667,14 @@ def campaign_comments(q: dict[str, Any], data: dict[str, Any], b: dict[str, Any]
                 out.append({"text": line, "image_url": card["url"]})
         except Exception:  # noqa: BLE001
             pass
+    if isinstance(q.get("chemistry"), dict):
+        # Chemistry: the animation picture by picture — every step of the reaction, the atoms, the separation.
+        from . import chem_stills
+
+        try:
+            out += chem_stills.comments(qid, q)
+        except Exception:  # noqa: BLE001
+            pass
     for n, slo in enumerate(_texts(row.get("slos")), start=1):
         out.append({"text": f"🎯 Learning outcome {n} for {sub}: “{slo}” {credit}"})
     for kiq in _texts(row.get("key_inquiry_questions")):
