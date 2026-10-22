@@ -214,7 +214,8 @@ def library_question(question_id: str, auth: AuthContext = Depends(CONTENT)) -> 
     cols = """post_id, platform, format, step, status, scheduled_for, posted_at, handed_at, platform_scheduled, url, notes,
               attempts, last_error, last_attempt_at, created_by, groups, destinations, teacher, marketing,
               comments_state, comments_error, comments_next_at, campaign_index, campaign_done, score,
-              boost_state, boost_daily_ksh, boost_days, boost_error, boosted_at, views, likes, comments, shares"""
+              boost_state, boost_daily_ksh, boost_days, boost_error, boosted_at, views, likes, comments, shares,
+              share_now_at, comment_now_at, find_link_at, campaign_goal, campaign_pinned_at, campaign_ended_at"""
     for r in fetch_all(f"SELECT {cols} FROM social_posts WHERE question_id = :id ORDER BY created_at",
                        {"id": question_id}) or []:
         post = plain(r)
@@ -2211,6 +2212,47 @@ def boosts(auth: AuthContext = Depends(require_roles("admin"))) -> dict[str, Any
 
     return {"posts": social_export.boost_candidates(), "daily_ksh": social_export.BOOST_DAILY_KSH,
             "days": social_export.BOOST_DAYS}
+
+
+class PostAction(BaseModel):
+    action: Literal["reschedule", "cancel", "post_now", "repost", "find_link", "comment_now", "share_now",
+                    "campaign_start", "campaign_stop"]
+    at: str = ""                       # reschedule: an ISO date-time (East Africa time if it has no zone)
+    goal: int = Field(1000, ge=100, le=1_000_000)
+
+
+@router.post("/poster/posts/{post_id}/action")
+def post_action(post_id: str, payload: PostAction, auth: AuthContext = Depends(ANY)) -> dict[str, Any]:
+    """One post's control in the Library: reschedule, cancel, post now or again, find its link, comment or
+    share now, or pin a campaign to it (shared to new groups and commented until its goal in views)."""
+    from datetime import datetime as _dt
+
+    from ..services import social_export
+
+    _may_make_videos(auth)
+    at = None
+    if payload.at:
+        try:
+            at = _dt.fromisoformat(payload.at.replace("Z", "+00:00"))
+        except ValueError:
+            raise_api_error("VALIDATION_FAILED", "Give the time as 2026-10-24T09:30.")
+        if at.tzinfo is None:
+            at = at.replace(tzinfo=social_export.EAT)
+    out = social_export.post_action(post_id, payload.action, at=at, goal=payload.goal)
+    if out.pop("send", False):
+        sent = poster_command(PosterCommand(action="run_now", platform="facebook", post_id=out["post_id"],
+                                            options={"share": "feed", "groups": []}), auth=auth)
+        out = {**out, "poster": sent}
+    return out
+
+
+@router.get("/poster/campaigns")
+def poster_campaigns(auth: AuthContext = Depends(ANY)) -> dict[str, Any]:
+    """The campaigns pinned to posts (at most two at a time), with their progress."""
+    from ..services import social_export
+
+    _may_make_videos(auth)
+    return {"max": social_export.MAX_CAMPAIGNS, "running": social_export.campaigns_running()}
 
 
 @router.post("/poster/posts/{post_id}/boost")

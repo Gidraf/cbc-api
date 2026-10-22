@@ -1786,6 +1786,21 @@ MIGRATIONS: list[tuple[str, str]] = [
         CREATE INDEX IF NOT EXISTS idx_poster_groups_status ON poster_groups(status, members DESC);
         """,
     ),
+    (
+        "069_post_actions",
+        """
+        -- A post's own controls from the Library: a share or a comment asked
+        -- for now (taken before the campaign's turn), its link looked for now
+        -- (a profile scan), and a campaign pinned to it — shared to new groups
+        -- and commented until it reaches its goal in views (two at a time).
+        ALTER TABLE social_posts ADD COLUMN IF NOT EXISTS share_now_at TIMESTAMPTZ NULL;
+        ALTER TABLE social_posts ADD COLUMN IF NOT EXISTS comment_now_at TIMESTAMPTZ NULL;
+        ALTER TABLE social_posts ADD COLUMN IF NOT EXISTS find_link_at TIMESTAMPTZ NULL;
+        ALTER TABLE social_posts ADD COLUMN IF NOT EXISTS campaign_goal INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE social_posts ADD COLUMN IF NOT EXISTS campaign_pinned_at TIMESTAMPTZ NULL;
+        ALTER TABLE social_posts ADD COLUMN IF NOT EXISTS campaign_ended_at TIMESTAMPTZ NULL;
+        """,
+    ),
 ]
 
 

@@ -5039,6 +5039,8 @@ export type LibraryPost = {
   comments_state: string; comments_error: string; comments_next_at: string | null; campaign_index: number; campaign_done: boolean;
   score: number | null; boost_state: string; boost_daily_ksh: number | null; boost_days: number | null; boost_error: string;
   boosted_at: string | null; views: number; likes: number; comments: number; shares: number;
+  share_now_at?: string | null; comment_now_at?: string | null; find_link_at?: string | null;
+  campaign_goal?: number; campaign_pinned_at?: string | null; campaign_ended_at?: string | null;
   daily: Array<{ day: string; views: number; reactions: number; comments: number; shares: number }>;
   campaign: Record<string, { kind: string; ok: number; failed: number; last: string }>;
 };
@@ -5076,6 +5078,28 @@ export function useBoostPost() {
         { method: "POST", body: JSON.stringify({ daily_ksh: v.daily_ksh, days: v.days, again: Boolean(v.again) }) }),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["library-question"] }); qc.invalidateQueries({ queryKey: ["library"] }); },
   });
+}
+
+/** One post's control from the Library: reschedule, cancel, post now / again, find its link, comment or share
+ *  now, or pin a campaign (new groups twice a day + comments until its goal in views; two at a time). */
+export type PostActionName = "reschedule" | "cancel" | "post_now" | "repost" | "find_link" | "comment_now" | "share_now"
+  | "campaign_start" | "campaign_stop";
+export function usePostAction() {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { post_id: string; action: PostActionName; at?: string; goal?: number }) =>
+      api<{ ok: boolean; message?: string; error?: string; making?: boolean }>(
+        `/api/v1/play/poster/posts/${encodeURIComponent(v.post_id)}/action`,
+        { method: "POST", body: JSON.stringify({ action: v.action, at: v.at || "", goal: v.goal || 1000 }) }),
+    onSuccess: () => { for (const k of ["library-question", "library", "poster-campaigns", "chem-questions"]) qc.invalidateQueries({ queryKey: [k] }); },
+  });
+}
+export function usePosterCampaigns() {
+  const api = useApi();
+  return useQuery({ queryKey: ["poster-campaigns"], staleTime: 60_000,
+    queryFn: () => api<{ max: number; running: Array<{ post_id: string; question_id: string; url: string; views: number;
+      campaign_goal: number; question_text: string; shares: number; comments: number }> }>("/api/v1/play/poster/campaigns") });
 }
 
 export type FoundGroup = { name: string; url: string; members: number; privacy: string;

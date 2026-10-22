@@ -3,7 +3,7 @@ import { useSearchParams } from "react-router-dom";
 import { Badge, Button, Card, ErrorNotice, Input, LoadingBlock, PageHeader, Select, Stack, useToast } from "../ui/components";
 import { MathText } from "../ui/MathBlock";
 import {
-  useBoostPost, useLibrary, useLibraryQuestion, useLibraryTree, useMakeSocial, usePostQuestion,
+  useBoostPost, useLibrary, useLibraryQuestion, useLibraryTree, useMakeSocial, usePostAction, usePosterCampaigns, usePostQuestion,
   type LibraryFilters, type LibraryItem, type LibraryPost, type LibraryQuestion,
 } from "../lib/queries";
 
@@ -25,6 +25,7 @@ function postState(p: { status: string; handed_at?: string | null; posted_at?: s
     return [`Posted · ${when(p.posted_at)}`, "ok"];
   }
   if (p.status === "failed") return [`Failed · retried · booked ${when(p.scheduled_for)}`, "danger"];
+  if (p.scheduled_for && !future(p.scheduled_for)) return [`Missed · booked ${when(p.scheduled_for)}, not out`, "warn"];
   if (p.scheduled_for) return [`Booked · ${when(p.scheduled_for)}`, "neutral"];
   return ["Not booked", "neutral"];
 }
@@ -157,7 +158,7 @@ function Detail({ id }: { id: string }) {
   const shown = cv.url || q.videos.find((v) => v.kind === "social")?.url || q.videos[0]?.url;
   const out = q.posts.some((p) => p.handed_at);
   async function makeVideo(fresh: boolean) {
-    try { await make.mutateAsync({ questionId: id, fresh }); toast("Its video is being made — this page updates when it is ready.", "ok"); one.refetch(); }
+    try { await make.mutateAsync({ questionId: id, fresh, now: true }); toast("Its video is being made now on the standby worker, ahead of the queue — this page updates when it is ready.", "ok"); one.refetch(); }
     catch (err) { toast(err instanceof Error ? err.message : "Could not make its video.", "danger"); }
   }
   async function postNow() {
@@ -211,6 +212,11 @@ function Detail({ id }: { id: string }) {
               <span style={{ color: "var(--ink-3)" }}>An older video exists (shown), made before the current settings — it is made again before it is posted.</span>
             )}
             {cv.error && <span style={{ color: "var(--danger, #dc2626)" }}>{cv.error}</span>}
+            {cv.status !== "ready" && q.posts.some((p) => !p.handed_at && p.format !== "photo") && (
+              <span style={{ color: "var(--warn, #b45309)" }}>
+                It is booked but its video is not made yet — <b>Make video now</b> renders it on the standby worker, ahead of the queue.
+              </span>
+            )}
             {q.videos.length > 0 && (
               <div style={{ display: "grid", gap: 2 }}>
                 <b style={{ fontSize: "var(--text-xs)" }}>Made</b>
@@ -229,6 +235,7 @@ function Detail({ id }: { id: string }) {
 
       {q.staff && (
         <Card title={`Posts (${q.posts.length})`}>
+          <CampaignsRunning />
           {q.posts.length === 0 ? (
             <p style={{ margin: 0, color: "var(--ink-3)", fontSize: "var(--text-sm)" }}>Not booked or posted yet. Post now puts it out live; Auto-book books it in turn.</p>
           ) : <div style={{ display: "grid", gap: "var(--s3)" }}>{q.posts.map((p) => <PostBox key={p.post_id} p={p} />)}</div>}
@@ -307,6 +314,17 @@ function PostBox({ p }: { p: LibraryPost }) {
   const [daily, setDaily] = React.useState(p.boost_daily_ksh || 200);
   const [days, setDays] = React.useState(p.boost_days || 5);
   const ours = 4 + (p.campaign?.comment?.ok || 0);
+  const act = usePostAction();
+  const [at, setAt] = React.useState(() => (p.scheduled_for || new Date().toISOString()).slice(0, 16));
+  const [goal, setGoal] = React.useState(p.campaign_goal || 1000);
+  const out = Boolean(p.handed_at);
+  const pinned = Boolean(p.campaign_pinned_at && !p.campaign_ended_at);
+  async function run(action: Parameters<typeof act.mutateAsync>[0]["action"], extra: { at?: string; goal?: number } = {}) {
+    try {
+      const r = await act.mutateAsync({ post_id: p.post_id, action, ...extra });
+      toast(String(r?.message || r?.error || "Done."), r?.ok ? "ok" : r?.making ? "info" : "danger");
+    } catch (err) { toast(err instanceof Error ? err.message : "Could not do it.", "danger"); }
+  }
   const thread: Record<string, string> = { pending: "first comments waiting", part: "answer comment waiting", done: "thread done",
                                            complete: "thread done", boost: "extra comments going", failed: "thread failed", "": "no comments yet" };
   async function doBoost() {
@@ -340,6 +358,41 @@ function PostBox({ p }: { p: LibraryPost }) {
         {p.comments_next_at && future(p.comments_next_at) ? ` · next at ${when(p.comments_next_at)}` : ""}
       </div>
       {(p.groups || []).length > 0 && <div style={{ color: "var(--ink-3)" }}>Groups: {p.groups.join(", ")}</div>}
+      <Stack direction="row" gap="var(--s2)" wrap align="center">
+        {!out ? (<>
+          <Button size="sm" variant="primary" disabled={act.isPending} onClick={() => run("post_now")}
+                  title="Live now (its video made first if need be — then it posts itself)">Post now</Button>
+          <Input type="datetime-local" value={at} onChange={(e) => setAt(e.target.value)} style={{ width: "auto" }} />
+          <Button size="sm" variant="ghost" disabled={act.isPending} onClick={() => run("reschedule", { at })}>Reschedule</Button>
+          <Button size="sm" variant="ghost" disabled={act.isPending} onClick={() => { if (window.confirm("Unbook this post?")) run("cancel"); }}>Cancel booking</Button>
+        </>) : (<>
+          {!p.url && <Button size="sm" variant="ghost" disabled={act.isPending || Boolean(p.find_link_at)} onClick={() => run("find_link")}
+                             title="The poster scans your profile for it and saves its link">{p.find_link_at ? "Looking for its link…" : "🔗 Find its link"}</Button>}
+          <Button size="sm" variant="ghost" disabled={act.isPending || Boolean(p.comment_now_at)} onClick={() => run("comment_now")}>
+            {p.comment_now_at ? "Comment coming…" : "💬 Comment now"}</Button>
+          <Button size="sm" variant="ghost" disabled={act.isPending || Boolean(p.share_now_at)} onClick={() => run("share_now")}>
+            {p.share_now_at ? "Sharing soon…" : "👥 Share to groups now"}</Button>
+          <Button size="sm" variant="ghost" disabled={act.isPending}
+                  onClick={() => { if (window.confirm("Post this question again as a new post? The old one stays in its history.")) run("repost"); }}>🔁 Post again</Button>
+        </>)}
+      </Stack>
+      {out && p.platform === "facebook" && (
+        <Stack direction="row" gap="var(--s2)" wrap align="center">
+          {pinned ? (<>
+            <Badge tone="info">🚀 Campaign: {Number(p.views || 0).toLocaleString()} / {Number(p.campaign_goal || 0).toLocaleString()} views</Badge>
+            <span style={{ color: "var(--ink-3)" }}>shared {p.campaign?.share?.ok || 0}× · {p.campaign?.comment?.ok || 0} comments</span>
+            <Button size="sm" variant="ghost" disabled={act.isPending} onClick={() => run("campaign_stop")}>Stop campaign</Button>
+          </>) : (<>
+            <span style={{ color: "var(--ink-3)" }}>Campaign to</span>
+            <Input type="number" min={100} max={1000000} value={goal} style={{ width: 100 }}
+                   onChange={(e) => setGoal(Math.max(100, Math.min(1000000, Number(e.target.value) || 1000)))} />
+            <span style={{ color: "var(--ink-3)" }}>views</span>
+            <Button size="sm" variant="ghost" disabled={act.isPending} onClick={() => run("campaign_start", { goal })}
+                    title="Shared to new groups twice a day and commented, until it reaches the goal (two campaigns at a time)">🚀 Start campaign</Button>
+            {p.campaign_ended_at && <span style={{ color: "var(--ink-3)" }}>last campaign ended {when(p.campaign_ended_at)}</span>}
+          </>)}
+        </Stack>
+      )}
       {p.last_error && <div style={{ color: "var(--danger, #dc2626)" }}>Posting: {p.last_error}</div>}
       {p.comments_error && <div style={{ color: "var(--warn, #b45309)" }}>Comments: {p.comments_error}</div>}
       {p.boost_error && <div style={{ color: "var(--danger, #dc2626)" }}>Boost: {p.boost_error}</div>}
@@ -373,6 +426,24 @@ function PostBox({ p }: { p: LibraryPost }) {
         {p.attempts ? ` · ${p.attempts} attempt(s)` : ""}{p.last_attempt_at ? ` · last tried ${when(p.last_attempt_at)}` : ""}
         {p.teacher ? ` · ${p.teacher} teacher` : ""} · <code>{p.post_id}</code>
       </span>
+    </div>
+  );
+}
+
+/** The campaigns pinned to posts — two at a time — and how far each has come. */
+function CampaignsRunning() {
+  const c = usePosterCampaigns();
+  const running = c.data?.running || [];
+  if (!c.data) return null;
+  return (
+    <div style={{ fontSize: "var(--text-xs)", color: "var(--ink-3)", marginBottom: "var(--s2)" }}>
+      🚀 Campaigns running: {running.length} of {c.data.max}
+      {running.map((r) => (
+        <div key={r.post_id}>
+          · <a href={`/library?q=${encodeURIComponent(r.question_id)}`}>{r.question_text.slice(0, 70)}</a> — {r.views.toLocaleString()} /
+          {" "}{r.campaign_goal.toLocaleString()} views, shared {r.shares}×, {r.comments} comments
+        </div>
+      ))}
     </div>
   );
 }

@@ -1064,6 +1064,9 @@ def reconcile_due(now: datetime) -> bool:
     """Enough posts without their link, and no deep scroll in the last few hours."""
     from ..infra.db import fetch_one
 
+    if (fetch_one("""SELECT COUNT(*) AS n FROM social_posts WHERE find_link_at IS NOT NULL AND url = ''
+                     AND handed_at IS NOT NULL""") or {}).get("n"):
+        return True                                      # asked for now, from the Library
     last = (fetch_one("SELECT MAX(at) AS t FROM campaign_log WHERE kind = 'reconcile'") or {}).get("t")
     if isinstance(last, datetime) and now - last < RECONCILE_EVERY:
         return False
@@ -1075,6 +1078,7 @@ def reconcile_job(now: datetime) -> dict[str, Any]:
     from ..infra.db import execute
 
     execute("INSERT INTO campaign_log (post_id, at, kind, ok) VALUES ('', :t, 'reconcile', TRUE)", {"t": now})
+    execute("UPDATE social_posts SET find_link_at = NULL WHERE find_link_at IS NOT NULL")
     return {"post_id": "reconcile", "stage": "reconcile", "platform": "facebook", "scrolls": 160, "comments": []}
 
 
@@ -1233,7 +1237,7 @@ def comments_next(now: datetime | None = None, *, check: bool = False,
                         "comments": [extras[k]], "image_url": "", "measure": True}, "reason": ""}
     if not row:
         br = boost_rules()
-        camp = campaign_rules()["enabled"] and not check and "comments" in roles
+        camp = (campaign_rules()["enabled"] or _asked_or_pinned()) and not check and "comments" in roles
         if (br["enabled"] or camp) and not check and "comments" in roles:
             # Read a post's insights: the weakest (or never read) first.
             row = fetch_one("""SELECT post_id, question_id, platform, url FROM social_posts
@@ -2818,6 +2822,9 @@ def campaign_next(now: datetime | None = None) -> dict[str, Any]:
 
     now = now or datetime.now(timezone.utc)
     r = campaign_rules()
+    first = _asked_now(now) or _pinned_next(now, r)
+    if first:
+        return first
     if not r["enabled"]:
         return {"job": None, "reason": "The comment campaign is off."}
     day = now.astimezone(EAT).replace(hour=0, minute=0, second=0, microsecond=0)
@@ -2877,6 +2884,192 @@ def campaign_next(now: datetime | None = None) -> dict[str, Any]:
                     "find": t.get("find") or "", "find_also": t.get("find_also") or [], "stage": "campaign",
                     "phase": phase, "comments": [item["text"]], "image_url": item.get("image_url") or "",
                     "measure": False}, "reason": ""}
+
+
+# ── a post's own controls (the Library) ──────────────────────────────────────
+
+MAX_CAMPAIGNS = 2                     # campaigns pinned to posts at once
+PIN_SHARE_EVERY = timedelta(hours=12)
+
+
+def _asked_or_pinned() -> bool:
+    from ..infra.db import fetch_one
+
+    return bool((fetch_one("""SELECT COUNT(*) AS n FROM social_posts WHERE share_now_at IS NOT NULL OR comment_now_at IS NOT NULL
+                              OR (campaign_pinned_at IS NOT NULL AND campaign_ended_at IS NULL)""") or {}).get("n"))
+
+
+def _job_base(row: dict[str, Any]) -> dict[str, Any]:
+    from . import social
+
+    t = social.status(row["question_id"]).get("thread") or {}
+    return {"post_id": row["post_id"], "platform": "facebook", "url": row.get("url") or "",
+            "find": t.get("find") or "", "find_also": t.get("find_also") or []}
+
+
+def _comment_job(row: dict[str, Any], phase: str) -> dict[str, Any] | None:
+    from ..infra.db import execute
+
+    items = _campaign_items(row["question_id"])
+    k = int(row.get("campaign_index") or 0) + 4
+    if k >= len(items):
+        execute("UPDATE social_posts SET campaign_done = TRUE WHERE post_id = :id", {"id": row["post_id"]})
+        return None
+    item = items[k]
+    return {"job": {**_job_base(row), "stage": "campaign", "phase": phase, "comments": [item["text"]],
+                    "image_url": item.get("image_url") or "", "measure": False}, "reason": ""}
+
+
+def _asked_now(now: datetime) -> dict[str, Any] | None:
+    """A share or a comment asked for now from the Library: before anything else."""
+    from ..infra.db import execute, fetch_one
+
+    row = fetch_one("""SELECT post_id, question_id, url, campaign_index, share_now_at, comment_now_at FROM social_posts
+                       WHERE (share_now_at IS NOT NULL OR comment_now_at IS NOT NULL) AND handed_at IS NOT NULL
+                       ORDER BY LEAST(COALESCE(share_now_at, comment_now_at), COALESCE(comment_now_at, share_now_at)) LIMIT 1""")
+    if not row:
+        return None
+    if row.get("share_now_at"):
+        execute("UPDATE social_posts SET share_now_at = NULL WHERE post_id = :id", {"id": row["post_id"]})
+        groups = groups_for("facebook", now, poster_rules())
+        if groups:
+            return {"job": {**_job_base(row), "stage": "share", "groups": groups, "comments": [], "image_url": ""}, "reason": ""}
+    if row.get("comment_now_at"):
+        execute("UPDATE social_posts SET comment_now_at = NULL WHERE post_id = :id", {"id": row["post_id"]})
+        return _comment_job(row, "asked")
+    return None
+
+
+def _pinned_next(now: datetime, r: dict[str, Any]) -> dict[str, Any] | None:
+    """A campaign pinned to a post: shared to new groups twice a day and
+    commented (within the day's limits) until its views reach the goal."""
+    from ..infra.db import execute, fetch_all
+
+    day = now.astimezone(EAT).replace(hour=0, minute=0, second=0, microsecond=0)
+    # Every campaign at its goal ends first — whichever post's turn comes next.
+    execute("""UPDATE social_posts SET campaign_ended_at = :t WHERE campaign_pinned_at IS NOT NULL AND campaign_ended_at IS NULL
+               AND campaign_goal > 0 AND views >= campaign_goal""", {"t": now})
+    rows = fetch_all("""SELECT p.post_id, p.question_id, p.url, p.campaign_index, p.views, p.campaign_goal,
+                               (SELECT COUNT(*) FROM campaign_log c WHERE c.post_id = p.post_id AND c.at >= :d
+                                  AND c.kind = 'comment' AND c.ok) AS today,
+                               (SELECT MAX(at) FROM campaign_log c WHERE c.post_id = p.post_id AND c.kind = 'share' AND c.ok) AS shared_at,
+                               (SELECT MAX(at) FROM campaign_log c WHERE c.post_id = p.post_id) AS last_at
+                        FROM social_posts p WHERE p.campaign_pinned_at IS NOT NULL AND p.campaign_ended_at IS NULL
+                          AND p.handed_at IS NOT NULL ORDER BY p.campaign_pinned_at""", {"d": day}) or []
+    for row in rows:
+        if int(row.get("views") or 0) >= int(row.get("campaign_goal") or 0) > 0:
+            execute("UPDATE social_posts SET campaign_ended_at = :t WHERE post_id = :id", {"id": row["post_id"], "t": now})
+            continue
+        last = row.get("last_at")
+        if last and now - last < timedelta(seconds=90):
+            continue                                     # a breath between a post's own steps
+        if not row.get("shared_at") or now - row["shared_at"] >= PIN_SHARE_EVERY:
+            groups = groups_for("facebook", now, poster_rules())
+            if groups:
+                return {"job": {**_job_base(row), "stage": "share", "groups": groups, "comments": [], "image_url": ""}, "reason": ""}
+        if int(row.get("today") or 0) < r["per_post_day"]:
+            job = _comment_job(row, "pinned")
+            if job:
+                return job
+    return None
+
+
+def post_action(post_id: str, action: str, *, at: datetime | None = None, goal: int = 1000,
+                now: datetime | None = None) -> dict[str, Any]:
+    """One post's control from the Library. Returns {ok, message} — and
+    `send` with the post to hand to the poster now, for post_now and repost."""
+    from ..infra.db import execute, fetch_one
+
+    now = now or datetime.now(timezone.utc)
+    row = fetch_one("SELECT * FROM social_posts WHERE post_id = :id", {"id": post_id})
+    if not row:
+        return {"ok": False, "error": "No such post."}
+    out_already = row.get("handed_at") is not None
+    qid = row["question_id"]
+    if action == "reschedule":
+        if out_already:
+            return {"ok": False, "error": "It is out already — post it again instead."}
+        if not at:
+            return {"ok": False, "error": "Pick when."}
+        execute("""UPDATE social_posts SET scheduled_for = :at, status = 'planned', attempts = 0, last_error = '',
+                   updated_at = NOW() WHERE post_id = :id""", {"id": post_id, "at": at})
+        return {"ok": True, "message": f"Booked for {at.astimezone(EAT):%a %d %b, %H:%M}."}
+    if action == "cancel":
+        if out_already:
+            return {"ok": False, "error": "It is out already — it cannot be unbooked."}
+        delete_post(post_id)
+        return {"ok": True, "message": "Unbooked. Auto-book may book it again later; Post now puts it out now."}
+    if action in ("post_now", "repost"):
+        if action == "repost":
+            if not out_already:
+                return {"ok": False, "error": "It is not out yet — Post now instead."}
+            _archive_post(post_id, "posted again from the Library")
+        elif out_already:
+            return {"ok": False, "error": "It is out already — Post again puts it out once more."}
+        got = post_card(qid, row["step"]) if str(row.get("format") or "video") == "photo" and row.get("step") else post_question(qid)
+        return {**got, "send": bool(got.get("ok")), "message": got.get("error") or "Sent to the poster — it goes out in a minute or two."}
+    if action == "find_link":
+        if not out_already:
+            return {"ok": False, "error": "It is not out yet."}
+        if row.get("url"):
+            return {"ok": True, "message": f"Its link is known: {row['url']}"}
+        execute("UPDATE social_posts SET find_link_at = :t WHERE post_id = :id", {"id": post_id, "t": now})
+        return {"ok": True, "message": "The poster scans your profile for it on its next round and saves its link."}
+    if action in ("comment_now", "share_now"):
+        if not out_already:
+            return {"ok": False, "error": "It is not out yet."}
+        if action == "comment_now" and row.get("comments_state") in ("", "pending", "part", "failed"):
+            execute("""UPDATE social_posts SET comments_next_at = :t, comments_attempts = 0,
+                       comments_state = CASE WHEN comments_state IN ('', 'failed') THEN 'pending' ELSE comments_state END
+                       WHERE post_id = :id""", {"id": post_id, "t": now})
+            return {"ok": True, "message": "Its first comments go up on the poster's next round."}
+        col = "comment_now_at" if action == "comment_now" else "share_now_at"
+        execute(f"UPDATE social_posts SET {col} = :t WHERE post_id = :id", {"id": post_id, "t": now})
+        return {"ok": True, "message": ("The next comment goes up" if action == "comment_now" else "It is shared to the next groups")
+                                       + " on the poster's next round."}
+    if action == "campaign_start":
+        if not out_already:
+            return {"ok": False, "error": "It is not out yet — post it first."}
+        running = fetch_one("""SELECT COUNT(*) AS n FROM social_posts WHERE campaign_pinned_at IS NOT NULL
+                               AND campaign_ended_at IS NULL AND post_id <> :id""", {"id": post_id}) or {}
+        if int(running.get("n") or 0) >= MAX_CAMPAIGNS:
+            return {"ok": False, "error": f"{MAX_CAMPAIGNS} campaigns are running already — stop one first."}
+        goal = max(100, min(int(goal or 1000), 1_000_000))
+        execute("""UPDATE social_posts SET campaign_pinned_at = :t, campaign_ended_at = NULL, campaign_goal = :g,
+                   campaign_done = FALSE WHERE post_id = :id""", {"id": post_id, "t": now, "g": goal})
+        return {"ok": True, "message": f"Campaign started: shared to new groups twice a day and commented until {goal:,} views."}
+    if action == "campaign_stop":
+        execute("UPDATE social_posts SET campaign_ended_at = :t WHERE post_id = :id", {"id": post_id, "t": now})
+        return {"ok": True, "message": "Campaign stopped."}
+    return {"ok": False, "error": "Unknown action."}
+
+
+def _archive_post(post_id: str, why: str) -> None:
+    """A post moved to social_posts_history (kept, with its numbers) so the question can go out afresh."""
+    from ..infra.db import execute, fetch_all
+
+    cols = [r["column_name"] for r in fetch_all("""
+        SELECT h.column_name FROM information_schema.columns h
+        JOIN information_schema.columns p ON p.table_name = 'social_posts' AND p.column_name = h.column_name
+             AND p.table_schema = h.table_schema
+        WHERE h.table_name = 'social_posts_history' AND h.table_schema = current_schema()
+        ORDER BY h.ordinal_position""") or []]
+    names = ", ".join(f'"{c}"' for c in cols)
+    execute(f"""INSERT INTO social_posts_history ({names}, archived_at, archived_why)
+                SELECT {names}, NOW(), :why FROM social_posts WHERE post_id = :id""", {"id": post_id, "why": why})
+    execute("DELETE FROM social_posts WHERE post_id = :id", {"id": post_id})
+
+
+def campaigns_running() -> list[dict[str, Any]]:
+    from ..infra.db import fetch_all
+
+    return fetch_all("""SELECT p.post_id, p.question_id, p.url, p.views, p.campaign_goal, p.campaign_pinned_at,
+                               LEFT(COALESCE(q.content->>'question_text', ''), 120) AS question_text,
+                               (SELECT COUNT(*) FROM campaign_log c WHERE c.post_id = p.post_id AND c.kind = 'share' AND c.ok) AS shares,
+                               (SELECT COUNT(*) FROM campaign_log c WHERE c.post_id = p.post_id AND c.kind = 'comment' AND c.ok) AS comments
+                        FROM social_posts p LEFT JOIN question_dna q ON q.question_id = p.question_id
+                        WHERE p.campaign_pinned_at IS NOT NULL AND p.campaign_ended_at IS NULL
+                        ORDER BY p.campaign_pinned_at""") or []
 
 
 def campaign_result(post_id: str, *, stage: str, ok: bool, error: str = "", now: datetime | None = None,
