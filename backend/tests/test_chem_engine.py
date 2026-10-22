@@ -217,7 +217,26 @@ def test_every_kind_of_item_makes_its_scenes() -> None:
     assert "chem_covalent" in kinds({"bond": ["C", "H"]})
     assert kinds({"separate": ["sand", "salt"]}).count("chem_separation") == 3
     react = kinds({"reactants": ["Mg", "Cl2"]})
-    assert react[0] == "chem_hook" and "chem_particles" in react and "chem_ionic" in react, "why it is MgCl2"
+    assert react[0] == "chem_hook" and "chem_atoms" in react and "chem_ionic" in react, "why it is MgCl2"
+
+
+def test_the_atoms_scene_carries_exactly_the_equations_atoms() -> None:
+    from collections import Counter
+
+    for a, b, cond in [("NaOH", "CuSO4", ""), ("C", "CuO", "heat"), ("CH4", "O2", ""), ("Zn", "HCl", ""), ("Fe", "Cl2", ""),
+                       ("H2SO4", "NaOH", ""), ("CaCO3", "HCl", ""), ("Pb(NO3)2", "KI", "")]:
+        sc = next(s for s in W.scenes_for({"chemistry": {"reactants": [a, b], "condition": cond}}) if s["scene"] == "chem_atoms")
+        side = lambda xs: Counter(at["el"] for sp in xs for _ in range(sp["count"]) for at in sp["atoms"])  # noqa: E731
+        assert side(sc["left2"]) == side(sc["right2"]) == Counter(sc["tally"]), (a, b)
+
+
+def test_structures_have_their_formulas_atoms() -> None:
+    from collections import Counter
+
+    for f in ["H2O", "CuSO4", "Cu(OH)2", "Fe2(SO4)3", "H2SO4", "CH3COOH", "C2H5OH", "(NH4)2SO4", "Ca(HCO3)2", "Ag2O", "Al2O3"]:
+        assert Counter(a["el"] for a in W.structure(f)) == Counter(C.parse(C.normalize(f))), f
+    ethanol = W.structure("C2H5OH")
+    assert sum(1 for a in ethanol if a["el"] == "H" and ethanol[a["to"]]["el"] == "O") == 1     # one H on the O
     pair = W.scenes_for({"chemistry": {"bond": ["Na", "Cl"]}})
     atoms = [s for s in pair if s["scene"] == "chem_atom"]
     assert [a["slot"] for a in atoms] == [0, 1], "the two atoms share a page, side by side"
@@ -295,3 +314,45 @@ def test_the_3d_layer_comes_only_with_atoms_bonds_and_lattices() -> None:
 def test_a_mixture_may_be_named_as_a_question_names_it() -> None:
     assert C.separate(["iron", "sulfur"])["methods"] == ["magnet"]
     assert C.separate(["sodium chloride", "sand"])["methods"][:2] == ["dissolve", "filtration"]
+
+
+
+@pytest.mark.parametrize("a, b, cond, equation", [
+    ("NaOH", "CuSO4", "", "2NaOH + CuSO₄ → Cu(OH)₂ + Na₂SO₄"),
+    ("Ca(OH)2", "Na2CO3", "", "Ca(OH)₂ + Na₂CO₃ → CaCO₃ + 2NaOH"),
+    ("NaOH", "AgNO3", "", "2NaOH + 2AgNO₃ → Ag₂O + 2NaNO₃ + H₂O"),
+    ("HCl", "AgNO3", "", "HCl + AgNO₃ → AgCl + HNO₃"),
+    ("H2SO4", "BaCl2", "", "H₂SO₄ + BaCl₂ → BaSO₄ + 2HCl"),
+    ("Fe", "S", "heat", "Fe + S → FeS"),
+    ("C", "CuO", "heat", "C + 2CuO → 2Cu + CO₂"),
+    ("H2", "CuO", "heat", "H₂ + CuO → Cu + H₂O"),
+    ("CaO", "H2O", "", "CaO + H₂O → Ca(OH)₂"),
+    ("Cu(NO3)2", "", "heat", "2Cu(NO₃)₂ → 2CuO + 4NO₂ + O₂"),
+    ("NaHCO3", "", "heat", "2NaHCO₃ → Na₂CO₃ + H₂O + CO₂"),
+])
+def test_more_of_school_chemistry(a, b, cond, equation) -> None:
+    r = C.react(a, b, condition=cond)
+    assert r["reacts"] and r["equation"] == equation
+
+
+@pytest.mark.parametrize("a, b, cond, why", [
+    ("Zn", "Fe", "", "alloy"), ("CH4", "CuSO4", "", "burns in oxygen"), ("HCl", "H2SO4", "", "Both are acids"),
+    ("NaOH", "NaCl", "", "Both contain sodium"), ("CuO", "CuSO4", "", "Both contain copper"),
+    ("CaCO3", "ZnSO4", "", "does not dissolve"), ("Mg", "BaCl2", "", "Barium"), ("C", "MgO", "heat", "above carbon"),
+    ("Fe", "S", "", "only combine when heated"), ("Al", "H2O", "", "oxide"), ("NaCl", "H2O", "", "dissolves"),
+    ("NaCl", "KI", "", "stay mixed in solution"),
+])
+def test_what_does_not_react_says_why_in_school_terms(a, b, cond, why) -> None:
+    r = C.react(a, b, condition=cond)
+    assert r["covered"] and r["reacts"] is False and why in r["why"]
+
+
+def test_almost_every_pair_on_the_shelf_is_decided() -> None:
+    import itertools
+
+    from app.services.chem_walkthrough import SUBSTANCES
+
+    shelf = [f for fs in SUBSTANCES.values() for f in fs]
+    pairs = list(itertools.combinations(shelf, 2))
+    open_ = [p for p in pairs if not C.react(*p)["covered"]]
+    assert len(open_) / len(pairs) < 0.02, open_[:10]

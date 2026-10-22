@@ -190,7 +190,7 @@ def page(data: dict[str, Any], *, title: str = "", voice: str = "en-KE", duratio
             .replace("__TEACHER__", _teacher_scripts((social or {}).get("teacher"), three_loaded=bool(chem3d))))
 
 
-CHEM3D_SCENES = {"chem_atom", "chem_ionic", "chem_covalent", "chem_lab", "chem_separation"}
+CHEM3D_SCENES = {"chem_atom", "chem_ionic", "chem_covalent", "chem_atoms", "chem_lab", "chem_separation"}
 
 
 def _chem3d_scripts(scenes: list[dict[str, Any]]) -> str:

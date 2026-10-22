@@ -166,7 +166,7 @@ CATIONS: dict[str, tuple[str, int]] = {      # symbol in a salt → (name, charg
 ANIONS: dict[str, tuple[str, int, str]] = {  # group → (name, charge, acid it comes from)
     "Cl": ("chloride", 1, "HCl"), "Br": ("bromide", 1, "HBr"), "I": ("iodide", 1, "HI"), "NO3": ("nitrate", 1, "HNO3"),
     "SO4": ("sulphate", 2, "H2SO4"), "CO3": ("carbonate", 2, ""), "HCO3": ("hydrogencarbonate", 1, ""),
-    "OH": ("hydroxide", 1, ""), "O": ("oxide", 2, ""), "PO4": ("phosphate", 3, "H3PO4"), "CH3COO": ("ethanoate", 1, "CH3COOH"),
+    "OH": ("hydroxide", 1, ""), "O": ("oxide", 2, ""), "S": ("sulphide", 2, ""), "PO4": ("phosphate", 3, "H3PO4"), "CH3COO": ("ethanoate", 1, "CH3COOH"),
 }
 POLY = {"NO3", "SO4", "CO3", "HCO3", "OH", "PO4", "NH4", "CH3COO"}
 ACIDS = {"HCl": "hydrochloric acid", "H2SO4": "sulphuric acid", "HNO3": "nitric acid", "H3PO4": "phosphoric acid",
@@ -187,6 +187,10 @@ COLOURS: dict[str, tuple[str, str]] = {
     "CuO": ("black", "#1f1f1f"), "MgO": ("white", "#f7f7f7"), "ZnO": ("white (yellow when hot)", "#f7f7f7"),
     "CaO": ("white", "#f7f7f7"), "Fe2O3": ("reddish-brown", "#8a3b12"), "Al2O3": ("white", "#f7f7f7"),
     "CuCO3": ("green", "#3c8f6a"), "FeCl3": ("brown", "#8a4b12"),
+    "FeS": ("black", "#222222"), "CuS": ("black", "#1c1c1c"), "PbS": ("black", "#202020"), "ZnS": ("white", "#f4f4f2"),
+    "MgS": ("white", "#f4f4f2"), "CaS": ("white", "#f4f4f2"), "Na2S": ("pale yellow", "#f1e7a8"), "K2S": ("pale yellow", "#f1e7a8"),
+    "Al2S3": ("yellow", "#e9d36a"), "Ag2S": ("black", "#1c1c1c"), "Ag2O": ("brown", "#6b4a2b"), "PbO": ("yellow", "#e8c547"),
+    "S": ("yellow", "#e6c200"), "C": ("black", "#2b2b2b"), "Fe3O4": ("black", "#2a2a2a"),
 }
 GAS_TESTS = {
     "H2": "a lighted splint placed at the mouth of the tube goes out with a 'pop'",
@@ -314,6 +318,11 @@ APPLICATIONS = {
     "chlorination": ["Making iron(III) chloride for treating water", "Making table salt from its elements (in theory)"],
     "decomposition": ["Making quicklime from limestone in a lime kiln", "Scale (fur) in kettles from temporarily hard water",
                       "Softening temporarily hard water by boiling"],
+    "reduction": ["Extracting iron from its ore in the blast furnace", "Extracting zinc and lead from their oxides with coke",
+                  "Why copper is found by heating malachite with charcoal"],
+    "metal_sulphur": ["Why iron sulphide is not magnetic though iron is (a compound is not a mixture)",
+                      "Sulphide ores such as galena (lead sulphide)"],
+    "hydration": ["Slaking lime for building mortar and whitewash", "Liming acidic farm soils"],
     "synthesis": ["Water is formed when hydrogen burns — a clean fuel", "Making ammonia for fertilisers (Haber process)"],
 }
 
@@ -328,7 +337,11 @@ def react(a: str, b: str = "", *, condition: str = "") -> dict[str, Any]:
         if f:
             parse(f)                                   # a formula, or ValueError
     pair = [x for x in (a, b) if x]
-    found = (_decompose(a, condition) if not b else None) or _rules(a, b, condition) or (_rules(b, a, condition) if b else None)
+    if not b:
+        found = _decompose(a, condition) or _alone(a, condition)
+    else:
+        found = (_rules(a, b, condition) or _rules(b, a, condition) or _more_rules(a, b, condition)
+                 or _more_rules(b, a, condition) or _no_reaction(a, b, condition))
     if found is None:
         return {"reacts": False, "covered": False, "reactants": pair,
                 "why": "The rules of school chemistry here do not cover this combination — no reaction is assumed."}
@@ -503,6 +516,8 @@ def _rules(x: str, y: str, condition: str) -> dict[str, Any] | None:
     # two salts in solution: precipitation
     sxs, sys = split_salt(x), split_salt(y)
     if sxs and sys and sxs[0] != sys[0] and _soluble(x) and _soluble(y):
+        return _precipitation(x, y)
+    if False:
         p1, p2 = salt(sxs[0], sys[1]), salt(sys[0], sxs[1])
         insol = [p for p in (p1, p2) if not _soluble(p)]
         if not insol:
@@ -529,6 +544,296 @@ def _rules(x: str, y: str, condition: str) -> dict[str, Any] | None:
                 "why": "A hydrocarbon burning in plenty of oxygen gives carbon dioxide and water — and a lot of heat.",
                 "word": f"{name_of(x)} + oxygen → carbon dioxide + water"}
     return None
+
+
+_METALS = [m for m in REACTIVITY if m not in ("C", "H")]
+
+
+def _precipitation(x: str, y: str) -> dict[str, Any]:
+    """Two solutions meet: if a product does not dissolve, it comes out as a solid."""
+    sxs, sys = split_salt(x), split_salt(y)
+    p1, p2 = salt(sxs[0], sys[1]), salt(sys[0], sxs[1])
+    insol = [p for p in (p1, p2) if not _soluble(p)]
+    if not insol:
+        return {"reacts": False, "why": f"Both possible products ({name_of(p1)} and {name_of(p2)}) are soluble, "
+                                        "so the ions just stay mixed in solution: no reaction is seen."}
+    ppt = insol[0]
+    other = p2 if ppt == p1 else p1
+    products = [ppt, other]
+    if ppt == "AgOH":                                  # silver hydroxide at once gives brown silver oxide
+        ppt, products = "Ag2O", ["Ag2O", other, "H2O"]
+    obs = [f"A {COLOURS.get(ppt, ('white', ''))[0]} precipitate forms at once: {name_of(ppt) if ppt != 'Ag2O' else 'silver oxide'}",
+           "The precipitate settles at the bottom if left to stand"]
+    alkali = {x, y} & {"NaOH", "KOH"}
+    if alkali and ppt in ("Zn(OH)2", "Pb(OH)2", "Al(OH)3"):
+        obs.append(f"With more {name_of(sorted(alkali)[0])} the white precipitate dissolves (it is amphoteric)")
+    if ppt == "Fe(OH)2":
+        obs.append("On standing in air the green precipitate turns brown at the top")
+    return {"type": "precipitation", "reactants": [x, y], "products": products,
+            "states": {x: "aq", y: "aq", ppt: "s", other: "aq", **({"H2O": "l"} if "H2O" in products else {})},
+            "observations": obs,
+            "lab": {"vessel": "test_tube", "liquid": _ion_colour(x)[1] if x != "Ca(OH)2" else COLOURS["none"][1], "drops": True,
+                    "drop_colour": _ion_colour(y)[1], "precipitate": COLOURS.get(ppt, ("white", "#f5f5f5"))[1]},
+            "why": f"{(name_of(ppt) if ppt != 'Ag2O' else 'Silver oxide').capitalize()} does not dissolve in water, so its ions come "
+                   "together as a solid the moment the two solutions meet.",
+            "word": f"{name_of(x) if x != 'Ca(OH)2' else 'calcium hydroxide (limewater)'} + {name_of(y)} → "
+                    + " + ".join(name_of(p) if p != "Ag2O" else "silver oxide" for p in products)}
+
+
+def _more_rules(x: str, y: str, condition: str) -> dict[str, Any] | None:
+    """The rest of school chemistry: limewater as an alkali, a metal heated
+    with sulphur, carbon and hydrogen taking oxygen from a metal oxide,
+    slaking quicklime, and an acid giving an insoluble salt with a solution."""
+    heat = any(w in condition for w in ("heat", "molten", "melt", "boil", "steam"))
+    sx = _symbol_of(x)
+    sy_salt = split_salt(y) if y else None
+    # limewater (calcium hydroxide solution) with a salt solution
+    if x == "Ca(OH)2" and sy_salt and _soluble(y) and sy_salt[0] != "Ca" and sy_salt[1] not in ("OH", "O"):
+        return _precipitation(x, y)
+    # a metal heated with sulphur: its sulphide
+    if sx in _METALS and y == "S":
+        if sx in ("Au", "Pt"):
+            return {"reacts": False, "why": f"{ELEMENTS[sx].capitalize()} is too unreactive to combine with sulphur."}
+        if not heat:
+            return {"reacts": False, "why": f"{ELEMENTS[sx].capitalize()} and sulphur only combine when heated — mixed cold, they "
+                                            f"stay a mixture (choose 'Heated')."}
+        cat = "Ag" if sx == "Ag" else sx
+        product = salt(cat, "S")
+        colour = COLOURS.get(product, ("dark", "#333333"))
+        return {"type": "metal_sulphur", "reactants": [x, "S"], "products": [product],
+                "states": {x: "s", "S": "s", product: "s"},
+                "observations": ["The mixture glows red-hot and the glow spreads through it even after the heat is removed",
+                                 f"A {colour[0]} solid forms: {name_of(product)}"]
+                                + (["Unlike the iron in the mixture, it is not attracted by a magnet"] if sx == "Fe" else []),
+                "lab": {"vessel": "heated_tube", "solid": COLOURS.get(sx, ("", "#999"))[1], "solid_to": colour[1],
+                        "flame": "#ff8c42", "heat": True, "burner": True},
+                "why": f"When heated, {ELEMENTS[sx]} and sulphur combine into a new compound, {name_of(product)}, giving out heat.",
+                "word": f"{ELEMENTS[sx]} + sulphur → {name_of(product)}"}
+    # carbon or hydrogen taking the oxygen from a metal oxide
+    if x in ("C", "H2") and sy_salt and sy_salt[1] == "O":
+        metal = "Fe" if sy_salt[0] == "Fe3" else sy_salt[0]
+        agent = "carbon" if x == "C" else "hydrogen"
+        can = metal in (("Zn", "Fe", "Sn", "Pb", "Cu") if x == "C" else ("Fe", "Sn", "Pb", "Cu"))
+        if metal not in REACTIVITY:
+            return None
+        if not can:
+            return {"reacts": False, "why": f"{ELEMENTS[metal].capitalize()} is above {agent} in the reactivity series, so "
+                                            f"{agent} cannot take the oxygen from {name_of(y)}: no reaction."}
+        if not heat:
+            return {"reacts": False, "why": f"No reaction until heated strongly: then {agent} takes the oxygen from {name_of(y)} "
+                                            f"(choose 'Heated')."}
+        gas = "CO2" if x == "C" else "H2O"
+        oc, mc = COLOURS.get(y, ("", "#333"))[0], COLOURS.get(metal, ("", "#999"))[0]
+        return {"type": "reduction", "reactants": [x, y], "products": [metal, gas],
+                "states": {x: "s" if x == "C" else "g", y: "s", metal: "s", gas: "g"},
+                "observations": [f"The {oc + ' ' if oc else ''}{name_of(y)} glows and turns {mc or 'to a metal'}: {ELEMENTS[metal]}",
+                                 "The gas turns limewater milky (carbon dioxide)" if x == "C"
+                                 else "Droplets of water form at the cool end of the tube"],
+                "lab": {"vessel": "heated_tube", "solid": COLOURS.get(y, ("", "#333"))[1], "solid_to": COLOURS.get(metal, ("", "#999"))[1],
+                        "heat": True, "burner": True, **({"bubbles": "CO2", "limewater": True} if x == "C" else {})},
+                "why": f"{agent.capitalize()} is above {ELEMENTS[metal]} in the reactivity series, so when heated it takes the oxygen "
+                       f"from {name_of(y)} (reduction), leaving {ELEMENTS[metal]}.",
+                "word": f"{agent} + {name_of(y)} → {ELEMENTS[metal]} + {'carbon dioxide' if x == 'C' else 'water'}"}
+    # hydrogen burning in chlorine
+    if x == "H2" and y == "Cl2":
+        return {"type": "synthesis", "reactants": ["H2", "Cl2"], "products": ["HCl"],
+                "states": {"H2": "g", "Cl2": "g", "HCl": "g"},
+                "observations": ["Hydrogen burns in chlorine with a white flame (in sunlight the mixture explodes)",
+                                 "The green colour of the chlorine fades", "Steamy fumes of hydrogen chloride form"],
+                "lab": {"vessel": "gas_jar", "gas": "#c6e86b", "gas_fades": True, "flame": "#ffffff", "heat": True},
+                "why": "Hydrogen and chlorine combine to form hydrogen chloride, which dissolves in water to give hydrochloric acid.",
+                "word": "hydrogen + chlorine → hydrogen chloride"}
+    # slaking quicklime
+    if x == "CaO" and y == "H2O":
+        return {"type": "hydration", "reactants": ["CaO", "H2O"], "products": ["Ca(OH)2"],
+                "states": {"CaO": "s", "H2O": "l", "Ca(OH)2": "s"},
+                "observations": ["Hissing and steam: the mixture gets very hot", "The lumps crack and crumble to a white powder (slaked lime)"],
+                "lab": {"vessel": "beaker", "solid": COLOURS["CaO"][1], "solid_shrinks": True, "liquid": COLOURS["none"][1],
+                        "liquid_to": "#eeeeee", "heat": True},
+                "why": "Quicklime (calcium oxide) combines with water, giving out a lot of heat, to form calcium hydroxide (slaked lime).",
+                "word": "calcium oxide + water → calcium hydroxide"}
+    # an acid with a salt solution: an insoluble salt of the acid comes out
+    if x in ACIDS and sy_salt and sy_salt[1] not in ("OH", "O", "CO3", "HCO3", "S") and _soluble(y):
+        an = {"HCl": "Cl", "H2SO4": "SO4", "HNO3": "NO3", "H3PO4": "PO4", "CH3COOH": "CH3COO", "HBr": "Br", "HI": "I"}.get(x)
+        back = ANIONS[sy_salt[1]][2]
+        if not an or not back:
+            return None
+        new = salt(sy_salt[0], an)
+        if _soluble(new):
+            return {"reacts": False, "why": f"Every possible product stays dissolved ({name_of(new)} and {ACIDS.get(back, back)}): "
+                                            "no precipitate, gas or water forms, so no reaction is seen."}
+        return {"type": "precipitation", "reactants": [x, y], "products": [new, back],
+                "states": {x: "aq", y: "aq", new: "s", back: "aq"},
+                "observations": [f"A {COLOURS.get(new, ('white', ''))[0]} precipitate forms at once: {name_of(new)}",
+                                 "The precipitate settles at the bottom if left to stand"],
+                "lab": {"vessel": "test_tube", "liquid": _ion_colour(y)[1], "drops": True, "drop_colour": COLOURS["none"][1],
+                        "precipitate": COLOURS.get(new, ("white", "#f5f5f5"))[1]},
+                "why": f"{name_of(new).capitalize()} does not dissolve in water, so it comes out as a solid: a test for "
+                       f"{ANIONS[an][0]} ions.",
+                "word": f"{ACIDS[x]} + {name_of(y)} → {name_of(new)} + {ACIDS.get(back, back)}"}
+    return None
+
+
+def _kind(f: str) -> str:
+    """What a substance is, for saying why two do not react."""
+    sym = _symbol_of(f)
+    if sym in _METALS:
+        return "metal"
+    if f in ("C", "S", "H2", "O2", "Cl2"):
+        return "nonmetal"
+    if f == "H2O":
+        return "water"
+    if f in ACIDS:
+        return "acid"
+    els = set(parse(f))
+    if els <= {"C", "H", "O"} and "C" in els and "H" in els:
+        return "fuel"
+    sp = split_salt(f)
+    if sp:
+        if sp[1] in ("CO3", "HCO3"):
+            return "carbonate"
+        if sp[1] in ("OH", "O"):
+            return "alkali" if _soluble(f) or f == "Ca(OH)2" else "base"
+        return "salt"
+    return "other"
+
+
+def _no_reaction(x: str, y: str, condition: str) -> dict[str, Any] | None:
+    """Why two substances do not react, in the words of school chemistry —
+    or None, when the rules cannot say."""
+    kx, ky = _kind(x), _kind(y)
+    pair = {kx, ky}
+    name = lambda f: name_of(f)  # noqa: E731
+    no = lambda why: {"reacts": False, "why": why}  # noqa: E731
+    sx, sy = split_salt(x), split_salt(y)
+    mx = _symbol_of(x) if kx == "metal" else (("Fe" if sx[0] == "Fe3" else sx[0]) if sx else None)
+    my = _symbol_of(y) if ky == "metal" else (("Fe" if sy[0] == "Fe3" else sy[0]) if sy else None)
+    if kx == ky == "metal":
+        return no("Metals do not react with each other — melted together they only mix, as an alloy.")
+    if "fuel" in pair and not {x, y} & {"O2"}:
+        fuel = x if kx == "fuel" else y
+        return no(f"{name(fuel).capitalize()} reacts only when it burns in oxygen (air): no reaction here.")
+    if mx and my and mx == my:
+        return no(f"Both contain {ELEMENTS.get(mx, mx)}: swapping partners makes nothing new, so no reaction.")
+    if kx == ky and kx in ("acid", "alkali", "base", "carbonate"):
+        return no({"acid": "Both are acids (each gives H⁺ ions): they just mix — no reaction.",
+                   "alkali": "Both are alkalis: no reaction.", "base": "Both are bases: no reaction.",
+                   "carbonate": "Both are carbonates: no reaction."}[kx])
+    if {"alkali", "base"} >= pair and len(pair) == 2:
+        return no("Both are bases: no reaction.")
+    for f, k in ((x, kx), (y, ky)):
+        other = ky if f == x else kx
+        if k in ("base", "carbonate") and not _soluble(f) and other in ("salt", "alkali", "water", "carbonate", "base"):
+            return no(f"{name(f).capitalize()} does not dissolve in water, so it cannot meet the ions in the solution — no "
+                      f"reaction (an acid would dissolve it).")
+    if "water" in pair and pair & {"salt", "acid", "alkali", "carbonate", "base"}:
+        f = y if kx == "water" else x
+        if _soluble(f) or _kind(f) == "acid":
+            return no(f"{name(f).capitalize()} simply dissolves in water: a solution forms, but no new substance — no reaction.")
+        return no(f"{name(f).capitalize()} does not dissolve in water: no change.")
+    if "metal" in pair and "salt" in pair:
+        m = _symbol_of(x if kx == "metal" else y)
+        sp = sx or sy
+        other = "Fe" if sp[0] == "Fe3" else sp[0]
+        if other not in REACTIVITY:                       # barium: above all but potassium
+            if m in ("K", "Na", "Ca"):
+                out = _rules(m, "H2O", condition)
+                if out:
+                    return {**out, "note": f"{ELEMENTS[m].capitalize()} is so reactive that in the solution it reacts with the water."}
+            return no(f"{CATIONS.get(sp[0], (other,))[0].capitalize()} is near the top of the reactivity series: "
+                      f"{ELEMENTS.get(m, m)} cannot displace it — no reaction.")
+    if "metal" in pair and ({x, y} & {"C", "H2"}):
+        return no("Metals do not combine with carbon or hydrogen in school chemistry: no reaction.")
+    if "metal" in pair and "water" in pair:
+        m = _symbol_of(x if kx == "metal" else y)
+        if m == "Al":
+            return no("Aluminium is protected by a thin, tough layer of oxide, so in practice it does not react with water or steam.")
+        if m in ("Zn", "Fe") and "steam" not in condition:
+            return no(f"{ELEMENTS[m].capitalize()} reacts with steam, not cold water: choose 'With steam'. No reaction in cold water.")
+        if m in ("Pb", "Sn"):
+            return no(f"{ELEMENTS[m].capitalize()} is too unreactive to react with water or steam.")
+    if "metal" in pair and ({"alkali", "base", "carbonate"} & pair):
+        m = _symbol_of(x if kx == "metal" else y)
+        other = y if kx == "metal" else x
+        if m in ("K", "Na", "Ca") and _soluble(other):
+            out = _rules(m, "H2O", condition)
+            if out:
+                return {**out, "note": f"{ELEMENTS[m].capitalize()} is so reactive that in the solution it reacts with the water."}
+        return no(f"{ELEMENTS[m].capitalize()} does not react with {name(other)}: a metal reacts with acids, water, oxygen or "
+                  f"the salt of a less reactive metal.")
+    if "nonmetal" in pair and pair & {"acid", "alkali", "base", "salt", "carbonate", "water"}:
+        el = x if kx == "nonmetal" else y
+        return no(f"{name(el).capitalize()} does not react with it at room temperature: no reaction.")
+    if kx == ky == "nonmetal":
+        return None                                  # some do, when lit or heated: not said here
+    solutions = {"salt", "alkali", "acid"}
+    if pair <= solutions | {"carbonate"} and not ({x, y} & {"NaHCO3", "Ca(HCO3)2"}):
+        if "carbonate" in pair and "acid" not in pair:
+            return no("An alkali or a salt solution does not react with this carbonate: no precipitate, gas or water forms.")
+        return no("Every possible product stays dissolved: no precipitate, gas or water forms, so no reaction is seen.")
+    return None
+
+
+def _alone(a: str, condition: str) -> dict[str, Any] | None:
+    """One substance heated (beyond carbonates): nitrates and hydroxides break
+    down, baking soda gives off carbon dioxide; most others do not change."""
+    if "heat" not in condition and "boil" not in condition:
+        return {"reacts": False, "why": f"{name_of(a).capitalize()} on its own does not change: mix it with something, or heat it."}
+    s = split_salt(a)
+    if a == "NaHCO3":
+        return {"type": "decomposition", "reactants": ["NaHCO3"], "products": ["Na2CO3", "H2O", "CO2"],
+                "states": {"NaHCO3": "s", "Na2CO3": "s", "H2O": "l", "CO2": "g"},
+                "observations": ["Droplets of water form at the cool end of the tube", "The gas turns limewater milky"],
+                "lab": {"vessel": "heated_tube", "solid": "#f3f3f3", "solid_to": "#f7f7f7", "bubbles": "CO2", "limewater": True,
+                        "heat": True, "burner": True},
+                "why": "Heat breaks sodium hydrogencarbonate (baking soda) into sodium carbonate, water and carbon dioxide — "
+                       "the carbon dioxide makes cakes rise.",
+                "word": "sodium hydrogencarbonate → sodium carbonate + water + carbon dioxide"}
+    if s and s[1] == "NO3":
+        cat = s[0]
+        if cat in ("Na", "K"):
+            nitrite = {"Na": "NaNO2", "K": "KNO2"}[cat]
+            return {"type": "decomposition", "reactants": [a], "products": [nitrite, "O2"],
+                    "states": {a: "s", nitrite: "s", "O2": "g"},
+                    "observations": ["The white solid melts", "A gas that relights a glowing splint is given off (oxygen)"],
+                    "lab": {"vessel": "heated_tube", "solid": "#f7f7f7", "solid_to": "#f2ecd0", "bubbles": "O2", "heat": True, "burner": True},
+                    "why": f"{name_of(a).capitalize()} loses oxygen when heated, leaving the nitrite.",
+                    "word": f"{name_of(a)} → {name_of(nitrite) if nitrite in ELEMENTS else nitrite.replace('NO2', ' nitrite')} + oxygen"}
+        if cat == "Ag":
+            return {"type": "decomposition", "reactants": [a], "products": ["Ag", "NO2", "O2"],
+                    "states": {a: "s", "Ag": "s", "NO2": "g", "O2": "g"},
+                    "observations": ["Brown fumes of nitrogen dioxide", "A grey solid (silver) is left"],
+                    "lab": {"vessel": "heated_tube", "solid": "#f7f7f7", "solid_to": "#a6a6a6", "heat": True, "burner": True},
+                    "why": "Silver nitrate breaks down right to the metal, as silver is so low in the reactivity series.",
+                    "word": "silver nitrate → silver + nitrogen dioxide + oxygen"}
+        oxide = salt(cat, "O")
+        return {"type": "decomposition", "reactants": [a], "products": [oxide, "NO2", "O2"],
+                "states": {a: "s", oxide: "s", "NO2": "g", "O2": "g"},
+                "observations": ["Brown fumes of nitrogen dioxide", f"A {COLOURS.get(oxide, ('', ''))[0] or 'solid'} residue: {name_of(oxide)}"]
+                                + (["A crackling sound as the crystals break (decrepitation)"] if cat == "Pb" else []),
+                "lab": {"vessel": "heated_tube", "solid": _ion_colour(a)[1], "solid_to": COLOURS.get(oxide, ("", "#333"))[1],
+                        "heat": True, "burner": True},
+                "why": f"Heat breaks {name_of(a)} down into the metal oxide, brown nitrogen dioxide and oxygen.",
+                "word": f"{name_of(a)} → {name_of(oxide)} + nitrogen dioxide + oxygen"}
+    if s and s[1] == "OH" and s[0] not in ("Na", "K"):
+        oxide = salt(s[0], "O")
+        return {"type": "decomposition", "reactants": [a], "products": [oxide, "H2O"],
+                "states": {a: "s", oxide: "s", "H2O": "l"},
+                "observations": [f"The solid turns {COLOURS.get(oxide, ('', ''))[0] or 'to the oxide'}", "Droplets of water form at the cool end"],
+                "lab": {"vessel": "heated_tube", "solid": COLOURS.get(a, ("", "#f3f3f3"))[1], "solid_to": COLOURS.get(oxide, ("", "#eee"))[1],
+                        "heat": True, "burner": True},
+                "why": f"Heat drives water out of {name_of(a)}, leaving {name_of(oxide)}.",
+                "word": f"{name_of(a)} → {name_of(oxide)} + water"}
+    kind = _kind(a)
+    if kind in ("nonmetal", "fuel"):
+        return {"reacts": False, "why": f"{name_of(a).capitalize()} heated on its own does not change: it needs oxygen to burn — "
+                                        f"heat it with oxygen."}
+    if kind == "metal":
+        return {"reacts": False, "why": f"{name_of(a).capitalize()} alone only gets hot (and may melt): heat it with oxygen to see it burn."}
+    if kind in ("salt", "base", "alkali", "carbonate", "acid", "water"):
+        return {"reacts": False, "why": f"{name_of(a).capitalize()} does not break down at the heat of a Bunsen burner (it may melt or boil)."}
+    return None
+
 
 
 def _decompose(a: str, condition: str) -> dict[str, Any] | None:
