@@ -191,25 +191,57 @@ def _bond_scenes(x: str, y: str) -> list[dict[str, Any]]:
 
 
 def _separation_scenes(parts: list[str], keep: str) -> list[dict[str, Any]]:
-    r = C.separate(parts, keep)
+    """The mixture's own walkthrough: what each part is like, then each step
+    of the plan on its apparatus — drawn with these substances' colours, the
+    residue and filtrate, the layers, the boiling points named — and the uses."""
+    from . import chem_separation as X
+
+    r = X.separate(parts, keep)
     if not r["covered"]:
         return [{"scene": "working", "text": r["why"], "say": r["why"]}]
-    out: list[dict[str, Any]] = [{"scene": "chem_hook", "tiles": [{"symbol": p.split()[0][:3].capitalize(), "name": p.capitalize(),
-                                                                   "Z": "", "colour": "#5b8db8", "formula": p} for p in parts[:2]],
-                                  "question": f"How do we separate {' and '.join(parts)}?",
-                                  "say": f"How do we separate {' and '.join(parts)}? It depends on what each one is like."}]
-    for m in r["methods"]:
-        if m == "dissolve":
-            out.append({"scene": "chem_separation", "method": "dissolve", "name": "Dissolve",
-                        "steps": ["Add water and stir: the soluble part dissolves, the insoluble part does not"], "parts": parts,
-                        "say": "First, add water and stir. One part dissolves; the other does not."})
-            continue
-        info = C.SEPARATIONS[m]
-        out.append({"scene": "chem_separation", "method": m, "name": info["name"], "steps": info["steps"], "parts": parts,
-                    "say": f"{info['name']}. " + ". ".join(info["steps"]) + "."})
+    ps = r["parts"]
+    mixture = X._list(ps)
+    out: list[dict[str, Any]] = [{"scene": "chem_hook", "tiles": [{"symbol": _tile_symbol(p), "name": p.capitalize(), "Z": "",
+                                                                   "colour": X.SUBSTANCES[p]["colour"], "formula": p} for p in ps[:3]],
+                                  "question": f"How do we separate {mixture}?",
+                                  "say": f"How do we separate {mixture}? It depends on what each one is like."}]
+    out.append({"scene": "chem_list", "title": "What each part is like", "icon": "🔎", "items": [_trait(p) for p in ps],
+                "say": "Look at each part. " + ". ".join(_trait(p) for p in ps) + "."})
+    for k, st in enumerate(r["plan"]):
+        lead = "First" if k == 0 and len(r["plan"]) > 1 else "Then" if k < len(r["plan"]) - 1 else ("Finally" if k else "")
+        out.append({"scene": "chem_separation", "method": st["method"], "name": st["name"], "steps": [st["text"], st["why"]],
+                    "parts": ps, "look": st["look"], "gives": st["gives"],
+                    "say": (f"{lead}, {st['name'].lower()}. " if lead else f"{st['name']}. ") + st["text"] + " " + st["why"]})
     out.append({"scene": "chem_list", "title": "Where it is used", "icon": "🌍", "items": r["uses"],
                 "say": "Where this is used: " + ". ".join(r["uses"]) + "."})
     return out
+
+
+def _tile_symbol(p: str) -> str:
+    from . import chem_separation as X
+
+    f = X.SUBSTANCES[p].get("formula")
+    return C.pretty(f) if f else p.split()[0][:3].capitalize()
+
+
+def _trait(p: str) -> str:
+    """One line on what a part is like, as far as separating goes."""
+    from . import chem_separation as X
+
+    i = X.SUBSTANCES[p]
+    if i["kind"] == "ink":
+        return f"{p.capitalize()}: a mixture of {len(i['dyes'])} dyes"
+    if i["kind"] == "liquid":
+        mix = "mixes with water" if i["polar"] else "does not mix with water"
+        return f"{p.capitalize()}: a liquid, boils at {i['bp']} °C, density {i['density']:.2f} g/cm³, {mix}"
+    bits = [i["looks"]]
+    if i.get("magnetic"):
+        bits.append("magnetic")
+    if i.get("sublimes"):
+        bits.append("sublimes when heated")
+    sol = i.get("dissolves") or []
+    bits.append(f"dissolves in {' and '.join(sol)}" if sol else "does not dissolve in water")
+    return f"{p.capitalize()}: " + ", ".join(bits)
 
 
 def _salt_metal(reactants: list[str]) -> str:
@@ -317,7 +349,9 @@ def periodic() -> list[dict[str, Any]]:
 
 
 def mixtures() -> list[str]:
-    return list(C.COMPONENTS)
+    from . import chem_separation as X
+
+    return list(X.SUBSTANCES)
 
 
 def substances() -> list[dict[str, Any]]:

@@ -77,9 +77,17 @@ reaction happening.
 
 - Separating a mixture: the apparatus works on screen (filtration, evaporation, crystallisation,
   distillation, fractional distillation, separating funnel, magnet, chromatography, sublimation).
-  Parts the engine knows: sand, chalk, salt, sugar, copper(II) sulphate, water, ethanol, oil,
-  kerosene, iron filings, sulphur, iodine, ammonium chloride, ink, food colouring. Add
-  `"keep": "water"` when the question wants the water (distillation, not evaporation).
+  Mixtures of two or three parts; the engine works out every step in order (a magnet, sublimation,
+  dissolving in the right solvent, filtering, evaporating or crystallising, a separating funnel,
+  fractional distillation, chromatography). Parts it knows: sand, chalk, charcoal powder,
+  copper(II) oxide, sawdust, iron(III) oxide, lead(II) iodide, barium sulphate, copper(II) carbonate,
+  zinc oxide, magnesium oxide, iron filings, nickel powder, cobalt powder, iodine, naphthalene,
+  ammonium chloride, sulphur, salt, sugar, copper(II) sulphate, iron(II) sulphate, nickel(II) sulphate,
+  potassium nitrate, potassium permanganate, potassium dichromate, sodium carbonate, zinc sulphate,
+  water, ethanol, methanol, propanone, cooking oil, kerosene, petrol, tetrachloromethane,
+  methylbenzene, hexane, black ink, blue ink, green food colouring, brown marker ink, chlorophyll
+  extract, red flower extract. Add `"keep": "water"` when the question wants the solvent
+  (distillation, not evaporation).
 
 ```json
 "chemistry": {"separate": ["sand", "salt"]}

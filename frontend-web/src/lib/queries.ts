@@ -4098,6 +4098,26 @@ export function useChemReact(mix: ChemMix | null) {
 }
 
 /** The mix on the whiteboard, voiced in the science voice. */
+/** What the separation rules decide: mixtures, questions, by method and kind. */
+export type SeparationSummary = { substances: number; mixtures: number; questions: number;
+  by_method: Record<string, number>; by_focus: Record<string, number>; sample: string[] };
+export function useChemSeparations(enabled = true) {
+  const api = useApi();
+  return useQuery({ queryKey: ["chem-separations"], enabled, staleTime: 10 * 60_000,
+                    queryFn: () => api<SeparationSummary>("/api/v1/play/chem/separations") });
+}
+
+/** Save rule-made separation questions to the bank at a point of the curriculum (for Social batches). */
+export function useSeparationBank() {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { grade: string; subject: string; strand: string; sub_strand: string; limit: number; focuses: string[] }) =>
+      api<{ saved: number; already: number; asked: number }>("/api/v1/play/chem/separations/bank", { method: "POST", body: JSON.stringify(v) }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["social"] }); qc.invalidateQueries({ queryKey: ["library"] }); },
+  });
+}
+
 export function useChemLabHtml(mix: ChemMix | null, social = false) {
   const { token } = useAuth();
   return useQuery({

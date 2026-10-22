@@ -125,7 +125,9 @@ def page(q: dict[str, Any], step: str, b: dict[str, Any]) -> str:
         body = (f"<div class='topic small'>{esc(topic)}</div>{context}"
                 f"<p class='stem m'>{esc(display(q.get('question_text') or ''))}</p>{fig}"
                 + (f"<ul class='opts'>{options}</ul>" if options else "") + tail)
-    foot = " · ".join(x for x in (b.get("name"), b.get("handle"), b.get("website")) if x)
+    from .social import brand_name
+
+    foot = " · ".join(x for x in (brand_name(b, q), b.get("handle"), b.get("website")) if x)
     return f"""<!doctype html><html><head><meta charset="utf-8">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
 <script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
@@ -308,7 +310,9 @@ def kicd_page(q: dict[str, Any], b: dict[str, Any]) -> str:
         for title, items in (("Core competencies to be developed", comps), ("Values", vals)) if items)
     source = (f"Source: KICD {grade} {subject} Curriculum Design" + (f", {pages}" if pages else "")
               + ". © Kenya Institute of Curriculum Development.")
-    foot = " · ".join(x for x in (b.get("name"), b.get("website")) if x)
+    from .social import brand_name
+
+    foot = " · ".join(x for x in (brand_name(b, subject=str(subject)), b.get("website")) if x)
     return f"""<!doctype html><html><head><meta charset="utf-8"><style>
  *{{box-sizing:border-box}} html{{font-size:10px}} html,body{{margin:0;width:{WIDTH}px;height:{HEIGHT}px}}
  body{{background:#e9e6df;font-family:'Times New Roman',Georgia,serif;color:#111;padding:44px}}

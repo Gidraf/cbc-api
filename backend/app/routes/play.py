@@ -381,6 +381,37 @@ def chem_react(a: str = Query(..., max_length=120), b: str = Query("", max_lengt
     return {"reaction": out["reaction"], "scenes": len(out["walkthrough"]["scenes"])}
 
 
+@router.get("/chem/separations")
+def chem_separations(auth: AuthContext = Depends(CONTENT)) -> dict[str, Any]:
+    """How many mixtures the separation rules decide, and the questions they make."""
+    from ..services import chem_separation
+
+    return chem_separation.summary()
+
+
+class SeparationBank(BaseModel):
+    grade: str = Field(..., max_length=40)
+    subject: str = Field(..., max_length=80)
+    strand: str = Field("", max_length=120)
+    sub_strand: str = Field(..., max_length=120)
+    limit: int = Field(200, ge=1, le=5000)
+    focuses: list[str] = Field(default_factory=list)
+
+
+@router.post("/chem/separations/bank")
+def chem_separations_bank(body: SeparationBank, auth: AuthContext = Depends(ANY)) -> dict[str, Any]:
+    """Save separation questions made by the rules to the bank at this point of
+    the curriculum — ready for Social batches, papers and tests."""
+    _may_make_videos(auth)
+    from ..services import chem_separation
+
+    bad = [f for f in body.focuses if f not in chem_separation.FOCUSES]
+    if bad:
+        raise_api_error("VALIDATION_FAILED", f"A focus is one of: {', '.join(chem_separation.FOCUSES)}.")
+    return chem_separation.bank(body.model_dump(), body.limit, body.focuses or None,
+                                by=str(getattr(auth, "subject", "") or ""))
+
+
 @router.get("/chem/lab.html")
 def chem_lab_page(a: str = Query(..., max_length=120), b: str = Query("", max_length=40),
                   condition: str = Query("", max_length=20), autoplay: bool = Query(False),

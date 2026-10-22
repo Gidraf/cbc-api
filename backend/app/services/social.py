@@ -40,6 +40,29 @@ VERSION = "so1"
 
 # ── the brand ────────────────────────────────────────────────────────────────
 
+def brand_name(b: dict[str, Any], q: dict[str, Any] | None = None, subject: str = "") -> str:
+    """The brand for a question's subject: Settings → Brand per subject
+    ("Chemistry=CBC Chemistry; Biology=CBC Biology"), or else the brand with
+    its subject word swapped ("CBC Maths" on a chemistry video: "CBC Chemistry")."""
+    name = str(b.get("name") or "")
+    subject = (subject or str(((q or {}).get("curriculum") or {}).get("subject") or "")).strip()
+    if not subject:
+        return name
+    from . import platform_settings
+
+    try:
+        table = str(platform_settings.get("social_brand_by_subject", "") or "")
+    except Exception:  # noqa: BLE001
+        table = ""
+    for part in re.split(r"[;\n]", table):
+        key, _, value = part.partition("=")
+        if key.strip() and value.strip() and key.strip().lower() == subject.lower():
+            return value.strip()
+    if re.search(r"\bmath", subject, re.I):
+        return name
+    return re.sub(r"\b(?:Mathematics|Maths|Math)\b", subject.title() if subject.islower() else subject, name)
+
+
 def brand() -> dict[str, Any]:
     from . import platform_settings
 
@@ -111,7 +134,7 @@ def cover_for(q: dict[str, Any], b: dict[str, Any]) -> dict[str, Any]:
             "tilt": [-4, -2, 2, 3][(n // 13) % 4],
             "tag": " · ".join(x for x in (_grade_label(str(link.get("grade") or "")).upper(),
                                           str(link.get("subject") or "").upper()) if x),
-            "question": text, "choices": chips, "brand": b.get("name") or "", "figure": _cover_figure(q)}
+            "question": text, "choices": chips, "brand": brand_name(b, q), "figure": _cover_figure(q)}
 
 
 def _cover_figure(q: dict[str, Any]) -> str:
@@ -176,8 +199,8 @@ def script(data: dict[str, Any], q: dict[str, Any], b: dict[str, Any] | None = N
             break
     if b.get("marketing"):
         scenes.append(marketing_scene(q, b))
-    who = b["handle"] or b["name"]
-    scenes.append({"scene": "outro", "name": b["name"], "handle": b["handle"], "website": b["website"],
+    who = b["handle"] or brand_name(b, q)
+    scenes.append({"scene": "outro", "name": brand_name(b, q), "handle": b["handle"], "website": b["website"],
                    "cta": b["cta"], "say": f"{b['cta']}. Follow {spoken_handle(who)}.",
                    "caption": f"{b['cta']}: {who}"})
     if b.get("teacher", "off") != "off" and not b.get("single"):
@@ -247,7 +270,7 @@ def frame_payload(q: dict[str, Any], b: dict[str, Any]) -> dict[str, Any]:
         if raw:
             kind = "image/svg+xml" if raw.lstrip()[:1] == b"<" else "image/png"
             logo = f"data:{kind};base64," + base64.b64encode(raw).decode()
-    return {"hook": b.get("hook") or "Can you solve this?", "tag": tag, "brand": b["name"], "handle": b["handle"],
+    return {"hook": b.get("hook") or "Can you solve this?", "tag": tag, "brand": brand_name(b, q), "handle": b["handle"],
             "bg_from": b["bg_from"], "bg_to": b["bg_to"], "accent": b["accent"], "text": b["text"],
             "website": b["website"], "countdown": b["countdown"], "logo": logo, "music_url": b["music_url"],
             **({"cover": cover_for(q, b)} if b.get("cover", True) else {}),

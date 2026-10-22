@@ -1316,6 +1316,8 @@
       // distilling, a magnet, a separating funnel, chromatography, sublimation.
       at = newPage(at); cursorY = H;
       const s0 = at, m = s.method, cx = data.social ? W / 2 : 380;
+      // This mixture's names, for the labels (chem_separation's plan).
+      const lk = s.look || {}, nm = (o, d) => (o && o.name) || d, names = (a, d) => (a && a.length ? a.map((x) => x.name).join(", ") : d);
       at = write(text(60, 70, s.name, { size: 38, color: INK.blue }), at, 0.6);
       const t0 = at, span = Math.max(2, s0 + dur - at - 0.3);
       s._t0 = t0 - s0; s._span = span;
@@ -1350,10 +1352,10 @@
             const r = el("circle", { cx: cx - 40 + rnd() * 80, cy: 270 + rnd() * 50, r: 5, fill: "#b08a5a", opacity: 0 }, page);
             tl.to(r, { opacity: 1, duration: 0.3 }, t0 + 0.8 + rnd() * span * 0.4);
           }
-          write(text(cx + 110, 300, "residue", { size: 24, color: INK.grey }), t0 + 1, 0.4);
+          write(text(cx + 110, 300, `residue: ${names(lk.residue, "solid")}`, { size: 24, color: INK.grey }), t0 + 1, 0.4);
           beaker(cx - 80, 430, 160, 170, "#dff3ff");
           drops(cx, 420, 520, "#7fbfff", 4);
-          write(text(cx + 110, 560, "filtrate", { size: 24, color: INK.grey }), t0 + 1.5, 0.4);
+          write(text(cx + 110, 560, `filtrate: ${nm(lk.filtrate, "liquid")}${lk.filtrate && lk.filtrate.in ? " solution" : ""}`, { size: 24, color: INK.grey }), t0 + 1.5, 0.4);
         } else {
           const liq = beaker(cx - 120, 300, 240, 260, "#dff3ff");
           for (let k = 0; k < 24; k++) {
@@ -1399,8 +1401,8 @@
         tl.to(top, { attr: { d: `M${cx - 70},300 L${cx + 70},300 Q${cx + 60},400 ${cx},440 Q${cx - 60},400 ${cx - 70},300 Z` }, duration: span * 0.6 }, t0 + 1);
         beaker(cx - 70, 560, 140, 110, "#7fbfff");
         drops(cx, 530, 610, "#7fbfff", 3);
-        write(text(cx + 120, 270, "oil (less dense)", { size: 22, color: INK.grey }), t0 + 0.8, 0.4);
-        write(text(cx + 120, 390, "water", { size: 22, color: INK.grey }), t0 + 1, 0.4);
+        write(text(cx + 120, 270, `${nm(lk.top, "oil")} (less dense)`, { size: 22, color: INK.grey }), t0 + 0.8, 0.4);
+        write(text(cx + 120, 390, `${nm(lk.bottom, "water")} (denser)`, { size: 22, color: INK.grey }), t0 + 1, 0.4);
       } else if (m === "magnet") {
         draw(path(`M${cx - 200},520 L${cx + 200},520`, INK.grey, 3), t0, 0.4);
         const iron = [];
@@ -1442,9 +1444,14 @@
       if (!data.social) {
         let y = 200;
         const per = (span * 0.8) / Math.max(1, (s.steps || []).length);
+        // A plan's step comes as what happens and why (s.look); older ones as numbered steps.
+        const why = Boolean(s.look) && (s.steps || []).length === 2;
         (s.steps || []).slice(0, 4).forEach((st, k) => {
-          wrap(st, 32).slice(0, 3).forEach((l, j) => { write(text(760, y, (j ? "    " : `${k + 1}. `) + l, { size: 24, color: INK.blue }), t0 + 0.5 + k * per + j * 0.2, 0.5); y += 32; });
-          y += 14;
+          const lead = why ? (k ? "Why: " : "") : `${k + 1}. `;
+          const lines = wrap(st, 34).slice(0, why ? 6 : 3);
+          if (y + lines.length * 30 > H - 40) return;
+          lines.forEach((l, j) => { write(text(760, y, (j ? (why ? "" : "    ") : lead) + l, { size: 23, color: why && k ? INK.green : INK.blue }), t0 + 0.5 + k * per + j * 0.2, 0.5); y += 30; });
+          y += 16;
         });
       }
       return { at: t0 + span };

@@ -2434,9 +2434,12 @@ carries a `chemistry` block the engine reads. Give the SUBSTANCES; the engine gi
   - electron arrangement of one element (first twenty): "chemistry": {"atom": "Mg"}
   - how two elements bond and the formula it gives: "chemistry": {"bond": ["Mg", "Cl"]}
     (ionic: a metal and a non-metal; covalent: two non-metals — the engine animates the electrons)
-  - separating a mixture: "chemistry": {"separate": ["sand", "salt"]} (parts: sand, chalk, salt,
-    sugar, copper(II) sulphate, water, ethanol, oil, kerosene, iron filings, sulphur, iodine,
-    ammonium chloride, ink, food colouring; "keep": "water" when the water is wanted)
+  - separating a mixture of two or three parts: "chemistry": {"separate": ["iron filings", "sand", "salt"]}
+    (the engine plans every step; parts include sand, chalk, charcoal powder, copper(II) oxide, iron
+    filings, nickel powder, iodine, naphthalene, ammonium chloride, sulphur, salt, sugar, copper(II)
+    sulphate, iron(II) sulphate, potassium permanganate, water, ethanol, propanone, cooking oil,
+    kerosene, petrol, tetrachloromethane, methylbenzene, black ink, green food colouring, chlorophyll
+    extract; "keep": "water" when the solvent is wanted)
 Reactions the engine knows (stay inside these): metals with acids (above hydrogen only), metals
 with cold water (K, Na, Ca) or steam (Mg, Zn, Fe), burning in oxygen (metals, C, S, H2, fuels),
 burning in chlorine, displacement by the reactivity series, neutralisation (acid + alkali/oxide),
