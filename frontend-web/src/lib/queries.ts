@@ -4098,13 +4098,14 @@ export function useChemReact(mix: ChemMix | null) {
 }
 
 /** The mix on the whiteboard, voiced in the science voice. */
-export function useChemLabHtml(mix: ChemMix | null) {
+export function useChemLabHtml(mix: ChemMix | null, social = false) {
   const { token } = useAuth();
   return useQuery({
-    queryKey: ["chem-lab-html", mix],
+    queryKey: ["chem-lab-html", mix, social],
     enabled: Boolean(mix?.a),
     queryFn: async () => {
       const qs = new URLSearchParams({ a: mix!.a, b: mix!.b, condition: mix!.condition, mode: mix!.mode || "react", autoplay: "true" });
+      if (social) qs.set("social", "true");
       const { blob } = await fetchBlob(`/api/v1/play/chem/lab.html?${qs}`, { bearerToken: token });
       return await blob.text();
     },

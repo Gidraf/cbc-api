@@ -385,17 +385,25 @@ def chem_react(a: str = Query(..., max_length=120), b: str = Query("", max_lengt
 def chem_lab_page(a: str = Query(..., max_length=120), b: str = Query("", max_length=40),
                   condition: str = Query("", max_length=20), autoplay: bool = Query(False),
                   mode: Literal["react", "atom", "bond", "separate"] = Query("react"),
+                  social: bool = Query(False, description="the vertical cut, as the post's video will be"),
                   auth: AuthContext = Depends(CONTENT)) -> HTMLResponse:
     """The mix on the whiteboard, voiced in the science voice: the lab bench,
-    the reactivity series, the equation balanced, what you see, where it is used."""
+    the reactivity series, the equation balanced, what you see, where it is used.
+    `social`: the vertical cut (hook, captions, countdown, brand) — a video maker's tool."""
     from ..services import chem_walkthrough, whiteboard
     from ..services.math_engine.tts_service import science_voice
 
+    if social:
+        _may_make_videos(auth)
     try:
         out = chem_walkthrough.lab(a, b, condition, mode)
     except ValueError as exc:
         raise_api_error("VALIDATION_FAILED", str(exc))
     q = out["question"]
+    if social:
+        from ..services import social as social_cut
+
+        return HTMLResponse(social_cut.live_page(q, science_voice("female", q["question_id"])))
     return HTMLResponse(whiteboard.live_page(out["walkthrough"], title=q["question_text"][:80],
                                              voice=science_voice("female", q["question_id"]), autoplay=autoplay))
 

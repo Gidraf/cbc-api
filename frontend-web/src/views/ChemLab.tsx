@@ -23,7 +23,8 @@ export function ChemLab() {
     : { a: parts.join(","), b: "", condition: "", mode });
   const pick = (sym: string) => setEls((cur) => mode === "atom" ? [sym] : (cur.includes(sym) ? cur.filter((x) => x !== sym) : [...cur, sym].slice(-2)));
   const result = useChemReact(mix);
-  const board = useChemLabHtml(mix);
+  const [view, setView] = React.useState<"board" | "social">("board");
+  const board = useChemLabHtml(mix, view === "social");
   const r = result.data?.reaction;
   const picker = (value: string, set: (v: string) => void, allowNone = false) => (
     <Select value={value} onChange={(e) => set(e.target.value)} style={{ width: "auto", minWidth: "14rem" }}>
@@ -126,10 +127,19 @@ export function ChemLab() {
             </div>
           </Card>
           <Card title="On the whiteboard">
-            {board.isLoading && <LoadingBlock rows={4} label="Drawing and voicing it" />}
+            <Stack direction="row" gap="var(--s2)" style={{ marginBottom: "var(--s3)" }}>
+              <Button size="sm" variant={view === "board" ? "primary" : "ghost"} onClick={() => setView("board")}>🧑‍🏫 Board</Button>
+              <Button size="sm" variant={view === "social" ? "primary" : "ghost"} onClick={() => setView("social")}>📱 Social (vertical)</Button>
+            </Stack>
+            {board.isLoading && <LoadingBlock rows={4} label={view === "social" ? "Making the vertical cut and voicing it" : "Drawing and voicing it"} />}
             {board.error && <ErrorNotice error={board.error} />}
-            {board.data && <iframe title="chemistry walkthrough" srcDoc={board.data}
-                                   style={{ width: "100%", aspectRatio: "16 / 9.6", border: 0, borderRadius: 8, background: "#fdfdfb" }} />}
+            {board.data && (view === "social"
+              ? <div style={{ display: "flex", justifyContent: "center" }}>
+                  <iframe key="social" title="chemistry social cut" srcDoc={board.data} allow="autoplay"
+                          style={{ width: "min(420px, 100%)", height: "74vh", border: 0, borderRadius: 8, background: "#0f172a" }} />
+                </div>
+              : <iframe key="board" title="chemistry walkthrough" srcDoc={board.data}
+                        style={{ width: "100%", aspectRatio: "16 / 9.6", border: 0, borderRadius: 8, background: "#fdfdfb" }} />)}
           </Card>
         </div>
       )}
