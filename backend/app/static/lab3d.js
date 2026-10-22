@@ -366,7 +366,7 @@
     const shrink = lab.solid_shrinks ? 1 - 0.85 * ease(at(1, span * 0.85)) : 1;
     const solidC = lab.solid ? mix(lab.solid, lab.solid_to, at(1, span * 0.6)) : null;
     let liquidC = lab.liquid ? mix(lab.liquid, lab.liquid_to, at(1, span * 0.75)) : null;
-    if (liquidC && lab.precipitate) liquidC = mix(liquidC, lab.precipitate, 0.35 * at(0.9, span * 0.5));
+    if (liquidC && lab.precipitate) liquidC = mix(liquidC, lab.precipitate, 0.25 * at(0.9, span * 0.5));
     const on = lab.flame || lab.burner ? at(0.6, 0.4) : 0;
 
     if (kind === "heated_tube") return heatedTube();
@@ -394,7 +394,8 @@
       } else v = vessel("beaker", U(230), U(290));
       level = v.h * (tube ? 0.55 : trough ? 0.62 : flask ? 0.42 : 0.62);
       put(v.g, x, base);
-      if (liquidC) v.fill(0.04, level, liquidC, clearish(liquidC) && !lab.precipitate ? (trough ? 0.28 : 0.42) : 0.72);
+      // With a precipitate the liquid stays fairly clear, so the solid's own colour shows through it.
+      if (liquidC) v.fill(0.04, level, liquidC, lab.precipitate ? 0.38 : clearish(liquidC) ? (trough ? 0.28 : 0.42) : 0.72);
       const g = v.g, rIn = v.r(level * 0.5);
 
       // The solid: a strip of metal lowered in, lumps of a carbonate, or a lump darting on the water.

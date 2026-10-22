@@ -38,6 +38,7 @@
   el("rect", { x: 14, y: 14, width: W - 28, height: H - 28, rx: 6, fill: "none", stroke: "#d6d3cb", "stroke-width": 3 }, svg);
   const ink = el("g", {}, svg);
   const hand = buildHand();
+  window.__hideHand = () => { hand.style.display = "none"; };   // a still picture of the board, no hand over it
   if (data.no_hand) hand.style.display = "none";   // a developer's video: the work speaks, no hand
 
   function el(tag, attrs, parent) {
