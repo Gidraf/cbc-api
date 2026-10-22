@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import hashlib
 import html
+import re
 import logging
 from typing import Any
 
@@ -82,11 +83,45 @@ def object_name(question_id: str, step: str, key: str) -> str:
     return f"{PREFIX}/{question_id}/{step}-{key}.jpg"
 
 
+# A chemistry item's step pictures as cards of the series, after the answer:
+# "steps0", "steps1"… (up to four steps on a picture, with their words) and
+# "anim0" (the first of them animated — a GIF, which Facebook plays).
+CHEM_STEP = re.compile(r"^(steps|anim)(\d)$")
+
+
+def chem_steps(q: dict[str, Any]) -> list[str]:
+    """The step-picture cards a chemistry item has (worked out without making them)."""
+    if not isinstance(q.get("chemistry"), dict):
+        return []
+    from . import chem_stills
+
+    try:
+        _, _, ms, _ = chem_stills._plan(q)
+    except Exception:  # noqa: BLE001
+        return []
+    n = len(chem_stills._groups(ms))
+    return ([f"steps{g}" for g in range(n)] + ["anim0"]) if n else []
+
+
+def is_card(q: dict[str, Any], step: str) -> bool:
+    return step in CARDS or step in chem_steps(q)
+
+
 def status(question_id: str, step: str, q: dict[str, Any] | None = None) -> dict[str, Any]:
     from ..infra.storage import object_storage, public_object_url
     from .social import brand
 
     q = q or _q(question_id)
+    m = CHEM_STEP.match(step)
+    if m:
+        from . import chem_stills
+
+        grids = chem_stills.status(question_id, q).get("grids") or []
+        g = int(m.group(2))
+        key = "jpg" if m.group(1) == "steps" else "gif"
+        url = grids[g].get(key) if g < len(grids) else ""
+        return {"status": "ready", "url": url, "object_name": grids[g][f"{key}_name"]} if url else \
+               {"status": "none", "object_name": grids[g][f"{key}_name"] if g < len(grids) else ""}
     name = object_name(question_id, step, _key(q, step, brand()))
     if object_storage.object_exists(name):
         return {"status": "ready", "url": public_object_url(name), "object_name": name}
@@ -200,9 +235,14 @@ def render(question_id: str, step: str, q: dict[str, Any] | None = None) -> dict
     from ..infra.storage import object_storage
     from .social import brand
 
+    q = q or _q(question_id)
+    if CHEM_STEP.match(step):                   # made with the item's step pictures
+        from . import chem_stills
+
+        chem_stills.render(question_id, q)
+        return status(question_id, step, q)
     if step not in CARDS:
         raise ValueError(f"A card is one of {', '.join(CARDS)}.")
-    q = q or _q(question_id)
     st = status(question_id, step, q)
     if st["status"] == "ready":
         return st
@@ -259,6 +299,17 @@ def caption(q: dict[str, Any], step: str, b: dict[str, Any] | None = None) -> st
     b = b or brand()
     if step == "kicd":
         return kicd_caption(q, b)
+    m = CHEM_STEP.match(step)
+    if m:
+        n = sum(1 for x in chem_steps(q) if x.startswith("steps"))
+        part = f" ({int(m.group(2)) + 1} of {n})" if n > 1 and m.group(1) == "steps" else ""
+        head = (f"🧩 Every step of the answer{part} — save it for revision." if m.group(1) == "steps"
+                else "🎞️ The steps, animated — watch each one happen.")
+        lines = [head, "", display(q.get("question_text") or "")]
+        if b.get("website"):
+            lines += ["", f"🌐 {b['website']}"]
+        lines += ["", " ".join(hashtags(q, b))]
+        return "\n".join(lines).strip() + "\n"
     link = q.get("curriculum") or {}
     topic = " · ".join(x for x in (grade_label(str(link.get("grade") or "")), str(link.get("subject") or ""),
                                    str(link.get("sub_strand") or "")) if x)

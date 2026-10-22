@@ -5126,7 +5126,7 @@ export function usePostQuestion() {
   return useMutation({
     mutationFn: (v: { question_id: string; share?: "feed" | "groups"; groups?: string[];
                       /** Its video, one card, or its whole series from now (in order, a posting gap apart). */
-                      what?: "video" | "teaser" | "question" | "kicd" | "answer" | "series" }) =>
+                      what?: "video" | "teaser" | "question" | "kicd" | "answer" | "series" | `steps${number}` | `anim${number}` }) =>
       api<Record<string, any>>("/api/v1/play/poster/post-question", { method: "POST", body: JSON.stringify(v) }),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["poster"] }); qc.invalidateQueries({ queryKey: ["question-search"] });
                        qc.invalidateQueries({ queryKey: ["library-question"] }); qc.invalidateQueries({ queryKey: ["library"] }); },

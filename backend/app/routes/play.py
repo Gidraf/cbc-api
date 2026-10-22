@@ -206,7 +206,7 @@ def library_question(question_id: str, auth: AuthContext = Depends(CONTENT)) -> 
         from ..services import social_cards
 
         out["cards"] = {step: {k: v for k, v in social_cards.status(question_id, step, q).items() if k in ("status", "url")}
-                        for step in social_cards.CARDS}
+                        for step in (*social_cards.CARDS, *social_cards.chem_steps(q))}
     except Exception:  # noqa: BLE001
         out["cards"] = {}
     if not staff:
@@ -1912,7 +1912,7 @@ class PostQuestion(BaseModel):
     share: Literal["feed", "groups"] = "feed"
     groups: list[str] = []
     # What goes out: its video, one of its cards, or its whole series from now (in order, a gap apart).
-    what: Literal["video", "teaser", "question", "kicd", "answer", "series"] = "video"
+    what: str = Field("video", pattern=r"^(video|teaser|question|kicd|answer|series|steps\d|anim\d)$")
 
 
 @router.post("/poster/post-question")
@@ -1952,12 +1952,15 @@ def poster_card(question_id: str = Query(..., max_length=200), step: str = Query
     from ..services.whiteboard import load
 
     _may_make_videos(auth)
-    if step not in social_cards.CARDS:
-        raise_api_error("VALIDATION_FAILED", "A card is one of " + ", ".join(social_cards.CARDS))
     q = load(question_id)
+    if not social_cards.is_card(q, step):
+        raise_api_error("VALIDATION_FAILED", "A card is one of " + ", ".join((*social_cards.CARDS, *social_cards.chem_steps(q))))
     st = social_cards.status(question_id, step, q)
     if st.get("status") == "ready":
         return {"status": "ready", "url": st["url"]}
+    if social_cards.CHEM_STEP.match(step):
+        social_cards.enqueue(question_id, queued_by="poster")      # made in the worker; nothing for the Mac to draw
+        return {"status": "none", "html": ""}
     return {"status": "none", "html": social_cards.page(q, step, social.brand()),
             "width": social_cards.WIDTH, "height": social_cards.HEIGHT}
 
@@ -2000,8 +2003,8 @@ def poster_command(payload: PosterCommand, auth: AuthContext = Depends(ANY)) -> 
         options = {"count": max(1, min(int((payload.options or {}).get("count") or 5), 30))}
     if payload.action == "series_now":
         o = payload.options or {}
-        options = {"question_id": str(o.get("question_id") or "")[:200], "post_ids": [str(x)[:40] for x in (o.get("post_ids") or [])][:6],
-                   "steps": [str(x)[:20] for x in (o.get("steps") or [])][:6], "share": str(o.get("share") or "feed"),
+        options = {"question_id": str(o.get("question_id") or "")[:200], "post_ids": [str(x)[:40] for x in (o.get("post_ids") or [])][:12],
+                   "steps": [str(x)[:20] for x in (o.get("steps") or [])][:12], "share": str(o.get("share") or "feed"),
                    "groups": [str(g)[:200] for g in (o.get("groups") or [])][:9]}
     share = str((payload.options or {}).get("share") or "")
     if payload.action == "run_now" and share:
