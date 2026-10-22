@@ -233,6 +233,12 @@ SETTINGS: tuple[Setting, ...] = (
     Setting("social_brand_name", "", "string", "Brand on social videos",
             "The name in the top corner of every social video and written on its end card. Empty: the "
             "series name on papers.", "", "Social"),
+    Setting("social_brand_by_subject", "", "string", "Brand per subject",
+            "A different brand for a subject's videos, e.g. \"Chemistry=CBC Chemistry; Biology=CBC Biology\". A "
+            "subject not listed swaps the brand's subject word for the subject as CBC names it at the question's "
+            "grade: CBC Integrated Science for Grades 7–9, CBC Chemistry for Grades 10–12 (and, with no grade, "
+            "by the topic: separations and atoms Integrated Science, bonding and reactions Chemistry).", "",
+            "Social"),
     Setting("social_handle", "", "string", "Social handle",
             "Your account, e.g. @cbcmaths — shown on every video, written on the end card, said aloud and "
             "put in each post.", "", "Social"),

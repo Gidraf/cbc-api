@@ -344,18 +344,23 @@
       parent.add(d);
     }
   }
-  function camera() {
-    K.camera.position.set(0, 5, 19.4);
-    K.camera.lookAt(0, 0, 0);
+  // A slow sway, and a push in towards the bench as the reaction starts —
+  // small, so the board's words stay beside what they name.
+  function camera(t, tt, cx) {
+    const push = tt == null ? 0 : Math.exp(-((tt - 1.6) ** 2) / 2.2);
+    const aim = X(cx || 640) * 0.18 * push;
+    K.camera.position.set(Math.sin((t || 0) * 0.22) * 0.45 + aim, 5 - push * 0.7, 19.4 - push * 1.6);
+    K.camera.lookAt(aim * 0.6, -0.5 * push, 0);
   }
 
   // ═══ the bench: the reaction ═══
   LAB.chem_lab = function (s, t, dur) {
-    init(); camera();
+    init();
     const lab = s.lab || {}, kind = lab.vessel || "beaker";
     const t0 = s._t0 != null ? s._t0 : Math.min(2, dur * 0.3), span = s._span != null ? s._span : Math.max(1.5, dur - t0 - 0.3);
     const tt = t - t0, at = (a, d) => clamp01((tt - a) / Math.max(0.01, d));
     const social = !!K.data.social, cx = social ? 640 : 470, floor = 650;
+    camera(t, tt, cx);
     const heatBelow = !!lab.burner || (!!lab.flame && kind === "beaker");
     bench(floor);
     const shrink = lab.solid_shrinks ? 1 - 0.85 * ease(at(1, span * 0.85)) : 1;
@@ -557,13 +562,20 @@
 
   // ═══ the separations ═══
   LAB.chem_separation = function (s, t, dur) {
-    init(); camera();
+    init();
     const m = s.method;
     const t0 = s._t0 != null ? s._t0 : Math.min(1.2, dur * 0.2), span = s._span != null ? s._span : Math.max(2, dur - t0 - 0.3);
     const tt = t - t0, at = (a, d) => clamp01((tt - a) / Math.max(0.01, d));
     const social = !!K.data.social, cx = social ? 640 : 380, floor = 650;
+    camera(t, tt, cx);
     bench(floor);
     const water = "#bfe3ff";
+    // This mixture's own substances (chem_separation's plan): their colours, which is which.
+    const L = s.look || {};
+    const C_ = (o, d) => (o && o.colour) || d;
+    const nth = (arr, k, d) => (arr && arr.length ? arr[k % arr.length].colour : d);
+    // A colourless liquid tinted a little, so a layer or a distillate is seen.
+    const vis = (hex) => (clearish(hex) ? mix(hex, "#8fb3d1", 0.35) : hex);
     if (m === "filtration") filtration();
     else if (m === "dissolve") dissolve();
     else if (m === "evaporation" || m === "crystallisation") evaporation(m === "crystallisation");
@@ -583,22 +595,23 @@
       const fl = vessel("conical", U(80), U(170), U(25)); put(fl.g, cx, floor);
       // The muddy water in the paper going down; the sand left on it.
       const left = 1 - ease(at(0.5, span * 0.75)), top = U(90) + U(100) * (0.25 + 0.65 * left);
-      if (left > 0.02) f.g.add(mesh(band(f.key + "p", [[0.01, U(90)], [U(84), U(90) + U(100)]], U(90) + 0.08, top, 0.02), wet("#c9a874", 0.8)));
+      if (left > 0.02) f.g.add(mesh(band(f.key + "p", [[0.01, U(90)], [U(84), U(90) + U(100)]], U(90) + 0.08, top, 0.02), wet(mix(C_(L.filtrate, water), nth(L.residue, 0, "#b08a5a"), 0.55), 0.8)));
       const rnd = K.rand(5);
       for (let k = 0; k < 26; k++) {
         const a = rnd() * 6.28, y = rnd(), when = 0.6 + rnd() * span * 0.5;
         if (tt < when) continue;
         const yy = U(90) + 0.12 + y * 0.45, rr = (yy - U(90)) * (U(84) / U(100)) * 0.7;
-        const p = K.ball(0.06, solidMat("#b08a5a")); p.position.set(Math.cos(a) * rr, yy, Math.sin(a) * rr); f.g.add(p);
+        const p = K.ball(0.06, solidMat(seen(nth(L.residue, k, "#b08a5a")))); p.position.set(Math.cos(a) * rr, yy, Math.sin(a) * rr); f.g.add(p);
       }
-      drip(W, X(cx), Y(450), Y(floor) + fl.h * 0.25, tt, 0.7, water, 0.8);
-      fl.fill(0.04, 0.05 + fl.h * 0.3 * ease(at(0.8, span * 0.8)), "#dff3ff", 0.7);
+      drip(W, X(cx), Y(450), Y(floor) + fl.h * 0.25, tt, 0.7, vis(C_(L.filtrate, water)), 0.8);
+      fl.fill(0.04, 0.05 + fl.h * 0.3 * ease(at(0.8, span * 0.8)), vis(C_(L.filtrate, "#dff3ff")), 0.7);
     }
 
     function dissolve() {
       const v = vessel("beaker", U(240), U(260)); put(v.g, cx, floor);
       const level = v.h * 0.6;
-      v.fill(0.04, level, mix(water, "#eef7ff", at(1, span * 0.5)), 0.7);
+      const dissolving = (L.dissolves || [])[0] || {};
+      v.fill(0.04, level, mix(vis(C_(L.solvent, water)), vis(dissolving.colour || "#eef7ff"), at(1, span * 0.5)), 0.7);
       const ang = tt * 2.2, rodTop = new T.Vector3(Math.cos(ang) * 0.5, v.h + 0.8, Math.sin(ang) * 0.5);
       v.g.add(rod(new T.Vector3(Math.cos(ang) * 0.9, 0.12, Math.sin(ang) * 0.9), rodTop, 0.045, M.tubeGlass));
       const rnd = K.rand(8);
@@ -607,7 +620,7 @@
         const f = at(1, span * 0.5), sw = a + tt * (1.4 - 0.9 * f);
         const r = sinks ? 0.07 : 0.07 * (1 - f);
         if (r < 0.01) continue;
-        const p = K.ball(r, solidMat(sinks ? "#b08a5a" : "#ffffff"));
+        const p = K.ball(r, solidMat(seen(sinks ? nth(L.stays, k, "#b08a5a") : dissolving.solid || "#ffffff")));
         p.position.set(Math.cos(sw) * d, sinks ? y + (v.floor(d, 0.07) - y) * f : y, Math.sin(sw) * d); v.g.add(p);
       }
     }
@@ -623,14 +636,14 @@
       const top = heated(U(160));
       const d = vessel("dish", U(110), U(46)); d.g.position.set(X(cx), top, 0); W.add(d.g);
       const left = 1 - ease(at(1, span * (crystals ? 0.55 : 0.75)));
-      if (left > 0.03) d.fill(0.02, 0.04 + U(40) * left, "#bfe3ff", 0.8, 0.01);
+      if (left > 0.03) d.fill(0.02, 0.04 + U(40) * left, vis(C_(L.solution, "#bfe3ff")), 0.8, 0.01);
       puffs(W, X(cx), top + U(50), 0.2, tt - 1, "#c3ccd5", 6, 2.2, 1.5);
       const rnd = K.rand(12);
       for (let k = 0; k < 18; k++) {
         const a = rnd() * 6.28, rr = rnd() * U(70), when = span * 0.45 + rnd() * span * 0.45, sz = (crystals ? 0.1 : 0.06) + rnd() * 0.04;
         if (tt < when) continue;
-        const c = mesh(geo("cube", () => new T.BoxGeometry(1, 1, 1)), solidMat("#ffffff", true));
-        c.scale.setScalar(sz * ease(clamp01((tt - when) / 0.8))); c.rotation.set(a, a * 2, 0);
+        const c = mesh(geo("cube", () => new T.BoxGeometry(1, 1, 1)), solidMat(seen(C_(L.crystals, "#ffffff")), true));
+        c.scale.setScalar(sz * (L.crystals && L.crystals.hydrated ? 1.4 : 1) * ease(clamp01((tt - when) / 0.8))); c.rotation.set(a, a * 2, 0);
         c.position.set(Math.cos(a) * rr, d.floor(rr, 0.02) + sz * 0.4, Math.sin(a) * rr); d.g.add(c);
       }
     }
@@ -640,7 +653,9 @@
       const R = U(70), neck = fractional ? U(170) : U(70);
       const fl = vessel("round", R, U(18), neck); fl.g.position.set(X(fx), top - 0.02, 0); W.add(fl.g);
       const boil = fl.h * 0.3 * (1 - 0.35 * at(1, span));
-      fl.fill(0.05, boil, "#bfe3ff", 0.75);
+      const inFlask = L.liquids ? mix(vis(L.liquids[0].colour), vis(L.liquids[L.liquids.length - 1].colour), 0.5) : vis(C_(L.solution, "#bfe3ff"));
+      const distillate = vis(L.liquids ? L.liquids[0].colour : C_(L.distillate, "#dff3ff"));
+      fl.fill(0.05, boil, inFlask, 0.75);
       bubbles(fl.g, 14, (rnd) => [(rnd() - 0.5) * R * 0.8, 0.12, (rnd() - 0.5) * R * 0.5], boil, tt - 0.8, 4, 0.05);
       if (fractional) {                                   // glass beads in the column
         const rnd = K.rand(21);
@@ -668,11 +683,11 @@
       for (let k = 0; k < 5; k++) {
         if (tt < 1.4) break;
         const ph = ((tt - 1.4) / 2.2 + k / 5) % 1;
-        const p = K.ball(0.05, wet("#7fbfff", 0.9)); p.position.copy(a).lerp(b, ph); W.add(p);
+        const p = K.ball(0.05, wet(distillate, 0.9)); p.position.copy(a).lerp(b, ph); W.add(p);
       }
       const rcv = vessel("conical", U(70), U(150), U(22)); put(rcv.g, fx + 345, floor);
-      drip(W, b.x, b.y - 0.1, Y(floor) + rcv.h * 0.2, tt, 0.8, "#7fbfff", 2);
-      rcv.fill(0.04, 0.05 + rcv.h * 0.3 * ease(at(2, span * 0.8)), "#dff3ff", 0.7);
+      drip(W, b.x, b.y - 0.1, Y(floor) + rcv.h * 0.2, tt, 0.8, distillate, 2);
+      rcv.fill(0.04, 0.05 + rcv.h * 0.3 * ease(at(2, span * 0.8)), distillate, 0.7);
     }
 
     function sepFunnel() {
@@ -685,11 +700,12 @@
       handle.position.set(0.3, 1.12 * k, 0); handle.rotation.z = tt > 0.8 ? 0 : Math.PI / 2; f.g.add(handle);
       const drain = ease(at(1, span * 0.6));
       const lowHi = (2.3 - 1.25 * drain) * k, upHi = (3.1 - 1.05 * drain) * k;
-      if (lowHi > 1.06 * k) f.fill(0.02, lowHi, "#7fbfff", 0.75, 0.02);
-      f.fill(lowHi, upHi, "#f6d365", 0.8, 0.02);
+      const lower = vis(C_(L.bottom, "#7fbfff")), upper = vis(C_(L.top, "#f6d365"));
+      if (lowHi > 1.06 * k) f.fill(0.02, lowHi, lower, 0.75, 0.02);
+      f.fill(lowHi, upHi, upper, 0.8, 0.02);
       const bk = vessel("beaker", U(140), U(110)); put(bk.g, cx, floor);
-      if (tt > 0.8 && drain < 1) drip(W, X(cx), Y(bottom), Y(floor) + bk.h * 0.3, tt, 0.5, "#7fbfff", 0.8);
-      bk.fill(0.04, 0.05 + bk.h * 0.55 * drain, "#7fbfff", 0.75);
+      if (tt > 0.8 && drain < 1) drip(W, X(cx), Y(bottom), Y(floor) + bk.h * 0.3, tt, 0.5, lower, 0.8);
+      bk.fill(0.04, 0.05 + bk.h * 0.55 * drain, lower, 0.75);
     }
 
     function magnetic() {
@@ -707,14 +723,14 @@
           const P0 = pole[k % 4 < 2 ? 0 : 1].clone().add(new T.Vector3((jit - 0.5) * 0.35, -jit * 0.2, (rnd() - 0.5) * 0.3));
           p = home.clone().lerp(P0, f);
         } else rnd();
-        const b = mesh(geo("grain", () => new T.DodecahedronGeometry(1, 0)), solidMat(iron ? "#4b5563" : "#e6c200", iron));
+        const b = mesh(geo("grain", () => new T.DodecahedronGeometry(1, 0)), solidMat(seen(iron ? nth(L.magnetic, k, "#4b5563") : nth(L.others, k, "#e6c200")), iron));
         b.scale.setScalar(0.06); b.position.copy(p); W.add(b);
       }
     }
 
     function chromatography() {
       const v = vessel("beaker", U(200), U(360)); put(v.g, cx, floor);
-      v.fill(0.04, U(45), "#dff3ff", 0.6);
+      v.fill(0.04, U(45), vis(C_(L.solvent, "#dff3ff")), 0.6);
       v.g.add(rod(new T.Vector3(-U(130), v.h + 0.08, 0), new T.Vector3(U(130), v.h + 0.08, 0), 0.04, M.tubeGlass));
       const ph = U(340), pw = U(80), y0 = v.h + 0.06 - ph;
       const sheet = mesh(geo("chromP", () => new T.PlaneGeometry(pw, ph)), M.sheet); sheet.position.set(0, y0 + ph / 2, 0); v.g.add(sheet);
@@ -722,7 +738,8 @@
       const front = ease(at(0.6, span * 0.8)), wetH = 0.2 + (ph - 0.4) * front;
       const w = mesh(geo("chromW" + q(wetH), () => new T.PlaneGeometry(pw, wetH)), wet("#b8dcf5", 0.55)); w.position.set(0, y0 + wetH / 2, 0.004); v.g.add(w);
       const base = line.position.y;
-      [["#e8261b", 0.35], ["#1d4ed8", 0.6], ["#e6c200", 0.85]].forEach(([c, f]) => {
+      const dyes = (L.dyes || [{ colour: "#e8261b" }, { colour: "#1d4ed8" }, { colour: "#e6c200" }]).map((d, j, all) => [d.colour, 0.3 + (0.6 * (j + 0.5)) / all.length]);
+      dyes.forEach(([c, f]) => {
         const sp = mesh(geo("spot", () => new T.CircleGeometry(0.1, 20)), fire(c, 0.85));
         sp.position.set(0, base + (U(280) * f) * front, 0.008); v.g.add(sp);
       });
@@ -740,17 +757,18 @@
       for (let k = 0; k < 30; k++) {
         const a = rnd() * 6.28, rr = rnd() * U(80), iodine = k % 2 === 1;
         if (iodine && rnd() < gone) continue;
-        const p = mesh(geo("grain", () => new T.DodecahedronGeometry(1, 0)), solidMat(iodine ? "#5b21b6" : "#b08a5a"));
+        const p = mesh(geo("grain", () => new T.DodecahedronGeometry(1, 0)), solidMat(seen(iodine ? C_(L.sublimer, "#5b21b6") : nth(L.others, k, "#b08a5a"))));
         p.scale.setScalar(0.06); p.position.set(Math.cos(a) * rr, d.floor(rr, 0.05), Math.sin(a) * rr); d.g.add(p);
       }
-      puffs(W, X(cx), top + 0.3, 0.1, tt - 1, "#a78bfa", 5, 1.6, 0.9);
+      const sc = C_(L.sublimer, "#4c1d95");
+      puffs(W, X(cx), top + 0.3, 0.1, tt - 1, clearish(sc) ? "#cbd5e1" : mix(sc, "#ffffff", 0.45), 5, 1.6, 0.9);
       // Crystals forming on the cold funnel.
       const rc = K.rand(66);
       for (let k = 0; k < 40; k++) {
         const a = rc() * 6.28, y = rc(), when = 1.5 + rc() * span * 0.7;
         if (tt < when) continue;
         const yy = U(70) + U(150) * (0.15 + 0.8 * y), rr = U(10) + (U(100) - U(10)) * ((yy - U(70)) / U(150)) * 0.96;
-        const c = mesh(geo("cube", () => new T.BoxGeometry(1, 1, 1)), solidMat("#4c1d95", true));
+        const c = mesh(geo("cube", () => new T.BoxGeometry(1, 1, 1)), solidMat(seen(sc), true));
         c.scale.setScalar(0.05 * ease(clamp01((tt - when) / 0.5))); c.position.set(Math.cos(a) * rr, yy, Math.sin(a) * rr); fn.g.add(c);
       }
     }

@@ -1,6 +1,6 @@
 import React from "react";
-import { Badge, Button, Card, ErrorNotice, LoadingBlock, PageHeader, Select, Stack } from "../ui/components";
-import { useChemLabHtml, useChemReact, useChemSubstances, type ChemMix } from "../lib/queries";
+import { Badge, Button, Card, ErrorNotice, Field, Input, LoadingBlock, PageHeader, Select, Stack, useToast } from "../ui/components";
+import { useChemLabHtml, useChemReact, useChemSeparations, useChemSubstances, useSeparationBank, type ChemMix } from "../lib/queries";
 
 const CONDITIONS: [string, string][] = [["", "Mixed (room temperature)"], ["heat", "Heated"], ["steam", "With steam"],
                                          ["molten", "Molten (no water)"], ["boil", "Boiled"]];
@@ -23,7 +23,8 @@ export function ChemLab() {
     : { a: parts.join(","), b: "", condition: "", mode });
   const pick = (sym: string) => setEls((cur) => mode === "atom" ? [sym] : (cur.includes(sym) ? cur.filter((x) => x !== sym) : [...cur, sym].slice(-2)));
   const result = useChemReact(mix);
-  const board = useChemLabHtml(mix);
+  const [view, setView] = React.useState<"board" | "social">("board");
+  const board = useChemLabHtml(mix, view === "social");
   const r = result.data?.reaction;
   const picker = (value: string, set: (v: string) => void, allowNone = false) => (
     <Select value={value} onChange={(e) => set(e.target.value)} style={{ width: "auto", minWidth: "14rem" }}>
@@ -59,7 +60,7 @@ export function ChemLab() {
           <Stack direction="row" gap="var(--s2)" wrap align="center">
             {shelf.data.mixtures.map((m) => (
               <Button key={m} size="sm" variant={parts.includes(m) ? "primary" : "ghost"}
-                      onClick={() => setParts((cur) => cur.includes(m) ? cur.filter((x) => x !== m) : [...cur, m].slice(-2))}>{m}</Button>
+                      onClick={() => setParts((cur) => cur.includes(m) ? cur.filter((x) => x !== m) : [...cur, m].slice(-3))}>{m}</Button>
             ))}
             <Button variant="primary" onClick={go} disabled={!parts.length}>🧪 Separate</Button>
           </Stack>
@@ -126,14 +127,89 @@ export function ChemLab() {
             </div>
           </Card>
           <Card title="On the whiteboard">
-            {board.isLoading && <LoadingBlock rows={4} label="Drawing and voicing it" />}
+            <Stack direction="row" gap="var(--s2)" style={{ marginBottom: "var(--s3)" }}>
+              <Button size="sm" variant={view === "board" ? "primary" : "ghost"} onClick={() => setView("board")}>🧑‍🏫 Board</Button>
+              <Button size="sm" variant={view === "social" ? "primary" : "ghost"} onClick={() => setView("social")}>📱 Social (vertical)</Button>
+            </Stack>
+            {board.isLoading && <LoadingBlock rows={4} label={view === "social" ? "Making the vertical cut and voicing it" : "Drawing and voicing it"} />}
             {board.error && <ErrorNotice error={board.error} />}
-            {board.data && <iframe title="chemistry walkthrough" srcDoc={board.data}
-                                   style={{ width: "100%", aspectRatio: "16 / 9.6", border: 0, borderRadius: 8, background: "#fdfdfb" }} />}
+            {board.data && (view === "social"
+              ? <div style={{ display: "flex", justifyContent: "center" }}>
+                  <iframe key="social" title="chemistry social cut" srcDoc={board.data} allow="autoplay"
+                          style={{ width: "min(420px, 100%)", height: "74vh", border: 0, borderRadius: 8, background: "#0f172a" }} />
+                </div>
+              : <iframe key="board" title="chemistry walkthrough" srcDoc={board.data}
+                        style={{ width: "100%", aspectRatio: "16 / 9.6", border: 0, borderRadius: 8, background: "#fdfdfb" }} />)}
           </Card>
         </div>
       )}
+      {mode === "separate" && <SeparationBank />}
       <style>{`@media (max-width: 900px) { .chem-grid { grid-template-columns: 1fr !important; } }`}</style>
     </div>
+  );
+}
+
+const FOCUS_LABELS: Record<string, string> = { method: "Which method", order: "Order of steps", residue: "Residue / filtrate",
+  layer: "Which layer", first: "What distils first", why: "Why it works", apparatus: "Which apparatus" };
+
+/** Every mixture the separation rules decide, as questions in the bank — so
+ *  Social batches can make a video of each. */
+function SeparationBank() {
+  const sum = useChemSeparations();
+  const save = useSeparationBank();
+  const toast = useToast();
+  const [grade, setGrade] = React.useState("Grade 7");
+  const [subject, setSubject] = React.useState("Integrated Science");
+  const [strand, setStrand] = React.useState("Mixtures, Elements and Compounds");
+  const [subStrand, setSubStrand] = React.useState("Mixtures");
+  const [limit, setLimit] = React.useState(500);
+  const [focuses, setFocuses] = React.useState<string[]>([]);
+  const d = sum.data;
+  const run = () => save.mutate({ grade, subject, strand, sub_strand: subStrand, limit, focuses }, {
+    onSuccess: (r) => toast(`${r.saved} new questions saved${r.already ? ` (${r.already} were already there)` : ""}. Make their videos in Play → Social batches.`, "ok"),
+    onError: (e) => toast(String((e as Error).message || e), "danger"),
+  });
+  return (
+    <Card title="Separation questions for videos">
+      {sum.isLoading && <LoadingBlock rows={2} label="Counting the mixtures" />}
+      {d && (
+        <div style={{ display: "grid", gap: "var(--s3)" }}>
+          <div>
+            The rules know <b>{d.substances}</b> substances and decide <b>{d.mixtures.toLocaleString()}</b> mixtures of two or three
+            parts — <b>{d.questions.toLocaleString()}</b> questions, each with its own animated walkthrough.
+          </div>
+          <Stack direction="row" gap="var(--s2)" wrap>
+            {Object.entries(d.by_method).map(([m, n]) => <Badge key={m}>{m.replace(/_/g, " ")}: {n.toLocaleString()}</Badge>)}
+          </Stack>
+          <details><summary style={{ cursor: "pointer" }}>Some of the questions</summary>
+            <ul style={{ margin: 0, paddingLeft: "1.2rem" }}>{d.sample.map((q) => <li key={q}>{q}</li>)}</ul>
+          </details>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(12rem, 1fr))", gap: "var(--s2)" }}>
+            <Field label="Grade">{(p) => <Input {...p} value={grade} onChange={(e) => setGrade(e.target.value)} />}</Field>
+            <Field label="Subject">{(p) => <Input {...p} value={subject} onChange={(e) => setSubject(e.target.value)} />}</Field>
+            <Field label="Strand">{(p) => <Input {...p} value={strand} onChange={(e) => setStrand(e.target.value)} />}</Field>
+            <Field label="Sub-strand">{(p) => <Input {...p} value={subStrand} onChange={(e) => setSubStrand(e.target.value)} />}</Field>
+            <Field label="How many">{(p) => <Input {...p} type="number" min={1} max={5000} value={limit} onChange={(e) => setLimit(Math.max(1, Math.min(5000, Number(e.target.value) || 1)))} />}</Field>
+          </div>
+          <Stack direction="row" gap="var(--s2)" wrap align="center">
+            <span style={{ fontSize: "var(--text-sm)", color: "var(--ink-3)" }}>Kinds (none picked: all):</span>
+            {Object.entries(FOCUS_LABELS).map(([f, l]) => (
+              <Button key={f} size="sm" variant={focuses.includes(f) ? "primary" : "ghost"}
+                      onClick={() => setFocuses((cur) => cur.includes(f) ? cur.filter((x) => x !== f) : [...cur, f])}>{l}</Button>
+            ))}
+          </Stack>
+          <div>
+            <Button variant="primary" onClick={run} disabled={save.isPending || !grade || !subject || !subStrand}>
+              {save.isPending ? "Saving…" : `💾 Save ${limit.toLocaleString()} questions to the bank`}
+            </Button>
+            <div style={{ fontSize: "var(--text-sm)", color: "var(--ink-3)", marginTop: 6 }}>
+              Spread across every method and kind; saving again adds only new ones. Check the grade, subject and sub-strand
+              match your curriculum, then make their videos in Play → Social batches.
+            </div>
+          </div>
+        </div>
+      )}
+      {sum.error && <ErrorNotice error={sum.error} />}
+    </Card>
   );
 }

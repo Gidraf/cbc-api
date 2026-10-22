@@ -736,102 +736,24 @@ def _formula_of(counts: dict[str, int]) -> str:
 
 # ── separating mixtures ──────────────────────────────────────────────────────
 
-SEPARATIONS: dict[str, dict[str, Any]] = {
-    "filtration": {"name": "Filtration", "when": "an insoluble solid from a liquid",
-                   "steps": ["Fold a filter paper into a cone and fit it in a filter funnel over a beaker",
-                             "Pour the mixture in slowly", "The liquid (filtrate) runs through; the solid (residue) stays on the paper"],
-                   "uses": ["Clearing muddy water at a water works", "Making tea or coffee with a filter", "Separating sand from water"]},
-    "evaporation": {"name": "Evaporation", "when": "a dissolved solid from its solution (the solvent is not kept)",
-                    "steps": ["Pour the solution into an evaporating dish", "Heat it gently over a water bath or Bunsen burner",
-                              "The water evaporates; the solid is left behind"],
-                    "uses": ["Salt pans at the coast (Malindi, Ngomeni)", "Getting sugar from sugarcane juice"]},
-    "crystallisation": {"name": "Crystallisation", "when": "pure crystals of a dissolved solid",
-                        "steps": ["Heat the solution until it is saturated (crystals form on a cold glass rod)",
-                                  "Leave it to cool slowly", "Crystals form; filter them off and dry them between filter papers"],
-                        "uses": ["Making pure copper(II) sulphate crystals", "Purifying table salt"]},
-    "distillation": {"name": "Simple distillation", "when": "a pure liquid (the solvent) from a solution",
-                     "steps": ["Heat the solution in a flask", "The solvent boils off as vapour and passes into a Liebig condenser",
-                               "Cold water around the condenser turns the vapour back to liquid (distillate), collected in a beaker",
-                               "The dissolved solid stays in the flask"],
-                     "uses": ["Getting drinking water from sea water", "Making distilled water for car batteries and labs"]},
-    "fractional_distillation": {"name": "Fractional distillation", "when": "liquids that mix but boil at different temperatures",
-                                "steps": ["Heat the mixture in a flask with a fractionating column",
-                                          "The liquid with the lower boiling point vaporises first and reaches the condenser",
-                                          "Collect each liquid as the thermometer shows its boiling point"],
-                                "uses": ["Separating crude oil into petrol, kerosene and diesel", "Getting oxygen and nitrogen from liquid air"]},
-    "separating_funnel": {"name": "Separating funnel", "when": "two liquids that do not mix",
-                          "steps": ["Pour the mixture into a separating funnel and let it settle into two layers",
-                                    "Open the tap to run off the lower (denser) layer", "Close the tap: the upper layer stays"],
-                          "uses": ["Separating oil from water", "Extracting oils in industry"]},
-    "magnet": {"name": "Magnetic separation", "when": "a magnetic solid (iron, nickel, cobalt) from a non-magnetic one",
-               "steps": ["Spread the mixture on paper", "Pass a magnet over it", "The iron sticks to the magnet; the rest stays behind"],
-               "uses": ["Sorting scrap iron from other waste", "Removing iron from crushed ore"]},
-    "chromatography": {"name": "Paper chromatography", "when": "dyes or colours mixed in a solution",
-                       "steps": ["Put a spot of the mixture on a pencil line near the bottom of a filter paper",
-                                 "Stand the paper in a solvent (water or ethanol) below the line",
-                                 "The solvent rises and carries each dye a different distance: the colours separate"],
-                       "uses": ["Testing food colourings and inks", "Forensic tests on ink in documents"]},
-    "sublimation": {"name": "Sublimation", "when": "a solid that sublimes (iodine, ammonium chloride) from one that does not",
-                    "steps": ["Heat the mixture in a dish covered by an inverted funnel or cold surface",
-                              "The subliming solid turns straight to vapour", "It turns back to solid on the cold surface; the rest stays"],
-                    "uses": ["Purifying iodine", "Separating ammonium chloride from salt"]},
-}
-
-# component → its properties (how it behaves in a mixture)
-COMPONENTS: dict[str, dict[str, Any]] = {
-    "sand": {"state": "solid", "soluble": False}, "chalk": {"state": "solid", "soluble": False},
-    "salt": {"state": "solid", "soluble": True, "formula": "NaCl"}, "sugar": {"state": "solid", "soluble": True},
-    "copper(II) sulphate": {"state": "solid", "soluble": True, "formula": "CuSO4"},
-    "water": {"state": "liquid", "bp": 100}, "ethanol": {"state": "liquid", "bp": 78, "mixes": True},
-    "oil": {"state": "liquid", "mixes": False}, "kerosene": {"state": "liquid", "mixes": False},
-    "iron filings": {"state": "solid", "soluble": False, "magnetic": True}, "sulphur": {"state": "solid", "soluble": False},
-    "iodine": {"state": "solid", "soluble": False, "sublimes": True}, "ammonium chloride": {"state": "solid", "soluble": True, "sublimes": True},
-    "ink": {"state": "solution", "dyes": True}, "food colouring": {"state": "solution", "dyes": True},
-}
-
-
-# Other names a question may use for a component.
-ALIASES = {"iron": "iron filings", "iron powder": "iron filings", "sulfur": "sulphur", "sulphur powder": "sulphur",
-           "common salt": "salt", "sodium chloride": "salt"}
-
-
+# Separating mixtures: the planner in chem_separation (many substances, two
+# or three parts, the methods in order with what goes where and why).
 def separate(parts: list[str], keep: str = "") -> dict[str, Any]:
     """How to separate a mixture: the method(s) from what the parts are like."""
-    ps = [ALIASES.get(p.strip().lower(), p.strip().lower()) for p in parts if p.strip()]
-    unknown = [p for p in ps if p not in COMPONENTS]
-    if unknown:
-        return {"covered": False, "why": f"The separation rules here do not know {', '.join(unknown)}."}
-    props = {p: COMPONENTS[p] for p in ps}
-    method: list[str] = []
-    if any(v.get("dyes") for v in props.values()):
-        method = ["chromatography"]
-    elif any(v.get("magnetic") for v in props.values()):
-        method = ["magnet"]
-    elif any(v.get("sublimes") for v in props.values()) and all(v["state"] == "solid" for v in props.values()):
-        method = ["sublimation"]
-    elif all(v["state"] == "liquid" for v in props.values()):
-        method = ["fractional_distillation"] if all(v.get("mixes", True) for v in props.values()) else ["separating_funnel"]
-    else:
-        solids = [p for p, v in props.items() if v["state"] == "solid"]
-        liquids = [p for p, v in props.items() if v["state"] == "liquid"]
-        insoluble = [p for p in solids if not props[p].get("soluble")]
-        soluble = [p for p in solids if props[p].get("soluble")]
-        if insoluble and soluble and not liquids:
-            method = ["dissolve", "filtration", "evaporation"]
-        elif insoluble and liquids:
-            method = ["filtration"]
-        elif soluble and liquids:
-            method = ["distillation"] if keep in liquids else (["crystallisation"] if "crystal" in keep else ["evaporation"])
-        else:
-            return {"covered": False, "why": "The separation rules here do not cover that mixture."}
-    steps: list[str] = []
-    for m in method:
-        if m == "dissolve":
-            steps.append("Add water and stir: the soluble part dissolves, the insoluble part does not")
-        else:
-            steps.extend(SEPARATIONS[m]["steps"])
-    named = [SEPARATIONS[m]["name"] if m in SEPARATIONS else "Dissolving" for m in method]
-    main = next((m for m in method if m in SEPARATIONS), method[0])
-    return {"covered": True, "parts": ps, "methods": method, "names": named, "steps": steps,
-            "why": f"{' then '.join(named)}: for {SEPARATIONS[main]['when']}.",
-            "uses": SEPARATIONS[main]["uses"]}
+    from .chem_separation import separate as plan
+
+    return plan(parts, keep)
+
+
+def __getattr__(name: str) -> Any:
+    # The old tables, for anything still reading them.
+    from . import chem_separation as X
+
+    if name == "COMPONENTS":
+        return X.SUBSTANCES
+    if name == "SEPARATIONS":
+        return X.METHODS
+    if name == "ALIASES":
+        return X.ALIASES
+    raise AttributeError(name)
+

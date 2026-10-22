@@ -183,7 +183,8 @@ def page(data: dict[str, Any], *, title: str = "", voice: str = "en-KE", duratio
             .replace("__GSAP__", _script(_asset("gsap.min.js")))
             # The 3D chemistry layer loads before the board, so the board knows
             # to leave the atoms to it when it lays out its scenes.
-            .replace("<script>__ENGINE__</script>", ("" if render else _katex()) + chem3d + "<script>__ENGINE__</script>")
+            .replace("<script>__ENGINE__</script>", ("" if render else _katex()) + f"<script>{_script(_asset('sfx.js'))}</script>"
+                     + chem3d + "<script>__ENGINE__</script>")
             .replace("__DATA__", json.dumps(payload).replace("</", "<\\/"))
             .replace("__ENGINE__", _script(_asset("whiteboard.js")))
             .replace("__TEACHER__", _teacher_scripts((social or {}).get("teacher"), three_loaded=bool(chem3d))))
@@ -460,8 +461,10 @@ def render(data: dict[str, Any], *, title: str = "", voice: str = "", subject: s
             if social.get("cover"):
                 thumb_at = COVER * 0.55            # the cover, fully drawn
         video = folder / "board.mp4"
+        sounds: list[dict[str, Any]] = []
         seconds, thumb = _capture(cdp, doc, video, ffmpeg, fps, tick, size=size,
-                                  selector="#social" if social else "#wb", thumb_at=thumb_at, webgl=teach)
+                                  selector="#social" if social else "#wb", thumb_at=thumb_at, webgl=teach,
+                                  chem3d=any(sc.get("scene") in CHEM3D_SCENES for sc in scenes), sounds=sounds)
         if clips:
             from . import manim_steps
 
@@ -478,6 +481,15 @@ def render(data: dict[str, Any], *, title: str = "", voice: str = "", subject: s
                 from . import teacher
 
                 extras += teacher.mood_tracks(ffmpeg, folder, scenes, starts, seconds, beds=music is None)
+        if sounds:
+            from . import sfx
+
+            try:
+                track = sfx.track(sounds, seconds, folder / "sfx.wav")
+                if track:
+                    extras.append((track, 0.0))
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Sound effects skipped: %s", exc)
         final = folder / "final.mp4"
         tick("mux", 0, 1)
         _mux(ffmpeg, video, spoken, starts, seconds, final, extras=extras, music=music)
@@ -691,7 +703,8 @@ WEBGL_ARGS = ["--enable-unsafe-swiftshader", "--use-angle=swiftshader", "--ignor
 
 def _capture(cdp: str, doc: str, out: Path, ffmpeg: str, fps: int, tick: Any, *,
              size: tuple[int, int] = (WIDTH, HEIGHT), selector: str = "#wb",
-             thumb_at: float | None = None, webgl: bool = False) -> tuple[float, bytes | None]:
+             thumb_at: float | None = None, webgl: bool = False, chem3d: bool = False,
+             sounds: list[dict[str, Any]] | None = None) -> tuple[float, bytes | None]:
     """Every frame of the page, piped into ffmpeg.
 
     A video is a minute or two of screenshots, longer than the browser
@@ -721,7 +734,7 @@ def _capture(cdp: str, doc: str, out: Path, ffmpeg: str, fps: int, tick: Any, *,
                 browser = None
                 try:
                     try:
-                        browser = p.chromium.launch(headless=True, args=LAUNCH_ARGS + (WEBGL_ARGS if webgl else []))
+                        browser = p.chromium.launch(headless=True, args=LAUNCH_ARGS + (WEBGL_ARGS if webgl or chem3d else []))
                     except Exception as exc:  # noqa: BLE001
                         if not cdp:
                             raise
@@ -731,6 +744,8 @@ def _capture(cdp: str, doc: str, out: Path, ffmpeg: str, fps: int, tick: Any, *,
                     pg = context.new_page()
                     pg.set_content(doc, wait_until="domcontentloaded", timeout=60000)  # fonts: __ready waits up to 2.5 s
                     total = min(float(pg.evaluate("() => window.__ready")), MAX_SECONDS)
+                    if sounds is not None:            # the page's sound effects, for the track under the voice
+                        sounds[:] = pg.evaluate("() => window.__sfx || []") or []
                     if webgl:
                         # A video with a teacher has the teacher, or is not made: a big
                         # model on a slow machine gets another minute; a missing one
