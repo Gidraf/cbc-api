@@ -170,6 +170,22 @@ async def flush_reports() -> bool:
     return not left
 
 
+async def _comment_gif(page: Any, post: dict[str, Any]) -> None:
+    """A photo post just out, its animation added as the first comment —
+    Facebook plays a GIF in a comment. Never fails the post (it is out)."""
+    from .flows import fb_comments
+
+    words = " ".join(str(post.get("caption") or "").split())
+    try:
+        gif = await cbc.download(post["comment_image_url"], _pic_name(f"gif-{post['post_id']}", post["comment_image_url"]))
+        await asyncio.sleep(15)                       # a moment for the post to show on the profile
+        await fb_comments.comment(page, find=words[:60], url="", comments=[str(post.get("comment_text") or "▶️")],
+                                  also=[words[60:120]] if len(words) > 80 else [], images=[gif])
+        count("comments")
+    except Exception as exc:  # noqa: BLE001
+        log.info("The photo %s is out; its animated comment failed: %s", post.get("post_id"), _why(exc))
+
+
 async def _share_photo(page: Any, post: dict[str, Any], groups: list[str]) -> list[str]:
     """A photo post just out, shared to its groups. Never fails the post (it is out):
     the groups it reached, or none."""
@@ -213,6 +229,8 @@ async def publish(post: dict[str, Any], *, dry_run: bool) -> dict[str, Any]:
                 image = await cbc.download(post["image_url"], _pic_name(post["post_id"], post["image_url"]))
                 page = await browser.page()
                 url = await flow.post_photo(page, image=image, caption=post["caption"], dry_run=dry_run)
+                if post.get("comment_image_url") and not dry_run and post["platform"] == "facebook":
+                    await _comment_gif(page, post)          # the card's animation, where Facebook plays it
                 if groups and not dry_run and post["platform"] == "facebook":
                     # Out on the feed: then shared to its groups, as a reel is —
                     # found on the profile by its words and shared from there.
