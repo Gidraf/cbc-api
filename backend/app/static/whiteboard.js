@@ -299,6 +299,8 @@
     return mix(from, to, (time - t0) / gap);
   }
 
+  const sfx = (t, kind, gain, pitch) => { if (window.sfxAt) window.sfxAt(t, kind, gain, pitch); };
+  const every = (kind, from, to, step, gain, pitch) => { for (let t = from; t < to; t += step) sfx(t, kind, gain, pitch); };
   function show(node, at, dur) { tl.fromTo(node, { opacity: 0 }, { opacity: 1, duration: dur || 0.3 }, at); return at + (dur || 0.3); }
 
   function newPage(at) {
@@ -821,6 +823,19 @@
       }
       at = draw(path(outline, INK.black, 5), at, Math.min(1, dur * 0.12));
       const t0 = at, span = Math.max(1.5, s0 + dur - at - 0.3);   // what is left of the scene, for the reaction
+      {
+        // What you would hear at the bench.
+        const end = t0 + span;
+        if (lab.solid) sfx(t0 + 0.8, "drip", 0.5, 0.55);
+        if (lab.bubbles) every("fizz", t0 + 1, end, 1.1, lab.slow ? 0.35 : 0.75);
+        if (lab.drops) for (let k = 0; k < 6; k++) sfx(t0 + 1 + k * ((span * 0.45) / 6), "drip", 0.5, 1.1);
+        if (lab.precipitate) { sfx(t0 + 1.2, "sparkle", 0.5); sfx(t0 + 1.2 + span * 0.3, "sparkle", 0.35, 0.9); }
+        if (lab.flame || lab.burner) { sfx(t0 + 0.55, "whoosh", 0.6, 0.55); every("flame", t0 + 0.8, end, 1.3, 0.55); }
+        if (/^#f{3,6}$/i.test(lab.flame || "")) { sfx(t0 + 0.9, "zap", 0.55); sfx(t0 + 1.4, "sparkle", 0.5, 1.2); }
+        if (lab.coating) sfx(t0 + span * 0.5, "sparkle", 0.35, 0.8);
+        if (lab.limewater) sfx(t0 + 2 + span * 0.5, "chime", 0.4);
+        if (!s.reacts) sfx(t0 + span * 0.4, "thud", 0.5);
+      }
       s._t0 = t0 - s0; s._span = span;                            // when the 3D bench starts reacting
       // The solid: a strip of metal or a lump, lowered in.
       let solid = null;
@@ -1009,9 +1024,32 @@
         nums.push({ e, l, r, y: ty });
       });
       cursorY = tableTop + 40 + els.length * rowH;
+      // A balance: the side with more atoms dips; it levels as the numbers go in.
+      const sum = (o) => Object.values(o).reduce((a, b) => a + b, 0);
+      const Lb = sum(before.left), Rb = sum(before.right), La = sum(after.left);
+      const tilt = -Math.max(-1, Math.min(1, (Lb - Rb) / Math.max(1, Lb, Rb))) * 16;
+      const px = 1010, py = tableTop + 30, half = 150, origin = `${px} ${py}`;
+      const stand = el("g", {}, page), beam = el("g", {}, page);
+      el("path", { d: `M${px},${py} L${px - 38},${py + 165} L${px + 38},${py + 165} Z`, fill: "#e5e7eb", stroke: INK.black, "stroke-width": 3 }, stand);
+      el("line", { x1: px - 75, y1: py + 168, x2: px + 75, y2: py + 168, stroke: INK.black, "stroke-width": 5, "stroke-linecap": "round" }, stand);
+      el("line", { x1: px - half, y1: py, x2: px + half, y2: py, stroke: "#8b5e34", "stroke-width": 8, "stroke-linecap": "round" }, beam);
+      [-1, 1].forEach((sd) => {
+        const ex = px + sd * half;
+        el("path", { d: `M${ex},${py} L${ex - 42},${py + 66} M${ex},${py} L${ex + 42},${py + 66}`, stroke: INK.grey, "stroke-width": 2, fill: "none" }, beam);
+        el("path", { d: `M${ex - 54},${py + 66} Q${ex},${py + 98} ${ex + 54},${py + 66} Z`, fill: sd < 0 ? "#dbeafe" : "#fde68a", stroke: INK.black, "stroke-width": 2.5 }, beam);
+      });
+      el("circle", { cx: px, cy: py, r: 8, fill: INK.black }, beam);
+      const panL = text(px - half - 44, py + 125, `${Lb} atoms`, { size: 22, color: INK.blue });
+      const panR = text(px + half - 44, py + 125, `${Rb} atoms`, { size: 22, color: INK.blue });
+      beam.appendChild(panL); beam.appendChild(panR);
+      tl.fromTo([stand, beam], { opacity: 0 }, { opacity: 1, duration: 0.4 }, at);
+      tl.fromTo(beam, { rotation: 0, svgOrigin: origin }, { rotation: tilt, svgOrigin: origin, duration: 0.8, ease: "power2.out" }, at + 0.2);
+      if (tilt) sfx(at + 0.85, "thud", 0.7);
+      write(panL, at + 0.3, 0.3); write(panR, at + 0.45, 0.3);
       // The morph: the formulas make room (their clips travel with them), the
       // numbers are written into the gaps.
       const slide = 0.7;
+      sfx(at, "whoosh", 0.4, 0.9);
       nodes.forEach((n, k) => {
         const dx = xsAfter[k] - xsBefore[k];
         if (!dx) return;
@@ -1019,13 +1057,26 @@
         tl.to(n._clip, { attr: { x: xsAfter[k] - 4 }, duration: slide, ease: "power2.inOut" }, at);
       });
       at += slide;
-      const coefTime = (dur * 0.18) / Math.max(1, parts.filter((q) => q.coef > 1).length);
+      const coefs = parts.filter((q) => q.coef > 1).length;
+      const coefTime = (dur * 0.18) / Math.max(1, coefs);
+      let done = 0;
       parts.forEach((q, k) => {
         if (!(q.coef > 1)) return;
         const c = text(cx[k], y, String(q.coef), { size, color: INK.green });
         tl.fromTo(c, { y: -18 }, { y: 0, duration: 0.3, ease: "bounce.out" }, at);
+        sfx(at + 0.2, "pop", 0.6, 1 + done * 0.12);
         at = write(c, at, Math.min(0.5, Math.max(0.2, coefTime)));
+        done++;
+        if (done < coefs) tl.to(beam, { rotation: tilt * (1 - done / coefs) * 0.6, svgOrigin: origin, duration: 0.35, ease: "power1.out" }, at - 0.1);
       });
+      // Level: it swings and settles; both pans now hold the same atoms.
+      tl.to(beam, { rotation: 0, svgOrigin: origin, duration: 1.0, ease: "elastic.out(1, 0.4)" }, at);
+      tl.to([panL, panR], { opacity: 0, duration: 0.2 }, at);
+      const okL = text(px - half - 44, py + 125, `${La} atoms`, { size: 22, color: INK.green });
+      const okR = text(px + half - 44, py + 125, `${La} atoms`, { size: 22, color: INK.green });
+      beam.appendChild(okL); beam.appendChild(okR);
+      write(okL, at + 0.2, 0.3); write(okR, at + 0.35, 0.3);
+      sfx(at + 0.25, "ding", 0.6);
       // The counts become the balanced ones: the old fade out, the new (green)
       // fade in — tweens, so a rendered frame shows them as live does.
       for (const n of nums) {
@@ -1034,9 +1085,11 @@
         const r2 = text(colR - 20, n.y, `${after.right[n.e] || 0}`, { size: 24, color: INK.green });
         at = write(l2, at, 0.1); at = write(r2, at, 0.1);
         const tick = text(colR + 40, n.y, "✓", { size: 24, color: INK.green });
+        sfx(at, "tick", 0.5, 1.2);
         at = write(tick, at, 0.12);
       }
       const bb = nodes[0].getBBox(), right = x1 - gap();
+      sfx(at, "chime", 0.55);
       at = draw(sketchBox(LEFT - 14, bb.y - 8, right - LEFT + 28, bb.height + 18, INK.green), at, 0.5);
       cursorY += 40;
       return { at };
@@ -1077,6 +1130,7 @@
       } else if (tiles.length === 2) {
         const a = drawTile(tiles[0], meet - size - 30), b = drawTile(tiles[1], meet + 30);
         tl.fromTo(a, { x: -500, opacity: 0 }, { x: 0, opacity: 1, duration: 0.9, ease: "power2.out" }, at);
+        sfx(at, "whoosh", 0.6); sfx(at + 0.88, "snap", 0.7);
         tl.fromTo(b, { x: 500, opacity: 0 }, { x: 0, opacity: 1, duration: 0.9, ease: "power2.out" }, at);
         // The meeting: a spark of lines between them.
         for (let k = 0; k < 10; k++) {
@@ -1099,20 +1153,8 @@
       // A pair of atoms (before they bond) share one page, side by side.
       const slot = s.short ? (s.slot || 0) : 0;
       if (!s.short || slot === 0) { at = newPage(at); cursorY = H; }
-      if (window.__chem3d) {
-        // The atom itself is drawn in 3D over the board (chem3d.js): the board writes its facts.
-        if (s.short) {
-          at = write(text(slot ? W * 0.68 : W * 0.15, 650, `${s.name}  ${s.arrangement}`, { size: 32, color: INK.blue }), at + dur * 0.5, 0.8);
-          return { at };
-        }
-        at += dur * 0.15;
-        at = write(text(W * 0.62, 260, `${s.name}`, { size: 42, color: INK.blue }), at, 0.6);
-        at = write(text(W * 0.62, 320, `${s.protons} protons (red)`, { size: 28 }), at, 0.5);
-        at = write(text(W * 0.62, 365, `${s.neutrons} neutrons (grey)`, { size: 28 }), at, 0.5);
-        at = write(text(W * 0.62, 410, `${s.electrons} electrons (blue)`, { size: 28 }), at, 0.5);
-        at = write(text(W * 0.62, 490, `Arrangement: ${s.arrangement}`, { size: 34, color: INK.green }), at + dur * 0.2, 0.7);
-        return { at };
-      }
+      // In 3D (chem3d.js) the atom has its own world, its titles on screen: the board stays clear.
+      if (window.__chem3d) return { at: at + dur };
       const cx = s.short ? (slot ? W * 0.72 : W * 0.28) : W * 0.36, cy = 380;
       const ringGap = s.short ? 42 : 58, nucR = s.short ? 30 : 40;
       const nuc = el("circle", { cx, cy, r: nucR, fill: s.colour || "#999", opacity: 0.85, stroke: INK.black, "stroke-width": 3 }, page);
@@ -1144,15 +1186,8 @@
       // Ionic bonding: the metal's outer electrons travel to the non-metal
       // atoms; then the ions, their charges in brackets, and the formula.
       at = newPage(at); cursorY = H;
-      if (window.__chem3d) {
-        // In 3D (chem3d.js): the electrons fly, the ions form, the lattice builds. The board names it.
-        write(text(50, 70, `${s.metal.name} gives, ${s.nonmetal.name} takes`, { size: 30, color: INK.blue }), at + 0.2, 0.8);
-        const f = centered(690, `${s.formula}`, { size: 52, color: INK.green });
-        at = write(f, at + dur * 0.62, 0.8);
-        const bb = f.getBBox();
-        at = draw(sketchBox(bb.x - 18, bb.y - 8, bb.width + 36, bb.height + 18, INK.green), at, 0.5);
-        return { at };
-      }
+      // In 3D (chem3d.js): the electrons fly, the ions form, the lattice builds, titled on screen.
+      if (window.__chem3d) { newPage(at); return { at: at + dur }; }
       const nm = Math.min(3, s.counts[s.metal.symbol] || 1), nn = Math.min(3, s.counts[s.nonmetal.symbol] || 1);
       const scale = Math.max(nm, nn) > 1 ? 0.62 : 0.85;
       const atomsAt = (n, x) => Array.from({ length: n }, (_, k) => ({ x, y: 330 + (k - (n - 1) / 2) * (n > 2 ? 190 : 230) * scale }));
@@ -1207,12 +1242,8 @@
       // Covalent bonding: the atoms' outer shells overlap and the shared
       // pairs sit where they overlap; the formula follows.
       at = newPage(at); cursorY = H;
-      if (window.__chem3d) {
-        // In 3D (chem3d.js): the molecule in its real shape, the shared pairs in green.
-        write(text(50, 70, `${s.shared_pairs} shared pair${s.shared_pairs > 1 ? "s" : ""} of electrons (green)`, { size: 30, color: INK.blue }), at + dur * 0.3, 0.8);
-        at = write(centered(690, `${s.formula}`, { size: 52, color: INK.green }), at + dur * 0.7, 0.8);
-        return { at };
-      }
+      // In 3D (chem3d.js): the dot-and-cross overlap, then the real shape, titled on screen.
+      if (window.__chem3d) { newPage(at); return { at: at + dur }; }
       const [A, B] = s.atoms, centre = A.symbol === s.centre ? A : B, outerA = centre === A ? B : A;
       const same = A.symbol === B.symbol;
       const k = same ? 1 : Math.min(4, s.counts[outerA.symbol] || 1);
@@ -1321,6 +1352,17 @@
       at = write(text(60, 70, s.name, { size: 38, color: INK.blue }), at, 0.6);
       const t0 = at, span = Math.max(2, s0 + dur - at - 0.3);
       s._t0 = t0 - s0; s._span = span;
+      {
+        const end = t0 + span;
+        if (m === "magnet") { sfx(t0 + 0.6, "whoosh", 0.5, 0.8); for (let k = 0; k < 5; k++) sfx(t0 + 1.8 + k * 0.24, "snap", 0.45, 1 + k * 0.05); }
+        else if (m === "filtration") every("drip", t0 + 0.8, end, 0.7, 0.45);
+        else if (m === "dissolve") every("whoosh", t0 + 0.4, end, 1.4, 0.25, 1.4);
+        else if (m === "evaporation" || m === "crystallisation") { sfx(t0 + 0.3, "whoosh", 0.5, 0.55); every("fizz", t0 + 1, end, 1.2, 0.5); sfx(t0 + span * 0.55, "sparkle", 0.45); sfx(t0 + span * 0.8, "sparkle", 0.4, 1.1); }
+        else if (m === "distillation" || m === "fractional_distillation") { sfx(t0 + 0.3, "whoosh", 0.5, 0.55); every("fizz", t0 + 0.9, end, 1.2, 0.45); every("drip", t0 + 2, end, 0.8, 0.4, 1.1); }
+        else if (m === "separating_funnel") { sfx(t0 + 0.8, "click", 0.7); every("drip", t0 + 0.9, Math.min(end, t0 + 1 + span * 0.6), 0.5, 0.4); sfx(Math.min(end, t0 + 1 + span * 0.6), "click", 0.6); }
+        else if (m === "chromatography") { sfx(t0 + 0.5, "riser", 0.35); sfx(t0 + span * 0.55, "sparkle", 0.45); }
+        else if (m === "sublimation") { sfx(t0 + 0.3, "whoosh", 0.5, 0.55); every("flame", t0 + 0.6, end, 1.3, 0.4); sfx(t0 + 1.6, "sparkle", 0.4); sfx(t0 + span * 0.6, "sparkle", 0.4, 1.15); }
+      }
       const beaker = (x, y, w, h, fill) => {
         const liquid = fill ? el("rect", { x: x + 3, y: y + h * 0.45, width: w - 6, height: h * 0.55 - 3, fill, opacity: 0.85 }, page) : null;
         draw(path(`M${x - 6},${y} L${x},${y + 10} L${x},${y + h} L${x + w},${y + h} L${x + w},${y + 10} L${x + w + 6},${y}`, INK.black, 4), t0, 0.5);
@@ -1637,10 +1679,12 @@
     tl.to({}, { duration: 0.6 }, at);   // a beat on the finished board
     const end = tl.duration(), clock = { t: 0 };
     track.sort((a, b) => a.t0 - b.t0);
-    tl.fromTo(clock, { t: 0 }, { t: end, duration: end, ease: "none", onUpdate() { const p = handAt(clock.t); pose(p.x, p.y, p.tilt); overlay(clock.t); if (window.__onCover) window.__onCover(clock.t); if (window.__onFigure) window.__onFigure(clock.t); if (window.__onTime) window.__onTime(clock.t); if (window.__onChem3d) window.__onChem3d(clock.t); } }, 0);
+    tl.fromTo(clock, { t: 0 }, { t: end, duration: end, ease: "none", onUpdate() { const p = handAt(clock.t); pose(p.x, p.y, p.tilt); overlay(clock.t); if (window.__onCover) window.__onCover(clock.t); if (window.__onFigure) window.__onFigure(clock.t); if (window.__onTime) window.__onTime(clock.t); if (window.__onChem3d) window.__onChem3d(clock.t); if (window.__sfxTick) window.__sfxTick(clock.t, playing); } }, 0);
     pose(OFF.x, OFF.y, 0);
     window.__starts = starts;
     window.__total = tl.duration();
+    if (window.__sfx3d) window.__sfx3d(starts, window.__total);   // the 3D scenes' sounds, on this clock
+    (window.__sfx || []).sort((a, b) => a.t - b.t);
   }
 
   // ── live: the device's voice, scene by scene ──
@@ -1685,7 +1729,7 @@
     if (b) b.textContent = playing ? "❚❚ Pause" : "▶ Play";
   }
   window.__wb = {
-    play() { playing = true; playScene(current < 0 || current >= scenes.length - 1 ? 0 : current); },
+    play() { if (window.__sfxUnlock) window.__sfxUnlock(); playing = true; playScene(current < 0 || current >= scenes.length - 1 ? 0 : current); },
     pause() { playing = false; tl.pause(); stopAudio(); if ("speechSynthesis" in window) speechSynthesis.cancel(); status(); },
     toggle() { playing ? this.pause() : this.play(); },
     next() { this.pause(); current = Math.min(scenes.length - 1, current + 1); tl.seek(i2t(current + 1) - 0.01); status(); },

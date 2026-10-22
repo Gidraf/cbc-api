@@ -344,18 +344,23 @@
       parent.add(d);
     }
   }
-  function camera() {
-    K.camera.position.set(0, 5, 19.4);
-    K.camera.lookAt(0, 0, 0);
+  // A slow sway, and a push in towards the bench as the reaction starts —
+  // small, so the board's words stay beside what they name.
+  function camera(t, tt, cx) {
+    const push = tt == null ? 0 : Math.exp(-((tt - 1.6) ** 2) / 2.2);
+    const aim = X(cx || 640) * 0.18 * push;
+    K.camera.position.set(Math.sin((t || 0) * 0.22) * 0.45 + aim, 5 - push * 0.7, 19.4 - push * 1.6);
+    K.camera.lookAt(aim * 0.6, -0.5 * push, 0);
   }
 
   // ═══ the bench: the reaction ═══
   LAB.chem_lab = function (s, t, dur) {
-    init(); camera();
+    init();
     const lab = s.lab || {}, kind = lab.vessel || "beaker";
     const t0 = s._t0 != null ? s._t0 : Math.min(2, dur * 0.3), span = s._span != null ? s._span : Math.max(1.5, dur - t0 - 0.3);
     const tt = t - t0, at = (a, d) => clamp01((tt - a) / Math.max(0.01, d));
     const social = !!K.data.social, cx = social ? 640 : 470, floor = 650;
+    camera(t, tt, cx);
     const heatBelow = !!lab.burner || (!!lab.flame && kind === "beaker");
     bench(floor);
     const shrink = lab.solid_shrinks ? 1 - 0.85 * ease(at(1, span * 0.85)) : 1;
@@ -557,11 +562,12 @@
 
   // ═══ the separations ═══
   LAB.chem_separation = function (s, t, dur) {
-    init(); camera();
+    init();
     const m = s.method;
     const t0 = s._t0 != null ? s._t0 : Math.min(1.2, dur * 0.2), span = s._span != null ? s._span : Math.max(2, dur - t0 - 0.3);
     const tt = t - t0, at = (a, d) => clamp01((tt - a) / Math.max(0.01, d));
     const social = !!K.data.social, cx = social ? 640 : 380, floor = 650;
+    camera(t, tt, cx);
     bench(floor);
     const water = "#bfe3ff";
     // This mixture's own substances (chem_separation's plan): their colours, which is which.
