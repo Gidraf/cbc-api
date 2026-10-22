@@ -380,8 +380,24 @@ def walkthrough(question: dict[str, Any], *, grade: str = "") -> dict[str, Any]:
         "scene": "title", "text": stem, "context": situation,
         "say": (situation + " " if situation else "") + _speakable(stem),
     }]
+    if isinstance(question.get("chemistry"), dict) and question["chemistry"]:
+        # A chemistry item: the lab bench, the reactivity series, the equation
+        # balanced atom by atom, what you see, where it is used — all from the
+        # chemistry engine (services/chem_engine.py), none from the writer.
+        from .chem_walkthrough import scenes_for
+
+        from .chem_walkthrough import speakable_formulae
+
+        chem = scenes_for(question)
+        if chem:
+            scenes += chem
+            spec = {"kind": "chemistry"}
+            scenes[0]["say"] = speakable_formulae(scenes[0]["say"])
+            for sc in scenes:          # "copper(II)" is said "copper two"
+                sc["say"] = re.sub(r"\((I{1,3}|IV)\)", lambda m: " " + {"I": "one", "II": "two", "III": "three", "IV": "four"}[m.group(1)],
+                                   sc["say"]).replace("→", "gives").replace("->", "gives")
     kind = spec.get("kind")
-    if play.get("expression") and kind != "choice" and str(question.get("expression") or ""):
+    if play.get("expression") and kind not in ("choice", "chemistry") and str(question.get("expression") or ""):
         scenes.append({"scene": "setup", "expression": structured_steps(play["expression"])[0]["before"]
                        if structured_steps(play["expression"]) else play["expression"],
                        "say": "Let us write the situation as one calculation."})
@@ -416,14 +432,14 @@ def walkthrough(question: dict[str, Any], *, grade: str = "") -> dict[str, Any]:
         scenes.append({"scene": "fraction_bars", "spec": spec, "phase": "result",
                        "say": f"{'Together' if spec['op'] == '+' else 'The difference'}: "
                               f"{_spoken(spec['target'])}."})
-    elif kind == "bodmas" or play.get("expression"):
+    elif kind != "chemistry" and (kind == "bodmas" or play.get("expression")):
         steps = (spec.get("steps") if kind == "bodmas" else structured_steps(play["expression"])) or []
         for n, step in enumerate(steps):
             first = n == 0
             scenes.append({"scene": "rewrite", "step": step,
                            "say": (f"{'First' if first else 'Next'}, {_spoken(step['left'])} {_spoken_op(step['op'])} "
                                    f"{_spoken(step['right'])} is {_spoken(step['result'])}. {step['why']}")})
-    if not any(sc["scene"] not in ("title",) for sc in scenes):
+    if not any(sc["scene"] not in ("title",) for sc in scenes) and kind != "chemistry":
         # No picture the engine can build: the working the question itself
         # carries, written and said line by line, so no walkthrough jumps
         # from the question straight to the answer.
@@ -551,11 +567,15 @@ def session(questions: list[dict[str, Any]], *, mode: str = "mixed", count: int 
 
 
 def prompt_block(subject: str = "") -> str:
-    """The writer's contract for `interaction` — mathematics only for now."""
+    """The writer's contract: `interaction` for mathematics, the `chemistry`
+    block for the sciences (the chemistry engine draws and balances it)."""
     from .langfuse_seed import SEED_PROMPT_BLOCKS
+    from .math_engine.tts_service import is_science
     from .prompt_store import render
     from .subject_checks import family_of
 
+    if subject and is_science(subject):
+        return render("question-chemistry", SEED_PROMPT_BLOCKS["question-chemistry"])
     if subject and family_of(subject) != "mathematics":
         return ""
     return render("question-interactions", SEED_PROMPT_BLOCKS["question-interactions"])

@@ -357,6 +357,49 @@ def walkthrough_page(question_id: str, voice: str = Query("en-KE"), autoplay: bo
                                          autoplay=autoplay))
 
 
+@router.get("/chem/substances")
+def chem_substances(auth: AuthContext = Depends(CONTENT)) -> dict[str, Any]:
+    """The lab game's shelf: metals, gases, acids, bases, carbonates, salts, fuels."""
+    from ..services import chem_walkthrough
+
+    return {"groups": chem_walkthrough.substances(), "periodic": chem_walkthrough.periodic(),
+            "mixtures": chem_walkthrough.mixtures()}
+
+
+@router.get("/chem/react")
+def chem_react(a: str = Query(..., max_length=120), b: str = Query("", max_length=40),
+               condition: str = Query("", max_length=20), mode: Literal["react", "atom", "bond", "separate"] = Query("react"),
+               auth: AuthContext = Depends(CONTENT)) -> dict[str, Any]:
+    """What happens when a meets b (or a is heated): the chemistry engine's
+    reaction — balanced, with observations, gas tests, applications — and its walkthrough."""
+    from ..services import chem_walkthrough
+
+    try:
+        out = chem_walkthrough.lab(a, b, condition, mode)
+    except ValueError as exc:
+        raise_api_error("VALIDATION_FAILED", str(exc))
+    return {"reaction": out["reaction"], "scenes": len(out["walkthrough"]["scenes"])}
+
+
+@router.get("/chem/lab.html")
+def chem_lab_page(a: str = Query(..., max_length=120), b: str = Query("", max_length=40),
+                  condition: str = Query("", max_length=20), autoplay: bool = Query(False),
+                  mode: Literal["react", "atom", "bond", "separate"] = Query("react"),
+                  auth: AuthContext = Depends(CONTENT)) -> HTMLResponse:
+    """The mix on the whiteboard, voiced in the science voice: the lab bench,
+    the reactivity series, the equation balanced, what you see, where it is used."""
+    from ..services import chem_walkthrough, whiteboard
+    from ..services.math_engine.tts_service import science_voice
+
+    try:
+        out = chem_walkthrough.lab(a, b, condition, mode)
+    except ValueError as exc:
+        raise_api_error("VALIDATION_FAILED", str(exc))
+    q = out["question"]
+    return HTMLResponse(whiteboard.live_page(out["walkthrough"], title=q["question_text"][:80],
+                                             voice=science_voice("female", q["question_id"]), autoplay=autoplay))
+
+
 @router.get("/items/{question_id}/whiteboard.html")
 def whiteboard_page(question_id: str, autoplay: bool = Query(False), voice: str = Query(""),
                     auth: AuthContext = Depends(CONTENT)) -> HTMLResponse:

@@ -152,8 +152,8 @@ def test_the_voice_follows_the_learning_area() -> None:
     assert voice_for("Kiswahili") == "sw-KE-ZuriNeural"
     assert voice_for("Arabic").startswith("ar-")
     assert voice_for("French").startswith("fr-")
-    # A maths lesson is narrated in English whatever else is on the timetable.
-    assert voice_for("Integrated Science") == "en-KE-AsiliaNeural"
+    # The sciences are explained in a British or American voice (Settings → Science accent).
+    assert voice_for("Integrated Science").startswith(("en-GB-", "en-US-"))
 
 
 def test_an_openai_voice_name_is_not_passed_to_edge() -> None:

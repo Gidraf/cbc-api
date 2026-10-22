@@ -2418,6 +2418,36 @@ number from the expression, so the expression must be the situation, exactly:
                             "-16 + (-28) / 4 * (-3) - (-9)"
   {"kind": "choice"}        anything else; the quiz plays the options and each distractor's rationale
 Vary the kinds across a batch. A conceptual item ("explain why…") is `choice` and needs no expression.""",
+    "question-chemistry": """=== CHEMISTRY: EVERY ITEM IS ALSO A LAB, AN EQUATION AND A WALKTHROUGH ===
+The platform has a chemistry engine. It works out the reaction itself — balanced, with what is
+observed, the gas test and where it is used — draws the lab bench (bubbles, colour changes,
+precipitates, coatings, flames), circles the reactivity series, balances the equation atom by
+atom, and narrates it. So every item that involves substances meeting, heating or an equation
+carries a `chemistry` block the engine reads. Give the SUBSTANCES; the engine gives the chemistry:
+  "chemistry": {"reactants": ["Zn", "CuSO4"], "condition": "", "focus": "observations"}
+  - reactants: one or two exact formulas, case-correct: Zn, CuSO4, HCl, H2SO4, NaOH, Na2CO3,
+    Ca(OH)2, Fe2(SO4)3, AgNO3, Pb(NO3)2, CH4, C3H8, O2, Cl2, H2O. One reactant = it is heated.
+  - condition: "" | "heat" | "steam" | "molten" | "boil".
+  - focus: "observations" | "equation" | "balancing" | "explain" | "application" | "test" | "separation".
+  - an item that only asks to BALANCE an equation gives it instead:
+    "chemistry": {"equation": "Fe + Cl2 -> FeCl3", "focus": "balancing"}
+  - electron arrangement of one element (first twenty): "chemistry": {"atom": "Mg"}
+  - how two elements bond and the formula it gives: "chemistry": {"bond": ["Mg", "Cl"]}
+    (ionic: a metal and a non-metal; covalent: two non-metals — the engine animates the electrons)
+  - separating a mixture: "chemistry": {"separate": ["sand", "salt"]} (parts: sand, chalk, salt,
+    sugar, copper(II) sulphate, water, ethanol, oil, kerosene, iron filings, sulphur, iodine,
+    ammonium chloride, ink, food colouring; "keep": "water" when the water is wanted)
+Reactions the engine knows (stay inside these): metals with acids (above hydrogen only), metals
+with cold water (K, Na, Ca) or steam (Mg, Zn, Fe), burning in oxygen (metals, C, S, H2, fuels),
+burning in chlorine, displacement by the reactivity series, neutralisation (acid + alkali/oxide),
+acid + carbonate or hydrogencarbonate, precipitation by the solubility rules (AgCl, BaSO4, PbI2,
+Cu(OH)2, Fe(OH)2, Fe(OH)3 …), heating carbonates and hydrogencarbonates (limestone, hard
+water). Pairs that do NOT react are good items too (Cu + HCl; Cu + ZnSO4): the engine shows why.
+Never write a reaction the rules would not give; never state a product the engine would not
+make. Your `correct_answer` and options must agree with what the engine will show — a key that
+disagrees is sent back. A conceptual item with no substances meeting needs no `chemistry`.
+Even a simple item gets one: "Name the gas given off when zinc reacts with dilute hydrochloric
+acid" carries {"reactants": ["Zn", "HCl"], "focus": "test"} so the video shows it happen.""",
     "question-figures": """=== FIGURES A QUESTION NEEDS ===
 An item that is set on a figure the lesson did not draw — a shape with its sides marked, a bar
 graph, a clock, a number line, a shaded fraction, a table of data — carries the figure as DATA

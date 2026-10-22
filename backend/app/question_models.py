@@ -209,6 +209,13 @@ class QuestionItem(BaseModel):
     # does the arithmetic — the part it is not. Empty where the item has
     # no single calculation in it.
     expression: str = ""
+    # A chemistry item: what the engine works out — {"reactants": ["Zn",
+    # "CuSO4"], "condition": "" | "heat" | "steam" | "molten" | "boil",
+    # "equation": "Fe + Cl2 -> FeCl3" (an equation to balance), "focus":
+    # "observations" | "equation" | "balancing" | "explain" | "application" |
+    # "separation" | "test"}. The engine decides the reaction, balances it and
+    # draws the lab; a writer's equation is checked, never trusted.
+    chemistry: dict[str, Any] = Field(default_factory=dict)
     # How this item is PLAYED — the game, simulator and walkthrough kind the
     # writer chose: {"kind": "number_line" | "balance" | "bodmas" |
     # "fraction_bar" | "choice"}. The engine fills the numbers from the
@@ -334,6 +341,7 @@ class QuestionItem(BaseModel):
                 for p in self.structured_parts
             ],
             "diagram": self.diagram.model_dump() if self.diagram else None,
+            **({"chemistry": self.chemistry} if self.chemistry else {}),
             "provenance_citation": self.provenance_citation,
             "dna_id": self.dna_id,
             "status": self.status,

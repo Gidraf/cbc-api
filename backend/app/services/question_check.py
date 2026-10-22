@@ -672,6 +672,81 @@ def _unplayable(questions: list[dict[str, Any]], *, subject: str, findings: list
                 [_id(question)]))
 
 
+def _chemistry_disagrees(questions: list[dict[str, Any]], findings: list[Finding]) -> None:
+    """A chemistry item the engine cannot read or does not cover, or whose key
+    says otherwise than the engine: no reaction when there is one (or the
+    reverse), or a balanced equation that is not the engine's."""
+    import re as _re
+
+    from . import chem_engine as C
+
+    for index, question in enumerate(questions, start=1):
+        spec = question.get("chemistry")
+        if not isinstance(spec, dict) or not spec:
+            continue
+        label = _label(question, index)
+        key = next((str(o.get("text") or "") for o in (question.get("options") or [])
+                    if isinstance(o, dict) and o.get("is_correct")), "") or str(question.get("correct_answer") or "")
+        if not spec.get("reactants") and any(spec.get(k) for k in ("atom", "bond", "separate")):
+            try:
+                if spec.get("atom"):
+                    C.atom(str(spec["atom"]))
+                elif spec.get("bond"):
+                    pair = [str(x) for x in spec["bond"]][:2]
+                    b = C.bond(pair[0], pair[1])
+                    flat = lambda t: _re.sub(r"\s+", "", t.translate(str.maketrans("₀₁₂₃₄₅₆₇₈₉", "0123456789")))  # noqa: E731
+                    formulas = set(_re.findall(r"\b(?:[A-Z][a-z]?\d*){2,}\b", flat(key)))
+                    if b.get("formula") and formulas and b["formula"] not in formulas:
+                        findings.append(Finding("chemistry_disagrees", f"{label}: the electrons give {b['formula']}, "
+                                                f"but the key gives {', '.join(sorted(formulas))}.",
+                                                "Use the formula the electron arrangements give.", [_id(question)]))
+                else:
+                    r = C.separate([str(x) for x in spec["separate"]], str(spec.get("keep") or ""))
+                    if not r["covered"]:
+                        findings.append(Finding("chemistry_not_covered", f"{label}: {r['why']}",
+                                                "Use mixtures the separation rules know (see the prompt).", [_id(question)]))
+            except (ValueError, IndexError, KeyError) as exc:
+                findings.append(Finding("chemistry_unreadable", f"{label}: the chemistry engine cannot read it ({exc}).",
+                                        "Give an element of the first twenty, two elements, or known mixture parts.",
+                                        [_id(question)]))
+            continue
+        try:
+            if spec.get("equation") and not spec.get("reactants"):
+                engine = C.balance_given(str(spec["equation"]))["equation"]
+                result = None
+            else:
+                rs = [str(r) for r in (spec.get("reactants") or []) if str(r).strip()][:2]
+                result = C.react(rs[0], rs[1] if len(rs) > 1 else "", condition=str(spec.get("condition") or ""))
+                engine = result.get("equation", "")
+        except (ValueError, IndexError) as exc:
+            findings.append(Finding("chemistry_unreadable", f"{label}: the chemistry engine cannot read it ({exc}).",
+                                    "Give exact, case-correct formulas (Zn, CuSO4, Ca(OH)2) or an equation 'A + B -> C'.",
+                                    [_id(question)]))
+            continue
+        if result is not None and not result.get("covered", True):
+            findings.append(Finding("chemistry_not_covered", f"{label}: {result['why']}",
+                                    "Keep to the reactions the engine knows (see the chemistry block of the prompt).",
+                                    [_id(question)]))
+            continue
+        says_none = bool(_re.search(r"\bno (reaction|observable change|change)\b|does not react|will not react", key, _re.I))
+        if result is not None and result.get("reacts") is False and key and not says_none:
+            findings.append(Finding("chemistry_disagrees", f"{label}: the engine finds no reaction ({result['why']}) "
+                                    "but the key describes one.", "Make the key say there is no reaction, and why.",
+                                    [_id(question)]))
+        elif result is not None and result.get("reacts") and says_none:
+            findings.append(Finding("chemistry_disagrees", f"{label}: the key says there is no reaction, but the engine "
+                                    f"finds {engine}.", "Correct the key to the reaction.", [_id(question)]))
+        term = r"\d*[A-Z][A-Za-z0-9()₀-₉]*(?:\((?:s|l|g|aq)\))?"
+        written = _re.search(rf"{term}(?:\s*\+\s*{term})*\s*(?:→|->)\s*{term}(?:\s*\+\s*{term})*", key)
+        if written and engine:
+            flat = lambda e: _re.sub(r"\((s|l|g|aq)\)|\s+", "", e.translate(str.maketrans("₀₁₂₃₄₅₆₇₈₉", "0123456789")).replace("->", "→"))  # noqa: E731
+            if flat(written.group(0)) != flat(engine):
+                findings.append(Finding("chemistry_disagrees", f"{label}: the key's equation '{written.group(0)}' is not "
+                                        f"the engine's: {engine}.",
+                                        "Use the engine's balanced equation (its products and its numbers) in the key.",
+                                        [_id(question)]))
+
+
 def _refers_to_a_figure_it_lacks(questions: list[dict[str, Any]], findings: list[Finding]) -> None:
     for index, question in enumerate(questions, start=1):
         if question.get("diagram"):
@@ -914,6 +989,7 @@ def check(questions: list[dict[str, Any]], *, grade: str = "", subject: str = ""
     _figures_unused(items, diagrams or [], findings)
     _few_figures(items, subject=subject, findings=findings)
     _unplayable(items, subject=subject, findings=findings)
+    _chemistry_disagrees(items, findings)
     _too_many_tables(items, subject=subject, findings=findings)
     _figure_contradicts_stem(items, findings)
 

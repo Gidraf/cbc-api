@@ -683,6 +683,11 @@ def _prepare(q: dict[str, Any], voice: str = "", *, teacher_mode: str | None = N
     gender, lead = "", ""
     if b.get("teacher", "off") != "off":
         cast = teacher.cast_for(qid, b["teacher"], b.get("students"))
+        from .math_engine.tts_service import is_science, science_voice
+
+        if is_science(str((q.get("curriculum") or {}).get("subject") or "")):
+            # A science video: the teacher speaks with a British or American voice.
+            cast = {**cast, "teacher": {**cast["teacher"], "voice": science_voice(cast["teacher"]["gender"], qid)}}
         b["cast"] = cast
         gender, lead = cast["teacher"]["gender"], cast["teacher"]["voice"]
     data, voice, title = whiteboard._script_for(q, voice or lead)

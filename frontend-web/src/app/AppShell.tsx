@@ -34,6 +34,7 @@ const NAV: { group: string; items: NavItem[] }[] = [
     items: [
       { to: "/studio", label: "Exam studio", icon: "✎", right: "build", hint: "Build a paper step by step and see it as it prints" },
       { to: "/play", label: "Play", icon: "▶", right: "build", hint: "Every question as a game, a simulator and a narrated walkthrough" },
+      { to: "/chem-lab", label: "Chemistry lab", icon: "⚗️", right: "build", hint: "Pick two substances and mix: the reaction worked out, balanced, animated and explained" },
       { to: "/library", label: "Library", icon: "📚", right: "build", hint: "Every question in one place: its answer, video, posts, comments, boost and numbers" },
       { to: "/classroom", label: "Online tests", icon: "✓", right: "build", hint: "Your class takes a paper on their phones; each gets their own random questions" },
       { to: "/my-questions", label: "My questions", icon: "✍", right: "build", hint: "Write your own questions for your papers and tests" },

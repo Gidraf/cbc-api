@@ -82,6 +82,12 @@ marking scheme, and returns `result.render_urls` — the paper, the booklet
   `balance`, `bodmas`, `fraction_bar` or `choice`) and write `expression` so
   it supports that kind — the engine takes every number from the expression,
   and an item whose game would land anywhere but its key is sent back.
+- Every science item where substances meet, are heated or an equation is
+  asked carries a `chemistry` block: `{{"reactants": ["Zn", "CuSO4"],
+  "condition": "", "focus": "observations"}}` (exact formulas; condition
+  "heat" | "steam" | "molten" | "boil"), or `{{"equation": "Fe + Cl2 -> FeCl3",
+  "focus": "balancing"}}`. The chemistry engine works out the reaction, balances
+  it, draws the lab and narrates it — your key must agree with it.
 - Do not repeat the guide's worked examples as questions; the checks catch it.
 - Sentence answers to sentence questions; values to value questions.
 

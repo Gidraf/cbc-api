@@ -40,6 +40,7 @@ from .routes.pipelines import router as pipelines_router
 from .routes.math import router as math_router
 from .routes.billing import router as billing_router
 from .routes.content import embed as embed_router, router as content_router
+from .routes.chem_api import router as chem_api_router
 from .routes.admin_drive import router as admin_drive_router
 from .routes.dev_studio import demo as dev_demo_router, router as dev_studio_router
 from .routes.classroom import public as tests_public_router, router as classroom_router, watch as watch_router
@@ -130,6 +131,7 @@ app.include_router(pipelines_router)
 app.include_router(math_router)
 app.include_router(billing_router)
 app.include_router(content_router)
+app.include_router(chem_api_router)
 app.include_router(embed_router)
 app.include_router(admin_drive_router)
 app.include_router(classroom_router)

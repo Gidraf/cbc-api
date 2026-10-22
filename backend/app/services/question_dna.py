@@ -442,6 +442,7 @@ class QuestionDnaService:
                 "model_answer": item.get("model_answer", ""),
                 "marking_scheme": item.get("marking_scheme", ""),
                 "expression": item.get("expression", ""),
+                "chemistry": item.get("chemistry") or {},
                 "interaction": item.get("interaction") or {},
                 "rubric": item.get("rubric") or item.get("marking_guide") or {},
             }
