@@ -2197,6 +2197,17 @@ def book_month(grade: str, subject: str, sub_strand: str = "", *, year: int, mon
                  full_note="Every day left in this month is already full at this many a day.")
 
 
+def fill_days(days: list[dict[str, Any]], scopes: list[Scope], *, per_day: int, platforms: list[str] | None = None,
+              created_by: str = "", gap_min: int = 30, gap_max: int = 60, ready_only: bool = False, dry: bool = False,
+              seed: int | None = None) -> dict[str, Any]:
+    """Book the open room of these days from several scopes at once, taken in turn."""
+    import random
+
+    return _fill(days, scopes, per_day=max(1, min(int(per_day), HARD_DAILY_CAP)), gap_min=gap_min, gap_max=gap_max,
+                 platforms=_platforms(platforms), ready_only=ready_only, dry=dry, created_by=created_by,
+                 rng=random.Random(seed), full_note="Every day left is already full at this many a day.")
+
+
 # ── booking itself ───────────────────────────────────────────────────────────
 #
 # With Auto-book on, the calendar keeps itself full: every two hours the next
