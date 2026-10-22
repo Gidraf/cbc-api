@@ -409,6 +409,45 @@ def chem_bank_save(body: ChemBank, auth: AuthContext = Depends(ANY)) -> dict[str
     return chem_bank.bank(body.kind, body.model_dump(), body.limit, by=str(getattr(auth, "subject", "") or ""))
 
 
+@router.get("/chem/questions")
+def chem_questions(kind: str = Query("", max_length=20), search: str = Query("", max_length=100),
+                   offset: int = Query(0, ge=0), limit: int = Query(20, ge=1, le=100),
+                   auth: AuthContext = Depends(ANY)) -> dict[str, Any]:
+    """The chemistry questions saved to the bank, with their video and whether they are out — to make and post now."""
+    _may_make_videos(auth)
+    from ..infra.db import fetch_all, fetch_one
+    from ..services import question_rows, social, social_export
+
+    where = """provenance->>'written_by' = 'chemistry engine' AND status = 'approved' AND superseded_by IS NULL
+               AND (:model = '' OR provenance->>'model' = :model) AND (:s = '' OR content->>'question_text' ILIKE :like)"""
+    params = {"model": f"chemistry-{kind}" if kind else "", "s": search, "like": f"%{search}%"}
+    total = int((fetch_one(f"SELECT COUNT(*) AS n FROM question_dna WHERE {where}", params) or {}).get("n") or 0)
+    rows = fetch_all(f"SELECT * FROM question_dna WHERE {where} ORDER BY updated_at DESC, question_id OFFSET :o LIMIT :n",
+                     {**params, "o": offset, "n": limit}) or []
+    ids = [r["question_id"] for r in rows]
+    posts = {p["question_id"]: p for p in (fetch_all("""SELECT question_id, status, scheduled_for, handed_at, posted_at, url
+                                                        FROM social_posts WHERE question_id = ANY(:i) AND platform = 'facebook'
+                                                          AND COALESCE(format, 'video') = 'video'""", {"i": ids}) or [])}
+    items = []
+    for r in rows:
+        q = question_rows.flatten(r)
+        try:
+            st = social.status(r["question_id"], q)
+        except Exception as exc:  # noqa: BLE001
+            st = {"status": "failed", "error": str(exc)}
+        p = posts.get(r["question_id"]) or {}
+        link = q.get("curriculum") or {}
+        items.append({"question_id": r["question_id"], "question_text": q.get("question_text") or "",
+                      "kind": str((r.get("provenance") or {}).get("model") or "").replace("chemistry-", ""),
+                      "focus": (q.get("pedagogy") or {}).get("focus") or "",
+                      "topic": " · ".join(x for x in (str(link.get("grade") or "").replace("grade-", "Grade "),
+                                                       str(link.get("subject") or ""), str(link.get("sub_strand") or "")) if x),
+                      "video": st.get("status"), "video_url": st.get("url") or "", "thumbnail_url": st.get("thumbnail_url") or "",
+                      "post": ("out" if p.get("posted_at") or p.get("handed_at") else "booked" if p.get("scheduled_for") else ""),
+                      "booked_for": str(p.get("scheduled_for") or ""), "url": p.get("url") or ""})
+    return {"total": total, "offset": offset, "items": items}
+
+
 @router.get("/chem/autopilot")
 def chem_autopilot_plan(auth: AuthContext = Depends(ANY)) -> dict[str, Any]:
     """Where each kind of chemistry question would go in the stored curriculum, and how many — nothing written."""

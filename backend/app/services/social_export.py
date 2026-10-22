@@ -984,17 +984,36 @@ def post_question(question_id: str, *, platform: str = "facebook", now: datetime
         link = f" — {post['url']}" if post.get("url") else ""
         return {"ok": False, "post_id": pid, "error": f"It was posted already ({at}){link}."}
     if post:
-        execute("""UPDATE social_posts SET scheduled_for = :now, status = 'planned', attempts = 0, updated_at = NOW()
-                   WHERE post_id = :id""", {"id": pid, "now": now})
+        execute("""UPDATE social_posts SET scheduled_for = :now, status = 'planned', attempts = 0, created_by = :by,
+                   updated_at = NOW() WHERE post_id = :id""", {"id": pid, "now": now, "by": POST_NOW})
     else:
         _plan_post(q, platform, now, POST_NOW)
     st = social.status(question_id)
     if st.get("status") != "ready":
-        if st.get("status") not in ("queued", "running"):
-            social.enqueue(question_id, queued_by=POST_NOW, on_demand=True, dispatch=False)
+        # Made now, ahead of the queue — and posted the moment it is made (hand_when_made).
+        social.enqueue(question_id, queued_by=POST_NOW, on_demand=True, dispatch=st.get("status") not in ("queued", "running"))
         return {"ok": False, "post_id": pid, "making": True,
-                "error": "Its video is being made now — press Post again in about five minutes."}
+                "error": "Its video is being made now, ahead of the queue — it posts itself the moment it is ready."}
     return {"ok": True, "post_id": pid}
+
+
+def hand_when_made(question_id: str, *, now: datetime | None = None) -> int | None:
+    """A question someone pressed Post now on before its video was made: when
+    the video is done, it goes to the poster at once (not at the next booking).
+    Only Post now's own posts, never a booking's."""
+    from ..infra.db import fetch_one
+
+    now = now or datetime.now(timezone.utc)
+    pid = _post_id(question_id, "facebook")
+    row = fetch_one("SELECT * FROM social_posts WHERE post_id = :id", {"id": pid})
+    if not row or row.get("handed_at") is not None or row.get("posted_at") is not None or row.get("created_by") != POST_NOW:
+        return None
+    when = row.get("scheduled_for")
+    if not isinstance(when, datetime) or when < now - timedelta(hours=12) or when > now + timedelta(minutes=5):
+        return None
+    if not pull_poster():
+        return None                          # the server poster takes due posts in its own round
+    return queue_command("run_now", "facebook", pid, by=POST_NOW, options={"share": "feed", "groups": []})
 
 
 # ── reconciling: every post found on the profile, matched to its booking ─────

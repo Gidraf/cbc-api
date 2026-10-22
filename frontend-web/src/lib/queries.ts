@@ -4098,6 +4098,19 @@ export function useChemReact(mix: ChemMix | null) {
 }
 
 /** The mix on the whiteboard, voiced in the science voice. */
+/** The chemistry questions in the bank, with their video and post state — to make and post now. */
+export type ChemQuestionRow = { question_id: string; question_text: string; kind: string; focus: string; topic: string;
+  video: string; video_url: string; thumbnail_url: string; post: "" | "booked" | "out"; booked_for: string; url: string };
+export function useChemQuestions(kind: string, search: string, offset: number) {
+  const api = useApi();
+  return useQuery({
+    queryKey: ["chem-questions", kind, search, offset],
+    queryFn: () => api<{ total: number; offset: number; items: ChemQuestionRow[] }>(
+      `/api/v1/play/chem/questions?${new URLSearchParams({ kind, search, offset: String(offset), limit: "20" })}`),
+    refetchInterval: (q) => ((q.state.data?.items || []).some((r) => ["queued", "running"].includes(r.video)) ? 8000 : false),
+  });
+}
+
 /** Chemistry on autopilot: where each kind goes in the stored curriculum, then save and book it all. */
 export type ChemPlacement = { kind: string; label: string; grade: string; grade_label: string; subject: string; strand: string;
   sub_strand: string; score: number; questions: number; available?: number; saved?: number; already?: number; chosen?: boolean;
@@ -4476,10 +4489,11 @@ export function useMakeSocial() {
   const api = useApi();
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (v: { questionId: string; voice?: string; fresh?: boolean; teacher?: string; students?: string }) => {
+    mutationFn: (v: { questionId: string; voice?: string; fresh?: boolean; teacher?: string; students?: string; now?: boolean }) => {
       const qs = new URLSearchParams();
       if (v.voice) qs.set("voice", v.voice);
       if (v.fresh) qs.set("fresh", "true");
+      if (v.now) qs.set("now", "true");          // on the standby worker, ahead of the queue
       // A cast chosen in Play is kept for this question; "" teacher: as Settings say.
       if (v.teacher !== undefined) qs.set("teacher", v.teacher);
       if (v.students) qs.set("students", v.students);

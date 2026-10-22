@@ -925,6 +925,13 @@ def run_job(job: dict[str, Any]) -> dict[str, Any]:
     object_storage.save_text(f"{PREFIX}/{qid}/{key}.txt", post)
     live.done()
     run_log.step("Saved", made["url"])
+    try:                                      # someone pressed Post now while it was being made: post it now
+        from . import social_export
+
+        if social_export.hand_when_made(qid):
+            run_log.step("Posting", "Post now was waiting for this video")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Could not hand %s to the poster: %s", qid, exc)
     return {"status": "done", "question_id": qid, "post": post, **made}
 
 
