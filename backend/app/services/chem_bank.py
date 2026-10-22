@@ -99,7 +99,9 @@ def _reactions() -> list[dict[str, Any]]:
     pairs = [(a, b, "") for a, b in itertools.combinations(shelf, 2) if meets(a, b)]
     pairs += [(a, "", "heat") for a in shelf] + [(m, "H2O", "steam") for m in metals] + \
              [(m, o, "molten") for m in metals for o in oxides] + \
-             [(r, o, "heat") for r in ("C", "H2") for o in oxides] + [(m, "S", "heat") for m in metals] + [("H2", "Cl2", "")]
+             [(r, o, "heat") for r in ("C", "H2") for o in oxides] + [(m, "S", "heat") for m in metals] + [("H2", "Cl2", "")] + \
+             [(n, k, "heat") for n in ("NH4Cl", "(NH4)2SO4", "NH4NO3") for k in sorted(alkalis)] + \
+             [(f, a, "") for f in ("FeS", "ZnS") for a in ("HCl", "H2SO4")]
     for a, b, cond in pairs:
         key = (a, b, cond)
         if key in tried:

@@ -417,9 +417,39 @@ def _salt_metal(reactants: list[str]) -> str:
     return ""
 
 
+# Gases a learner would smell, what they smell like, and the colour their wisps are drawn in
+# (the real colour where there is one: chlorine yellow-green, nitrogen dioxide brown).
+SMELLS = {
+    "SO2": ("sulphur dioxide", "a choking smell, like a struck match", "#e9e2a8"),
+    "NH3": ("ammonia", "a sharp, pungent smell that stings the nose", "#cfe8ff"),
+    "H2S": ("hydrogen sulphide", "a smell of rotten eggs", "#d9e8a0"),
+    "Cl2": ("chlorine", "a choking smell, like a swimming pool", "#c6e86b"),
+    "NO2": ("nitrogen dioxide", "a choking smell, with brown fumes", "#b5651d"),
+    "HCl": ("hydrogen chloride", "a sharp smell, with steamy fumes in moist air", "#e8eef2"),
+}
+
+
+def smell_of(result: dict[str, Any]) -> dict[str, str] | None:
+    """The smell a reaction gives off, if one of its gaseous products has one."""
+    if not result.get("reacts", True):
+        return None
+    states = result.get("states") or {}
+    for p in result.get("products") or []:
+        if p in SMELLS and states.get(p, "g") == "g":
+            name, like, colour = SMELLS[p]
+            return {"gas": p, "name": name, "like": like, "colour": colour}
+    return None
+
+
 def _lab(result: dict[str, Any], names: list[str], spec: dict[str, Any]) -> dict[str, Any]:
     lab = dict(result.get("lab") or {"vessel": "beaker"})
     reacts = result.get("reacts", True)
+    sm = smell_of(result)
+    obs = list(result.get("observations") or [])
+    if sm:
+        lab["smell"] = sm
+        if not any("smell" in o.lower() for o in obs):
+            obs.insert(1, f"{sm['like'][0].upper()}{sm['like'][1:]}: {sm['name']}")
     if not reacts:
         lab = {k: v for k, v in lab.items() if k in ("vessel", "solid", "liquid")} or {"vessel": "beaker"}
         lab.setdefault("liquid", C.COLOURS["none"][1])
@@ -433,7 +463,7 @@ def _lab(result: dict[str, Any], names: list[str], spec: dict[str, Any]) -> dict
     else:
         say += "Watch closely. Nothing happens."
     return {"scene": "chem_lab", "reactants": [{"formula": C.pretty(r), "name": n} for r, n in zip(result.get("reactants") or [], names)],
-            "lab": lab, "reacts": bool(reacts), "condition": cond, "observations": list(result.get("observations") or [])[:3],
+            "lab": lab, "reacts": bool(reacts), "condition": cond, "observations": obs[:3],
             "say": say}
 
 
@@ -497,6 +527,7 @@ SUBSTANCES: dict[str, list[str]] = {
     "Carbonates": ["CaCO3", "Na2CO3", "CuCO3", "ZnCO3", "MgCO3", "NaHCO3", "Ca(HCO3)2"],
     "Salts in solution": ["CuSO4", "FeSO4", "FeCl3", "ZnSO4", "AgNO3", "Pb(NO3)2", "NaCl", "KI", "BaCl2", "MgSO4", "CaCl2"],
     "Fuels": ["CH4", "C3H8", "C2H5OH"],
+    "Ammonium salts and sulphides": ["NH4Cl", "(NH4)2SO4", "NH4NO3", "FeS", "ZnS"],
 }
 
 

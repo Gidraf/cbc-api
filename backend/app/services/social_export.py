@@ -2484,6 +2484,29 @@ def attach_series(now: datetime | None = None, *, days: int = 7, dry: bool = Fal
 CARD_STEPS = ("teaser", "question", "kicd", "answer")
 
 
+def series_steps(q: dict[str, Any], *, ready_only: bool = False) -> list[str]:
+    """A question's series in order — teaser, question, KICD page, answer, then
+    (a chemistry item) the steps animated, then the video.
+    `ready_only`: only the step pictures already made (for posting at once)."""
+    from . import social_cards
+
+    chem = social_cards.series_chem_steps(q)
+    if ready_only and chem:
+        chem = [c for c in chem if social_cards.status(str(q.get("question_id") or ""), c, q).get("status") == "ready"]
+    return [*CARD_STEPS, *chem, "walkthrough"]
+
+
+def _with_steps(q: dict[str, Any], run: tuple[str, ...]) -> list[str]:
+    """A booked run with a chemistry item's step pictures after its answer card."""
+    from . import social_cards
+
+    if "answer" not in run:
+        return list(run)
+    chem = social_cards.series_chem_steps(q)
+    k = run.index("answer") + 1
+    return [*run[:k], *chem, *run[k:]]
+
+
 def post_card(question_id: str, step: str, *, now: datetime | None = None) -> dict[str, Any]:
     """One card of a question, picked in the console, booked for now so Post
     now can take it — its card made first if need be. Refused when that card
@@ -2492,10 +2515,10 @@ def post_card(question_id: str, step: str, *, now: datetime | None = None) -> di
     from . import social_cards
     from .whiteboard import load
 
-    if step not in CARD_STEPS:
-        raise ValueError("A card is one of " + ", ".join(CARD_STEPS))
     now = now or datetime.now(timezone.utc)
     q = load(question_id)
+    if not social_cards.is_card(q, step):
+        raise ValueError("A card is one of " + ", ".join((*CARD_STEPS, *social_cards.chem_steps(q))))
     pid = "sp_" + hashlib.sha256(f"{question_id}:facebook:{step}".encode()).hexdigest()[:16]
     post = fetch_one("SELECT handed_at, posted_at, url FROM social_posts WHERE post_id = :id", {"id": pid})
     if post and post.get("handed_at") is not None:
@@ -2504,6 +2527,11 @@ def post_card(question_id: str, step: str, *, now: datetime | None = None) -> di
     _plan_step(q, "facebook", step, now, POST_NOW)
     execute("UPDATE social_posts SET status = 'planned', attempts = 0 WHERE post_id = :id", {"id": pid})
     card = social_cards.status(question_id, step, q)
+    if card.get("status") != "ready" and social_cards.CHEM_STEP.match(step):
+        # The step pictures take a minute or two in the worker (an animation is photographed frame by frame).
+        social_cards.enqueue(question_id, queued_by=POST_NOW)
+        return {"ok": False, "post_id": pid, "making": True,
+                "error": "Its step pictures are being made — press Post again in two or three minutes."}
     if card.get("status") != "ready":
         try:
             card = social_cards.render(question_id, step, q)
@@ -2523,7 +2551,7 @@ def post_series_now(question_id: str, *, now: datetime | None = None) -> dict[st
     now = now or datetime.now(timezone.utc)
     q = load(question_id)
     ids, steps = [], []
-    for n, step in enumerate((*CARD_STEPS, "walkthrough")):
+    for n, step in enumerate(series_steps(q, ready_only=True)):
         pid = (_post_id(question_id, "facebook") if step == "walkthrough" else
                "sp_" + hashlib.sha256(f"{question_id}:facebook:{step}".encode()).hexdigest()[:16])
         row = fetch_one("SELECT handed_at FROM social_posts WHERE post_id = :id", {"id": pid})
@@ -2551,7 +2579,7 @@ def post_series_today(question_id: str, *, now: datetime | None = None) -> dict[
     gap = timedelta(minutes=max(30, int(rules.get("min_gap_minutes") or 60)))
     q = load(question_id)
     booked, at = [], now + timedelta(minutes=2)
-    for step in (*CARD_STEPS, "walkthrough"):
+    for step in series_steps(q):
         pid = (_post_id(question_id, "facebook") if step == "walkthrough" else
                "sp_" + hashlib.sha256(f"{question_id}:facebook:{step}".encode()).hexdigest()[:16])
         row = fetch_one("SELECT handed_at FROM social_posts WHERE post_id = :id", {"id": pid})
@@ -2640,7 +2668,7 @@ def book_series(grade: str, subject: str, sub_strand: str = "", *, days: int = 7
             if not q:
                 break
             chosen[q["question_id"]] = q
-            runs.append([(q["question_id"], step) for step in run])
+            runs.append([(q["question_id"], step) for step in _with_steps(q, run)])
         if not runs:
             notes.append("Not enough unbooked questions in this scope for more days — widen it or add questions.")
             break

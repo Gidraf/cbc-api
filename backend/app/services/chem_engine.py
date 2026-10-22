@@ -201,7 +201,8 @@ GAS_TESTS = {
     "SO2": "it turns orange acidified potassium dichromate green",
 }
 GAS_NAMES = {"H2": "hydrogen", "CO2": "carbon dioxide", "O2": "oxygen", "Cl2": "chlorine", "NH3": "ammonia",
-             "SO2": "sulphur dioxide", "H2O": "steam"}
+             "SO2": "sulphur dioxide", "H2O": "steam", "H2S": "hydrogen sulphide", "NO2": "nitrogen dioxide",
+             "N2O": "dinitrogen oxide", "HCl": "hydrogen chloride"}
 
 
 def _symbol_of(formula: str) -> str | None:
@@ -340,7 +341,7 @@ def react(a: str, b: str = "", *, condition: str = "") -> dict[str, Any]:
     if not b:
         found = _decompose(a, condition) or _alone(a, condition)
     else:
-        found = (_rules(a, b, condition) or _rules(b, a, condition) or _more_rules(a, b, condition)
+        found = (_ammonia(a, b, condition) or _ammonia(b, a, condition) or _rules(a, b, condition) or _rules(b, a, condition) or _more_rules(a, b, condition)
                  or _more_rules(b, a, condition) or _no_reaction(a, b, condition))
     if found is None:
         return {"reacts": False, "covered": False, "reactants": pair,
@@ -580,6 +581,33 @@ def _precipitation(x: str, y: str) -> dict[str, Any]:
                     + " + ".join(name_of(p) if p != "Ag2O" else "silver oxide" for p in products)}
 
 
+def _ammonia(x: str, y: str, condition: str) -> dict[str, Any] | None:
+    """An ammonium salt warmed with an alkali: ammonia (the test for an ammonium salt)."""
+    heat = any(w in condition for w in ("heat", "warm", "molten", "melt", "boil"))
+    sy_salt = split_salt(y) if y else None
+    if x in ("NaOH", "KOH", "Ca(OH)2") and sy_salt and sy_salt[0] == "NH4" and sy_salt[1] not in ("OH",):
+        if not heat:
+            return {"reacts": False, "why": "An ammonium salt and an alkali give off ammonia when warmed — cold, hardly any is "
+                                            "noticed (choose 'Heated')."}
+        cat = {"NaOH": "Na", "KOH": "K", "Ca(OH)2": "Ca"}[x]
+        other = salt(cat, sy_salt[1])
+        return {"type": "ammonia_test", "reactants": [y, x], "products": [other, "NH3", "H2O"],
+                "states": {y: "s", x: "aq", other: "aq", "NH3": "g", "H2O": "l"},
+                "observations": ["A pungent gas comes off when it is warmed",
+                                 "It turns damp red litmus paper blue: ammonia"],
+                "lab": {"vessel": "test_tube", "liquid": COLOURS["none"][1], "solid": "#f3f3f3", "solid_shrinks": True,
+                        "heat": True, "bubbles": "NH3"},
+                "why": "The hydroxide ions of the alkali take a hydrogen ion from each ammonium ion, leaving ammonia gas, "
+                       "which escapes when warmed.",
+                "word": f"{name_of(y)} + {name_of(x)} → {name_of(other)} + ammonia + water"}
+    return None
+
+
+def sx_salt_is_sulphide(f: str) -> bool:
+    sp = split_salt(f) if f else None
+    return bool(sp and sp[1] == "S" and sp[0] in CATIONS and sp[0] != "NH4")
+
+
 def _more_rules(x: str, y: str, condition: str) -> dict[str, Any] | None:
     """The rest of school chemistry: limewater as an alkali, a metal heated
     with sulphur, carbon and hydrogen taking oxygen from a metal oxide,
@@ -587,6 +615,19 @@ def _more_rules(x: str, y: str, condition: str) -> dict[str, Any] | None:
     heat = any(w in condition for w in ("heat", "molten", "melt", "boil", "steam"))
     sx = _symbol_of(x)
     sy_salt = split_salt(y) if y else None
+    # a metal sulphide with a dilute acid: hydrogen sulphide (the smell of rotten eggs)
+    acid_an = {"HCl": "Cl", "H2SO4": "SO4", "HNO3": "NO3"}.get(y)
+    if acid_an and sx is None and sx_salt_is_sulphide(x):
+        cat = split_salt(x)[0]  # type: ignore[index]
+        other = salt(cat, acid_an)
+        return {"type": "sulphide_acid", "reactants": [x, y], "products": [other, "H2S"],
+                "states": {x: "s", y: "aq", other: "aq", "H2S": "g"},
+                "observations": ["Bubbles of gas; the solid dissolves",
+                                 "A rotten-egg smell: hydrogen sulphide (poisonous)"],
+                "lab": {"vessel": "test_tube", "solid": COLOURS.get(x, ("dark", "#2b2b2b"))[1], "solid_shrinks": True,
+                        "liquid": COLOURS["none"][1], "liquid_to": _ion_colour(other)[1], "bubbles": "H2S"},
+                "why": f"The acid's hydrogen ions join the sulphide ions as hydrogen sulphide gas, leaving {name_of(other)} in solution.",
+                "word": f"{name_of(x)} + {name_of(y)} → {name_of(other)} + hydrogen sulphide"}
     # limewater (calcium hydroxide solution) with a salt solution
     if x == "Ca(OH)2" and sy_salt and _soluble(y) and sy_salt[0] != "Ca" and sy_salt[1] not in ("OH", "O"):
         return _precipitation(x, y)
@@ -789,6 +830,28 @@ def _alone(a: str, condition: str) -> dict[str, Any] | None:
                 "why": "Heat breaks sodium hydrogencarbonate (baking soda) into sodium carbonate, water and carbon dioxide — "
                        "the carbon dioxide makes cakes rise.",
                 "word": "sodium hydrogencarbonate → sodium carbonate + water + carbon dioxide"}
+    if a == "NH4Cl":                                   # it seems to sublime: apart when hot, back together where cool
+        return {"type": "decomposition", "reactants": ["NH4Cl"], "products": ["NH3", "HCl"],
+                "states": {"NH4Cl": "s", "NH3": "g", "HCl": "g"},
+                "observations": ["The white solid vanishes from the hot end",
+                                 "A white solid forms again at the cool end"],
+                "lab": {"vessel": "heated_tube", "solid": "#f3f3f3", "solid_to": "#f7f7f7", "solid_shrinks": True,
+                        "bubbles": "NH3", "heat": True, "burner": True},
+                "why": "Heat splits ammonium chloride into ammonia and hydrogen chloride; where the tube is cool they join "
+                       "again, so it looks as though it sublimes (a reversible reaction).",
+                "word": "ammonium chloride ⇌ ammonia + hydrogen chloride"}
+    if a == "NH4NO3":
+        return {"type": "decomposition", "reactants": ["NH4NO3"], "products": ["N2O", "H2O"],
+                "states": {"NH4NO3": "s", "N2O": "g", "H2O": "g"},
+                "observations": ["The solid melts; a colourless gas comes off",
+                                 "Droplets of water form at the cool end"],
+                "lab": {"vessel": "heated_tube", "solid": "#f3f3f3", "solid_to": "#f7f7f7", "solid_shrinks": True,
+                        "bubbles": "O2", "heat": True, "burner": True},
+                "why": "Heat breaks ammonium nitrate into dinitrogen oxide (laughing gas) and water — gently: strongly heated "
+                       "it can explode, which is why it is handled with care.",
+                "word": "ammonium nitrate → dinitrogen oxide + water"}
+    if s and s[0] == "NH4":
+        return None                                    # other ammonium salts: not decided here
     if s and s[1] == "NO3":
         cat = s[0]
         if cat in ("Na", "K"):

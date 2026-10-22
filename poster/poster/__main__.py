@@ -210,7 +210,7 @@ async def publish(post: dict[str, Any], *, dry_run: bool) -> dict[str, Any]:
                 # A card of a question's series: the teaser, the question, or its answer.
                 if not getattr(flow, "can_post_photos", False):
                     raise StepFailed(f"The poster cannot post photos on {post['platform']} yet.")
-                image = await cbc.download(post["image_url"], f"{post['post_id']}.jpg")
+                image = await cbc.download(post["image_url"], _pic_name(post["post_id"], post["image_url"]))
                 page = await browser.page()
                 url = await flow.post_photo(page, image=image, caption=post["caption"], dry_run=dry_run)
                 if groups and not dry_run and post["platform"] == "facebook":
@@ -524,13 +524,13 @@ async def comment_step(*, check: bool = False) -> dict[str, Any]:
             path = ""
             if link:
                 try:
-                    path = await cbc.download(link, f"card-{job['post_id']}-{k}.jpg")
+                    path = await cbc.download(link, _pic_name(f"card-{job['post_id']}-{k}", link))
                 except Exception as exc:  # noqa: BLE001
                     log.info("No card %d for %s: %s", k, job["post_id"], _why(exc))
             images.append(path)
     elif job.get("image_url") and not check:
         try:
-            image = await cbc.download(job["image_url"], f"answer-{job['post_id']}.jpg")
+            image = await cbc.download(job["image_url"], _pic_name(f"answer-{job['post_id']}", job["image_url"]))
         except Exception as exc:  # noqa: BLE001
             log.info("No answer card for %s: %s", job["post_id"], _why(exc))
     async with browser.lock:
@@ -742,6 +742,11 @@ async def do_dry_run(platform: str = "", post_id: str = "") -> dict[str, Any]:
     if not nxt.get("post"):
         return {"ok": False, "error": nxt.get("reason") or "Nothing queued for that platform."}
     return await publish(nxt["post"], dry_run=True)
+
+
+def _pic_name(stem: str, url: str) -> str:
+    """A picture's file name with its own kind — a GIF stays a .gif, so Facebook plays it."""
+    return stem + (".gif" if url.lower().split("?")[0].endswith(".gif") else ".jpg")
 
 
 async def make_card(question_id: str, step: str) -> None:

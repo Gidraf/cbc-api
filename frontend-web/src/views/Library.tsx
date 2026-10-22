@@ -266,7 +266,12 @@ function Cards({ q }: { q: LibraryQuestion }) {
   const toast = useToast();
   const [share, setShare] = React.useState<"feed" | "groups">("feed");
   const out = new Set(q.posts.filter((p) => p.format === "photo" && p.handed_at).map((p) => p.step || ""));
-  async function go(what: "teaser" | "question" | "kicd" | "answer" | "series") {
+  // A chemistry item's step pictures (up to four steps on each, then the steps animated) follow the answer.
+  const steps: [string, string][] = [...CARD_STEPS.slice(0, 4),
+    ...Object.keys(q.cards || {}).filter((k) => /^steps\d$/.test(k)).sort()
+      .map((k, i, all) => [k, `Every step${all.length > 1 ? ` (${i + 1} of ${all.length})` : ""}`] as [string, string]),
+    ...Object.keys(q.cards || {}).filter((k) => /^anim\d$/.test(k)).map((k) => [k, "The steps, animated"] as [string, string])];
+  async function go(what: "teaser" | "question" | "kicd" | "answer" | "series" | `steps${number}` | `anim${number}`) {
     try {
       const r = await post.mutateAsync({ question_id: q.question_id, what, share });
       toast(String(r?.error || r?.message || "Sent to the poster — it goes out in a minute or two."), r?.error ? "danger" : "ok");
@@ -283,7 +288,7 @@ function Cards({ q }: { q: LibraryQuestion }) {
                     title="Each card, then the video — now, one after the other (the Mac makes any card not made yet)">Post the series now</Button>
           </Stack>}>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(8.5rem, 1fr))", gap: "var(--s2)" }}>
-        {CARD_STEPS.map(([step, title]) => {
+        {steps.map(([step, title]) => {
           const c = q.cards?.[step];
           return (
             <div key={step} style={{ display: "grid", gap: 6, fontSize: "var(--text-xs)" }}>

@@ -133,10 +133,12 @@ def status(question_id: str, q: dict[str, Any]) -> dict[str, Any]:
     stills, made, want = [], 0, 0
     for k, m in enumerate(ms):
         name = object_name(question_id, key, k)
-        ok = object_storage.object_exists(name)
-        made += ok
-        want += 1
-        stills.append({**m, "object_name": name, **({"url": public_object_url(name)} if ok else {})})
+        clip = name[:-4] + ".mp4"                       # the moment's run-up, moving (for an animated card)
+        ok, has_clip = object_storage.object_exists(name), object_storage.object_exists(clip)
+        made += ok + has_clip
+        want += 2
+        stills.append({**m, "object_name": name, "clip_name": clip, **({"url": public_object_url(name)} if ok else {}),
+                       **({"clip": public_object_url(clip)} if has_clip else {})})
     grids = []
     for g, idx in enumerate(_groups(ms)):
         entry: dict[str, Any] = {"steps": idx}
@@ -215,6 +217,7 @@ def render(question_id: str, q: dict[str, Any]) -> dict[str, Any]:
     data, durations, ms, _ = _plan(q)
     doc = page(data, title="still", voice="en-GB", durations=durations, render=True)
     todo = [s for s in st["stills"] if "url" not in s]
+    clips_todo = [k for k, s in enumerate(st["stills"]) if "clip" not in s]
     grids_todo = [g for g in st["grids"] if not all(g.get(e) for e in ("jpg", "mp4", "gif"))]
     ffmpeg = ffmpeg_binary()
     with sync_playwright() as p:
@@ -244,11 +247,19 @@ def render(question_id: str, q: dict[str, Any]) -> dict[str, Any]:
 
             for s in todo:
                 object_storage.save_bytes(s["object_name"], shot(s, s["f"]), "image/jpeg")
+            # Each step's animation: frames across the run-up to its moment.
+            needed = sorted({k for g in grids_todo for k in g["steps"]} | set(clips_todo))
+            frames = {k: [shot(ms[k], max(0.04, ms[k]["f"] - 0.5) + (ms[k]["f"] - max(0.04, ms[k]["f"] - 0.5)) * j / (FRAMES - 1), 0.5)
+                          for j in range(FRAMES)] for k in needed}
+            for k in clips_todo if ffmpeg else []:
+                with tempfile.TemporaryDirectory() as tmp:
+                    out = Path(tmp) / "c.mp4"
+                    subprocess.run([ffmpeg, "-y", "-loglevel", "error", "-f", "image2pipe", "-framerate", "7", "-c:v", "mjpeg",
+                                    "-i", "-", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2",
+                                    "-r", "14", str(out)], input=b"".join(frames[k]), capture_output=True, timeout=120, check=False)
+                    if out.exists():
+                        object_storage.save_bytes(st["stills"][k]["clip_name"], out.read_bytes(), "video/mp4")
             if grids_todo:
-                # Each step's animation: frames across the run-up to its moment.
-                needed = sorted({k for g in grids_todo for k in g["steps"]})
-                frames = {k: [shot(ms[k], max(0.04, ms[k]["f"] - 0.5) + (ms[k]["f"] - max(0.04, ms[k]["f"] - 0.5)) * j / (FRAMES - 1), 0.5)
-                              for j in range(FRAMES)] for k in needed}
                 b = brand()
                 foot = " · ".join(x for x in (brand_name(b, q), b.get("website")) if x)
                 title = str(q.get("question_text") or "")
@@ -352,11 +363,14 @@ def pick_for(q: dict[str, Any], stills: list[dict[str, Any]], step: str,
     return next((s for s in made if s["role"] == "result"), made[-1])
 
 
-def card_image(question_id: str, q: dict[str, Any], step: str) -> str:
-    """The picture on a photo card ("" if none made yet)."""
+def card_image(question_id: str, q: dict[str, Any], step: str, *, moving: bool = False) -> str:
+    """The picture on a photo card ("" if none made yet); `moving`: its clip instead
+    (the step playing, for an animated card) — "" when it has none."""
     try:
         st = status(question_id, q)
     except Exception:  # noqa: BLE001
         return ""
     s = pick_for(q, st["stills"], step, st.get("grids"))
+    if moving:
+        return str((s or {}).get("clip") or "")
     return s["url"] if s else ""
