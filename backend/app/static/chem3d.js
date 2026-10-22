@@ -105,54 +105,104 @@
   const clamp01 = (x) => Math.max(0, Math.min(1, x));
   function rand(seed) { let s = seed >>> 0; return () => { s = (s * 1664525 + 1013904223) >>> 0; return s / 4294967296; }; }
 
-  // ── one atom: a nucleus of protons and neutrons, its shells, its electrons ──
+  // ── one atom, as the dot-and-cross diagrams draw it ──
+  // The shells are circles round the nucleus, in one plane, evenly spaced;
+  // the electrons sit at the four places (N, E, S, W) — one at each first,
+  // then in pairs — and the first shell's two opposite each other. The
+  // nucleus is a tight ball of protons (red) and neutrons (grey), mixed.
   const SHELL_R = (k) => 1.1 + k * 0.85;
-  const TILTS = [[0.2, 0.1], [-0.35, 0.25], [0.5, -0.3], [-0.15, 0.6]];
+  const SLOTS = [Math.PI / 2, 0, -Math.PI / 2, Math.PI];          // N, E, S, W
+  function slotAngles(n, k, r) {
+    if (k === 0) return n === 1 ? [SLOTS[0]] : [SLOTS[0], SLOTS[2]];
+    const off = 0.17 / r, out = [];
+    for (let e = 0; e < n; e++) {
+      const place = e % 4, paired = n > place + 4;
+      out.push(SLOTS[place] + (paired ? (e < 4 ? off : -off) : 0));
+    }
+    return out;
+  }
+  // The electrons sway a little about their places, never far from N, E, S, W.
+  const sway = (t, k) => Math.sin(t * 0.7 + k * 1.3) * 0.12;
+  const NUC_R = 0.15, nuclei = {};
+  function nucleusLayout(p, n) {
+    const key = p + ":" + n;
+    if (nuclei[key]) return nuclei[key];
+    const N = Math.max(1, p + n), rnd = rand(p * 131 + n * 7 + 1), pts = [];
+    if (N === 1) return (nuclei[key] = [{ v: new THREE.Vector3(), proton: p > 0 }]);
+    for (let i = 0; i < N; i++) {
+      const y = 1 - ((i + 0.5) / N) * 2, rr = Math.sqrt(1 - y * y), th = i * 2.399963;
+      const d = NUC_R * 1.7 * Math.cbrt(N) * Math.cbrt((i + 0.5) / N);
+      pts.push(new THREE.Vector3(Math.cos(th) * rr * d, y * d, Math.sin(th) * rr * d));
+    }
+    // Neighbours push apart, everything pulls in: a packed ball, worked out once.
+    const want = 2 * NUC_R * 0.97;
+    for (let it = 0; it < 90; it++) {
+      for (let i = 0; i < N; i++) {
+        pts[i].multiplyScalar(0.985);
+        for (let j = i + 1; j < N; j++) {
+          const dv = pts[i].clone().sub(pts[j]), dist = dv.length() || 1e-3;
+          if (dist < want) { dv.multiplyScalar(((want - dist) / dist) * 0.5); pts[i].add(dv); pts[j].sub(dv); }
+        }
+      }
+    }
+    // Which are protons: chosen evenly through the ball, so the colours mix.
+    const idx = pts.map((_, i) => i);
+    for (let i = idx.length - 1; i > 0; i--) { const j = Math.floor(rnd() * (i + 1)); [idx[i], idx[j]] = [idx[j], idx[i]]; }
+    const proton = new Set(idx.slice(0, p));
+    return (nuclei[key] = pts.map((v, i) => ({ v, proton: proton.has(i) })));
+  }
   function buildAtom(a, opts) {
-    // opts: {built: 0..1 (how far the electrons have arrived), t: seconds, lose: n outer electrons gone, gain: n added, spin}
+    // opts: built 0..1 (electrons arrived so far), t (seconds), spin, shells
+    // (to draw an ion), gained (the last n outer electrons came from another
+    // atom: drawn orange), bare (no outer electrons: a diagram places them).
     const g = new THREE.Group();
-    const nucleons = Math.min(40, (a.protons || 1) + (a.neutrons || 0));
-    const rnd = rand((a.Z || 1) * 7919);
-    const nr = 0.22 + Math.cbrt(nucleons) * 0.12;
-    for (let i = 0; i < nucleons; i++) {
-      // Fibonacci points in a small ball: a packed nucleus, the same every frame.
-      const y = 1 - (i / Math.max(1, nucleons - 1)) * 2, rad = Math.sqrt(1 - y * y), th = i * 2.399963;
-      const d = nr * Math.cbrt((i + 0.5) / nucleons) * 1.2;
-      const p = ball(0.13, i < (a.protons || 1) ? mat("#dc2626") : mat("#9ca3af"));
-      p.position.set(Math.cos(th) * rad * d, y * d, Math.sin(th) * rad * d);
-      g.add(p);
+    for (const nu of nucleusLayout(a.protons || 1, a.neutrons || 0)) {
+      const b = ball(NUC_R, nu.proton ? mat("#dc2626") : mat("#a3a9b3"));
+      b.position.copy(nu.v); g.add(b);
     }
     const shells = (opts.shells || a.shells || []).slice();
     const total = shells.reduce((x, y) => x + y, 0);
+    const built = opts.built == null ? 1 : opts.built;
     let count = 0;
     shells.forEach((n, k) => {
-      const r = SHELL_R(k);
-      const tilt = TILTS[k % 4];
-      const holder = new THREE.Group();
-      holder.rotation.set(Math.PI / 2 + tilt[0], tilt[1], 0);
-      const shellShown = clamp01(opts.built * total - count + 1);
-      if (shellShown > 0) holder.add(ring(r, k === shells.length - 1 && opts.outerColour ? opts.outerColour : 0x6b7280, 0.25 + 0.5 * shellShown));
-      const speed = 0.9 / (k + 1);
+      const r = SHELL_R(k), last = k === shells.length - 1;
+      const shown = clamp01(built * total - count + 1);
+      if (shown > 0) g.add(ring(r, 0x6b7280, 0.3 + 0.45 * shown));
+      const angs = slotAngles(n, k, r), turn = sway(opts.t || 0, k) * (opts.spin == null ? 1 : opts.spin);
       for (let e = 0; e < n; e++) {
         count++;
-        const arrived = clamp01(opts.built * total - (count - 1));
+        if (last && opts.bare) continue;
+        const arrived = clamp01(built * total - (count - 1));
         if (arrived <= 0) continue;
-        const ang = (e / n) * Math.PI * 2 + (opts.t || 0) * speed * (opts.spin == null ? 1 : opts.spin);
-        const el = ball(0.11 * (0.4 + 0.6 * ease(arrived)), electronMat);
-        el.position.set(Math.cos(ang) * r, Math.sin(ang) * r, 0);
-        holder.add(el);
+        const foreign = last && e >= n - (opts.gained || 0);
+        const el = ball(0.12 * (0.4 + 0.6 * ease(arrived)), foreign ? movingMat : electronMat);
+        el.position.set(Math.cos(angs[e] + turn) * r, Math.sin(angs[e] + turn) * r, 0.02);
+        g.add(el);
       }
-      g.add(holder);
     });
     return g;
   }
   function outerPoint(a, slot, of, t, centre, scaleK) {
     // Where electron `slot` of `of` on the outer shell is, in world space.
-    const k = (a.shells || [1]).length - 1, r = SHELL_R(k), tilt = TILTS[k % 4];
-    const ang = (slot / Math.max(1, of)) * Math.PI * 2 + t * (0.9 / (k + 1));
-    const v = new THREE.Vector3(Math.cos(ang) * r, Math.sin(ang) * r, 0);
-    v.applyEuler(new THREE.Euler(Math.PI / 2 + tilt[0], tilt[1], 0));
-    return v.multiplyScalar(scaleK || 1).add(centre);
+    const k = (a.shells || [1]).length - 1, r = SHELL_R(k);
+    const ang = slotAngles(of, k, r)[Math.max(0, Math.min(of - 1, slot))] + sway(t, k);
+    return new THREE.Vector3(Math.cos(ang) * r, Math.sin(ang) * r, 0).multiplyScalar(scaleK || 1).add(centre);
+  }
+  // The symbol on the nucleus, dark with a white edge, so it reads over red and grey.
+  const tags = {};
+  function tag(text) {
+    if (!tags[text]) {
+      const c = document.createElement("canvas"), x = c.getContext("2d");
+      c.width = 256; c.height = 128;
+      x.font = "bold 76px 'Patrick Hand', 'Comic Sans MS', sans-serif";
+      x.textAlign = "center"; x.textBaseline = "middle";
+      x.lineWidth = 14; x.strokeStyle = "rgba(255,255,255,0.92)"; x.lineJoin = "round";
+      x.strokeText(text, 128, 66); x.fillStyle = "#111827"; x.fillText(text, 128, 66);
+      tags[text] = new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(c), transparent: true, depthTest: false });
+    }
+    const sp = new THREE.Sprite(tags[text]);
+    sp.scale.set(1.0, 0.5, 1);
+    return sp;
   }
 
   // ── the scenes ──
@@ -164,16 +214,16 @@
       const isNow = a === s;
       const g = buildAtom(a, { built: isNow ? built : 1, t: t + j * 3 });
       // One atom: left of centre (its facts are written on the right). A pair: side by side.
-      const x = !s.short ? -2.6 : both.length > 1 ? (j === 0 ? -4.2 : 4.2) : -4.2;
-      g.position.set(x, s.short ? 0.2 : 0, 0);
-      g.scale.setScalar(s.short ? 0.85 : 1.05);
+      const x = !s.short ? -2.9 : both.length > 1 ? (j === 0 ? -4.2 : 4.2) : -4.2;
+      g.position.set(x, s.short ? 0.3 : 0, 0);
+      g.scale.setScalar((s.short ? 0.85 : 1.05) * Math.min(1, 2.95 / SHELL_R(a.shells.length - 1)));
+      g.rotation.set(0.12, Math.sin(t * 0.5 + j) * 0.3, 0);         // a slow turn: it is a ball, not a drawing
       world.add(g);
-      const sym = label(a.symbol, "#ffffff", 72);
+      const sym = tag(a.symbol);
       sym.position.copy(g.position).add(new THREE.Vector3(0, 0, 1.2));
-      sym.scale.set(1.1, 0.55, 1);
       world.add(sym);
     });
-    camera.position.set(Math.sin(t * 0.25) * 2.5, 1.2 + Math.sin(t * 0.18) * 0.6, 15);
+    camera.position.set(0, 0.5, 15);
     camera.lookAt(s.short ? 0 : -1.2, 0, 0);
   }
 
@@ -183,9 +233,11 @@
     const tMove0 = dur * 0.18, perMove = Math.min(1.6, (dur * 0.42) / Math.max(1, moves.length));
     const tMoved = tMove0 + perMove * moves.length;
     const tLattice = Math.max(tMoved + 1.2, dur * 0.72);
-    const k = Math.max(nm, nn) > 1 ? 0.62 : 0.8;
-    const mPos = Array.from({ length: nm }, (_, j) => new THREE.Vector3(-4.2, (j - (nm - 1) / 2) * 3.3 * k, 0));
-    const nPos = Array.from({ length: nn }, (_, j) => new THREE.Vector3(4.2, (j - (nn - 1) / 2) * 3.3 * k, 0));
+    // Several atoms of a kind stand in a column, apart: sized so the column fits.
+    const Rm = SHELL_R(s.metal.shells.length - 1), Rn = SHELL_R(s.nonmetal.shells.length - 1);
+    const k = Math.min(0.8, 7.4 / (nm * 2 * Rm * 1.08), 7.4 / (nn * 2 * Rn * 1.08));
+    const mPos = Array.from({ length: nm }, (_, j) => new THREE.Vector3(-4.2, (j - (nm - 1) / 2) * 2 * Rm * 1.08 * k, 0));
+    const nPos = Array.from({ length: nn }, (_, j) => new THREE.Vector3(4.2, (j - (nn - 1) / 2) * 2 * Rn * 1.08 * k, 0));
     const qm = Math.abs(s.metal.ion_charge || 1), qn = Math.abs(s.nonmetal.ion_charge || 1);
     const toLattice = clamp01((t - tLattice) / 1.8);
     // How many electrons each atom has given or taken so far.
@@ -205,18 +257,18 @@
         const shrink = given[j] >= qm ? 0.88 : 1;
         g.position.copy(p); g.scale.setScalar(k * shrink * (1 - toLattice));
         world.add(g);
-        const l = label(given[j] >= qm ? `${s.metal.symbol}${sup(qm)}⁺` : s.metal.symbol, given[j] >= qm ? "#c2410c" : "#ffffff", 64);
+        const l = given[j] >= qm ? label(`${s.metal.symbol}${sup(qm)}⁺`, "#c2410c", 64) : tag(s.metal.symbol);
         const side = nm > 1 && given[j] >= qm;   // stacked atoms: the ion's name beside it, not on the one above
         l.position.copy(p).add(new THREE.Vector3(side ? -2.9 * k : 0, given[j] >= qm && !side ? 2.6 * k : 0, 1.3)); if (toLattice < 0.5) world.add(l);
       });
       nPos.forEach((p, j) => {
         const shells = s.nonmetal.shells.slice();
         shells[shells.length - 1] += taken[j];
-        const g = buildAtom(s.nonmetal, { built: 1, t: t + 2, shells });
+        const g = buildAtom(s.nonmetal, { built: 1, t: t + 2, shells, gained: taken[j] });
         g.position.copy(p); g.scale.setScalar(k * (1 - toLattice));
         world.add(g);
         const full = taken[j] >= qn;
-        const l = label(full ? `${s.nonmetal.symbol}${sup(qn)}⁻` : s.nonmetal.symbol, full ? "#1d4ed8" : "#ffffff", 64);
+        const l = full ? label(`${s.nonmetal.symbol}${sup(qn)}⁻`, "#1d4ed8", 64) : tag(s.nonmetal.symbol);
         const side = nn > 1 && full;
         l.position.copy(p).add(new THREE.Vector3(side ? 3.6 * k : 0, full && !side ? 3.0 * k : 0, 1.3)); if (toLattice < 0.5) world.add(l);
       });
@@ -279,48 +331,90 @@
     3: [[0, -0.33, 0.94], [0.82, -0.33, -0.47], [-0.82, -0.33, -0.47]],
     4: [[0, 1, 0], [0.94, -0.33, 0], [-0.47, -0.33, 0.82], [-0.47, -0.33, -0.82]],
   };
+  // Space-filling sizes (relative van der Waals radii) for the real shape.
+  const VDW = { H: 0.55, C: 0.85, N: 0.8, O: 0.78, F: 0.72, Cl: 0.95, S: 0.98, P: 0.98, Br: 1.05, I: 1.15 };
   function covalentScene(s, i, t, dur) {
+    // First the dot-and-cross diagram as it is drawn in the exam — the outer
+    // shells overlapping, each shared pair (green) in the overlap, the lone
+    // pairs at their places, the outer atoms' electrons orange — then the
+    // molecule in its real shape, space-filling, turning.
     const [A, B] = s.atoms, centre = A.symbol === s.centre ? A : B, outer = centre === A ? B : A;
     const same = A.symbol === B.symbol;
     const n = same ? 1 : Math.min(4, s.counts[outer.symbol] || 1);
-    let dirs = SHAPES[n] || SHAPES[1];
-    if (n === 2) dirs = centre.symbol === "O" || centre.symbol === "S" ? SHAPES[2].bent : SHAPES[2].linear;
     const order = same ? (centre.valency || 1) : (outer.valency || 1);
-    const come = ease(clamp01(t / Math.max(1, dur * 0.25)));
-    const pairsShown = clamp01((t - dur * 0.3) / Math.max(1, dur * 0.4));
-    const d = SHELL_R(centre.shells.length - 1) * 0.85 + SHELL_R(outer.shells.length - 1) * 0.55;
-    const grp = new THREE.Group();
-    const cAtom = buildAtom(centre, { built: 1, t, spin: 0.4 });
-    if (same) cAtom.position.set(-d / 2 - (1 - come) * 3, 0, 0);
-    grp.add(cAtom);
-    const cl = label(centre.symbol, "#ffffff", 72); cl.position.copy(cAtom.position).add(new THREE.Vector3(0, 0, 1.3)); cl.scale.set(1.1, 0.55, 1); grp.add(cl);
-    dirs.forEach((dv, j) => {
-      const dir = new THREE.Vector3(...dv).normalize();
-      const at = same ? new THREE.Vector3(d / 2 + (1 - come) * 3, 0, 0) : dir.clone().multiplyScalar(d + (1 - come) * 4);
-      const o = buildAtom(outer, { built: 1, t: t + j, spin: 0.4 });
-      o.position.copy(at); grp.add(o);
-      const ol = label(outer.symbol, outer.symbol === "H" ? "#1b1f2a" : "#ffffff", 72); ol.position.copy(at).add(new THREE.Vector3(0, 0, 1.3)); ol.scale.set(1.1, 0.55, 1); grp.add(ol);
-      // The shared pairs, between the two nuclei: green, gently breathing.
-      const from = same ? cAtom.position.clone() : new THREE.Vector3(0, 0, 0);
-      const mid = from.clone().add(at).multiplyScalar(0.5);
-      const side = new THREE.Vector3().crossVectors(at.clone().sub(from).normalize(), new THREE.Vector3(0, 0, 1)).normalize();
-      if (side.lengthSq() < 0.01) side.set(0, 1, 0);
-      for (let p = 0; p < order; p++) {
-        const show = clamp01(pairsShown * order * (same ? 1 : n) - (j * order + p));
-        if (show <= 0) continue;
-        const off = side.clone().multiplyScalar((p - (order - 1) / 2) * 0.42);
-        const wob = Math.sin(t * 2 + p + j) * 0.06;
-        [-0.13, 0.13].forEach((dz) => {
-          const e = ball(0.13 * ease(show), sharedMat);
-          e.position.copy(mid).add(off).add(new THREE.Vector3(0, wob, dz)); grp.add(e);
-        });
+    const come = ease(clamp01(t / Math.max(1, dur * 0.18)));
+    const share = ease(clamp01((t - dur * 0.2) / Math.max(1, dur * 0.3)));
+    const toModel = ease(clamp01((t - dur * 0.64) / 1.4));
+    const V = (x, y) => new THREE.Vector3(x, y, 0);
+    const dirOf = (si) => V(Math.cos(SLOTS[si]), Math.sin(SLOTS[si]));
+    if (toModel < 1) {
+      const flat = new THREE.Group();
+      const Rc = SHELL_R(centre.shells.length - 1), Ro = SHELL_R(outer.shells.length - 1);
+      const overlap = Math.min(Rc, Ro) * 0.5, d = Rc + Ro - overlap;
+      const bonded = same ? [1] : { 1: [1], 2: [3, 1], 3: [3, 1, 2], 4: [0, 1, 2, 3] }[n];
+      const cPos = same ? V(-d / 2, 0) : V(0, 0);
+      const lone = (pos, R, count, slots, material) => {
+        for (let e = 0; e < count; e++) {
+          const si = slots[Math.floor(e / 2) % slots.length], paired = count - Math.floor(e / 2) * 2 >= 2;
+          const ang = SLOTS[si] + (paired ? (e % 2 ? -1 : 1) * (0.17 / R) : 0);
+          const el = ball(0.12, material); el.position.copy(pos).add(V(Math.cos(ang) * R, Math.sin(ang) * R)); flat.add(el);
+        }
+      };
+      const loneSlots = (facing, pairs) => {
+        const far = (facing + 2) % 4, perp = [(facing + 1) % 4, (facing + 3) % 4];
+        return pairs === 1 ? [far, ...perp] : [...perp, far];
+      };
+      const atom = (a, pos) => {
+        const g = buildAtom(a, { built: 1, t: 0, spin: 0, bare: true }); g.position.copy(pos); flat.add(g);
+        const tg = tag(a.symbol); tg.position.copy(pos).add(V(0, 0)).setZ(1.2); flat.add(tg);
+      };
+      atom(centre, cPos);
+      const cOuter = centre.shells[centre.shells.length - 1], cLone = Math.max(0, cOuter - bonded.length * order);
+      const cSlots = same ? loneSlots(1, cLone / 2) : [0, 1, 2, 3].filter((k) => !bonded.includes(k));
+      lone(cPos, Rc, cLone, cSlots.length ? cSlots : [0], electronMat);
+      bonded.forEach((si, j) => {
+        const dir = dirOf(si), perp = V(-dir.y, dir.x);
+        const oPos = same ? V(d / 2 + (1 - come) * 3, 0) : dir.clone().multiplyScalar(d + (1 - come) * 4);
+        atom(outer, oPos);
+        const oOuter = outer.shells[outer.shells.length - 1], oLone = Math.max(0, oOuter - order), facing = (si + 2) % 4;
+        lone(oPos, Ro, oLone, loneSlots(facing, oLone / 2), movingMat);
+        // Each shared pair: one electron from each atom, meeting in the overlap.
+        const mid = cPos.clone().add(dir.clone().multiplyScalar(Rc - overlap / 2));
+        for (let p = 0; p < order; p++) {
+          const off = perp.clone().multiplyScalar((p - (order - 1) / 2) * 0.36);
+          const tilt = (p - (order - 1) / 2) * (0.36 / Rc);
+          const fromC = cPos.clone().add(V(Math.cos(SLOTS[si] + tilt) * Rc, Math.sin(SLOTS[si] + tilt) * Rc));
+          const fromO = oPos.clone().add(V(Math.cos(SLOTS[facing] - tilt) * Ro, Math.sin(SLOTS[facing] - tilt) * Ro));
+          const toC = mid.clone().add(off).add(dir.clone().multiplyScalar(-0.13)), toO = mid.clone().add(off).add(dir.clone().multiplyScalar(0.13));
+          const eC = ball(0.12, share > 0.5 ? sharedMat : electronMat); eC.position.copy(fromC.lerp(toC, share)); flat.add(eC);
+          const eO = ball(0.12, share > 0.5 ? sharedMat : movingMat); eO.position.copy(fromO.lerp(toO, share)); flat.add(eO);
+        }
+      });
+      const extX = same ? d / 2 + Ro : d + Ro, extY = bonded.some((k) => k === 0 || k === 2) ? d + Ro : Math.max(Rc, Ro);
+      flat.scale.setScalar(Math.min(1, 6.2 / (2 * extY), 12 / (2 * extX)) * (1 - toModel));
+      flat.position.set(0, 0.35, 0);
+      world.add(flat);
+    }
+    if (toModel > 0) {
+      // The real shape: CH4 a tetrahedron, NH3 a pyramid, H2O bent, CO2 straight.
+      const mol = new THREE.Group();
+      const rc = VDW[centre.symbol] || 0.9, ro = VDW[outer.symbol] || 0.9;
+      const tint = (a) => mat(a.symbol === "H" ? "#f1f1f1" : a.colour || "#999999");
+      if (same) {
+        const L = rc * 1.5 * (1 - 0.07 * (order - 1));
+        [-1, 1].forEach((sg) => { const b = ball(rc, tint(centre)); b.position.x = (sg * L) / 2; mol.add(b); });
+      } else {
+        mol.add(ball(rc, tint(centre)));
+        let dirs = SHAPES[n] || SHAPES[1];
+        if (n === 2) dirs = centre.shells[centre.shells.length - 1] - 2 * order > 0 ? SHAPES[2].bent : SHAPES[2].linear;
+        dirs.forEach((dv) => { const b = ball(ro, tint(outer)); b.position.copy(new THREE.Vector3(...dv).normalize().multiplyScalar((rc + ro) * 0.8 * (1 - 0.05 * (order - 1)))); mol.add(b); });
       }
-    });
-    grp.scale.setScalar(same ? 0.95 : n > 2 ? 1.05 : 1.0);
-    grp.rotation.set(0.25, t * 0.3, 0);
-    grp.position.set(0, 0.4, 0);
-    world.add(grp);
-    camera.position.set(0, 1.2, 16);
+      mol.scale.setScalar(1.7 * toModel);
+      mol.rotation.set(0.35, t * 0.6, 0);
+      mol.position.set(0, 0.35, 0);
+      world.add(mol);
+    }
+    camera.position.set(0, 0.6, 16);
     camera.lookAt(0, 0.3, 0);
   }
 
