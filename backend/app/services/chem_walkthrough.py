@@ -155,9 +155,10 @@ def _ring(n: int, r: float, tilt: float = 0.0) -> list[tuple[float, float, float
              math.sin(tilt + 2 * math.pi * k / n + 1) * r * 0.5) for k in range(n)]
 
 
-def _group(counts: dict[str, int]) -> list[dict[str, Any]]:
+def _group(counts: dict[str, int], ion: bool = False) -> list[dict[str, Any]]:
     """A covalent particle (a molecule, or an anion group): a centre with
-    the others round it; hydrogens on oxygens when there are oxygens."""
+    the others round it; hydrogens on oxygens when there are oxygens — except
+    in an ion such as ethanoate, which has lost the acid's H from its O."""
     atoms: list[dict[str, Any]] = []
     els = [e for e in counts if counts[e] > 0]
     if sum(counts.values()) == 1:
@@ -186,7 +187,7 @@ def _group(counts: dict[str, int]) -> list[dict[str, Any]]:
         # Carbon compounds: the hydrogens on the carbons; one on an oxygen (the -OH of an alcohol or acid).
         carbons = [0] + [i for i, a in enumerate(atoms) if a["el"] == "C" and i > 0]
         oxy = [i for i, a in enumerate(atoms) if a["el"] == "O" and i > 0]
-        on_o = 1 if oxy and hs else 0
+        on_o = 1 if oxy and hs and not ion else 0
         import math
         for k in range(hs):
             host = oxy[0] if k < on_o else carbons[(k - on_o) % len(carbons)]
@@ -238,7 +239,7 @@ def structure(formula: str) -> list[dict[str, Any]]:
     if cat == "NH4" and key == "H":
         n_an = 1
     atoms: list[dict[str, Any]] = []
-    group = _group(an_counts)
+    group = _group(an_counts, ion=True)
     spread = 1.9
     centres = [(0.0, 0.0, 0.0)] if n_an == 1 else [(p[0] * spread * 0.8, p[1] * spread * 0.8, p[2] * spread * 0.6) for p in _ring(n_an, 1.0)]
     for c in centres:                                       # the anion groups
