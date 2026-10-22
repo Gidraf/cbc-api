@@ -426,7 +426,8 @@ class ChemAutopilot(BaseModel):
     per_day: int = Field(0, ge=0, le=30)            # 0: the Auto-book setting's
     keep_booking: bool = True                       # add the topics to Auto-book and turn it on
     photo_days: int = Field(7, ge=0, le=31)         # photo series days per topic, after what is booked
-    counts: dict[str, int] = Field(default_factory=dict)
+    counts: dict[str, int] = Field(default_factory=dict)          # 0 or absent: every question of that kind
+    overrides: dict[str, dict[str, str]] = Field(default_factory=dict)
 
 
 @router.post("/chem/autopilot")
@@ -438,7 +439,8 @@ def chem_autopilot_run(body: ChemAutopilot, auth: AuthContext = Depends(ANY)) ->
 
     try:
         return chem_autopilot.run(per_day=body.per_day, keep_booking=body.keep_booking, photo_days=body.photo_days,
-                                  counts={k: max(0, min(int(v), 5000)) for k, v in body.counts.items()},
+                                  counts={k: max(0, min(int(v), 60000)) for k, v in body.counts.items()},
+                                  overrides=body.overrides,
                                   by=str(getattr(auth, "subject", "") or ""))
     except ValueError as exc:
         raise_api_error("VALIDATION_FAILED", str(exc))
