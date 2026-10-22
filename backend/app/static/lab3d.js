@@ -90,6 +90,24 @@
     const s = new T.Sprite(m); s.scale.set(w, h || w, 1); return s;
   }
   const glow = (hex, size, op) => sprite(soft(hex), "g" + hex, op, size);
+  // A word on a coloured pill, facing the camera (cached by its words).
+  function tag(text, ink, bg, op, big) {
+    const k = `tag${text}${ink}${bg}${big ? 1 : 0}`;
+    const tex = once(k, () => {
+      const c = document.createElement("canvas"), x = c.getContext("2d"), px = big ? 54 : 44;
+      x.font = `bold ${px}px 'Inter','Segoe UI','Noto Color Emoji',sans-serif`;
+      c.width = Math.min(2048, Math.ceil(x.measureText(text).width) + 60); c.height = px + 40;
+      x.font = `bold ${px}px 'Inter','Segoe UI','Noto Color Emoji',sans-serif`;
+      x.fillStyle = bg; x.beginPath();
+      if (x.roundRect) x.roundRect(0, 0, c.width, c.height, c.height / 2); else x.rect(0, 0, c.width, c.height);
+      x.fill(); x.fillStyle = ink; x.textBaseline = "middle"; x.fillText(text, 30, c.height / 2 + 2);
+      const t = new T.CanvasTexture(c); t.userData = { w: c.width, h: c.height }; return t;
+    });
+    const sp = sprite(tex, k, op, 1);
+    const hgt = big ? 0.55 : 0.42; sp.scale.set(hgt * tex.userData.w / tex.userData.h, hgt, 1);
+    sp.material.depthTest = false; sp.center && sp.center.set(0, 0.5);
+    return sp;
+  }
 
   // ── materials by colour (cached; a colour mid-change is rounded to a step) ──
   const col = (hex, fallback) => (typeof hex === "string" && /^#[0-9a-f]{3,8}$/i.test(hex) ? hex : fallback || "#dff3ff");
@@ -369,12 +387,41 @@
     if (liquidC && lab.precipitate) liquidC = mix(liquidC, lab.precipitate, 0.25 * at(0.9, span * 0.5));
     const on = lab.flame || lab.burner ? at(0.6, 0.4) : 0;
 
-    if (kind === "heated_tube") return heatedTube();
-    if (kind === "spoon") return spoon();
-    if (kind === "gas_jar") return gasJar();
-    if (kind === "crucible") return crucible();
-    if (kind === "burner") return burnerOnly();
-    return openVessel();
+    let mouthAt = null;                                  // where a gas leaves the apparatus (for its smell)
+    ({ heated_tube: heatedTube, spoon, gas_jar: gasJar, crucible, burner: burnerOnly }[kind] || openVessel)();
+    if (lab.smell && s.reacts !== false) smell(lab.smell, mouthAt || new T.Vector3(X(cx), Y(floor - 300), 0));
+    return;
+
+    // A gas with a smell, on its journey through the room: wisps leave the
+    // mouth of the apparatus, curl up and drift across to a hand wafting them
+    // to the nose — never a sniff straight from the tube — and the smell is named.
+    function smell(sm, from) {
+      // To the open corner above the bench (the board writes its notes on the right).
+      const to = new T.Vector3(X(social ? cx - 330 : 120), Y(floor - 430), 0.6), travel = 2.0, start = 0.9, n = 40;
+      const top = Math.max(from.y, to.y) + 0.9, c = new T.Vector3(from.x + (to.x - from.x) * 0.3, top, 0.3);
+      const hex = col(sm.colour, "#e5e7eb"), rnd = K.rand(71);
+      for (let j = 0; j < n; j++) {
+        // Each wisp its own speed, sway and size, so the gas drifts as a cloud, not a string of beads.
+        const born = start + rnd() * travel, len = travel * (0.8 + rnd() * 0.5), sway = 0.25 + rnd() * 0.5,
+              size = 0.5 + rnd() * 0.7, seed = rnd() * 6.28, lift = (rnd() - 0.5) * 0.9;
+        if (tt < born) continue;
+        const ph = ((tt - born) % len) / len, u = ph, w = 1 - u;
+        const x = w * w * from.x + 2 * w * u * c.x + u * u * to.x, y = w * w * from.y + 2 * w * u * (c.y + lift) + u * u * to.y;
+        const puff = glow(hex, size * (0.5 + ph * 1.6), 0.5 * Math.sin(Math.PI * Math.min(1, ph * 1.1)));
+        puff.position.set(x + Math.sin(ph * 8 + seed) * sway * ph, y + Math.cos(ph * 6 + seed) * sway * 0.6 * ph,
+                          0.3 + Math.sin(seed) * 0.6 * ph);
+        W.add(puff);
+      }
+      const arrive = at(start + travel * 0.7, 0.5);
+      if (arrive <= 0) return;
+      // The wafting hand, and the smell's name beside it.
+      const like = sm.like || "a smell";
+      const name = tag(like.charAt(0).toUpperCase() + like.slice(1), "#ffffff", "#7c2d12", arrive, 1);
+      name.position.set(to.x, to.y + 1.0, 1); W.add(name);
+      if (sm.name) { const g = tag(sm.name, "#7c2d12", "#ffffff", arrive * 0.95); g.position.set(to.x, to.y + 0.42, 1); W.add(g); }
+      const hand = tag("waft it towards you — never sniff", "#1b1f2a", "#fde68a", 0.95 * arrive);
+      hand.position.set(to.x + Math.sin(tt * 5) * 0.12, to.y - 0.12, 1); W.add(hand);
+    }
 
     // A beaker, a test tube held in a clamp, a trough, or a flask with a
     // delivery tube to limewater — with what goes in and what is seen.
@@ -394,6 +441,7 @@
       } else v = vessel("beaker", U(230), U(290));
       level = v.h * (tube ? 0.55 : trough ? 0.62 : flask ? 0.42 : 0.62);
       put(v.g, x, base);
+      mouthAt = new T.Vector3(X(x), Y(base) + v.h, 0);
       // With a precipitate the liquid stays fairly clear, so the solid's own colour shows through it.
       if (liquidC) v.fill(0.04, level, liquidC, lab.precipitate ? 0.38 : clearish(liquidC) ? (trough ? 0.28 : 0.42) : 0.72);
       const g = v.g, rIn = v.r(level * 0.5);
@@ -492,6 +540,7 @@
         if (lab.flame && /^#f{3,6}$/i.test(lab.flame)) { const gl = glow("#ffe680", 2.2, 0.9 * at(1, 0.4) * (0.85 + 0.15 * Math.sin(tt * 20))); gl.position.set(r * 0.3, r * 1.5, 0.2); v.g.add(gl); }
       }
       const mouth = new T.Vector3(X(bx) + Math.sin(-ang) * h, Y(by) + Math.cos(-ang) * h, 0);
+      mouthAt = mouth;
       if (lab.limewater) {
         const b = bung(r, 0); b.position.set(0, h - 0.1, 0); v.g.add(b);
         limewater(v, 0, 0, { mouth });
@@ -505,6 +554,7 @@
       W.add(rod(cup.clone().add(new T.Vector3(0, 0.08, 0)), handle, 0.035, M.metal));
       const grip = rod(handle, handle.clone().add(new T.Vector3(0.9, 0.45, 0.15)), 0.08, M.wood); W.add(grip);
       const c = mesh(geo("cup", () => new T.CylinderGeometry(0.26, 0.2, 0.14, 20, 1, true)), M.metal); c.position.copy(cup); W.add(c);
+      mouthAt = cup.clone().add(new T.Vector3(0, 0.6, 0));
       const disc = mesh(geo("cupB", () => new T.CircleGeometry(0.2, 20)), M.metal); disc.rotation.x = -Math.PI / 2; disc.position.copy(cup).add(new T.Vector3(0, -0.06, 0)); W.add(disc);
       if (lab.solid) {
         const l = K.ball(0.17 * Math.max(0.5, shrink), solidMat(solidC)); l.scale.y *= 0.6; l.position.copy(cup).add(new T.Vector3(0, 0.05, 0)); W.add(l);
@@ -516,6 +566,7 @@
     // A gas jar of the gas, the solid lowered in on a spoon, burning.
     function gasJar() {
       const v = vessel("jar", U(85), U(300)); put(v.g, cx, floor);
+      mouthAt = new T.Vector3(X(cx), Y(floor) + v.h, 0);
       if (lab.gas) v.fill(0.17, v.h - 0.02, lab.gas, 0.42 * (1 - (lab.gas_fades ? 0.85 * at(span * 0.25, span * 0.5) : 0)), 0.02);
       const low = ease(at(0, 0.9)), cupY = v.h * 0.45 + (1 - low) * (v.h * 0.55 + 1.2);
       const g = v.g;

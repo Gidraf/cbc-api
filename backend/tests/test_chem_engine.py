@@ -360,3 +360,17 @@ def test_almost_every_pair_on_the_shelf_is_decided() -> None:
     pairs = list(itertools.combinations(shelf, 2))
     open_ = [p for p in pairs if not C.react(*p)["covered"]]
     assert len(open_) / len(pairs) < 0.02, open_[:10]
+
+
+def test_smelly_gases_are_smelt_on_their_way_across_the_room() -> None:
+    from app.services import chem_walkthrough as W
+
+    nh3 = C.react("NH4Cl", "NaOH", condition="heat")
+    assert nh3["equation"] == "NH₄Cl + NaOH → NaCl + NH₃ + H₂O" and W.smell_of(nh3)["gas"] == "NH3"
+    assert not C.react("NH4Cl", "NaOH")["reacts"]                                  # warmed, or hardly any
+    h2s = C.react("FeS", "HCl")
+    assert h2s["equation"] == "FeS + 2HCl → FeCl₂ + H₂S" and "rotten eggs" in W.smell_of(h2s)["like"]
+    assert C.react("NH4NO3", condition="heat")["products"] == ["N2O", "H2O"]        # never (NH4)2O
+    assert W.smell_of(C.react("Mg", "HCl")) is None                                 # hydrogen has no smell
+    lab = W._lab(C.react("S", "O2"), ["sulphur", "oxygen"], {})
+    assert lab["lab"]["smell"]["name"] == "sulphur dioxide" and any("struck match" in o for o in lab["observations"])

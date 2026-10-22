@@ -2486,11 +2486,11 @@ CARD_STEPS = ("teaser", "question", "kicd", "answer")
 
 def series_steps(q: dict[str, Any], *, ready_only: bool = False) -> list[str]:
     """A question's series in order — teaser, question, KICD page, answer, then
-    (a chemistry item) its step pictures and the steps animated, then the video.
+    (a chemistry item) the steps animated, then the video.
     `ready_only`: only the step pictures already made (for posting at once)."""
     from . import social_cards
 
-    chem = social_cards.chem_steps(q)
+    chem = social_cards.series_chem_steps(q)
     if ready_only and chem:
         chem = [c for c in chem if social_cards.status(str(q.get("question_id") or ""), c, q).get("status") == "ready"]
     return [*CARD_STEPS, *chem, "walkthrough"]
@@ -2502,7 +2502,7 @@ def _with_steps(q: dict[str, Any], run: tuple[str, ...]) -> list[str]:
 
     if "answer" not in run:
         return list(run)
-    chem = social_cards.chem_steps(q)
+    chem = social_cards.series_chem_steps(q)
     k = run.index("answer") + 1
     return [*run[:k], *chem, *run[k:]]
 
