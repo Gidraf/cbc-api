@@ -45,3 +45,38 @@ def test_the_pictures_become_comments_and_the_cards_show_them(monkeypatch) -> No
     assert X.comments("x", q) == [{"text": "at the bench", "image_url": "u1"}, {"text": "balanced", "image_url": "u2"}]
     assert social_cards._chem_figure(q, "question") == "u0" and social_cards._chem_figure(q, "answer") == "u2"
     assert social_cards._chem_figure({"question_id": "y"}, "question") == ""
+
+
+def _made(chem: dict) -> list[dict]:
+    sc = _scenes(chem)
+    return [{**m, "url": f"u{k}"} for k, m in enumerate(X.moments(sc, [5.0] * len(sc)))]
+
+
+def test_the_answer_card_shows_the_step_the_question_asks_about() -> None:
+    q = {"question_text": "Sugar, tetrachloromethane and water are poured into a separating funnel. Which liquid forms the lower layer?",
+         "chemistry": {"separate": ["sugar", "tetrachloromethane", "water"], "focus": "layer"}}
+    assert X.pick_for(q, _made(q["chemistry"]), "answer")["method"] == "separating_funnel"     # not the crystallisation after it
+    q = {"question_text": "What is the residue?", "chemistry": {"separate": ["iron filings", "sand", "salt"], "focus": "residue"}}
+    assert X.pick_for(q, _made(q["chemistry"]), "answer")["method"] == "filtration"
+    q = {"question_text": "Why can heating separate a mixture of iodine and sand?", "chemistry": {"separate": ["iodine", "sand"], "focus": "why"}}
+    assert X.pick_for(q, _made(q["chemistry"]), "answer")["method"] == "sublimation"
+    q = {"question_text": "In what order?", "chemistry": {"separate": ["iron filings", "sand", "salt"], "focus": "order"}}
+    assert X.pick_for(q, _made(q["chemistry"]), "answer", [{"jpg": "grid.jpg"}])["url"] == "grid.jpg"   # every step
+    q = {"question_text": "Which is the balanced equation?", "chemistry": {"reactants": ["Zn", "HCl"], "focus": "balancing"}}
+    assert X.pick_for(q, _made(q["chemistry"]), "answer")["scene"] == "chem_equation"
+
+
+def test_the_steps_go_four_to_a_picture_evenly() -> None:
+    ms = [{"role": "step"}] * 5
+    assert [len(g) for g in X._groups(ms)] == [3, 2]
+    assert [len(g) for g in X._groups([{"role": "step"}] * 8)] == [4, 4]
+    assert X._groups([{"role": "setup"}, {"role": "step"}]) == []                     # one step needs no grid
+
+
+def test_the_step_pictures_lead_the_comments(monkeypatch) -> None:
+    fake = {"status": "ready", "grids": [{"jpg": "g.jpg", "gif": "g.gif"}],
+            "stills": [{"role": "step", "caption": "filter", "url": "u1", "scene": "chem_separation"}]}
+    monkeypatch.setattr(X, "status", lambda qid, q: fake)
+    got = X.comments("x", {"chemistry": {"separate": ["sand", "water"]}})
+    assert [c["image_url"] for c in got] == ["g.jpg", "g.gif", "u1"]
+    assert got[0]["text"].startswith("🧩") and got[1]["text"].startswith("🎞") and got[2]["text"] == "filter"
