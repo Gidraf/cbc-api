@@ -572,7 +572,8 @@ def next_for_poster(now: datetime | None = None, *, platform: str = "", post_id:
                         if str(chosen.get("format") or "video") == "photo":
                             from . import social_cards
 
-                            social_cards.enqueue(chosen["question_id"], queued_by="poster")
+                            social_cards.enqueue(chosen["question_id"], queued_by="poster",
+                                                 on_demand=chosen.get("created_by") == POST_NOW)
                         else:
                             social.enqueue(chosen["question_id"], queued_by="poster")
                     except Exception as exc:  # noqa: BLE001
@@ -1025,6 +1026,33 @@ def hand_when_made(question_id: str, *, now: datetime | None = None) -> int | No
     if not pull_poster():
         return None                          # the server poster takes due posts in its own round
     return queue_command("run_now", "facebook", pid, by=POST_NOW, options={"share": "feed", "groups": []})
+
+
+def hand_cards_when_made(question_id: str, *, now: datetime | None = None) -> list[int]:
+    """A question's cards someone pressed Post now on before they were made:
+    now they are, each goes to the poster at once, in its series' order.
+    Only Post now's own posts, never a booking's."""
+    from ..infra.db import fetch_all
+    from . import social_cards
+    from .whiteboard import load
+
+    now = now or datetime.now(timezone.utc)
+    rows = fetch_all("""SELECT post_id, step FROM social_posts
+                        WHERE question_id = :q AND COALESCE(format, 'video') = 'photo' AND created_by = :by
+                          AND handed_at IS NULL AND posted_at IS NULL AND status = 'planned'
+                          AND scheduled_for BETWEEN :old AND :soon
+                        ORDER BY scheduled_for""",
+                     {"q": question_id, "by": POST_NOW, "old": now - timedelta(hours=12),
+                      "soon": now + timedelta(minutes=5)}) or []
+    if not rows or not pull_poster():
+        return []
+    q = load(question_id)
+    out = []
+    for r in rows:
+        if social_cards.status(question_id, str(r["step"] or ""), q).get("status") != "ready":
+            break                            # in order: a later card never goes before an earlier one
+        out.append(queue_command("run_now", "facebook", r["post_id"], by=POST_NOW, options={"share": "feed", "groups": []}))
+    return out
 
 
 # ── reconciling: every post found on the profile, matched to its booking ─────
@@ -2538,11 +2566,12 @@ def post_card(question_id: str, step: str, *, now: datetime | None = None) -> di
     _plan_step(q, "facebook", step, now, POST_NOW)
     execute("UPDATE social_posts SET status = 'planned', attempts = 0 WHERE post_id = :id", {"id": pid})
     card = social_cards.status(question_id, step, q)
-    if card.get("status") != "ready" and social_cards.CHEM_STEP.match(step):
-        # The step pictures take a minute or two in the worker (an animation is photographed frame by frame).
-        social_cards.enqueue(question_id, queued_by=POST_NOW)
+    if card.get("status") != "ready" and (social_cards.CHEM_STEP.match(step) or social_cards.animated(q, step)):
+        # Made in the worker (an animation is photographed frame by frame): on the
+        # standby worker, ahead of the queue — and posted the moment it is made.
+        social_cards.enqueue(question_id, queued_by=POST_NOW, on_demand=True)
         return {"ok": False, "post_id": pid, "making": True,
-                "error": "Its step pictures are being made — press Post again in two or three minutes."}
+                "error": "Its pictures are being made now, ahead of the queue — it posts itself the moment they are ready."}
     if card.get("status") != "ready":
         try:
             card = social_cards.render(question_id, step, q)
@@ -2573,6 +2602,12 @@ def post_series_now(question_id: str, *, now: datetime | None = None) -> dict[st
         steps.append(step)
     if not ids:
         return {"ok": False, "error": "Every part of its series is out already."}
+    from . import social_cards
+
+    try:                                    # what is not made yet: made now, and handed on when made
+        social_cards.enqueue(question_id, queued_by=POST_NOW, on_demand=True)
+    except Exception as exc:  # noqa: BLE001
+        logger.info("Cards for %s not queued: %s", question_id, exc)
     return {"ok": True, "post_ids": ids, "steps": steps}
 
 

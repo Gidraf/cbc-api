@@ -182,10 +182,11 @@ def dispatch(job_id: str) -> str:
             from ..tasks import run_job
 
             queue = render_queue()
-            if queue and _kind_of(job_id) in RENDER_KINDS and _on_demand(job_id):
+            kind = _kind_of(job_id)
+            if queue and (kind in RENDER_KINDS or kind == "social_card") and _on_demand(job_id):
                 # Asked for on the spot: the standby worker that does nothing else.
                 run_job.apply_async((job_id,), queue=render_now_queue())
-            elif queue and _kind_of(job_id) in RENDER_KINDS:
+            elif queue and kind in RENDER_KINDS:
                 # Videos go to the render worker: as many at once as it has cores
                 # for, and never in line behind content generation.
                 run_job.apply_async((job_id,), queue=queue)
@@ -854,7 +855,10 @@ def redispatch_stranded() -> int:
         SELECT job_id FROM jobs
         WHERE status = 'queued' AND started_at IS NULL
           AND created_at < NOW() - (:minutes * INTERVAL '1 minute')
-        ORDER BY created_at ASC LIMIT 200
+        -- Asked for on the spot first, then the quick jobs: hundreds of queued
+        -- videos must not keep a card waiting past the limit for ever.
+        ORDER BY (payload->>'on_demand' = 'true') DESC NULLS LAST, (kind IN ('social', 'video', 'devcast')), created_at ASC
+        LIMIT 200
         """,
         {"minutes": STRANDED_MINUTES},
     ) or []
