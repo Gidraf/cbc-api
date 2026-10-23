@@ -42,9 +42,30 @@ def test_post_now_of_a_step_card_not_made_yet_has_it_made(monkeypatch) -> None:
     monkeypatch.setattr(db, "execute", lambda sql, p=None: None)
     monkeypatch.setattr(se, "_plan_step", lambda *a, **k: None)
     monkeypatch.setattr(social_cards, "status", lambda qid, step, q=None: {"status": "none"})
-    monkeypatch.setattr(social_cards, "enqueue", lambda qid, queued_by="": queued.append(qid))
+    monkeypatch.setattr(social_cards, "enqueue", lambda qid, queued_by="", on_demand=False: queued.append((qid, on_demand)))
     r = se.post_card("q1", "steps1")
-    assert not r["ok"] and r["making"] and queued == ["q1"]
+    assert not r["ok"] and r["making"] and queued == [("q1", True)]             # ahead of the queue
+    assert "posts itself" in r["error"]
+    r = se.post_card("q1", "answer")                                             # an animated card: the worker's too
+    assert r["making"] and queued[-1] == ("q1", True)
+
+
+def test_cards_made_after_post_now_go_out_in_order(monkeypatch) -> None:
+    import app.infra.db as db
+    import app.services.whiteboard as wb
+
+    rows = [{"post_id": "p-teaser", "step": "teaser"}, {"post_id": "p-question", "step": "question"},
+            {"post_id": "p-answer", "step": "answer"}]
+    ready = {"teaser", "question"}
+    sent = []
+    monkeypatch.setattr(db, "fetch_all", lambda sql, p=None: rows)
+    monkeypatch.setattr(wb, "load", lambda qid: Q)
+    monkeypatch.setattr(se, "pull_poster", lambda: {"poster_id": "mac"})
+    monkeypatch.setattr(social_cards, "status", lambda qid, step, q=None: {"status": "ready" if step in ready else "none"})
+    monkeypatch.setattr(se, "queue_command", lambda a, p, pid, by="", options=None: sent.append(pid) or len(sent))
+    assert se.hand_cards_when_made("q1") == [1, 2] and sent == ["p-teaser", "p-question"]   # never the answer first
+    monkeypatch.setattr(se, "pull_poster", lambda: None)
+    assert se.hand_cards_when_made("q1") == []
 
 
 def test_a_chemistry_items_teaser_question_and_answer_are_animated(monkeypatch) -> None:

@@ -407,8 +407,10 @@ def render(question_id: str, step: str, q: dict[str, Any] | None = None) -> dict
     return status(question_id, step, q)
 
 
-def enqueue(question_id: str, *, queued_by: str = "cards") -> dict[str, Any]:
-    """Queue the cards a question does not have yet."""
+def enqueue(question_id: str, *, queued_by: str = "cards", on_demand: bool = False) -> dict[str, Any]:
+    """Queue the cards a question does not have yet. `on_demand` (Post now):
+    on the standby worker, ahead of the queue — never behind the day's videos."""
+    from ..infra.db import execute, fetch_one
     from . import job_queue
 
     q = _q(question_id)
@@ -419,9 +421,20 @@ def enqueue(question_id: str, *, queued_by: str = "cards") -> dict[str, Any]:
         chem_ready = chem_stills.status(question_id, q)["status"] == "ready"
     if chem_ready and all(status(question_id, s, q)["status"] == "ready" for s in CARDS):
         return {"status": "ready"}
+    waiting = fetch_one("""SELECT job_id, status FROM jobs WHERE kind = :k AND status IN ('queued', 'running')
+                           AND payload->>'question_id' = :q ORDER BY created_at DESC LIMIT 1""",
+                        {"k": JOB_KIND, "q": question_id})
+    if waiting:
+        if on_demand and waiting["status"] == "queued":
+            # Already waiting: moved to the standby worker, first.
+            execute("""UPDATE jobs SET payload = payload || '{"on_demand": true, "priority": 50}'::jsonb
+                       WHERE job_id = :id AND status = 'queued'""", {"id": waiting["job_id"]})
+            job_queue.dispatch(waiting["job_id"])
+        return {"status": waiting["status"], "job_id": waiting["job_id"]}
     link = q.get("curriculum") or {}
     job = job_queue.enqueue(JOB_KIND, str(link.get("grade") or ""), str(link.get("subject") or ""),
-                            {"artifact_id": question_id, "question_id": question_id},
+                            {"artifact_id": question_id, "question_id": question_id,
+                             **({"on_demand": True, "priority": 50} if on_demand else {})},
                             strand=str(link.get("strand") or ""), sub_strand=str(link.get("sub_strand") or ""),
                             queued_by=queued_by)
     job_queue.dispatch(job.job_id)          # the render runs in the worker, not in the API
@@ -443,6 +456,12 @@ def run_job(job: dict[str, Any]) -> dict[str, Any]:
         except Exception as exc:  # noqa: BLE001
             logger.warning("Chemistry stills for %s failed: %s", qid, exc)
     made = {step: render(qid, step, q)["status"] for step in CARDS}
+    try:                                    # Post now pressed before they were made: out now
+        from . import social_export
+
+        social_export.hand_cards_when_made(qid)
+    except Exception as exc:  # noqa: BLE001
+        logger.info("Cards of %s not handed on: %s", qid, exc)
     return {"status": "done", "question_id": qid, "cards": made, **({"stills": stills} if stills else {})}
 
 
