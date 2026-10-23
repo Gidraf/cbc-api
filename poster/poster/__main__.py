@@ -179,8 +179,12 @@ async def _comment_gif(page: Any, post: dict[str, Any]) -> None:
     try:
         gif = await cbc.download(post["comment_image_url"], _pic_name(f"gif-{post['post_id']}", post["comment_image_url"]))
         await asyncio.sleep(15)                       # a moment for the post to show on the profile
-        await fb_comments.comment(page, find=words[:60], url="", comments=[str(post.get("comment_text") or "▶️")],
-                                  also=[words[60:120]] if len(words) > 80 else [], images=[gif])
+        URGENT["shield"] = True                       # part of this post: the next command waits for it
+        try:
+            await fb_comments.comment(page, find=words[:60], url="", comments=[str(post.get("comment_text") or "▶️")],
+                                      also=[words[60:120]] if len(words) > 80 else [], images=[gif])
+        finally:
+            URGENT["shield"] = False
         count("comments")
     except Exception as exc:  # noqa: BLE001
         log.info("The photo %s is out; its animated comment failed: %s", post.get("post_id"), _why(exc))

@@ -44,7 +44,8 @@ class Yielded(Exception):
 
 
 def yield_point() -> None:
-    if URGENT["n"] > 0:
+    # "shield": the finishing touch of a post in hand (its animated comment) is not background work.
+    if URGENT["n"] > 0 and not URGENT.get("shield"):
         raise Yielded("A command from the console came first.")
 
 
