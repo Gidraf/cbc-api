@@ -767,8 +767,9 @@ async def do_dry_run(platform: str = "", post_id: str = "") -> dict[str, Any]:
 
 
 def _pic_name(stem: str, url: str) -> str:
-    """A picture's file name with its own kind — a GIF stays a .gif, so Facebook plays it."""
-    return stem + (".gif" if url.lower().split("?")[0].endswith(".gif") else ".jpg")
+    """A picture's file name with its own kind — a GIF stays a .gif, an animated card's video an .mp4."""
+    ext = url.lower().split("?")[0].rsplit(".", 1)[-1]
+    return stem + "." + (ext if ext in ("gif", "mp4") else "jpg")
 
 
 async def make_card(question_id: str, step: str) -> None:
