@@ -447,6 +447,52 @@ def enqueue(question_id: str, *, queued_by: str = "cards", on_demand: bool = Fal
     return {"status": "queued", "job_id": job.job_id}
 
 
+def animations(question_id: str, q: dict[str, Any] | None = None) -> str:
+    """An item's animated cards: "ready" (every one made), "making" (its job queued or
+    running), "none" (to make) or "" (not an animated item)."""
+    from ..infra.db import fetch_one
+
+    q = q or _q(question_id)
+    steps = [s for s in CARDS if animated(q, s)]
+    if not steps:
+        return ""
+    if all(status(question_id, s, q)["status"] == "ready" for s in steps):
+        return "ready"
+    busy = fetch_one("""SELECT 1 AS b FROM jobs WHERE kind = :k AND status IN ('queued', 'running')
+                        AND payload->>'question_id' = :q LIMIT 1""", {"k": JOB_KIND, "q": question_id})
+    return "making" if busy else "none"
+
+
+def remake(question_id: str, *, by: str = "remake", steps: bool = True) -> dict[str, Any]:
+    """Make an item's animations again from scratch: its cards (and, `steps`, its
+    step pictures and clips) thrown away and made anew on the standby worker —
+    an older item gets today's look."""
+    from ..infra.storage import object_storage
+    from .social import brand
+
+    q = _q(question_id)
+    gone = 0
+    for step in CARDS:
+        name = object_name(question_id, step, _key(q, step, brand()))
+        for ext in (".jpg", ".gif", ".mp4"):
+            try:
+                gone += bool(object_storage.remove_object(name[:-4] + ext))
+            except Exception:  # noqa: BLE001
+                pass
+    if steps and isinstance(q.get("chemistry"), dict):
+        from . import chem_stills
+
+        st = chem_stills.status(question_id, q)
+        names = [s["object_name"] for s in st.get("stills") or []] + [s["clip_name"] for s in st.get("stills") or []] + \
+                [g[f"{e}_name"] for g in st.get("grids") or [] for e in ("jpg", "mp4", "gif")]
+        for n in names:
+            try:
+                gone += bool(object_storage.remove_object(n))
+            except Exception:  # noqa: BLE001
+                pass
+    return {**enqueue(question_id, queued_by=by, on_demand=True), "removed": gone}
+
+
 def run_job(job: dict[str, Any]) -> dict[str, Any]:
     qid = str((job.get("payload") or {}).get("question_id") or "")
     if not qid:

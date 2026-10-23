@@ -106,3 +106,26 @@ def test_an_animated_card_posts_its_picture_and_comments_its_gif(monkeypatch) ->
     assert (a["still_url"], a["gif_url"]) == ("g0.jpg", "g0.gif")
     assert "gif_url" not in social_cards.status("q1", "steps0", Q)                  # a still card: no comment GIF
     assert social_cards.gif_comment("anim0").startswith("▶️ Every step") and social_cards.gif_comment("teaser").startswith("▶️ Breaking")
+
+
+def test_an_older_item_can_have_its_animations_made_again(monkeypatch) -> None:
+    import app.infra.db as db
+    import app.infra.storage as st
+
+    removed, queued = [], []
+    monkeypatch.setattr(social_cards, "_q", lambda qid: Q)
+    monkeypatch.setattr(st.object_storage, "remove_object", lambda n: removed.append(n) or True)
+    monkeypatch.setattr(chem_stills, "status", lambda qid, q: {
+        "stills": [{"object_name": "s0.jpg", "clip_name": "s0.mp4"}],
+        "grids": [{"jpg_name": "g.jpg", "mp4_name": "g.mp4", "gif_name": "g.gif"}]})
+    monkeypatch.setattr(social_cards, "enqueue", lambda qid, queued_by="", on_demand=False: queued.append(on_demand) or {"status": "queued"})
+    r = social_cards.remake("q1")
+    assert r["status"] == "queued" and queued == [True]                          # on the standby worker
+    assert {"s0.jpg", "s0.mp4", "g.gif"} <= set(removed) and any(n.endswith("answer-" + n.split("answer-")[-1]) for n in removed if "answer-" in n)
+    # its state for the list: made, being made, or to make
+    monkeypatch.setattr(social_cards, "status", lambda qid, step, q=None: {"status": "none"})
+    monkeypatch.setattr(db, "fetch_one", lambda sql, p=None: {"b": 1})
+    assert social_cards.animations("q1", Q) == "making"
+    monkeypatch.setattr(db, "fetch_one", lambda sql, p=None: None)
+    assert social_cards.animations("q1", Q) == "none"
+    assert social_cards.animations("m1", {"question_text": "2 + 2?"}) == ""     # maths: not animated

@@ -445,8 +445,18 @@ def chem_questions(kind: str = Query("", max_length=20), search: str = Query("",
                                                        str(link.get("subject") or ""), str(link.get("sub_strand") or "")) if x),
                       "video": st.get("status"), "video_url": st.get("url") or "", "thumbnail_url": st.get("thumbnail_url") or "",
                       "post": ("out" if p.get("posted_at") or p.get("handed_at") else "booked" if p.get("scheduled_for") else ""),
-                      "booked_for": str(p.get("scheduled_for") or ""), "url": p.get("url") or ""})
+                      "booked_for": str(p.get("scheduled_for") or ""), "url": p.get("url") or "",
+                      "animations": _animations_of(r["question_id"], q)})
     return {"total": total, "offset": offset, "items": items}
+
+
+def _animations_of(question_id: str, q: dict[str, Any]) -> str:
+    from ..services import social_cards
+
+    try:
+        return social_cards.animations(question_id, q)
+    except Exception:  # noqa: BLE001
+        return ""
 
 
 @router.get("/chem/autopilot")
@@ -1410,11 +1420,58 @@ def make_social_cards(payload: MakeCards, auth: AuthContext = Depends(ANY)) -> d
 
 
 @router.post("/items/{question_id}/cards")
-def make_question_cards(question_id: str, auth: AuthContext = Depends(ANY)) -> dict[str, Any]:
+def make_question_cards(question_id: str, fresh: bool = Query(False), auth: AuthContext = Depends(ANY)) -> dict[str, Any]:
+    """Its cards made (on the standby worker for an animated item); `fresh`: thrown away and made again."""
     from ..services import social_cards
 
     _may_make_videos(auth)
-    return social_cards.enqueue(question_id, queued_by=str(getattr(auth, "subject", "") or "cards"))
+    by = str(getattr(auth, "subject", "") or "cards")
+    if fresh:
+        return social_cards.remake(question_id, by=by)
+    q = social_cards._q(question_id)
+    return social_cards.enqueue(question_id, queued_by=by, on_demand=bool(social_cards.animations(question_id, q)))
+
+
+class RemakeAnimations(BaseModel):
+    limit: int = Field(10, ge=1, le=50)
+    kind: str = Field("", max_length=20)
+    fresh: bool = False                       # also those already in today's look
+
+
+@router.post("/chem/animations")
+def chem_remake_animations(body: RemakeAnimations, auth: AuthContext = Depends(ANY)) -> dict[str, Any]:
+    """The older chemistry items — those with a video already — given their animated cards (and
+    step animations) in today's look, the next `limit` of them, on the standby worker one by one."""
+    _may_make_videos(auth)
+    from ..infra.db import fetch_all
+    from ..services import question_rows, social, social_cards
+
+    rows = fetch_all("""SELECT * FROM question_dna WHERE provenance->>'written_by' = 'chemistry engine' AND status = 'approved'
+                          AND superseded_by IS NULL AND (:model = '' OR provenance->>'model' = :model)
+                        ORDER BY updated_at DESC LIMIT 600""", {"model": f"chemistry-{body.kind}" if body.kind else ""}) or []
+    by = str(getattr(auth, "subject", "") or "remake")
+    done, skipped, looked = [], 0, 0
+    for r in rows:
+        if len(done) >= body.limit:
+            break
+        q = question_rows.flatten(r)
+        qid = str(r["question_id"])
+        try:
+            if social.status(qid, q).get("status") != "ready":
+                continue                                   # older items are those with a video made
+            looked += 1
+            state = social_cards.animations(qid, q)
+            if state == "making" or (state == "ready" and not body.fresh):
+                skipped += 1
+                continue
+            (social_cards.remake if body.fresh else social_cards.enqueue)(qid, **({"by": by} if body.fresh else
+                                                                                 {"queued_by": by, "on_demand": True}))
+            done.append(qid)
+        except Exception as exc:  # noqa: BLE001
+            logger.info("No animations for %s: %s", qid, exc)
+    return {"queued": len(done), "question_ids": done, "already": skipped,
+            "message": (f"{len(done)} older item(s) getting their animations now, one by one on the standby worker "
+                        f"(about 2 minutes each)." if done else "Every older item already has its animations.")}
 
 
 @router.get("/social/photo-posts")

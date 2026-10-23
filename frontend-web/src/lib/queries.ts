@@ -4100,14 +4100,30 @@ export function useChemReact(mix: ChemMix | null) {
 /** The mix on the whiteboard, voiced in the science voice. */
 /** The chemistry questions in the bank, with their video and post state — to make and post now. */
 export type ChemQuestionRow = { question_id: string; question_text: string; kind: string; focus: string; topic: string;
-  video: string; video_url: string; thumbnail_url: string; post: "" | "booked" | "out"; booked_for: string; url: string };
+  video: string; video_url: string; thumbnail_url: string; post: "" | "booked" | "out"; booked_for: string; url: string;
+  /** Its animated cards: "ready", "making", "none" (to make) or "" (not animated). */
+  animations?: "" | "ready" | "making" | "none" };
 export function useChemQuestions(kind: string, search: string, offset: number) {
   const api = useApi();
   return useQuery({
     queryKey: ["chem-questions", kind, search, offset],
     queryFn: () => api<{ total: number; offset: number; items: ChemQuestionRow[] }>(
       `/api/v1/play/chem/questions?${new URLSearchParams({ kind, search, offset: String(offset), limit: "20" })}`),
-    refetchInterval: (q) => ((q.state.data?.items || []).some((r) => ["queued", "running"].includes(r.video)) ? 8000 : false),
+    refetchInterval: (q) => ((q.state.data?.items || []).some((r) => ["queued", "running"].includes(r.video) || r.animations === "making") ? 8000 : false),
+  });
+}
+
+/** An item's animated cards made again from scratch (today's look), on the standby worker. */
+export function useRemakeAnimations() {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { question_id?: string; limit?: number; kind?: string; fresh?: boolean }) =>
+      v.question_id
+        ? api<any>(`/api/v1/play/items/${encodeURIComponent(v.question_id)}/cards?fresh=true`, { method: "POST" })
+        : api<{ queued: number; already: number; message: string }>("/api/v1/play/chem/animations", {
+            method: "POST", body: JSON.stringify({ limit: v.limit ?? 10, kind: v.kind ?? "", fresh: !!v.fresh }) }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["chem-questions"] }); qc.invalidateQueries({ queryKey: ["library"] }); },
   });
 }
 
