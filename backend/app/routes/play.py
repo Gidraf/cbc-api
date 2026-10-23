@@ -1958,8 +1958,9 @@ def poster_card(question_id: str = Query(..., max_length=200), step: str = Query
     st = social_cards.status(question_id, step, q)
     if st.get("status") == "ready":
         return {"status": "ready", "url": st["url"]}
-    if social_cards.CHEM_STEP.match(step):
-        social_cards.enqueue(question_id, queued_by="poster")      # made in the worker; nothing for the Mac to draw
+    if social_cards.CHEM_STEP.match(step) or social_cards.animated(q, step):
+        # Made in the worker (an animation is frame by frame, with ffmpeg): nothing for the Mac to draw.
+        social_cards.enqueue(question_id, queued_by="poster")
         return {"status": "none", "html": ""}
     return {"status": "none", "html": social_cards.page(q, step, social.brand()),
             "width": social_cards.WIDTH, "height": social_cards.HEIGHT}
@@ -1980,6 +1981,10 @@ async def poster_card_upload(question_id: str = Form(..., max_length=200), step:
     if not data.startswith(b"\xff\xd8") or len(data) > 4_000_000:
         raise_api_error("VALIDATION_FAILED", "A card is a JPEG under 4 MB.")
     q = load(question_id)
+    if social_cards.animated(q, step):
+        # An animated card is the worker's (a still from the Mac is never kept as its GIF).
+        social_cards.enqueue(question_id, queued_by="poster")
+        return social_cards.status(question_id, step, q)
     name = social_cards.status(question_id, step, q)["object_name"]
     object_storage.save_bytes(name, data, "image/jpeg")
     return social_cards.status(question_id, step, q)

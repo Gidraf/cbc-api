@@ -79,7 +79,7 @@ def _key(q: dict[str, Any], step: str, b: dict[str, Any]) -> str:
     letter, text = _answer(q)
     basis = "|".join([VERSION, step, str(q.get("question_text") or ""), str(q.get("stimulus_context") or ""),
                       repr(q.get("options") or []), letter, text, repr(sorted(b.items())), _chem_figure(q, step),
-                      ("anim1" + _chem_clip(q, step)) if animated(q, step) else ""])
+                      ("anim2" + _chem_clip(q, step)) if animated(q, step) else ""])   # anim2: past any still a Mac kept as a GIF
     return hashlib.sha256(basis.encode()).hexdigest()[:16]
 
 
