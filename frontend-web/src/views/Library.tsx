@@ -3,7 +3,7 @@ import { useSearchParams } from "react-router-dom";
 import { Badge, Button, Card, ErrorNotice, Input, LoadingBlock, PageHeader, Select, Stack, useToast } from "../ui/components";
 import { MathText } from "../ui/MathBlock";
 import {
-  useBoostPost, useLibrary, useLibraryQuestion, useLibraryTree, useMakeSocial, usePostAction, usePosterCampaigns, usePostQuestion,
+  useBoostPost, useLibrary, useLibraryQuestion, useLibraryTree, useMakeSocial, usePostAction, usePosterCampaigns, usePostQuestion, useRemakeAnimations,
   type LibraryFilters, type LibraryItem, type LibraryPost, type LibraryQuestion,
 } from "../lib/queries";
 
@@ -263,7 +263,9 @@ const CARD_STEPS: [string, string][] = [["teaser", "A question is coming"], ["qu
  *  or the whole series from now, in order, a posting gap apart. */
 function Cards({ q }: { q: LibraryQuestion }) {
   const post = usePostQuestion();
+  const remake = useRemakeAnimations();
   const toast = useToast();
+  const animated = Object.keys(q.cards || {}).some((k) => /^anim\d$/.test(k));
   const [share, setShare] = React.useState<"feed" | "groups">("feed");
   const out = new Set(q.posts.filter((p) => p.format === "photo" && p.handed_at).map((p) => p.step || ""));
   // A chemistry item's step pictures (up to four steps on each, then the steps animated) follow the answer.
@@ -284,6 +286,12 @@ function Cards({ q }: { q: LibraryQuestion }) {
               <option value="feed">To the feed</option>
               <option value="groups">Feed + next groups</option>
             </Select>
+            {animated && (
+              <Button size="sm" variant="ghost" disabled={remake.isPending}
+                      title="Its animated cards and step animations made again, from scratch — today's look (about 2 minutes)"
+                      onClick={() => remake.mutate({ question_id: q.question_id }, {
+                        onSuccess: () => toast("Making its animations again now on the standby worker — about 2 minutes.", "ok"),
+                        onError: (e) => toast(String((e as Error).message || e), "danger") })}>🎞️ Make the animations again</Button>)}
             <Button size="sm" variant="primary" disabled={post.isPending} onClick={() => go("series")}
                     title="Each card, then the video — now, one after the other (the Mac makes any card not made yet)">Post the series now</Button>
           </Stack>}>

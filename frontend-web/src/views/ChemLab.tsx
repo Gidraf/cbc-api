@@ -1,7 +1,7 @@
 import React from "react";
 import { Badge, Button, Card, EmptyState, ErrorNotice, Field, Input, LoadingBlock, PageHeader, Select, Stack, useToast } from "../ui/components";
 import { gradeOptionLabel, subjectOptionLabel, useChemAutopilot, useChemAutopilotPlan, useChemBank, useChemBankSummary,
-         useChemQuestions, useMakeSocial, usePostQuestion, useChemLabHtml, useChemReact, useChemSubstances,
+         useChemQuestions, useMakeSocial, usePostQuestion, useRemakeAnimations, useChemLabHtml, useChemReact, useChemSubstances,
          useGrades, useStoredStructure, useSubjects, type ChemKind, type ChemMix } from "../lib/queries";
 import { AutoPost, BookSeries, Performance, SocialLibrary, VideoLibrary, WatchModal } from "./PlayArcade";
 import { MonthPlanner } from "./MonthPlanner";
@@ -312,6 +312,8 @@ const VIDEO_WORDS: Record<string, string> = { ready: "🎬 made", queued: "⏳ i
 
 /** Post now, without waiting for the calendar: the saved chemistry questions, each made on the standby
  *  worker ahead of the queue and posted — a video posts itself the moment it is made. */
+const ANIM_WORDS: Record<string, string> = { ready: "🎞️ animated", making: "🎞️ animating…", none: "🎞️ not animated yet" };
+
 function PostNow({ onWatch }: { onWatch: (qid: string) => void }) {
   const [kind, setKind] = React.useState("");
   const [search, setSearch] = React.useState("");
@@ -319,9 +321,18 @@ function PostNow({ onWatch }: { onWatch: (qid: string) => void }) {
   const list = useChemQuestions(kind, search, offset);
   const make = useMakeSocial();
   const post = usePostQuestion();
+  const remake = useRemakeAnimations();
   const toast = useToast();
   const [busy, setBusy] = React.useState<string>("");
   const rows = list.data?.items || [];
+  async function animate(qid?: string) {
+    setBusy(qid || "*");
+    try {
+      const r = await remake.mutateAsync(qid ? { question_id: qid } : { limit: 10, kind });
+      toast(qid ? "Making its animations again now on the standby worker — about 2 minutes." : String(r?.message || "Queued."), "ok");
+      list.refetch();
+    } catch (e) { toast(String((e as Error).message || e), "danger"); } finally { setBusy(""); }
+  }
   async function render(qid: string) {
     setBusy(qid);
     try { await make.mutateAsync({ questionId: qid, now: true }); toast("Rendering now on the standby worker — a few minutes.", "ok"); list.refetch(); }
@@ -356,6 +367,10 @@ function PostNow({ onWatch }: { onWatch: (qid: string) => void }) {
           </Select>
           <Input placeholder="Search the questions" value={search} onChange={(e) => { setSearch(e.target.value); setOffset(0); }} style={{ maxWidth: "18rem" }} />
           <Button size="sm" onClick={() => renderNext(5)} disabled={!rows.length}>🎬 Render the next 5 now</Button>
+          <Button size="sm" variant="ghost" disabled={busy === "*"} onClick={() => animate()}
+                  title="Older items (their video made already) given today's animated cards and step animations — the next 10">
+            🎞️ Animate 10 older ones
+          </Button>
           <span style={{ fontSize: "var(--text-sm)", color: "var(--ink-3)" }}>{list.data ? `${list.data.total.toLocaleString()} questions` : ""}</span>
         </Stack>
         {list.isLoading && <LoadingBlock rows={4} label="Loading the chemistry questions" />}
@@ -367,6 +382,7 @@ function PostNow({ onWatch }: { onWatch: (qid: string) => void }) {
               <div style={{ fontSize: "var(--text-sm)" }}>{r.question_text}</div>
               <div style={{ fontSize: "var(--text-xs)", color: "var(--ink-3)", display: "flex", gap: 8, flexWrap: "wrap" }}>
                 <span>{r.topic}</span><span>{VIDEO_WORDS[r.video] || r.video}</span>
+                {r.animations && <span>{ANIM_WORDS[r.animations]}</span>}
                 {r.post === "out" && <span>✅ posted{r.url ? <> · <a href={r.url} target="_blank" rel="noreferrer">open</a></> : null}</span>}
                 {r.post === "booked" && <span>📅 booked {r.booked_for.slice(0, 16).replace("T", " ")}</span>}
                 <a href={`/library?q=${encodeURIComponent(r.question_id)}`}>Library</a>
@@ -380,6 +396,10 @@ function PostNow({ onWatch }: { onWatch: (qid: string) => void }) {
               <Button size="sm" variant="primary" disabled={busy === r.question_id || r.post === "out"}
                       title={r.post === "out" ? "Posted already" : "Post the video now (made first if need be, then it posts itself)"}
                       onClick={() => send(r.question_id, "video")}>📤</Button>
+              {r.animations && (
+                <Button size="sm" variant="ghost" disabled={busy === r.question_id || r.animations === "making"}
+                        title="Make its animated cards and step animations again, from scratch (today's look)"
+                        onClick={() => animate(r.question_id)}>🎞️</Button>)}
               <Button size="sm" variant="ghost" disabled={busy === r.question_id}
                       title="The photo series now: its cards (with the animation's pictures), then the video"
                       onClick={() => send(r.question_id, "series")}>🖼️</Button>
