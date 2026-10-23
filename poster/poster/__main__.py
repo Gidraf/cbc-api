@@ -179,8 +179,12 @@ async def _comment_gif(page: Any, post: dict[str, Any]) -> None:
     try:
         gif = await cbc.download(post["comment_image_url"], _pic_name(f"gif-{post['post_id']}", post["comment_image_url"]))
         await asyncio.sleep(15)                       # a moment for the post to show on the profile
-        await fb_comments.comment(page, find=words[:60], url="", comments=[str(post.get("comment_text") or "▶️")],
-                                  also=[words[60:120]] if len(words) > 80 else [], images=[gif])
+        URGENT["shield"] = True                       # part of this post: the next command waits for it
+        try:
+            await fb_comments.comment(page, find=words[:60], url="", comments=[str(post.get("comment_text") or "▶️")],
+                                      also=[words[60:120]] if len(words) > 80 else [], images=[gif])
+        finally:
+            URGENT["shield"] = False
         count("comments")
     except Exception as exc:  # noqa: BLE001
         log.info("The photo %s is out; its animated comment failed: %s", post.get("post_id"), _why(exc))
@@ -763,8 +767,9 @@ async def do_dry_run(platform: str = "", post_id: str = "") -> dict[str, Any]:
 
 
 def _pic_name(stem: str, url: str) -> str:
-    """A picture's file name with its own kind — a GIF stays a .gif, so Facebook plays it."""
-    return stem + (".gif" if url.lower().split("?")[0].endswith(".gif") else ".jpg")
+    """A picture's file name with its own kind — a GIF stays a .gif, an animated card's video an .mp4."""
+    ext = url.lower().split("?")[0].rsplit(".", 1)[-1]
+    return stem + "." + (ext if ext in ("gif", "mp4") else "jpg")
 
 
 async def make_card(question_id: str, step: str) -> None:

@@ -131,13 +131,16 @@ def status(question_id: str, q: dict[str, Any]) -> dict[str, Any]:
     except Exception as exc:  # noqa: BLE001
         return {"status": "none", "stills": [], "grids": [], "reason": str(exc)}
     stills, made, want = [], 0, 0
+    moving = _clip_moments(q, ms)                       # only the cards' pictures move: their clips
     for k, m in enumerate(ms):
         name = object_name(question_id, key, k)
         clip = name[:-4] + ".mp4"                       # the moment's run-up, moving (for an animated card)
-        ok, has_clip = object_storage.object_exists(name), object_storage.object_exists(clip)
+        ok = object_storage.object_exists(name)
+        has_clip = k in moving and object_storage.object_exists(clip)
         made += ok + has_clip
-        want += 2
-        stills.append({**m, "object_name": name, "clip_name": clip, **({"url": public_object_url(name)} if ok else {}),
+        want += 1 + (k in moving)
+        stills.append({**m, "object_name": name, "clip_name": clip, "moving": k in moving,
+                       **({"url": public_object_url(name)} if ok else {}),
                        **({"clip": public_object_url(clip)} if has_clip else {})})
     grids = []
     for g, idx in enumerate(_groups(ms)):
@@ -217,7 +220,7 @@ def render(question_id: str, q: dict[str, Any]) -> dict[str, Any]:
     data, durations, ms, _ = _plan(q)
     doc = page(data, title="still", voice="en-GB", durations=durations, render=True)
     todo = [s for s in st["stills"] if "url" not in s]
-    clips_todo = [k for k, s in enumerate(st["stills"]) if "clip" not in s]
+    clips_todo = [k for k, s in enumerate(st["stills"]) if s.get("moving") and "clip" not in s]
     grids_todo = [g for g in st["grids"] if not all(g.get(e) for e in ("jpg", "mp4", "gif"))]
     ffmpeg = ffmpeg_binary()
     with sync_playwright() as p:
@@ -361,6 +364,18 @@ def pick_for(q: dict[str, Any], stills: list[dict[str, Any]], step: str,
         if hit:
             return hit
     return next((s for s in made if s["role"] == "result"), made[-1])
+
+
+def _clip_moments(q: dict[str, Any], ms: list[dict[str, Any]]) -> set[int]:
+    """The moments a card shows (the question card's set-up, the answer card's
+    step): the only ones photographed moving too."""
+    fake = [{**m, "url": str(k), "object_name": str(k)} for k, m in enumerate(ms)]
+    out = set()
+    for step in ("question", "answer"):
+        hit = pick_for(q, fake, step, None)
+        if hit and str(hit.get("object_name", "")).isdigit():
+            out.add(int(hit["object_name"]))
+    return out
 
 
 def card_image(question_id: str, q: dict[str, Any], step: str, *, moving: bool = False) -> str:

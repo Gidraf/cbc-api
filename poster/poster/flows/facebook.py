@@ -176,11 +176,12 @@ class Facebook(Flow):
             async with page.expect_file_chooser(timeout=20_000) as chooser:
                 await add.click()
             await (await chooser.value).set_files(image)
-        await first(page, [dialog.locator("img[src^='blob:'], img[src*='scontent']")], timeout=90,
+        # An animated card is a short video: its preview is a <video>, and it uploads before Post lights up.
+        await first(page, [dialog.locator("img[src^='blob:'], img[src*='scontent'], video")], timeout=90,
                     what="the photo's preview")
         await asyncio.sleep(1.5)
         post = dialog.get_by_role("button", name="Post", exact=True).last
-        await enabled(post, timeout=120)
+        await enabled(post, timeout=300 if image.endswith(".mp4") else 120)
         await check_for_human(page)
         self.destinations = ["feed"]
         if dry_run:

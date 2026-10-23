@@ -71,7 +71,7 @@ def test_cards_made_after_post_now_go_out_in_order(monkeypatch) -> None:
 def test_a_chemistry_items_teaser_question_and_answer_are_animated(monkeypatch) -> None:
     import app.infra.storage as st
 
-    monkeypatch.setattr(st.object_storage, "object_exists", lambda name: name.endswith(".gif"))
+    monkeypatch.setattr(st.object_storage, "object_exists", lambda name: name.endswith((".gif", ".mp4")))
     monkeypatch.setattr(st, "public_object_url", lambda name: "u/" + name)
     for step in ("teaser", "question", "answer"):
         assert social_cards.animated(Q, step)
@@ -99,6 +99,7 @@ def test_an_animated_card_posts_its_picture_and_comments_its_gif(monkeypatch) ->
     monkeypatch.setattr(st, "public_object_url", lambda name: "u/" + name)
     r = social_cards.status("q1", "answer", Q)
     assert r["url"].endswith(".gif") and r["gif_url"] == r["url"] and r["still_url"].endswith(".jpg")
+    assert r["mp4_url"].endswith(".mp4")                          # what goes out: Facebook plays a video
     grids = [{"jpg": "g0.jpg", "gif": "g0.gif", "jpg_name": "n0.jpg", "gif_name": "n0.gif"}]
     monkeypatch.setattr(chem_stills, "status", lambda qid, q: {"grids": grids, "stills": []})
     a = social_cards.status("q1", "anim0", Q)

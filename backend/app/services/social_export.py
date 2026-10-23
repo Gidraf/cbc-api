@@ -620,13 +620,15 @@ def next_for_poster(now: datetime | None = None, *, platform: str = "", post_id:
                     {"t": str(st.get("teacher") or ""), "m": bool(st.get("marketing")), "id": chosen["post_id"]})
         except Exception:  # noqa: BLE001
             pass
-    # An animated card: the post is its finished picture, the GIF its first comment (Facebook plays it there).
-    gif = str(st.get("gif_url") or "") if photo and st.get("still_url") else ""
+    # An animated card goes out as its short silent video (Facebook plays a video in the feed; a GIF
+    # posted as a photo it shows still). Without its video: the finished picture, the GIF as a comment.
+    mp4 = str(st.get("mp4_url") or "") if photo else ""
+    gif = "" if mp4 else str(st.get("gif_url") or "") if photo and st.get("still_url") else ""
     return {"post": {"post_id": chosen["post_id"], "platform": chosen["platform"], "question_id": chosen["question_id"],
                      "audience": audience,
                      "format": "photo" if photo else "video", "step": chosen.get("step") or "walkthrough",
                      "video_url": "" if photo else st["url"],
-                     "image_url": (st["still_url"] if gif else st.get("url")) if photo else "",
+                     "image_url": (mp4 or (st["still_url"] if gif else st.get("url"))) if photo else "",
                      "comment_image_url": gif,
                      "comment_text": _gif_words(chosen) if gif else "",
                      "thumbnail_url": None if photo else st.get("thumbnail_url"),

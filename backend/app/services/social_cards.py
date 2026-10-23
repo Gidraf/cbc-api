@@ -150,14 +150,16 @@ def status(question_id: str, step: str, q: dict[str, Any] | None = None) -> dict
         g = int(m.group(2))
         key = "jpg" if m.group(1) == "steps" else "gif"
         url = grids[g].get(key) if g < len(grids) else ""
-        extra = {"gif_url": url, "still_url": grids[g]["jpg"]} if url and key == "gif" and grids[g].get("jpg") else {}
+        extra = {"gif_url": url, "still_url": grids[g]["jpg"], **({"mp4_url": grids[g]["mp4"]} if grids[g].get("mp4") else {})} \
+            if url and key == "gif" and grids[g].get("jpg") else {}
         return {"status": "ready", "url": url, "object_name": grids[g][f"{key}_name"], **extra} if url else \
                {"status": "none", "object_name": grids[g][f"{key}_name"] if g < len(grids) else ""}
     name = object_name(question_id, step, _key(q, step, brand()))
     if animated(q, step):
-        gif = name[:-4] + ".gif"
-        if object_storage.object_exists(gif):
+        gif, mp4 = name[:-4] + ".gif", name[:-4] + ".mp4"
+        if object_storage.object_exists(gif) and object_storage.object_exists(mp4):
             return {"status": "ready", "url": public_object_url(gif), "object_name": gif, "gif_url": public_object_url(gif),
+                    "mp4_url": public_object_url(mp4),
                     **({"still_url": public_object_url(name)} if object_storage.object_exists(name) else {})}
         return {"status": "none", "object_name": gif}
     if object_storage.object_exists(name):
@@ -267,7 +269,7 @@ _ANIM_CSS = """<style>
  @keyframes slideR{from{transform:translateX(60%);opacity:0}to{transform:none;opacity:1}}
  @keyframes up{from{transform:translateY(40px);opacity:0}to{transform:none;opacity:1}}
  @keyframes fade{from{opacity:0}to{opacity:1}}
- @keyframes dim{from{opacity:1}to{opacity:.4}}
+ @keyframes dim{from{opacity:1}to{opacity:.72}}
  @keyframes reveal{from{clip-path:inset(0 100% 0 0)}to{clip-path:inset(0 0 0 0)}}
  @keyframes pop{0%{transform:scale(.6);opacity:0}70%{transform:scale(1.08);opacity:1}100%{transform:scale(1)}}
  @keyframes pulse{0%,100%{transform:scale(1)}50%{transform:scale(1.06)}}
@@ -292,6 +294,7 @@ _ANIM_CSS = """<style>
  .a-answer .topic,.a-answer .stem,.a-answer .ctx{animation:fade .5s 0s}
  .a-answer .opts li{animation:fade .4s calc(.3s + var(--i) * .12s)}
  .a-answer .opts li:not(.right){animation:fade .4s calc(.3s + var(--i) * .12s), dim .5s 1.3s}
+ /* the wrong choices step back, but stay readable */
  .a-answer .opts li.right{position:relative;background:rgba(255,255,255,.1);color:inherit;overflow:hidden;
                           animation:fade .4s calc(.3s + var(--i) * .12s), pulse .6s 2.4s}
  .a-answer .opts li.right::before{content:"";position:absolute;inset:0;background:ACCENT;transform-origin:left;z-index:-1;
@@ -306,8 +309,9 @@ _ANIM_CSS = """<style>
 </style>"""
 
 
-async def _shoot_animated(doc: str) -> tuple[bytes, bytes]:
-    """A card's 5 seconds, frame by frame, as a silent GIF (and its last frame as a still)."""
+async def _shoot_animated(doc: str) -> tuple[bytes, bytes, bytes]:
+    """A card's 5 seconds, frame by frame: (its last frame as a still, a silent GIF, a silent MP4 —
+    the MP4 is what goes out: Facebook plays a video in the feed, a GIF post it shows still)."""
     import subprocess
     import tempfile
     from pathlib import Path
@@ -346,19 +350,19 @@ async def _shoot_animated(doc: str) -> tuple[bytes, bytes]:
         finally:
             await context.close()
     if not ffmpeg:
-        return still, b""
+        return still, b"", b""
     with tempfile.TemporaryDirectory() as tmp:
         mp4, gif = Path(tmp) / "a.mp4", Path(tmp) / "a.gif"
         enc = subprocess.Popen([ffmpeg, "-y", "-loglevel", "error", "-f", "image2pipe", "-framerate", str(FPS), "-c:v", "mjpeg",
                                 "-i", "-", "-c:v", "libx264", "-pix_fmt", "yuv420p", str(mp4)], stdin=subprocess.PIPE)
-        for f in frames + [still] * int(FPS * 1.5):          # then it holds on the finished card
+        for f in frames + [still] * int(FPS * 2.5):          # then it holds on the finished card, to be read
             enc.stdin.write(f)  # type: ignore[union-attr]
         enc.stdin.close()  # type: ignore[union-attr]
         enc.wait(timeout=300)
         subprocess.run([ffmpeg, "-y", "-loglevel", "error", "-i", str(mp4), "-vf",
                         f"fps={FPS},scale=720:-1:flags=lanczos,split[a][b];[a]palettegen=max_colors=160[p];[b][p]paletteuse=dither=bayer:bayer_scale=4",
                         "-loop", "0", str(gif)], capture_output=True, timeout=300, check=False)
-        return still, (gif.read_bytes() if gif.exists() else b"")
+        return still, (gif.read_bytes() if gif.exists() else b""), (mp4.read_bytes() if mp4.exists() else b"")
 
 
 async def _shoot(doc: str) -> bytes:
@@ -397,8 +401,10 @@ def render(question_id: str, step: str, q: dict[str, Any] | None = None) -> dict
     if st["status"] == "ready":
         return st
     if animated(q, step):
-        still, gif = asyncio.run(_shoot_animated(page(q, step, brand(), animate=True)))
+        still, gif, mp4 = asyncio.run(_shoot_animated(page(q, step, brand(), animate=True)))
         object_storage.save_bytes(st["object_name"][:-4] + ".jpg", still, "image/jpeg")
+        if mp4:
+            object_storage.save_bytes(st["object_name"][:-4] + ".mp4", mp4, "video/mp4")
         if gif:
             object_storage.save_bytes(st["object_name"], gif, "image/gif")
         return status(question_id, step, q)
