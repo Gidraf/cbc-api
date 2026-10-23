@@ -79,7 +79,7 @@ def _key(q: dict[str, Any], step: str, b: dict[str, Any]) -> str:
     letter, text = _answer(q)
     basis = "|".join([VERSION, step, str(q.get("question_text") or ""), str(q.get("stimulus_context") or ""),
                       repr(q.get("options") or []), letter, text, repr(sorted(b.items())), _chem_figure(q, step),
-                      ("anim1" + _chem_clip(q, step)) if animated(q, step) else ""])
+                      ("anim2" + _chem_clip(q, step)) if animated(q, step) else ""])   # anim2: past any still a Mac kept as a GIF
     return hashlib.sha256(basis.encode()).hexdigest()[:16]
 
 
@@ -150,13 +150,14 @@ def status(question_id: str, step: str, q: dict[str, Any] | None = None) -> dict
         g = int(m.group(2))
         key = "jpg" if m.group(1) == "steps" else "gif"
         url = grids[g].get(key) if g < len(grids) else ""
-        return {"status": "ready", "url": url, "object_name": grids[g][f"{key}_name"]} if url else \
+        extra = {"gif_url": url, "still_url": grids[g]["jpg"]} if url and key == "gif" and grids[g].get("jpg") else {}
+        return {"status": "ready", "url": url, "object_name": grids[g][f"{key}_name"], **extra} if url else \
                {"status": "none", "object_name": grids[g][f"{key}_name"] if g < len(grids) else ""}
     name = object_name(question_id, step, _key(q, step, brand()))
     if animated(q, step):
         gif = name[:-4] + ".gif"
         if object_storage.object_exists(gif):
-            return {"status": "ready", "url": public_object_url(gif), "object_name": gif,
+            return {"status": "ready", "url": public_object_url(gif), "object_name": gif, "gif_url": public_object_url(gif),
                     **({"still_url": public_object_url(name)} if object_storage.object_exists(name) else {})}
         return {"status": "none", "object_name": gif}
     if object_storage.object_exists(name):
@@ -446,6 +447,21 @@ def run_job(job: dict[str, Any]) -> dict[str, Any]:
 
 
 # ── what each post says ──────────────────────────────────────────────────────
+
+# Facebook plays a GIF in a comment (a photo post may show it still): an
+# animated card goes out as its finished picture, its animation the first comment.
+GIF_COMMENTS = {"teaser": "▶️ Breaking — watch the question arrive 👇",
+                "question": "▶️ The question, animated — then pick your answer in the comments.",
+                "answer": "▶️ The answer, animated — watch it unfold."}
+
+
+def gif_comment(step: str) -> str:
+    """The words with an animated card's GIF in its post's first comment."""
+    m = CHEM_STEP.match(step)
+    if m:
+        return "▶️ Every step, animated — watch each one happen."
+    return GIF_COMMENTS.get(step, "▶️ Animated.")
+
 
 def caption(q: dict[str, Any], step: str, b: dict[str, Any] | None = None) -> str:
     from .grade_order import grade_label

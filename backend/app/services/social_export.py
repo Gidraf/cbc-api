@@ -619,15 +619,26 @@ def next_for_poster(now: datetime | None = None, *, platform: str = "", post_id:
                     {"t": str(st.get("teacher") or ""), "m": bool(st.get("marketing")), "id": chosen["post_id"]})
         except Exception:  # noqa: BLE001
             pass
+    # An animated card: the post is its finished picture, the GIF its first comment (Facebook plays it there).
+    gif = str(st.get("gif_url") or "") if photo and st.get("still_url") else ""
     return {"post": {"post_id": chosen["post_id"], "platform": chosen["platform"], "question_id": chosen["question_id"],
                      "audience": audience,
                      "format": "photo" if photo else "video", "step": chosen.get("step") or "walkthrough",
-                     "video_url": "" if photo else st["url"], "image_url": st.get("url") if photo else "",
+                     "video_url": "" if photo else st["url"],
+                     "image_url": (st["still_url"] if gif else st.get("url")) if photo else "",
+                     "comment_image_url": gif,
+                     "comment_text": _gif_words(chosen) if gif else "",
                      "thumbnail_url": None if photo else st.get("thumbnail_url"),
                      "caption": st.get("post") or "" if photo else _caption(st),
                      "title": title, "attempts": chosen.get("attempts") or 0,
                      "schedule_at": when.astimezone(EAT).isoformat() if ahead else "",
                      "groups": to_groups}, "reason": "", "rules": rules}
+
+
+def _gif_words(post: dict[str, Any]) -> str:
+    from . import social_cards
+
+    return social_cards.gif_comment(str(post.get("step") or ""))
 
 
 def comment_rules() -> dict[str, Any]:

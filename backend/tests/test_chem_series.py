@@ -69,3 +69,18 @@ def test_a_chemistry_kicd_card_is_narrowed_to_its_question() -> None:
     got = social_cards.focused(Q, slos, 1)
     assert got == ["separate mixtures using magnetism, sublimation and filtration"]
     assert social_cards.focused(Q, slos, 2)[1] == slos[1] or slos[1] in social_cards.focused(Q, slos, 2)
+
+
+def test_an_animated_card_posts_its_picture_and_comments_its_gif(monkeypatch) -> None:
+    import app.infra.storage as st
+
+    monkeypatch.setattr(st.object_storage, "object_exists", lambda name: True)
+    monkeypatch.setattr(st, "public_object_url", lambda name: "u/" + name)
+    r = social_cards.status("q1", "answer", Q)
+    assert r["url"].endswith(".gif") and r["gif_url"] == r["url"] and r["still_url"].endswith(".jpg")
+    grids = [{"jpg": "g0.jpg", "gif": "g0.gif", "jpg_name": "n0.jpg", "gif_name": "n0.gif"}]
+    monkeypatch.setattr(chem_stills, "status", lambda qid, q: {"grids": grids, "stills": []})
+    a = social_cards.status("q1", "anim0", Q)
+    assert (a["still_url"], a["gif_url"]) == ("g0.jpg", "g0.gif")
+    assert "gif_url" not in social_cards.status("q1", "steps0", Q)                  # a still card: no comment GIF
+    assert social_cards.gif_comment("anim0").startswith("▶️ Every step") and social_cards.gif_comment("teaser").startswith("▶️ Breaking")
