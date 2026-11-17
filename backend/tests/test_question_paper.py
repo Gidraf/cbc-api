@@ -224,3 +224,36 @@ def test_a_scenario_the_stem_does_not_repeat_is_still_printed() -> None:
 
     assert "bolt of cloth 40 m long" in paper
     assert "Find the square root" in paper
+
+
+def test_a_stem_that_lists_its_own_parts_prints_them_once() -> None:
+    """A Grade 7 structured item carried its parts both inline in the stem and
+    in `structured_parts`, so the paper printed (a), (b) and (c) twice — once
+    crammed into the stem, once laid out with the mark allocations. The stem
+    bracketed its marks as "[2 marks]", which the inline-part pattern did not
+    recognise."""
+    item = {
+        "question_type": "structured",
+        "question_text": (
+            "A cooperative society in Kisumu County purchases a square storage "
+            "yard with an area of 1024 sq m. (a) Using the long division method, "
+            "calculate the side length of the storage yard. [2 marks] "
+            "(b) Calculate the perimeter of the storage yard. [2 marks]"
+        ),
+        "pedagogy": {"max_marks": 4},
+        "structured_parts": [
+            {"part_id": "(a)",
+             "sub_question": "Using the long division method, calculate the side "
+                             "length of the storage yard.", "marks": 2},
+            {"part_id": "(b)",
+             "sub_question": "Calculate the perimeter of the storage yard.", "marks": 2},
+        ],
+        "marking_scheme": "32 m (2 marks)\n128 m (2 marks)",
+    }
+
+    paper = question_paper.render_html([item], answers=False, **PAGE)
+
+    assert paper.count("Using the long division method") == 1
+    assert paper.count("Calculate the perimeter of the storage yard") == 1
+    # The scenario that is not part of the list survives.
+    assert "cooperative society in Kisumu County" in paper

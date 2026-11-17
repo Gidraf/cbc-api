@@ -22,6 +22,7 @@ import re
 from typing import Any
 
 from .notes_renderer import PRINT_CSS, _KATEX, _KATEX_CRITICAL, _esc, _math
+from .question_normalizer import strip_inline_parts
 
 logger = logging.getLogger("cbc-question-paper")
 
@@ -245,8 +246,9 @@ def _restates(stimulus: str, stem: str) -> bool:
 def _body(question: dict[str, Any], *, answers: bool,
           assets: dict[str, str] | None = None) -> str:
     out: list[str] = []
+    parts = [p for p in (question.get("structured_parts") or []) if isinstance(p, dict)]
     stimulus = str(question.get("stimulus_context") or "").strip()
-    stem = str(question.get("question_text") or "").strip()
+    stem = strip_inline_parts(str(question.get("question_text") or "").strip(), parts)
     if stimulus and not _restates(stimulus, stem):
         out.append(f"<div class='stimulus'>{_math(stimulus)}</div>")
     out.append(_figure(question, assets, answers=answers))
@@ -261,7 +263,6 @@ def _body(question: dict[str, Any], *, answers: bool,
                        f"{_math(option.get('text'))}</li>")
         out.append("</ul>")
 
-    parts = [p for p in (question.get("structured_parts") or []) if isinstance(p, dict)]
     if parts:
         out.append("<ul class='parts'>")
         for part in parts:
@@ -509,7 +510,8 @@ def _item(question: dict[str, Any], number: int, *, answers: bool, written_space
     if marks and q_type not in ("multiple_choice", "true_false", "matching", "assertion_reason"):
         out.append(f"<span class='marks'>({marks:g} {'mark' if marks == 1 else 'marks'})</span>")
     stimulus = str(question.get("stimulus_context") or "").strip()
-    stem = str(question.get("question_text") or "").strip()
+    item_parts = [p for p in (question.get("structured_parts") or []) if isinstance(p, dict)]
+    stem = strip_inline_parts(str(question.get("question_text") or "").strip(), item_parts)
     if stimulus and not _restates(stimulus, stem):
         out.append(f"<div class='stim'>{_math(stimulus)}</div>")
     out.append(f"<div class='stem'>{_math(stem)}</div>")

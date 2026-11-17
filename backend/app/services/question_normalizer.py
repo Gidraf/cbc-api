@@ -185,10 +185,24 @@ def scheme_text(raw: Any) -> str:
     return str(raw).strip()
 
 
-_INLINE_PARTS = re.compile(r"\(\s*[a-h]\s*\)\s*.*?\(\s*\d+\s*marks?\s*\)", re.I | re.S)
+# The mark allocation is bracketed either way a writer types it: "(2 marks)"
+# and "[2 marks]" both end an inline part.
+_INLINE_PARTS = re.compile(
+    r"\(\s*[a-h]\s*\)\s*.*?[\(\[]\s*\d+\s*marks?\s*[\)\]]", re.I | re.S)
 
 
-def strip_inline_parts(text: str, parts: list["StructuredPart"]) -> str:
+def _sub_question_of(part: Any) -> str:
+    """The part's own wording, whether it arrives as a model or as a dict.
+
+    The normalizer holds `StructuredPart` objects; the paper renderer reads the
+    same questions back from the bank as plain dicts.
+    """
+    if isinstance(part, dict):
+        return str(part.get("sub_question") or part.get("question") or "")
+    return str(getattr(part, "sub_question", "") or "")
+
+
+def strip_inline_parts(text: str, parts: list[Any]) -> str:
     """A stem that lists its parts — "(a) Write a signed expression … (2 marks)
     (b) Calculate … (3 marks)" — when the parts are also carried in
     `structured_parts`. The paper printed every part twice."""
@@ -199,7 +213,7 @@ def strip_inline_parts(text: str, parts: list["StructuredPart"]) -> str:
         return text
     # Only when what follows really is the part list, i.e. it mentions the
     # first part's own words; a "(a)" inside an expression is left alone.
-    head = re.sub(r"\s+", " ", parts[0].sub_question.lower())[:30]
+    head = re.sub(r"\s+", " ", _sub_question_of(parts[0]).lower())[:30]
     tail = re.sub(r"\s+", " ", text[first.start():].lower())
     if head[:20] not in tail:
         return text
