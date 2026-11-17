@@ -220,14 +220,37 @@ def figures_for(questions: list[dict[str, Any]]) -> dict[str, Any]:
     return out
 
 
+def _norm_prose(text: str) -> str:
+    """Comparable prose: single spaces, no case, no trailing full stop."""
+    return re.sub(r"\s+", " ", str(text or "")).strip().lower().rstrip(".")
+
+
+def _restates(stimulus: str, stem: str) -> bool:
+    """Whether the stem already carries the scenario the stimulus sets up.
+
+    A writer who put the scenario in `stimulus_context` and again at the head of
+    `question_text` had it printed twice, so the paper read "A workshop in Nakuru
+    varnishes 5 identical dining tables, each with a square top of side 1.6 m ..."
+    and then said all of it again before it asked anything. Nearly half the
+    approved Grade 7 bank was written that way, so this is fixed where the paper
+    is built rather than one item at a time. The stimulus is the half dropped,
+    because the stem is the half that ends in the question.
+    """
+    scenario, question = _norm_prose(stimulus), _norm_prose(stem)
+    if not scenario or not question:
+        return False
+    return scenario in question
+
+
 def _body(question: dict[str, Any], *, answers: bool,
           assets: dict[str, str] | None = None) -> str:
     out: list[str] = []
     stimulus = str(question.get("stimulus_context") or "").strip()
-    if stimulus:
+    stem = str(question.get("question_text") or "").strip()
+    if stimulus and not _restates(stimulus, stem):
         out.append(f"<div class='stimulus'>{_math(stimulus)}</div>")
     out.append(_figure(question, assets, answers=answers))
-    out.append(f"<div class='stem'>{_math(question.get('question_text'))}</div>")
+    out.append(f"<div class='stem'>{_math(stem)}</div>")
 
     options = [o for o in (question.get("options") or []) if isinstance(o, dict)]
     if options:
@@ -486,9 +509,10 @@ def _item(question: dict[str, Any], number: int, *, answers: bool, written_space
     if marks and q_type not in ("multiple_choice", "true_false", "matching", "assertion_reason"):
         out.append(f"<span class='marks'>({marks:g} {'mark' if marks == 1 else 'marks'})</span>")
     stimulus = str(question.get("stimulus_context") or "").strip()
-    if stimulus:
+    stem = str(question.get("question_text") or "").strip()
+    if stimulus and not _restates(stimulus, stem):
         out.append(f"<div class='stim'>{_math(stimulus)}</div>")
-    out.append(f"<div class='stem'>{_math(question.get('question_text'))}</div>")
+    out.append(f"<div class='stem'>{_math(stem)}</div>")
     options = [o for o in (question.get("options") or []) if isinstance(o, dict)]
     if options:
         out.append(f"<ul class='opts{' grid' if _short(options) else ''}'>")

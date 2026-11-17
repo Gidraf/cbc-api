@@ -190,3 +190,37 @@ def test_the_answer_key_spans_both_columns_as_a_block_not_as_tables():
     assert block and block.group(1).count("class='keygrid'") == 3          # 1–10, 11–20, 21–22
     assert ".exam .keyblock { column-span: all;" in html
     assert re.search(r"\.exam \.keygrid \{[^}]*column-span", html) is None
+
+
+def test_a_scenario_in_both_fields_is_printed_once() -> None:
+    """A writer who put the scenario in `stimulus_context` and again at the head
+    of `question_text` had it printed twice, so the paper said "A workshop in
+    Nakuru varnishes 5 identical dining tables ..." and then said all of it
+    again before it asked anything. Nearly half the approved Grade 7 bank was
+    written that way."""
+    scenario = "A workshop in Nakuru varnishes 5 identical dining tables."
+    item = dict(
+        MCQ,
+        stimulus_context=scenario,
+        question_text=f"{scenario} Calculate the total varnished surface.",
+    )
+
+    paper = question_paper.render_html([item], answers=False, **PAGE)
+
+    assert paper.count("varnishes 5 identical dining tables") == 1
+    assert "Calculate the total varnished surface" in paper
+
+
+def test_a_scenario_the_stem_does_not_repeat_is_still_printed() -> None:
+    """Dropping the stimulus whenever one exists would throw away the half of a
+    question that sets the numbers up."""
+    item = dict(
+        MCQ,
+        stimulus_context="A tailor has a bolt of cloth 40 m long.",
+        question_text="Find the square root of 1 225.",
+    )
+
+    paper = question_paper.render_html([item], answers=False, **PAGE)
+
+    assert "bolt of cloth 40 m long" in paper
+    assert "Find the square root" in paper
